@@ -653,7 +653,7 @@ func (m *Model) refreshViewport(forceBottom bool) {
 				b.WriteString(systemLabelStyle.Render(entry.Role))
 			}
 			b.WriteString("\n")
-			b.WriteString(entry.Content)
+			b.WriteString(truncateForDisplay(entry.Content))
 		}
 		if m.pendingRequest {
 			if b.Len() > 0 {
