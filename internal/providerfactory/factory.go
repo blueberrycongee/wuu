@@ -45,6 +45,32 @@ func BuildClient(provider config.ProviderConfig) (providers.Client, error) {
 	}
 }
 
+// BuildStreamClient constructs a streaming-capable provider client.
+func BuildStreamClient(provider config.ProviderConfig) (providers.StreamClient, error) {
+	typeName := normalizeType(provider.Type)
+	apiKey, err := resolveAPIKey(provider)
+	if err != nil {
+		return nil, err
+	}
+
+	switch typeName {
+	case "openai", "openai-compatible", "codex":
+		return openai.New(openai.ClientConfig{
+			BaseURL: provider.BaseURL,
+			APIKey:  apiKey,
+			Headers: provider.Headers,
+		})
+	case "anthropic", "claude", "anthropic-official":
+		return anthropic.New(anthropic.ClientConfig{
+			BaseURL: provider.BaseURL,
+			APIKey:  apiKey,
+			Headers: provider.Headers,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported provider type %q", provider.Type)
+	}
+}
+
 func normalizeType(value string) string {
 	s := strings.ToLower(strings.TrimSpace(value))
 	s = strings.ReplaceAll(s, "_", "-")
