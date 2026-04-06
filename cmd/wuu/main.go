@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -72,16 +75,16 @@ func runInit(args []string) error {
 		}
 	}
 
-	content, err := config.TemplateJSON()
+	result, err := runOnboarding()
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	if !result.Completed {
+		fmt.Println("setup cancelled")
+		return nil
 	}
 
-	fmt.Printf("created %s\n", configPath)
-	return nil
+	return writeOnboardingResult(workdir, os.Getenv("HOME"), result)
 }
 
 func runTask(args []string) error {
@@ -200,7 +203,24 @@ func runTUI(args []string) error {
 
 	cfg, configPath, err := config.LoadFrom(rootDir, os.Getenv("HOME"))
 	if err != nil {
-		return err
+		// No config found — run onboarding.
+		result, onboardErr := runOnboarding()
+		if onboardErr != nil {
+			return onboardErr
+		}
+		if !result.Completed {
+			return nil // user cancelled
+		}
+
+		if writeErr := writeOnboardingResult(rootDir, os.Getenv("HOME"), result); writeErr != nil {
+			return writeErr
+		}
+
+		// Reload config.
+		cfg, configPath, err = config.LoadFrom(rootDir, os.Getenv("HOME"))
+		if err != nil {
+			return fmt.Errorf("config still invalid after onboarding: %w", err)
+		}
 	}
 
 	providerCfg, resolvedName, err := cfg.ResolveProvider(*providerName)
@@ -380,6 +400,57 @@ func stdinHasInput() bool {
 		return false
 	}
 	return info.Mode()&os.ModeCharDevice == 0
+}
+
+func runOnboarding() (tui.OnboardingResult, error) {
+	m := tui.NewOnboardingModel()
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
+		return tui.OnboardingResult{}, fmt.Errorf("onboarding: %w", err)
+	}
+	om, ok := finalModel.(tui.OnboardingModel)
+	if !ok {
+		return tui.OnboardingResult{}, fmt.Errorf("unexpected model type")
+	}
+	return om.Result(), nil
+}
+
+func writeOnboardingResult(rootDir, home string, r tui.OnboardingResult) error {
+	// 1. Save API key to global auth store.
+	providerName := r.ProviderType
+	if providerName == "openai-compatible" {
+		providerName = "custom"
+	}
+	if err := config.SaveAuthKey(home, providerName, r.APIKey); err != nil {
+		return fmt.Errorf("save auth key: %w", err)
+	}
+
+	// 2. Write .wuu.json (no API key stored in project config).
+	cfg := config.Default()
+	cfg.DefaultProvider = providerName
+	cfg.Providers = map[string]config.ProviderConfig{
+		providerName: {
+			Type:    r.ProviderType,
+			BaseURL: r.BaseURL,
+			Model:   r.Model,
+		},
+	}
+	configPath := filepath.Join(rootDir, ".wuu.json")
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(configPath, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	// 3. Save global preferences.
+	gc := config.GlobalConfig{
+		Theme:                  r.Theme,
+		HasCompletedOnboarding: true,
+	}
+	return config.SaveGlobalConfig(home, gc)
 }
 
 func printUsage() {

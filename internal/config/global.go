@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-const globalConfigRelPath = ".config/wuu/config.json"
+const globalConfigRelPath = ".config/wuu/preferences.json"
 
 type GlobalConfig struct {
 	Theme                  string `json:"theme,omitempty"`
