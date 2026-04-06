@@ -168,6 +168,45 @@ func TestMouseClickPositionsCursor(t *testing.T) {
 	}
 }
 
+func TestMouseClickPositionsCursorMultiLine(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return prompt, nil
+		},
+	})
+	m.width = 100
+	m.height = 24
+	m.relayout()
+
+	m.input.SetValue("first line\nsecond line")
+	m.input.CursorStart() // cursor at start of first line
+
+	// Click on second line (row 1), column 3.
+	borderOff := 1 // non-compact
+	promptW := 2
+	inputY := m.layout.Input.Y + borderOff + 1 // +1 for second row
+	clickX := m.layout.Input.X + borderOff + promptW + 3
+
+	updated, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      clickX,
+		Y:      inputY,
+	})
+	after := updated.(Model)
+
+	if after.input.Line() != 1 {
+		t.Fatalf("expected cursor on line 1, got %d", after.input.Line())
+	}
+	li := after.input.LineInfo()
+	if li.CharOffset != 3 {
+		t.Fatalf("expected cursor at column 3, got %d", li.CharOffset)
+	}
+}
+
 func renderEntries(entries []transcriptEntry) string {
 	var b strings.Builder
 	for i, e := range entries {
