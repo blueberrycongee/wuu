@@ -40,6 +40,8 @@ type streamEventMsg struct {
 	event providers.StreamEvent
 }
 
+type ctrlCResetMsg struct{}
+
 type transcriptEntry struct {
 	Role    string
 	Content string
@@ -88,6 +90,10 @@ type Model struct {
 	completionVisible bool
 	completionItems   []command
 	completionIndex   int
+
+	// Double ctrl+c to quit.
+	ctrlCPressed bool
+	quitting     bool
 }
 
 // NewModel builds the initial UI model.
@@ -196,6 +202,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.clock = msg.now.Format("15:04:05")
 		return m, tickCmd()
+
+	case ctrlCResetMsg:
+		m.ctrlCPressed = false
+		if m.statusLine == "press ctrl+c again to exit" {
+			m.statusLine = "ready"
+		}
+		return m, nil
 
 	case responseMsg:
 		m.pendingRequest = false
@@ -337,7 +350,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			if m.ctrlCPressed {
+				m.quitting = true
+				return m, tea.Quit
+			}
+			m.ctrlCPressed = true
+			m.statusLine = "press ctrl+c again to exit"
+			return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+				return ctrlCResetMsg{}
+			})
 		case "enter":
 			m.completionVisible = false
 			m.completionItems = nil
@@ -392,6 +413,10 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	}
 
 	if output, handled := m.handleSlash(raw); handled {
+		if output == "__exit__" {
+			m.quitting = true
+			return m, tea.Quit
+		}
 		m.appendEntry("system", output)
 		m.input.Reset()
 		m.statusLine = "command executed"

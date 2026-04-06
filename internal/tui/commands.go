@@ -356,7 +356,7 @@ func cmdInsight(_ string, m *Model) string {
 }
 
 func cmdExit(_ string, _ *Model) string {
-	return "goodbye"
+	return "__exit__"
 }
 
 // ---------------------------------------------------------------------------

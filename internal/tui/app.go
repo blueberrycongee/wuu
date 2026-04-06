@@ -40,8 +40,18 @@ func Run(cfg Config) error {
 
 	m := NewModel(cfg)
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if _, err := program.Run(); err != nil {
+	finalModel, err := program.Run()
+	if err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}
+
+	// Print resume hint after exiting alt screen.
+	if fm, ok := finalModel.(Model); ok && fm.sessionID != "" {
+		fmt.Println()
+		fmt.Printf("To resume this session:\n")
+		fmt.Printf("  wuu --resume %s\n", fm.sessionID)
+		fmt.Println()
+	}
+
 	return nil
 }
