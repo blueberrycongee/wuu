@@ -43,3 +43,36 @@ type ChatResponse struct {
 type Client interface {
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 }
+
+// StreamEventType classifies events emitted during streaming.
+type StreamEventType string
+
+const (
+	EventContentDelta StreamEventType = "content_delta"
+	EventToolUseStart StreamEventType = "tool_use_start"
+	EventToolUseDelta StreamEventType = "tool_use_delta"
+	EventToolUseEnd   StreamEventType = "tool_use_end"
+	EventDone         StreamEventType = "done"
+	EventError        StreamEventType = "error"
+)
+
+// TokenUsage reports token consumption for a streaming response.
+type TokenUsage struct {
+	InputTokens  int
+	OutputTokens int
+}
+
+// StreamEvent is a single event from a streaming chat response.
+type StreamEvent struct {
+	Type     StreamEventType
+	Content  string
+	ToolCall *ToolCall
+	Error    error
+	Usage    *TokenUsage
+}
+
+// StreamClient extends Client with streaming support.
+type StreamClient interface {
+	Client
+	StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
+}
