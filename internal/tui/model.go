@@ -376,6 +376,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
 				return ctrlCResetMsg{}
 			})
+		case "ctrl+u":
+			// Cmd+Backspace / Ctrl+U: clear input to beginning of line.
+			m.input.SetValue("")
+			m.historyIndex = -1
+			m.historyDraft = ""
+			m.completionVisible = false
+			m.completionItems = nil
+			return m, nil
+		case "ctrl+w":
+			// Ctrl+W / Alt+Backspace: delete word backward.
+			val := m.input.Value()
+			if val == "" {
+				return m, nil
+			}
+			// Trim trailing spaces, then trim non-spaces.
+			trimmed := strings.TrimRight(val, " \t")
+			lastSpace := strings.LastIndexAny(trimmed, " \t")
+			if lastSpace < 0 {
+				m.input.SetValue("")
+			} else {
+				m.input.SetValue(trimmed[:lastSpace+1])
+			}
+			m.input.CursorEnd()
+			return m, nil
 		case "enter":
 			m.completionVisible = false
 			m.completionItems = nil
@@ -393,12 +417,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.autoFollow = true
 			m.showJump = false
 			return m, nil
-		case "pgup", "ctrl+u":
+		case "pgup":
 			m.viewport.ViewUp()
 			m.autoFollow = false
 			m.showJump = !m.viewport.AtBottom()
 			return m, nil
-		case "pgdown", "ctrl+d":
+		case "pgdown":
 			m.viewport.ViewDown()
 			m.showJump = !m.viewport.AtBottom()
 			m.autoFollow = !m.showJump
