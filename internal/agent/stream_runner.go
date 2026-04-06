@@ -25,6 +25,12 @@ type StreamRunner struct {
 
 // Run executes one prompt with streaming tool-use loop.
 func (r *StreamRunner) Run(ctx context.Context, prompt string) (string, error) {
+	return r.RunWithCallback(ctx, prompt, r.OnEvent)
+}
+
+// RunWithCallback executes one prompt with a per-call event callback.
+// This avoids data races when multiple concurrent calls share the same runner.
+func (r *StreamRunner) RunWithCallback(ctx context.Context, prompt string, onEvent StreamCallback) (string, error) {
 	if r.Client == nil {
 		return "", errors.New("client is required")
 	}
@@ -66,8 +72,8 @@ func (r *StreamRunner) Run(ctx context.Context, prompt string) (string, error) {
 		pendingTools := map[int]*providers.ToolCall{}
 
 		for event := range ch {
-			if r.OnEvent != nil {
-				r.OnEvent(event)
+			if onEvent != nil {
+				onEvent(event)
 			}
 
 			switch event.Type {

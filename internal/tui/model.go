@@ -599,21 +599,22 @@ func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
 		runner := m.streamRunner
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelStream = cancel
-		done := make(chan struct{})
 		go func() {
 			defer close(ch)
-			defer close(done)
-			runner.OnEvent = func(event providers.StreamEvent) {
+			// Per-call callback — avoids races with concurrent runs
+			// that would otherwise stomp on runner.OnEvent.
+			onEvent := func(event providers.StreamEvent) {
+				// Respect ctx cancellation so we never block forever.
 				select {
 				case ch <- event:
-				case <-done:
+				case <-ctx.Done():
 				}
 			}
-			_, err := runner.Run(ctx, raw)
-			if err != nil {
+			_, err := runner.RunWithCallback(ctx, raw, onEvent)
+			if err != nil && ctx.Err() == nil {
 				select {
 				case ch <- providers.StreamEvent{Type: providers.EventError, Error: err}:
-				case <-done:
+				case <-ctx.Done():
 				}
 			}
 		}()
