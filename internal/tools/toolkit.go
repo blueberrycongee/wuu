@@ -181,6 +181,38 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 				"required": []string{"pattern"},
 			},
 		},
+		{
+			Name:        "web_search",
+			Description: "Search the web using DuckDuckGo. Returns titles, URLs, and snippets.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Search query.",
+					},
+					"max_results": map[string]any{
+						"type":        "integer",
+						"description": "Maximum results to return (1-20). Default 10.",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "web_fetch",
+			Description: "Fetch a URL and return its content as text. HTML is converted to readable text.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "URL to fetch.",
+					},
+				},
+				"required": []string{"url"},
+			},
+		},
 	}
 }
 
@@ -201,6 +233,10 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 		return t.grep(call.Arguments)
 	case "glob":
 		return t.glob(call.Arguments)
+	case "web_search":
+		return t.webSearch(call.Arguments)
+	case "web_fetch":
+		return t.webFetch(call.Arguments)
 	default:
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
