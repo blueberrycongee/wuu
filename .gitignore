@@ -1,0 +1,5 @@
+# Build artifacts
+wuu
+
+# Local runtime config
+.wuu.json
