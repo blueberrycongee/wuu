@@ -22,19 +22,9 @@ func welcomeScreen(width int, provider, model, sessionID string) string {
 		return welcomeCompact(provider, model, sessionID)
 	}
 
-	bannerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("12")).
-		Bold(true)
-
-	subtitleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("8"))
-
-	infoStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("7"))
-
 	var b strings.Builder
 
-	// Center the banner.
+	// Center the banner with brand color.
 	for _, line := range strings.Split(strings.TrimSpace(wuuBanner), "\n") {
 		pad := (width - lipgloss.Width(line)) / 2
 		if pad < 0 {
@@ -54,7 +44,7 @@ func welcomeScreen(width int, provider, model, sessionID string) string {
 		pad = 0
 	}
 	b.WriteString(strings.Repeat(" ", pad))
-	b.WriteString(subtitleStyle.Render(subtitle))
+	b.WriteString(bannerSubtitleStyle.Render(subtitle))
 	b.WriteString("\n\n")
 
 	// Session info.
@@ -67,33 +57,34 @@ func welcomeScreen(width int, provider, model, sessionID string) string {
 		infoPad = 0
 	}
 	b.WriteString(strings.Repeat(" ", infoPad))
-	b.WriteString(infoStyle.Render(info))
+	b.WriteString(bannerInfoStyle.Render(info))
 	b.WriteString("\n\n")
 
 	// Hints.
-	hints := []string{
-		"Type a prompt to start  ·  /help for commands  ·  /resume to restore a session",
+	hint := "Type a prompt to start  ·  /help for commands  ·  /resume to restore a session"
+	hPad := (width - len(hint)) / 2
+	if hPad < 0 {
+		hPad = 0
 	}
-	for _, h := range hints {
-		hPad := (width - len(h)) / 2
-		if hPad < 0 {
-			hPad = 0
-		}
-		b.WriteString(strings.Repeat(" ", hPad))
-		b.WriteString(subtitleStyle.Render(h))
-		b.WriteString("\n")
-	}
+	b.WriteString(strings.Repeat(" ", hPad))
+	b.WriteString(bannerSubtitleStyle.Render(hint))
+	b.WriteString("\n")
 
 	return b.String()
 }
 
 func welcomeCompact(provider, model, sessionID string) string {
 	var b strings.Builder
-	b.WriteString("wuu · coding agent\n\n")
-	b.WriteString(fmt.Sprintf("%s/%s\n", provider, model))
+	b.WriteString(bannerStyle.Render("wuu"))
+	b.WriteString(bannerSubtitleStyle.Render(" · coding agent"))
+	b.WriteString("\n\n")
+	b.WriteString(bannerInfoStyle.Render(fmt.Sprintf("%s/%s", provider, model)))
+	b.WriteString("\n")
 	if sessionID != "" {
-		b.WriteString(fmt.Sprintf("session: %s\n", sessionID))
+		b.WriteString(bannerInfoStyle.Render(fmt.Sprintf("session: %s", sessionID)))
+		b.WriteString("\n")
 	}
-	b.WriteString("\nType a prompt or /help")
+	b.WriteString("\n")
+	b.WriteString(bannerSubtitleStyle.Render("Type a prompt or /help"))
 	return b.String()
 }

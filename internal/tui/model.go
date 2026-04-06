@@ -520,7 +520,15 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			if i > 0 {
 				b.WriteString("\n\n")
 			}
-			b.WriteString(entry.Role)
+			// Color the role label based on type.
+			switch entry.Role {
+			case "USER":
+				b.WriteString(userLabelStyle.Render(entry.Role))
+			case "ASSISTANT":
+				b.WriteString(assistantLabelStyle.Render(entry.Role))
+			default:
+				b.WriteString(systemLabelStyle.Render(entry.Role))
+			}
 			b.WriteString("\n")
 			b.WriteString(entry.Content)
 		}
@@ -528,7 +536,9 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			if b.Len() > 0 {
 				b.WriteString("\n\n")
 			}
-			b.WriteString("ASSISTANT\nthinking...")
+			b.WriteString(assistantLabelStyle.Render("ASSISTANT"))
+			b.WriteString("\n")
+			b.WriteString(lipgloss.NewStyle().Foreground(currentTheme.Subtle).Render("thinking..."))
 		}
 	}
 
@@ -565,20 +575,22 @@ func (m Model) View() string {
 		tokenEstimate += len(e.Content) / 4
 	}
 	tokenStr := formatTokenCount(tokenEstimate)
-	header := lipgloss.NewStyle().Bold(true).Render(
+	header := headerStyle.Render(
 		trimToWidth(fmt.Sprintf("wuu · %s/%s · %s tokens", m.provider, m.modelName, tokenStr), m.width),
 	)
 
 	// Footer
-	icon := "○"
+	var iconStyled string
 	state := m.statusLine
 	if m.streaming {
-		icon = "●"
+		iconStyled = statusStreamStyle.Render("●")
 		state = "streaming"
 	} else if strings.HasPrefix(m.statusLine, "executing tool:") {
-		icon = "◆"
+		iconStyled = statusToolStyle.Render("◆")
 	} else if m.statusLine == "request failed" {
-		icon = "✗"
+		iconStyled = statusErrorStyle.Render("✗")
+	} else {
+		iconStyled = statusReadyStyle.Render("○")
 	}
 
 	jumpHint := ""
@@ -586,22 +598,18 @@ func (m Model) View() string {
 		jumpHint = " · ▼ jump"
 	}
 
-	footerLeft := fmt.Sprintf("%s %s%s", icon, state, jumpHint)
+	footerLeft := fmt.Sprintf("%s %s%s", iconStyled, state, jumpHint)
 	footerRight := m.clock
 	availableW := max(1, m.width-lipgloss.Width(footerRight)-1)
 	footerLeft = trimToWidth(footerLeft, availableW)
 	gap := max(1, m.width-lipgloss.Width(footerLeft)-lipgloss.Width(footerRight))
-	footer := lipgloss.NewStyle().Faint(true).Render(footerLeft + strings.Repeat(" ", gap) + footerRight)
+	footer := footerStyle.Render(footerLeft + strings.Repeat(" ", gap) + footerRight)
 
 	outputBox := m.viewport.View()
 	inputBox := m.input.View()
 	if !m.layout.Compact {
-		outputBox = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			Render(outputBox)
-		inputBox = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			Render(inputBox)
+		outputBox = outputBorderStyle.Render(outputBox)
+		inputBox = inputBorderStyle.Render(inputBox)
 	}
 
 	parts := []string{header, outputBox}
