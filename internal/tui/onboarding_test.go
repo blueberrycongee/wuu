@@ -41,7 +41,7 @@ func TestOnboardingStepTransitions(t *testing.T) {
 
 	// Select "openai" (cursor 0).
 	m.cursor = 0
-	m.selectCurrentOption()
+	(&m).selectCurrentOption()
 	if m.step != stepBaseURL {
 		t.Fatalf("after provider select, step: %d", m.step)
 	}

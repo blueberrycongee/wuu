@@ -30,7 +30,8 @@ func computeLayout(termWidth, termHeight, inputLines int) layout {
 	headerH := 1
 	footerH := 1
 	inputOuterH := inputLines + borderH
-	chatH := termHeight - headerH - footerH - inputOuterH - borderH
+	// Chat area has no border, only input does.
+	chatH := termHeight - headerH - footerH - inputOuterH
 	if chatH < 4 {
 		chatH = 4
 	}
@@ -44,8 +45,8 @@ func computeLayout(termWidth, termHeight, inputLines int) layout {
 	header := layoutRect{X: 0, Y: y, Width: termWidth, Height: headerH}
 	y += headerH
 
-	chat := layoutRect{X: 0, Y: y, Width: innerW, Height: chatH}
-	y += chatH + borderH
+	chat := layoutRect{X: 0, Y: y, Width: termWidth, Height: chatH}
+	y += chatH
 
 	input := layoutRect{X: 0, Y: y, Width: innerW, Height: inputLines}
 	y += inputLines + borderH

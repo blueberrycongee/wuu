@@ -731,7 +731,6 @@ func (m Model) View() string {
 	outputBox := m.viewport.View()
 	inputBox := m.input.View()
 	if !m.layout.Compact {
-		outputBox = outputBorderStyle.Render(outputBox)
 		inputBox = inputBorderStyle.Render(inputBox)
 	}
 
