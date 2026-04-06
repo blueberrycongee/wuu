@@ -612,15 +612,13 @@ func (m Model) View() string {
 		inputBox = inputBorderStyle.Render(inputBox)
 	}
 
-	parts := []string{header, outputBox}
-
-	// Slash command completion popup.
+	// Overlay completion popup on top of outputBox if visible.
 	if m.completionVisible && len(m.completionItems) > 0 {
 		popup := renderCompletion(m.completionItems, m.completionIndex, m.width)
-		parts = append(parts, popup)
+		outputBox = overlayBottom(outputBox, popup, m.width)
 	}
 
-	parts = append(parts, inputBox, footer)
+	parts := []string{header, outputBox, inputBox, footer}
 
 	return strings.Join(parts, "\n")
 }

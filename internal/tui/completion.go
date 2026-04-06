@@ -7,6 +7,37 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// overlayBottom places the popup over the bottom lines of the base string,
+// keeping the total line count the same (no layout shift).
+func overlayBottom(base, popup string, width int) string {
+	baseLines := strings.Split(base, "\n")
+	popupLines := strings.Split(popup, "\n")
+
+	popupH := len(popupLines)
+	if popupH == 0 || len(baseLines) == 0 {
+		return base
+	}
+
+	// If popup is taller than base, just show what fits.
+	startLine := len(baseLines) - popupH
+	if startLine < 0 {
+		startLine = 0
+		popupLines = popupLines[len(popupLines)-len(baseLines):]
+	}
+
+	// Replace bottom lines of base with popup lines.
+	result := make([]string, len(baseLines))
+	copy(result, baseLines)
+	for i, pl := range popupLines {
+		idx := startLine + i
+		if idx < len(result) {
+			result[idx] = pl
+		}
+	}
+
+	return strings.Join(result, "\n")
+}
+
 // updateCompletion refreshes the completion popup based on current input.
 func (m *Model) updateCompletion() {
 	val := m.input.Value()
