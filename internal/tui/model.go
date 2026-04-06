@@ -293,13 +293,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case providers.EventDone:
 			m.streaming = false
 			m.pendingRequest = false
-			if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
-				raw := m.entries[m.streamTarget].Content
-				rendered, err := m.renderMarkdown(raw)
-				if err == nil {
-					m.entries[m.streamTarget].Content = rendered
-				}
-			}
 			m.streamTarget = -1
 			m.statusLine = "ready"
 			m.refreshViewport(true)
@@ -611,10 +604,7 @@ func (m *Model) finishStream() {
 	m.streamRunes = nil
 
 	if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
-		rendered, err := m.renderMarkdown(raw)
-		if err == nil {
-			m.entries[m.streamTarget].Content = rendered
-		}
+		m.entries[m.streamTarget].Content = raw
 	}
 	m.streamTarget = -1
 	m.statusLine = fmt.Sprintf("response in %s", m.streamElapsed.Truncate(10*time.Millisecond))
@@ -748,7 +738,16 @@ func (m *Model) refreshViewport(forceBottom bool) {
 				b.WriteString(systemLabelStyle.Render(entry.Role))
 			}
 			b.WriteString("\n")
-			b.WriteString(truncateForDisplay(entry.Content))
+
+			content := truncateForDisplay(entry.Content)
+			// Render markdown for completed assistant messages.
+			if entry.Role == "ASSISTANT" && !(m.streaming && i == m.streamTarget) {
+				rendered, err := m.renderMarkdown(content)
+				if err == nil {
+					content = rendered
+				}
+			}
+			b.WriteString(content)
 		}
 		if m.pendingRequest {
 			if b.Len() > 0 {
