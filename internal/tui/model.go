@@ -331,6 +331,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Mouse click inside input area — reposition cursor.
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			borderOff := 0
+			if !m.layout.Compact {
+				borderOff = 1
+			}
+			promptW := 2 // "> " prompt width
+
+			// Check if click is inside the input area (accounting for border).
+			inputTop := m.layout.Input.Y + borderOff
+			inputBot := inputTop + m.layout.Input.Height
+			inputLeft := m.layout.Input.X + borderOff
+
+			if msg.Y >= inputTop && msg.Y < inputBot && msg.X >= inputLeft {
+				targetRow := msg.Y - inputTop
+				targetCol := msg.X - inputLeft - promptW
+				if targetCol < 0 {
+					targetCol = 0
+				}
+
+				// Move to target row.
+				currentRow := m.input.Line()
+				for currentRow < targetRow && currentRow < m.input.LineCount()-1 {
+					m.input.CursorDown()
+					currentRow++
+				}
+				for currentRow > targetRow && currentRow > 0 {
+					m.input.CursorUp()
+					currentRow--
+				}
+
+				// Move to target column.
+				m.input.SetCursor(targetCol)
+				return m, nil
+			}
+		}
+
 	case tea.KeyMsg:
 		// Handle completion popup navigation first.
 		if m.completionVisible {
