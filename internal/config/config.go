@@ -160,6 +160,18 @@ func Default() Config {
 				APIKeyEnv: "OPENAI_API_KEY",
 				Model:     "gpt-4.1",
 			},
+			"codex": {
+				Type:      "codex",
+				BaseURL:   "https://api.openai.com/v1",
+				APIKeyEnv: "OPENAI_API_KEY",
+				Model:     "gpt-5-codex",
+			},
+			"anthropic": {
+				Type:      "anthropic",
+				BaseURL:   "https://api.anthropic.com",
+				APIKeyEnv: "ANTHROPIC_API_KEY",
+				Model:     "claude-3-5-sonnet-latest",
+			},
 			"openrouter": {
 				Type:      "openai-compatible",
 				BaseURL:   "https://openrouter.ai/api/v1",

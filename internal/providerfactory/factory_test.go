@@ -24,6 +24,23 @@ func TestBuildClient_OpenAICompatible(t *testing.T) {
 	}
 }
 
+func TestBuildClient_Anthropic(t *testing.T) {
+	t.Setenv("TEST_ANTHROPIC_KEY", "abc")
+
+	client, err := BuildClient(config.ProviderConfig{
+		Type:      "anthropic",
+		BaseURL:   "https://api.anthropic.com",
+		APIKeyEnv: "TEST_ANTHROPIC_KEY",
+		Model:     "claude-test",
+	})
+	if err != nil {
+		t.Fatalf("BuildClient returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected client")
+	}
+}
+
 func TestBuildClient_MissingAPIKey(t *testing.T) {
 	_ = os.Unsetenv("MISSING_WUU_KEY")
 

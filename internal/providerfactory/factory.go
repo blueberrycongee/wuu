@@ -7,6 +7,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 )
 
@@ -19,8 +20,18 @@ func BuildClient(provider config.ProviderConfig) (providers.Client, error) {
 	}
 
 	switch typeName {
-	case "openai", "openai-compatible":
+	case "openai", "openai-compatible", "codex":
 		client, newErr := openai.New(openai.ClientConfig{
+			BaseURL: provider.BaseURL,
+			APIKey:  apiKey,
+			Headers: provider.Headers,
+		})
+		if newErr != nil {
+			return nil, newErr
+		}
+		return client, nil
+	case "anthropic", "claude", "anthropic-official":
+		client, newErr := anthropic.New(anthropic.ClientConfig{
 			BaseURL: provider.BaseURL,
 			APIKey:  apiKey,
 			Headers: provider.Headers,
@@ -62,8 +73,10 @@ func resolveAPIKey(provider config.ProviderConfig) (string, error) {
 
 func defaultAPIKeyEnv(providerType string) string {
 	switch providerType {
-	case "openai", "openai-compatible":
+	case "openai", "openai-compatible", "codex":
 		return "OPENAI_API_KEY"
+	case "anthropic", "claude", "anthropic-official":
+		return "ANTHROPIC_API_KEY"
 	default:
 		return ""
 	}

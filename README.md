@@ -11,7 +11,9 @@
 
 - `wuu init`：生成 `.wuu.json` 配置模板。
 - `wuu run "任务"`：执行一次 coding 任务。
+- `wuu tui`：交互式终端会话（固定底部输入区与时钟、流式输出、斜杠命令）。
 - 支持 OpenAI-compatible API（OpenAI / OpenRouter / one-api / New API 等常见中转）。
+- 支持 Anthropic 官方 Messages API。
 - 内置本地工具：
   - `run_shell`
   - `read_file`
@@ -93,6 +95,19 @@ wuu run [flags] "task"
   --workdir
   --no-tools
   --timeout
+
+wuu tui [flags]
+  --provider
+  --model
+  --max-steps
+  --temperature
+  --system-prompt
+  --workdir
+  --no-tools
+  --memory-file
+  --pre-hook
+  --post-hook
+  --request-timeout
 ```
 
 ## 设计说明
@@ -101,14 +116,15 @@ wuu run [flags] "task"
 
 - `internal/config`：配置加载与校验。
 - `internal/providers/openai`：OpenAI-compatible 协议适配。
-- `internal/providerfactory`：provider 装配与密钥解析。
+- `internal/providers/anthropic`：Anthropic Messages 协议适配。
+- `internal/providerfactory`：provider 装配与密钥解析（OpenAI-compatible / Anthropic / Codex alias）。
 - `internal/tools`：本地工具执行。
 - `internal/agent`：多轮 tool-calling agent loop。
+- `internal/tui`：交互式终端 UI（流式渲染 / markdown / memory / slash commands）。
 - `cmd/wuu`：CLI 入口。
 
 ## 下一步（建议）
 
-- 增加 Anthropic 原生协议 provider。
-- 增加 streaming 输出与交互式 REPL。
+- 增加 provider 级别真实 SSE streaming（当前 TUI 为本地流式渲染）。
 - 增加更细粒度文件编辑工具（patch/diff）。
-- 增加 session 持久化与 resume。
+- 增强 session 管理（fork/resume/worktree 语义完善）。
