@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -179,6 +180,9 @@ func runTUI(args []string) error {
 	workdir := fs.String("workdir", "", "workspace directory")
 	noTools := fs.Bool("no-tools", false, "disable local tools")
 	requestTimeout := fs.Duration("request-timeout", 10*time.Minute, "single request timeout (e.g. 2m)")
+	memoryFile := fs.String("memory-file", ".wuu/session.jsonl", "session memory file path")
+	preHook := fs.String("pre-hook", strings.TrimSpace(os.Getenv("WUU_PRE_HOOK")), "shell command before each prompt")
+	postHook := fs.String("post-hook", strings.TrimSpace(os.Getenv("WUU_POST_HOOK")), "shell command after each prompt")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -233,21 +237,76 @@ func runTUI(args []string) error {
 		runner.SystemPrompt = *systemPrompt
 	}
 
+	resolvedMemoryPath, err := resolveRuntimePath(rootDir, *memoryFile)
+	if err != nil {
+		return err
+	}
+
 	runPrompt := func(ctx context.Context, prompt string) (string, error) {
 		if *requestTimeout <= 0 {
-			return runner.Run(ctx, prompt)
+			return runPromptWithHooks(ctx, *preHook, *postHook, prompt, runner.Run)
 		}
 		callCtx, cancel := context.WithTimeout(ctx, *requestTimeout)
 		defer cancel()
-		return runner.Run(callCtx, prompt)
+		return runPromptWithHooks(callCtx, *preHook, *postHook, prompt, runner.Run)
 	}
 
 	return tui.Run(tui.Config{
 		Provider:   resolvedName,
 		Model:      providerCfg.Model,
 		ConfigPath: configPath,
+		MemoryPath: resolvedMemoryPath,
 		RunPrompt:  runPrompt,
 	})
+}
+
+func runPromptWithHooks(
+	ctx context.Context,
+	preHook string,
+	postHook string,
+	prompt string,
+	run func(context.Context, string) (string, error),
+) (string, error) {
+	if strings.TrimSpace(preHook) != "" {
+		if err := runHook(ctx, preHook, map[string]string{
+			"WUU_PROMPT": prompt,
+		}); err != nil {
+			return "", fmt.Errorf("pre-hook failed: %w", err)
+		}
+	}
+
+	answer, runErr := run(ctx, prompt)
+	if strings.TrimSpace(postHook) != "" {
+		hookErr := runHook(ctx, postHook, map[string]string{
+			"WUU_PROMPT": prompt,
+			"WUU_ANSWER": answer,
+		})
+		if hookErr != nil {
+			if runErr == nil {
+				runErr = fmt.Errorf("post-hook failed: %w", hookErr)
+			} else {
+				runErr = fmt.Errorf("%w; post-hook failed: %v", runErr, hookErr)
+			}
+		}
+	}
+	return answer, runErr
+}
+
+func runHook(ctx context.Context, command string, env map[string]string) error {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", command)
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, trimmed)
+	}
+	return nil
 }
 
 func resolveWorkdir(input string) (string, error) {
@@ -264,6 +323,17 @@ func resolveWorkdir(input string) (string, error) {
 		return "", fmt.Errorf("resolve workdir: %w", err)
 	}
 	return abs, nil
+}
+
+func resolveRuntimePath(rootDir, input string) (string, error) {
+	value := strings.TrimSpace(input)
+	if value == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(value) {
+		return value, nil
+	}
+	return filepath.Join(rootDir, value), nil
 }
 
 func resolvePrompt(args []string) (string, error) {
@@ -323,5 +393,8 @@ TUI flags:
   --system-prompt   system prompt override
   --workdir         workspace directory
   --no-tools        disable local tools
+  --memory-file     session memory file path
+  --pre-hook        shell hook before each prompt
+  --post-hook       shell hook after each prompt
   --request-timeout single request timeout (default 10m)`)
 }

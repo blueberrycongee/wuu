@@ -14,6 +14,7 @@ type Config struct {
 	Provider   string
 	Model      string
 	ConfigPath string
+	MemoryPath string
 	RunPrompt  func(ctx context.Context, prompt string) (string, error)
 }
 

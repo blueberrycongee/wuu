@@ -46,6 +46,7 @@ type Model struct {
 	modelName     string
 	configPath    string
 	workspaceRoot string
+	memoryPath    string
 	runPrompt     func(ctx context.Context, prompt string) (string, error)
 
 	viewport viewport.Model
@@ -91,6 +92,7 @@ func NewModel(cfg Config) Model {
 		modelName:     cfg.Model,
 		configPath:    cfg.ConfigPath,
 		workspaceRoot: filepath.Dir(cfg.ConfigPath),
+		memoryPath:    cfg.MemoryPath,
 		runPrompt:     cfg.RunPrompt,
 		viewport:      vp,
 		input:         in,
@@ -98,7 +100,26 @@ func NewModel(cfg Config) Model {
 		clock:         time.Now().Format("15:04:05"),
 		statusLine:    "ready",
 		streamTarget:  -1,
+	}.loadMemory()
+}
+
+func (m Model) loadMemory() Model {
+	if strings.TrimSpace(m.memoryPath) == "" {
+		return m
 	}
+
+	entries, err := loadMemoryEntries(m.memoryPath)
+	if err != nil {
+		m.statusLine = fmt.Sprintf("memory load failed: %v", err)
+		return m
+	}
+	if len(entries) == 0 {
+		return m
+	}
+	m.entries = append(m.entries, entries...)
+	m.statusLine = fmt.Sprintf("resumed %d entries", len(entries))
+	m.refreshViewport(true)
+	return m
 }
 
 // Init starts the clock ticker.
@@ -290,10 +311,14 @@ func (m *Model) appendEntry(role, content string) int {
 	if text == "" {
 		text = "(empty)"
 	}
-	m.entries = append(m.entries, transcriptEntry{
+	entry := transcriptEntry{
 		Role:    strings.ToUpper(role),
 		Content: text,
-	})
+	}
+	m.entries = append(m.entries, entry)
+	if err := appendMemoryEntry(m.memoryPath, entry); err != nil {
+		m.statusLine = fmt.Sprintf("memory write failed: %v", err)
+	}
 	return len(m.entries) - 1
 }
 

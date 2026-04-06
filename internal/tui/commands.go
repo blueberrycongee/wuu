@@ -2,7 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 type slashCommand struct {
@@ -36,19 +42,102 @@ func (m *Model) handleSlash(input string) (string, bool) {
 
 	switch cmd.Name {
 	case "resume":
-		if cmd.Args == "" {
-			return "resume: session recovery is not configured yet. Pass a session id in future rounds.", true
+		if strings.TrimSpace(m.memoryPath) == "" {
+			return "resume: memory file is disabled for this session.", true
 		}
-		return fmt.Sprintf("resume: requested session %q (implementation stub).", cmd.Args), true
+		entries, err := loadMemoryEntries(m.memoryPath)
+		if err != nil {
+			return fmt.Sprintf("resume: failed to read memory: %v", err), true
+		}
+		if len(entries) == 0 {
+			return "resume: no saved entries found.", true
+		}
+		m.entries = entries
+		m.refreshViewport(true)
+		return fmt.Sprintf("resume: loaded %d entries from %s", len(entries), m.memoryPath), true
 	case "fork":
-		return "fork: agent forking workflow will be wired in a later round.", true
+		if strings.TrimSpace(m.memoryPath) == "" {
+			return "fork: memory file is disabled for this session.", true
+		}
+		target := strings.TrimSuffix(m.memoryPath, filepath.Ext(m.memoryPath))
+		target = fmt.Sprintf("%s.fork-%s.jsonl", target, time.Now().Format("20060102-150405"))
+		if err := copyFile(m.memoryPath, target); err != nil {
+			return fmt.Sprintf("fork: failed to create snapshot: %v", err), true
+		}
+		return fmt.Sprintf("fork: session snapshot created at %s", target), true
 	case "worktree":
-		return fmt.Sprintf("worktree: current workspace %s", m.workspaceRoot), true
+		branch := currentBranch(m.workspaceRoot)
+		return fmt.Sprintf("worktree: workspace=%s branch=%s", m.workspaceRoot, branch), true
 	case "skills":
-		return "skills: available core capabilities include hooks, memory, slash-commands, and provider adapters.", true
+		skills := discoverLocalSkills(filepath.Join(m.workspaceRoot, ".claude", "skills"))
+		if len(skills) == 0 {
+			return "skills: no local skills found under .claude/skills", true
+		}
+		return fmt.Sprintf("skills: %s", strings.Join(skills, ", ")), true
 	case "insight":
-		return fmt.Sprintf("insight: transcript entries=%d pending=%v streaming=%v", m.entryCount(), m.pendingRequest, m.streaming), true
+		return fmt.Sprintf(
+			"insight: transcript entries=%d pending=%v streaming=%v memory=%s",
+			m.entryCount(),
+			m.pendingRequest,
+			m.streaming,
+			m.memoryPath,
+		), true
 	default:
 		return fmt.Sprintf("unknown command: /%s", cmd.Name), true
 	}
+}
+
+func currentBranch(root string) string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "(unknown)"
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return "(unknown)"
+	}
+	return branch
+}
+
+func discoverLocalSkills(baseDir string) []string {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil
+	}
+	skills := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillPath := filepath.Join(baseDir, entry.Name(), "SKILL.md")
+		if _, statErr := os.Stat(skillPath); statErr == nil {
+			skills = append(skills, entry.Name())
+		}
+	}
+	sort.Strings(skills)
+	return skills
+}
+
+func copyFile(src, dst string) error {
+	input, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source file: %w", err)
+	}
+	defer input.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	output, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("open destination file: %w", err)
+	}
+	defer output.Close()
+
+	if _, err := io.Copy(output, input); err != nil {
+		return fmt.Errorf("copy data: %w", err)
+	}
+	return nil
 }
