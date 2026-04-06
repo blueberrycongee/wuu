@@ -3,3 +3,6 @@ wuu
 
 # Local runtime config
 .wuu.json
+
+# Third party dependencies
+thirdparty/
