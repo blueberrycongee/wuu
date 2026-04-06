@@ -484,24 +484,39 @@ func (m Model) View() string {
 		return "loading..."
 	}
 
-	title := lipgloss.NewStyle().Bold(true).Render(
-		trimToWidth(fmt.Sprintf("wuu tui | provider=%s | model=%s", m.provider, m.modelName), m.width),
-	)
-	meta := lipgloss.NewStyle().Faint(true).Render(trimToWidth(fmt.Sprintf("config: %s", m.configPath), m.width))
-	jumpHint := ""
-	if m.showJump {
-		jumpHint = " | [Jump to bottom: click or Ctrl+J]"
+	// Header
+	tokenEstimate := 0
+	for _, e := range m.entries {
+		tokenEstimate += len(e.Content) / 4
 	}
-	clockText := m.clock
-	statusText := m.statusLine
+	tokenStr := formatTokenCount(tokenEstimate)
+	header := lipgloss.NewStyle().Bold(true).Render(
+		trimToWidth(fmt.Sprintf("wuu · %s/%s · %s tokens", m.provider, m.modelName, tokenStr), m.width),
+	)
+
+	// Footer
+	icon := "○"
+	state := m.statusLine
 	if m.streaming {
-		statusText += " (streaming; input editable)"
+		icon = "●"
+		state = "streaming"
+	} else if strings.HasPrefix(m.statusLine, "executing tool:") {
+		icon = "◆"
+	} else if m.statusLine == "request failed" {
+		icon = "✗"
 	}
 
-	availableStatus := max(1, m.width-lipgloss.Width(clockText)-1)
-	statusText = trimToWidth(statusText+jumpHint, availableStatus)
-	gap := max(1, m.width-lipgloss.Width(statusText)-lipgloss.Width(clockText))
-	footer := lipgloss.NewStyle().Faint(true).Render(statusText + strings.Repeat(" ", gap) + clockText)
+	jumpHint := ""
+	if m.showJump {
+		jumpHint = " · ▼ jump"
+	}
+
+	footerLeft := fmt.Sprintf("%s %s%s", icon, state, jumpHint)
+	footerRight := m.clock
+	availableW := max(1, m.width-lipgloss.Width(footerRight)-1)
+	footerLeft = trimToWidth(footerLeft, availableW)
+	gap := max(1, m.width-lipgloss.Width(footerLeft)-lipgloss.Width(footerRight))
+	footer := lipgloss.NewStyle().Faint(true).Render(footerLeft + strings.Repeat(" ", gap) + footerRight)
 
 	outputBox := m.viewport.View()
 	inputBox := m.input.View()
@@ -515,8 +530,7 @@ func (m Model) View() string {
 	}
 
 	return strings.Join([]string{
-		title,
-		meta,
+		header,
 		outputBox,
 		inputBox,
 		footer,
@@ -557,4 +571,11 @@ func trimToWidth(value string, width int) string {
 		b.WriteRune(r)
 	}
 	return b.String() + "…"
+}
+
+func formatTokenCount(tokens int) string {
+	if tokens >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(tokens)/1000)
+	}
+	return fmt.Sprintf("%d", tokens)
 }
