@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -18,17 +19,25 @@ const (
 	inputHeight     = 3
 	headerHeight    = 2
 	footerHeight    = 2
+	streamChunkSize = 24
+	streamTickDelay = 30 * time.Millisecond
 )
 
 type tickMsg struct {
 	now time.Time
 }
 
+type streamTickMsg struct{}
+
 type responseMsg struct {
-	prompt  string
 	answer  string
 	err     error
 	elapsed time.Duration
+}
+
+type transcriptEntry struct {
+	Role    string
+	Content string
 }
 
 // Model implements the terminal UI state machine.
@@ -42,15 +51,25 @@ type Model struct {
 	viewport viewport.Model
 	input    textarea.Model
 
-	width       int
-	height      int
-	transcript  []string
-	pending     bool
-	autoFollow  bool
-	showJump    bool
-	clock       string
-	statusLine  string
-	pendingText string
+	width  int
+	height int
+
+	entries []transcriptEntry
+
+	pendingRequest bool
+	streaming      bool
+	streamRunes    []rune
+	streamCursor   int
+	streamTarget   int
+	streamElapsed  time.Duration
+
+	autoFollow bool
+	showJump   bool
+	clock      string
+	statusLine string
+
+	mdRenderer *glamour.TermRenderer
+	mdWidth    int
 }
 
 // NewModel builds the initial UI model.
@@ -78,6 +97,7 @@ func NewModel(cfg Config) Model {
 		autoFollow:    true,
 		clock:         time.Now().Format("15:04:05"),
 		statusLine:    "ready",
+		streamTarget:  -1,
 	}
 }
 
@@ -89,6 +109,12 @@ func (m Model) Init() tea.Cmd {
 func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
 		return tickMsg{now: t}
+	})
+}
+
+func streamTickCmd() tea.Cmd {
+	return tea.Tick(streamTickDelay, func(_ time.Time) tea.Msg {
+		return streamTickMsg{}
 	})
 }
 
@@ -106,17 +132,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case responseMsg:
-		m.pending = false
-		m.pendingText = ""
+		m.pendingRequest = false
 		if msg.err != nil {
 			m.appendEntry("system", fmt.Sprintf("error: %v", msg.err))
 			m.statusLine = "request failed"
-		} else {
-			m.appendEntry("assistant", msg.answer)
-			m.statusLine = fmt.Sprintf("response in %s", msg.elapsed.Truncate(10*time.Millisecond))
+			m.refreshViewport(true)
+			return m, nil
 		}
+
+		m.streaming = true
+		m.streamElapsed = msg.elapsed
+		m.streamRunes = []rune(msg.answer)
+		m.streamCursor = 0
+		m.streamTarget = m.appendEntry("assistant", "")
+		m.statusLine = "streaming response"
 		m.refreshViewport(true)
-		return m, nil
+		return m, streamTickCmd()
+
+	case streamTickMsg:
+		if !m.streaming || m.streamTarget < 0 || m.streamTarget >= len(m.entries) {
+			return m, nil
+		}
+		if m.streamCursor >= len(m.streamRunes) {
+			m.finishStream()
+			return m, nil
+		}
+		end := min(m.streamCursor+streamChunkSize, len(m.streamRunes))
+		m.entries[m.streamTarget].Content += string(m.streamRunes[m.streamCursor:end])
+		m.streamCursor = end
+		m.refreshViewport(true)
+		if m.streamCursor >= len(m.streamRunes) {
+			m.finishStream()
+			return m, nil
+		}
+		return m, streamTickCmd()
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -172,14 +221,14 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.pending {
+	if m.pendingRequest {
+		m.statusLine = "request already running"
 		return m, nil
 	}
 
 	m.appendEntry("user", raw)
 	m.input.Reset()
-	m.pending = true
-	m.pendingText = "thinking..."
+	m.pendingRequest = true
 	m.statusLine = "running prompt"
 	m.refreshViewport(true)
 
@@ -187,7 +236,6 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		answer, err := m.runPrompt(context.Background(), raw)
 		return responseMsg{
-			prompt:  raw,
 			answer:  answer,
 			err:     err,
 			elapsed: time.Since(start),
@@ -195,28 +243,82 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *Model) appendEntry(role, content string) {
+func (m *Model) finishStream() {
+	m.streaming = false
+	m.streamCursor = 0
+	raw := string(m.streamRunes)
+	m.streamRunes = nil
+
+	if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
+		rendered, err := m.renderMarkdown(raw)
+		if err == nil {
+			m.entries[m.streamTarget].Content = rendered
+		}
+	}
+	m.streamTarget = -1
+	m.statusLine = fmt.Sprintf("response in %s", m.streamElapsed.Truncate(10*time.Millisecond))
+	m.refreshViewport(true)
+}
+
+func (m *Model) renderMarkdown(content string) (string, error) {
+	if strings.TrimSpace(content) == "" {
+		return "(empty)", nil
+	}
+
+	width := max(40, m.viewport.Width-6)
+	if m.mdRenderer == nil || m.mdWidth != width {
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(width),
+		)
+		if err != nil {
+			return "", err
+		}
+		m.mdRenderer = renderer
+		m.mdWidth = width
+	}
+
+	rendered, err := m.mdRenderer.Render(content)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(rendered), nil
+}
+
+func (m *Model) appendEntry(role, content string) int {
 	text := strings.TrimSpace(content)
 	if text == "" {
 		text = "(empty)"
 	}
-	prefix := strings.ToUpper(role)
-	m.transcript = append(m.transcript, fmt.Sprintf("%s\n%s", prefix, text))
+	m.entries = append(m.entries, transcriptEntry{
+		Role:    strings.ToUpper(role),
+		Content: text,
+	})
+	return len(m.entries) - 1
 }
 
 func (m Model) entryCount() int {
-	return len(m.transcript)
+	return len(m.entries)
 }
 
 func (m *Model) refreshViewport(forceBottom bool) {
-	content := strings.Join(m.transcript, "\n\n")
-	if m.pending && m.pendingText != "" {
-		if content != "" {
-			content += "\n\n"
+	var b strings.Builder
+	for i, entry := range m.entries {
+		if i > 0 {
+			b.WriteString("\n\n")
 		}
-		content += "ASSISTANT\n" + m.pendingText
+		b.WriteString(entry.Role)
+		b.WriteString("\n")
+		b.WriteString(entry.Content)
 	}
-	m.viewport.SetContent(content)
+	if m.pendingRequest {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("ASSISTANT\nthinking...")
+	}
+
+	m.viewport.SetContent(b.String())
 	if forceBottom || m.autoFollow {
 		m.viewport.GotoBottom()
 	}
@@ -253,8 +355,17 @@ func (m Model) View() string {
 		jumpHint = " | Ctrl+J jump to bottom"
 	}
 	clock := lipgloss.NewStyle().Faint(true).Render(m.clock)
-	status := lipgloss.NewStyle().Faint(true).Render(m.statusLine + jumpHint)
-	footer := lipgloss.JoinHorizontal(lipgloss.Left, status, strings.Repeat(" ", max(1, m.width-lipgloss.Width(status)-lipgloss.Width(clock)-2)), clock)
+	statusText := m.statusLine
+	if m.streaming {
+		statusText += " (editing input is still available)"
+	}
+	status := lipgloss.NewStyle().Faint(true).Render(statusText + jumpHint)
+	footer := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		status,
+		strings.Repeat(" ", max(1, m.width-lipgloss.Width(status)-lipgloss.Width(clock)-2)),
+		clock,
+	)
 
 	outputBox := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -280,6 +391,13 @@ func (m Model) View() string {
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

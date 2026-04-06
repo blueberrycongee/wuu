@@ -27,17 +27,29 @@ func TestSubmitPromptFlow(t *testing.T) {
 		t.Fatal("expected async command from submit")
 	}
 	next := nextModel.(Model)
-	if !next.pending {
-		t.Fatal("expected pending=true after submit")
+	if !next.pendingRequest {
+		t.Fatal("expected pendingRequest=true after submit")
 	}
 
 	msg := cmd()
-	afterModel, _ := next.Update(msg)
+	afterModel, streamCmd := next.Update(msg)
 	after := afterModel.(Model)
-	if after.pending {
-		t.Fatal("expected pending=false after response")
+	if after.pendingRequest {
+		t.Fatal("expected pendingRequest=false after model response")
 	}
-	content := strings.Join(after.transcript, "\n\n")
+	if !after.streaming {
+		t.Fatal("expected streaming=true before stream ticks")
+	}
+
+	for after.streaming {
+		if streamCmd == nil {
+			t.Fatal("expected stream tick command while streaming")
+		}
+		tick := streamCmd()
+		afterModel, streamCmd = after.Update(tick)
+		after = afterModel.(Model)
+	}
+	content := renderEntries(after.entries)
 	if !strings.Contains(content, "USER\nhello world") {
 		t.Fatalf("missing user entry: %s", content)
 	}
@@ -78,4 +90,17 @@ func TestJumpToBottomToggle(t *testing.T) {
 	if jumped.showJump {
 		t.Fatal("expected jump hint cleared after jump-to-bottom")
 	}
+}
+
+func renderEntries(entries []transcriptEntry) string {
+	var b strings.Builder
+	for i, e := range entries {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(e.Role)
+		b.WriteString("\n")
+		b.WriteString(e.Content)
+	}
+	return b.String()
 }

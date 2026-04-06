@@ -47,7 +47,7 @@ func (m *Model) handleSlash(input string) (string, bool) {
 	case "skills":
 		return "skills: available core capabilities include hooks, memory, slash-commands, and provider adapters.", true
 	case "insight":
-		return fmt.Sprintf("insight: transcript entries=%d pending=%v", m.entryCount(), m.pending), true
+		return fmt.Sprintf("insight: transcript entries=%d pending=%v streaming=%v", m.entryCount(), m.pendingRequest, m.streaming), true
 	default:
 		return fmt.Sprintf("unknown command: /%s", cmd.Name), true
 	}
