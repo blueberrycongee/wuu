@@ -25,9 +25,9 @@ type theme struct {
 	InputBorder lipgloss.Color // input box border
 }
 
-// darkTheme is the default color palette, inspired by Claude Code.
+// darkTheme is the default color palette.
 var darkTheme = theme{
-	Brand:      lipgloss.Color("#D77757"), // warm orange (Claude's brand color)
+	Brand:      lipgloss.Color("#D77757"), // warm orange
 	BrandLight: lipgloss.Color("#EB9F7F"), // lighter orange
 
 	Success: lipgloss.Color("#4EBA65"), // bright green

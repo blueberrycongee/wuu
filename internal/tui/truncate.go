@@ -14,8 +14,7 @@ const (
 	truncateTailRunes = 2_500
 )
 
-// truncateForDisplay applies head+tail truncation to long content,
-// matching Claude Code's strategy for render performance.
+// truncateForDisplay applies head+tail truncation to long content.
 // Cuts on rune boundaries to avoid splitting multi-byte characters.
 func truncateForDisplay(content string) string {
 	if utf8.RuneCountInString(content) <= maxDisplayRunes {
