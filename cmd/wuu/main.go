@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/tui"
 )
@@ -180,7 +181,8 @@ func runTUI(args []string) error {
 	workdir := fs.String("workdir", "", "workspace directory")
 	noTools := fs.Bool("no-tools", false, "disable local tools")
 	fs.Duration("request-timeout", 10*time.Minute, "single request timeout (e.g. 2m)")
-	memoryFile := fs.String("memory-file", ".wuu/session.jsonl", "session memory file path")
+	memoryFile := fs.String("memory-file", "", "session memory file path (deprecated, use sessions)")
+	resumeID := fs.String("resume", "", "resume session by ID (empty with flag = most recent)")
 	fs.String("pre-hook", strings.TrimSpace(os.Getenv("WUU_PRE_HOOK")), "shell command before each prompt")
 	fs.String("post-hook", strings.TrimSpace(os.Getenv("WUU_POST_HOOK")), "shell command after each prompt")
 	if err := fs.Parse(args); err != nil {
@@ -242,11 +244,29 @@ func runTUI(args []string) error {
 		return err
 	}
 
+	sessDir := session.Dir(rootDir)
+
+	// Handle --resume flag.
+	resolvedResumeID := strings.TrimSpace(*resumeID)
+	// Check if --resume was passed without a value (flag present but empty).
+	for _, a := range args {
+		if a == "--resume" && resolvedResumeID == "" {
+			// Resume most recent session.
+			recent, err := session.MostRecent(sessDir)
+			if err == nil && recent != "" {
+				resolvedResumeID = recent
+			}
+			break
+		}
+	}
+
 	return tui.Run(tui.Config{
 		Provider:     resolvedName,
 		Model:        providerCfg.Model,
 		ConfigPath:   configPath,
 		MemoryPath:   resolvedMemoryPath,
+		SessionDir:   sessDir,
+		ResumeID:     resolvedResumeID,
 		StreamRunner: streamRunner,
 	})
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const (
@@ -51,6 +52,8 @@ type Model struct {
 	configPath    string
 	workspaceRoot string
 	memoryPath    string
+	sessionID     string
+	sessionDir    string
 	runPrompt     func(ctx context.Context, prompt string) (string, error)
 	streamRunner  *agent.StreamRunner
 	streamCh      chan providers.StreamEvent
@@ -96,12 +99,13 @@ func NewModel(cfg Config) Model {
 	in.Prompt = "> "
 	in.CharLimit = 0
 
-	return Model{
+	m := Model{
 		provider:      cfg.Provider,
 		modelName:     cfg.Model,
 		configPath:    cfg.ConfigPath,
 		workspaceRoot: filepath.Dir(cfg.ConfigPath),
 		memoryPath:    cfg.MemoryPath,
+		sessionDir:    cfg.SessionDir,
 		runPrompt:     cfg.RunPrompt,
 		streamRunner:  cfg.StreamRunner,
 		viewport:      vp,
@@ -110,7 +114,33 @@ func NewModel(cfg Config) Model {
 		clock:         time.Now().Format("15:04:05"),
 		statusLine:    "ready",
 		streamTarget:  -1,
-	}.loadMemory()
+	}
+
+	// Session isolation: create or resume session.
+	if m.sessionDir != "" {
+		if cfg.ResumeID != "" {
+			// Resume existing session.
+			path, err := session.Load(m.sessionDir, cfg.ResumeID)
+			if err == nil {
+				m.sessionID = cfg.ResumeID
+				m.memoryPath = path
+			} else {
+				m.statusLine = fmt.Sprintf("resume failed: %v", err)
+			}
+		}
+		if m.sessionID == "" {
+			// Create new session.
+			sess, err := session.Create(m.sessionDir)
+			if err == nil {
+				m.sessionID = sess.ID
+				m.memoryPath = session.FilePath(m.sessionDir, sess.ID)
+			} else {
+				m.statusLine = fmt.Sprintf("session create failed: %v", err)
+			}
+		}
+	}
+
+	return m.loadMemory()
 }
 
 func (m Model) loadMemory() Model {

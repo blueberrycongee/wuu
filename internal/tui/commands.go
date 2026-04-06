@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -42,7 +44,7 @@ func init() {
 		{Name: "status", Description: "Show session config and token usage", Type: cmdTypeLocal, Execute: cmdStatus},
 		{Name: "compact", Description: "Compress conversation context", Type: cmdTypeLocal, Execute: cmdCompact},
 		{Name: "model", Description: "Switch model/provider", ArgHint: "<model-name>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdModelSwitch},
-		{Name: "resume", Description: "Resume previous session", Type: cmdTypeLocal, Execute: cmdResume},
+		{Name: "resume", Description: "Resume previous session", ArgHint: "[session-id]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdResume},
 		{Name: "fork", Description: "Fork current session", Type: cmdTypeLocal, Execute: cmdFork},
 		{Name: "new", Description: "Start new conversation", Type: cmdTypeLocal, Execute: cmdNew},
 		{Name: "diff", Description: "Show git diff", Type: cmdTypeLocal, Execute: cmdDiff},
@@ -167,7 +169,51 @@ func cmdModelSwitch(args string, m *Model) string {
 	return fmt.Sprintf("model switched: %s -> %s", old, name)
 }
 
-func cmdResume(_ string, m *Model) string {
+func cmdResume(args string, m *Model) string {
+	id := strings.TrimSpace(args)
+
+	// Session-based resume.
+	if m.sessionDir != "" {
+		if id == "" {
+			// List recent sessions.
+			sessions, err := session.List(m.sessionDir, 10)
+			if err != nil {
+				return fmt.Sprintf("resume: failed to list sessions: %v", err)
+			}
+			if len(sessions) == 0 {
+				return "resume: no previous sessions found"
+			}
+			var b strings.Builder
+			b.WriteString("Recent sessions:\n")
+			for _, s := range sessions {
+				summary := s.Summary
+				if summary == "" {
+					summary = "(no summary)"
+				}
+				b.WriteString(fmt.Sprintf("  %s  %s  %d msgs  %s\n",
+					s.ID, s.CreatedAt.Local().Format("2006-01-02 15:04"), s.Entries, summary))
+			}
+			b.WriteString("\nUse /resume <id> to restore a session")
+			return strings.TrimRight(b.String(), "\n")
+		}
+
+		// Resume specific session.
+		path, err := session.Load(m.sessionDir, id)
+		if err != nil {
+			return fmt.Sprintf("resume: %v", err)
+		}
+		entries, err := loadMemoryEntries(path)
+		if err != nil {
+			return fmt.Sprintf("resume: failed to load session: %v", err)
+		}
+		m.sessionID = id
+		m.memoryPath = path
+		m.entries = entries
+		m.refreshViewport(true)
+		return fmt.Sprintf("resume: loaded session %s (%d entries)", id, len(entries))
+	}
+
+	// Legacy memory-file resume.
 	if strings.TrimSpace(m.memoryPath) == "" {
 		return "resume: memory file is disabled for this session."
 	}
@@ -184,6 +230,27 @@ func cmdResume(_ string, m *Model) string {
 }
 
 func cmdFork(_ string, m *Model) string {
+	if m.sessionDir != "" {
+		// Session-based fork: copy current session file to new session.
+		newSess, err := session.Create(m.sessionDir)
+		if err != nil {
+			return fmt.Sprintf("fork: failed to create new session: %v", err)
+		}
+		srcPath := session.FilePath(m.sessionDir, m.sessionID)
+		dstPath := session.FilePath(m.sessionDir, newSess.ID)
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return fmt.Sprintf("fork: failed to copy session data: %v", err)
+		}
+		// Update old session index.
+		summary := firstUserSummary(m.entries)
+		session.UpdateIndex(m.sessionDir, m.sessionID, len(m.entries), summary)
+		// Switch to new session.
+		m.sessionID = newSess.ID
+		m.memoryPath = dstPath
+		return fmt.Sprintf("fork: session forked to %s (%d entries)", newSess.ID, len(m.entries))
+	}
+
+	// Legacy fork.
 	if strings.TrimSpace(m.memoryPath) == "" {
 		return "fork: memory file is disabled for this session."
 	}
@@ -196,12 +263,28 @@ func cmdFork(_ string, m *Model) string {
 }
 
 func cmdNew(_ string, m *Model) string {
+	// Update index for current session before switching.
+	if m.sessionDir != "" && m.sessionID != "" {
+		summary := firstUserSummary(m.entries)
+		session.UpdateIndex(m.sessionDir, m.sessionID, len(m.entries), summary)
+	}
+
 	m.entries = nil
 	m.streamTarget = -1
 	m.streaming = false
 	m.pendingRequest = false
+
+	// Create new session if session isolation is active.
+	if m.sessionDir != "" {
+		sess, err := session.Create(m.sessionDir)
+		if err == nil {
+			m.sessionID = sess.ID
+			m.memoryPath = session.FilePath(m.sessionDir, sess.ID)
+		}
+	}
+
 	m.refreshViewport(true)
-	return "new conversation started"
+	return fmt.Sprintf("new conversation started (session: %s)", m.sessionID)
 }
 
 func cmdDiff(_ string, m *Model) string {
@@ -319,4 +402,18 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("copy data: %w", err)
 	}
 	return nil
+}
+
+// firstUserSummary returns the first 60 chars of the first user message.
+func firstUserSummary(entries []transcriptEntry) string {
+	for _, e := range entries {
+		if e.Role == "USER" {
+			s := strings.TrimSpace(e.Content)
+			if len(s) > 60 {
+				return s[:60] + "..."
+			}
+			return s
+		}
+	}
+	return ""
 }

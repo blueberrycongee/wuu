@@ -17,6 +17,8 @@ type Config struct {
 	Model        string
 	ConfigPath   string
 	MemoryPath   string
+	SessionDir   string // .wuu/sessions/ directory for session isolation
+	ResumeID     string // session ID to resume (empty = new session)
 	RunPrompt    func(ctx context.Context, prompt string) (string, error)
 	StreamRunner *agent.StreamRunner // optional, used when available
 }
