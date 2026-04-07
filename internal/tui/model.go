@@ -118,6 +118,7 @@ type Model struct {
 func NewModel(cfg Config) Model {
 	vp := viewport.New(80, minOutputHeight)
 	vp.SetContent("")
+	vp.MouseWheelDelta = 1
 
 	in := textarea.New()
 	in.Placeholder = "Ask anything..."
@@ -825,7 +826,7 @@ func (m *Model) relayout() {
 
 	m.input.SetWidth(m.layout.Input.Width)
 	m.input.SetHeight(m.layout.Input.Height)
-	m.viewport.Width = m.layout.Chat.Width
+	m.viewport.Width = m.layout.Chat.Width - 1 // reserve 1 col for scrollbar
 	m.viewport.Height = m.layout.Chat.Height
 	m.refreshViewport(false)
 }
@@ -878,6 +879,17 @@ func (m Model) View() string {
 	footer := footerStyle.Render(footerLeft + strings.Repeat(" ", gap) + footerRight)
 
 	outputBox := m.viewport.View()
+
+	// Render scrollbar on the right side of the viewport.
+	sb := renderScrollbar(
+		m.layout.Chat.Height,
+		m.viewport.TotalLineCount(),
+		m.viewport.Height,
+		m.viewport.YOffset,
+	)
+	if sb != "" {
+		outputBox = lipgloss.JoinHorizontal(lipgloss.Top, outputBox, sb)
+	}
 	inputBox := m.input.View()
 	if !m.layout.Compact {
 		inputBox = inputBorderStyle.Render(inputBox)
