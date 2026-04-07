@@ -157,6 +157,14 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 				toolResult = errorJSON(execErr)
 			}
 			providers.DebugLogf("tool result: %s: %s", call.Name, truncateLog(toolResult, 500))
+			// Emit tool result to TUI.
+			if onEvent != nil {
+				onEvent(providers.StreamEvent{
+					Type:       providers.EventToolUseEnd,
+					ToolCall:   &providers.ToolCall{ID: call.ID, Name: call.Name},
+					ToolResult: truncateLog(toolResult, 2000),
+				})
+			}
 			messages = append(messages, providers.ChatMessage{
 				Role:       "tool",
 				Name:       call.Name,
