@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -437,6 +438,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventError:
+			// Ignore context cancellation — this is normal when the user
+			// interrupts a stream by pressing Enter.
+			if msg.event.Error != nil && (errors.Is(msg.event.Error, context.Canceled) ||
+				strings.Contains(msg.event.Error.Error(), "context canceled")) {
+				return m, waitStreamEvent(m.streamCh)
+			}
 			m.streaming = false
 			m.pendingRequest = false
 			// Show accumulated content so far (if any) before the error.
