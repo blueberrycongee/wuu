@@ -48,12 +48,14 @@ type Client interface {
 type StreamEventType string
 
 const (
-	EventContentDelta StreamEventType = "content_delta"
-	EventToolUseStart StreamEventType = "tool_use_start"
-	EventToolUseDelta StreamEventType = "tool_use_delta"
-	EventToolUseEnd   StreamEventType = "tool_use_end"
-	EventDone         StreamEventType = "done"
-	EventError        StreamEventType = "error"
+	EventContentDelta  StreamEventType = "content_delta"
+	EventThinkingDelta StreamEventType = "thinking_delta"
+	EventThinkingDone  StreamEventType = "thinking_done"
+	EventToolUseStart  StreamEventType = "tool_use_start"
+	EventToolUseDelta  StreamEventType = "tool_use_delta"
+	EventToolUseEnd    StreamEventType = "tool_use_end"
+	EventDone          StreamEventType = "done"
+	EventError         StreamEventType = "error"
 )
 
 // TokenUsage reports token consumption for a streaming response.
@@ -64,11 +66,12 @@ type TokenUsage struct {
 
 // StreamEvent is a single event from a streaming chat response.
 type StreamEvent struct {
-	Type     StreamEventType
-	Content  string
-	ToolCall *ToolCall
-	Error    error
-	Usage    *TokenUsage
+	Type       StreamEventType
+	Content    string
+	ToolCall   *ToolCall
+	ToolResult string
+	Error      error
+	Usage      *TokenUsage
 }
 
 // StreamClient extends Client with streaming support.
