@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -54,4 +55,39 @@ func renderScrollbar(height, contentSize, viewportSize, offset int) string {
 	}
 
 	return sb.String()
+}
+
+// overlayScrollbar places each scrollbar character at the rightmost column
+// of the corresponding viewport line. This avoids shrinking the viewport
+// width which would cause content truncation.
+func overlayScrollbar(viewport, scrollbar string, totalWidth int) string {
+	vLines := strings.Split(viewport, "\n")
+	sLines := strings.Split(scrollbar, "\n")
+
+	for i := range vLines {
+		if i >= len(sLines) {
+			break
+		}
+		lineW := lipgloss.Width(vLines[i])
+		if lineW >= totalWidth {
+			// Replace the last visible column with the scrollbar char.
+			vLines[i] = truncateToWidth(vLines[i], totalWidth-1) + sLines[i]
+		} else {
+			// Pad to position the scrollbar at the right edge.
+			pad := totalWidth - lineW - 1
+			if pad < 0 {
+				pad = 0
+			}
+			vLines[i] = vLines[i] + strings.Repeat(" ", pad) + sLines[i]
+		}
+	}
+	return strings.Join(vLines, "\n")
+}
+
+// truncateToWidth cuts a string (possibly with ANSI codes) to a visual width.
+func truncateToWidth(s string, width int) string {
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	return ansi.Truncate(s, width, "")
 }

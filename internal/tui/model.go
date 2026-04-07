@@ -826,7 +826,7 @@ func (m *Model) relayout() {
 
 	m.input.SetWidth(m.layout.Input.Width)
 	m.input.SetHeight(m.layout.Input.Height)
-	m.viewport.Width = m.layout.Chat.Width - 1 // reserve 1 col for scrollbar
+	m.viewport.Width = m.layout.Chat.Width
 	m.viewport.Height = m.layout.Chat.Height
 	m.refreshViewport(false)
 }
@@ -880,7 +880,7 @@ func (m Model) View() string {
 
 	outputBox := m.viewport.View()
 
-	// Render scrollbar on the right side of the viewport.
+	// Overlay scrollbar on the rightmost column of the viewport.
 	sb := renderScrollbar(
 		m.layout.Chat.Height,
 		m.viewport.TotalLineCount(),
@@ -888,7 +888,7 @@ func (m Model) View() string {
 		m.viewport.YOffset,
 	)
 	if sb != "" {
-		outputBox = lipgloss.JoinHorizontal(lipgloss.Top, outputBox, sb)
+		outputBox = overlayScrollbar(outputBox, sb, m.layout.Chat.Width)
 	}
 	inputBox := m.input.View()
 	if !m.layout.Compact {
