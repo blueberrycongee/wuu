@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func TestAppendAndLoadMemoryEntries(t *testing.T) {
@@ -59,5 +61,118 @@ func TestResumeSlashLoadsMemory(t *testing.T) {
 	}
 	if len(m.entries) != 1 {
 		t.Fatalf("expected one entry after resume, got %d", len(m.entries))
+	}
+}
+
+func TestAppendAndLoadChatHistory_WithToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chat.jsonl")
+
+	// Assistant message with tool calls.
+	assistantMsg := providers.ChatMessage{
+		Role:    "assistant",
+		Content: "",
+		ToolCalls: []providers.ToolCall{
+			{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Tokyo"}`},
+			{ID: "call_2", Name: "get_time", Arguments: `{"tz":"Asia/Tokyo"}`},
+		},
+	}
+	if err := appendChatMessage(path, assistantMsg); err != nil {
+		t.Fatalf("append assistant msg: %v", err)
+	}
+
+	// Tool result message.
+	toolMsg := providers.ChatMessage{
+		Role:       "tool",
+		Content:    `{"temp":22}`,
+		ToolCallID: "call_1",
+		Name:       "get_weather",
+	}
+	if err := appendChatMessage(path, toolMsg); err != nil {
+		t.Fatalf("append tool msg: %v", err)
+	}
+
+	msgs, err := loadChatHistory(path)
+	if err != nil {
+		t.Fatalf("load chat history: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+
+	// Verify assistant message tool calls.
+	got := msgs[0]
+	if got.Role != "assistant" {
+		t.Fatalf("expected role assistant, got %q", got.Role)
+	}
+	if len(got.ToolCalls) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(got.ToolCalls))
+	}
+	if got.ToolCalls[0].ID != "call_1" || got.ToolCalls[0].Name != "get_weather" {
+		t.Fatalf("unexpected first tool call: %+v", got.ToolCalls[0])
+	}
+	if got.ToolCalls[0].Arguments != `{"city":"Tokyo"}` {
+		t.Fatalf("unexpected arguments: %s", got.ToolCalls[0].Arguments)
+	}
+	if got.ToolCalls[1].ID != "call_2" || got.ToolCalls[1].Name != "get_time" {
+		t.Fatalf("unexpected second tool call: %+v", got.ToolCalls[1])
+	}
+
+	// Verify tool result message.
+	got2 := msgs[1]
+	if got2.Role != "tool" {
+		t.Fatalf("expected role tool, got %q", got2.Role)
+	}
+	if got2.ToolCallID != "call_1" {
+		t.Fatalf("expected tool_call_id call_1, got %q", got2.ToolCallID)
+	}
+	if got2.Name != "get_weather" {
+		t.Fatalf("expected name get_weather, got %q", got2.Name)
+	}
+	if got2.Content != `{"temp":22}` {
+		t.Fatalf("unexpected content: %s", got2.Content)
+	}
+}
+
+func TestLoadChatHistory_BackwardCompatible(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compat.jsonl")
+
+	// Write old-format entries via appendMemoryEntry.
+	if err := appendMemoryEntry(path, transcriptEntry{Role: "USER", Content: "hello"}); err != nil {
+		t.Fatalf("append old user: %v", err)
+	}
+	if err := appendMemoryEntry(path, transcriptEntry{Role: "ASSISTANT", Content: "hi there"}); err != nil {
+		t.Fatalf("append old assistant: %v", err)
+	}
+
+	msgs, err := loadChatHistory(path)
+	if err != nil {
+		t.Fatalf("load chat history: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+
+	// Roles should be lowercase.
+	if msgs[0].Role != "user" {
+		t.Fatalf("expected role user, got %q", msgs[0].Role)
+	}
+	if msgs[0].Content != "hello" {
+		t.Fatalf("unexpected content: %q", msgs[0].Content)
+	}
+	if msgs[1].Role != "assistant" {
+		t.Fatalf("expected role assistant, got %q", msgs[1].Role)
+	}
+	if msgs[1].Content != "hi there" {
+		t.Fatalf("unexpected content: %q", msgs[1].Content)
+	}
+
+	// No tool call fields should be set.
+	if len(msgs[0].ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(msgs[0].ToolCalls))
+	}
+	if msgs[0].ToolCallID != "" {
+		t.Fatalf("expected empty tool_call_id, got %q", msgs[0].ToolCallID)
 	}
 }
