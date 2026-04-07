@@ -46,11 +46,37 @@ type ctrlCResetMsg struct{}
 
 type queueDrainMsg struct{}
 
+type ToolCallStatus string
+
+const (
+	ToolCallRunning ToolCallStatus = "running"
+	ToolCallDone    ToolCallStatus = "done"
+	ToolCallError   ToolCallStatus = "error"
+)
+
+type ToolCallEntry struct {
+	ID        string
+	Name      string
+	Args      string
+	Result    string
+	Status    ToolCallStatus
+	Collapsed bool
+}
+
 type transcriptEntry struct {
 	Role        string
 	Content     string // raw content
 	rendered    string // markdown-rendered text (cached)
 	renderedLen int    // Content length when rendered was last computed
+
+	// Thinking block.
+	ThinkingContent  string
+	ThinkingDuration time.Duration
+	ThinkingDone     bool
+	ThinkingExpanded bool
+
+	// Tool calls in this assistant turn.
+	ToolCalls []ToolCallEntry
 }
 
 // Model implements the terminal UI state machine.
