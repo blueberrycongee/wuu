@@ -264,7 +264,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 
 // blockState tracks an active content block during SSE streaming.
 type blockState struct {
-	blockType string // "text" or "tool_use"
+	blockType string // "text", "tool_use", or "thinking"
 	toolID    string
 	toolName  string
 	argsJSON  strings.Builder
@@ -359,6 +359,11 @@ func (c *Client) handleSSEEvent(
 					Type:    providers.EventToolUseDelta,
 					Content: p.Delta.PartialJSON,
 				}
+			case "thinking_delta":
+				ch <- providers.StreamEvent{
+					Type:    providers.EventThinkingDelta,
+					Content: p.Delta.Thinking,
+				}
 			}
 		}
 
@@ -367,14 +372,19 @@ func (c *Client) handleSSEEvent(
 			Index int `json:"index"`
 		}
 		if json.Unmarshal([]byte(raw.Data), &idx) == nil {
-			if bs, ok := blocks[idx.Index]; ok && bs.blockType == "tool_use" {
-				ch <- providers.StreamEvent{
-					Type: providers.EventToolUseEnd,
-					ToolCall: &providers.ToolCall{
-						ID:        bs.toolID,
-						Name:      bs.toolName,
-						Arguments: bs.argsJSON.String(),
-					},
+			if bs, ok := blocks[idx.Index]; ok {
+				if bs.blockType == "tool_use" {
+					ch <- providers.StreamEvent{
+						Type: providers.EventToolUseEnd,
+						ToolCall: &providers.ToolCall{
+							ID:        bs.toolID,
+							Name:      bs.toolName,
+							Arguments: bs.argsJSON.String(),
+						},
+					}
+				}
+				if bs.blockType == "thinking" {
+					ch <- providers.StreamEvent{Type: providers.EventThinkingDone}
 				}
 			}
 			delete(blocks, idx.Index)
@@ -514,6 +524,7 @@ type contentBlockDeltaPayload struct {
 		Type        string `json:"type"`
 		Text        string `json:"text,omitempty"`
 		PartialJSON string `json:"partial_json,omitempty"`
+		Thinking    string `json:"thinking,omitempty"`
 	} `json:"delta"`
 }
 
