@@ -372,16 +372,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventToolUseStart:
+			if m.streamTarget < 0 || m.streamTarget >= len(m.entries) {
+				m.streamTarget = m.appendEntry("assistant", "")
+			}
 			toolName := ""
+			toolID := ""
 			if msg.event.ToolCall != nil {
 				toolName = msg.event.ToolCall.Name
+				toolID = msg.event.ToolCall.ID
 			}
+			e := &m.entries[m.streamTarget]
+			e.ToolCalls = append(e.ToolCalls, ToolCallEntry{
+				ID:     toolID,
+				Name:   toolName,
+				Status: ToolCallRunning,
+			})
 			m.statusLine = fmt.Sprintf("tool: %s", toolName)
-			m.refreshViewport(false)
+			m.refreshViewport(true)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventToolUseEnd:
+			if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
+				e := &m.entries[m.streamTarget]
+				for i := len(e.ToolCalls) - 1; i >= 0; i-- {
+					tc := &e.ToolCalls[i]
+					if tc.Status == ToolCallRunning {
+						if msg.event.ToolCall != nil {
+							tc.Args = msg.event.ToolCall.Arguments
+						}
+						tc.Result = msg.event.ToolResult
+						tc.Status = ToolCallDone
+						tc.Collapsed = true
+						break
+					}
+				}
+			}
 			m.statusLine = "streaming"
+			m.refreshViewport(true)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventDone:
@@ -389,9 +416,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// execution and start another stream, so keep listening.
 			if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
 				content := strings.TrimSpace(m.entries[m.streamTarget].Content)
-				if content == "" || content == "(empty)" {
-					// No text content in this round (pure tool call).
-					// Remove the empty assistant entry.
+				if (content == "" || content == "(empty)") && len(m.entries[m.streamTarget].ToolCalls) == 0 && m.entries[m.streamTarget].ThinkingContent == "" {
+					// No text content, no tool calls, no thinking — remove empty entry.
 					m.entries = m.entries[:m.streamTarget]
 					m.streamTarget = -1
 				} else {
@@ -425,6 +451,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusLine = "request failed"
 			m.refreshViewport(true)
 			return m, nil
+
+		case providers.EventThinkingDelta:
+			if m.streamTarget < 0 || m.streamTarget >= len(m.entries) {
+				m.streamTarget = m.appendEntry("assistant", "")
+			}
+			e := &m.entries[m.streamTarget]
+			if e.ThinkingContent == "" {
+				m.thinkingStart = time.Now()
+			}
+			e.ThinkingContent += msg.event.Content
+			m.statusLine = "thinking"
+			m.refreshViewport(true)
+			return m, waitStreamEvent(m.streamCh)
+
+		case providers.EventThinkingDone:
+			if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
+				e := &m.entries[m.streamTarget]
+				e.ThinkingDone = true
+				if !m.thinkingStart.IsZero() {
+					e.ThinkingDuration = time.Since(m.thinkingStart)
+				}
+			}
+			m.statusLine = "streaming"
+			m.refreshViewport(true)
+			return m, waitStreamEvent(m.streamCh)
 
 		default:
 			return m, waitStreamEvent(m.streamCh)
