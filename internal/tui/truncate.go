@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wrap"
 )
 
 const (
@@ -66,4 +67,9 @@ func runeSliceFromEnd(s string, n int) string {
 		return s
 	}
 	return runeSlice(s, total-n, n)
+}
+
+// wrapText wraps plain text to the given width, supporting CJK characters.
+func wrapText(s string, width int) string {
+	return wrap.String(s, width)
 }

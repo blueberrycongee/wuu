@@ -48,7 +48,8 @@ type queueDrainMsg struct{}
 
 type transcriptEntry struct {
 	Role    string
-	Content string
+	Content string // raw content
+	rendered string // markdown-rendered plain text (cached)
 }
 
 // Model implements the terminal UI state machine.
@@ -237,6 +238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingRequest = false
 		m.streamTarget = -1
 		m.statusLine = "ready"
+		m.cacheRenderedEntries()
 		m.refreshViewport(true)
 		return m, func() tea.Msg { return queueDrainMsg{} }
 
@@ -323,6 +325,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Remove the empty assistant entry.
 					m.entries = m.entries[:m.streamTarget]
 					m.streamTarget = -1
+				} else {
+					m.cacheEntryRendered(m.streamTarget)
 				}
 			}
 			m.refreshViewport(true)
@@ -694,6 +698,28 @@ func (m *Model) renderMarkdown(content string) (string, error) {
 	return strings.TrimSpace(rendered), nil
 }
 
+// cacheEntryRendered renders markdown for a single entry and caches the result.
+func (m *Model) cacheEntryRendered(idx int) {
+	if idx < 0 || idx >= len(m.entries) {
+		return
+	}
+	e := &m.entries[idx]
+	if e.Role == "ASSISTANT" && e.rendered == "" {
+		if r, err := m.renderMarkdown(e.Content); err == nil {
+			e.rendered = r
+		}
+	}
+}
+
+// cacheRenderedEntries renders markdown for all uncached assistant entries.
+func (m *Model) cacheRenderedEntries() {
+	for i := range m.entries {
+		if m.entries[i].Role == "ASSISTANT" && m.entries[i].rendered == "" {
+			m.cacheEntryRendered(i)
+		}
+	}
+}
+
 func (m *Model) appendEntry(role, content string) int {
 	text := strings.TrimSpace(content)
 	if text == "" {
@@ -798,7 +824,13 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			b.WriteString("\n")
 
 			content := truncateForDisplay(entry.Content)
-			b.WriteString(content)
+			wrapWidth := max(40, m.viewport.Width-2)
+			if entry.rendered != "" {
+				// Use cached markdown render, just re-wrap for current width.
+				b.WriteString(wrapText(entry.rendered, wrapWidth))
+			} else {
+				b.WriteString(wrapText(content, wrapWidth))
+			}
 		}
 		if m.pendingRequest {
 			if b.Len() > 0 {
