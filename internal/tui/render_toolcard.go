@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -38,9 +39,9 @@ func renderToolCard(tc ToolCallEntry, width int) string {
 		b.WriteString(statusError.Render("✗ error"))
 	}
 
-	// Collapsed: just the header line with brief args summary
+	// Collapsed: header + human-readable args summary
 	if tc.Collapsed {
-		summary := toolArgsSummary(tc.Args, width-30)
+		summary := toolArgsSummary(tc.Name, tc.Args, width-30)
 		if summary != "" {
 			b.WriteString(" ── ")
 			b.WriteString(contentStyle.Render(summary))
@@ -48,7 +49,7 @@ func renderToolCard(tc ToolCallEntry, width int) string {
 		return b.String()
 	}
 
-	// Expanded: show args and result in a bordered box
+	// Expanded: show formatted args and result in a bordered box
 	innerW := width - 4
 	if innerW < 20 {
 		innerW = 20
@@ -56,7 +57,8 @@ func renderToolCard(tc ToolCallEntry, width int) string {
 
 	var content strings.Builder
 	if tc.Args != "" {
-		content.WriteString(contentStyle.Render(wrapText(tc.Args, innerW)))
+		formatted := formatToolArgs(tc.Name, tc.Args)
+		content.WriteString(contentStyle.Render(wrapText(formatted, innerW)))
 	}
 	if tc.Result != "" {
 		if content.Len() > 0 {
@@ -76,20 +78,96 @@ func renderToolCard(tc ToolCallEntry, width int) string {
 	return b.String()
 }
 
-// toolArgsSummary extracts a brief summary from tool arguments.
-func toolArgsSummary(args string, maxWidth int) string {
+// toolArgsSummary extracts a human-readable one-line summary from tool arguments.
+func toolArgsSummary(toolName, args string, maxWidth int) string {
 	if args == "" || maxWidth <= 0 {
 		return ""
 	}
-	summary := args
-	// Strip JSON braces for readability.
-	summary = strings.TrimPrefix(summary, "{")
-	summary = strings.TrimSuffix(summary, "}")
-	summary = strings.TrimSpace(summary)
+
+	var parsed map[string]any
+	if json.Unmarshal([]byte(args), &parsed) != nil {
+		// Fallback: strip JSON braces.
+		s := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(args), "}"), "{")
+		s = strings.TrimSpace(s)
+		if len(s) > maxWidth {
+			s = s[:maxWidth] + "…"
+		}
+		return s
+	}
+
+	var summary string
+	switch toolName {
+	case "read_file", "write_file", "edit_file":
+		if p, ok := parsed["path"].(string); ok {
+			summary = p
+		}
+	case "list_files":
+		if p, ok := parsed["path"].(string); ok && p != "" {
+			summary = p
+		} else {
+			summary = "."
+		}
+	case "run_shell":
+		if c, ok := parsed["command"].(string); ok {
+			summary = c
+		}
+	case "grep":
+		if p, ok := parsed["pattern"].(string); ok {
+			summary = p
+		}
+	case "glob":
+		if p, ok := parsed["pattern"].(string); ok {
+			summary = p
+		}
+	case "web_search":
+		if q, ok := parsed["query"].(string); ok {
+			summary = q
+		}
+	case "web_fetch":
+		if u, ok := parsed["url"].(string); ok {
+			summary = u
+		}
+	}
+
+	if summary == "" {
+		// Generic fallback: first string value.
+		for _, v := range parsed {
+			if s, ok := v.(string); ok && s != "" {
+				summary = s
+				break
+			}
+		}
+	}
+
 	if len(summary) > maxWidth {
 		summary = summary[:maxWidth] + "…"
 	}
 	return summary
+}
+
+// formatToolArgs returns a human-readable multi-line format for expanded view.
+func formatToolArgs(toolName, args string) string {
+	var parsed map[string]any
+	if json.Unmarshal([]byte(args), &parsed) != nil {
+		return args
+	}
+
+	var lines []string
+	for k, v := range parsed {
+		switch val := v.(type) {
+		case string:
+			// Skip very long values (like file content) in the display.
+			if len(val) > 200 {
+				lines = append(lines, k+": ("+string(rune(len(val)))+" chars)")
+			} else {
+				lines = append(lines, k+": "+val)
+			}
+		default:
+			b, _ := json.Marshal(val)
+			lines = append(lines, k+": "+string(b))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // truncateToolResult shortens tool output for display.

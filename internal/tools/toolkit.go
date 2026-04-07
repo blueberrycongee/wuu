@@ -72,10 +72,6 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 						"type":        "string",
 						"description": "Relative file path in workspace.",
 					},
-					"max_bytes": map[string]any{
-						"type":        "integer",
-						"description": "Max bytes to return.",
-					},
 				},
 				"required": []string{"path"},
 			},
@@ -107,10 +103,6 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 					"path": map[string]any{
 						"type":        "string",
 						"description": "Relative directory path, default is current workspace root.",
-					},
-					"max_entries": map[string]any{
-						"type":        "integer",
-						"description": "Maximum number of entries.",
 					},
 				},
 			},
@@ -155,10 +147,6 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 						"type":        "string",
 						"description": "Glob pattern to filter files (e.g. '*.go', '*.ts').",
 					},
-					"max_results": map[string]any{
-						"type":        "integer",
-						"description": "Maximum number of matching lines to return. Default 50.",
-					},
 				},
 				"required": []string{"pattern"},
 			},
@@ -173,10 +161,6 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 						"type":        "string",
 						"description": "Glob pattern (e.g. '**/*.go', 'src/**/*.ts', '*.json').",
 					},
-					"max_results": map[string]any{
-						"type":        "integer",
-						"description": "Maximum number of files to return. Default 100.",
-					},
 				},
 				"required": []string{"pattern"},
 			},
@@ -190,10 +174,6 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 					"query": map[string]any{
 						"type":        "string",
 						"description": "Search query.",
-					},
-					"max_results": map[string]any{
-						"type":        "integer",
-						"description": "Maximum results to return (1-20). Default 10.",
 					},
 				},
 				"required": []string{"query"},
