@@ -101,7 +101,9 @@ type Model struct {
 	width  int
 	height int
 
-	entries []transcriptEntry
+	entries        []transcriptEntry
+	chatHistory    []providers.ChatMessage
+	pendingNewMsgs *[]providers.ChatMessage // shared with goroutine for returning new messages
 
 	pendingRequest bool
 	streaming      bool
@@ -109,6 +111,7 @@ type Model struct {
 	streamCursor   int
 	streamTarget   int
 	streamElapsed  time.Duration
+	thinkingStart  time.Time // when thinking began for current turn
 
 	autoFollow bool
 	showJump   bool
@@ -196,6 +199,14 @@ func NewModel(cfg Config) Model {
 		}
 	}
 
+	// Seed chatHistory with the system prompt so every API call includes it.
+	if m.streamRunner != nil && strings.TrimSpace(m.streamRunner.SystemPrompt) != "" {
+		m.chatHistory = append(m.chatHistory, providers.ChatMessage{
+			Role:    "system",
+			Content: m.streamRunner.SystemPrompt,
+		})
+	}
+
 	return m.loadMemory()
 }
 
@@ -226,6 +237,18 @@ func (m Model) loadMemory() Model {
 
 	m.statusLine = fmt.Sprintf("resumed %d entries", len(entries))
 	m.refreshViewport(true)
+
+	// Also load structured chat history for API calls.
+	chatMsgs, chatErr := loadChatHistory(m.memoryPath)
+	if chatErr == nil && len(chatMsgs) > 0 {
+		// If we already have a system prompt in chatHistory, keep it and append loaded messages.
+		if len(m.chatHistory) > 0 && m.chatHistory[0].Role == "system" {
+			m.chatHistory = append(m.chatHistory[:1], chatMsgs...)
+		} else {
+			m.chatHistory = chatMsgs
+		}
+	}
+
 	return m
 }
 
@@ -264,8 +287,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.pendingRequest = false
 		m.streamTarget = -1
+		m.thinkingStart = time.Time{}
 		m.statusLine = "ready"
 		m.cacheRenderedEntries()
+
+		// Merge new messages from the completed turn into chatHistory and persist.
+		if m.pendingNewMsgs != nil && len(*m.pendingNewMsgs) > 0 {
+			for _, msg := range *m.pendingNewMsgs {
+				m.chatHistory = append(m.chatHistory, msg)
+				_ = appendChatMessage(m.memoryPath, msg)
+			}
+			m.pendingNewMsgs = nil
+		}
+
 		m.refreshViewport(true)
 		return m, func() tea.Msg { return queueDrainMsg{} }
 
@@ -635,6 +669,8 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 
 func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
 	m.appendEntry("user", raw)
+	m.chatHistory = append(m.chatHistory, providers.ChatMessage{Role: "user", Content: raw})
+	_ = appendChatMessage(m.memoryPath, providers.ChatMessage{Role: "user", Content: raw})
 
 	m.pendingRequest = true
 	m.streaming = true
@@ -652,25 +688,25 @@ func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
 		runner := m.streamRunner
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelStream = cancel
+
+		// Copy history for the goroutine (defensive copy).
+		history := make([]providers.ChatMessage, len(m.chatHistory))
+		copy(history, m.chatHistory)
+
+		// Shared pointer for goroutine to return new messages.
+		newMsgsHolder := &[]providers.ChatMessage{}
+		m.pendingNewMsgs = newMsgsHolder
+
 		go func() {
 			defer close(ch)
-			// Per-call callback — avoids races with concurrent runs
-			// that would otherwise stomp on runner.OnEvent.
 			onEvent := func(event providers.StreamEvent) {
-				// Respect ctx cancellation so we never block forever.
 				select {
 				case ch <- event:
 				case <-ctx.Done():
 				}
 			}
-			// Build a temporary history for this turn.
-				// Task 3 will replace this with proper conversation history.
-				var hist []providers.ChatMessage
-				if sp := runner.SystemPrompt; sp != "" {
-					hist = append(hist, providers.ChatMessage{Role: "system", Content: sp})
-				}
-				hist = append(hist, providers.ChatMessage{Role: "user", Content: raw})
-				_, _, err := runner.RunWithCallback(ctx, hist, onEvent)
+			_, newMsgs, err := runner.RunWithCallback(ctx, history, onEvent)
+			*newMsgsHolder = newMsgs // safe: written before close(ch)
 			if err != nil && ctx.Err() == nil {
 				select {
 				case ch <- providers.StreamEvent{Type: providers.EventError, Error: err}:
