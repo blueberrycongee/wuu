@@ -65,10 +65,57 @@ func loadMemoryEntries(path string) ([]transcriptEntry, error) {
 		if content == "" {
 			content = "(empty)"
 		}
-		entries = append(entries, transcriptEntry{
+
+		// Tool results: merge into the previous assistant entry's ToolCalls.
+		if role == "TOOL" {
+			for i := len(entries) - 1; i >= 0; i-- {
+				if entries[i].Role == "ASSISTANT" {
+					// Find matching tool call by ID and fill in the result.
+					matched := false
+					for j := range entries[i].ToolCalls {
+						if entries[i].ToolCalls[j].ID == rec.ToolCallID {
+							entries[i].ToolCalls[j].Result = content
+							entries[i].ToolCalls[j].Status = ToolCallDone
+							entries[i].ToolCalls[j].Collapsed = true
+							matched = true
+							break
+						}
+					}
+					if !matched && rec.Name != "" {
+						// Tool call wasn't tracked yet — add it.
+						entries[i].ToolCalls = append(entries[i].ToolCalls, ToolCallEntry{
+							ID:        rec.ToolCallID,
+							Name:      rec.Name,
+							Result:    content,
+							Status:    ToolCallDone,
+							Collapsed: true,
+						})
+					}
+					break
+				}
+			}
+			continue // Don't create a separate entry for tool results.
+		}
+
+		entry := transcriptEntry{
 			Role:    role,
 			Content: content,
-		})
+		}
+
+		// Restore tool calls from assistant messages.
+		if role == "ASSISTANT" && len(rec.ToolCalls) > 0 {
+			for _, tc := range rec.ToolCalls {
+				entry.ToolCalls = append(entry.ToolCalls, ToolCallEntry{
+					ID:        tc.ID,
+					Name:      tc.Name,
+					Args:      tc.Arguments,
+					Status:    ToolCallDone,
+					Collapsed: true,
+				})
+			}
+		}
+
+		entries = append(entries, entry)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan memory file: %w", err)
