@@ -567,7 +567,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.isScrollbarClick(msg.X, msg.Y) {
 			row := msg.Y - m.layout.Chat.Y
 			if !m.jumpToNearestUserAnchorAtRow(row) {
-				m.jumpToScrollbarRow(row)
+				if row == 0 {
+					m.jumpToPreviousUserAnchor()
+				} else {
+					m.jumpToScrollbarRow(row)
+				}
 			}
 			return m, nil
 		}
@@ -1261,6 +1265,25 @@ func (m *Model) jumpToNearestUserAnchorAtRow(row int) bool {
 	}
 	m.setViewportOffset(m.userMessageLineAnchors[nearest])
 	return true
+}
+
+// jumpToPreviousUserAnchor scrolls to the nearest user message anchor that
+// is above the current viewport offset. If no such anchor exists it jumps to
+// the very first anchor.
+func (m *Model) jumpToPreviousUserAnchor() {
+	if len(m.userMessageLineAnchors) == 0 {
+		return
+	}
+	offset := m.viewport.YOffset
+	// Walk anchors in reverse to find the first one above the current view.
+	for i := len(m.userMessageLineAnchors) - 1; i >= 0; i-- {
+		if m.userMessageLineAnchors[i] < offset {
+			m.setViewportOffset(m.userMessageLineAnchors[i])
+			return
+		}
+	}
+	// All anchors are at or below current offset — jump to the first one.
+	m.setViewportOffset(m.userMessageLineAnchors[0])
 }
 
 func (m *Model) refreshViewport(forceBottom bool) {
