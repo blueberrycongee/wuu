@@ -287,7 +287,27 @@ func (m Model) loadMemory() Model {
 }
 
 // Init starts the clock ticker.
+// dispatchSessionEnd fires the SessionEnd hook with a short timeout.
+func (m Model) dispatchSessionEnd() {
+	if m.hookDispatcher == nil || !m.hookDispatcher.HasHooks(hooks.SessionEnd) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	m.hookDispatcher.Dispatch(ctx, hooks.SessionEnd, &hooks.Input{
+		SessionID: m.sessionID,
+		CWD:       m.workspaceRoot,
+	})
+}
+
 func (m Model) Init() tea.Cmd {
+	// Dispatch SessionStart hook (fire-and-forget).
+	if m.hookDispatcher != nil && m.hookDispatcher.HasHooks(hooks.SessionStart) {
+		go m.hookDispatcher.Dispatch(context.Background(), hooks.SessionStart, &hooks.Input{
+			SessionID: m.sessionID,
+			CWD:       m.workspaceRoot,
+		})
+	}
 	return tickCmd()
 }
 
@@ -344,6 +364,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = appendChatMessage(m.memoryPath, msg)
 			}
 			m.pendingTurn = nil
+		}
+
+		// Dispatch Stop hook (fire-and-forget).
+		if m.hookDispatcher != nil && m.hookDispatcher.HasHooks(hooks.Stop) {
+			go m.hookDispatcher.Dispatch(context.Background(), hooks.Stop, &hooks.Input{
+				SessionID: m.sessionID,
+				CWD:       m.workspaceRoot,
+			})
 		}
 
 		m.refreshViewport(false)
@@ -670,6 +698,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cancelStream != nil {
 					m.cancelStream()
 				}
+				m.dispatchSessionEnd()
 				m.quitting = true
 				return m, tea.Quit
 			}
@@ -800,6 +829,7 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 				if m.cancelStream != nil {
 					m.cancelStream()
 				}
+				m.dispatchSessionEnd()
 				m.quitting = true
 				return m, tea.Quit
 			}
@@ -854,6 +884,23 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
+	// Dispatch UserPromptSubmit hook — may block the prompt.
+	if m.hookDispatcher != nil && m.hookDispatcher.HasHooks(hooks.UserPromptSubmit) {
+		out, err := m.hookDispatcher.Dispatch(context.Background(), hooks.UserPromptSubmit, &hooks.Input{
+			SessionID: m.sessionID,
+			CWD:       m.workspaceRoot,
+			Prompt:    message.Text,
+		})
+		if hooks.IsBlocked(err) {
+			reason := "blocked by hook"
+			if out != nil && out.Reason != "" {
+				reason = out.Reason
+			}
+			m.statusLine = fmt.Sprintf("prompt blocked: %s", reason)
+			return m, nil
+		}
+	}
+
 	userDisplay := formatUserEntryContent(message.Text, len(message.Images))
 	m.appendEntry("user", userDisplay)
 	chatMsg := providers.ChatMessage{
