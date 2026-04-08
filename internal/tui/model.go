@@ -1179,7 +1179,7 @@ func (m Model) View() string {
 		Foreground(darkTheme.Border).
 		Render(strings.Repeat("─", m.width))
 
-	parts := []string{header, outputBox, sep, inputBox, footer}
+	parts := []string{header, outputBox, sep, inputBox, sep, footer}
 
 	return strings.Join(parts, "\n")
 }
