@@ -241,6 +241,7 @@ func (m Model) loadMemory() Model {
 	}
 
 	m.statusLine = fmt.Sprintf("resumed %d entries", len(entries))
+	m.cacheRenderedEntries()
 	m.refreshViewport(true)
 
 	// Also load structured chat history for API calls.
@@ -1173,7 +1174,12 @@ func (m Model) View() string {
 		outputBox = overlayBottom(outputBox, popup, m.width)
 	}
 
-	parts := []string{header, outputBox, inputBox, footer}
+	// Separator line between chat and input.
+	sep := lipgloss.NewStyle().
+		Foreground(darkTheme.Border).
+		Render(strings.Repeat("─", m.width))
+
+	parts := []string{header, outputBox, sep, inputBox, footer}
 
 	return strings.Join(parts, "\n")
 }
