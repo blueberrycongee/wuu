@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -21,6 +24,12 @@ type StreamRunner struct {
 	MaxSteps     int
 	Temperature  float64
 	OnEvent      StreamCallback
+
+	// Stream reconnect policy (more aggressive than codex default 5).
+	// Zero values use built-in defaults.
+	StreamMaxRetries        int
+	StreamRetryInitialDelay time.Duration
+	StreamRetryMaxDelay     time.Duration
 }
 
 // Run executes one prompt with streaming tool-use loop.
@@ -67,62 +76,11 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 			req.Tools = r.Tools.Definitions()
 		}
 
-		ch, err := r.Client.StreamChat(ctx, req)
-		if err != nil {
-			return "", nil, fmt.Errorf("stream request failed: %w", err)
-		}
-
 		var contentBuf strings.Builder
 		// Map from tool call index to accumulated tool call.
 		pendingTools := map[int]*providers.ToolCall{}
-
-		for event := range ch {
-			if onEvent != nil {
-				onEvent(event)
-			}
-
-			switch event.Type {
-			case providers.EventContentDelta:
-				contentBuf.WriteString(event.Content)
-
-			case providers.EventToolUseStart:
-				if event.ToolCall != nil {
-					idx := len(pendingTools)
-					pendingTools[idx] = &providers.ToolCall{
-						ID:   event.ToolCall.ID,
-						Name: event.ToolCall.Name,
-					}
-				}
-
-			case providers.EventToolUseDelta:
-				// Append partial arguments to the most recently started tool call.
-				if len(pendingTools) > 0 {
-					latest := pendingTools[len(pendingTools)-1]
-					latest.Arguments += event.Content
-				}
-
-			case providers.EventToolUseEnd:
-				// EventToolUseEnd carries the fully accumulated arguments from
-				// the provider layer. Use them if present; otherwise keep what
-				// we accumulated from deltas.
-				if event.ToolCall != nil && event.ToolCall.Arguments != "" {
-					for _, tc := range pendingTools {
-						if tc.ID == event.ToolCall.ID {
-							tc.Arguments = event.ToolCall.Arguments
-							break
-						}
-					}
-				}
-
-			case providers.EventError:
-				if event.Error != nil {
-					return "", nil, event.Error
-				}
-				return "", nil, errors.New("stream error")
-
-			case providers.EventDone:
-				// Stream complete.
-			}
+		if err := r.runStreamWithReconnect(ctx, req, &contentBuf, pendingTools, onEvent); err != nil {
+			return "", nil, fmt.Errorf("stream request failed: %w", err)
 		}
 
 		// Build ordered tool calls list from pending map.
@@ -187,4 +145,172 @@ func truncateLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func (r *StreamRunner) runStreamWithReconnect(
+	ctx context.Context,
+	req providers.ChatRequest,
+	contentBuf *strings.Builder,
+	pendingTools map[int]*providers.ToolCall,
+	onEvent StreamCallback,
+) error {
+	cfg := r.streamRetryConfig()
+	attempt := 0
+	for {
+		ch, err := r.Client.StreamChat(ctx, req)
+		if err != nil {
+			if shouldRetryStreamError(err, attempt, cfg.MaxRetries) {
+				delay := streamRetryDelay(attempt, cfg.InitialDelay, cfg.MaxDelay)
+				providers.DebugLogf("stream connect failed, reconnecting (%d/%d) in %s: %v", attempt+1, cfg.MaxRetries, delay, err)
+				if waitErr := waitWithContext(ctx, delay); waitErr != nil {
+					return waitErr
+				}
+				attempt++
+				continue
+			}
+			return err
+		}
+
+		var (
+			streamErr error
+			sawDone   bool
+			sawOutput bool
+		)
+
+		for event := range ch {
+			switch event.Type {
+			case providers.EventContentDelta,
+				providers.EventToolUseStart,
+				providers.EventToolUseDelta,
+				providers.EventToolUseEnd,
+				providers.EventThinkingDelta,
+				providers.EventThinkingDone:
+				sawOutput = true
+			}
+
+			switch event.Type {
+			case providers.EventContentDelta:
+				contentBuf.WriteString(event.Content)
+
+			case providers.EventToolUseStart:
+				if event.ToolCall != nil {
+					idx := len(pendingTools)
+					pendingTools[idx] = &providers.ToolCall{
+						ID:   event.ToolCall.ID,
+						Name: event.ToolCall.Name,
+					}
+				}
+
+			case providers.EventToolUseDelta:
+				// Append partial arguments to the most recently started tool call.
+				if len(pendingTools) > 0 {
+					latest := pendingTools[len(pendingTools)-1]
+					latest.Arguments += event.Content
+				}
+
+			case providers.EventToolUseEnd:
+				// EventToolUseEnd carries the fully accumulated arguments from
+				// the provider layer. Use them if present; otherwise keep what
+				// we accumulated from deltas.
+				if event.ToolCall != nil && event.ToolCall.Arguments != "" {
+					for _, tc := range pendingTools {
+						if tc.ID == event.ToolCall.ID {
+							tc.Arguments = event.ToolCall.Arguments
+							break
+						}
+					}
+				}
+
+			case providers.EventError:
+				if event.Error != nil {
+					streamErr = event.Error
+				} else {
+					streamErr = errors.New("stream error")
+				}
+				continue
+
+			case providers.EventDone:
+				sawDone = true
+			}
+
+			if onEvent != nil {
+				onEvent(event)
+			}
+		}
+
+		if streamErr == nil && !sawDone {
+			streamErr = errors.New("stream closed before done")
+		}
+		if streamErr == nil {
+			return nil
+		}
+
+		// Only retry when the stream failed before producing any user-visible output.
+		if !sawOutput && shouldRetryStreamError(streamErr, attempt, cfg.MaxRetries) {
+			delay := streamRetryDelay(attempt, cfg.InitialDelay, cfg.MaxDelay)
+			providers.DebugLogf("stream disconnected early, reconnecting (%d/%d) in %s: %v", attempt+1, cfg.MaxRetries, delay, streamErr)
+			if waitErr := waitWithContext(ctx, delay); waitErr != nil {
+				return waitErr
+			}
+			attempt++
+			continue
+		}
+
+		if onEvent != nil {
+			onEvent(providers.StreamEvent{
+				Type:  providers.EventError,
+				Error: streamErr,
+			})
+		}
+		return streamErr
+	}
+}
+
+func (r *StreamRunner) streamRetryConfig() providers.RetryConfig {
+	cfg := providers.DefaultRetryConfig()
+	// Codex default is 5; we default to 6 to be slightly more aggressive.
+	cfg.MaxRetries = 6
+	cfg.InitialDelay = 250 * time.Millisecond
+	cfg.MaxDelay = 5 * time.Second
+	if r.StreamMaxRetries > 0 {
+		cfg.MaxRetries = r.StreamMaxRetries
+	}
+	if r.StreamRetryInitialDelay > 0 {
+		cfg.InitialDelay = r.StreamRetryInitialDelay
+	}
+	if r.StreamRetryMaxDelay > 0 {
+		cfg.MaxDelay = r.StreamRetryMaxDelay
+	}
+	if cfg.InitialDelay > cfg.MaxDelay {
+		cfg.InitialDelay = cfg.MaxDelay
+	}
+	return cfg
+}
+
+func shouldRetryStreamError(err error, attempt, maxRetries int) bool {
+	if attempt >= maxRetries {
+		return false
+	}
+	return providers.IsRetryable(err)
+}
+
+func streamRetryDelay(attempt int, initial, maxDelay time.Duration) time.Duration {
+	base := float64(initial) * math.Pow(2, float64(attempt))
+	if base > float64(maxDelay) {
+		base = float64(maxDelay)
+	}
+	// 0-20% jitter to avoid herd retry.
+	jitter := base * 0.2 * rand.Float64()
+	return time.Duration(base + jitter)
+}
+
+func waitWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

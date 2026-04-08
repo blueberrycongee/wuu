@@ -2,14 +2,23 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+type mockStreamAttempt struct {
+	events []providers.StreamEvent
+	err    error
+}
+
 type mockStreamClient struct {
-	events   []providers.StreamEvent
-	requests []providers.ChatRequest
+	events    []providers.StreamEvent
+	attempts  []mockStreamAttempt
+	requests  []providers.ChatRequest
+	callCount int
 }
 
 func (m *mockStreamClient) Chat(_ context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
@@ -19,6 +28,23 @@ func (m *mockStreamClient) Chat(_ context.Context, req providers.ChatRequest) (p
 
 func (m *mockStreamClient) StreamChat(_ context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
 	m.requests = append(m.requests, req)
+	if len(m.attempts) > 0 {
+		idx := m.callCount
+		m.callCount++
+		if idx >= len(m.attempts) {
+			return nil, errors.New("unexpected extra stream attempt")
+		}
+		attempt := m.attempts[idx]
+		if attempt.err != nil {
+			return nil, attempt.err
+		}
+		ch := make(chan providers.StreamEvent, len(attempt.events))
+		for _, e := range attempt.events {
+			ch <- e
+		}
+		close(ch)
+		return ch, nil
+	}
 	ch := make(chan providers.StreamEvent, len(m.events))
 	for _, e := range m.events {
 		ch <- e
@@ -140,6 +166,111 @@ func TestStreamRunner_StreamError(t *testing.T) {
 	_, err := runner.Run(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error from stream error event")
+	}
+}
+
+func TestStreamRunner_RetryOnInitialConnectError(t *testing.T) {
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{err: errors.New("Post https://example.com/v1/chat/completions: EOF")},
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "recovered"},
+					{Type: providers.EventDone},
+				},
+			},
+		},
+	}
+
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "m",
+		StreamMaxRetries:        2,
+		StreamRetryInitialDelay: time.Millisecond,
+		StreamRetryMaxDelay:     2 * time.Millisecond,
+	}
+
+	result, err := runner.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result != "recovered" {
+		t.Fatalf("unexpected result: %q", result)
+	}
+	if client.callCount != 2 {
+		t.Fatalf("expected 2 stream attempts, got %d", client.callCount)
+	}
+}
+
+func TestStreamRunner_RetryOnEarlyStreamErrorEvent(t *testing.T) {
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventError, Error: errors.New("connection reset by peer")},
+				},
+			},
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "ok"},
+					{Type: providers.EventDone},
+				},
+			},
+		},
+	}
+
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "m",
+		StreamMaxRetries:        2,
+		StreamRetryInitialDelay: time.Millisecond,
+		StreamRetryMaxDelay:     2 * time.Millisecond,
+	}
+
+	result, err := runner.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("unexpected result: %q", result)
+	}
+	if client.callCount != 2 {
+		t.Fatalf("expected 2 stream attempts, got %d", client.callCount)
+	}
+}
+
+func TestStreamRunner_DoesNotRetryAfterPartialOutput(t *testing.T) {
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "partial"},
+					{Type: providers.EventError, Error: errors.New("EOF")},
+				},
+			},
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "second"},
+					{Type: providers.EventDone},
+				},
+			},
+		},
+	}
+
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "m",
+		StreamMaxRetries:        2,
+		StreamRetryInitialDelay: time.Millisecond,
+		StreamRetryMaxDelay:     2 * time.Millisecond,
+	}
+
+	_, err := runner.Run(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("expected stream error")
+	}
+	if client.callCount != 1 {
+		t.Fatalf("expected no reconnect after partial output, got %d attempts", client.callCount)
 	}
 }
 
