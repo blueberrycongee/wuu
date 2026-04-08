@@ -442,12 +442,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 			}
 			m.streamCollector.Push(msg.event.Content)
-			if newLines := m.streamCollector.CommitCompleteLines(); len(newLines) > 0 {
+			if rendered := m.streamCollector.CommitCompleteLines(); rendered != "" {
 				e := &m.entries[m.streamTarget]
-				if e.rendered != "" {
-					e.rendered += "\n"
-				}
-				e.rendered += strings.Join(newLines, "\n")
+				e.rendered = rendered
 				e.renderedLen = len(e.Content)
 			}
 			m.refreshViewport(false)
@@ -497,13 +494,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// One SSE stream finished. The runner may continue with tool
 			// execution and start another stream, so keep listening.
 			if m.streamCollector != nil {
-				if finalLines := m.streamCollector.Finalize(); len(finalLines) > 0 {
+				if final := m.streamCollector.Finalize(); final != "" {
 					if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
 						e := &m.entries[m.streamTarget]
-						if e.rendered != "" {
-							e.rendered += "\n"
-						}
-						e.rendered += strings.Join(finalLines, "\n")
+						e.rendered = final
 						e.renderedLen = len(e.Content)
 					}
 				}

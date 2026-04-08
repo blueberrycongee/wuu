@@ -5,12 +5,13 @@ import (
 )
 
 // StreamCollector accumulates streaming markdown deltas and returns
-// rendered lines incrementally, committing only on line boundaries.
+// the full rendered output on each commit. The caller should replace
+// (not append) its cached render on each call, so that block-level
+// structures like tables render correctly as they stream in.
 type StreamCollector struct {
-	buffer         strings.Builder
-	committedLines int
-	width          int
-	styles         Styles
+	buffer strings.Builder
+	width  int
+	styles Styles
 }
 
 // NewStreamCollector creates a new collector for streaming markdown.
@@ -26,64 +27,32 @@ func (c *StreamCollector) Push(delta string) {
 	c.buffer.WriteString(delta)
 }
 
-// CommitCompleteLines renders up to the last newline and returns
-// only the newly rendered lines since the last commit.
-func (c *StreamCollector) CommitCompleteLines() []string {
+// CommitCompleteLines renders everything up to the last newline and
+// returns the full rendered output. Returns "" if there is nothing
+// to render yet (no newline received).
+func (c *StreamCollector) CommitCompleteLines() string {
 	src := c.buffer.String()
 	lastNL := strings.LastIndexByte(src, '\n')
 	if lastNL < 0 {
-		return nil
+		return ""
 	}
 
-	// Render everything up to and including the last newline.
 	rendered := Render(src[:lastNL+1], c.width, c.styles)
-	if rendered == "" {
-		return nil
-	}
-	lines := strings.Split(rendered, "\n")
-
-	// Strip trailing blank lines (goldmark may add them after paragraphs).
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
-	}
-
-	if c.committedLines >= len(lines) {
-		return nil
-	}
-	out := make([]string, len(lines)-c.committedLines)
-	copy(out, lines[c.committedLines:])
-	c.committedLines = len(lines)
-	return out
+	return strings.TrimRight(rendered, "\n")
 }
 
 // Finalize renders any remaining buffer content and resets state.
-func (c *StreamCollector) Finalize() []string {
+func (c *StreamCollector) Finalize() string {
 	src := c.buffer.String()
 	if src == "" {
-		c.reset()
-		return nil
+		c.buffer.Reset()
+		return ""
 	}
 	if !strings.HasSuffix(src, "\n") {
 		src += "\n"
 	}
 
 	rendered := Render(src, c.width, c.styles)
-	if rendered == "" {
-		c.reset()
-		return nil
-	}
-	lines := strings.Split(rendered, "\n")
-
-	var out []string
-	if c.committedLines < len(lines) {
-		out = make([]string, len(lines)-c.committedLines)
-		copy(out, lines[c.committedLines:])
-	}
-	c.reset()
-	return out
-}
-
-func (c *StreamCollector) reset() {
 	c.buffer.Reset()
-	c.committedLines = 0
+	return strings.TrimRight(rendered, "\n")
 }
