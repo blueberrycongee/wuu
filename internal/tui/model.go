@@ -81,6 +81,11 @@ type transcriptEntry struct {
 	ToolCalls []ToolCallEntry
 }
 
+type queuedMessage struct {
+	Text   string
+	Images []providers.InputImage
+}
+
 // Model implements the terminal UI state machine.
 type Model struct {
 	provider      string
@@ -95,6 +100,7 @@ type Model struct {
 	streamCh      chan providers.StreamEvent
 
 	maxContextTokens int
+	requestTimeout   time.Duration
 
 	viewport viewport.Model
 	input    textarea.Model
@@ -146,7 +152,10 @@ type Model struct {
 	historyDraft string // saves current input when entering history
 
 	// Message queue — Tab queues, Enter cuts in line.
-	messageQueue []string
+	messageQueue []queuedMessage
+
+	// Pending image attachments for the next user message.
+	pendingImages []providers.InputImage
 }
 
 // NewModel builds the initial UI model.
@@ -174,6 +183,7 @@ func NewModel(cfg Config) Model {
 		runPrompt:        cfg.RunPrompt,
 		streamRunner:     cfg.StreamRunner,
 		maxContextTokens: cfg.MaxContextTokens,
+		requestTimeout:   cfg.RequestTimeout,
 		viewport:         vp,
 		input:            in,
 		autoFollow:       true,
@@ -233,7 +243,7 @@ func (m Model) loadMemory() Model {
 	// Populate input history from loaded user messages.
 	for _, e := range entries {
 		if e.Role == "USER" {
-			content := strings.TrimSpace(e.Content)
+			content := strings.TrimSpace(stripUserImagePlaceholderLines(e.Content))
 			if content != "" && content != "(empty)" {
 				m.inputHistory = append(m.inputHistory, content)
 			}
@@ -624,10 +634,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+u":
 			// Cmd+Backspace / Ctrl+U: clear input to beginning of line.
 			m.input.SetValue("")
+			m.pendingImages = nil
 			m.historyIndex = -1
 			m.historyDraft = ""
 			m.completionVisible = false
 			m.completionItems = nil
+			return m, nil
+		case "ctrl+v", "alt+v":
+			image, err := pasteImageFromClipboard()
+			if err != nil {
+				m.statusLine = fmt.Sprintf("image paste failed: %v", err)
+				return m, nil
+			}
+			m.pendingImages = append(m.pendingImages, image)
+			count := len(m.pendingImages)
+			label := "images"
+			if count == 1 {
+				label = "image"
+			}
+			m.statusLine = fmt.Sprintf("attached %d %s", count, label)
 			return m, nil
 		case "ctrl+w":
 			// Ctrl+W / Alt+Backspace: delete word backward.
@@ -716,36 +741,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 	raw := strings.TrimSpace(m.input.Value())
-	if raw == "" {
+	hasImages := len(m.pendingImages) > 0
+	if raw == "" && !hasImages {
 		return m, nil
 	}
 
-	if output, handled := m.handleSlash(raw); handled {
-		if output == "__exit__" {
-			if m.cancelStream != nil {
-				m.cancelStream()
+	if raw != "" {
+		if output, handled := m.handleSlash(raw); handled {
+			if output == "__exit__" {
+				if m.cancelStream != nil {
+					m.cancelStream()
+				}
+				m.quitting = true
+				return m, tea.Quit
 			}
-			m.quitting = true
-			return m, tea.Quit
+			m.appendEntry("system", output)
+			m.input.Reset()
+			m.statusLine = "command executed"
+			m.refreshViewport(true)
+			return m, nil
 		}
-		m.appendEntry("system", output)
-		m.input.Reset()
-		m.statusLine = "command executed"
-		m.refreshViewport(true)
+	}
+
+	if hasImages && m.streamRunner == nil {
+		m.statusLine = "image paste requires streaming mode"
 		return m, nil
 	}
 
 	// Record in input history (skip duplicates).
-	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != raw {
+	if raw != "" && (len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != raw) {
 		m.inputHistory = append(m.inputHistory, raw)
 	}
 	m.historyIndex = -1
 	m.historyDraft = ""
 	m.input.Reset()
 
+	message := queuedMessage{
+		Text:   raw,
+		Images: append([]providers.InputImage(nil), m.pendingImages...),
+	}
+	m.pendingImages = nil
+
 	if m.pendingRequest && shouldQueue {
 		// Tab while busy — queue the message.
-		m.messageQueue = append(m.messageQueue, raw)
+		m.messageQueue = append(m.messageQueue, message)
 		m.statusLine = fmt.Sprintf("queued (%d pending)", len(m.messageQueue))
 		return m, nil
 	}
@@ -754,7 +793,7 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 		// Enter while busy — prioritize this message ahead of queued ones.
 		// If the current request is streamable, cancel it and let queue drain
 		// start the prioritized message as soon as the runner exits.
-		m.messageQueue = append([]string{raw}, m.messageQueue...)
+		m.messageQueue = append([]queuedMessage{message}, m.messageQueue...)
 		if m.cancelStream != nil {
 			m.cancelStream()
 			m.statusLine = fmt.Sprintf("interrupting · %d queued", len(m.messageQueue))
@@ -765,13 +804,19 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 	}
 
 	// If idle, both Tab and Enter send directly.
-	return m.sendMessage(raw)
+	return m.sendMessage(message)
 }
 
-func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
-	m.appendEntry("user", raw)
-	m.chatHistory = append(m.chatHistory, providers.ChatMessage{Role: "user", Content: raw})
-	_ = appendChatMessage(m.memoryPath, providers.ChatMessage{Role: "user", Content: raw})
+func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
+	userDisplay := formatUserEntryContent(message.Text, len(message.Images))
+	m.appendEntry("user", userDisplay)
+	chatMsg := providers.ChatMessage{
+		Role:    "user",
+		Content: message.Text,
+		Images:  append([]providers.InputImage(nil), message.Images...),
+	}
+	m.chatHistory = append(m.chatHistory, chatMsg)
+	_ = appendChatMessage(m.memoryPath, chatMsg)
 
 	// Compact history if approaching context limit.
 	if m.maxContextTokens > 0 && compact.ShouldCompact(m.chatHistory, m.maxContextTokens) {
@@ -802,7 +847,7 @@ func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
 		ch := make(chan providers.StreamEvent, 64)
 		m.streamCh = ch
 		runner := m.streamRunner
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := m.newRequestContext()
 		m.cancelStream = cancel
 
 		// Copy history for the goroutine (defensive copy).
@@ -823,7 +868,7 @@ func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
 			}
 			_, newMsgs, err := runner.RunWithCallback(ctx, history, onEvent)
 			*newMsgsHolder = newMsgs // safe: written before close(ch)
-			if err != nil && ctx.Err() == nil {
+			if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
 				select {
 				case ch <- providers.StreamEvent{Type: providers.EventError, Error: err}:
 				case <-ctx.Done():
@@ -836,13 +881,22 @@ func (m Model) sendMessage(raw string) (tea.Model, tea.Cmd) {
 	// Fallback to blocking path.
 	start := time.Now()
 	return m, func() tea.Msg {
-		answer, err := m.runPrompt(context.Background(), raw)
+		ctx, cancel := m.newRequestContext()
+		defer cancel()
+		answer, err := m.runPrompt(ctx, message.Text)
 		return responseMsg{
 			answer:  answer,
 			err:     err,
 			elapsed: time.Since(start),
 		}
 	}
+}
+
+func (m Model) newRequestContext() (context.Context, context.CancelFunc) {
+	if m.requestTimeout > 0 {
+		return context.WithTimeout(context.Background(), m.requestTimeout)
+	}
+	return context.WithCancel(context.Background())
 }
 
 func waitStreamEvent(ch <-chan providers.StreamEvent) tea.Cmd {
@@ -890,6 +944,50 @@ func (m *Model) renderMarkdown(content string) (string, error) {
 		return "(empty)", nil
 	}
 	return rendered, nil
+}
+
+func formatUserEntryContent(text string, imageCount int) string {
+	parts := make([]string, 0, imageCount+1)
+	trimmed := strings.TrimSpace(text)
+	if trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	for i := 1; i <= imageCount; i++ {
+		parts = append(parts, fmt.Sprintf("[Image #%d]", i))
+	}
+	if len(parts) == 0 {
+		return "(empty)"
+	}
+	return strings.Join(parts, "\n")
+}
+
+func stripUserImagePlaceholderLines(content string) string {
+	lines := strings.Split(content, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isUserImagePlaceholder(trimmed) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+func isUserImagePlaceholder(line string) bool {
+	if !strings.HasPrefix(line, "[Image #") || !strings.HasSuffix(line, "]") {
+		return false
+	}
+	number := strings.TrimSuffix(strings.TrimPrefix(line, "[Image #"), "]")
+	if number == "" {
+		return false
+	}
+	for _, r := range number {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // cacheEntryRendered renders markdown for a single entry and caches the result.
@@ -1144,7 +1242,15 @@ func (m Model) View() string {
 		queueHint = fmt.Sprintf(" · %d queued", len(m.messageQueue))
 	}
 
-	footerLeft := fmt.Sprintf("%s %s%s%s", iconStyled, state, queueHint, jumpHint)
+	imageHint := ""
+	if len(m.pendingImages) > 0 {
+		imageHint = fmt.Sprintf(" · %d image", len(m.pendingImages))
+		if len(m.pendingImages) > 1 {
+			imageHint += "s"
+		}
+	}
+
+	footerLeft := fmt.Sprintf("%s %s%s%s%s", iconStyled, state, queueHint, imageHint, jumpHint)
 	footerRight := fmt.Sprintf("t:thinking · %s", m.clock)
 	availableW := max(1, m.width-lipgloss.Width(footerRight)-1)
 	footerLeft = trimToWidth(footerLeft, availableW)

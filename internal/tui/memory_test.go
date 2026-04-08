@@ -250,3 +250,48 @@ func TestLoadChatHistory_BackwardCompatible(t *testing.T) {
 		t.Fatalf("expected empty tool_call_id, got %q", msgs[0].ToolCallID)
 	}
 }
+
+func TestChatHistory_WithUserImages(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "images.jsonl")
+
+	userMsg := providers.ChatMessage{
+		Role:    "user",
+		Content: "check this",
+		Images: []providers.InputImage{
+			{MediaType: "image/png", Data: "AAA"},
+			{MediaType: "image/jpeg", Data: "BBB"},
+		},
+	}
+	if err := appendChatMessage(path, userMsg); err != nil {
+		t.Fatalf("append user msg: %v", err)
+	}
+
+	msgs, err := loadChatHistory(path)
+	if err != nil {
+		t.Fatalf("load chat history: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].Images) != 2 {
+		t.Fatalf("expected 2 images, got %d", len(msgs[0].Images))
+	}
+	if msgs[0].Images[0].MediaType != "image/png" || msgs[0].Images[0].Data != "AAA" {
+		t.Fatalf("unexpected first image: %+v", msgs[0].Images[0])
+	}
+	if msgs[0].Images[1].MediaType != "image/jpeg" || msgs[0].Images[1].Data != "BBB" {
+		t.Fatalf("unexpected second image: %+v", msgs[0].Images[1])
+	}
+
+	entries, err := loadMemoryEntries(path)
+	if err != nil {
+		t.Fatalf("load memory entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 transcript entry, got %d", len(entries))
+	}
+	if entries[0].Content != "check this\n[Image #1]\n[Image #2]" {
+		t.Fatalf("unexpected transcript content: %q", entries[0].Content)
+	}
+}

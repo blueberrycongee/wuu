@@ -273,6 +273,8 @@ func cmdNew(_ string, m *Model) string {
 	m.streamTarget = -1
 	m.streaming = false
 	m.pendingRequest = false
+	m.messageQueue = nil
+	m.pendingImages = nil
 
 	// Create new session if session isolation is active.
 	if m.sessionDir != "" {

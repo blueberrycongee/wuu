@@ -18,9 +18,15 @@ type toolCallEntry struct {
 	Arguments string `json:"arguments"`
 }
 
+type imageEntry struct {
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
 type memoryEntry struct {
 	Role       string          `json:"role"`
 	Content    string          `json:"content"`
+	Images     []imageEntry    `json:"images,omitempty"`
 	At         time.Time       `json:"at"`
 	ToolCalls  []toolCallEntry `json:"tool_calls,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
@@ -62,9 +68,6 @@ func loadMemoryEntries(path string) ([]transcriptEntry, error) {
 			role = "SYSTEM"
 		}
 		content := strings.TrimSpace(rec.Content)
-		if content == "" {
-			content = "(empty)"
-		}
 
 		// Tool results: merge into the previous assistant entry's ToolCalls.
 		if role == "TOOL" {
@@ -95,6 +98,12 @@ func loadMemoryEntries(path string) ([]transcriptEntry, error) {
 				}
 			}
 			continue // Don't create a separate entry for tool results.
+		}
+
+		if role == "USER" {
+			content = formatUserEntryContent(content, len(rec.Images))
+		} else if content == "" {
+			content = "(empty)"
 		}
 
 		entry := transcriptEntry{
@@ -170,10 +179,22 @@ func appendChatMessage(path string, msg providers.ChatMessage) error {
 			Arguments: tc.Arguments,
 		})
 	}
+	var imgs []imageEntry
+	for _, image := range msg.Images {
+		data := strings.TrimSpace(image.Data)
+		if data == "" {
+			continue
+		}
+		imgs = append(imgs, imageEntry{
+			MediaType: image.MediaType,
+			Data:      data,
+		})
+	}
 
 	rec := memoryEntry{
 		Role:       strings.ToLower(msg.Role),
 		Content:    msg.Content,
+		Images:     imgs,
 		At:         time.Now().UTC(),
 		ToolCalls:  tcs,
 		ToolCallID: msg.ToolCallID,
@@ -223,11 +244,23 @@ func loadChatHistory(path string) ([]providers.ChatMessage, error) {
 				Arguments: tc.Arguments,
 			})
 		}
+		var imgs []providers.InputImage
+		for _, image := range rec.Images {
+			data := strings.TrimSpace(image.Data)
+			if data == "" {
+				continue
+			}
+			imgs = append(imgs, providers.InputImage{
+				MediaType: image.MediaType,
+				Data:      data,
+			})
+		}
 
 		msgs = append(msgs, providers.ChatMessage{
 			Role:       strings.ToLower(strings.TrimSpace(rec.Role)),
 			Name:       rec.Name,
 			Content:    rec.Content,
+			Images:     imgs,
 			ToolCallID: rec.ToolCallID,
 			ToolCalls:  tcs,
 		})

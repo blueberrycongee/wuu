@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -267,6 +268,23 @@ func TestRenderToolCard_Running(t *testing.T) {
 	}
 }
 
+func TestNewModel_RequestTimeout(t *testing.T) {
+	timeout := 2 * time.Second
+	m := NewModel(Config{
+		Provider:       "test",
+		Model:          "test-model",
+		ConfigPath:     "/tmp/.wuu.json",
+		RequestTimeout: timeout,
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return prompt, nil
+		},
+	})
+
+	if m.requestTimeout != timeout {
+		t.Fatalf("expected requestTimeout=%s, got %s", timeout, m.requestTimeout)
+	}
+}
+
 func TestRenderToolCard_Done_Collapsed(t *testing.T) {
 	tc := ToolCallEntry{
 		Name:      "read_file",
@@ -292,5 +310,47 @@ func TestRenderToolCard_Error(t *testing.T) {
 	result := renderToolCard(tc, 80)
 	if !strings.Contains(result, "error") {
 		t.Fatalf("expected error status: %s", result)
+	}
+}
+
+func TestFormatUserEntryContent_WithImages(t *testing.T) {
+	got := formatUserEntryContent("show me", 2)
+	want := "show me\n[Image #1]\n[Image #2]"
+	if got != want {
+		t.Fatalf("formatUserEntryContent() = %q, want %q", got, want)
+	}
+}
+
+func TestSubmit_ImageRequiresStreamingMode(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return "answer to: " + prompt, nil
+		},
+	})
+	m.pendingImages = []providers.InputImage{
+		{MediaType: "image/png", Data: "AAA"},
+	}
+
+	nextModel, cmd := m.submit(false)
+	if cmd != nil {
+		t.Fatal("expected no command when image submit is unsupported")
+	}
+	next := nextModel.(Model)
+	if next.statusLine != "image paste requires streaming mode" {
+		t.Fatalf("unexpected status line: %q", next.statusLine)
+	}
+	if len(next.pendingImages) != 1 {
+		t.Fatalf("expected pending image to remain, got %d", len(next.pendingImages))
+	}
+}
+
+func TestStripUserImagePlaceholderLines(t *testing.T) {
+	input := "please review\n[Image #1]\n[Image #2]"
+	got := stripUserImagePlaceholderLines(input)
+	if got != "please review" {
+		t.Fatalf("stripUserImagePlaceholderLines() = %q", got)
 	}
 }
