@@ -91,12 +91,10 @@ func (w *Writer) walk(n ast.Node) {
 		case *ast.Heading:
 			if entering {
 				w.startBlock()
-				w.openLine()
-				prefix := strings.Repeat("#", node.Level) + " "
-				w.lineBuf.WriteString(w.headingStyle(node.Level).Render(prefix))
+				w.pushInline(w.headingStyle(node.Level))
 			} else {
-				// Apply heading style to whole accumulated line content.
 				w.flushPendingLine()
+				w.popInline()
 				w.needsNewline = true
 			}
 		case *ast.ThematicBreak:

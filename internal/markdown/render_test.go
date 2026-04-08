@@ -131,6 +131,16 @@ func TestRender_TightOrderedListItemsSeparated(t *testing.T) {
 	}
 }
 
+func TestRender_HeadingNoHashPrefix(t *testing.T) {
+	got := Render("# Title", 80, DefaultStyles())
+	if strings.Contains(got, "#") {
+		t.Fatalf("heading should not contain '#' prefix, got %q", got)
+	}
+	if !strings.Contains(got, "Title") {
+		t.Fatalf("heading should contain text 'Title', got %q", got)
+	}
+}
+
 func TestRender_EmptyInput(t *testing.T) {
 	got := Render("", 80, DefaultStyles())
 	if got != "" {

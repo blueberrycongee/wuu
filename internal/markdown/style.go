@@ -23,7 +23,7 @@ func DefaultStyles() Styles {
 	toolBorder := lipgloss.Color("#B1B9F9")
 
 	return Styles{
-		H1:                  lipgloss.NewStyle().Bold(true).Foreground(brand),
+		H1:                  lipgloss.NewStyle().Bold(true).Italic(true).Underline(true).Foreground(brand),
 		H2:                  lipgloss.NewStyle().Bold(true).Foreground(brandLight),
 		H3:                  lipgloss.NewStyle().Bold(true),
 		H4:                  lipgloss.NewStyle().Italic(true),
