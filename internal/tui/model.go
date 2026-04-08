@@ -24,6 +24,9 @@ const (
 	minOutputHeight = 6
 	streamChunkSize = 24
 	streamTickDelay = 30 * time.Millisecond
+
+	queuePreviewMaxItems = 2
+	queuePreviewMaxChars = 28
 )
 
 type tickMsg struct {
@@ -989,6 +992,27 @@ func formatUserEntryContent(text string, imageCount int) string {
 	return strings.Join(parts, "\n")
 }
 
+func summarizeQueuedMessage(message queuedMessage) string {
+	inline := formatUserEntryContent(message.Text, len(message.Images))
+	inline = strings.Join(strings.Fields(inline), " ")
+	return trimToWidth(inline, queuePreviewMaxChars)
+}
+
+func summarizeQueuedMessages(messages []queuedMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	limit := min(len(messages), queuePreviewMaxItems)
+	parts := make([]string, 0, limit+1)
+	for i := 0; i < limit; i++ {
+		parts = append(parts, summarizeQueuedMessage(messages[i]))
+	}
+	if len(messages) > limit {
+		parts = append(parts, fmt.Sprintf("+%d", len(messages)-limit))
+	}
+	return strings.Join(parts, " | ")
+}
+
 func stripUserImagePlaceholderLines(content string) string {
 	lines := strings.Split(content, "\n")
 	kept := make([]string, 0, len(lines))
@@ -1265,9 +1289,14 @@ func (m Model) View() string {
 		jumpHint = " · ▼ jump"
 	}
 
+	steerHint := ""
+	if len(m.pendingSteers) > 0 {
+		steerHint = fmt.Sprintf(" · steer: %s", summarizeQueuedMessages(m.pendingSteers))
+	}
+
 	queueHint := ""
 	if len(m.messageQueue) > 0 {
-		queueHint = fmt.Sprintf(" · %d queued", len(m.messageQueue))
+		queueHint = fmt.Sprintf(" · queue: %s", summarizeQueuedMessages(m.messageQueue))
 	}
 
 	imageHint := ""
@@ -1278,7 +1307,7 @@ func (m Model) View() string {
 		}
 	}
 
-	footerLeft := fmt.Sprintf("%s %s%s%s%s", iconStyled, state, queueHint, imageHint, jumpHint)
+	footerLeft := fmt.Sprintf("%s %s%s%s%s%s", iconStyled, state, steerHint, queueHint, imageHint, jumpHint)
 	footerRight := fmt.Sprintf("t:thinking · %s", m.clock)
 	availableW := max(1, m.width-lipgloss.Width(footerRight)-1)
 	footerLeft = trimToWidth(footerLeft, availableW)

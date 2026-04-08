@@ -321,6 +321,56 @@ func TestFormatUserEntryContent_WithImages(t *testing.T) {
 	}
 }
 
+func TestSummarizeQueuedMessages_ShowsPreviewAndOverflowCount(t *testing.T) {
+	msgs := []queuedMessage{
+		{Text: "first queued"},
+		{Text: "second queued"},
+		{Text: "third queued"},
+	}
+	got := summarizeQueuedMessages(msgs)
+	want := "first queued | second queued | +1"
+	if got != want {
+		t.Fatalf("summarizeQueuedMessages() = %q, want %q", got, want)
+	}
+}
+
+func TestSummarizeQueuedMessage_InlinesImages(t *testing.T) {
+	got := summarizeQueuedMessage(queuedMessage{
+		Text: "check this",
+		Images: []providers.InputImage{
+			{MediaType: "image/png", Data: "AAA"},
+		},
+	})
+	want := "check this [Image #1]"
+	if got != want {
+		t.Fatalf("summarizeQueuedMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestView_ShowsSteerAndQueuePreview(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return "answer to: " + prompt, nil
+		},
+	})
+	m.width = 180
+	m.height = 24
+	m.relayout()
+	m.pendingSteers = []queuedMessage{{Text: "steer now"}}
+	m.messageQueue = []queuedMessage{{Text: "queued after steer"}}
+
+	view := m.View()
+	if !strings.Contains(view, "steer: steer now") {
+		t.Fatalf("expected steer preview in footer, got: %s", view)
+	}
+	if !strings.Contains(view, "queue: queued after steer") {
+		t.Fatalf("expected queue preview in footer, got: %s", view)
+	}
+}
+
 func TestSubmit_ImageRequiresStreamingMode(t *testing.T) {
 	m := NewModel(Config{
 		Provider:   "test",
