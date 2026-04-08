@@ -437,10 +437,10 @@ func (t *Toolkit) editFile(argsJSON string) (string, error) {
 		return "", fmt.Errorf("write file: %w", err)
 	}
 
+	diff := computeDiff(text, newContent, 3)
 	result := map[string]any{
-		"path":         normalizeDisplayPath(t.rootDir, resolved),
-		"old_text_len": len(args.OldText),
-		"new_text_len": len(args.NewText),
+		"path": normalizeDisplayPath(t.rootDir, resolved),
+		"diff": diff,
 	}
 	return mustJSON(result)
 }
