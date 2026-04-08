@@ -134,6 +134,80 @@ func TestAppendAndLoadChatHistory_WithToolCalls(t *testing.T) {
 	}
 }
 
+func TestLoadMemoryEntries_ToolMerge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	// Write assistant with tool_calls, then tool result, then assistant with content.
+	assistantMsg := providers.ChatMessage{
+		Role:    "assistant",
+		Content: "",
+		ToolCalls: []providers.ToolCall{
+			{ID: "call_123", Name: "grep", Arguments: `{"pattern":"foo"}`},
+		},
+	}
+	if err := appendChatMessage(path, assistantMsg); err != nil {
+		t.Fatalf("append assistant: %v", err)
+	}
+	toolMsg := providers.ChatMessage{
+		Role:       "tool",
+		Content:    `{"matches":null,"total":0}`,
+		ToolCallID: "call_123",
+		Name:       "grep",
+	}
+	if err := appendChatMessage(path, toolMsg); err != nil {
+		t.Fatalf("append tool: %v", err)
+	}
+	finalMsg := providers.ChatMessage{
+		Role:    "assistant",
+		Content: "No matches found.",
+	}
+	if err := appendChatMessage(path, finalMsg); err != nil {
+		t.Fatalf("append final assistant: %v", err)
+	}
+
+	entries, err := loadMemoryEntries(path)
+	if err != nil {
+		t.Fatalf("load entries: %v", err)
+	}
+
+	// Should have 2 entries: assistant (with merged tool call) + assistant (with content).
+	// Tool entry should NOT appear as a separate entry.
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (tool merged), got %d", len(entries))
+	}
+
+	// First assistant should have the tool call with result merged in.
+	if len(entries[0].ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(entries[0].ToolCalls))
+	}
+	tc := entries[0].ToolCalls[0]
+	if tc.Name != "grep" {
+		t.Fatalf("expected tool name 'grep', got %q", tc.Name)
+	}
+	if tc.Args != `{"pattern":"foo"}` {
+		t.Fatalf("expected args, got %q", tc.Args)
+	}
+	if tc.Result != `{"matches":null,"total":0}` {
+		t.Fatalf("expected result, got %q", tc.Result)
+	}
+	if tc.Status != ToolCallDone {
+		t.Fatalf("expected status done, got %q", tc.Status)
+	}
+
+	// Second assistant should have content.
+	if entries[1].Content != "No matches found." {
+		t.Fatalf("expected content, got %q", entries[1].Content)
+	}
+
+	// No entry should have role TOOL.
+	for _, e := range entries {
+		if e.Role == "TOOL" {
+			t.Fatal("TOOL entry should not exist as separate entry")
+		}
+	}
+}
+
 func TestLoadChatHistory_BackwardCompatible(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "compat.jsonl")

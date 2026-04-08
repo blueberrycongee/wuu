@@ -1008,6 +1008,10 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		b.WriteString(welcomeScreen(m.viewport.Width, m.provider, m.modelName, m.sessionID))
 	} else {
 		for i, entry := range m.entries {
+			// Skip tool entries — they are merged into assistant entries.
+			if entry.Role == "TOOL" {
+				continue
+			}
 			if i > 0 {
 				b.WriteString("\n\n")
 			}
