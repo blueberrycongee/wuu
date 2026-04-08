@@ -89,6 +89,11 @@ type queuedMessage struct {
 	Images []providers.InputImage
 }
 
+type pendingTurnResult struct {
+	baseHistory []providers.ChatMessage
+	newMsgs     []providers.ChatMessage
+}
+
 // Model implements the terminal UI state machine.
 type Model struct {
 	provider      string
@@ -114,9 +119,9 @@ type Model struct {
 	width  int
 	height int
 
-	entries        []transcriptEntry
-	chatHistory    []providers.ChatMessage
-	pendingNewMsgs *[]providers.ChatMessage // shared with goroutine for returning new messages
+	entries      []transcriptEntry
+	chatHistory  []providers.ChatMessage
+	pendingTurn *pendingTurnResult // shared with goroutine for returning turn result
 
 	pendingRequest bool
 	streaming      bool
@@ -319,13 +324,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusLine = "ready"
 		m.cacheRenderedEntries()
 
-		// Merge new messages from the completed turn into chatHistory and persist.
-		if m.pendingNewMsgs != nil && len(*m.pendingNewMsgs) > 0 {
-			for _, msg := range *m.pendingNewMsgs {
+		// Merge turn result into chatHistory and persist.
+		if m.pendingTurn != nil {
+			if len(m.pendingTurn.baseHistory) > 0 {
+				base := make([]providers.ChatMessage, len(m.pendingTurn.baseHistory))
+				copy(base, m.pendingTurn.baseHistory)
+				m.chatHistory = base
+			}
+			for _, msg := range m.pendingTurn.newMsgs {
 				m.chatHistory = append(m.chatHistory, msg)
 				_ = appendChatMessage(m.memoryPath, msg)
 			}
-			m.pendingNewMsgs = nil
+			m.pendingTurn = nil
 		}
 
 		m.refreshViewport(true)
@@ -494,6 +504,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.streaming = false
 			m.pendingRequest = false
+			m.pendingTurn = nil
 			// Show accumulated content so far (if any) before the error.
 			if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
 				content := strings.TrimSpace(m.entries[m.streamTarget].Content)
@@ -830,21 +841,6 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 	m.chatHistory = append(m.chatHistory, chatMsg)
 	_ = appendChatMessage(m.memoryPath, chatMsg)
 
-	// Compact history if approaching context limit.
-	if m.maxContextTokens > 0 && compact.ShouldCompact(m.chatHistory, m.maxContextTokens) {
-		if m.streamRunner != nil {
-			compacted, compactErr := compact.Compact(
-				context.Background(),
-				m.chatHistory,
-				m.streamRunner.Client,
-				m.streamRunner.Model,
-			)
-			if compactErr == nil {
-				m.chatHistory = compacted
-			}
-		}
-	}
-
 	m.pendingRequest = true
 	m.streaming = true
 	m.streamTarget = m.appendEntry("assistant", "")
@@ -866,9 +862,9 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 		history := make([]providers.ChatMessage, len(m.chatHistory))
 		copy(history, m.chatHistory)
 
-		// Shared pointer for goroutine to return new messages.
-		newMsgsHolder := &[]providers.ChatMessage{}
-		m.pendingNewMsgs = newMsgsHolder
+		// Shared pointer for goroutine to return turn result.
+		result := &pendingTurnResult{}
+		m.pendingTurn = result
 
 		go func() {
 			defer close(ch)
@@ -878,8 +874,18 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 				case <-ctx.Done():
 				}
 			}
+
+			history = maybeCompactHistory(
+				ctx,
+				history,
+				m.maxContextTokens,
+				runner.Client,
+				runner.Model,
+			)
+			result.baseHistory = history // safe: written before close(ch)
+
 			_, newMsgs, err := runner.RunWithCallback(ctx, history, onEvent)
-			*newMsgsHolder = newMsgs // safe: written before close(ch)
+			result.newMsgs = newMsgs // safe: written before close(ch)
 			if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
 				select {
 				case ch <- providers.StreamEvent{Type: providers.EventError, Error: err}:
@@ -909,6 +915,27 @@ func (m Model) newRequestContext() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), m.requestTimeout)
 	}
 	return context.WithCancel(context.Background())
+}
+
+func maybeCompactHistory(
+	ctx context.Context,
+	history []providers.ChatMessage,
+	maxContextTokens int,
+	client providers.Client,
+	model string,
+) []providers.ChatMessage {
+	if client == nil || maxContextTokens <= 0 {
+		return history
+	}
+	if !compact.ShouldCompact(history, maxContextTokens) {
+		return history
+	}
+
+	compacted, err := compact.Compact(ctx, history, client, model)
+	if err != nil {
+		return history
+	}
+	return compacted
 }
 
 func waitStreamEvent(ch <-chan providers.StreamEvent) tea.Cmd {

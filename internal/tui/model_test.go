@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -531,5 +533,71 @@ func TestDrainQueuePrioritizesPendingSteers(t *testing.T) {
 	}
 	if last.Content != "first steer\nsecond steer" {
 		t.Fatalf("unexpected merged steer content: %q", last.Content)
+	}
+}
+
+type blockingCompactStreamClient struct {
+	compactSleep time.Duration
+	chatCalls    atomic.Int32
+}
+
+func (c *blockingCompactStreamClient) Chat(_ context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
+	c.chatCalls.Add(1)
+	time.Sleep(c.compactSleep)
+	return providers.ChatResponse{Content: "summary"}, nil
+}
+
+func (c *blockingCompactStreamClient) StreamChat(_ context.Context, _ providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	ch := make(chan providers.StreamEvent, 2)
+	ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "ok"}
+	ch <- providers.StreamEvent{Type: providers.EventDone}
+	close(ch)
+	return ch, nil
+}
+
+func TestSendMessage_DoesNotBlockOnCompaction(t *testing.T) {
+	client := &blockingCompactStreamClient{compactSleep: 500 * time.Millisecond}
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		StreamRunner: &agent.StreamRunner{
+			Client: client,
+			Model:  "test-model",
+		},
+	})
+	m.maxContextTokens = 10 // force compaction path
+	m.chatHistory = []providers.ChatMessage{
+		{Role: "user", Content: strings.Repeat("seed ", 40)},
+		{Role: "assistant", Content: strings.Repeat("seed ", 40)},
+		{Role: "user", Content: strings.Repeat("seed ", 40)},
+		{Role: "assistant", Content: strings.Repeat("seed ", 40)},
+	}
+
+	start := time.Now()
+	nextModel, cmd := m.sendMessage(queuedMessage{
+		Text: strings.Repeat("long message ", 20),
+	})
+	elapsed := time.Since(start)
+
+	if cmd == nil {
+		t.Fatal("expected async command from sendMessage")
+	}
+	if elapsed > 150*time.Millisecond {
+		t.Fatalf("sendMessage blocked too long: %s", elapsed)
+	}
+
+	next := nextModel.(Model)
+	if !next.pendingRequest {
+		t.Fatal("expected pendingRequest=true")
+	}
+
+	// Let background goroutine run and trigger compaction call.
+	deadline := time.Now().Add(2 * time.Second)
+	for client.chatCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := client.chatCalls.Load(); got == 0 {
+		t.Fatal("expected compaction chat call in background")
 	}
 }
