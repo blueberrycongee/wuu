@@ -100,11 +100,8 @@ func TestRender_ThematicBreak(t *testing.T) {
 	if !strings.Contains(got, "Before") || !strings.Contains(got, "After") {
 		t.Fatalf("expected content around thematic break, got %q", got)
 	}
-	if !strings.Contains(got, strings.Repeat("─", thematicBreakMaxWidth)) {
-		t.Fatalf("expected horizontal rule, got %q", got)
-	}
-	if strings.Contains(got, strings.Repeat("─", thematicBreakMaxWidth+1)) {
-		t.Fatalf("expected capped horizontal rule length, got %q", got)
+	if !strings.Contains(got, strings.Repeat("─", 80)) {
+		t.Fatalf("expected full-width horizontal rule, got %q", got)
 	}
 }
 
