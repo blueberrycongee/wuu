@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 )
 
 // Config defines runtime dependencies for the interactive UI.
@@ -24,6 +25,7 @@ type Config struct {
 	RequestTimeout   time.Duration
 	RunPrompt        func(ctx context.Context, prompt string) (string, error)
 	StreamRunner     *agent.StreamRunner // optional, used when available
+	HookDispatcher   *hooks.Dispatcher   // optional, dispatches lifecycle hooks
 }
 
 // Run starts the interactive terminal UI.

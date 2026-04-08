@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/markdown"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -106,8 +107,9 @@ type Model struct {
 	sessionID     string
 	sessionDir    string
 	runPrompt     func(ctx context.Context, prompt string) (string, error)
-	streamRunner  *agent.StreamRunner
-	streamCh      chan providers.StreamEvent
+	streamRunner   *agent.StreamRunner
+	hookDispatcher *hooks.Dispatcher
+	streamCh       chan providers.StreamEvent
 
 	maxContextTokens int
 	requestTimeout   time.Duration
@@ -197,6 +199,7 @@ func NewModel(cfg Config) Model {
 		sessionDir:       cfg.SessionDir,
 		runPrompt:        cfg.RunPrompt,
 		streamRunner:     cfg.StreamRunner,
+		hookDispatcher:   cfg.HookDispatcher,
 		maxContextTokens: cfg.MaxContextTokens,
 		requestTimeout:   cfg.RequestTimeout,
 		viewport:         vp,
