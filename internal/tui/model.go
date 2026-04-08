@@ -313,7 +313,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clock = msg.now.Format("15:04:05")
 		m.spinnerTick++
 		if m.streaming || m.pendingRequest || m.statusLine == "thinking" {
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 		}
 		return m, tickCmd()
 
@@ -343,7 +343,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingTurn = nil
 		}
 
-		m.refreshViewport(true)
+		m.refreshViewport(false)
 		return m, func() tea.Msg { return queueDrainMsg{} }
 
 	case ctrlCResetMsg:
@@ -385,7 +385,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		end := min(m.streamCursor+streamChunkSize, len(m.streamRunes))
 		m.entries[m.streamTarget].Content += string(m.streamRunes[m.streamCursor:end])
 		m.streamCursor = end
-		m.refreshViewport(true)
+		m.refreshViewport(false)
 		if m.streamCursor >= len(m.streamRunes) {
 			m.finishStream()
 			return m, func() tea.Msg { return queueDrainMsg{} }
@@ -419,7 +419,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				e.rendered += strings.Join(newLines, "\n")
 				e.renderedLen = len(e.Content)
 			}
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventToolUseStart:
@@ -439,7 +439,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Status: ToolCallRunning,
 			})
 			m.statusLine = fmt.Sprintf("tool: %s", toolName)
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventToolUseEnd:
@@ -459,7 +459,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.statusLine = "streaming"
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventDone:
@@ -488,7 +488,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cacheEntryRendered(m.streamTarget)
 				}
 			}
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventReconnect:
@@ -497,7 +497,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg = "Reconnecting..."
 			}
 			m.statusLine = msg
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventError:
@@ -542,7 +542,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			e.ThinkingContent += msg.event.Content
 			m.statusLine = "thinking"
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventThinkingDone:
@@ -554,7 +554,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.statusLine = "streaming"
-			m.refreshViewport(true)
+			m.refreshViewport(false)
 			return m, waitStreamEvent(m.streamCh)
 
 		default:
@@ -778,7 +778,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	m.showJump = !m.viewport.AtBottom()
+	m.autoFollow = m.viewport.AtBottom()
+	m.showJump = !m.autoFollow
 
 	return m, tea.Batch(cmds...)
 }
@@ -1008,7 +1009,7 @@ func (m *Model) finishStream() {
 	}
 	m.streamTarget = -1
 	m.statusLine = fmt.Sprintf("response in %s", m.streamElapsed.Truncate(10*time.Millisecond))
-	m.refreshViewport(true)
+	m.refreshViewport(false)
 }
 
 func (m *Model) renderMarkdown(content string) (string, error) {
