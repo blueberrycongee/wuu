@@ -1,6 +1,8 @@
 .PHONY: build install test vet clean release-dry snapshot
 
-VERSION ?= dev
+VERSION_FILE := VERSION
+BASE_VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "0.1.0")
+VERSION ?= v$(BASE_VERSION)-dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w \

@@ -42,7 +42,7 @@ func TestInfo_FallsBackToBuildSettings(t *testing.T) {
 	}
 
 	got := info.String()
-	want := "wuu dev (abcdef1-dirty 2026-04-08T12:00:00Z)"
+	want := "wuu v0.1.0-dev (abcdef1-dirty 2026-04-08T12:00:00Z)"
 	if got != want {
 		t.Fatalf("unexpected String output: got %q want %q", got, want)
 	}
@@ -56,7 +56,7 @@ func TestInfo_ReleaseFormatting(t *testing.T) {
 		readBuildInfo = origRead
 	})
 
-	Version = "v1.2.3"
+	Version = "1.2.3"
 	Commit = "1234567"
 	Date = "2026-04-08T00:00:00Z"
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
@@ -77,5 +77,25 @@ func TestInfo_ReleaseFormatting(t *testing.T) {
 		if !strings.Contains(long, needle) {
 			t.Fatalf("LongString missing %q: %q", needle, long)
 		}
+	}
+}
+
+func TestInfo_BuiltFromSourceFallback(t *testing.T) {
+	origVersion, origCommit, origDate := Version, Commit, Date
+	origRead := readBuildInfo
+	t.Cleanup(func() {
+		Version, Commit, Date = origVersion, origCommit, origDate
+		readBuildInfo = origRead
+	})
+
+	Version = ""
+	Commit = "none"
+	Date = "unknown"
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return nil, false
+	}
+
+	if got, want := String(), "wuu v0.1.0-dev (built from source)"; got != want {
+		t.Fatalf("unexpected fallback output: got %q want %q", got, want)
 	}
 }
