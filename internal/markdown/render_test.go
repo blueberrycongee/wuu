@@ -147,3 +147,39 @@ func TestRender_EmptyInput(t *testing.T) {
 		t.Fatalf("expected empty output for empty input, got %q", got)
 	}
 }
+
+func TestRender_StrikethroughDisabled(t *testing.T) {
+	input := "This costs ~100 dollars"
+	got := Render(input, 80, DefaultStyles())
+	if !strings.Contains(got, "~100") {
+		t.Fatalf("tilde should be preserved literally, got %q", got)
+	}
+}
+
+func TestRender_Table(t *testing.T) {
+	input := "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |"
+	got := Render(input, 80, DefaultStyles())
+	if !strings.Contains(got, "┌") {
+		t.Fatalf("expected box-drawing top border, got %q", got)
+	}
+	if !strings.Contains(got, "│") {
+		t.Fatalf("expected box-drawing vertical border, got %q", got)
+	}
+	if !strings.Contains(got, "├") {
+		t.Fatalf("expected box-drawing separator, got %q", got)
+	}
+	if !strings.Contains(got, "└") {
+		t.Fatalf("expected box-drawing bottom border, got %q", got)
+	}
+	if !strings.Contains(got, "Alice") || !strings.Contains(got, "Bob") {
+		t.Fatalf("expected table cell content, got %q", got)
+	}
+}
+
+func TestRender_TableAlignment(t *testing.T) {
+	input := "| Left | Center | Right |\n|:-----|:------:|------:|\n| a | b | c |"
+	got := Render(input, 80, DefaultStyles())
+	if !strings.Contains(got, "a") || !strings.Contains(got, "b") || !strings.Contains(got, "c") {
+		t.Fatalf("expected aligned cell content, got %q", got)
+	}
+}

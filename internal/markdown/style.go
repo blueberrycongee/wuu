@@ -5,14 +5,13 @@ import "github.com/charmbracelet/lipgloss"
 // Styles defines the lipgloss styles for each markdown node type.
 type Styles struct {
 	H1, H2, H3, H4, H5, H6 lipgloss.Style
-	Emphasis               lipgloss.Style
-	Strong                 lipgloss.Style
-	Strikethrough          lipgloss.Style
-	CodeSpan               lipgloss.Style
-	Blockquote             lipgloss.Style
-	Link                   lipgloss.Style
-	OrderedListMarker      lipgloss.Style
-	UnorderedListMarker    lipgloss.Style
+	Emphasis            lipgloss.Style
+	Strong              lipgloss.Style
+	CodeSpan            lipgloss.Style
+	Blockquote          lipgloss.Style
+	Link                lipgloss.Style
+	OrderedListMarker   lipgloss.Style
+	UnorderedListMarker lipgloss.Style
 }
 
 // DefaultStyles returns the default style palette aligned with the wuu theme.
@@ -31,7 +30,6 @@ func DefaultStyles() Styles {
 		H6:                  lipgloss.NewStyle().Italic(true),
 		Emphasis:            lipgloss.NewStyle().Italic(true),
 		Strong:              lipgloss.NewStyle().Bold(true),
-		Strikethrough:       lipgloss.NewStyle().Strikethrough(true),
 		CodeSpan:            lipgloss.NewStyle().Foreground(toolBorder),
 		Blockquote:          lipgloss.NewStyle().Foreground(success),
 		Link:                lipgloss.NewStyle().Foreground(toolBorder).Underline(true),
