@@ -58,6 +58,10 @@ func ScanSessions(sessDir string, maxSessions int) ([]SessionMeta, error) {
 		metas = append(metas, meta)
 	}
 
+	// Deduplicate fork/branch sessions: group by base ID, keep the one
+	// with the most user messages (tie-break by duration).
+	metas = deduplicateSessions(metas)
+
 	sort.Slice(metas, func(i, j int) bool {
 		return metas[i].CreatedAt.After(metas[j].CreatedAt)
 	})
@@ -66,6 +70,39 @@ func ScanSessions(sessDir string, maxSessions int) ([]SessionMeta, error) {
 		metas = metas[:maxSessions]
 	}
 	return metas, nil
+}
+
+// deduplicateSessions groups sessions by their base ID (stripping .fork-*
+// suffixes) and keeps only the session with the most user messages per group.
+func deduplicateSessions(metas []SessionMeta) []SessionMeta {
+	groups := make(map[string]SessionMeta)
+	for _, m := range metas {
+		baseID := baseSessionID(m.ID)
+		existing, ok := groups[baseID]
+		if !ok {
+			groups[baseID] = m
+			continue
+		}
+		// Keep the one with more user messages; tie-break by duration.
+		if m.UserMessages > existing.UserMessages ||
+			(m.UserMessages == existing.UserMessages && m.Duration > existing.Duration) {
+			groups[baseID] = m
+		}
+	}
+	result := make([]SessionMeta, 0, len(groups))
+	for _, m := range groups {
+		result = append(result, m)
+	}
+	return result
+}
+
+// baseSessionID strips fork suffixes from session IDs.
+// "20260409-084018-b774.fork-20260409-150000" → "20260409-084018-b774"
+func baseSessionID(id string) string {
+	if idx := strings.Index(id, ".fork-"); idx >= 0 {
+		return id[:idx]
+	}
+	return id
 }
 
 // scanOneSession reads a single .jsonl session file and extracts metadata.
