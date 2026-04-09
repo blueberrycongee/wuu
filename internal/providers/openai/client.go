@@ -19,18 +19,20 @@ const defaultTimeout = 120 * time.Second
 
 // ClientConfig configures an OpenAI-compatible chat completions endpoint.
 type ClientConfig struct {
-	BaseURL    string
-	APIKey     string
-	Headers    map[string]string
-	HTTPClient *http.Client
+	BaseURL     string
+	APIKey      string
+	Headers     map[string]string
+	HTTPClient  *http.Client
+	RetryConfig *providers.RetryConfig
 }
 
 // Client sends tool-enabled chat requests to OpenAI-compatible APIs.
 type Client struct {
-	baseURL    string
-	apiKey     string
-	headers    map[string]string
-	httpClient *http.Client
+	baseURL     string
+	apiKey      string
+	headers     map[string]string
+	httpClient  *http.Client
+	retryConfig providers.RetryConfig
 }
 
 // New creates an OpenAI-compatible client.
@@ -46,12 +48,18 @@ func New(cfg ClientConfig) (*Client, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
+	rc := providers.DefaultRetryConfig()
+	if cfg.RetryConfig != nil {
+		rc = *cfg.RetryConfig
+	}
+	rc = providers.NormalizeRetryConfig(rc)
 
 	return &Client{
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:     cfg.APIKey,
-		headers:    cloneHeaders(cfg.Headers),
-		httpClient: hc,
+		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:      cfg.APIKey,
+		headers:     cloneHeaders(cfg.Headers),
+		httpClient:  hc,
+		retryConfig: rc,
 	}, nil
 }
 
@@ -93,20 +101,9 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		return providers.ChatResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpResp, err := c.doChatCompletionsRequest(ctx, c.httpClient, body, false)
 	if err != nil {
-		return providers.ChatResponse{}, fmt.Errorf("build request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	for k, v := range c.headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return providers.ChatResponse{}, fmt.Errorf("request failed: %w", err)
+		return providers.ChatResponse{}, err
 	}
 	defer httpResp.Body.Close()
 
@@ -194,37 +191,60 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	for k, v := range c.headers {
-		httpReq.Header.Set(k, v)
-	}
-
 	// Use a separate client without short timeout for long-lived SSE connections.
 	streamClient := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := streamClient.Do(httpReq)
+	resp, err := c.doChatCompletionsRequest(ctx, streamClient, body, true)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
-		return nil, &providers.HTTPError{
-			StatusCode: resp.StatusCode,
-			Body:       fmt.Sprintf("%s: %s", resp.Status, string(snippet)),
-			RetryAfter: providers.ParseRetryAfter(resp),
-		}
+		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
 	go c.readSSE(resp, ch)
 	return ch, nil
+}
+
+func (c *Client) doChatCompletionsRequest(
+	ctx context.Context,
+	httpClient *http.Client,
+	body []byte,
+	acceptStream bool,
+) (*http.Response, error) {
+	var httpResp *http.Response
+	err := providers.WithRetry(ctx, c.retryConfig, func() error {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("build request: %w", err)
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		if acceptStream {
+			httpReq.Header.Set("Accept", "text/event-stream")
+		}
+		for k, v := range c.headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		resp, err := httpClient.Do(httpReq)
+		if err != nil {
+			return fmt.Errorf("request failed: %w", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+			_ = resp.Body.Close()
+			return &providers.HTTPError{
+				StatusCode: resp.StatusCode,
+				Body:       fmt.Sprintf("%s: %s", resp.Status, string(snippet)),
+				RetryAfter: providers.ParseRetryAfter(resp),
+			}
+		}
+
+		httpResp = resp
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return httpResp, nil
 }
 
 func (c *Client) readSSE(resp *http.Response, ch chan<- providers.StreamEvent) {

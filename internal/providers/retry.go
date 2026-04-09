@@ -18,6 +18,23 @@ type RetryConfig struct {
 	MaxDelay     time.Duration
 }
 
+// NormalizeRetryConfig clamps invalid values and fills reasonable defaults.
+func NormalizeRetryConfig(cfg RetryConfig) RetryConfig {
+	if cfg.MaxRetries < 0 {
+		cfg.MaxRetries = 0
+	}
+	if cfg.InitialDelay <= 0 {
+		cfg.InitialDelay = time.Second
+	}
+	if cfg.MaxDelay <= 0 {
+		cfg.MaxDelay = 30 * time.Second
+	}
+	if cfg.InitialDelay > cfg.MaxDelay {
+		cfg.InitialDelay = cfg.MaxDelay
+	}
+	return cfg
+}
+
 // DefaultRetryConfig returns sensible defaults.
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{

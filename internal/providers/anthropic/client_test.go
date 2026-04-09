@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -157,6 +159,87 @@ func TestChat_SendsImageBlocks(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("chat error: %v", err)
+	}
+}
+
+func TestChat_RetriesTransientServerError(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"upstream unavailable"}`))
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	rc := providers.RetryConfig{
+		MaxRetries:   2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     2 * time.Millisecond,
+	}
+	client, err := New(ClientConfig{
+		BaseURL:     server.URL,
+		APIKey:      "test-key",
+		RetryConfig: &rc,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	resp, err := client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hi"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Fatalf("unexpected content: %q", resp.Content)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("expected 2 attempts, got %d", got)
+	}
+}
+
+func TestChat_DoesNotRetryAuthError(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer server.Close()
+
+	rc := providers.RetryConfig{
+		MaxRetries:   2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     2 * time.Millisecond,
+	}
+	client, err := New(ClientConfig{
+		BaseURL:     server.URL,
+		APIKey:      "test-key",
+		RetryConfig: &rc,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hi"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected auth error")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("expected 1 attempt for auth failure, got %d", got)
 	}
 }
 

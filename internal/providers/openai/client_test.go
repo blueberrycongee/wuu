@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -175,6 +177,87 @@ func TestChat_HandlesProviderError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected provider error")
+	}
+}
+
+func TestChat_RetriesTransientServerError(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"upstream unavailable"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	rc := providers.RetryConfig{
+		MaxRetries:   2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     2 * time.Millisecond,
+	}
+	client, err := New(ClientConfig{
+		BaseURL:     server.URL,
+		APIKey:      "test-key",
+		RetryConfig: &rc,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	resp, err := client.Chat(context.Background(), providers.ChatRequest{
+		Model: "gpt-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Fatalf("unexpected response content: %q", resp.Content)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("expected 2 attempts, got %d", got)
+	}
+}
+
+func TestChat_DoesNotRetryAuthError(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer server.Close()
+
+	rc := providers.RetryConfig{
+		MaxRetries:   2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     2 * time.Millisecond,
+	}
+	client, err := New(ClientConfig{
+		BaseURL:     server.URL,
+		APIKey:      "test-key",
+		RetryConfig: &rc,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "gpt-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected auth error")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("expected 1 attempt for auth failure, got %d", got)
 	}
 }
 
