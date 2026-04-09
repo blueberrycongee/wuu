@@ -349,6 +349,11 @@ func cmdInsight(_ string, m *Model) string {
 	if m.insightRunning {
 		return "insight: already running"
 	}
+	// Insight should run in a fresh session to avoid polluting conversation
+	// context with the lengthy report output.
+	if len(m.entries) > 0 {
+		return "insight: please start a new session first (/new), then run /insight.\n  The report is large and would pollute your current conversation context."
+	}
 	if m.streaming || m.pendingRequest {
 		return "insight: please wait for the current response to finish"
 	}
