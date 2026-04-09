@@ -197,9 +197,10 @@ type Model struct {
 	scrollbarHoverRow    int
 
 	// Insight generation state.
-	insightRunning bool
-	insightCh      chan insight.ProgressEvent
-	cancelInsight  context.CancelFunc
+	insightRunning     bool
+	insightCh          chan insight.ProgressEvent
+	cancelInsight      context.CancelFunc
+	insightProgressIdx int // index of the live progress entry in entries, -1 if none
 }
 
 // NewModel builds the initial UI model.
@@ -234,9 +235,10 @@ func NewModel(cfg Config) Model {
 		autoFollow:        true,
 		clock:             time.Now().Format("15:04:05"),
 		statusLine:        "ready",
-		streamTarget:      -1,
-		historyIndex:      -1,
-		scrollbarHoverRow: -1,
+		streamTarget:       -1,
+		historyIndex:       -1,
+		scrollbarHoverRow:  -1,
+		insightProgressIdx: -1,
 	}
 
 	// Session isolation: create or resume session.
@@ -367,6 +369,25 @@ func waitInsightEvent(ch <-chan insight.ProgressEvent) tea.Cmd {
 	}
 }
 
+// progressBar renders a text progress bar like [████░░░░░░] 45%
+func progressBar(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 1 {
+		pct = 1
+	}
+	filled := int(pct * float64(width))
+	if filled > width {
+		filled = width
+	}
+	empty := width - filled
+	return fmt.Sprintf("[%s%s] %2d%%",
+		strings.Repeat("█", filled),
+		strings.Repeat("░", empty),
+		int(pct*100))
+}
+
 // Update handles events.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -396,21 +417,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.event.Phase {
 		case "done":
 			m.insightRunning = false
-			if msg.event.Report != nil {
+			// Replace the progress entry with the final report.
+			if m.insightProgressIdx >= 0 && m.insightProgressIdx < len(m.entries) {
+				m.entries[m.insightProgressIdx].Content = insight.FormatReport(msg.event.Report)
+			} else if msg.event.Report != nil {
 				m.appendEntry("assistant", insight.FormatReport(msg.event.Report))
 			}
+			m.insightProgressIdx = -1
 			m.statusLine = "ready"
 			m.refreshViewport(true)
 			return m, nil
 		case "error":
 			m.insightRunning = false
-			m.appendEntry("system", fmt.Sprintf("insight failed: %v", msg.event.Err))
+			if m.insightProgressIdx >= 0 && m.insightProgressIdx < len(m.entries) {
+				m.entries[m.insightProgressIdx].Content += fmt.Sprintf("\n\n**Error:** %v", msg.event.Err)
+			} else {
+				m.appendEntry("system", fmt.Sprintf("insight failed: %v", msg.event.Err))
+			}
+			m.insightProgressIdx = -1
 			m.statusLine = "ready"
 			m.refreshViewport(true)
 			return m, nil
 		default:
+			// Update the live progress entry in the chat.
+			pctBar := progressBar(msg.event.Pct, 20)
+			line := fmt.Sprintf("%s %s", pctBar, msg.event.Detail)
+			if m.insightProgressIdx < 0 {
+				m.insightProgressIdx = m.appendEntry("assistant", line)
+			} else if m.insightProgressIdx < len(m.entries) {
+				m.entries[m.insightProgressIdx].Content += "\n" + line
+				m.entries[m.insightProgressIdx].rendered = ""
+				m.entries[m.insightProgressIdx].renderedLen = 0
+			}
 			m.statusLine = fmt.Sprintf("insight: %s", msg.event.Detail)
-			m.refreshViewport(false)
+			m.refreshViewport(true)
 			return m, waitInsightEvent(m.insightCh)
 		}
 

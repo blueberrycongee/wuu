@@ -18,7 +18,7 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 	cacheDir := CacheDir(cfg.WorkspaceRoot)
 
 	// Phase 1: Scan sessions.
-	send(progress, "scanning", "Scanning sessions...", 0.05)
+	send(progress, "scanning", "Scanning session files...", 0.05)
 
 	metas, err := ScanSessions(cfg.SessionDir, cfg.MaxSessions)
 	if err != nil {
@@ -30,7 +30,13 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 		return
 	}
 
-	send(progress, "scanning", fmt.Sprintf("Found %d sessions", len(metas)), 0.10)
+	// Compute quick stats for the progress message.
+	totalMsgs := 0
+	for _, m := range metas {
+		totalMsgs += m.UserMessages + m.AssistantMsgs
+	}
+	send(progress, "scanning",
+		fmt.Sprintf("Found %d sessions (%d messages total)", len(metas), totalMsgs), 0.10)
 
 	// Cache session metadata.
 	for _, m := range metas {
@@ -48,6 +54,12 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 		} else {
 			uncached++
 		}
+	}
+
+	cachedCount := len(facets)
+	if cachedCount > 0 {
+		send(progress, "extracting",
+			fmt.Sprintf("Loaded %d cached facets, %d remaining", cachedCount, uncached), 0.12)
 	}
 
 	if uncached > 0 {
@@ -70,9 +82,13 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 				break
 			}
 
-			pct := 0.10 + 0.60*float64(extracted)/float64(uncached)
+			pct := 0.12 + 0.55*float64(extracted)/float64(uncached)
+			preview := truncateStr(m.FirstUserMsg, 40)
+			if preview == "" {
+				preview = m.ID
+			}
 			send(progress, "extracting",
-				fmt.Sprintf("Extracting facets (%d/%d)...", extracted+1, uncached), pct)
+				fmt.Sprintf("Analyzing session %d/%d: \"%s\"", extracted+1, uncached, preview), pct)
 
 			transcript, err := FormatTranscript(cfg.SessionDir, m.ID)
 			if err != nil {
@@ -82,6 +98,8 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 
 			facet, err := ExtractFacet(ctx, cfg.Client, cfg.Model, m.ID, transcript)
 			if err != nil {
+				send(progress, "extracting",
+					fmt.Sprintf("Session %d/%d: extraction failed, skipping", extracted+1, uncached), pct)
 				extracted++
 				continue // non-fatal
 			}
@@ -93,13 +111,19 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 	}
 
 	send(progress, "extracting",
-		fmt.Sprintf("Facets: %d sessions analyzed", len(facets)), 0.70)
+		fmt.Sprintf("Analysis complete: %d sessions processed", len(facets)), 0.70)
 
 	// Phase 3: Aggregate data.
+	send(progress, "generating", "Aggregating statistics...", 0.72)
 	agg := Aggregate(metas, facets)
 
 	// Phase 4: Generate insights via LLM.
-	send(progress, "generating", "Generating insights...", 0.75)
+	sectionNames := make([]string, len(insightSections))
+	for i, s := range insightSections {
+		sectionNames[i] = s.Title
+	}
+	send(progress, "generating",
+		fmt.Sprintf("Generating %d insight sections in parallel...", len(insightSections)), 0.75)
 
 	sections, glance, err := GenerateInsights(ctx, cfg.Client, cfg.Model, agg, facets)
 	if err != nil {
@@ -107,6 +131,8 @@ func Run(ctx context.Context, cfg RunConfig, progress chan<- ProgressEvent) {
 		return
 	}
 
+	send(progress, "synthesizing", "Building At a Glance summary...", 0.92)
+	// Small delay to let the user see the message before it switches to HTML.
 	send(progress, "synthesizing", "Generating HTML report...", 0.95)
 
 	report := &Report{
