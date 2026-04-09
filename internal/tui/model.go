@@ -196,6 +196,10 @@ type Model struct {
 	scrollbarHoverActive bool
 	scrollbarHoverRow    int
 
+	// Token usage accumulator for current turn.
+	turnInputTokens  int
+	turnOutputTokens int
+
 	// Insight generation state.
 	insightRunning     bool
 	insightCh          chan insight.ProgressEvent
@@ -492,6 +496,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingTurn = nil
 		}
 
+		// Persist token usage for this turn.
+		if m.turnInputTokens > 0 || m.turnOutputTokens > 0 {
+			_ = appendTokenUsage(m.memoryPath, m.turnInputTokens, m.turnOutputTokens)
+			m.turnInputTokens = 0
+			m.turnOutputTokens = 0
+		}
+
 		// Dispatch Stop hook (fire-and-forget).
 		if m.hookDispatcher != nil && m.hookDispatcher.HasHooks(hooks.Stop) {
 			go m.hookDispatcher.Dispatch(context.Background(), hooks.Stop, &hooks.Input{
@@ -617,6 +628,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitStreamEvent(m.streamCh)
 
 		case providers.EventDone:
+			// Accumulate token usage from this stream chunk.
+			if msg.event.Usage != nil {
+				m.turnInputTokens += msg.event.Usage.InputTokens
+				m.turnOutputTokens += msg.event.Usage.OutputTokens
+			}
 			// One SSE stream finished. The runner may continue with tool
 			// execution and start another stream, so keep listening.
 			if m.streamCollector != nil {

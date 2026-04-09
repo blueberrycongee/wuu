@@ -24,13 +24,15 @@ type imageEntry struct {
 }
 
 type memoryEntry struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content"`
-	Images     []imageEntry    `json:"images,omitempty"`
-	At         time.Time       `json:"at"`
-	ToolCalls  []toolCallEntry `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	Role         string          `json:"role"`
+	Content      string          `json:"content"`
+	Images       []imageEntry    `json:"images,omitempty"`
+	At           time.Time       `json:"at"`
+	ToolCalls    []toolCallEntry `json:"tool_calls,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	InputTokens  int             `json:"input_tokens,omitempty"`
+	OutputTokens int             `json:"output_tokens,omitempty"`
 }
 
 func loadMemoryEntries(path string) ([]transcriptEntry, error) {
@@ -204,6 +206,30 @@ func appendChatMessage(path string, msg providers.ChatMessage) error {
 		return fmt.Errorf("write chat message: %w", err)
 	}
 	return nil
+}
+
+// appendTokenUsage writes a meta record with token usage for the turn.
+func appendTokenUsage(path string, inputTokens, outputTokens int) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create memory directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open memory file for append: %w", err)
+	}
+	defer file.Close()
+
+	rec := memoryEntry{
+		Role:         "meta",
+		Content:      "token_usage",
+		At:           time.Now().UTC(),
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+	}
+	return json.NewEncoder(file).Encode(rec)
 }
 
 func loadChatHistory(path string) ([]providers.ChatMessage, error) {

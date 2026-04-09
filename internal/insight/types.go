@@ -16,6 +16,8 @@ type SessionMeta struct {
 	ToolCounts    map[string]int    `json:"tool_counts"`
 	Languages     map[string]int    `json:"languages"`
 	EstTokens     int               `json:"est_tokens"`
+	InputTokens   int               `json:"input_tokens"`
+	OutputTokens  int               `json:"output_tokens"`
 	FirstUserMsg  string            `json:"first_user_msg"`
 	MessageHours  []int             `json:"message_hours"`
 	LinesAdded    int               `json:"lines_added"`
@@ -48,6 +50,8 @@ type AggregatedData struct {
 	TotalMessages   int               `json:"total_messages"`
 	TotalDurationH  float64           `json:"total_duration_hours"`
 	TotalEstTokens  int               `json:"total_est_tokens"`
+	TotalInputTokens  int             `json:"total_input_tokens"`
+	TotalOutputTokens int             `json:"total_output_tokens"`
 	ToolCounts      map[string]int    `json:"tool_counts"`
 	Languages       map[string]int    `json:"languages"`
 	GoalCategories  map[string]int    `json:"goal_categories"`

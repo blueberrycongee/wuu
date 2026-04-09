@@ -12,12 +12,14 @@ import (
 
 // memoryRecord mirrors the JSONL schema used by tui/memory.go.
 type memoryRecord struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content"`
-	At         time.Time       `json:"at"`
-	ToolCalls  []toolCallRec   `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	Role         string          `json:"role"`
+	Content      string          `json:"content"`
+	At           time.Time       `json:"at"`
+	ToolCalls    []toolCallRec   `json:"tool_calls,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	InputTokens  int             `json:"input_tokens,omitempty"`
+	OutputTokens int             `json:"output_tokens,omitempty"`
 }
 
 type toolCallRec struct {
@@ -177,6 +179,10 @@ func scanOneSession(path string, id string) (SessionMeta, error) {
 					}
 				}
 			}
+		case "meta":
+			// Token usage records.
+			meta.InputTokens += rec.InputTokens
+			meta.OutputTokens += rec.OutputTokens
 		}
 	}
 
@@ -261,6 +267,8 @@ func Aggregate(metas []SessionMeta, facets map[string]Facet) AggregatedData {
 		agg.TotalMessages += m.UserMessages + m.AssistantMsgs
 		agg.TotalDurationH += m.Duration.Hours()
 		agg.TotalEstTokens += m.EstTokens
+		agg.TotalInputTokens += m.InputTokens
+		agg.TotalOutputTokens += m.OutputTokens
 		agg.TotalLinesAdded += m.LinesAdded
 		agg.TotalLinesRemoved += m.LinesRemoved
 		agg.TotalFilesModified += m.FilesModified
