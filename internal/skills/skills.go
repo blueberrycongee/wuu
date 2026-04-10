@@ -9,13 +9,30 @@ import (
 	"strings"
 )
 
-// Skill represents a discovered skill definition.
+// Skill represents a discovered skill definition. Fields mirror Claude Code's
+// frontmatter schema for cross-compatibility — wuu reads them so a CC-style
+// SKILL.md can be dropped in unchanged.
 type Skill struct {
 	Name        string // canonical name without leading slash, e.g. "commit"
-	Description string
-	Content     string // full markdown body after frontmatter
+	Description string // one-line description, auto-derived from first markdown paragraph if absent
+	WhenToUse   string // detailed usage scenarios for the model
+	Content     string // full markdown body after frontmatter (no variable substitution applied)
 	Source      string // "project" or "user"
 	Path        string // filesystem path to the SKILL.md file
+	Dir         string // directory containing the skill (parent of SKILL.md, or file's parent for flat)
+	ArgumentHint string // gray help text shown after skill name in /<name> ...
+
+	// CC-compatible fields parsed but not yet acted on (kept for forward compat).
+	Model              string   // "sonnet", "haiku", "opus", "inherit"
+	Context            string   // "inline" (default) or "fork"
+	Agent              string   // sub-agent type when Context=fork
+	AllowedTools       []string // tools the skill is allowed to call
+	UserInvocable      bool     // can the user type /<name> to invoke
+	DisableModelInvoke bool     // hide from model auto-invocation
+	Paths              []string // glob patterns for conditional activation
+	Effort             string   // thinking effort hint
+	Version            string   // skill version string
+	Shell              string   // "bash" or "powershell"
 }
 
 // Discover scans the given directories for skills and returns a deduplicated
@@ -50,7 +67,7 @@ func Discover(projectDir, userDir string) []Skill {
 // Find returns the skill with the given name (slash-prefix tolerated), or
 // false if not found.
 func Find(skills []Skill, name string) (Skill, bool) {
-	name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+	name = canonicalName(name)
 	for _, s := range skills {
 		if s.Name == name {
 			return s, true
@@ -92,6 +109,7 @@ func scanDir(dir, source string) []Skill {
 				skill.Name = entry.Name()
 			}
 			skill.Name = canonicalName(skill.Name)
+			skill.Dir = path
 			skills = append(skills, skill)
 			continue
 		}
@@ -105,6 +123,7 @@ func scanDir(dir, source string) []Skill {
 			continue
 		}
 		skill.Name = canonicalName(skill.Name)
+		skill.Dir = filepath.Dir(path)
 		skills = append(skills, skill)
 	}
 	return skills
@@ -128,7 +147,7 @@ func findSkillMD(dir string) string {
 	return ""
 }
 
-// canonicalName strips leading slash and lowercases.
+// canonicalName strips leading slash and trims whitespace.
 func canonicalName(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.TrimPrefix(name, "/")
@@ -150,31 +169,61 @@ func parseSkillFile(path, source string) (Skill, error) {
 		return Skill{}, fmt.Errorf("no frontmatter")
 	}
 
-	// Parse frontmatter (simple key:value pairs, ignore complex YAML).
-	var name, description string
+	skill := Skill{
+		Source:        source,
+		Path:          path,
+		UserInvocable: true, // default true for CC compatibility
+	}
+
+	// Parse frontmatter as flat key:value pairs. Multi-line YAML lists are
+	// supported as comma-separated strings or bracketed inline lists.
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "---" {
 			break
 		}
-		if k, v, ok := splitYAMLLine(line); ok {
-			switch k {
-			case "name":
-				name = v
-			case "description":
-				description = v
-			}
+		k, v, ok := splitYAMLLine(line)
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			skill.Name = v
+		case "description":
+			skill.Description = v
+		case "when-to-use", "when_to_use":
+			skill.WhenToUse = v
+		case "model":
+			skill.Model = v
+		case "context":
+			skill.Context = v
+		case "agent":
+			skill.Agent = v
+		case "allowed-tools", "allowed_tools":
+			skill.AllowedTools = parseList(v)
+		case "user-invocable", "user_invocable":
+			skill.UserInvocable = parseBool(v, true)
+		case "disable-model-invocation", "disable_model_invocation":
+			skill.DisableModelInvoke = parseBool(v, false)
+		case "argument-hint", "argument_hint":
+			skill.ArgumentHint = v
+		case "paths":
+			skill.Paths = parseList(v)
+		case "effort":
+			skill.Effort = v
+		case "version":
+			skill.Version = v
+		case "shell":
+			skill.Shell = v
 		}
 	}
 
-	if name == "" {
-		// Use filename (without extension) as fallback.
+	if skill.Name == "" {
 		base := filepath.Base(path)
-		// For SKILL.md inside a directory, use the parent directory name.
 		if strings.EqualFold(base, "SKILL.md") {
-			name = filepath.Base(filepath.Dir(path))
+			skill.Name = filepath.Base(filepath.Dir(path))
 		} else {
-			name = strings.TrimSuffix(base, filepath.Ext(base))
+			skill.Name = strings.TrimSuffix(base, filepath.Ext(base))
 		}
 	}
 
@@ -186,18 +235,22 @@ func parseSkillFile(path, source string) (Skill, error) {
 		}
 		body.WriteString(scanner.Text())
 	}
+	skill.Content = body.String()
 
-	return Skill{
-		Name:        name,
-		Description: description,
-		Content:     body.String(),
-		Source:      source,
-		Path:        path,
-	}, nil
+	// Auto-derive description from first non-empty markdown line if missing.
+	if skill.Description == "" {
+		skill.Description = firstMarkdownLine(skill.Content)
+	}
+
+	return skill, nil
 }
 
 // splitYAMLLine parses a "key: value" YAML line, stripping quotes.
 func splitYAMLLine(line string) (key, value string, ok bool) {
+	// Skip indented lines (list items belonging to a previous key).
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		return "", "", false
+	}
 	idx := strings.Index(line, ":")
 	if idx < 0 {
 		return "", "", false
@@ -206,4 +259,58 @@ func splitYAMLLine(line string) (key, value string, ok bool) {
 	value = strings.TrimSpace(line[idx+1:])
 	value = strings.Trim(value, `"'`)
 	return key, value, key != ""
+}
+
+// parseList accepts either "[a, b, c]" or "a, b, c" and returns a slice.
+func parseList(v string) []string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "[")
+	v = strings.TrimSuffix(v, "]")
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.Trim(strings.TrimSpace(p), `"'`)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// parseBool accepts "true"/"false"/"yes"/"no" with a default fallback.
+func parseBool(v string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "yes", "1", "on":
+		return true
+	case "false", "no", "0", "off":
+		return false
+	}
+	return def
+}
+
+// firstMarkdownLine returns the first non-empty content line from markdown,
+// stripping markdown syntax characters.
+func firstMarkdownLine(content string) string {
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// Strip leading markdown header markers.
+		line = strings.TrimLeft(line, "#")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Cap length so it stays one-line in displays.
+		if len(line) > 200 {
+			line = line[:200] + "..."
+		}
+		return line
+	}
+	return ""
 }
