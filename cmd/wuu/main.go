@@ -262,7 +262,14 @@ func runTUI(args []string) error {
 
 	cfg, configPath, err := config.LoadFrom(rootDir, homeDir)
 	if err != nil {
-		// No config found — run onboarding.
+		// Only enter onboarding when the config genuinely does not
+		// exist. A present-but-broken config (parse error, failed
+		// validation, etc.) must surface so the user can fix it —
+		// otherwise onboarding would silently overwrite their
+		// existing .wuu.json with a fresh template.
+		if !errors.Is(err, config.ErrConfigNotFound) {
+			return err
+		}
 		result, onboardErr := runOnboarding()
 		if onboardErr != nil {
 			return onboardErr

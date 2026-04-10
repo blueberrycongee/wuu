@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,7 +269,42 @@ func TestLoadFrom_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when config is missing")
 	}
+	if !errors.Is(err, ErrConfigNotFound) {
+		t.Fatalf("expected ErrConfigNotFound, got %v", err)
+	}
 	if !strings.Contains(err.Error(), "wuu init") {
 		t.Fatalf("expected init hint, got %v", err)
+	}
+}
+
+// A present-but-broken config must NOT look like ErrConfigNotFound,
+// otherwise the TUI's onboarding fallback would silently overwrite
+// the user's existing .wuu.json.
+func TestLoadFrom_BrokenConfigIsNotNotFound(t *testing.T) {
+	workdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, _, err := LoadFrom(workdir, "")
+	if err == nil {
+		t.Fatal("expected error for malformed config")
+	}
+	if errors.Is(err, ErrConfigNotFound) {
+		t.Fatalf("malformed config wrongly classified as not-found: %v", err)
+	}
+}
+
+func TestLoadFrom_InvalidConfigIsNotNotFound(t *testing.T) {
+	workdir := t.TempDir()
+	// Valid JSON, fails Validate (no providers).
+	if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte(`{"default_provider":"x"}`), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, _, err := LoadFrom(workdir, "")
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if errors.Is(err, ErrConfigNotFound) {
+		t.Fatalf("invalid config wrongly classified as not-found: %v", err)
 	}
 }

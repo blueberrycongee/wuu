@@ -15,6 +15,13 @@ const (
 	globalConfigRelative = ".config/wuu/config.json"
 )
 
+// ErrConfigNotFound is returned by LoadFrom when none of the candidate
+// config files exist on disk. Callers should use errors.Is to
+// distinguish a missing config (where running onboarding is the right
+// recovery) from a present-but-broken config (where overwriting it
+// would silently destroy the user's work).
+var ErrConfigNotFound = errors.New("config not found")
+
 // HookEntry defines a single hook command bound to a lifecycle event.
 type HookEntry struct {
 	Matcher string `json:"matcher,omitempty"` // tool name pattern, "*" or empty = match all
@@ -119,7 +126,7 @@ func LoadFrom(workdir, home string) (Config, string, error) {
 		}
 	}
 
-	return Config{}, "", fmt.Errorf("config not found, run `wuu init` to create %s", localPrimaryConfig)
+	return Config{}, "", fmt.Errorf("%w, run `wuu init` to create %s", ErrConfigNotFound, localPrimaryConfig)
 }
 
 func readConfig(path string) (Config, error) {
