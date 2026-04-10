@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,7 +16,8 @@ import (
 // resumePickerEntry holds one session and a lazily-loaded preview.
 type resumePickerEntry struct {
 	Session session.Session
-	loaded  bool
+	title   string // first user message, populated eagerly at init
+	loaded  bool   // full preview loaded?
 	preview []transcriptEntry
 }
 
@@ -39,7 +43,11 @@ func newResumePicker(sessDir string, maxItems int, width, height int) (*resumePi
 	}
 	entries := make([]*resumePickerEntry, len(sessions))
 	for i, s := range sessions {
-		entries[i] = &resumePickerEntry{Session: s}
+		e := &resumePickerEntry{Session: s}
+		// Eagerly extract a one-line title (first user message) so the
+		// list shows real content immediately, not "(empty session)".
+		e.title = peekFirstUserMessage(session.FilePath(sessDir, s.ID))
+		entries[i] = e
 	}
 	p := &resumePicker{
 		sessDir: sessDir,
@@ -49,6 +57,40 @@ func newResumePicker(sessDir string, maxItems int, width, height int) (*resumePi
 	}
 	p.loadPreview(0)
 	return p, nil
+}
+
+// peekFirstUserMessage scans a JSONL session file and returns the content
+// of the first user message it finds. Reads only what's needed (early exit)
+// so it stays cheap when called for every session at picker init.
+func peekFirstUserMessage(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var rec struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if strings.EqualFold(rec.Role, "user") {
+			content := strings.TrimSpace(rec.Content)
+			if content != "" {
+				return content
+			}
+		}
+	}
+	return ""
 }
 
 // loadPreview lazily reads the messages of the entry at idx.
@@ -224,7 +266,9 @@ func (p *resumePicker) renderListLines(width, rows int) []string {
 		focused := i == p.cursor
 		title := e.Session.Summary
 		if title == "" {
-			// Try to use first user message from preview if loaded.
+			title = e.title // eagerly populated first user message
+		}
+		if title == "" {
 			title = firstUserPreview(e.preview)
 		}
 		if title == "" {
