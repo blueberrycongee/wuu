@@ -234,15 +234,17 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 				"The sub-agent has its own context, its own tools, and runs in its own working " +
 				"directory based on the current HEAD. Use this for any task that requires reading " +
 				"file contents or making changes — your own context stays clean. " +
-				"In synchronous mode (default for now), this blocks until the worker finishes and " +
-				"returns its final summary. The worktree persists after completion so changes can " +
-				"be inspected or merged manually with git.",
+				"By default the spawn is asynchronous: this returns immediately with an agent_id, " +
+				"and the worker's result will be delivered to you as a <worker-result> message " +
+				"once it completes. Set synchronous=true to block until the worker finishes. " +
+				"Spawn multiple workers in parallel by calling spawn_agent multiple times in " +
+				"the same response — they run concurrently.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"type": map[string]any{
 						"type":        "string",
-						"description": "Worker type. Choose 'worker' for general tasks. (More types added in Phase 4.)",
+						"description": "Worker type. Choose 'worker' for general tasks, 'explorer' for read-only investigation. (More types added in Phase 4.)",
 					},
 					"description": map[string]any{
 						"type":        "string",
@@ -256,8 +258,56 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 						"type":        "string",
 						"description": "Optional: path to another worker's worktree. The new worker is then based on that worktree's HEAD, enabling chained workflows.",
 					},
+					"synchronous": map[string]any{
+						"type":        "boolean",
+						"description": "If true, block until the worker completes and return its result inline. If false (default), return immediately and receive the result later via a <worker-result> message.",
+					},
 				},
 				"required": []string{"description", "prompt"},
+			},
+		},
+		{
+			Name: "send_message_to_agent",
+			Description: "Send a follow-up message to an existing sub-agent that is still running " +
+				"or has completed. The agent will resume from its current state and process the " +
+				"new instruction.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"agent_id": map[string]any{
+						"type":        "string",
+						"description": "The agent_id returned by spawn_agent.",
+					},
+					"message": map[string]any{
+						"type":        "string",
+						"description": "Follow-up instruction to send.",
+					},
+				},
+				"required": []string{"agent_id", "message"},
+			},
+		},
+		{
+			Name: "stop_agent",
+			Description: "Halt a running sub-agent. Use this to abort work that's no longer needed " +
+				"or that's taking too long.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"agent_id": map[string]any{
+						"type":        "string",
+						"description": "The agent_id to stop.",
+					},
+				},
+				"required": []string{"agent_id"},
+			},
+		},
+		{
+			Name: "list_agents",
+			Description: "List all sub-agents in the current session with their status (running, " +
+				"completed, failed, cancelled), type, description, and timing info.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
 			},
 		},
 		{
@@ -311,9 +361,60 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 		return t.loadSkill(ctx, call.Arguments)
 	case "spawn_agent":
 		return t.spawnAgent(ctx, call.Arguments)
+	case "send_message_to_agent":
+		return t.sendMessageToAgent(call.Arguments)
+	case "stop_agent":
+		return t.stopAgent(call.Arguments)
+	case "list_agents":
+		return t.listAgents()
 	default:
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
+}
+
+func (t *Toolkit) sendMessageToAgent(argsJSON string) (string, error) {
+	if t.coordinator == nil {
+		return "", errors.New("send_message_to_agent: coordinator not configured")
+	}
+	var args struct {
+		AgentID string `json:"agent_id"`
+		Message string `json:"message"`
+	}
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	if err := t.coordinator.SendMessage(args.AgentID, args.Message); err != nil {
+		return "", err
+	}
+	return `{"status":"sent"}`, nil
+}
+
+func (t *Toolkit) stopAgent(argsJSON string) (string, error) {
+	if t.coordinator == nil {
+		return "", errors.New("stop_agent: coordinator not configured")
+	}
+	var args struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	if !t.coordinator.Stop(args.AgentID) {
+		return "", fmt.Errorf("agent %q not found", args.AgentID)
+	}
+	return `{"status":"stopped"}`, nil
+}
+
+func (t *Toolkit) listAgents() (string, error) {
+	if t.coordinator == nil {
+		return "", errors.New("list_agents: coordinator not configured")
+	}
+	list := t.coordinator.List()
+	out, err := json.Marshal(list)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func (t *Toolkit) spawnAgent(ctx context.Context, argsJSON string) (string, error) {
@@ -325,6 +426,7 @@ func (t *Toolkit) spawnAgent(ctx context.Context, argsJSON string) (string, erro
 		Description string `json:"description"`
 		Prompt      string `json:"prompt"`
 		BaseRepo    string `json:"base_repo"`
+		Synchronous bool   `json:"synchronous"`
 	}
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return "", err
@@ -334,7 +436,7 @@ func (t *Toolkit) spawnAgent(ctx context.Context, argsJSON string) (string, erro
 		Description: args.Description,
 		Prompt:      args.Prompt,
 		BaseRepo:    args.BaseRepo,
-		Synchronous: true, // Phase 2: sync only. Phase 3 will default to async.
+		Synchronous: args.Synchronous,
 	})
 	if err != nil {
 		return "", err

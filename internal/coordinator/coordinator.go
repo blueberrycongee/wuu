@@ -220,6 +220,67 @@ func (c *Coordinator) StopAll() {
 	c.manager.StopAll()
 }
 
+// Stop cancels a specific worker by ID. Returns false if not found.
+func (c *Coordinator) Stop(id string) bool {
+	return c.manager.Stop(id)
+}
+
+// List returns snapshots of all sub-agents in this session.
+func (c *Coordinator) List() []subagent.SubAgentSnapshot {
+	return c.manager.List()
+}
+
+// SendMessage delivers a follow-up message to a specific sub-agent.
+// In Phase 3 this is a stub that will be filled in once the manager
+// supports message injection — for now it returns an error explaining
+// the feature is not yet implemented.
+func (c *Coordinator) SendMessage(agentID, message string) error {
+	if c.manager.Get(agentID) == nil {
+		return fmt.Errorf("agent %q not found", agentID)
+	}
+	return errors.New("send_message: follow-up messaging is not yet implemented in this build (worker is one-shot)")
+}
+
+// Subscribe forwards to the underlying manager so the TUI can receive
+// status notifications and inject worker-result messages.
+func (c *Coordinator) Subscribe(ch chan<- subagent.Notification) {
+	c.manager.Subscribe(ch)
+}
+
+// FormatWorkerResult turns a sub-agent snapshot into the XML message
+// that the orchestrator sees when a worker completes. The format
+// mirrors Claude Code's <task-notification>:
+//
+//	<worker-result agent_id="..." type="..." status="completed">
+//	<summary>...</summary>
+//	<duration_ms>1234</duration_ms>
+//	<result>
+//	... worker's final assistant message ...
+//	</result>
+//	</worker-result>
+func FormatWorkerResult(snap subagent.SubAgentSnapshot) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<worker-result agent_id=%q type=%q status=%q>\n",
+		snap.ID, snap.Type, snap.Status)
+	if snap.Description != "" {
+		fmt.Fprintf(&b, "<summary>%s</summary>\n", snap.Description)
+	}
+	if !snap.CompletedAt.IsZero() && !snap.StartedAt.IsZero() {
+		ms := snap.CompletedAt.Sub(snap.StartedAt).Milliseconds()
+		fmt.Fprintf(&b, "<duration_ms>%d</duration_ms>\n", ms)
+	}
+	if snap.Error != nil {
+		fmt.Fprintf(&b, "<error>%s</error>\n", snap.Error.Error())
+	}
+	if snap.Result != "" {
+		b.WriteString("<result>\n")
+		b.WriteString(snap.Result)
+		b.WriteString("\n</result>\n")
+	}
+	b.WriteString("</worker-result>")
+	return b.String()
+}
+
 // CleanupSession removes all worktrees belonging to this session.
 func (c *Coordinator) CleanupSession() error {
 	return c.worktrees.CleanupSession(c.sessionID)

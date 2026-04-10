@@ -166,3 +166,45 @@ func (slowClient) Chat(ctx context.Context, _ providers.ChatRequest) (providers.
 	<-ctx.Done()
 	return providers.ChatResponse{}, ctx.Err()
 }
+
+func TestFormatWorkerResult(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	c, _ := New(Config{
+		Client:        &fakeClient{resp: providers.ChatResponse{Content: "found bug at line 42"}},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, "wt"),
+		SessionID:     "sess",
+		WorkerFactory: func(string) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+
+	res, _ := c.Spawn(context.Background(), SpawnRequest{
+		Type:        "explorer",
+		Description: "find the bug",
+		Prompt:      "look for it",
+		Synchronous: true,
+	})
+
+	snap := c.Manager().Get(res.AgentID).Snapshot()
+	xml := FormatWorkerResult(snap)
+	if !contains(xml, "<worker-result") || !contains(xml, "found bug at line 42") {
+		t.Fatalf("worker-result XML missing expected fields: %s", xml)
+	}
+	if !contains(xml, "find the bug") {
+		t.Fatalf("summary missing: %s", xml)
+	}
+	if !contains(xml, "completed") {
+		t.Fatalf("status missing: %s", xml)
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
