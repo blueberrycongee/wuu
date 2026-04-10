@@ -120,26 +120,55 @@ func Compact(ctx context.Context, messages []providers.ChatMessage, client provi
 }
 
 // compactInstructionPrompt is the framing wuu wraps every
-// summarization request in. Lifted in spirit from Codex CLI's
-// compact/prompt.md: short, model-agnostic, focused on a clean
-// hand-off to "another LLM that will resume the task". Deliberately
-// avoids Claude-specific XML structures so it works equally well on
-// GPT, DeepSeek, Gemini, and any third-party-routed model.
-const compactInstructionPrompt = `You are performing a CONTEXT CHECKPOINT COMPACTION for an AI coding agent.
-Create a handoff summary that another LLM will read to resume the task.
+// summarization request in. Structured handoff in the style of
+// Charmbracelet's crush template, but kept model-agnostic (no
+// Claude XML, no GPT-specific formatting) so it works equally well
+// on Anthropic, OpenAI, Gemini, DeepSeek, and any proxied model.
+//
+// The five-section structure exists because flat bullet lists
+// consistently lose the "what's actually being worked on right now"
+// signal — splitting Current State / Files / Technical Context /
+// Strategy / Next Steps gives the resuming model a clear scaffold
+// to follow.
+const compactInstructionPrompt = `You are summarizing a coding-agent conversation to preserve context for continuing the work later.
 
-Include, in roughly this order:
-- The user's goal and any explicit instructions or preferences
-- Key decisions made and the reasoning behind them
-- Files inspected or modified, with paths and the gist of the change
-- Errors encountered and how they were resolved (or are still open)
-- Outstanding work and clear next steps
-- Any concrete data, examples, function signatures, or references the
-  next agent will need to continue without re-reading the history
+CRITICAL: This summary will be the ONLY context available when the conversation resumes. Assume every previous message is about to be deleted. Be thorough — losing a detail here means the next agent will have to ask the user (or guess) to recover it.
 
-Be concrete and structured. Prefer bullet points over prose. Keep it
-focused — the goal is to let the next agent pick up exactly where you
-left off, not to retell the entire conversation.
+Produce the summary using exactly these five sections, in order:
+
+## Current State
+- The user's exact request (quote or paraphrase precisely; do not generalize)
+- What has been completed
+- What is in progress right now and how far along it is
+- What still has to happen for the task to be done
+
+## Files & Changes
+- Files modified, with a one-line description of the change to each
+- Files read or analyzed and why they mattered
+- Files that haven't been touched yet but will need to be
+- File paths and line numbers for code locations the next agent should jump to
+
+## Technical Context
+- Architecture / design decisions made and the reasoning
+- Patterns or conventions being followed (with examples)
+- Libraries, frameworks, and language/version details that matter
+- Commands that worked (exact form, plus what they were for)
+- Commands that failed and what the failure looked like
+
+## Strategy & Approach
+- The overall approach being taken
+- Why this approach was chosen over alternatives
+- Key insights, gotchas, or surprises discovered along the way
+- Assumptions being made that the next agent should not silently inherit
+- Open risks or blockers
+
+## Exact Next Steps
+Be specific. Do not write "implement authentication" — write:
+1. Add JWT middleware to src/middleware/auth.js around line 15
+2. Update login handler in src/routes/user.js:45 to return the token
+3. Verify with: npm test -- auth.test.js
+
+Tone: brief a teammate taking over mid-task. Include everything they would need to continue without asking the user a single question. No emojis. No filler. Err on the side of too much detail rather than too little — critical context is worth the tokens.
 
 --- Conversation to summarize ---
 
