@@ -1932,7 +1932,13 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			}
 			renderedAny = true
 			cw := contentWidth(m.viewport.Width)
-			innerWidth := cw + contentPadRight // thinking/tool cards handle their own right slack
+			// Tool/thinking cards use the same width as regular text
+			// content. Previously we expanded by contentPadRight, but
+			// that pushed the rounded box's right border `│` into the
+			// column directly adjacent to the scrollbar track `│` —
+			// the two identical glyphs separated by a single space
+			// looked like a doubled scrollbar.
+			innerWidth := cw
 			// Role indicator — icon only, no text label.
 			switch entry.Role {
 			case "USER":
