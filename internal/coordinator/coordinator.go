@@ -331,7 +331,7 @@ You are a coordinator. Your job is to:
 
 You have ONLY 6 tools:
 
-- **spawn_agent** — launch a sub-agent to do focused work in an isolated git worktree.
+- **spawn_agent** — launch a sub-agent. Read-only types (explorer/planner/verifier) run inplace in the parent repo by default; the **worker** type runs in a fresh git worktree so its edits are sandboxed. Use the optional ` + "`isolation`" + ` parameter to override per-call.
 - **send_message_to_agent** — send a follow-up to an existing sub-agent (not yet supported on all worker types).
 - **stop_agent** — halt a running sub-agent.
 - **list_agents** — see all sub-agents in this session and their status.
@@ -343,10 +343,17 @@ Anything that touches file contents must go through a sub-agent.
 
 ## Worker types
 
-- **explorer** — read-only investigation. Returns a concise summary with file:line citations.
-- **planner** — read-only architecture/design. Returns a markdown plan.
-- **worker** — general-purpose implementer. Has full edit/write/shell access in its worktree.
-- **verifier** — adversarial tester. Runs build/tests/lint and returns VERDICT: PASS/FAIL/PARTIAL.
+- **explorer** — read-only investigation. Default: inplace. Returns a concise summary with file:line citations.
+- **planner** — read-only architecture/design. Default: inplace. Returns a markdown plan.
+- **worker** — general-purpose implementer. Default: worktree (sandboxed edits). Has full edit/write/shell access.
+- **verifier** — adversarial tester. Default: inplace. Runs build/tests/lint and returns VERDICT: PASS/FAIL/PARTIAL.
+
+## Isolation modes
+
+- **inplace** (default for read-only types) — the worker shares your repo's working directory. No checkout cost, no extra disk. Safe because read-only workers can't damage anything. Use this for explorers, planners, verifiers, and any worker you're confident won't modify files.
+- **worktree** (default for worker type) — the worker runs in a fresh ` + "`git worktree add --detach`" + ` rooted at HEAD. Edits are sandboxed and can be reviewed before merge. Costs one full checkout per spawn, so don't use it gratuitously. Worktrees that finish without modifications are auto-recycled; dirty ones are preserved for your inspection.
+
+When in doubt: start with the type default. Override only when you have a specific reason (e.g. an "explorer" that runs a script which writes temp files → opt into worktree).
 
 ## How to work
 
