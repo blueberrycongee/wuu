@@ -944,18 +944,28 @@ func TestInlineSpinMsg_DoesNotRebuildViewport(t *testing.T) {
 	m.height = 40
 	m.relayout()
 
-	// Simulate streaming state with enough content that GotoBottom would
-	// shift YOffset if refreshViewport were called.
+	// Simulate streaming state: add content and point streamTarget at
+	// the active assistant entry. In the pre-fix code, refreshViewport
+	// would render renderInlineStatus inside the viewport for the
+	// streamTarget entry when streaming=true, adding an extra line.
 	m.streaming = true
+	m.statusLine = "streaming"
 	for i := 0; i < 60; i++ {
 		m.appendEntry("assistant", fmt.Sprintf("line %d", i))
 	}
+	m.streamTarget = len(m.entries) - 1 // point at last assistant entry
 	m.refreshViewport(true)
-	// Scroll away from bottom so a sneaky GotoBottom would be visible.
+
+	// Scroll to top and disable auto-follow so we can observe entry[0].
 	m.viewport.SetYOffset(0)
 	m.autoFollow = false
-	beforeOffset := m.viewport.YOffset
-	beforeTotal := m.viewport.TotalLineCount()
+
+	// Mutate entry[0] with a unique marker. If inlineSpinMsg triggers
+	// refreshViewport, the viewport content gets rebuilt from m.entries
+	// and the marker appears in the visible window (YOffset=0 → top).
+	// If it doesn't call refreshViewport, the stale content remains.
+	const marker = "SPIN_REBUILD_CANARY"
+	m.entries[0].Content = marker
 	beforeFrame := m.inlineSpinFrame
 
 	// Dispatch the spinner tick.
@@ -966,13 +976,10 @@ func TestInlineSpinMsg_DoesNotRebuildViewport(t *testing.T) {
 		t.Fatalf("expected inlineSpinFrame to advance by 1: before=%d after=%d",
 			beforeFrame, after.inlineSpinFrame)
 	}
-	if after.viewport.YOffset != beforeOffset {
-		t.Fatalf("inlineSpinMsg must not move viewport YOffset: before=%d after=%d",
-			beforeOffset, after.viewport.YOffset)
-	}
-	if after.viewport.TotalLineCount() != beforeTotal {
-		t.Fatalf("inlineSpinMsg must not rebuild viewport content: totalLines before=%d after=%d",
-			beforeTotal, after.viewport.TotalLineCount())
+	// The canary must NOT appear in the viewport — that would mean
+	// refreshViewport was called, rebuilding content from m.entries.
+	if strings.Contains(after.viewport.View(), marker) {
+		t.Fatal("inlineSpinMsg must not call refreshViewport: canary marker appeared in viewport content after spinner tick")
 	}
 }
 
