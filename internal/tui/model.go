@@ -540,6 +540,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.streaming || m.pendingRequest || m.statusLine == "thinking" {
 			m.refreshViewport(false)
 		}
+		// Re-layout if the worker panel is showing — its contents
+		// (elapsed time, spinner) need to refresh every tick.
+		if m.coordinator != nil && m.workerPanelHeight() > 0 {
+			m.relayout()
+		}
 		return m, tickCmd()
 
 	case inlineSpinMsg:
@@ -632,6 +637,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			injected = true
 		}
+		// Worker count likely changed — re-layout so the activity
+		// panel appears/disappears immediately.
+		m.relayout()
 		m.refreshViewport(false)
 
 		// If we injected a result and the main agent is idle, fire an
@@ -1992,7 +2000,7 @@ func (m *Model) relayout() {
 		return
 	}
 	m.inputLines = clampInputLines(strings.Count(m.input.Value(), "\n")+1, 15)
-	m.layout = computeLayout(m.width, m.height, m.inputLines)
+	m.layout = computeLayout(m.width, m.height, m.inputLines, m.workerPanelHeight())
 
 	m.input.SetWidth(m.layout.Input.Width)
 	m.input.SetHeight(m.layout.Input.Height)
@@ -2084,7 +2092,11 @@ func (m Model) View() string {
 		Foreground(currentTheme.Border).
 		Render(strings.Repeat("─", m.width))
 
-	parts := []string{header, outputBox, sep, inputBox}
+	parts := []string{header, outputBox}
+	if panel := m.renderWorkerPanel(m.width); panel != "" {
+		parts = append(parts, sep, panel)
+	}
+	parts = append(parts, sep, inputBox)
 
 	return strings.Join(parts, "\n")
 }

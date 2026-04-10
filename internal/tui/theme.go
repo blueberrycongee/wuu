@@ -225,4 +225,5 @@ func applyTheme(t theme) {
 	inlineStatusLabelStyle = lipgloss.NewStyle().Foreground(t.Subtle)
 
 	initPickerStyles()
+	initWorkerPanelStyles()
 }

@@ -16,13 +16,18 @@ type layout struct {
 
 // computeLayout calculates all layout rectangles from terminal dimensions.
 // inputLines is the current number of lines in the input area (clamped 3-15).
-func computeLayout(termWidth, termHeight, inputLines int) layout {
+// workerPanelLines is the height of the optional worker activity panel
+// (0 when no workers are active).
+func computeLayout(termWidth, termHeight, inputLines, workerPanelLines int) layout {
 	compact := termWidth < 80
 
 	headerH := 1
 	inputOuterH := inputLines
-	sepH := 1 // one separator line between chat and input
-	chatH := termHeight - headerH - inputOuterH - sepH
+	sepH := 1 // chat ↔ input separator
+	if workerPanelLines > 0 {
+		sepH++ // extra separator above worker panel
+	}
+	chatH := termHeight - headerH - inputOuterH - sepH - workerPanelLines
 	if chatH < 4 {
 		chatH = 4
 	}
@@ -37,7 +42,7 @@ func computeLayout(termWidth, termHeight, inputLines int) layout {
 	y += headerH
 
 	chat := layoutRect{X: 0, Y: y, Width: termWidth, Height: chatH}
-	y += chatH
+	y += chatH + workerPanelLines
 
 	input := layoutRect{X: 0, Y: y, Width: innerW, Height: inputLines}
 

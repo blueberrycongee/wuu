@@ -122,7 +122,7 @@ func TestRelayoutFitsWindow(t *testing.T) {
 	m.height = 24
 	m.relayout()
 
-	l := computeLayout(m.width, m.height, m.inputLines)
+	l := computeLayout(m.width, m.height, m.inputLines, 0)
 	totalHeight := l.Header.Height + l.Chat.Height + l.Input.Height
 	if totalHeight > m.height {
 		t.Fatalf("layout exceeds window height: used=%d window=%d", totalHeight, m.height)
