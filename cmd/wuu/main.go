@@ -384,6 +384,7 @@ func runTUI(args []string) error {
 		RequestTimeout:   *requestTimeout,
 		StreamRunner:     streamRunner,
 		HookDispatcher:   hookDispatcher,
+		Skills:           discoveredSkills,
 	}
 	if toolkit != nil {
 		cfgUI.OnSessionID = toolkit.SetSessionID

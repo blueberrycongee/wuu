@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/markdown"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/skills"
 )
 
 const (
@@ -121,6 +122,7 @@ type Model struct {
 	hookDispatcher *hooks.Dispatcher
 	streamCh       chan providers.StreamEvent
 	onSessionID    func(string)
+	skills         []skills.Skill
 
 	maxContextTokens int
 	requestTimeout   time.Duration
@@ -237,6 +239,7 @@ func NewModel(cfg Config) Model {
 		streamRunner:      cfg.StreamRunner,
 		hookDispatcher:    cfg.HookDispatcher,
 		onSessionID:       cfg.OnSessionID,
+		skills:            cfg.Skills,
 		maxContextTokens:  cfg.MaxContextTokens,
 		requestTimeout:    cfg.RequestTimeout,
 		viewport:          vp,
@@ -1027,6 +1030,13 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 	hasImages := len(m.pendingImages) > 0
 	if raw == "" && !hasImages {
 		return m, nil
+	}
+
+	// Skill shorthand: /<skill-name> [args] expands to the skill body
+	// (with variable substitution) and is sent as a user message.
+	if expanded, ok := m.expandSkillShorthand(raw); ok {
+		raw = expanded
+		m.input.SetValue(raw)
 	}
 
 	if raw != "" {

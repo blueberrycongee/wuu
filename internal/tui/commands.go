@@ -114,6 +114,47 @@ func (m *Model) handleSlash(input string) (string, bool) {
 	return fmt.Sprintf("unknown command: /%s (type /help for available commands)", name), true
 }
 
+// expandSkillShorthand checks whether the input is a /<skill-name> shorthand
+// for a discovered skill. If it is, it returns the expanded skill body
+// (with variable substitution applied) so submit() can dispatch it as a
+// regular user message. The shorthand never matches built-in commands.
+func (m *Model) expandSkillShorthand(input string) (string, bool) {
+	trimmed := strings.TrimSpace(input)
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", false
+	}
+	parts := strings.SplitN(trimmed[1:], " ", 2)
+	name := strings.ToLower(parts[0])
+	if name == "" {
+		return "", false
+	}
+	// Built-in commands take precedence — never expand to a skill if a
+	// command with that name exists.
+	for _, cmd := range commandRegistry {
+		if cmd.Name == name || containsAlias(cmd.Aliases, name) {
+			return "", false
+		}
+	}
+	// Look up the skill.
+	skill, ok := skills.Find(m.skills, name)
+	if !ok {
+		return "", false
+	}
+	if !skill.UserInvocable {
+		return "", false
+	}
+	args := ""
+	if len(parts) > 1 {
+		args = strings.TrimSpace(parts[1])
+	}
+	// Apply substitution: ${ARGUMENTS}, ${CLAUDE_SKILL_DIR}, ${CLAUDE_SESSION_ID}
+	body := skill.Content
+	body = strings.ReplaceAll(body, "${ARGUMENTS}", args)
+	body = strings.ReplaceAll(body, "${CLAUDE_SKILL_DIR}", skill.Dir)
+	body = strings.ReplaceAll(body, "${CLAUDE_SESSION_ID}", m.sessionID)
+	return body, true
+}
+
 func containsAlias(aliases []string, name string) bool {
 	for _, a := range aliases {
 		if a == name {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/skills"
 )
 
 // Config defines runtime dependencies for the interactive UI.
@@ -27,6 +28,7 @@ type Config struct {
 	StreamRunner     *agent.StreamRunner // optional, used when available
 	HookDispatcher   *hooks.Dispatcher   // optional, dispatches lifecycle hooks
 	OnSessionID      func(string)        // optional, called when the session ID changes
+	Skills           []skills.Skill      // discovered skills, for /<skill-name> shorthand
 }
 
 // Run starts the interactive terminal UI.
