@@ -68,6 +68,32 @@ type queueDrainMsg struct{}
 
 type inlineSpinMsg struct{}
 
+// selectionAutoScrollMsg drives the recurring viewport scroll while a
+// drag-select is held past the chat area's edge. seq must match the
+// model's current selectionAutoScroll.seq for the tick to take effect;
+// stale ticks (from a burst the user has already left) self-discard.
+type selectionAutoScrollMsg struct {
+	seq int
+}
+
+// selectionAutoScrollState captures everything needed to keep
+// scrolling without further mouse motion events. dir is -1 (up) or
+// +1 (down). speed is the number of content lines to advance per
+// tick — proportional to how far past the edge the cursor sat at
+// the moment we (re)started ticking, so dragging further past the
+// edge scrolls faster, mirroring most desktop editors. lastX is the
+// most recent screen X so we can re-derive the selection focus
+// column on every tick (the user's mouse hasn't moved, but the
+// content under it has). seq is bumped on every (de)activation so
+// in-flight ticks from a previous burst exit cleanly.
+type selectionAutoScrollState struct {
+	active bool
+	dir    int
+	speed  int
+	lastX  int
+	seq    int
+}
+
 type insightProgressMsg struct {
 	event insight.ProgressEvent
 }
@@ -233,6 +259,15 @@ type Model struct {
 
 	// Text selection in viewport.
 	selection selectionState
+
+	// Auto-scroll state for drag-select past the viewport edge.
+	// While the mouse is held outside the chat area, a recurring tick
+	// scrolls the viewport in the held direction so the selection can
+	// extend into off-screen content (standard editor behavior).
+	// `seq` is bumped on every (de)activation so stale in-flight ticks
+	// from a previous burst can recognize themselves and exit cleanly
+	// instead of compounding into runaway scroll.
+	selectionAutoScroll selectionAutoScrollState
 
 	// Token usage accumulator for current turn.
 	turnInputTokens  int
@@ -435,6 +470,24 @@ func inlineSpinTickCmd() tea.Cmd {
 	})
 }
 
+// selectionAutoScrollInterval is the cadence of the auto-scroll tick
+// fired while a drag-select is held outside the chat viewport. Fast
+// enough to feel responsive but slow enough that the per-tick line
+// jump (capped by selectionAutoScrollMaxSpeed) gives the user time
+// to release before overshooting. ~25 lines/second at 1 line/tick.
+const selectionAutoScrollInterval = 40 * time.Millisecond
+
+// selectionAutoScrollMaxSpeed caps how many content lines a single
+// tick may advance, so even an extreme drag (mouse parked far below
+// the terminal) doesn't blast through hundreds of lines instantly.
+const selectionAutoScrollMaxSpeed = 5
+
+func selectionAutoScrollCmd(seq int) tea.Cmd {
+	return tea.Tick(selectionAutoScrollInterval, func(_ time.Time) tea.Msg {
+		return selectionAutoScrollMsg{seq: seq}
+	})
+}
+
 // applyResume loads the chosen session into the current Model, replacing
 // current entries and chat history. Used by both the picker and direct
 // /resume <id> invocation.
@@ -566,6 +619,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, inlineSpinTickCmd()
 		}
 		return m, nil
+
+	case selectionAutoScrollMsg:
+		// Stale ticks (left over from a previous burst that has
+		// since stopped or restarted) self-discard via seq mismatch.
+		if !m.selectionAutoScroll.active ||
+			msg.seq != m.selectionAutoScroll.seq ||
+			!m.selection.IsDragging {
+			return m, nil
+		}
+		cmd := m.tickSelectionAutoScroll()
+		return m, cmd
 
 	case insightProgressMsg:
 		switch msg.event.Phase {
@@ -979,6 +1043,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollbarDragTrackSpace = 0
 			m.scrollbarDragMaxOffset = 0
 			if m.selection.IsDragging {
+				m.stopSelectionAutoScroll()
 				m.selection.finish()
 				if m.selection.hasSelection() {
 					m.copySelectionToClipboard()
@@ -988,9 +1053,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.Action == tea.MouseActionMotion && m.selection.IsDragging {
+			// Auto-scroll bookkeeping: while the cursor is past the
+			// chat area's top or bottom edge, kick a recurring tick
+			// that keeps scrolling even if the mouse stays still.
+			// Without the tick, only motion events advance the
+			// selection — meaning a stationary "hold past the edge"
+			// would do nothing, which is the surprising behavior
+			// the user reported.
+			cmd := m.refreshSelectionAutoScroll(msg.X, msg.Y)
 			vpRow, vpCol := m.screenToViewportCoords(msg.X, msg.Y)
 			m.selection.update(vpCol, vpRow)
-			return m, nil
+			return m, cmd
 		}
 		if msg.Action == tea.MouseActionMotion && m.scrollbarDragging {
 			m.dragScrollbarToRow(msg.Y - m.layout.Chat.Y)
@@ -1074,6 +1147,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Start new selection on left-click in viewport area.
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			if m.isInChatArea(msg.X, msg.Y) {
+				m.stopSelectionAutoScroll()
 				m.selection.clear()
 				vpRow, vpCol := m.screenToViewportCoords(msg.X, msg.Y)
 				m.selection.start(vpCol, vpRow)

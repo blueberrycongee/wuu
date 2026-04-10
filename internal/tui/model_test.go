@@ -477,6 +477,126 @@ func TestMouseAltClickScrollbarAnchorJumpsToUserMessage(t *testing.T) {
 	}
 }
 
+// TestMouseDragSelectionAutoScrollsPastEdge covers the bug where a
+// drag-select held past the chat viewport's bottom edge couldn't
+// extend the selection into off-screen content. The motion handler
+// must (a) scroll the viewport on each motion event that lands
+// outside the chat area, and (b) keep scrolling on a recurring
+// tick when the user holds the cursor still past the edge — that
+// second part is the part the user explicitly asked for.
+func TestMouseDragSelectionAutoScrollsPastEdge(t *testing.T) {
+	m := newScrollableModelForScrollbarTest(t)
+	m.setViewportOffset(0)
+	startOffset := m.viewport.YOffset
+
+	// Press inside the chat area to begin a selection.
+	pressX := m.layout.Chat.X + 2
+	pressY := m.layout.Chat.Y + 1
+	updated, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      pressX,
+		Y:      pressY,
+	})
+	dragging := updated.(Model)
+	if !dragging.selection.IsDragging {
+		t.Fatal("expected drag to start after press in chat area")
+	}
+
+	// Drag past the bottom of the chat area. The motion handler
+	// must scroll the viewport AND start the auto-scroll ticker.
+	belowY := dragging.layout.Chat.Y + dragging.layout.Chat.Height + 2
+	updated, cmd := dragging.Update(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonLeft,
+		X:      pressX + 4,
+		Y:      belowY,
+	})
+	afterMotion := updated.(Model)
+	if afterMotion.viewport.YOffset <= startOffset {
+		t.Fatalf("expected motion past edge to scroll viewport: start=%d after=%d",
+			startOffset, afterMotion.viewport.YOffset)
+	}
+	if !afterMotion.selectionAutoScroll.active {
+		t.Fatal("expected auto-scroll state to be active after dragging past edge")
+	}
+	if afterMotion.selectionAutoScroll.dir != 1 {
+		t.Fatalf("expected dir=+1 (down), got %d", afterMotion.selectionAutoScroll.dir)
+	}
+	if cmd == nil {
+		t.Fatal("expected motion past edge to return a tick Cmd")
+	}
+
+	// Now simulate "user holds the mouse still past the edge":
+	// no further motion events arrive, but the recurring tick
+	// must keep advancing the viewport AND extending the
+	// selection focus into newly-revealed content.
+	offsetBeforeTick := afterMotion.viewport.YOffset
+	maxOffset := max(0, afterMotion.viewport.TotalLineCount()-afterMotion.viewport.Height)
+
+	current := afterMotion
+	for i := 0; i < 3 && current.viewport.YOffset < maxOffset; i++ {
+		next, _ := current.Update(selectionAutoScrollMsg{seq: current.selectionAutoScroll.seq})
+		current = next.(Model)
+	}
+
+	if current.viewport.YOffset <= offsetBeforeTick {
+		t.Fatalf("expected ticks with no further motion to keep scrolling: before=%d after=%d",
+			offsetBeforeTick, current.viewport.YOffset)
+	}
+	if !current.selection.hasSelection() {
+		t.Fatal("expected selection to be extended by auto-scroll ticks")
+	}
+	// Focus row should track the bottom edge of the (now scrolled) viewport.
+	wantFocusRow := current.viewport.YOffset + current.layout.Chat.Height - 1
+	if current.selection.Focus == nil || current.selection.Focus.Row != wantFocusRow {
+		gotRow := -1
+		if current.selection.Focus != nil {
+			gotRow = current.selection.Focus.Row
+		}
+		t.Fatalf("expected focus row %d after auto-scroll, got %d", wantFocusRow, gotRow)
+	}
+
+	// Stale ticks (from a previous burst, seq mismatch) must be no-ops.
+	staleSeq := current.selectionAutoScroll.seq - 1
+	offsetBeforeStale := current.viewport.YOffset
+	updated, _ = current.Update(selectionAutoScrollMsg{seq: staleSeq})
+	stale := updated.(Model)
+	if stale.viewport.YOffset != offsetBeforeStale {
+		t.Fatalf("expected stale tick to be a no-op: before=%d after=%d",
+			offsetBeforeStale, stale.viewport.YOffset)
+	}
+
+	// Moving the cursor back inside the viewport must stop the
+	// ticker (active=false, seq bumped so any in-flight tick exits).
+	insideY := current.layout.Chat.Y + 1
+	updated, _ = current.Update(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonLeft,
+		X:      pressX + 4,
+		Y:      insideY,
+	})
+	stopped := updated.(Model)
+	if stopped.selectionAutoScroll.active {
+		t.Fatal("expected auto-scroll to stop after cursor returned inside viewport")
+	}
+
+	// Release should also clear the auto-scroll state defensively.
+	updated, _ = stopped.Update(tea.MouseMsg{
+		Action: tea.MouseActionRelease,
+		Button: tea.MouseButtonLeft,
+		X:      pressX + 4,
+		Y:      insideY,
+	})
+	released := updated.(Model)
+	if released.selection.IsDragging {
+		t.Fatal("expected drag to finish after release")
+	}
+	if released.selectionAutoScroll.active {
+		t.Fatal("expected auto-scroll to be cleared after release")
+	}
+}
+
 func newScrollableModelForScrollbarTest(t *testing.T) Model {
 	t.Helper()
 	m := NewModel(Config{

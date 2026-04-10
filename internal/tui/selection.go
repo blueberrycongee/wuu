@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -125,6 +126,122 @@ func (m *Model) isInChatArea(x, y int) bool {
 	left := m.layout.Chat.X
 	right := m.layout.Chat.X + m.layout.Chat.Width - 2
 	return x >= left && x <= right && y >= top && y < bottom
+}
+
+// refreshSelectionAutoScroll inspects a fresh mouse motion event and
+// updates the auto-scroll state machine. If the cursor is past the
+// chat area's top or bottom edge, it stores the direction and a
+// distance-proportional speed, then either kicks off a recurring
+// tick (if newly active) or just lets the existing tick keep firing
+// against the updated state. If the cursor returned inside the
+// viewport, it tears the state down and bumps seq so any in-flight
+// tick exits cleanly on its next delivery.
+//
+// Returns a tea.Cmd to schedule the next tick (nil when no tick is
+// needed). The motion handler should call this BEFORE updating the
+// selection focus, since the immediate motion event already extends
+// the selection on its own — the tick is only for the no-further-
+// motion case where the user is holding the mouse stationary past
+// the edge.
+func (m *Model) refreshSelectionAutoScroll(x, y int) tea.Cmd {
+	chatTop := m.layout.Chat.Y
+	chatBottom := m.layout.Chat.Y + m.layout.Chat.Height
+	if m.layout.Chat.Height <= 0 {
+		m.stopSelectionAutoScroll()
+		return nil
+	}
+
+	var dir, speed int
+	switch {
+	case y < chatTop:
+		dir = -1
+		speed = chatTop - y
+	case y >= chatBottom:
+		dir = 1
+		speed = y - chatBottom + 1
+	default:
+		// Mouse came back inside — stop ticking. The motion event
+		// itself will still extend the selection to the new point
+		// via the regular handler path.
+		m.stopSelectionAutoScroll()
+		return nil
+	}
+
+	if speed > selectionAutoScrollMaxSpeed {
+		speed = selectionAutoScrollMaxSpeed
+	}
+
+	m.selectionAutoScroll.dir = dir
+	m.selectionAutoScroll.speed = speed
+	m.selectionAutoScroll.lastX = x
+
+	// Scroll immediately on this motion event so a fast drag past
+	// the edge feels responsive — without this the user would have
+	// to wait one full tick interval before any scroll happened.
+	// The recurring tick handles the "held still past the edge"
+	// case where no further motion events arrive.
+	m.setViewportOffset(m.viewport.YOffset + dir*speed)
+
+	if m.selectionAutoScroll.active {
+		// Already ticking — the in-flight tick will pick up the
+		// updated dir/speed/lastX next time it fires.
+		return nil
+	}
+	m.selectionAutoScroll.active = true
+	m.selectionAutoScroll.seq++
+	return selectionAutoScrollCmd(m.selectionAutoScroll.seq)
+}
+
+// stopSelectionAutoScroll halts the recurring auto-scroll tick. seq
+// is bumped so any tick already in-flight self-discards on delivery.
+func (m *Model) stopSelectionAutoScroll() {
+	if !m.selectionAutoScroll.active {
+		return
+	}
+	m.selectionAutoScroll.active = false
+	m.selectionAutoScroll.seq++
+}
+
+// tickSelectionAutoScroll performs one auto-scroll step: advance the
+// viewport offset by the stored speed in the stored direction, then
+// re-derive the selection focus point from the *current* visible
+// edge row + the saved cursor X. The mouse hasn't moved (otherwise
+// a regular motion event would have driven the selection), so we
+// have to manufacture the new focus ourselves.
+//
+// Returns a Cmd to schedule the next tick. We always reschedule
+// while active is true — even when the viewport has hit the top
+// or bottom of the content and can't actually move — so that the
+// state machine keeps polling until the user either releases the
+// button or moves the cursor back inside the viewport. The cost
+// of an idle tick is trivial.
+func (m *Model) tickSelectionAutoScroll() tea.Cmd {
+	dir := m.selectionAutoScroll.dir
+	speed := m.selectionAutoScroll.speed
+	if speed < 1 {
+		speed = 1
+	}
+
+	newOffset := m.viewport.YOffset + dir*speed
+	m.setViewportOffset(newOffset)
+
+	// Re-derive the selection focus from the current edge row.
+	// When dragging upward, the focus should sit on the topmost
+	// visible row (which is now a previously-hidden line); when
+	// dragging downward, on the bottommost visible row.
+	var edgeRow int
+	if dir < 0 {
+		edgeRow = m.viewport.YOffset
+	} else {
+		edgeRow = m.viewport.YOffset + m.layout.Chat.Height - 1
+	}
+	col := m.selectionAutoScroll.lastX - m.layout.Chat.X
+	if col < 0 {
+		col = 0
+	}
+	m.selection.update(col, edgeRow)
+
+	return selectionAutoScrollCmd(m.selectionAutoScroll.seq)
 }
 
 // screenToViewportCoords converts screen (x, y) to a CONTENT-row and
