@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
+	"github.com/muesli/reflow/wrap"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -708,103 +710,108 @@ func padCell(cell string, width int, align xast.Alignment) string {
 	}
 }
 
-// wrapAnsi wraps a (possibly ANSI-styled) string to the given width.
-// In soft mode it breaks at word boundaries; in hard mode it can break
-// inside words. ANSI escape sequences are NOT explicitly preserved
-// across breaks — table cells in wuu typically contain plain text or
-// already-styled lipgloss spans that don't span the cell width, so a
-// best-effort byte-aware wrap is sufficient.
+// wrapAnsi wraps a (possibly ANSI-styled) string to the given width
+// using reflow's ANSI-aware wrappers, then post-processes the output
+// so that ANSI escape sequences open before a wrap point are
+// re-emitted at the start of the next line. This preserves styled
+// spans (bold/italic/color) across wrapped lines.
+//
+// In soft mode (hard == false) breaks happen at word boundaries; in
+// hard mode words longer than width are broken inside.
 func wrapAnsi(text string, width int, hard bool) []string {
 	if width <= 0 {
 		return []string{text}
 	}
+	if text == "" {
+		return []string{""}
+	}
 	if lipgloss.Width(text) <= width {
 		return []string{text}
 	}
-	// Split on whitespace for soft wrap; fall through to hard if a
-	// word is wider than width.
-	var lines []string
-	var cur strings.Builder
-	curWidth := 0
 
-	flush := func() {
-		if cur.Len() > 0 {
-			lines = append(lines, cur.String())
-			cur.Reset()
-			curWidth = 0
-		}
+	// First pass: soft word-wrap. wordwrap is ANSI-aware (doesn't
+	// count escapes toward width) and never breaks inside words.
+	soft := wordwrap.String(text, width)
+
+	// Second pass: hard wrap any line that's still too wide (only
+	// when the caller explicitly asked for hard wrapping).
+	wrapped := soft
+	if hard {
+		wrapped = wrap.String(soft, width)
 	}
 
-	for _, word := range splitPreserveWS(text) {
-		ww := lipgloss.Width(word)
-		if word == " " {
-			if curWidth+1 <= width {
-				cur.WriteString(" ")
-				curWidth++
-			}
-			continue
-		}
-		if ww > width && hard {
-			flush()
-			// Hard wrap: break the word at width boundaries.
-			runes := []rune(word)
-			for len(runes) > 0 {
-				take := width
-				if take > len(runes) {
-					take = len(runes)
-				}
-				lines = append(lines, string(runes[:take]))
-				runes = runes[take:]
-			}
-			continue
-		}
-		if curWidth == 0 {
-			cur.WriteString(word)
-			curWidth = ww
-			continue
-		}
-		if curWidth+ww+1 <= width {
-			cur.WriteString(" ")
-			cur.WriteString(word)
-			curWidth += ww + 1
-			continue
-		}
-		flush()
-		cur.WriteString(word)
-		curWidth = ww
+	lines := splitNonEmpty(wrapped)
+	return restoreAnsiAcrossLines(lines)
+}
+
+// splitNonEmpty splits on \n and drops trailing empty lines so an
+// empty cell still produces []string{""} (one empty visible row).
+func splitNonEmpty(s string) []string {
+	lines := strings.Split(s, "\n")
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
 	}
-	flush()
 	if len(lines) == 0 {
-		lines = []string{""}
+		return []string{""}
 	}
 	return lines
 }
 
-// splitPreserveWS splits a string into words, preserving single
-// spaces as their own elements so the wrapper can decide whether to
-// keep them.
-func splitPreserveWS(s string) []string {
-	var out []string
-	var cur strings.Builder
-	for _, r := range s {
-		if r == ' ' || r == '\t' {
-			if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
-			out = append(out, " ")
-		} else if r == '\n' {
-			if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
-			out = append(out, " ")
-		} else {
-			cur.WriteRune(r)
-		}
+// restoreAnsiAcrossLines walks a sequence of pre-wrapped lines and
+// for each line: tracks the ANSI escape sequences active at its end,
+// then prepends those sequences to the start of the next line so the
+// styling continues. Each line that ends with active styles gets a
+// reset (\x1b[0m) appended so cell padding (spaces) is unstyled.
+//
+// This is a simplified ANSI tracker: it recognizes SGR (Select Graphic
+// Rendition) sequences of the form \x1b[...m and treats \x1b[0m as a
+// full reset. It does not handle non-SGR escape sequences (cursor
+// moves, OSC, etc.) — those aren't expected inside markdown cell
+// content.
+func restoreAnsiAcrossLines(lines []string) []string {
+	if len(lines) <= 1 {
+		return lines
 	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
+	out := make([]string, len(lines))
+	var active []string // currently-open SGR codes from previous lines
+
+	for i, line := range lines {
+		prefix := strings.Join(active, "")
+		// Scan this line to update the active set.
+		newActive := append([]string(nil), active...)
+		var b strings.Builder
+		b.WriteString(prefix)
+		j := 0
+		for j < len(line) {
+			if j+1 < len(line) && line[j] == 0x1b && line[j+1] == '[' {
+				// SGR sequence: find the terminating 'm'.
+				end := j + 2
+				for end < len(line) && line[end] != 'm' {
+					end++
+				}
+				if end < len(line) {
+					seq := line[j : end+1]
+					b.WriteString(seq)
+					if seq == "\x1b[0m" || seq == "\x1b[m" {
+						// Full reset.
+						newActive = nil
+					} else {
+						newActive = append(newActive, seq)
+					}
+					j = end + 1
+					continue
+				}
+			}
+			b.WriteByte(line[j])
+			j++
+		}
+		// If there are still active styles at end of line, append a
+		// reset so cell padding doesn't inherit the style.
+		if len(newActive) > 0 {
+			b.WriteString("\x1b[0m")
+		}
+		out[i] = b.String()
+		active = newActive
 	}
 	return out
 }

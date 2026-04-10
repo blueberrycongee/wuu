@@ -234,6 +234,21 @@ func TestRender_TableWrapsLongCells(t *testing.T) {
 	}
 }
 
+func TestWrapAnsi_PreservesStyleAcrossLines(t *testing.T) {
+	// Hand-crafted ANSI input: bold "hello world example" wrapping to width 7.
+	// reflow should re-open the bold sequence on each wrapped line.
+	input := "\x1b[1mhello world example\x1b[0m"
+	lines := wrapAnsi(input, 7, false)
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 wrapped lines, got %d: %#v", len(lines), lines)
+	}
+	for i, line := range lines {
+		if !strings.Contains(line, "\x1b[") {
+			t.Errorf("wrapped line %d lost ANSI sequence: %q", i, line)
+		}
+	}
+}
+
 func TestRender_TableVerticalFallback(t *testing.T) {
 	// Tiny terminal forces vertical layout.
 	input := "| Name | Description |\n|------|-------------|\n| Alice | a fairly long description that won't fit horizontally in a tiny terminal |"
