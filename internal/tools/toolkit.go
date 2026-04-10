@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/skills"
 )
 
 const (
@@ -28,6 +29,17 @@ const (
 // Toolkit executes local coding tools for the agent.
 type Toolkit struct {
 	rootDir string
+	skills  []skills.Skill
+}
+
+// SetSkills attaches the discovered skills so the load_skill tool can find them.
+func (t *Toolkit) SetSkills(s []skills.Skill) {
+	t.skills = s
+}
+
+// Skills returns the currently registered skills (read-only).
+func (t *Toolkit) Skills() []skills.Skill {
+	return t.skills
 }
 
 // New creates a tool executor rooted in a workspace.
@@ -194,6 +206,23 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 				"required": []string{"url"},
 			},
 		},
+		{
+			Name: "load_skill",
+			Description: "Load the full body of a named skill from the project's .claude/skills/ or " +
+				"the user's ~/.claude/skills/ directory. Skills are reusable instructions that you " +
+				"can invoke when their description matches the user's request. Use the /skills " +
+				"command (or check the system prompt) to see what's available.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Skill name (e.g. \"commit\" or \"review-pr\"). Leading slash is optional.",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
 	}
 }
 
@@ -218,9 +247,42 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 		return t.webSearch(ctx, call.Arguments)
 	case "web_fetch":
 		return t.webFetch(ctx, call.Arguments)
+	case "load_skill":
+		return t.loadSkill(call.Arguments)
 	default:
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
+}
+
+func (t *Toolkit) loadSkill(argsJSON string) (string, error) {
+	var args struct {
+		Name string `json:"name"`
+	}
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(args.Name) == "" {
+		return "", errors.New("load_skill requires name")
+	}
+	skill, ok := skills.Find(t.skills, args.Name)
+	if !ok {
+		available := make([]string, 0, len(t.skills))
+		for _, s := range t.skills {
+			available = append(available, s.Name)
+		}
+		return "", fmt.Errorf("skill %q not found. available: %s", args.Name, strings.Join(available, ", "))
+	}
+	result := map[string]any{
+		"name":        skill.Name,
+		"description": skill.Description,
+		"source":      skill.Source,
+		"content":     skill.Content,
+	}
+	out, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func (t *Toolkit) runShell(ctx context.Context, argsJSON string) (string, error) {
