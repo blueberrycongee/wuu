@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,17 +9,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
-
-// maxTruncationRecoveries caps how many times the runner will ask the
-// model to keep going after hitting its output token cap. Aligned with
-// Claude Code's MAX_OUTPUT_TOKENS_RECOVERY_LIMIT.
-const maxTruncationRecoveries = 3
-
-// truncationContinuePrompt is sent after the model is cut off by its
-// output token limit. Lifted verbatim from Claude Code's recovery flow
-// — terse and emphatic so the model resumes mid-thought instead of
-// re-introducing the topic.
-const truncationContinuePrompt = "Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces."
 
 // ToolExecutor executes model-requested tool calls.
 type ToolExecutor interface {
@@ -176,13 +164,4 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 	}
 
 	return RunResult{InputTokens: totalIn, OutputTokens: totalOut}, fmt.Errorf("max steps exceeded (%d)", maxSteps)
-}
-
-func errorJSON(err error) string {
-	payload := map[string]any{"error": err.Error()}
-	b, marshalErr := json.Marshal(payload)
-	if marshalErr != nil {
-		return `{"error":"tool execution failed"}`
-	}
-	return string(b)
 }
