@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -16,6 +17,10 @@ import (
 type StreamCallback func(event providers.StreamEvent)
 
 // StreamRunner manages one multi-step coding turn with streaming.
+// It is a thin wrapper around RunToolLoop that supplies a streamStep
+// adapter (Step → providers.StreamClient.StreamChat with reconnect),
+// so the actual loop logic — step counting, truncation recovery,
+// context-overflow auto-compact — comes from the same code as Runner.
 type StreamRunner struct {
 	Client       providers.StreamClient
 	Tools        ToolExecutor
@@ -57,88 +62,81 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		return "", nil, errors.New("model is required")
 	}
 
-	// MaxSteps == 0 means unlimited (no step cap). Aligned with the
-	// non-streaming Runner and with Claude Code's default behavior:
-	// the model decides when it's done by emitting a final message.
-	// A positive value still acts as a runaway safety net.
-	maxSteps := r.MaxSteps
+	step := &streamStep{
+		client:  r.Client,
+		onEvent: onEvent,
+		retry:   r.streamRetryConfig(),
+	}
 
-	messages := make([]providers.ChatMessage, len(history))
-	copy(messages, history)
-	startLen := len(messages)
-
-	for step := 0; maxSteps == 0 || step < maxSteps; step++ {
-		req := providers.ChatRequest{
-			Model:       r.Model,
-			Messages:    messages,
-			Temperature: r.Temperature,
-		}
-		if r.Tools != nil {
-			req.Tools = r.Tools.Definitions()
-		}
-
-		var contentBuf strings.Builder
-		// Map from tool call index to accumulated tool call.
-		pendingTools := map[int]*providers.ToolCall{}
-		if err := r.runStreamWithReconnect(ctx, req, &contentBuf, pendingTools, onEvent); err != nil {
-			return "", nil, fmt.Errorf("stream request failed: %w", err)
-		}
-
-		// Build ordered tool calls list from pending map.
-		toolCalls := make([]providers.ToolCall, 0, len(pendingTools))
-		for i := 0; i < len(pendingTools); i++ {
-			if tc, ok := pendingTools[i]; ok {
-				toolCalls = append(toolCalls, *tc)
+	cfg := LoopConfig{
+		Tools:       r.Tools,
+		Model:       r.Model,
+		Temperature: r.Temperature,
+		MaxSteps:    r.MaxSteps,
+		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			return compact.Compact(ctx, messages, r.Client, r.Model)
+		},
+		// Forward each tool result through the streaming callback so
+		// the TUI can render the tool card live (the loop itself only
+		// records the tool message into the history).
+		OnToolResult: func(call providers.ToolCall, result string) {
+			if onEvent == nil {
+				return
 			}
-		}
-
-		assistant := providers.ChatMessage{
-			Role:      "assistant",
-			Content:   contentBuf.String(),
-			ToolCalls: toolCalls,
-		}
-		messages = append(messages, assistant)
-
-		// No tool calls means the model is done.
-		if len(toolCalls) == 0 {
-			result := strings.TrimSpace(contentBuf.String())
-			if result == "" {
-				return "", nil, errors.New("model returned empty answer")
-			}
-			return result, messages[startLen:], nil
-		}
-
-		// Execute each requested tool.
-		if r.Tools == nil {
-			return "", nil, errors.New("model requested tools but none are configured")
-		}
-
-		for _, call := range toolCalls {
-			providers.DebugLogf("executing tool: %s, id: %s, args: %s", call.Name, call.ID, call.Arguments)
-			toolResult, execErr := r.Tools.Execute(ctx, call)
-			if execErr != nil {
-				providers.DebugLogf("tool error: %s: %v", call.Name, execErr)
-				toolResult = errorJSON(execErr)
-			}
-			providers.DebugLogf("tool result: %s: %s", call.Name, truncateLog(toolResult, 500))
-			// Emit tool result to TUI.
-			if onEvent != nil {
-				onEvent(providers.StreamEvent{
-					Type:       providers.EventToolUseEnd,
-					ToolCall:   &providers.ToolCall{ID: call.ID, Name: call.Name},
-					ToolResult: truncateLog(toolResult, 2000),
-				})
-			}
-			messages = append(messages, providers.ChatMessage{
-				Role:       "tool",
-				Name:       call.Name,
-				ToolCallID: call.ID,
-				Content:    toolResult,
+			onEvent(providers.StreamEvent{
+				Type:       providers.EventToolUseEnd,
+				ToolCall:   &providers.ToolCall{ID: call.ID, Name: call.Name},
+				ToolResult: truncateLog(result, 2000),
 			})
+		},
+	}
+
+	res, err := RunToolLoop(ctx, history, cfg, step)
+	return res.Content, res.NewMessages, err
+}
+
+// streamStep adapts providers.StreamClient (with reconnect) to the
+// transport-agnostic Step interface. One Execute call opens an SSE
+// stream, consumes it to completion (with mid-attempt reconnect on
+// early disconnects), accumulates the assistant content + tool calls
+// + usage, and returns a normalized StepResult.
+type streamStep struct {
+	client  providers.StreamClient
+	onEvent StreamCallback
+	retry   providers.RetryConfig
+}
+
+func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (StepResult, error) {
+	var (
+		contentBuf   strings.Builder
+		pendingTools = map[int]*providers.ToolCall{}
+		usage        *providers.TokenUsage
+	)
+	if err := s.runStreamWithReconnect(ctx, req, &contentBuf, pendingTools, &usage); err != nil {
+		return StepResult{}, fmt.Errorf("stream request failed: %w", err)
+	}
+
+	// Build ordered tool calls list from the pending map.
+	toolCalls := make([]providers.ToolCall, 0, len(pendingTools))
+	for i := 0; i < len(pendingTools); i++ {
+		if tc, ok := pendingTools[i]; ok {
+			toolCalls = append(toolCalls, *tc)
 		}
 	}
 
-	return "", nil, fmt.Errorf("max steps exceeded (%d)", maxSteps)
+	return StepResult{
+		Content:   contentBuf.String(),
+		ToolCalls: toolCalls,
+		Usage:     usage,
+		// NOTE: SSE paths in providers/{openai,anthropic} don't yet
+		// surface stop_reason / finish_reason through StreamEvent, so
+		// streaming runs can't trigger truncation recovery today. The
+		// auto-compact-on-overflow branch DOES fire because StreamChat
+		// returns providers.HTTPError with ContextOverflow when the
+		// initial connect fails. Plumbing truncation through SSE is a
+		// follow-up.
+		Truncated: false,
+	}, nil
 }
 
 func truncateLog(s string, maxLen int) string {
@@ -148,21 +146,22 @@ func truncateLog(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-func (r *StreamRunner) runStreamWithReconnect(
+func (s *streamStep) runStreamWithReconnect(
 	ctx context.Context,
 	req providers.ChatRequest,
 	contentBuf *strings.Builder,
 	pendingTools map[int]*providers.ToolCall,
-	onEvent StreamCallback,
+	usage **providers.TokenUsage,
 ) error {
-	cfg := r.streamRetryConfig()
+	cfg := s.retry
+	onEvent := s.onEvent
 	attempt := 0
 	for {
 		// Don't retry if the caller's context is already done.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		ch, err := r.Client.StreamChat(ctx, req)
+		ch, err := s.client.StreamChat(ctx, req)
 		if err != nil {
 			if ctx.Err() == nil && shouldRetryStreamError(err, attempt, cfg.MaxRetries) {
 				delay := streamRetryDelay(attempt, cfg.InitialDelay, cfg.MaxDelay)
@@ -242,6 +241,9 @@ func (r *StreamRunner) runStreamWithReconnect(
 
 			case providers.EventDone:
 				sawDone = true
+				if event.Usage != nil {
+					*usage = event.Usage
+				}
 			}
 
 			if onEvent != nil {
