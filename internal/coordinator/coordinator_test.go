@@ -96,11 +96,14 @@ func TestSpawn_SyncHappyPath(t *testing.T) {
 	if res.Result != "task done" {
 		t.Fatalf("got result %q", res.Result)
 	}
-	if res.WorktreePath == "" {
-		t.Fatal("worktree path empty")
+	if res.Isolation != "worktree" {
+		t.Fatalf("worker default should be worktree isolation, got %q", res.Isolation)
 	}
-	if _, statErr := os.Stat(res.WorktreePath); statErr != nil {
-		t.Fatalf("worktree should exist after spawn, got: %v", statErr)
+	// fakeToolkit doesn't touch the filesystem, so the worker leaves
+	// its worktree pristine and the coordinator recycles it on
+	// completion. The path should therefore be empty.
+	if res.WorktreePath != "" {
+		t.Fatalf("clean worktree should be recycled, got %q", res.WorktreePath)
 	}
 }
 
@@ -156,6 +159,8 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 	})
 
 	// Explorer normally inplace; force it into a worktree.
+	// (It does no work, so auto-recycle will then drop the path —
+	// the override is verified via res.Isolation, not the path.)
 	res, err := c.Spawn(context.Background(), SpawnRequest{
 		Type:        "explorer",
 		Description: "force-isolated",
@@ -168,9 +173,6 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 	}
 	if res.Isolation != "worktree" {
 		t.Fatalf("override failed: %q", res.Isolation)
-	}
-	if res.WorktreePath == "" {
-		t.Fatal("worktree spawn should report a path")
 	}
 
 	// And: worker (default worktree) overridden to inplace.
@@ -204,6 +206,82 @@ func TestSpawn_UnknownIsolationRejected(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown isolation")
+	}
+}
+
+func TestSpawn_AutoRecycleCleanWorktree(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	// fakeToolkit doesn't touch the filesystem, so the worker leaves
+	// its worktree pristine. The coordinator should drop it on sync
+	// completion and clear the WorktreePath in the result.
+	c, _ := New(Config{
+		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, ".wuu", "worktrees"),
+		SessionID:     "sess-recycle",
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+
+	res, err := c.Spawn(context.Background(), SpawnRequest{
+		Type:        "worker", // default worktree
+		Description: "noop",
+		Prompt:      "p",
+		Synchronous: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Isolation != "worktree" {
+		t.Fatalf("expected worktree isolation, got %q", res.Isolation)
+	}
+	if res.WorktreePath != "" {
+		t.Fatalf("clean worktree should be recycled and path cleared, got %q", res.WorktreePath)
+	}
+	// And nothing left under the session directory.
+	entries, _ := os.ReadDir(filepath.Join(dir, ".wuu", "worktrees", "sess-recycle"))
+	if len(entries) != 0 {
+		t.Fatalf("expected recycled worktree to be removed, found %d entries", len(entries))
+	}
+}
+
+func TestSpawn_KeepDirtyWorktree(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	// Toolkit that drops a file in the worker's root before returning.
+	dirtyKit := func(root string, _ WorkerType) (agent.ToolExecutor, error) {
+		if err := os.WriteFile(filepath.Join(root, "scratch.txt"), []byte("x"), 0o644); err != nil {
+			return nil, err
+		}
+		return fakeToolkit{}, nil
+	}
+
+	c, _ := New(Config{
+		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, ".wuu", "worktrees"),
+		SessionID:     "sess-dirty",
+		WorkerFactory: dirtyKit,
+	})
+
+	res, err := c.Spawn(context.Background(), SpawnRequest{
+		Type:        "worker",
+		Description: "modifies",
+		Prompt:      "p",
+		Synchronous: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WorktreePath == "" {
+		t.Fatal("dirty worktree should be preserved and path returned")
+	}
+	if _, err := os.Stat(res.WorktreePath); err != nil {
+		t.Fatalf("dirty worktree should still be on disk: %v", err)
 	}
 }
 

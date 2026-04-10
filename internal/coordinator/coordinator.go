@@ -225,6 +225,12 @@ func (c *Coordinator) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult
 	}
 
 	if !req.Synchronous {
+		// Async path: schedule background recycle once the worker
+		// finishes. Detached context so it survives a cancelled
+		// parent (the worker itself runs detached too).
+		if worktreeRef != nil {
+			go c.recycleWorktreeWhenDone(sa.ID, worktreeRef)
+		}
 		return result, nil
 	}
 
@@ -247,7 +253,34 @@ func (c *Coordinator) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult
 	if !snap.CompletedAt.IsZero() && !snap.StartedAt.IsZero() {
 		result.DurationMS = snap.CompletedAt.Sub(snap.StartedAt).Milliseconds()
 	}
+
+	// Sync recycle: drop the worktree if the worker left it pristine.
+	// Anything dirty stays on disk so the orchestrator (or user) can
+	// inspect / merge it.
+	if worktreeRef != nil {
+		if kept, cerr := c.worktrees.CleanupIfClean(worktreeRef); cerr == nil && !kept {
+			result.WorktreePath = "" // recycled — no path to surface
+		}
+	}
 	return result, nil
+}
+
+// recycleWorktreeWhenDone is the async-spawn cleanup tail. It blocks
+// on the worker's completion, then attempts to drop the worktree if
+// nothing was modified. Errors are intentionally swallowed: cleanup is
+// best-effort and the user can always run `git worktree prune` later.
+func (c *Coordinator) recycleWorktreeWhenDone(agentID string, wtRef *worktree.Worktree) {
+	if wtRef == nil {
+		return
+	}
+	// Long ceiling — workers can legitimately run for a while. The
+	// real cap comes from the worker's own context, not this wait.
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
+	defer cancel()
+	if _, err := c.manager.Wait(ctx, agentID); err != nil {
+		return
+	}
+	_, _ = c.worktrees.CleanupIfClean(wtRef)
 }
 
 // StopAll cancels every running worker. Used for Ctrl+C handling.
