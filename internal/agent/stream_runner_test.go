@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -432,6 +433,61 @@ func TestStreamRunner_RetryOnDeadlineExceeded(t *testing.T) {
 	}
 	if client.callCount != 2 {
 		t.Fatalf("expected 2 stream attempts, got %d", client.callCount)
+	}
+}
+
+func TestStreamRunner_ZeroMaxStepsIsUnlimited(t *testing.T) {
+	// Regression: previously MaxSteps == 0 was silently coerced to 8,
+	// which broke long coordinator sessions. With the fix, 0 means
+	// unlimited and a 12-round tool-call run completes successfully.
+	const rounds = 12
+
+	attempts := make([]mockStreamAttempt, 0, rounds+1)
+	for i := 0; i < rounds; i++ {
+		id := fmt.Sprintf("call_%d", i)
+		attempts = append(attempts, mockStreamAttempt{
+			events: []providers.StreamEvent{
+				{
+					Type:     providers.EventToolUseStart,
+					ToolCall: &providers.ToolCall{ID: id, Name: "run_shell"},
+				},
+				{
+					Type: providers.EventToolUseEnd,
+					ToolCall: &providers.ToolCall{
+						ID: id, Name: "run_shell",
+						Arguments: `{"command":"echo hi"}`,
+					},
+				},
+				{Type: providers.EventDone},
+			},
+		})
+	}
+	// Final round: content only, no tool calls — runner exits cleanly.
+	attempts = append(attempts, mockStreamAttempt{
+		events: []providers.StreamEvent{
+			{Type: providers.EventContentDelta, Content: "all done"},
+			{Type: providers.EventDone},
+		},
+	})
+
+	client := &mockStreamClient{attempts: attempts}
+	tools := &fakeTools{}
+	runner := StreamRunner{
+		Client: client,
+		Tools:  tools,
+		Model:  "test-model",
+		// MaxSteps left at zero — must mean "no cap".
+	}
+
+	out, err := runner.Run(context.Background(), "long task")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "all done" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+	if len(tools.calls) != rounds {
+		t.Fatalf("expected %d tool calls, got %d", rounds, len(tools.calls))
 	}
 }
 

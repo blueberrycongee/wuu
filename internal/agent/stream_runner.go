@@ -57,16 +57,17 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		return "", nil, errors.New("model is required")
 	}
 
+	// MaxSteps == 0 means unlimited (no step cap). Aligned with the
+	// non-streaming Runner and with Claude Code's default behavior:
+	// the model decides when it's done by emitting a final message.
+	// A positive value still acts as a runaway safety net.
 	maxSteps := r.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = 8
-	}
 
 	messages := make([]providers.ChatMessage, len(history))
 	copy(messages, history)
 	startLen := len(messages)
 
-	for step := 0; step < maxSteps; step++ {
+	for step := 0; maxSteps == 0 || step < maxSteps; step++ {
 		req := providers.ChatRequest{
 			Model:       r.Model,
 			Messages:    messages,
