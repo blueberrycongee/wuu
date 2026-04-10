@@ -28,8 +28,9 @@ const (
 
 // Toolkit executes local coding tools for the agent.
 type Toolkit struct {
-	rootDir string
-	skills  []skills.Skill
+	rootDir   string
+	skills    []skills.Skill
+	sessionID string
 }
 
 // SetSkills attaches the discovered skills so the load_skill tool can find them.
@@ -40,6 +41,12 @@ func (t *Toolkit) SetSkills(s []skills.Skill) {
 // Skills returns the currently registered skills (read-only).
 func (t *Toolkit) Skills() []skills.Skill {
 	return t.skills
+}
+
+// SetSessionID sets the current session ID, used for ${CLAUDE_SESSION_ID}
+// substitution in skill bodies.
+func (t *Toolkit) SetSessionID(id string) {
+	t.sessionID = id
 }
 
 // New creates a tool executor rooted in a workspace.
@@ -210,14 +217,20 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 			Name: "load_skill",
 			Description: "Load the full body of a named skill from the project's .claude/skills/ or " +
 				"the user's ~/.claude/skills/ directory. Skills are reusable instructions that you " +
-				"can invoke when their description matches the user's request. Use the /skills " +
-				"command (or check the system prompt) to see what's available.",
+				"can invoke when their description matches the user's request. The returned body " +
+				"may contain ${ARGUMENTS} (replaced by the arguments parameter), ${CLAUDE_SKILL_DIR} " +
+				"(skill's directory path), and ${CLAUDE_SESSION_ID} (current session). Use the " +
+				"/skills command to see what's available.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"name": map[string]any{
 						"type":        "string",
 						"description": "Skill name (e.g. \"commit\" or \"review-pr\"). Leading slash is optional.",
+					},
+					"arguments": map[string]any{
+						"type":        "string",
+						"description": "Optional arguments string substituted into ${ARGUMENTS} placeholders in the skill body.",
 					},
 				},
 				"required": []string{"name"},
@@ -256,7 +269,8 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 
 func (t *Toolkit) loadSkill(argsJSON string) (string, error) {
 	var args struct {
-		Name string `json:"name"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
 	}
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return "", err
@@ -272,17 +286,38 @@ func (t *Toolkit) loadSkill(argsJSON string) (string, error) {
 		}
 		return "", fmt.Errorf("skill %q not found. available: %s", args.Name, strings.Join(available, ", "))
 	}
+
+	body := substituteSkillVariables(skill.Content, args.Arguments, skill.Dir, t.sessionID)
+
 	result := map[string]any{
 		"name":        skill.Name,
 		"description": skill.Description,
 		"source":      skill.Source,
-		"content":     skill.Content,
+		"content":     body,
+	}
+	if skill.WhenToUse != "" {
+		result["when_to_use"] = skill.WhenToUse
+	}
+	if len(skill.AllowedTools) > 0 {
+		result["allowed_tools"] = skill.AllowedTools
 	}
 	out, err := json.Marshal(result)
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// substituteSkillVariables replaces ${ARGUMENTS}, ${CLAUDE_SKILL_DIR},
+// and ${CLAUDE_SESSION_ID} placeholders in a skill body. Matches Claude
+// Code's substitution behavior.
+func substituteSkillVariables(body, arguments, skillDir, sessionID string) string {
+	r := strings.NewReplacer(
+		"${ARGUMENTS}", arguments,
+		"${CLAUDE_SKILL_DIR}", skillDir,
+		"${CLAUDE_SESSION_ID}", sessionID,
+	)
+	return r.Replace(body)
 }
 
 func (t *Toolkit) runShell(ctx context.Context, argsJSON string) (string, error) {

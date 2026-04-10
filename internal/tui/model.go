@@ -120,6 +120,7 @@ type Model struct {
 	streamRunner   *agent.StreamRunner
 	hookDispatcher *hooks.Dispatcher
 	streamCh       chan providers.StreamEvent
+	onSessionID    func(string)
 
 	maxContextTokens int
 	requestTimeout   time.Duration
@@ -235,6 +236,7 @@ func NewModel(cfg Config) Model {
 		runPrompt:         cfg.RunPrompt,
 		streamRunner:      cfg.StreamRunner,
 		hookDispatcher:    cfg.HookDispatcher,
+		onSessionID:       cfg.OnSessionID,
 		maxContextTokens:  cfg.MaxContextTokens,
 		requestTimeout:    cfg.RequestTimeout,
 		viewport:          vp,
@@ -266,6 +268,9 @@ func NewModel(cfg Config) Model {
 			// Files are created lazily on first message (see ensureSessionFile).
 			m.sessionID = session.NewID()
 			m.memoryPath = session.FilePath(m.sessionDir, m.sessionID)
+		}
+		if m.onSessionID != nil && m.sessionID != "" {
+			m.onSessionID(m.sessionID)
 		}
 	}
 

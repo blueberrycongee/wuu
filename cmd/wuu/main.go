@@ -318,12 +318,14 @@ func runTUI(args []string) error {
 	discoveredSkills := skills.Discover(projectSkillsDir, userSkillsDir)
 
 	var toolExecutor agent.ToolExecutor
+	var toolkit *tools.Toolkit
 	if !*noTools {
 		kit, newErr := tools.New(rootDir)
 		if newErr != nil {
 			return newErr
 		}
 		kit.SetSkills(discoveredSkills)
+		toolkit = kit
 		toolExecutor = hooks.NewHookedExecutor(kit, hookDispatcher, "", rootDir)
 	}
 
@@ -371,7 +373,7 @@ func runTUI(args []string) error {
 		}
 	}
 
-	return tui.Run(tui.Config{
+	cfgUI := tui.Config{
 		Provider:         resolvedName,
 		Model:            providerCfg.Model,
 		ConfigPath:       configPath,
@@ -382,7 +384,11 @@ func runTUI(args []string) error {
 		RequestTimeout:   *requestTimeout,
 		StreamRunner:     streamRunner,
 		HookDispatcher:   hookDispatcher,
-	})
+	}
+	if toolkit != nil {
+		cfgUI.OnSessionID = toolkit.SetSessionID
+	}
+	return tui.Run(cfgUI)
 }
 
 func resolveWorkdir(input string) (string, error) {

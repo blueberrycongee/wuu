@@ -26,6 +26,7 @@ type Config struct {
 	RunPrompt        func(ctx context.Context, prompt string) (string, error)
 	StreamRunner     *agent.StreamRunner // optional, used when available
 	HookDispatcher   *hooks.Dispatcher   // optional, dispatches lifecycle hooks
+	OnSessionID      func(string)        // optional, called when the session ID changes
 }
 
 // Run starts the interactive terminal UI.
