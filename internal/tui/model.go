@@ -537,13 +537,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.clock = msg.now.Format("15:04:05")
 		m.spinnerTick++
-		if m.streaming || m.pendingRequest || m.statusLine == "thinking" {
+		// Only refresh the viewport when the thinking-block spinner
+		// (which lives inside the viewport) needs to advance.
+		// Everything else that ticks — header clock, inline status,
+		// worker panel elapsed/spinner — renders in View() outside
+		// the viewport, so the spinnerTick increment is enough for
+		// BubbleTea to re-call View() and pick up the new frame.
+		// Worker panel height changes are handled by workerNotifyMsg.
+		if m.statusLine == "thinking" {
 			m.refreshViewport(false)
-		}
-		// Re-layout if the worker panel is showing — its contents
-		// (elapsed time, spinner) need to refresh every tick.
-		if m.coordinator != nil && m.workerPanelHeight() > 0 {
-			m.relayout()
 		}
 		return m, tickCmd()
 
