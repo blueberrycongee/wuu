@@ -67,8 +67,12 @@ func (m Model) renderWorkerPanel(width int) string {
 	}
 
 	var b strings.Builder
+	// Title row MUST fill the full terminal width — otherwise the
+	// trailing columns retain whatever was at that row in the previous
+	// frame (e.g., a scrollbar character from the chat above), which
+	// shows up as ghosting when the panel appears or shrinks.
 	title := fmt.Sprintf(" Active workers (%d)", len(active))
-	b.WriteString(workerPanelTitleStyle.Render(trimToWidth(title, width)))
+	b.WriteString(workerPanelTitleStyle.Render(fitToWidth(title, width)))
 
 	now := time.Now()
 	limit := len(active)
@@ -109,7 +113,12 @@ func (m Model) renderWorkerPanel(width int) string {
 		if gap < 1 {
 			gap = 1
 		}
-		row := workerPanelRowStyle.Render(left + strings.Repeat(" ", gap) + right)
+		// Build the row, then defensively re-fit to width so any
+		// math drift (wide unicode, ANSI miscounting) can't leave
+		// the row short.
+		raw := left + strings.Repeat(" ", gap) + right
+		raw = fitToWidth(raw, width)
+		row := workerPanelRowStyle.Render(raw)
 		b.WriteString("\n")
 		b.WriteString(row)
 	}
