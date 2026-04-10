@@ -15,7 +15,7 @@ func TestBuildClient_OpenAICompatible(t *testing.T) {
 		BaseURL:   "https://example.com/v1",
 		APIKeyEnv: "TEST_WUU_KEY",
 		Model:     "gpt-test",
-	})
+	}, "test")
 	if err != nil {
 		t.Fatalf("BuildClient returned error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestBuildClient_Anthropic(t *testing.T) {
 		BaseURL:   "https://api.anthropic.com",
 		APIKeyEnv: "TEST_ANTHROPIC_KEY",
 		Model:     "claude-test",
-	})
+	}, "test")
 	if err != nil {
 		t.Fatalf("BuildClient returned error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBuildClientWithRetry_AppliesCustomConfig(t *testing.T) {
 			BaseURL:   "https://example.com/v1",
 			APIKeyEnv: "TEST_WUU_KEY",
 			Model:     "test",
-		}, &rc)
+		}, "test", &rc)
 		if err != nil {
 			t.Fatalf("BuildClientWithRetry(%s) returned error: %v", ptype, err)
 		}
@@ -106,7 +106,7 @@ func TestBuildClient_MissingAPIKey(t *testing.T) {
 		BaseURL:   "https://example.com/v1",
 		APIKeyEnv: "MISSING_WUU_KEY",
 		Model:     "gpt-test",
-	})
+	}, "test")
 	if err == nil {
 		t.Fatal("expected error")
 	}

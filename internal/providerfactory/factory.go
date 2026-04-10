@@ -13,9 +13,12 @@ import (
 )
 
 // BuildClient constructs a provider client from config using the
-// default HTTP retry policy (3 attempts).
-func BuildClient(provider config.ProviderConfig) (providers.Client, error) {
-	return BuildClientWithRetry(provider, nil)
+// default HTTP retry policy (3 attempts). providerName is the key
+// under which this provider lives in the config map; it's needed so
+// resolveAPIKey can fall back to the global auth store (where the
+// onboarding flow stashes keys via SaveAuthKey).
+func BuildClient(provider config.ProviderConfig, providerName string) (providers.Client, error) {
+	return BuildClientWithRetry(provider, providerName, nil)
 }
 
 // BuildClientWithRetry is like BuildClient but lets the caller pin a
@@ -23,9 +26,9 @@ func BuildClient(provider config.ProviderConfig) (providers.Client, error) {
 // (e.g. sub-agents that may run for many minutes and should be more
 // tolerant of transient 429 / 5xx than the interactive main agent).
 // Pass nil to use the provider client's built-in default.
-func BuildClientWithRetry(provider config.ProviderConfig, retry *providers.RetryConfig) (providers.Client, error) {
+func BuildClientWithRetry(provider config.ProviderConfig, providerName string, retry *providers.RetryConfig) (providers.Client, error) {
 	typeName := normalizeType(provider.Type)
-	apiKey, err := resolveAPIKey(provider)
+	apiKey, err := resolveAPIKey(provider, providerName)
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +76,11 @@ func SubAgentRetryConfig() providers.RetryConfig {
 }
 
 // BuildStreamClient constructs a streaming-capable provider client.
-func BuildStreamClient(provider config.ProviderConfig) (providers.StreamClient, error) {
+// providerName is the config map key — see BuildClient for why this
+// matters for the global auth-store fallback.
+func BuildStreamClient(provider config.ProviderConfig, providerName string) (providers.StreamClient, error) {
 	typeName := normalizeType(provider.Type)
-	apiKey, err := resolveAPIKey(provider)
+	apiKey, err := resolveAPIKey(provider, providerName)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +143,8 @@ func ResolveAPIKeyWithHome(provider config.ProviderConfig, providerName, home st
 	return "", fmt.Errorf("no API key found for provider %q (%s)", provider.Type, hint)
 }
 
-func resolveAPIKey(provider config.ProviderConfig) (string, error) {
-	return ResolveAPIKeyWithHome(provider, "", os.Getenv("HOME"))
+func resolveAPIKey(provider config.ProviderConfig, providerName string) (string, error) {
+	return ResolveAPIKeyWithHome(provider, providerName, os.Getenv("HOME"))
 }
 
 func defaultAPIKeyEnv(providerType string) string {

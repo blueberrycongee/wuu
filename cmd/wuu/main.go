@@ -156,7 +156,7 @@ func runTask(args []string) error {
 		providerCfg.Model = *modelOverride
 	}
 
-	client, err := providerfactory.BuildClient(providerCfg)
+	client, err := providerfactory.BuildClient(providerCfg, resolvedName)
 	if err != nil {
 		return err
 	}
@@ -290,7 +290,7 @@ func runTUI(args []string) error {
 		providerCfg.Model = *modelOverride
 	}
 
-	client, err := providerfactory.BuildStreamClient(providerCfg)
+	client, err := providerfactory.BuildStreamClient(providerCfg, resolvedName)
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func runTUI(args []string) error {
 		// would otherwise kill them; the main TUI agent stays on the
 		// snappier 3-attempt default so failures surface faster.
 		workerRetry := providerfactory.SubAgentRetryConfig()
-		workerClient, werr := providerfactory.BuildClientWithRetry(providerCfg, &workerRetry)
+		workerClient, werr := providerfactory.BuildClientWithRetry(providerCfg, resolvedName, &workerRetry)
 		if werr != nil {
 			return fmt.Errorf("build worker client: %w", werr)
 		}
