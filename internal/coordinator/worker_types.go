@@ -12,13 +12,21 @@ type IsolationMode string
 
 const (
 	// IsolationInplace runs the worker directly in the parent repo's
-	// working directory. Cheap (no checkout, no disk hit) and the right
-	// default for read-only worker types like explorer/planner/verifier.
+	// working directory. Cheap (no checkout, no disk hit) and the
+	// default for ALL built-in worker types — additive writes that
+	// the user expects to land in the main repo are by far the common
+	// case, and isolating them by default just hides the artifacts in
+	// a worktree the user has to manually cherry-pick from. Matches
+	// Claude Code's default: workers share the parent fs unless the
+	// caller explicitly opts into isolation.
 	IsolationInplace IsolationMode = "inplace"
 	// IsolationWorktree creates a fresh `git worktree add --detach`
 	// rooted at HEAD so the worker can edit files without colliding
 	// with the parent or other concurrent workers. Costs one full
-	// checkout per spawn.
+	// checkout per spawn. Reach for it when the worker may break the
+	// build, fight with the user's uncommitted work, or run alongside
+	// another writer touching the same files — never as a blanket
+	// default for "this worker writes things".
 	IsolationWorktree IsolationMode = "worktree"
 )
 
@@ -40,9 +48,12 @@ type WorkerType struct {
 	// this worker type — it returns once and is done.
 	OneShot bool
 	// DefaultIsolation is the isolation mode used when the spawn
-	// request doesn't specify one. Read-only types should default to
-	// IsolationInplace; types that write to the workspace should
-	// default to IsolationWorktree.
+	// request doesn't specify one. All built-in types default to
+	// IsolationInplace — the worker shares the parent repo, which
+	// is what users expect when they ask for additive work. Custom
+	// types that genuinely need a sandbox (e.g. an experiment runner
+	// that may break the build) can override to IsolationWorktree
+	// at registration time.
 	DefaultIsolation IsolationMode
 }
 
@@ -111,7 +122,7 @@ How to confirm the change works (test command, manual check, etc.).`,
 		Description:      "General-purpose implementer. Has the full tool set including read/write/edit/run_shell.",
 		AllowedTools:     nil, // nil means "all non-orchestration tools"
 		OneShot:          false,
-		DefaultIsolation: IsolationWorktree,
+		DefaultIsolation: IsolationInplace,
 		SystemPrompt: `You are a worker sub-agent. Your job is to implement the changes the orchestrator described and report what you did.
 
 CRITICAL RULES:
@@ -121,7 +132,7 @@ CRITICAL RULES:
 
 OUTPUT FORMAT:
 End your final message with a concise summary including:
-- Which files you changed (full paths from your worktree root)
+- Which files you changed (absolute paths)
 - A brief description of each change
 - Whether tests/build/lint passed
 - Any follow-ups or warnings the orchestrator should know about`,
@@ -169,13 +180,15 @@ VERDICT: PARTIAL`,
 }
 
 // NormalizeIsolation validates and lowercases an isolation mode. An
-// empty input returns the worker type's default. Unknown values are
+// empty input returns the worker type's default; if the type itself
+// has no default, fall back to IsolationInplace (matching the global
+// "share parent fs unless told otherwise" stance). Unknown values are
 // rejected so the model can't sneak through arbitrary strings.
 func NormalizeIsolation(raw string, wt WorkerType) (IsolationMode, error) {
 	v := IsolationMode(strings.TrimSpace(strings.ToLower(raw)))
 	if v == "" {
 		if wt.DefaultIsolation == "" {
-			return IsolationWorktree, nil
+			return IsolationInplace, nil
 		}
 		return wt.DefaultIsolation, nil
 	}

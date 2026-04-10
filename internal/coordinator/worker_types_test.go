@@ -86,11 +86,14 @@ func TestFilterToolsForWorker_Worker(t *testing.T) {
 }
 
 func TestWorkerType_DefaultIsolation(t *testing.T) {
+	// All built-in types now default to inplace — workers share the
+	// parent repo unless the caller explicitly opts into a worktree.
+	// See the IsolationInplace doc comment for the rationale.
 	cases := map[string]IsolationMode{
 		"explorer": IsolationInplace,
 		"planner":  IsolationInplace,
 		"verifier": IsolationInplace,
-		"worker":   IsolationWorktree,
+		"worker":   IsolationInplace,
 	}
 	for name, want := range cases {
 		wt, err := LookupWorkerType(name)
@@ -114,11 +117,12 @@ func TestNormalizeIsolation(t *testing.T) {
 		want    IsolationMode
 		wantErr bool
 	}{
-		{"empty falls back to type default (worker)", "", worker, IsolationWorktree, false},
+		{"empty falls back to type default (worker)", "", worker, IsolationInplace, false},
 		{"empty falls back to type default (explorer)", "", explorer, IsolationInplace, false},
 		{"explicit inplace", "inplace", worker, IsolationInplace, false},
 		{"explicit worktree", "worktree", explorer, IsolationWorktree, false},
 		{"case insensitive", "InPlace", worker, IsolationInplace, false},
+		{"empty type with empty default falls back to inplace", "", WorkerType{}, IsolationInplace, false},
 		{"unknown rejected", "yolo", worker, "", true},
 	}
 	for _, tc := range cases {

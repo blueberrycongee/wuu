@@ -110,14 +110,13 @@ func TestSpawn_SyncHappyPath(t *testing.T) {
 	if res.Result != "task done" {
 		t.Fatalf("got result %q", res.Result)
 	}
-	if res.Isolation != "worktree" {
-		t.Fatalf("worker default should be worktree isolation, got %q", res.Isolation)
+	// Worker now defaults to inplace — additive writes land in the
+	// parent repo so users don't have to fish them out of a worktree.
+	if res.Isolation != "inplace" {
+		t.Fatalf("worker default should be inplace isolation, got %q", res.Isolation)
 	}
-	// fakeToolkit doesn't touch the filesystem, so the worker leaves
-	// its worktree pristine and the coordinator recycles it on
-	// completion. The path should therefore be empty.
 	if res.WorktreePath != "" {
-		t.Fatalf("clean worktree should be recycled, got %q", res.WorktreePath)
+		t.Fatalf("inplace spawn should not produce a worktree path, got %q", res.WorktreePath)
 	}
 }
 
@@ -230,6 +229,10 @@ func TestSpawn_AutoRecycleCleanWorktree(t *testing.T) {
 	// fakeToolkit doesn't touch the filesystem, so the worker leaves
 	// its worktree pristine. The coordinator should drop it on sync
 	// completion and clear the WorktreePath in the result.
+	//
+	// Worker no longer defaults to worktree, so this test explicitly
+	// opts in via Isolation: "worktree" — that's the supported way to
+	// get the auto-recycle path now.
 	c, _ := New(Config{
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
 		DefaultModel:  "fake",
@@ -240,9 +243,10 @@ func TestSpawn_AutoRecycleCleanWorktree(t *testing.T) {
 	})
 
 	res, err := c.Spawn(context.Background(), SpawnRequest{
-		Type:        "worker", // default worktree
+		Type:        "worker",
 		Description: "noop",
 		Prompt:      "p",
+		Isolation:   "worktree",
 		Synchronous: true,
 	})
 	if err != nil {
@@ -286,6 +290,7 @@ func TestSpawn_KeepDirtyWorktree(t *testing.T) {
 		Type:        "worker",
 		Description: "modifies",
 		Prompt:      "p",
+		Isolation:   "worktree",
 		Synchronous: true,
 	})
 	if err != nil {
