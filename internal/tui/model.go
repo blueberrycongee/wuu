@@ -1089,12 +1089,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refreshViewport(true)
 				return m, nil
 			}
-			// If any sub-agents are running, first ctrl+c stops all of them.
+			// If any sub-agents are running, first ctrl+c stops all of
+			// them AND cancels the main agent's current streaming
+			// turn. Without cancelling the main turn, the orchestrator
+			// would keep iterating its tool loop (potentially spawning
+			// more workers via auto-resume) until it hit max_steps.
 			if m.coordinator != nil && m.coordinator.Manager().CountRunning() > 0 {
 				count := m.coordinator.Manager().CountRunning()
 				m.coordinator.StopAll()
 				m.pendingAutoResume = false
-				m.appendEntry("system", fmt.Sprintf("⊘ Stopped %d running sub-agent(s)", count))
+				if m.cancelStream != nil {
+					m.cancelStream()
+				}
+				m.appendEntry("system", fmt.Sprintf("⊘ Stopped %d running sub-agent(s) and cancelled main turn", count))
 				m.statusLine = "sub-agents cancelled"
 				m.refreshViewport(true)
 				return m, nil

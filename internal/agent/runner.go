@@ -56,10 +56,11 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 		return RunResult{}, errors.New("prompt is required")
 	}
 
+	// MaxSteps == 0 means unlimited (no step cap). Aligned with
+	// Claude Code's default behavior — the model decides when to
+	// stop by emitting a final assistant message. Users who want a
+	// runaway safety net can set MaxSteps to a positive number.
 	maxSteps := r.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = 8
-	}
 
 	messages := []providers.ChatMessage{}
 	if strings.TrimSpace(r.SystemPrompt) != "" {
@@ -69,7 +70,7 @@ func (r *Runner) RunWithUsage(ctx context.Context, prompt string, onUsage func(i
 
 	totalIn, totalOut := 0, 0
 
-	for step := 0; step < maxSteps; step++ {
+	for step := 0; maxSteps == 0 || step < maxSteps; step++ {
 		req := providers.ChatRequest{
 			Model:       r.Model,
 			Messages:    messages,

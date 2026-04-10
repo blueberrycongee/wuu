@@ -163,8 +163,8 @@ func (c Config) Validate() error {
 		}
 	}
 
-	if c.Agent.MaxSteps <= 0 {
-		return errors.New("agent.max_steps must be > 0")
+	if c.Agent.MaxSteps < 0 {
+		return errors.New("agent.max_steps cannot be negative (use 0 for unlimited)")
 	}
 	if c.Agent.Temperature < 0 || c.Agent.Temperature > 2 {
 		return errors.New("agent.temperature must be in [0,2]")
@@ -211,7 +211,10 @@ func Default() Config {
 			},
 		},
 		Agent: AgentConfig{
-			MaxSteps:    8,
+			// 0 = unlimited. Aligned with Claude Code, which has no
+			// default step cap; the model decides when to stop. Users
+			// who want a runaway safety net can set this explicitly.
+			MaxSteps:    0,
 			Temperature: 0.2,
 			SystemPrompt: "You are a pragmatic CLI coding agent. Use tools when needed. " +
 				"When writing files, prefer minimal safe changes. Always explain what changed.",
@@ -230,9 +233,9 @@ func TemplateJSON() (string, error) {
 }
 
 func applyDefaults(cfg *Config) {
-	if cfg.Agent.MaxSteps == 0 {
-		cfg.Agent.MaxSteps = 8
-	}
+	// max_steps = 0 means unlimited (no step cap, the model decides
+	// when to stop). Aligned with Claude Code's default behavior.
+	// Users who set an explicit positive value get a hard cap.
 	if cfg.Agent.MaxContextTokens == 0 {
 		cfg.Agent.MaxContextTokens = 128000
 	}

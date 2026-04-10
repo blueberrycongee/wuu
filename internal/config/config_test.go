@@ -93,8 +93,9 @@ func TestLoadFrom_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFrom returned error: %v", err)
 	}
-	if cfg.Agent.MaxSteps != 8 {
-		t.Fatalf("expected default max_steps 8, got %d", cfg.Agent.MaxSteps)
+	// 0 = unlimited; aligned with Claude Code's default (no hard cap).
+	if cfg.Agent.MaxSteps != 0 {
+		t.Fatalf("expected default max_steps 0 (unlimited), got %d", cfg.Agent.MaxSteps)
 	}
 	if cfg.Agent.SystemPrompt == "" {
 		t.Fatal("expected default system prompt")
