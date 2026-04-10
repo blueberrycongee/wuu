@@ -44,6 +44,7 @@ type ChatRequest struct {
 type ChatResponse struct {
 	Content   string
 	ToolCalls []ToolCall
+	Usage     *TokenUsage // optional; nil when the provider didn't return usage
 }
 
 // Client sends chat requests to an LLM provider.

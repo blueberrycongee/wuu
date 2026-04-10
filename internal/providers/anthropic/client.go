@@ -175,10 +175,17 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		}
 	}
 
-	return providers.ChatResponse{
+	resp := providers.ChatResponse{
 		Content:   strings.TrimSpace(strings.Join(textParts, "\n")),
 		ToolCalls: toolCalls,
-	}, nil
+	}
+	if parsed.Usage != nil {
+		resp.Usage = &providers.TokenUsage{
+			InputTokens:  parsed.Usage.InputTokens,
+			OutputTokens: parsed.Usage.OutputTokens,
+		}
+	}
+	return resp, nil
 }
 
 // StreamChat opens an SSE stream to the Anthropic messages endpoint and
@@ -543,6 +550,10 @@ type anthropicTool struct {
 
 type anthropicResponse struct {
 	Content []anthropicBlock `json:"content"`
+	Usage   *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 // SSE streaming types.

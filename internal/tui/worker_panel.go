@@ -90,9 +90,16 @@ func (m Model) renderWorkerPanel(width int) string {
 		if desc == "" {
 			desc = "(no description)"
 		}
-		// Compose: " ⠹ explorer-7af3 explore auth module       12s"
+		// Compose left: " ⠹ explorer-7af3 explore auth module"
 		left := fmt.Sprintf(" %s %-14s %s", spin, truncate(s.ID, 14), desc)
+		// Compose right: "12s · 1240↑/890↓"
 		right := elapsed
+		if s.InputTokens > 0 || s.OutputTokens > 0 {
+			right = fmt.Sprintf("%s · %s↑/%s↓",
+				elapsed,
+				formatCompactNum(s.InputTokens),
+				formatCompactNum(s.OutputTokens))
+		}
 		availableW := width - lipgloss.Width(right) - 1
 		if availableW < 4 {
 			availableW = 4
@@ -107,6 +114,21 @@ func (m Model) renderWorkerPanel(width int) string {
 		b.WriteString(row)
 	}
 	return b.String()
+}
+
+// formatCompactNum returns a short representation of a token count.
+// 1234 → "1.2k", 12345 → "12k", 1234567 → "1.2M".
+func formatCompactNum(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 10000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	if n < 1_000_000 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
 }
 
 func formatElapsed(d time.Duration) string {

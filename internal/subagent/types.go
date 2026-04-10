@@ -68,14 +68,16 @@ type SpawnOptions struct {
 
 // SubAgent is an isolated agent instance managed by Manager.
 type SubAgent struct {
-	ID          string
-	Type        string
-	Description string
-	Status      Status
-	StartedAt   time.Time
-	CompletedAt time.Time
-	Result      string // final assistant message text
-	Error       error  // populated when Status == failed
+	ID           string
+	Type         string
+	Description  string
+	Status       Status
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	Result       string // final assistant message text
+	Error        error  // populated when Status == failed
+	InputTokens  int    // cumulative input tokens used so far
+	OutputTokens int    // cumulative output tokens used so far
 
 	// Internal state — read-only from outside.
 	prompt       string
@@ -102,28 +104,32 @@ func (s *SubAgent) Snapshot() SubAgentSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return SubAgentSnapshot{
-		ID:          s.ID,
-		Type:        s.Type,
-		Description: s.Description,
-		Status:      s.Status,
-		StartedAt:   s.StartedAt,
-		CompletedAt: s.CompletedAt,
-		Result:      s.Result,
-		Error:       s.Error,
+		ID:           s.ID,
+		Type:         s.Type,
+		Description:  s.Description,
+		Status:       s.Status,
+		StartedAt:    s.StartedAt,
+		CompletedAt:  s.CompletedAt,
+		Result:       s.Result,
+		Error:        s.Error,
+		InputTokens:  s.InputTokens,
+		OutputTokens: s.OutputTokens,
 	}
 }
 
 // SubAgentSnapshot is an immutable view of a SubAgent's state at a
 // point in time.
 type SubAgentSnapshot struct {
-	ID          string
-	Type        string
-	Description string
-	Status      Status
-	StartedAt   time.Time
-	CompletedAt time.Time
-	Result      string
-	Error       error
+	ID           string
+	Type         string
+	Description  string
+	Status       Status
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	Result       string
+	Error        error
+	InputTokens  int
+	OutputTokens int
 }
 
 // Notification is sent to listeners when a sub-agent's status changes

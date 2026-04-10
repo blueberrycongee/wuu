@@ -109,7 +109,16 @@ func (m *Manager) run(ctx context.Context, sa *SubAgent, opts SpawnOptions) {
 		Temperature:  0.2,
 	}
 
-	result, err := runner.Run(ctx, sa.prompt)
+	// Live token accumulation: every Chat round-trip updates the
+	// SubAgent's running totals so the activity panel can display
+	// progress while the worker is still going.
+	onUsage := func(input, output int) {
+		sa.mu.Lock()
+		sa.InputTokens += input
+		sa.OutputTokens += output
+		sa.mu.Unlock()
+	}
+	res, err := runner.RunWithUsage(ctx, sa.prompt, onUsage)
 
 	sa.mu.Lock()
 	sa.CompletedAt = time.Now()
@@ -122,7 +131,7 @@ func (m *Manager) run(ctx context.Context, sa *SubAgent, opts SpawnOptions) {
 		}
 	} else {
 		sa.Status = StatusCompleted
-		sa.Result = result
+		sa.Result = res.Content
 	}
 	finalStatus := sa.Status
 	sa.mu.Unlock()

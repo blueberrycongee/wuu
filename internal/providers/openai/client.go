@@ -147,10 +147,17 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		})
 	}
 
-	return providers.ChatResponse{
+	resp := providers.ChatResponse{
 		Content:   content,
 		ToolCalls: calls,
-	}, nil
+	}
+	if parsed.Usage != nil {
+		resp.Usage = &providers.TokenUsage{
+			InputTokens:  parsed.Usage.PromptTokens,
+			OutputTokens: parsed.Usage.CompletionTokens,
+		}
+	}
+	return resp, nil
 }
 
 // StreamChat opens an SSE stream and returns a channel of streaming events.
@@ -508,6 +515,7 @@ type toolFunctionCall struct {
 
 type chatCompletionsResponse struct {
 	Choices []chatChoice `json:"choices"`
+	Usage   *chunkUsage  `json:"usage,omitempty"`
 }
 
 type chatChoice struct {
