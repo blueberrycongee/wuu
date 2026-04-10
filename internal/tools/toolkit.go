@@ -275,21 +275,25 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 		},
 		{
 			Name: "spawn_agent",
-			Description: "Spawn a sub-agent to perform a focused task in an isolated git worktree. " +
-				"The sub-agent has its own context, its own tools, and runs in its own working " +
-				"directory based on the current HEAD. Use this for any task that requires reading " +
-				"file contents or making changes — your own context stays clean. " +
-				"By default the spawn is asynchronous: this returns immediately with an agent_id, " +
-				"and the worker's result will be delivered to you as a <worker-result> message " +
-				"once it completes. Set synchronous=true to block until the worker finishes. " +
-				"Spawn multiple workers in parallel by calling spawn_agent multiple times in " +
-				"the same response — they run concurrently.",
+			Description: "Spawn a sub-agent to perform a focused task. The sub-agent has its own " +
+				"context and its own tools. By default it runs INPLACE in the current repo for " +
+				"read-only worker types (explorer, planner, verifier) and in a fresh git WORKTREE " +
+				"for write-capable types (worker), so disk pressure stays low. " +
+				"You can override per-call with the isolation parameter — opt a worker into inplace " +
+				"if it really won't write, or opt an explorer into a worktree if it must run a " +
+				"destructive script. " +
+				"Use this for any task that requires reading file contents or making changes — your " +
+				"own context stays clean. By default the spawn is asynchronous: this returns " +
+				"immediately with an agent_id, and the worker's result will be delivered to you as " +
+				"a <worker-result> message once it completes. Set synchronous=true to block until " +
+				"the worker finishes. Spawn multiple workers in parallel by calling spawn_agent " +
+				"multiple times in the same response — they run concurrently.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"type": map[string]any{
 						"type":        "string",
-						"description": "Worker type. Choose 'worker' for general tasks, 'explorer' for read-only investigation. (More types added in Phase 4.)",
+						"description": "Worker type: 'explorer' (read-only, inplace), 'planner' (read-only, inplace), 'worker' (read+write, worktree), 'verifier' (runs tests/build, inplace).",
 					},
 					"description": map[string]any{
 						"type":        "string",
@@ -299,9 +303,14 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 						"type":        "string",
 						"description": "Self-contained task description. The worker cannot see your conversation, so include all needed context: file paths, line numbers, requirements, acceptance criteria.",
 					},
+					"isolation": map[string]any{
+						"type":        "string",
+						"enum":        []string{"inplace", "worktree"},
+						"description": "Override the worker type's default. 'inplace' shares the parent repo (no checkout cost). 'worktree' creates a fresh git worktree for sandboxed edits. Omit to use the type's default.",
+					},
 					"base_repo": map[string]any{
 						"type":        "string",
-						"description": "Optional: path to another worker's worktree. The new worker is then based on that worktree's HEAD, enabling chained workflows.",
+						"description": "Optional: path to another worker's worktree to chain off. Only valid with isolation=worktree.",
 					},
 					"synchronous": map[string]any{
 						"type":        "boolean",
@@ -470,6 +479,7 @@ func (t *Toolkit) spawnAgent(ctx context.Context, argsJSON string) (string, erro
 		Type        string `json:"type"`
 		Description string `json:"description"`
 		Prompt      string `json:"prompt"`
+		Isolation   string `json:"isolation"`
 		BaseRepo    string `json:"base_repo"`
 		Synchronous bool   `json:"synchronous"`
 	}
@@ -480,6 +490,7 @@ func (t *Toolkit) spawnAgent(ctx context.Context, argsJSON string) (string, erro
 		Type:        args.Type,
 		Description: args.Description,
 		Prompt:      args.Prompt,
+		Isolation:   args.Isolation,
 		BaseRepo:    args.BaseRepo,
 		Synchronous: args.Synchronous,
 	})
