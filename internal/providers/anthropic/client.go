@@ -9,11 +9,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
+
+// defaultStreamIdleTimeout is the maximum silence between SSE chunks before
+// the watchdog aborts the stream. Aligned with Claude Code's 90s default.
+const defaultStreamIdleTimeout = 90 * time.Second
+
+func streamIdleTimeout() time.Duration {
+	if v := os.Getenv("WUU_STREAM_IDLE_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return defaultStreamIdleTimeout
+}
 
 const (
 	defaultTimeout          = 120 * time.Second
@@ -315,6 +331,16 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 	defer close(ch)
 	defer resp.Body.Close()
 
+	// Idle watchdog: abort the body if no chunk arrives within the timeout.
+	idleTimeout := streamIdleTimeout()
+	var idleFired atomic.Bool
+	idleTimer := time.AfterFunc(idleTimeout, func() {
+		idleFired.Store(true)
+		_ = resp.Body.Close()
+	})
+	defer idleTimer.Stop()
+	resetIdle := func() { idleTimer.Reset(idleTimeout) }
+
 	var (
 		usage  providers.TokenUsage
 		blocks = make(map[int]*blockState)
@@ -323,6 +349,7 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
+		resetIdle()
 		line := scanner.Text()
 
 		if strings.HasPrefix(line, "event:") {
@@ -347,7 +374,21 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 	}
 
 	if err := scanner.Err(); err != nil {
+		if idleFired.Load() {
+			ch <- providers.StreamEvent{
+				Type:  providers.EventError,
+				Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded),
+			}
+			return
+		}
 		ch <- providers.StreamEvent{Type: providers.EventError, Error: fmt.Errorf("read SSE stream: %w", err)}
+		return
+	}
+	if idleFired.Load() {
+		ch <- providers.StreamEvent{
+			Type:  providers.EventError,
+			Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded),
+		}
 	}
 }
 
