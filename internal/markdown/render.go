@@ -548,6 +548,17 @@ func (w *Writer) emitTable(td tableData) {
 	// 4. Wrap each row's cells. If any row produces too many lines and
 	// we have terminal width to spare, fall back to vertical layout.
 	wrappedHeader := wrapCells(td.headers, widths, hardWrap)
+	// Apply bold style to header cell content. This is done after
+	// wrapping so each wrapped line gets its own bold envelope and
+	// cell padding (added later in renderWrappedRow) stays unstyled.
+	for i := range wrappedHeader {
+		for j, line := range wrappedHeader[i] {
+			if line == "" {
+				continue
+			}
+			wrappedHeader[i][j] = w.styles.Strong.Render(line)
+		}
+	}
 	wrappedRows := make([][][]string, 0, len(td.rows))
 	maxLinesInAnyRow := 0
 	for _, row := range td.rows {
