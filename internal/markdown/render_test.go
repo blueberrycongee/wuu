@@ -234,6 +234,48 @@ func TestRender_TableWrapsLongCells(t *testing.T) {
 	}
 }
 
+func TestRender_TableVerticalCentering(t *testing.T) {
+	// Force one cell to wrap to 3 lines and the other to 1 line —
+	// the short cell should be vertically centered (blank above and
+	// below).
+	long := "alpha beta gamma delta epsilon zeta"
+	input := "| Short | Long |\n|-------|------|\n| X | " + long + " |"
+	got := Render(input, 30, DefaultStyles())
+
+	lines := strings.Split(got, "\n")
+	var dataLines []string
+	inData := false
+	for _, line := range lines {
+		if strings.Contains(line, "├") {
+			inData = true
+			continue
+		}
+		if strings.Contains(line, "└") {
+			inData = false
+			continue
+		}
+		if inData && strings.Contains(line, "│") {
+			dataLines = append(dataLines, line)
+		}
+	}
+	if len(dataLines) < 3 {
+		t.Fatalf("expected row to span at least 3 lines, got %d: %q", len(dataLines), got)
+	}
+	// In a 3-line row with 1-line short cell, X should be on the
+	// middle line. So line 0 and line 2 should NOT contain "X".
+	if strings.Contains(dataLines[0], "X") {
+		t.Errorf("short cell should be vertically centered, but appears on first line: %q", dataLines[0])
+	}
+	if strings.Contains(dataLines[len(dataLines)-1], "X") {
+		t.Errorf("short cell should be vertically centered, but appears on last line: %q", dataLines[len(dataLines)-1])
+	}
+	// Should appear on the middle line.
+	mid := dataLines[len(dataLines)/2]
+	if !strings.Contains(mid, "X") {
+		t.Errorf("expected X on middle line, got: %q", mid)
+	}
+}
+
 func TestWrapAnsi_PreservesStyleAcrossLines(t *testing.T) {
 	// Hand-crafted ANSI input: bold "hello world example" wrapping to width 7.
 	// reflow should re-open the bold sequence on each wrapped line.

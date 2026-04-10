@@ -656,6 +656,11 @@ func wrapCells(cells []string, widths []int, hardWrap bool) [][]string {
 // renderWrappedRow renders a multi-line row using the wrapped cell
 // content. Each output line covers all columns with proper padding
 // and box-drawing borders.
+//
+// Cells with fewer lines than the row's max are vertically centered:
+// blank lines are inserted both above and below the content so the
+// text sits in the middle of the row's height. Mirrors Claude Code's
+// MarkdownTable behavior.
 func (w *Writer) renderWrappedRow(wrapped [][]string, widths []int, aligns []xast.Alignment, isHeader bool) string {
 	maxLines := 0
 	for _, lines := range wrapped {
@@ -667,13 +672,21 @@ func (w *Writer) renderWrappedRow(wrapped [][]string, widths []int, aligns []xas
 		maxLines = 1
 	}
 
+	// Compute the vertical offset (number of blank lines above the
+	// content) for each cell so it sits in the middle of the row.
+	verticalOffsets := make([]int, len(wrapped))
+	for i, lines := range wrapped {
+		verticalOffsets[i] = (maxLines - len(lines)) / 2
+	}
+
 	var b strings.Builder
 	for line := 0; line < maxLines; line++ {
 		b.WriteString("│")
 		for i, cw := range widths {
 			var content string
-			if line < len(wrapped[i]) {
-				content = wrapped[i][line]
+			localLine := line - verticalOffsets[i]
+			if localLine >= 0 && localLine < len(wrapped[i]) {
+				content = wrapped[i][localLine]
 			}
 			align := xast.AlignNone
 			if isHeader {
