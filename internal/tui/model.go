@@ -36,6 +36,12 @@ const (
 
 	scrollbarAnchorClickTolerance = 1
 	scrollbarHitboxTolerance      = 1
+
+	// maxAutoResumeChain caps how many turns the main agent can
+	// auto-fire in response to worker completions without seeing
+	// fresh user input. A pure safety net — modern models stop
+	// naturally well before this in normal use.
+	maxAutoResumeChain = 100
 )
 
 type tickMsg struct {
@@ -134,6 +140,14 @@ type Model struct {
 	memoryFiles    []memory.File
 	coordinator    *coordinator.Coordinator
 	workerNotifyCh chan subagent.Notification
+
+	// Auto-resume state: when a worker completes while the main agent
+	// is busy, we set pendingAutoResume so the streamFinishedMsg
+	// handler knows to fire a fresh turn from the existing history.
+	// autoResumeChain counts how many auto-turns have fired in a row
+	// without user input — used as a runaway safety net.
+	pendingAutoResume bool
+	autoResumeChain   int
 
 	maxContextTokens int
 	requestTimeout   time.Duration
@@ -595,6 +609,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// inject the worker-result XML into chatHistory so the
 		// orchestrator sees it on its next turn.
 		n := msg.notification
+		injected := false
 		switch n.Status {
 		case subagent.StatusRunning:
 			m.appendEntry("system", fmt.Sprintf("⠋ %s spawned: %s — %s",
@@ -609,16 +624,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendEntry("system", fmt.Sprintf("%s %s %s: %s",
 				icon, n.Snapshot.Type, n.Status, n.Snapshot.Description))
 			// Inject the worker-result XML into the orchestrator's
-			// next API request as a user-role message. This is the
-			// mechanism that lets the model "see" the worker's output.
+			// next API request as a user-role message.
 			xml := coordinator.FormatWorkerResult(n.Snapshot)
 			m.chatHistory = append(m.chatHistory, providers.ChatMessage{
 				Role:    "user",
 				Content: xml,
 			})
+			injected = true
 		}
 		m.refreshViewport(false)
-		// Keep listening for the next notification.
+
+		// If we injected a result and the main agent is idle, fire an
+		// auto-resume turn so the orchestrator processes the new
+		// information without waiting for user input. If the main
+		// agent is currently busy, set a flag and let the
+		// streamFinishedMsg handler pick it up after the current turn.
+		if injected {
+			if m.streaming || m.pendingRequest {
+				m.pendingAutoResume = true
+				return m, waitWorkerNotify(m.workerNotifyCh)
+			}
+			updated, cmd := m.triggerAutoResume()
+			return updated, tea.Batch(waitWorkerNotify(m.workerNotifyCh), cmd)
+		}
 		return m, waitWorkerNotify(m.workerNotifyCh)
 
 	case streamFinishedMsg:
@@ -663,6 +691,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.refreshViewport(false)
+
+		// If a worker completed while this turn was running, fire an
+		// auto-resume now so the orchestrator processes the queued
+		// worker-result(s).
+		if m.pendingAutoResume {
+			m.pendingAutoResume = false
+			updated, autoCmd := m.triggerAutoResume()
+			return updated, tea.Batch(func() tea.Msg { return queueDrainMsg{} }, autoCmd)
+		}
+
 		return m, func() tea.Msg { return queueDrainMsg{} }
 
 	case ctrlCResetMsg:
@@ -1047,6 +1085,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.coordinator != nil && m.coordinator.Manager().CountRunning() > 0 {
 				count := m.coordinator.Manager().CountRunning()
 				m.coordinator.StopAll()
+				m.pendingAutoResume = false
 				m.appendEntry("system", fmt.Sprintf("⊘ Stopped %d running sub-agent(s)", count))
 				m.statusLine = "sub-agents cancelled"
 				m.refreshViewport(true)
@@ -1280,6 +1319,9 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 	m.chatHistory = append(m.chatHistory, chatMsg)
 	_ = appendChatMessage(m.memoryPath, chatMsg)
 
+	// Real user input resets the auto-resume chain counter.
+	m.autoResumeChain = 0
+
 	m.pendingRequest = true
 	m.streaming = true
 	m.streamTarget = m.appendEntry("assistant", "")
@@ -1291,48 +1333,7 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 	m.refreshViewport(true)
 
 	if m.streamRunner != nil {
-		ch := make(chan providers.StreamEvent, 64)
-		m.streamCh = ch
-		runner := m.streamRunner
-		ctx, cancel := m.newRequestContext()
-		m.cancelStream = cancel
-
-		// Copy history for the goroutine (defensive copy).
-		history := make([]providers.ChatMessage, len(m.chatHistory))
-		copy(history, m.chatHistory)
-
-		// Shared pointer for goroutine to return turn result.
-		result := &pendingTurnResult{}
-		m.pendingTurn = result
-
-		go func() {
-			defer close(ch)
-			onEvent := func(event providers.StreamEvent) {
-				select {
-				case ch <- event:
-				case <-ctx.Done():
-				}
-			}
-
-			history = maybeCompactHistory(
-				ctx,
-				history,
-				m.maxContextTokens,
-				runner.Client,
-				runner.Model,
-			)
-			result.baseHistory = history // safe: written before close(ch)
-
-			_, newMsgs, err := runner.RunWithCallback(ctx, history, onEvent)
-			result.newMsgs = newMsgs // safe: written before close(ch)
-			if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
-				select {
-				case ch <- providers.StreamEvent{Type: providers.EventError, Error: err}:
-				case <-ctx.Done():
-				}
-			}
-		}()
-		return m, tea.Batch(waitStreamEvent(ch), inlineSpinTickCmd())
+		return m.startStreamingTurn()
 	}
 
 	// Fallback to blocking path.
@@ -1347,6 +1348,75 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 			elapsed: time.Since(start),
 		}
 	}
+}
+
+// startStreamingTurn launches a streaming runner using the current
+// chatHistory. Caller must already have set pendingRequest/streaming/
+// streamTarget and refreshed the viewport.
+func (m Model) startStreamingTurn() (tea.Model, tea.Cmd) {
+	ch := make(chan providers.StreamEvent, 64)
+	m.streamCh = ch
+	runner := m.streamRunner
+	ctx, cancel := m.newRequestContext()
+	m.cancelStream = cancel
+
+	// Copy history for the goroutine (defensive copy).
+	history := make([]providers.ChatMessage, len(m.chatHistory))
+	copy(history, m.chatHistory)
+
+	result := &pendingTurnResult{}
+	m.pendingTurn = result
+
+	go func() {
+		defer close(ch)
+		onEvent := func(event providers.StreamEvent) {
+			select {
+			case ch <- event:
+			case <-ctx.Done():
+			}
+		}
+
+		history = maybeCompactHistory(
+			ctx,
+			history,
+			m.maxContextTokens,
+			runner.Client,
+			runner.Model,
+		)
+		result.baseHistory = history
+
+		_, newMsgs, err := runner.RunWithCallback(ctx, history, onEvent)
+		result.newMsgs = newMsgs
+		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			select {
+			case ch <- providers.StreamEvent{Type: providers.EventError, Error: err}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	return m, tea.Batch(waitStreamEvent(ch), inlineSpinTickCmd())
+}
+
+// triggerAutoResume fires a fresh turn from the current chatHistory
+// without appending any new user message. Used when a worker completes
+// while the main agent is idle. Returns the model and the started
+// command, or (m, nil) if the safety limit has been reached.
+func (m Model) triggerAutoResume() (tea.Model, tea.Cmd) {
+	if m.streamRunner == nil {
+		return m, nil
+	}
+	if m.autoResumeChain >= maxAutoResumeChain {
+		m.appendEntry("system", fmt.Sprintf("auto-resume limit reached (%d). Type a message to continue.", maxAutoResumeChain))
+		m.refreshViewport(true)
+		return m, nil
+	}
+	m.autoResumeChain++
+	m.pendingRequest = true
+	m.streaming = true
+	m.streamTarget = m.appendEntry("assistant", "")
+	m.statusLine = fmt.Sprintf("auto-resume (%d/%d)", m.autoResumeChain, maxAutoResumeChain)
+	m.refreshViewport(true)
+	return m.startStreamingTurn()
 }
 
 func (m Model) newRequestContext() (context.Context, context.CancelFunc) {
