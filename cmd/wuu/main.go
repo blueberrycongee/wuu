@@ -330,9 +330,10 @@ func runTUI(args []string) error {
 		toolExecutor = hooks.NewHookedExecutor(kit, hookDispatcher, "", rootDir)
 	}
 
-	// Discover memory files (CLAUDE.md / AGENTS.md) from project hierarchy
-	// and ~/.claude/, then bake them into the system prompt before skills.
-	memoryFiles := memory.Discover(rootDir, homeDir)
+	// Discover memory files (AGENTS.md / CLAUDE.md / AGENTS.override.md)
+	// from the project hierarchy (bounded by .git markers) and from
+	// user-level directories (~/.config/wuu, ~/.claude, ~/.codex).
+	memoryFiles := memory.Discover(rootDir, homeDir, memory.DefaultOptions())
 
 	systemPromptText := cfg.Agent.SystemPrompt
 	if len(memoryFiles) > 0 {
