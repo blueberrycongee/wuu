@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
+	"github.com/blueberrycongee/wuu/internal/memory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -329,7 +330,14 @@ func runTUI(args []string) error {
 		toolExecutor = hooks.NewHookedExecutor(kit, hookDispatcher, "", rootDir)
 	}
 
+	// Discover memory files (CLAUDE.md / AGENTS.md) from project hierarchy
+	// and ~/.claude/, then bake them into the system prompt before skills.
+	memoryFiles := memory.Discover(rootDir, homeDir)
+
 	systemPromptText := cfg.Agent.SystemPrompt
+	if len(memoryFiles) > 0 {
+		systemPromptText = appendMemoryToPrompt(systemPromptText, memoryFiles)
+	}
 	if len(discoveredSkills) > 0 {
 		systemPromptText = appendSkillsToPrompt(systemPromptText, discoveredSkills)
 	}
@@ -417,6 +425,27 @@ func resolveRuntimePath(rootDir, input string) (string, error) {
 		return value, nil
 	}
 	return filepath.Join(rootDir, value), nil
+}
+
+// appendMemoryToPrompt prepends the contents of discovered memory files
+// (CLAUDE.md / AGENTS.md) into the system prompt under a clearly-labeled
+// section. Each file is shown with its source and path so the model can
+// track which conventions came from where.
+func appendMemoryToPrompt(base string, files []memory.File) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(base, "\n"))
+	if b.Len() > 0 {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("# Memory\n\n")
+	b.WriteString("The following memory files contain project- and user-defined conventions, ")
+	b.WriteString("style guides, and constraints. Treat them as binding instructions for this session.\n\n")
+	for _, f := range files {
+		fmt.Fprintf(&b, "## %s _[%s · %s]_\n\n", f.Name, f.Source, f.Path)
+		b.WriteString(strings.TrimRight(f.Content, "\n"))
+		b.WriteString("\n\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // appendSkillsToPrompt adds a "Session-specific guidance" section that lists
