@@ -49,10 +49,43 @@ type HTTPError struct {
 	StatusCode int
 	Body       string
 	RetryAfter time.Duration // parsed from Retry-After header, if present
+	// ContextOverflow is true when the body indicates the prompt
+	// exceeded the model's context window. Callers can use this
+	// to trigger an auto-compact rather than a plain retry.
+	ContextOverflow bool
 }
 
 func (e *HTTPError) Error() string {
 	return "HTTP " + strconv.Itoa(e.StatusCode) + ": " + e.Body
+}
+
+// DetectContextOverflow inspects a provider error body and reports
+// whether it represents a context-window-exceeded condition. The
+// matching is provider-agnostic: it covers both OpenAI's
+// `context_length_exceeded` code and Anthropic's "prompt is too long"
+// style messages.
+func DetectContextOverflow(body string) bool {
+	if body == "" {
+		return false
+	}
+	msg := strings.ToLower(body)
+	return strings.Contains(msg, "context_length_exceeded") ||
+		strings.Contains(msg, "context length exceeded") ||
+		strings.Contains(msg, "maximum context length") ||
+		strings.Contains(msg, "prompt is too long") ||
+		strings.Contains(msg, "input is too long") ||
+		strings.Contains(msg, "request too large") ||
+		strings.Contains(msg, "too many tokens")
+}
+
+// IsContextOverflow returns true if err is an HTTPError flagged as
+// context overflow.
+func IsContextOverflow(err error) bool {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.ContextOverflow
+	}
+	return false
 }
 
 // IsRetryable returns true if the error is worth retrying.
@@ -62,6 +95,10 @@ func IsRetryable(err error) bool {
 	}
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
+		// Context-overflow needs compaction, not a blind retry.
+		if httpErr.ContextOverflow {
+			return false
+		}
 		switch httpErr.StatusCode {
 		case 429, 529: // rate limit, overloaded
 			return true

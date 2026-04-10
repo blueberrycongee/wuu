@@ -45,6 +45,13 @@ type ChatResponse struct {
 	Content   string
 	ToolCalls []ToolCall
 	Usage     *TokenUsage // optional; nil when the provider didn't return usage
+	// StopReason is the raw provider stop signal, normalized to lowercase.
+	// Common values: "stop" / "end_turn" (natural finish), "length" /
+	// "max_tokens" (output truncation), "tool_calls" / "tool_use".
+	StopReason string
+	// Truncated is true when the model hit its output token cap mid-response.
+	// Callers (e.g. agent.Runner) can use this to issue a "continue" prompt.
+	Truncated bool
 }
 
 // Client sends chat requests to an LLM provider.
