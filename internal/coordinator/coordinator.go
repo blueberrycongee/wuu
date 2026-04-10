@@ -26,8 +26,9 @@ import (
 // will run inside the given root directory (typically a worktree path).
 // The factory should configure skills, memory, and any per-worker
 // restrictions but MUST NOT include orchestration tools — workers
-// don't spawn sub-sub-agents.
-type WorkerToolkitFactory func(rootDir string) (agent.ToolExecutor, error)
+// don't spawn sub-sub-agents. The worker type is provided so the
+// factory can apply tool whitelisting via FilterToolsForWorker.
+type WorkerToolkitFactory func(rootDir string, wt WorkerType) (agent.ToolExecutor, error)
 
 // Coordinator owns the orchestration runtime for one wuu session.
 type Coordinator struct {
@@ -135,31 +136,31 @@ func (c *Coordinator) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
-	wtype := req.Type
-	if wtype == "" {
-		wtype = "worker"
-	}
 
-	// Allocate worker ID by asking subagent.Manager for a fresh agent —
-	// but we need the ID before spawn to create the worktree. Generate
-	// our own here using a similar scheme.
+	// Resolve worker type (validates the name).
+	wt, err := LookupWorkerType(req.Type)
+	if err != nil {
+		return nil, err
+	}
+	wtype := wt.Name
+
 	workerID := newCoordinatorWorkerID(wtype)
 
 	// 1. Create worktree.
-	wt, err := c.worktrees.Create(c.sessionID, workerID, req.BaseRepo)
+	worktreeRef, err := c.worktrees.Create(c.sessionID, workerID, req.BaseRepo)
 	if err != nil {
 		return nil, fmt.Errorf("worktree create: %w", err)
 	}
 
 	// 2. Build worker's toolkit rooted at the worktree.
-	workerKit, err := c.workerFact(wt.Path)
+	workerKit, err := c.workerFact(worktreeRef.Path, wt)
 	if err != nil {
-		_ = c.worktrees.Cleanup(wt)
+		_ = c.worktrees.Cleanup(worktreeRef)
 		return nil, fmt.Errorf("worker toolkit: %w", err)
 	}
 
-	// 3. Compose system prompt: base + type-specific preamble.
-	sys := composeWorkerSystemPrompt(c.defaultSys, wtype, wt.Path)
+	// 3. Compose system prompt: type-specific role + worktree path + base prompt.
+	sys := composeWorkerSystemPrompt(c.defaultSys, wt, worktreeRef.Path)
 
 	// 4. History path.
 	historyPath := ""
@@ -179,14 +180,14 @@ func (c *Coordinator) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult
 		HistoryPath:  historyPath,
 	})
 	if err != nil {
-		_ = c.worktrees.Cleanup(wt)
+		_ = c.worktrees.Cleanup(worktreeRef)
 		return nil, fmt.Errorf("spawn: %w", err)
 	}
 
 	result := &SpawnResult{
 		AgentID:      sa.ID,
 		Status:       string(sa.Status),
-		WorktreePath: wt.Path,
+		WorktreePath: worktreeRef.Path,
 	}
 
 	if !req.Synchronous {
@@ -287,16 +288,16 @@ func (c *Coordinator) CleanupSession() error {
 }
 
 // composeWorkerSystemPrompt builds the system prompt for a worker.
-// It prepends a small role preamble + the worktree path so the worker
-// knows where it lives, then appends the user-provided base prompt
-// (typically the main agent's system prompt without coordinator
-// instructions).
-func composeWorkerSystemPrompt(base, workerType, worktreePath string) string {
+// It prepends the worker type's role-specific prompt + the worktree
+// path, then appends the base prompt (typically the main agent's
+// project memory and skills, NOT the coordinator instructions).
+func composeWorkerSystemPrompt(base string, wt WorkerType, worktreePath string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are a sub-agent of type \"%s\". You were spawned by an orchestrator to perform a focused task.\n", workerType)
-	fmt.Fprintf(&b, "Your working directory is %s — a git worktree isolated from other workers.\n", worktreePath)
-	b.WriteString("All file paths in your tools are resolved relative to this working directory.\n")
-	b.WriteString("You CANNOT spawn further sub-agents. Complete your task with the tools you have, then return a concise summary as your final assistant message.\n")
+	b.WriteString(wt.SystemPrompt)
+	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "Your working directory is %s — a git worktree isolated from other workers. ", worktreePath)
+	b.WriteString("All file paths in your tools resolve relative to this directory. ")
+	b.WriteString("You CANNOT spawn further sub-agents.\n")
 	if base != "" {
 		b.WriteString("\n---\n\n")
 		b.WriteString(base)

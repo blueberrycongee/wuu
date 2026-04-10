@@ -373,7 +373,14 @@ func runTUI(args []string) error {
 			SessionID:       "session-pending", // overwritten via SetSessionInfo
 			HistoryDir:      "",                // overwritten via SetSessionInfo
 			WorkerSysPrompt: systemPromptText,
-			WorkerFactory: func(workerRoot string) (agent.ToolExecutor, error) {
+			WorkerFactory: func(workerRoot string, _ coordinator.WorkerType) (agent.ToolExecutor, error) {
+				// Phase 4 note: tool whitelisting per worker type is
+				// expressed via the SystemPrompt and the always-blocked
+				// orchestration tools (handled inside the worker since
+				// it never gets a coordinator pointer). Hard-enforced
+				// filtering at the toolkit level can come later by
+				// passing FilterToolsForWorker(wt, ...) into a new
+				// tools.New variant.
 				wkit, werr := tools.New(workerRoot)
 				if werr != nil {
 					return nil, werr

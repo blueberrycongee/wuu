@@ -57,7 +57,7 @@ func TestNew_RequiresGitRepo(t *testing.T) {
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
 		WorktreeRoot:  filepath.Join(dir, "wt"),
-		WorkerFactory: func(string) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
 	})
 	if err == nil {
 		t.Fatal("expected error for non-git directory")
@@ -75,7 +75,7 @@ func TestSpawn_SyncHappyPath(t *testing.T) {
 		WorktreeRoot:  filepath.Join(dir, ".wuu", "worktrees"),
 		SessionID:     "sess-1",
 		HistoryDir:    filepath.Join(dir, ".wuu", "sessions", "sess-1", "workers"),
-		WorkerFactory: func(string) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestSpawn_RequiresPrompt(t *testing.T) {
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
 		WorktreeRoot:  filepath.Join(dir, "wt"),
-		WorkerFactory: func(string) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
 	})
 
 	_, err := c.Spawn(context.Background(), SpawnRequest{Description: "x"})
@@ -135,7 +135,7 @@ func TestSpawn_ConcurrencyCap(t *testing.T) {
 		ParentRepo:    dir,
 		WorktreeRoot:  filepath.Join(dir, "wt"),
 		SessionID:     "sess",
-		WorkerFactory: func(string) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
 		MaxParallel:   2,
 	})
 
@@ -177,7 +177,7 @@ func TestFormatWorkerResult(t *testing.T) {
 		ParentRepo:    dir,
 		WorktreeRoot:  filepath.Join(dir, "wt"),
 		SessionID:     "sess",
-		WorkerFactory: func(string) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
 	})
 
 	res, _ := c.Spawn(context.Background(), SpawnRequest{
