@@ -43,13 +43,17 @@ curl -fsSL "$URL" -o "${TMPDIR}/${FILENAME}"
 tar -xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"
 
 # Install.
+# Note: chmod must run with the same privilege as mv. Otherwise a
+# non-sudo chmod against a root-owned file fails under `set -e`,
+# producing a "fake failure" after the binary is already in place.
 if [ -w "$INSTALL_DIR" ]; then
   mv "${TMPDIR}/wuu" "${INSTALL_DIR}/wuu"
+  chmod +x "${INSTALL_DIR}/wuu"
 else
   echo "Installing to ${INSTALL_DIR} (requires sudo)..."
   sudo mv "${TMPDIR}/wuu" "${INSTALL_DIR}/wuu"
+  sudo chmod +x "${INSTALL_DIR}/wuu"
 fi
-chmod +x "${INSTALL_DIR}/wuu"
 
 # Cleanup.
 rm -rf "$TMPDIR"
