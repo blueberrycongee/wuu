@@ -211,6 +211,9 @@ type Model struct {
 	insightCh          chan insight.ProgressEvent
 	cancelInsight      context.CancelFunc
 	insightProgressIdx int // index of the live progress entry in entries, -1 if none
+
+	// Resume picker (modal sub-screen).
+	resumePicker *resumePicker
 }
 
 // NewModel builds the initial UI model.
@@ -374,6 +377,48 @@ func inlineSpinTickCmd() tea.Cmd {
 	})
 }
 
+// applyResume loads the chosen session into the current Model, replacing
+// current entries and chat history. Used by both the picker and direct
+// /resume <id> invocation.
+func (m Model) applyResume(id string) (tea.Model, tea.Cmd) {
+	if m.sessionDir == "" {
+		m.statusLine = "resume: no session directory configured"
+		return m, nil
+	}
+	path, err := session.Load(m.sessionDir, id)
+	if err != nil {
+		m.statusLine = fmt.Sprintf("resume: %v", err)
+		m.refreshViewport(false)
+		return m, nil
+	}
+	entries, err := loadMemoryEntries(path)
+	if err != nil {
+		m.statusLine = fmt.Sprintf("resume: failed to load: %v", err)
+		m.refreshViewport(false)
+		return m, nil
+	}
+	m.sessionID = id
+	m.memoryPath = path
+	m.entries = entries
+	m.cacheRenderedEntries()
+
+	// Reload chat history for API calls.
+	if chatMsgs, chatErr := loadChatHistory(path); chatErr == nil && len(chatMsgs) > 0 {
+		if len(m.chatHistory) > 0 && m.chatHistory[0].Role == "system" {
+			m.chatHistory = append(m.chatHistory[:1], chatMsgs...)
+		} else {
+			m.chatHistory = chatMsgs
+		}
+	}
+
+	if m.onSessionID != nil {
+		m.onSessionID(id)
+	}
+	m.statusLine = fmt.Sprintf("resumed %s (%d entries)", id, len(entries))
+	m.refreshViewport(true)
+	return m, nil
+}
+
 func waitInsightEvent(ch <-chan insight.ProgressEvent) tea.Cmd {
 	return func() tea.Msg {
 		event, ok := <-ch
@@ -405,11 +450,37 @@ func progressBar(pct float64, width int) string {
 
 // Update handles events.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Resume picker takes over when active.
+	if m.resumePicker != nil {
+		// Always forward WindowSizeMsg so the picker can re-layout.
+		switch msg.(type) {
+		case tea.WindowSizeMsg, tea.KeyMsg, tea.MouseMsg:
+			updated, cmd := m.resumePicker.Update(msg)
+			m.resumePicker = updated
+			if updated.cancel {
+				m.resumePicker = nil
+				m.statusLine = "resume cancelled"
+				m.refreshViewport(false)
+				return m, nil
+			}
+			if updated.chosenID != "" {
+				id := updated.chosenID
+				m.resumePicker = nil
+				return m.applyResume(id)
+			}
+			return m, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.relayout()
+		if m.resumePicker != nil {
+			m.resumePicker.width = m.width
+			m.resumePicker.height = m.height
+		}
 		return m, nil
 
 	case tickMsg:
@@ -1786,6 +1857,11 @@ func (m *Model) relayout() {
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "loading..."
+	}
+
+	// When the resume picker is active, it owns the entire screen.
+	if m.resumePicker != nil {
+		return m.resumePicker.View()
 	}
 
 	// Header — left: brand info, right: hints + clock.

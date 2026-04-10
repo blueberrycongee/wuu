@@ -222,26 +222,16 @@ func cmdResume(args string, m *Model) string {
 	// Session-based resume.
 	if m.sessionDir != "" {
 		if id == "" {
-			// List recent sessions.
-			sessions, err := session.List(m.sessionDir, 10)
+			// Open the interactive picker with preview pane.
+			picker, err := newResumePicker(m.sessionDir, 50, m.width, m.height)
 			if err != nil {
 				return fmt.Sprintf("resume: failed to list sessions: %v", err)
 			}
-			if len(sessions) == 0 {
+			if len(picker.entries) == 0 {
 				return "resume: no previous sessions found"
 			}
-			var b strings.Builder
-			b.WriteString("Recent sessions:\n")
-			for _, s := range sessions {
-				summary := s.Summary
-				if summary == "" {
-					summary = "(no summary)"
-				}
-				b.WriteString(fmt.Sprintf("  %s  %s  %d msgs  %s\n",
-					s.ID, s.CreatedAt.Local().Format("2006-01-02 15:04"), s.Entries, summary))
-			}
-			b.WriteString("\nUse /resume <id> to restore a session")
-			return strings.TrimRight(b.String(), "\n")
+			m.resumePicker = picker
+			return "resume: opening picker..."
 		}
 
 		// Resume specific session.

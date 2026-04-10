@@ -223,4 +223,6 @@ func applyTheme(t theme) {
 
 	inlineStatusDotStyle = lipgloss.NewStyle().Bold(true).Foreground(t.Brand)
 	inlineStatusLabelStyle = lipgloss.NewStyle().Foreground(t.Subtle)
+
+	initPickerStyles()
 }
