@@ -890,3 +890,121 @@ func TestSendMessage_DoesNotBlockOnCompaction(t *testing.T) {
 		t.Fatal("expected compaction chat call in background")
 	}
 }
+
+// TestComputeLayout_ReservesInlineStatusLine locks in the layout invariant
+// that computeLayout reserves exactly one line below the chat viewport for
+// the inline status indicator. If this slot is removed from the math, the
+// View() total row count will exceed the terminal height and bubbletea will
+// truncate, breaking the header-first render order.
+func TestComputeLayout_ReservesInlineStatusLine(t *testing.T) {
+	const termWidth, termHeight = 100, 40
+	const inputLines = 3
+
+	// No worker panel.
+	l := computeLayout(termWidth, termHeight, inputLines, 0)
+	// Expected total lines in View(): header + chat + inlineStatus + sep + input
+	// = 1 + chatH + 1 + 1 + inputLines = termHeight
+	expected := 1 + l.Chat.Height + 1 + 1 + inputLines
+	if expected != termHeight {
+		t.Fatalf("no-worker layout row count mismatch: header(1) + chat(%d) + status(1) + sep(1) + input(%d) = %d, want %d",
+			l.Chat.Height, inputLines, expected, termHeight)
+	}
+
+	// With worker panel (2 workers → 3 rows: title + 2 rows).
+	const workerRows = 3
+	lw := computeLayout(termWidth, termHeight, inputLines, workerRows)
+	// Expected: header + chat + inlineStatus + sep + panel + sep + input
+	expectedW := 1 + lw.Chat.Height + 1 + 1 + workerRows + 1 + inputLines
+	if expectedW != termHeight {
+		t.Fatalf("worker-panel layout row count mismatch: header(1) + chat(%d) + status(1) + sep(1) + panel(%d) + sep(1) + input(%d) = %d, want %d",
+			lw.Chat.Height, workerRows, inputLines, expectedW, termHeight)
+	}
+
+	// Worker panel steals from chat, not from the inline status slot.
+	if lw.Chat.Height != l.Chat.Height-workerRows-1 {
+		t.Fatalf("worker panel should only steal from chat height: noWorker=%d, withWorker=%d, delta=%d, want delta=%d",
+			l.Chat.Height, lw.Chat.Height, l.Chat.Height-lw.Chat.Height, workerRows+1)
+	}
+}
+
+// TestInlineSpinMsg_DoesNotRebuildViewport locks in the fix: inlineSpinMsg
+// must not trigger a viewport content rebuild. If it does, the viewport's
+// YOffset will shift on every 150ms spinner tick and break bubbletea's
+// line-diff, causing tool card flicker and scrollbar jitter.
+func TestInlineSpinMsg_DoesNotRebuildViewport(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return prompt, nil
+		},
+	})
+	m.width = 100
+	m.height = 40
+	m.relayout()
+
+	// Simulate streaming state with enough content that GotoBottom would
+	// shift YOffset if refreshViewport were called.
+	m.streaming = true
+	for i := 0; i < 60; i++ {
+		m.appendEntry("assistant", fmt.Sprintf("line %d", i))
+	}
+	m.refreshViewport(true)
+	// Scroll away from bottom so a sneaky GotoBottom would be visible.
+	m.viewport.SetYOffset(0)
+	m.autoFollow = false
+	beforeOffset := m.viewport.YOffset
+	beforeTotal := m.viewport.TotalLineCount()
+	beforeFrame := m.inlineSpinFrame
+
+	// Dispatch the spinner tick.
+	updated, _ := m.Update(inlineSpinMsg{})
+	after := updated.(Model)
+
+	if after.inlineSpinFrame != beforeFrame+1 {
+		t.Fatalf("expected inlineSpinFrame to advance by 1: before=%d after=%d",
+			beforeFrame, after.inlineSpinFrame)
+	}
+	if after.viewport.YOffset != beforeOffset {
+		t.Fatalf("inlineSpinMsg must not move viewport YOffset: before=%d after=%d",
+			beforeOffset, after.viewport.YOffset)
+	}
+	if after.viewport.TotalLineCount() != beforeTotal {
+		t.Fatalf("inlineSpinMsg must not rebuild viewport content: totalLines before=%d after=%d",
+			beforeTotal, after.viewport.TotalLineCount())
+	}
+}
+
+// TestView_InlineStatusRenderedOutsideViewport verifies the inline status
+// indicator lives in a View() segment below the viewport, not as part of
+// the viewport content. The viewport content must be free of "Generating"/
+// "Working" text so scrolling cannot affect spinner visibility.
+func TestView_InlineStatusRenderedOutsideViewport(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return prompt, nil
+		},
+	})
+	m.width = 100
+	m.height = 40
+	m.streaming = true
+	m.statusLine = "streaming"
+	m.appendEntry("user", "hello")
+	m.appendEntry("assistant", "partial reply")
+	m.streamTarget = len(m.entries) - 1
+	m.relayout()
+
+	viewportContent := m.viewport.View()
+	if strings.Contains(viewportContent, "Generating") {
+		t.Fatal("viewport content must not contain inline status 'Generating' — it should be rendered outside the viewport")
+	}
+
+	fullView := m.View()
+	if !strings.Contains(fullView, "Generating") {
+		t.Fatalf("full View() must contain inline status 'Generating'; got:\n%s", fullView)
+	}
+}
