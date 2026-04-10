@@ -15,10 +15,11 @@ import (
 
 // resumePickerEntry holds one session and a lazily-loaded preview.
 type resumePickerEntry struct {
-	Session session.Session
-	title   string // first user message, populated eagerly at init
-	loaded  bool   // full preview loaded?
-	preview []transcriptEntry
+	Session       session.Session
+	title         string // first user message, populated eagerly at init
+	loaded        bool   // full preview loaded?
+	preview       []transcriptEntry
+	previewScroll int // top line of preview pane (scrollable)
 }
 
 // resumePicker is a self-contained list+preview screen for /resume.
@@ -153,9 +154,54 @@ func (p *resumePicker) Update(msg tea.Msg) (*resumePicker, tea.Cmd) {
 			p.loadPreview(p.cursor)
 			p.adjustScroll()
 			return p, nil
+		case "pgup", "ctrl+u":
+			p.scrollPreview(-p.previewPageSize())
+			return p, nil
+		case "pgdown", "ctrl+d", " ":
+			p.scrollPreview(p.previewPageSize())
+			return p, nil
+		case "shift+up":
+			p.scrollPreview(-1)
+			return p, nil
+		case "shift+down":
+			p.scrollPreview(1)
+			return p, nil
+		}
+
+	case tea.MouseMsg:
+		// Mouse wheel scrolls the preview pane.
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			p.scrollPreview(-3)
+			return p, nil
+		case tea.MouseButtonWheelDown:
+			p.scrollPreview(3)
+			return p, nil
 		}
 	}
 	return p, nil
+}
+
+// scrollPreview adjusts the focused entry's preview scroll offset.
+// Bounds are enforced lazily during rendering.
+func (p *resumePicker) scrollPreview(delta int) {
+	if p.cursor < 0 || p.cursor >= len(p.entries) {
+		return
+	}
+	e := p.entries[p.cursor]
+	e.previewScroll += delta
+	if e.previewScroll < 0 {
+		e.previewScroll = 0
+	}
+}
+
+func (p *resumePicker) previewPageSize() int {
+	rows := p.listVisibleRows()
+	half := rows / 2
+	if half < 1 {
+		half = 1
+	}
+	return half
 }
 
 // adjustScroll keeps the cursor visible in the list pane.
@@ -236,7 +282,7 @@ func (p *resumePicker) View() string {
 	body := strings.Join(bodyLines, "\n")
 
 	footer := pickerFooterStyle.Render(
-		trimToWidth(" ↑↓ navigate  ·  Enter resume  ·  Esc cancel ", p.width),
+		trimToWidth(" ↑↓ navigate  ·  PgUp/PgDn scroll preview  ·  Enter resume  ·  Esc cancel ", p.width),
 	)
 
 	hr := lipgloss.NewStyle().
@@ -298,11 +344,10 @@ func (p *resumePicker) renderListLines(width, rows int) []string {
 	return lines
 }
 
-func (p *resumePicker) renderPreviewLines(width, rows int) []string {
-	if p.cursor < 0 || p.cursor >= len(p.entries) {
-		return nil
-	}
-	e := p.entries[p.cursor]
+// buildPreviewLines generates the FULL set of preview lines for an entry
+// (already wrapped to width). Caller is responsible for slicing to the
+// visible window. The result is what the user can scroll through.
+func (p *resumePicker) buildPreviewLines(e *resumePickerEntry, width int) []string {
 	if !e.loaded {
 		return []string{lipgloss.NewStyle().Foreground(currentTheme.Subtle).Render(" loading...")}
 	}
@@ -314,39 +359,66 @@ func (p *resumePicker) renderPreviewLines(width, rows int) []string {
 	lines = append(lines, pickerMetaStyle.Render(fmt.Sprintf(" Created: %s · %d entries", created, e.Session.Entries)))
 	lines = append(lines, "")
 
-	// Show first ~6 user/assistant messages, formatted compactly.
-	count := 0
+	// Show ALL user/assistant messages (no cap — preview is scrollable).
+	any := false
 	for _, entry := range e.preview {
-		if count >= 8 {
-			lines = append(lines, lipgloss.NewStyle().Foreground(currentTheme.Subtle).Render(" ..."))
-			break
-		}
 		switch entry.Role {
 		case "USER":
-			text := truncateForPreview(entry.Content, 200)
+			text := truncateForPreview(entry.Content, 800)
 			lines = append(lines, userPreviewStyle.Render(" › ")+text)
-			count++
+			any = true
 		case "ASSISTANT":
-			text := truncateForPreview(entry.Content, 250)
+			text := truncateForPreview(entry.Content, 1200)
 			lines = append(lines, assistantPreviewStyle.Render(" ‹ ")+text)
-			count++
+			any = true
 		}
 	}
-	if count == 0 {
+	if !any {
 		lines = append(lines, lipgloss.NewStyle().Foreground(currentTheme.Subtle).Render(" (no messages)"))
 	}
 
 	// Wrap each line to width.
 	wrapped := make([]string, 0, len(lines))
 	for _, l := range lines {
-		ws := wrapLineForPreview(l, width)
-		wrapped = append(wrapped, ws...)
-		if len(wrapped) >= rows {
-			wrapped = wrapped[:rows]
-			break
-		}
+		wrapped = append(wrapped, wrapLineForPreview(l, width)...)
 	}
 	return wrapped
+}
+
+// renderPreviewLines slices the full preview to the current scroll window
+// of the focused entry. Also applies bounds-checking to previewScroll so
+// it never goes off the end.
+func (p *resumePicker) renderPreviewLines(width, rows int) []string {
+	if p.cursor < 0 || p.cursor >= len(p.entries) {
+		return nil
+	}
+	e := p.entries[p.cursor]
+	full := p.buildPreviewLines(e, width)
+
+	maxScroll := len(full) - rows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if e.previewScroll > maxScroll {
+		e.previewScroll = maxScroll
+	}
+	if e.previewScroll < 0 {
+		e.previewScroll = 0
+	}
+
+	end := e.previewScroll + rows
+	if end > len(full) {
+		end = len(full)
+	}
+	visible := full[e.previewScroll:end]
+
+	// Append a scroll indicator on the last line if there's more below.
+	if end < len(full) && len(visible) > 0 {
+		marker := lipgloss.NewStyle().Foreground(currentTheme.Subtle).Render(" ↓ more ")
+		visible = append([]string(nil), visible...)
+		visible[len(visible)-1] = padRight(visible[len(visible)-1], width-lipgloss.Width(marker)) + marker
+	}
+	return visible
 }
 
 func firstUserPreview(entries []transcriptEntry) string {
