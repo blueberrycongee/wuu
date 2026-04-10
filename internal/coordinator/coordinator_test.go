@@ -136,9 +136,12 @@ func TestSpawn_InplaceSkipsWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Explorer defaults to inplace.
+	// Worker defaults to inplace and must not create anything under
+	// the worktree root on disk — overlap with TestSpawn_SyncHappyPath
+	// on the isolation field, but this one specifically pins the
+	// no-disk-side-effect property by reading the worktree dir.
 	res, err := c.Spawn(context.Background(), SpawnRequest{
-		Type:        "explorer",
+		Type:        "worker",
 		Description: "look",
 		Prompt:      "p",
 		Synchronous: true,
@@ -152,7 +155,6 @@ func TestSpawn_InplaceSkipsWorktree(t *testing.T) {
 	if res.WorktreePath != "" {
 		t.Fatalf("expected empty worktree path for inplace spawn, got %q", res.WorktreePath)
 	}
-	// And nothing should have been written under the worktree root.
 	if entries, _ := os.ReadDir(filepath.Join(dir, ".wuu", "worktrees", "sess-inplace")); len(entries) != 0 {
 		t.Fatalf("expected no worktrees on disk, got %d entries", len(entries))
 	}
@@ -171,11 +173,12 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
 	})
 
-	// Explorer normally inplace; force it into a worktree.
-	// (It does no work, so auto-recycle will then drop the path —
-	// the override is verified via res.Isolation, not the path.)
+	// Worker defaults to inplace; explicit isolation="worktree"
+	// must override that and put the worker in a fresh worktree.
+	// (The worker does no work, so the post-completion auto-recycle
+	// will drop the path — verify the override via res.Isolation.)
 	res, err := c.Spawn(context.Background(), SpawnRequest{
-		Type:        "explorer",
+		Type:        "worker",
 		Description: "force-isolated",
 		Prompt:      "p",
 		Isolation:   "worktree",
@@ -188,10 +191,12 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 		t.Fatalf("override failed: %q", res.Isolation)
 	}
 
-	// And: worker (default worktree) overridden to inplace.
+	// And: explicit isolation="inplace" is a no-op (it matches the
+	// default) but must still resolve cleanly without touching the
+	// worktree directory.
 	res2, err := c.Spawn(context.Background(), SpawnRequest{
 		Type:        "worker",
-		Description: "force-inplace",
+		Description: "explicit-inplace",
 		Prompt:      "p",
 		Isolation:   "inplace",
 		Synchronous: true,
@@ -200,7 +205,7 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res2.Isolation != "inplace" || res2.WorktreePath != "" {
-		t.Fatalf("worker→inplace override failed: %+v", res2)
+		t.Fatalf("explicit inplace failed: %+v", res2)
 	}
 }
 
@@ -394,7 +399,7 @@ func TestFormatWorkerResult(t *testing.T) {
 	})
 
 	res, _ := c.Spawn(context.Background(), SpawnRequest{
-		Type:        "explorer",
+		Type:        "worker",
 		Description: "find the bug",
 		Prompt:      "look for it",
 		Synchronous: true,
@@ -431,8 +436,8 @@ func TestFormatWorkerResult_IncludesErrorClass(t *testing.T) {
 // for FormatWorkerResult tests without actually spawning anything.
 func subagentSnapshotWithError(err error) subagent.SubAgentSnapshot {
 	return subagent.SubAgentSnapshot{
-		ID:          "explorer-test",
-		Type:        "explorer",
+		ID:          "worker-test",
+		Type:        "worker",
 		Description: "test",
 		Status:      subagent.StatusFailed,
 		Error:       err,

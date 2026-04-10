@@ -276,12 +276,15 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 		{
 			Name: "spawn_agent",
 			Description: "Spawn a sub-agent to perform a focused task. The sub-agent has its own " +
-				"context and its own tools. By default it runs INPLACE in the current repo for " +
-				"read-only worker types (explorer, planner, verifier) and in a fresh git WORKTREE " +
-				"for write-capable types (worker), so disk pressure stays low. " +
-				"You can override per-call with the isolation parameter — opt a worker into inplace " +
-				"if it really won't write, or opt an explorer into a worktree if it must run a " +
-				"destructive script. " +
+				"context and its own tools. There is exactly one worker type, 'worker', with the " +
+				"full tool set; specialized roles (verification, read-only research) are injected " +
+				"by pasting the appropriate preset block at the start of the prompt — see the " +
+				"coordinator system prompt for the verbatim preset text. " +
+				"By default the spawn runs INPLACE in the user's repo, so any files the worker " +
+				"creates or edits land directly in the working tree. Set isolation='worktree' ONLY " +
+				"when the work might break the build, when concurrent writers would collide, or " +
+				"when the user explicitly asked for a sandbox. Do NOT use a worktree just because " +
+				"the task involves writing files — additive writes are not a reason for isolation. " +
 				"Use this for any task that requires reading file contents or making changes — your " +
 				"own context stays clean. By default the spawn is asynchronous: this returns " +
 				"immediately with an agent_id, and the worker's result will be delivered to you as " +
@@ -293,7 +296,7 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 				"properties": map[string]any{
 					"type": map[string]any{
 						"type":        "string",
-						"description": "Worker type: 'explorer' (read-only, inplace), 'planner' (read-only, inplace), 'worker' (read+write, worktree), 'verifier' (runs tests/build, inplace).",
+						"description": "Worker type. Only 'worker' is supported; omit to use the default.",
 					},
 					"description": map[string]any{
 						"type":        "string",
@@ -306,7 +309,7 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 					"isolation": map[string]any{
 						"type":        "string",
 						"enum":        []string{"inplace", "worktree"},
-						"description": "Override the worker type's default. 'inplace' shares the parent repo (no checkout cost). 'worktree' creates a fresh git worktree for sandboxed edits. Omit to use the type's default.",
+						"description": "Optional. 'inplace' (default) shares the user's repo so writes land in the working tree. 'worktree' creates a fresh git worktree for sandboxed edits — only use this when the work might break the build, when concurrent writers would collide, or when the user explicitly asked for a sandbox.",
 					},
 					"base_repo": map[string]any{
 						"type":        "string",
