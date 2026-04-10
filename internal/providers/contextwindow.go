@@ -11,12 +11,16 @@ import (
 // equally well as long as they don't rewrite model names.
 //
 // Resolution order:
-//   1. Exact match against the registry (cheapest, used for canonical IDs).
-//   2. Substring match in the order entries are listed (most specific
-//      patterns first), so e.g. "gpt-4o-mini" matches the "gpt-4o" rule
-//      and "claude-opus-4-1m" matches the "claude-opus-4-1m" rule
-//      before falling through to the generic "claude-opus".
-//   3. defaultContextWindow if nothing matched.
+//
+//  1. Catwalk's curated, community-maintained model index (loaded
+//     from charm.land/catwalk's embedded snapshot at process start;
+//     a future remote sync path will refresh it without restart).
+//     This covers the broadest set of models with the freshest data.
+//  2. Wuu's hand-rolled substring registry below — kept as a robust
+//     fallback for models catwalk hasn't shipped yet, plus generic
+//     family rules ("claude-sonnet" → 200k) that catch any vendor's
+//     proxy-renamed variant.
+//  3. defaultContextWindow if nothing matched.
 //
 // The registry intentionally errs on the side of UNDERREPORTING (a
 // smaller window than the model actually has) for unknown variants,
@@ -27,6 +31,13 @@ func ContextWindowFor(model string) int {
 	if model == "" {
 		return defaultContextWindow
 	}
+
+	// Layer 1: catwalk curated index.
+	if w := catwalkLookup(model); w > 0 {
+		return w
+	}
+
+	// Layer 2: wuu's hand-rolled substring registry.
 	lower := strings.ToLower(strings.TrimSpace(model))
 	// OpenRouter and similar gateways prefix model names with the
 	// upstream vendor: "anthropic/claude-sonnet-4-5". Strip the prefix
@@ -67,16 +78,11 @@ type contextWindowEntry struct {
 // is what hurts.
 var contextWindowRegistry = []contextWindowEntry{
 	// --- Anthropic Claude 4.x ---------------------------------------
-	// Long-context Opus variant must come BEFORE the generic
-	// "claude-opus-4" rule.
-	{"claude-opus-4-6-1m", 1_000_000},
-	{"claude-opus-4-1m", 1_000_000},
-	{"claude-opus-4-6", 200_000},
+	// catwalk holds the precise per-id windows (e.g. claude-opus-4-6
+	// is actually 1M, not 200k); these entries are only the fallback
+	// when catwalk doesn't recognize a name.
 	{"claude-opus-4", 200_000},
-	{"claude-sonnet-4-6", 200_000},
-	{"claude-sonnet-4-5", 200_000},
 	{"claude-sonnet-4", 200_000},
-	{"claude-haiku-4-5", 200_000},
 	{"claude-haiku-4", 200_000},
 
 	// --- Anthropic Claude 3.x ---------------------------------------
