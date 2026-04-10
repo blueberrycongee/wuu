@@ -767,14 +767,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.entries[m.streamTarget].Content == "(empty)" {
 				m.entries[m.streamTarget].Content = ""
 			}
-			m.entries[m.streamTarget].Content += msg.event.Content
-			// Stream through the markdown collector.
+			// When this is the first delta of a fresh round (collector
+			// was reset to nil at the previous EventDone), seed the
+			// collector with the entry's existing Content. Without
+			// this seed, the collector only contains the new round's
+			// deltas, and CommitCompleteLines below would overwrite
+			// entry.rendered with ONLY the new round — causing the
+			// previous rounds' content to vanish from the viewport
+			// until the next EventDone fires (visible flashing in
+			// coordinator mode where multi-round turns are common).
 			if m.streamCollector == nil {
 				m.streamCollector = markdown.NewStreamCollector(
 					contentWidth(m.viewport.Width),
 					markdown.DefaultStyles(),
 				)
+				if existing := m.entries[m.streamTarget].Content; existing != "" {
+					m.streamCollector.Push(existing)
+				}
 			}
+			m.entries[m.streamTarget].Content += msg.event.Content
 			m.streamCollector.Push(msg.event.Content)
 			if rendered := m.streamCollector.CommitCompleteLines(); rendered != "" {
 				e := &m.entries[m.streamTarget]
