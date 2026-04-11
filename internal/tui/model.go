@@ -471,7 +471,7 @@ func streamTickCmd() tea.Cmd {
 }
 
 func inlineSpinTickCmd() tea.Cmd {
-	return tea.Tick(150*time.Millisecond, func(_ time.Time) tea.Msg {
+	return tea.Tick(statusAnimationInterval, func(_ time.Time) tea.Msg {
 		return inlineSpinMsg{}
 	})
 }
@@ -2171,6 +2171,36 @@ func (m *Model) relayout() {
 	m.refreshViewport(false)
 }
 
+func (m Model) shouldRenderInlineStatus() bool {
+	if !m.streaming && !m.pendingRequest {
+		return false
+	}
+	ws := deriveWorkStatus(m.statusLine)
+	if ws.Phase == workPhaseIdle {
+		return false
+	}
+	if ws.Phase == workPhaseThinking || ws.Phase == workPhaseTool {
+		if m.hasVisibleRunningTranscriptStatus() {
+			return false
+		}
+	}
+	return true
+}
+
+func (m Model) hasVisibleRunningTranscriptStatus() bool {
+	for _, entry := range m.entries {
+		if entry.ThinkingContent != "" && !entry.ThinkingDone {
+			return true
+		}
+		for _, tc := range entry.ToolCalls {
+			if tc.Status == ToolCallRunning {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // View renders the full terminal.
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
@@ -2262,7 +2292,7 @@ func (m Model) View() string {
 	// concise so it acts as the single live status line instead of
 	// competing with thinking/tool/worker surfaces inside the transcript.
 	statusLine := ""
-	if m.streaming || m.pendingRequest {
+	if m.shouldRenderInlineStatus() {
 		statusLine = indentLines(renderInlineStatus(m.statusLine, m.spinnerFrame, contentWidth(m.viewport.Width)), contentPadLeft)
 	}
 

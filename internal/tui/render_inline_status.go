@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const statusAnimationInterval = 150 * time.Millisecond
+const statusAnimationInterval = 300 * time.Millisecond
 
 var statusSpinnerFrames = []string{"·", "·", "·", "·"}
 
