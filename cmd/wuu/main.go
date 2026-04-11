@@ -390,11 +390,23 @@ func runTUI(args []string) error {
 		systemPromptText = appendSkillsToPrompt(systemPromptText, discoveredSkills)
 	}
 
+	// Ensure the cross-agent shared filesystem region exists. Agents
+	// use .wuu/shared/{findings,plans,status,reports} as the data
+	// plane between themselves; the system prompt teaches the
+	// convention but the directories must exist on disk so list_files
+	// returns something sensible on a fresh session.
+	if toolkit != nil {
+		if err := coordinator.EnsureSharedDir(rootDir); err != nil {
+			return fmt.Errorf("ensure shared dir: %w", err)
+		}
+	}
+
 	// If the workspace is a git repo and we have a toolkit, wire up the
-	// coordinator runtime so spawn_agent and friends become available.
-	// When coordinator wiring succeeds, we ALSO switch the main agent
-	// to coordinator-only mode (6 tools) and prepend the coordinator
-	// system prompt — this is the wuu default once Phase 6 is active.
+	// coordinator runtime so the orchestration tools (spawn_agent,
+	// send_message_to_agent, stop_agent, list_agents) become callable
+	// and the orchestration preamble gets prepended to the system
+	// prompt. The main agent keeps its full tool set either way; the
+	// coordinator just adds the inter-agent primitives on top.
 	var coord *coordinator.Coordinator
 	if toolkit != nil && worktree.IsGitRepo(rootDir) {
 		// Capture the worker base prompt BEFORE we prepend the
