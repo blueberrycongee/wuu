@@ -198,7 +198,7 @@ type Model struct {
 	streamTarget   int
 	streamElapsed  time.Duration
 	thinkingStart  time.Time // when thinking began for current turn
-	spinnerTick    int
+	spinnerFrame   int
 
 	autoFollow      bool
 	showJump        bool
@@ -433,7 +433,7 @@ func (m Model) Init() tea.Cmd {
 			CWD:       m.workspaceRoot,
 		})
 	}
-	cmds := []tea.Cmd{tickCmd()}
+	cmds := []tea.Cmd{tickCmd(), statusAnimationCmd()}
 	if m.workerNotifyCh != nil {
 		cmds = append(cmds, waitWorkerNotify(m.workerNotifyCh))
 	}
@@ -455,6 +455,12 @@ func waitWorkerNotify(ch <-chan subagent.Notification) tea.Cmd {
 func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
 		return tickMsg{now: t}
+	})
+}
+
+func statusAnimationCmd() tea.Cmd {
+	return tea.Tick(statusAnimationInterval, func(_ time.Time) tea.Msg {
+		return inlineSpinMsg{}
 	})
 }
 
@@ -604,12 +610,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.clock = msg.now.Format("15:04:05")
-		m.spinnerTick++
 		// Only refresh the viewport when the thinking-block spinner
 		// (which lives inside the viewport) needs to advance.
 		// Everything else that ticks — header clock, inline status,
 		// worker panel elapsed/spinner — renders in View() outside
-		// the viewport, so the spinnerTick increment is enough for
+		// the viewport, so the frame increment is enough for
 		// BubbleTea to re-call View() and pick up the new frame.
 		// Worker panel height changes are handled by workerNotifyMsg.
 		if m.statusLine == "thinking" {
@@ -618,15 +623,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case inlineSpinMsg:
-		m.inlineSpinFrame++
-		if m.streaming || m.pendingRequest {
-			// Only advance the frame counter — inline status is rendered
-			// outside the viewport in View(), so no viewport rebuild
-			// needed. BubbleTea's top-level diff redraws only the
-			// status line.
-			return m, inlineSpinTickCmd()
+		m.spinnerFrame = nextStatusFrame(m.spinnerFrame)
+		if m.streaming || m.pendingRequest || m.statusLine == "thinking" || len(m.activeWorkerSnapshots()) > 0 {
+			if m.statusLine == "thinking" {
+				// Thinking blocks live inside the viewport, so keep their
+				// spinner in sync with the shared status animation frame.
+				m.refreshViewport(false)
+			}
+			return m, statusAnimationCmd()
 		}
-		return m, nil
+		return m, statusAnimationCmd()
 
 	case selectionAutoScrollMsg:
 		// Stale ticks (left over from a previous burst that has
@@ -2087,14 +2093,14 @@ func (m *Model) refreshViewport(forceBottom bool) {
 					entry.ThinkingExpanded,
 					elapsed,
 					innerWidth,
-					m.spinnerTick,
+					m.spinnerFrame,
 				), contentPadLeft))
 				appendText("\n")
 			}
 
 			// Tool call cards.
 			for _, tc := range entry.ToolCalls {
-				appendText(indentLines(renderToolCard(tc, innerWidth, m.spinnerTick), contentPadLeft))
+				appendText(indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
 				appendText("\n")
 			}
 
@@ -2252,7 +2258,7 @@ func (m Model) View() string {
 	// competing with thinking/tool/worker surfaces inside the transcript.
 	statusLine := ""
 	if m.streaming || m.pendingRequest {
-		statusLine = indentLines(renderInlineStatus(m.statusLine, m.inlineSpinFrame), contentPadLeft)
+		statusLine = indentLines(renderInlineStatus(m.statusLine, m.spinnerFrame, contentWidth(m.viewport.Width)), contentPadLeft)
 	}
 
 	parts := []string{header, outputBox, statusLine}

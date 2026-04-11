@@ -682,8 +682,8 @@ func renderEntries(entries []transcriptEntry) string {
 }
 
 func TestRenderInlineStatus_AnimatesAcrossFrames(t *testing.T) {
-	frameA := renderInlineStatus("streaming", 0)
-	frameB := renderInlineStatus("streaming", 3)
+	frameA := renderInlineStatus("streaming", 0, 80)
+	frameB := renderInlineStatus("streaming", 3, 80)
 	if frameA == frameB {
 		t.Fatalf("expected different frames to render differently: %q", frameA)
 	}
@@ -703,7 +703,7 @@ func TestRenderInlineStatus_ShowsWaitingLabels(t *testing.T) {
 		"executing tool: read": "Running read",
 	}
 	for status, want := range cases {
-		got := renderInlineStatus(status, 1)
+		got := renderInlineStatus(status, 1, 80)
 		if !strings.Contains(got, strings.ReplaceAll(want, "  ", " ")) {
 			t.Fatalf("status %q rendered %q, want label containing %q", status, got, want)
 		}
@@ -711,10 +711,10 @@ func TestRenderInlineStatus_ShowsWaitingLabels(t *testing.T) {
 }
 
 func TestRenderInlineStatus_HidesForNonWaitingStatus(t *testing.T) {
-	if got := renderInlineStatus("ready", 0); got != "" {
+	if got := renderInlineStatus("ready", 0, 80); got != "" {
 		t.Fatalf("expected non-waiting status to render empty string, got %q", got)
 	}
-	if got := renderInlineStatus("response in 1.2s", 0); got != "" {
+	if got := renderInlineStatus("response in 1.2s", 0, 80); got != "" {
 		t.Fatalf("expected completed status to render empty string, got %q", got)
 	}
 }
@@ -737,9 +737,9 @@ func TestRenderThinkingBlock_Done_Collapsed(t *testing.T) {
 	if !strings.Contains(result, "Finished in 3.2s") {
 		t.Fatalf("expected duration in output: %s", result)
 	}
-	// Content should NOT be visible when not expanded.
-	if strings.Contains(result, "analyzed the code") {
-		t.Fatalf("content should be hidden when collapsed: %s", result)
+	// Content should show as a short preview when not expanded.
+	if !strings.Contains(result, "analyzed the code") {
+		t.Fatalf("expected preview content when collapsed: %s", result)
 	}
 }
 
@@ -1175,15 +1175,15 @@ func TestInlineSpinMsg_DoesNotRebuildViewport(t *testing.T) {
 	// If it doesn't call refreshViewport, the stale content remains.
 	const marker = "SPIN_REBUILD_CANARY"
 	m.entries[0].Content = marker
-	beforeFrame := m.inlineSpinFrame
+	beforeFrame := m.spinnerFrame
 
 	// Dispatch the spinner tick.
 	updated, _ := m.Update(inlineSpinMsg{})
 	after := updated.(Model)
 
-	if after.inlineSpinFrame != beforeFrame+1 {
-		t.Fatalf("expected inlineSpinFrame to advance by 1: before=%d after=%d",
-			beforeFrame, after.inlineSpinFrame)
+	if after.spinnerFrame != nextStatusFrame(beforeFrame) {
+		t.Fatalf("expected spinnerFrame to advance to next shared frame: before=%d after=%d",
+			beforeFrame, after.spinnerFrame)
 	}
 	// The canary must NOT appear in the viewport — that would mean
 	// refreshViewport was called, rebuilding content from m.entries.

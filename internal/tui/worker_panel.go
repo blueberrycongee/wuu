@@ -66,7 +66,7 @@ func (m Model) renderWorkerPanel(width int) string {
 
 	var b strings.Builder
 	titleStatus := workerRunningStatus(fmt.Sprintf("%d background task(s)", len(active)))
-	title := fmt.Sprintf(" %s", renderStatusHeader(titleStatus, m.spinnerTick))
+	title := fmt.Sprintf(" %s", renderStatusHeader(titleStatus, m.spinnerFrame))
 	b.WriteString(workerPanelTitleStyle.Render(fitToWidth(title, width)))
 
 	now := time.Now()
@@ -87,7 +87,7 @@ func (m Model) renderWorkerPanel(width int) string {
 		}
 		left := strings.Join([]string{
 			waitingStatusMetaStyle.Render(truncate(s.ID, 14)),
-			renderStatusHeader(workerRunningStatus(desc), m.spinnerTick+i),
+			renderStatusHeader(workerRunningStatus(desc), m.spinnerFrame+i),
 		}, "  ")
 		right := elapsed
 		if s.InputTokens > 0 || s.OutputTokens > 0 {
