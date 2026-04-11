@@ -149,6 +149,10 @@ var (
 	inlineStatusTrackStyle lipgloss.Style
 	inlineStatusSweepStyle lipgloss.Style
 	inlineStatusLabelStyle lipgloss.Style
+
+	waitingStatusPrefixStyle lipgloss.Style
+	waitingStatusLabelStyle  lipgloss.Style
+	waitingStatusMetaStyle   lipgloss.Style
 )
 
 func init() {
@@ -225,6 +229,10 @@ func applyTheme(t theme) {
 	inlineStatusTrackStyle = lipgloss.NewStyle().Foreground(t.Inactive)
 	inlineStatusSweepStyle = lipgloss.NewStyle().Bold(true).Foreground(t.BrandLight)
 	inlineStatusLabelStyle = lipgloss.NewStyle().Foreground(t.Subtle)
+
+	waitingStatusPrefixStyle = lipgloss.NewStyle().Bold(true).Foreground(t.Brand)
+	waitingStatusLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(t.Text)
+	waitingStatusMetaStyle = lipgloss.NewStyle().Foreground(t.Subtle)
 
 	initPickerStyles()
 	initWorkerPanelStyles()
