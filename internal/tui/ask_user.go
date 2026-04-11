@@ -609,13 +609,20 @@ func (m *askUserModal) renderOtherInputBody(q *tools.AskUserQuestion) string {
 	inputBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Brand).
-		Padding(0, 1).
-		Width(max(40, m.width-6))
+		Padding(0, 1)
+
+	// Keep the input box aligned with the modal content width.
+	// The previous fixed minimum width (max(40, m.width-6)) could
+	// overflow in narrow terminals and cause visible horizontal drift.
+	const leftInset = 2 // matches the visual indentation used below
+	outerW := max(1, m.width-leftInset)
+	innerW := max(1, outerW-inputBoxStyle.GetHorizontalFrameSize())
+	m.otherInput.Width = innerW
 
 	hint := hintStyle.Render("  Type your answer. Enter to submit, Esc to go back to the options.")
-	input := inputBoxStyle.Render(m.otherInput.View())
+	input := inputBoxStyle.Width(outerW).Render(m.otherInput.View())
 
-	return lipgloss.JoinVertical(lipgloss.Left, hint, "", "  "+input)
+	return lipgloss.JoinVertical(lipgloss.Left, hint, "", strings.Repeat(" ", leftInset)+input)
 }
 
 // -------------------------------------------------------------------
