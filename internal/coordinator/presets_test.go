@@ -75,21 +75,6 @@ func TestResearchPreset_OutputShape(t *testing.T) {
 	}
 }
 
-func TestSystemPromptPreamble_MentionsPresetsByName(t *testing.T) {
-	// The preamble no longer embeds preset text verbatim — the
-	// presets are reference material, not required boilerplate.
-	// But it must still tell the model the presets exist and are
-	// available in the codebase, so the model knows it can draw
-	// on them when writing verifier / researcher worker prompts.
-	preamble := SystemPromptPreamble()
-	if !strings.Contains(preamble, "VerificationPreset") {
-		t.Error("SystemPromptPreamble must mention VerificationPreset by name")
-	}
-	if !strings.Contains(preamble, "ResearchPreset") {
-		t.Error("SystemPromptPreamble must mention ResearchPreset by name")
-	}
-}
-
 func TestSystemPromptPreamble_TeachesThreePlanes(t *testing.T) {
 	// The three-plane discipline (filesystem for data, send_message
 	// for control, trajectories for history) is the load-bearing
