@@ -29,7 +29,6 @@ func (m Model) workerPanelHeight() int {
 	if rows > workerPanelMaxRows {
 		rows = workerPanelMaxRows
 	}
-	// Title row + worker rows.
 	return rows + 1
 }
 
@@ -46,7 +45,6 @@ func (m Model) activeWorkerSnapshots() []subagent.SubAgentSnapshot {
 			out = append(out, s)
 		}
 	}
-	// Sort by StartedAt ascending (oldest first).
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && out[j].StartedAt.Before(out[j-1].StartedAt); j-- {
 			out[j], out[j-1] = out[j-1], out[j]
@@ -67,11 +65,8 @@ func (m Model) renderWorkerPanel(width int) string {
 	}
 
 	var b strings.Builder
-	// Title row MUST fill the full terminal width — otherwise the
-	// trailing columns retain whatever was at that row in the previous
-	// frame (e.g., a scrollbar character from the chat above), which
-	// shows up as ghosting when the panel appears or shrinks.
-	title := fmt.Sprintf(" Active workers (%d)", len(active))
+	titleStatus := workerRunningStatus(fmt.Sprintf("%d background task(s)", len(active)))
+	title := fmt.Sprintf(" %s", renderStatusHeader(titleStatus, m.spinnerTick))
 	b.WriteString(workerPanelTitleStyle.Render(fitToWidth(title, width)))
 
 	now := time.Now()
@@ -79,10 +74,6 @@ func (m Model) renderWorkerPanel(width int) string {
 	if limit > workerPanelMaxRows {
 		limit = workerPanelMaxRows
 	}
-
-	// Spinner frame derived from the existing inline spin counter.
-	spinFrames := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
-	spin := string(spinFrames[m.spinnerTick%len(spinFrames)])
 
 	for i := 0; i < limit; i++ {
 		s := active[i]
@@ -92,17 +83,15 @@ func (m Model) renderWorkerPanel(width int) string {
 		}
 		desc := s.Description
 		if desc == "" {
-			desc = "(no description)"
+			desc = "working"
 		}
-		// Compose left: " ⠹ explorer-7af3 explore auth module"
-		left := fmt.Sprintf(" %s %-14s %s", spin, truncate(s.ID, 14), desc)
-		// Compose right: "12s · 1240↑/890↓"
+		left := strings.Join([]string{
+			waitingStatusMetaStyle.Render(truncate(s.ID, 14)),
+			renderStatusHeader(workerRunningStatus(desc), m.spinnerTick+i),
+		}, "  ")
 		right := elapsed
 		if s.InputTokens > 0 || s.OutputTokens > 0 {
-			right = fmt.Sprintf("%s · %s↑/%s↓",
-				elapsed,
-				formatCompactNum(s.InputTokens),
-				formatCompactNum(s.OutputTokens))
+			right = fmt.Sprintf("%s · %s↑/%s↓", elapsed, formatCompactNum(s.InputTokens), formatCompactNum(s.OutputTokens))
 		}
 		availableW := width - lipgloss.Width(right) - 1
 		if availableW < 4 {
@@ -113,14 +102,9 @@ func (m Model) renderWorkerPanel(width int) string {
 		if gap < 1 {
 			gap = 1
 		}
-		// Build the row, then defensively re-fit to width so any
-		// math drift (wide unicode, ANSI miscounting) can't leave
-		// the row short.
-		raw := left + strings.Repeat(" ", gap) + right
-		raw = fitToWidth(raw, width)
-		row := workerPanelRowStyle.Render(raw)
+		raw := fitToWidth(left+strings.Repeat(" ", gap)+right, width)
 		b.WriteString("\n")
-		b.WriteString(row)
+		b.WriteString(workerPanelRowStyle.Render(raw))
 	}
 	return b.String()
 }
@@ -169,6 +153,6 @@ var (
 )
 
 func initWorkerPanelStyles() {
-	workerPanelTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(currentTheme.Brand)
+	workerPanelTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(currentTheme.Subtle)
 	workerPanelRowStyle = lipgloss.NewStyle().Foreground(currentTheme.Subtle)
 }

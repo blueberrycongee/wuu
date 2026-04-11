@@ -3,81 +3,134 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
-const inlineSweepWidth = 7
+const statusAnimationInterval = 150 * time.Millisecond
 
-var inlineSweepChars = []rune{'░', '▒', '▓', '█', '▓', '▒', '░'}
+var statusSpinnerFrames = []string{"◐", "◓", "◑", "◒"}
 
-// renderInlineStatus renders an animated status line for display below the
-// user message in the chat viewport.
+type workPhase int
+
+const (
+	workPhaseIdle workPhase = iota
+	workPhaseThinking
+	workPhaseTool
+	workPhaseGenerating
+	workPhaseReconnecting
+	workPhaseAutoResume
+	workPhaseWorker
+)
+
+type workStatus struct {
+	Phase workPhase
+	Label string
+	Meta  string
+}
+
+func deriveWorkStatus(status string) workStatus {
+	switch {
+	case status == "thinking":
+		return workStatus{Phase: workPhaseThinking, Label: "Thinking", Meta: "Working through the next step"}
+	case status == "streaming" || status == "streaming response":
+		return workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply"}
+	case strings.HasPrefix(status, "tool:"):
+		name := trimToWidth(strings.TrimSpace(strings.TrimPrefix(status, "tool:")), 36)
+		if name == "" {
+			name = "tool"
+		}
+		return workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("Running %s", name), Meta: "Making progress with a tool"}
+	case strings.HasPrefix(status, "executing tool:"):
+		name := trimToWidth(strings.TrimSpace(strings.TrimPrefix(status, "executing tool:")), 36)
+		if name == "" {
+			name = "tool"
+		}
+		return workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("Running %s", name), Meta: "Making progress with a tool"}
+	case strings.HasPrefix(status, "Reconnecting"):
+		return workStatus{Phase: workPhaseReconnecting, Label: "Reconnecting", Meta: "Restoring the live response"}
+	case strings.HasPrefix(status, "auto-resume"):
+		return workStatus{Phase: workPhaseAutoResume, Label: "Continuing", Meta: "Picking up after worker updates"}
+	default:
+		return workStatus{Phase: workPhaseIdle}
+	}
+}
+
+func workerRunningStatus(desc string) workStatus {
+	desc = trimToWidth(strings.TrimSpace(desc), 40)
+	meta := "Running in the background"
+	if desc != "" {
+		meta = desc
+	}
+	return workStatus{Phase: workPhaseWorker, Label: "Running", Meta: meta}
+}
+
+func thinkingBlockStatus(done bool, duration time.Duration) workStatus {
+	if done {
+		return workStatus{
+			Phase: workPhaseThinking,
+			Label: "Thinking complete",
+			Meta:  fmt.Sprintf("Finished in %.1fs", duration.Seconds()),
+		}
+	}
+	return workStatus{
+		Phase: workPhaseThinking,
+		Label: "Thinking",
+		Meta:  fmt.Sprintf("Elapsed %.1fs", duration.Seconds()),
+	}
+}
+
+func toolCallStatus(tc ToolCallEntry) workStatus {
+	name := strings.TrimSpace(tc.Name)
+	if name == "" {
+		name = "tool"
+	}
+	switch tc.Status {
+	case ToolCallRunning:
+		return workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("Running %s", name), Meta: "Making progress with a tool"}
+	case ToolCallError:
+		return workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("%s failed", name), Meta: "Tool run failed"}
+	default:
+		return workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("Finished %s", name), Meta: "Tool run complete"}
+	}
+}
+
+func isWaitingStatus(status string) bool {
+	return deriveWorkStatus(status).Phase != workPhaseIdle
+}
+
+func statusSpinner(frame int) string {
+	if len(statusSpinnerFrames) == 0 {
+		return ""
+	}
+	if frame < 0 {
+		frame = 0
+	}
+	return statusSpinnerFrames[frame%len(statusSpinnerFrames)]
+}
+
+func statusGlyph(ws workStatus, frame int) string {
+	switch ws.Phase {
+	case workPhaseTool, workPhaseThinking, workPhaseGenerating, workPhaseReconnecting, workPhaseAutoResume, workPhaseWorker:
+		return statusSpinner(frame)
+	default:
+		return "•"
+	}
+}
+
+func renderStatusHeader(ws workStatus, frame int) string {
+	if ws.Phase == workPhaseIdle {
+		return ""
+	}
+	parts := []string{
+		waitingStatusPrefixStyle.Render(statusGlyph(ws, frame)),
+		waitingStatusLabelStyle.Render(ws.Label),
+	}
+	if meta := strings.TrimSpace(ws.Meta); meta != "" && meta != ws.Label {
+		parts = append(parts, waitingStatusMetaStyle.Render("· "+trimToWidth(meta, 44)))
+	}
+	return strings.Join(parts, " ")
+}
+
 func renderInlineStatus(status string, frame int) string {
-	if !isInlineWaitingStatus(status) {
-		return ""
-	}
-
-	label := statusLabel(status)
-	sweep := renderInlineSweep(frame)
-	styledLabel := inlineStatusLabelStyle.Render(label)
-
-	return fmt.Sprintf("%s %s", sweep, styledLabel)
-}
-
-func renderInlineSweep(frame int) string {
-	width := inlineSweepWidth * 2
-	track := make([]rune, width)
-	for i := range track {
-		track[i] = '─'
-	}
-
-	start := frame % (width + inlineSweepWidth)
-	start -= inlineSweepWidth
-	for i, ch := range inlineSweepChars {
-		pos := start + i
-		if pos < 0 || pos >= width {
-			continue
-		}
-		track[pos] = ch
-	}
-
-	var b strings.Builder
-	for _, ch := range track {
-		style := inlineStatusTrackStyle
-		if ch != '─' {
-			style = inlineStatusSweepStyle
-		}
-		b.WriteString(style.Render(string(ch)))
-	}
-	return b.String()
-}
-
-func isInlineWaitingStatus(status string) bool {
-	switch {
-	case status == "thinking":
-		return true
-	case status == "streaming" || status == "streaming response":
-		return true
-	case strings.HasPrefix(status, "tool:"):
-		return true
-	case strings.HasPrefix(status, "executing tool:"):
-		return true
-	default:
-		return false
-	}
-}
-
-// statusLabel maps internal statusLine values to user-friendly display labels.
-func statusLabel(status string) string {
-	switch {
-	case status == "thinking":
-		return "Thinking"
-	case status == "streaming" || status == "streaming response":
-		return "Generating"
-	case strings.HasPrefix(status, "tool:"):
-		return "Running " + strings.TrimPrefix(status, "tool: ")
-	case strings.HasPrefix(status, "executing tool:"):
-		return "Running " + strings.TrimPrefix(status, "executing tool: ")
-	default:
-		return ""
-	}
+	return renderStatusHeader(deriveWorkStatus(status), frame)
 }

@@ -2094,7 +2094,7 @@ func (m *Model) refreshViewport(forceBottom bool) {
 
 			// Tool call cards.
 			for _, tc := range entry.ToolCalls {
-				appendText(indentLines(renderToolCard(tc, innerWidth), contentPadLeft))
+				appendText(indentLines(renderToolCard(tc, innerWidth, m.spinnerTick), contentPadLeft))
 				appendText("\n")
 			}
 
@@ -2246,8 +2246,10 @@ func (m Model) View() string {
 		Foreground(currentTheme.Border).
 		Render(strings.Repeat("─", m.width))
 
-	// Inline status lives outside the viewport so its sweep animation
-	// (150ms ticks) does not force viewport rebuilds.
+	// Inline status lives outside the viewport so its lightweight spinner
+	// can update without rebuilding the viewport content. Keep this area
+	// concise so it acts as the single live status line instead of
+	// competing with thinking/tool/worker surfaces inside the transcript.
 	statusLine := ""
 	if m.streaming || m.pendingRequest {
 		statusLine = indentLines(renderInlineStatus(m.statusLine, m.inlineSpinFrame), contentPadLeft)

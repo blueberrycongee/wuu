@@ -687,23 +687,20 @@ func TestRenderInlineStatus_AnimatesAcrossFrames(t *testing.T) {
 	if frameA == frameB {
 		t.Fatalf("expected different frames to render differently: %q", frameA)
 	}
-	if !strings.Contains(frameA, "Generating") {
+	if !strings.Contains(frameA, "Responding") {
 		t.Fatalf("expected label to remain visible in frame A: %q", frameA)
 	}
-	if !strings.Contains(frameB, "Generating") {
+	if !strings.Contains(frameB, "Responding") {
 		t.Fatalf("expected label to remain visible in frame B: %q", frameB)
-	}
-	if !strings.Contains(frameA, "▓") && !strings.Contains(frameB, "▓") {
-		t.Fatalf("expected sweep highlight to appear in at least one frame: A=%q B=%q", frameA, frameB)
 	}
 }
 
 func TestRenderInlineStatus_ShowsWaitingLabels(t *testing.T) {
 	cases := map[string]string{
 		"thinking":             "Thinking",
-		"streaming":            "Generating",
-		"tool: run_shell":      "Running  run_shell",
-		"executing tool: read": "Running  read",
+		"streaming":            "Responding",
+		"tool: run_shell":      "Running run_shell",
+		"executing tool: read": "Running read",
 	}
 	for status, want := range cases {
 		got := renderInlineStatus(status, 1)
@@ -724,18 +721,21 @@ func TestRenderInlineStatus_HidesForNonWaitingStatus(t *testing.T) {
 
 func TestRenderThinkingBlock_Active(t *testing.T) {
 	result := renderThinkingBlock("analyzing...", false, false, 2*time.Second, 80, 0)
-	if !strings.Contains(result, "Thinking...") {
-		t.Fatalf("expected 'Thinking...' in output: %s", result)
+	if !strings.Contains(result, "Thinking") {
+		t.Fatalf("expected 'Thinking' in output: %s", result)
 	}
-	if !strings.Contains(result, "2.0s") {
+	if !strings.Contains(result, "Elapsed 2.0s") {
 		t.Fatalf("expected elapsed time in output: %s", result)
 	}
 }
 
 func TestRenderThinkingBlock_Done_Collapsed(t *testing.T) {
 	result := renderThinkingBlock("analyzed the code", true, false, 3200*time.Millisecond, 80, 0)
-	if !strings.Contains(result, "Thought for 3.2s") {
-		t.Fatalf("expected 'Thought for 3.2s' in output: %s", result)
+	if !strings.Contains(result, "Thinking complete") {
+		t.Fatalf("expected completed label in output: %s", result)
+	}
+	if !strings.Contains(result, "Finished in 3.2s") {
+		t.Fatalf("expected duration in output: %s", result)
 	}
 	// Content should NOT be visible when not expanded.
 	if strings.Contains(result, "analyzed the code") {
@@ -745,8 +745,8 @@ func TestRenderThinkingBlock_Done_Collapsed(t *testing.T) {
 
 func TestRenderThinkingBlock_Done_Expanded(t *testing.T) {
 	result := renderThinkingBlock("analyzed the code", true, true, 3200*time.Millisecond, 80, 0)
-	if !strings.Contains(result, "Thought for 3.2s") {
-		t.Fatalf("expected 'Thought for 3.2s' in output: %s", result)
+	if !strings.Contains(result, "Thinking complete") {
+		t.Fatalf("expected completed label in output: %s", result)
 	}
 	if !strings.Contains(result, "analyzed the code") {
 		t.Fatalf("content should be visible when expanded: %s", result)
@@ -759,11 +759,11 @@ func TestRenderToolCard_Running(t *testing.T) {
 		Args:   `{"cmd":"go build ./..."}`,
 		Status: ToolCallRunning,
 	}
-	result := renderToolCard(tc, 80)
+	result := renderToolCard(tc, 80, 0)
 	if !strings.Contains(result, "run_shell") {
 		t.Fatalf("expected tool name in output: %s", result)
 	}
-	if !strings.Contains(result, "running") {
+	if !strings.Contains(strings.ToLower(result), "running") {
 		t.Fatalf("expected running status: %s", result)
 	}
 }
@@ -793,12 +793,12 @@ func TestRenderToolCard_Done_Collapsed(t *testing.T) {
 		Status:    ToolCallDone,
 		Collapsed: true,
 	}
-	result := renderToolCard(tc, 80)
+	result := renderToolCard(tc, 80, 0)
 	if !strings.Contains(result, "read_file") {
 		t.Fatalf("expected tool name: %s", result)
 	}
-	if !strings.Contains(result, "done") {
-		t.Fatalf("expected done status: %s", result)
+	if !strings.Contains(strings.ToLower(result), "finished") {
+		t.Fatalf("expected finished status: %s", result)
 	}
 }
 
@@ -807,9 +807,9 @@ func TestRenderToolCard_Error(t *testing.T) {
 		Name:   "run_shell",
 		Status: ToolCallError,
 	}
-	result := renderToolCard(tc, 80)
-	if !strings.Contains(result, "error") {
-		t.Fatalf("expected error status: %s", result)
+	result := renderToolCard(tc, 80, 0)
+	if !strings.Contains(strings.ToLower(result), "failed") {
+		t.Fatalf("expected failed status: %s", result)
 	}
 }
 
@@ -1215,12 +1215,19 @@ func TestView_InlineStatusRenderedOutsideViewport(t *testing.T) {
 	m.relayout()
 
 	viewportContent := m.viewport.View()
-	if strings.Contains(viewportContent, "Generating") {
-		t.Fatal("viewport content must not contain inline status 'Generating' — it should be rendered outside the viewport")
+	if strings.Contains(viewportContent, "Responding") {
+		t.Fatal("viewport content must not contain inline status 'Responding' — it should be rendered outside the viewport")
 	}
 
 	fullView := m.View()
-	if !strings.Contains(fullView, "Generating") {
-		t.Fatalf("full View() must contain inline status 'Generating'; got:\n%s", fullView)
+	if !strings.Contains(fullView, "Responding") {
+		t.Fatalf("full View() must contain inline status 'Responding'; got:\n%s", fullView)
+	}
+}
+
+func TestRenderWorkerPanel_UsesSharedWaitingLanguage(t *testing.T) {
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
+	if got := m.renderWorkerPanel(80); got != "" {
+		t.Fatalf("expected empty worker panel without coordinator, got %q", got)
 	}
 }

@@ -8,86 +8,57 @@ import (
 )
 
 // renderToolCard renders a single tool call card.
-func renderToolCard(tc ToolCallEntry, width int) string {
-	iconStyle := lipgloss.NewStyle().Foreground(currentTheme.ToolBorder)
-	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(currentTheme.ToolBorder)
-	statusDone := lipgloss.NewStyle().Foreground(currentTheme.Success)
-	statusRunning := lipgloss.NewStyle().Foreground(currentTheme.Warning)
-	statusError := lipgloss.NewStyle().Foreground(currentTheme.Error)
+func renderToolCard(tc ToolCallEntry, width int, frame int) string {
+	metaStyle := waitingStatusMetaStyle
 	contentStyle := lipgloss.NewStyle().Foreground(currentTheme.Inactive)
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(currentTheme.ToolBorder)
+		BorderForeground(currentTheme.Border)
 
-	var b strings.Builder
+	ws := toolCallStatus(tc)
+	headerParts := []string{renderStatusHeader(ws, frame)}
 
-	// Header line: icon + name + status
-	b.WriteString(" ")
-	b.WriteString(iconStyle.Render("⚡"))
-	b.WriteString(" ")
-	b.WriteString(nameStyle.Render(tc.Name))
-
-	switch tc.Status {
-	case ToolCallDone:
-		b.WriteString("  ")
-		b.WriteString(statusDone.Render("✓ done"))
-	case ToolCallRunning:
-		b.WriteString("  ")
-		b.WriteString(statusRunning.Render("⏳ running"))
-	case ToolCallError:
-		b.WriteString("  ")
-		b.WriteString(statusError.Render("✗ error"))
-	}
-
-	// Collapsed: header + human-readable args summary + diff stats
 	if tc.Collapsed {
-		summary := toolArgsSummary(tc.Name, tc.Args, width-30)
+		summary := toolArgsSummary(tc.Name, tc.Args, width-28)
 		if summary != "" {
-			b.WriteString(" ── ")
-			b.WriteString(contentStyle.Render(summary))
+			headerParts = append(headerParts, metaStyle.Render("· "+summary))
 		}
-		// Show +N/-M stats for file-modifying tools.
 		if tc.Result != "" {
 			if dr := diffResultFromJSON(tc.Result); dr != nil {
-				b.WriteString("  ")
-				b.WriteString(diffStats(dr))
+				headerParts = append(headerParts, diffStats(dr))
 			}
 		}
-		return b.String()
-	}
-
-	// Expanded: show formatted args and result in a bordered box
-	innerW := width - 4
-	if innerW < 20 {
-		innerW = 20
+		return strings.Join(headerParts, " ")
 	}
 
 	var content strings.Builder
 	if tc.Args != "" {
 		formatted := formatToolArgs(tc.Name, tc.Args)
-		content.WriteString(contentStyle.Render(wrapText(formatted, innerW)))
+		content.WriteString(contentStyle.Render(wrapText(formatted, width-6)))
 	}
 	if tc.Result != "" {
 		if content.Len() > 0 {
 			content.WriteString("\n")
-			content.WriteString(contentStyle.Render(strings.Repeat("─", min(innerW, 40))))
+			content.WriteString(metaStyle.Render(strings.Repeat("─", min(width-6, 32))))
 			content.WriteString("\n")
 		}
-		// Render diff if available, otherwise fall back to plain text.
 		if dr := diffResultFromJSON(tc.Result); dr != nil {
-			content.WriteString(renderDiff(dr, innerW))
+			content.WriteString(renderDiff(dr, max(20, width-6)))
 		} else {
-			content.WriteString(contentStyle.Render(wrapText(truncateToolResult(tc.Result, 500), innerW)))
+			content.WriteString(contentStyle.Render(wrapText(truncateToolResult(tc.Result, 500), max(20, width-6))))
 		}
 	}
 
-	if content.Len() > 0 {
-		box := borderStyle.Width(innerW).Render(content.String())
-		b.WriteString("\n")
-		b.WriteString(box)
+	if content.Len() == 0 {
+		return strings.Join(headerParts, " ")
 	}
 
-	return b.String()
+	innerW := width - 4
+	if innerW < 20 {
+		innerW = 20
+	}
+	box := borderStyle.Width(innerW).Render(content.String())
+	return strings.Join(headerParts, " ") + "\n" + box
 }
 
 // toolArgsSummary extracts a human-readable one-line summary from tool arguments.
