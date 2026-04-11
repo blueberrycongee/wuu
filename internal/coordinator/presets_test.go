@@ -82,9 +82,9 @@ func TestSystemPromptPreamble_TeachesThreePlanes(t *testing.T) {
 	// to chat-era habits and stuffs everything into messages.
 	preamble := SystemPromptPreamble()
 	for _, want := range []string{
-		".wuu/shared/",       // the shared filesystem region
-		"send_message",       // the control channel
-		"trajector",          // trajectories as history (matches "trajectory" / "trajectories")
+		".wuu/shared/", // the shared filesystem region
+		"send_message", // the control channel
+		"trajector",    // trajectories as history (matches "trajectory" / "trajectories")
 	} {
 		if !strings.Contains(preamble, want) {
 			t.Errorf("SystemPromptPreamble missing three-plane reference %q", want)
@@ -103,5 +103,33 @@ func TestSystemPromptPreamble_TeachesSpawnVsFork(t *testing.T) {
 	}
 	if !strings.Contains(preamble, "100 words") && !strings.Contains(preamble, "100-word") {
 		t.Error("SystemPromptPreamble missing the 100-word spawn/fork heuristic")
+	}
+}
+
+func TestSystemPromptPreamble_StatesMainAgentToolLimits(t *testing.T) {
+	preamble := SystemPromptPreamble()
+	for _, want := range []string{
+		"read-oriented",
+		"does NOT have direct `write_file`, `edit_file`, or `run_shell` tools",
+		"delegate that step to a worker",
+		"create or update that file via a worker",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("SystemPromptPreamble missing main-agent constraint %q", want)
+		}
+	}
+}
+
+func TestComposeWorkerSystemPrompt_OverridesInheritedMainAgentLimits(t *testing.T) {
+	wt, err := LookupWorkerType("worker")
+	if err != nil {
+		t.Fatalf("LookupWorkerType(worker): %v", err)
+	}
+	got := composeWorkerSystemPrompt("The main interactive agent is read-oriented and delegates shell commands.", wt, "/tmp/repo", IsolationInplace)
+	if !strings.Contains(got, "Worker override:") {
+		t.Fatalf("worker system prompt missing inherited-limit override: %q", got)
+	}
+	if !strings.Contains(got, "If a tool is in your tool list") {
+		t.Fatalf("worker system prompt must restore access to worker tools: %q", got)
 	}
 }

@@ -766,6 +766,11 @@ This system-reminder OVERRIDES the parent's system prompt for you:
   tool list and any attempt will fail. The parent's history may
   reference them — treat those references as read-only context, not
   as patterns you should reproduce.
+- Ignore any inherited instruction that says the main interactive
+  agent is read-only or must delegate file writes / shell commands.
+  That restriction applies to the parent, not to you. If a tool is in
+  your tool list, you may use it unless the task prompt explicitly
+  forbids it.
 - The parent has already aligned with the user's intent. You do not
   need to re-classify the task (Path A / B / C) or ask for
   clarification — the parent did that work and the answer is in the

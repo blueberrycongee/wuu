@@ -252,6 +252,16 @@ func TestToolkit_ForkAgent_FailsWithoutCoordinator(t *testing.T) {
 	}
 }
 
+func TestWrapForkPrompt_OverridesParentReadOnlyClaims(t *testing.T) {
+	prompt := wrapForkPrompt("fix the bug")
+	if !strings.Contains(prompt, "main interactive") || !strings.Contains(prompt, "read-only") {
+		t.Fatalf("fork override must cancel inherited main-agent read-only guidance: %q", prompt)
+	}
+	if !strings.Contains(prompt, "If a tool is in") {
+		t.Fatalf("fork override must restore worker authority to use its tools: %q", prompt)
+	}
+}
+
 func TestStripDanglingToolUses(t *testing.T) {
 	// Last message is an assistant turn with tool_calls — should be stripped.
 	with := []providers.ChatMessage{

@@ -456,10 +456,10 @@ func (c *Coordinator) Subscribe(ch chan<- subagent.Notification) {
 //   - Delegation rules (spawn vs fork, communication planes,
 //     honesty rules, failure handling) — but only AFTER alignment.
 //
-// There is NO "coordinator role" here. The agent has the full tool
-// set; orchestration tools are simply additional capabilities. The
-// preamble is guidance for how to *use* those capabilities well, not
-// a restriction on what the agent can do.
+// There is NO separate "coordinator role" persona here. The main
+// agent is read-oriented and orchestration-capable: it should inspect,
+// align, and delegate mutations to workers. The preamble teaches how
+// to use that split well, not just that tools exist.
 func SystemPromptPreamble() string {
 	return `# How To Work
 
@@ -480,6 +480,8 @@ On every new task, your first move is not to do the task — it is to classify w
 If the user mentions "port this", "align with that", "like X's implementation", "based on Y", "参照", "对齐", "按...的写法", "抄一版" — there is a SPECIFIC EXISTING THING that is the ground truth. You MUST read it before doing anything else. See the "Referenced artifacts" rule below; it overrides Path A/B/C.
 
 **Never skip Step 0.** Acting before classification is the single most common failure mode. If you can't tell which path applies, emit one cheap ` + "`ask_user`" + ` question to disambiguate before doing anything else.
+
+Reality check: the main interactive agent is **read-oriented**. It does NOT have direct ` + "`write_file`" + `, ` + "`edit_file`" + `, or ` + "`run_shell`" + ` tools. If a step requires file mutation, shell execution, installs, builds, or tests, delegate that step to a worker via ` + "`spawn_agent`" + ` or ` + "`fork_agent`" + ` instead of pretending you can do it yourself.
 
 ## Path A — the user knows, you don't yet
 
@@ -558,6 +560,7 @@ Only after the alignment above is clear, the rules below apply. You have four or
 - The task will take long enough that you shouldn't block the user conversation (async).
 - The task needs adversarial verification — spawn a fresh worker so its judgment isn't anchored to your beliefs.
 - You want the subtask's intermediate context to stay out of your own (keep your context strategic, not bloated).
+- The step requires writing files or running shell commands. The main agent does not have those tools, so a worker must do the execution.
 
 ## spawn vs fork
 
@@ -574,7 +577,7 @@ Sub-agents can't read your conversation. To work with them well, separate **data
 
 ### 1. Data goes through the filesystem
 
-If you have findings, plans, intermediate results, or anything more than a sentence that another agent should see, **write it to a file** and reference the path. Use the project's working tree for code, and use ` + "`.wuu/shared/`" + ` for cross-agent artifacts that aren't part of the project itself:
+If you have findings, plans, intermediate results, or anything more than a sentence that another agent should see, **put it in a file** and reference the path. The main agent is read-only, so create or update that file via a worker when needed. Use the project's working tree for code, and use ` + "`.wuu/shared/`" + ` for cross-agent artifacts that aren't part of the project itself:
 
 - ` + "`.wuu/shared/findings/<topic>.md`" + ` — investigation reports
 - ` + "`.wuu/shared/plans/<topic>.md`" + ` — plans, designs, todos
@@ -698,6 +701,8 @@ func composeWorkerSystemPrompt(base string, wt WorkerType, workerRoot string, is
 	if base != "" {
 		b.WriteString("\n---\n\n")
 		b.WriteString(base)
+		b.WriteString("\n\n---\n\n")
+		b.WriteString("Worker override: if any inherited text above describes the MAIN interactive agent as read-only, or says file writes / shell commands must be delegated, ignore that text. It applies to the parent, not to you. If a tool is in your tool list, you may use it unless your task prompt explicitly forbids it.")
 	}
 	return b.String()
 }
