@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestSubmitPromptFlow(t *testing.T) {
@@ -729,16 +730,24 @@ func renderEntries(entries []transcriptEntry) string {
 }
 
 func TestRenderInlineStatus_AnimatesAcrossFrames(t *testing.T) {
-	frameA := renderInlineStatus("streaming", 0, 80)
-	frameB := renderInlineStatus("streaming", 3, 80)
-	if frameA == frameB {
-		t.Fatalf("expected different frames to render differently: %q", frameA)
+	frameARaw := renderInlineStatus("streaming", 0, 80)
+	frameBRaw := renderInlineStatus("streaming", 3, 80)
+	if frameARaw == frameBRaw {
+		t.Fatalf("expected different frames to render differently: %q", frameARaw)
 	}
+	frameA := ansi.Strip(frameARaw)
+	frameB := ansi.Strip(frameBRaw)
 	if !strings.Contains(frameA, "Responding") {
 		t.Fatalf("expected label to remain visible in frame A: %q", frameA)
 	}
 	if !strings.Contains(frameB, "Responding") {
 		t.Fatalf("expected label to remain visible in frame B: %q", frameB)
+	}
+	if count := strings.Count(frameA, "Responding"); count != 1 {
+		t.Fatalf("expected frame A to render one responding label, got %d in %q", count, frameA)
+	}
+	if count := strings.Count(frameB, "Responding"); count != 1 {
+		t.Fatalf("expected frame B to render one responding label, got %d in %q", count, frameB)
 	}
 }
 
@@ -750,7 +759,7 @@ func TestRenderInlineStatus_ShowsWaitingLabels(t *testing.T) {
 		"executing tool: read": "Running read",
 	}
 	for status, want := range cases {
-		got := renderInlineStatus(status, 1, 80)
+		got := ansi.Strip(renderInlineStatus(status, 1, 80))
 		if !strings.Contains(got, strings.ReplaceAll(want, "  ", " ")) {
 			t.Fatalf("status %q rendered %q, want label containing %q", status, got, want)
 		}
@@ -767,7 +776,7 @@ func TestRenderInlineStatus_HidesForNonWaitingStatus(t *testing.T) {
 }
 
 func TestRenderThinkingBlock_Active(t *testing.T) {
-	result := renderThinkingBlock("analyzing...", false, false, 2*time.Second, 80, 0)
+	result := ansi.Strip(renderThinkingBlock("analyzing...", false, false, 2*time.Second, 80, 0))
 	if !strings.Contains(result, "Thinking") {
 		t.Fatalf("expected 'Thinking' in output: %s", result)
 	}
@@ -777,7 +786,7 @@ func TestRenderThinkingBlock_Active(t *testing.T) {
 }
 
 func TestRenderThinkingBlock_Done_Collapsed(t *testing.T) {
-	result := renderThinkingBlock("analyzed the code", true, false, 3200*time.Millisecond, 80, 0)
+	result := ansi.Strip(renderThinkingBlock("analyzed the code", true, false, 3200*time.Millisecond, 80, 0))
 	if !strings.Contains(result, "Thinking complete") {
 		t.Fatalf("expected completed label in output: %s", result)
 	}
@@ -791,7 +800,7 @@ func TestRenderThinkingBlock_Done_Collapsed(t *testing.T) {
 }
 
 func TestRenderThinkingBlock_Done_Expanded(t *testing.T) {
-	result := renderThinkingBlock("analyzed the code", true, true, 3200*time.Millisecond, 80, 0)
+	result := ansi.Strip(renderThinkingBlock("analyzed the code", true, true, 3200*time.Millisecond, 80, 0))
 	if !strings.Contains(result, "Thinking complete") {
 		t.Fatalf("expected completed label in output: %s", result)
 	}
@@ -806,7 +815,7 @@ func TestRenderToolCard_Running(t *testing.T) {
 		Args:   `{"cmd":"go build ./..."}`,
 		Status: ToolCallRunning,
 	}
-	result := renderToolCard(tc, 80, 0)
+	result := ansi.Strip(renderToolCard(tc, 80, 0))
 	if !strings.Contains(result, "run_shell") {
 		t.Fatalf("expected tool name in output: %s", result)
 	}
@@ -840,7 +849,7 @@ func TestRenderToolCard_Done_Collapsed(t *testing.T) {
 		Status:    ToolCallDone,
 		Collapsed: true,
 	}
-	result := renderToolCard(tc, 80, 0)
+	result := ansi.Strip(renderToolCard(tc, 80, 0))
 	if !strings.Contains(result, "read_file") {
 		t.Fatalf("expected tool name: %s", result)
 	}
@@ -854,7 +863,7 @@ func TestRenderToolCard_Error(t *testing.T) {
 		Name:   "run_shell",
 		Status: ToolCallError,
 	}
-	result := renderToolCard(tc, 80, 0)
+	result := ansi.Strip(renderToolCard(tc, 80, 0))
 	if !strings.Contains(strings.ToLower(result), "failed") {
 		t.Fatalf("expected failed status: %s", result)
 	}
@@ -1261,12 +1270,12 @@ func TestView_InlineStatusRenderedOutsideViewport(t *testing.T) {
 	m.streamTarget = len(m.entries) - 1
 	m.relayout()
 
-	viewportContent := m.viewport.View()
+	viewportContent := ansi.Strip(m.viewport.View())
 	if strings.Contains(viewportContent, "Responding") {
 		t.Fatal("viewport content must not contain inline status 'Responding' — it should be rendered outside the viewport")
 	}
 
-	fullView := m.View()
+	fullView := ansi.Strip(m.View())
 	if !strings.Contains(fullView, "Responding") {
 		t.Fatalf("full View() must contain inline status 'Responding'; got:\n%s", fullView)
 	}

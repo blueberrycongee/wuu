@@ -165,13 +165,11 @@ func renderShimmerText(label string, frame int, running bool) string {
 		offset += cycle
 	}
 
-	var plain strings.Builder
 	var styled strings.Builder
 	for i, r := range runes {
-		plain.WriteRune(r)
 		styled.WriteString(statusShimmerStyleAt(i, offset).Render(string(r)))
 	}
-	return lipgloss.NewStyle().SetString(plain.String()).Value() + styled.String()
+	return styled.String()
 }
 
 func statusShimmerStyleAt(idx int, offset int) lipgloss.Style {
