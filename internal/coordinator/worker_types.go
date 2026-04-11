@@ -149,13 +149,16 @@ func knownTypes() string {
 	return strings.Join(names, ", ")
 }
 
-// alwaysBlockedTools is the set of orchestration tools that workers
-// can never use (no recursive sub-spawning, no agent management).
+// alwaysBlockedTools is the set of tools that workers can never use.
+// Orchestration tools (no recursive sub-spawning / agent management)
+// plus ask_user (workers cannot interrupt the human; only the main
+// agent running in a live TUI may ask clarifying questions).
 var alwaysBlockedTools = map[string]struct{}{
 	"spawn_agent":           {},
 	"send_message_to_agent": {},
 	"stop_agent":            {},
 	"list_agents":           {},
+	"ask_user":              {},
 }
 
 // FilterToolsForWorker returns the subset of fullList that this worker

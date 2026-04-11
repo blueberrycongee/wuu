@@ -351,6 +351,12 @@ func runTUI(args []string) error {
 	}
 	discoveredSkills := skills.Discover(projectSkillsDir, userSkillsDir)
 
+	// AskUserBridge connects the ask_user tool to the TUI's modal
+	// dialog. The main agent's toolkit gets it via SetAskUserBridge;
+	// sub-agent workers get a fresh toolkit without it (see the
+	// WorkerFactory below) so they cannot interrupt the human.
+	askBridge := tui.NewAskUserBridge()
+
 	var toolExecutor agent.ToolExecutor
 	var toolkit *tools.Toolkit
 	if !*noTools {
@@ -359,6 +365,7 @@ func runTUI(args []string) error {
 			return newErr
 		}
 		kit.SetSkills(discoveredSkills)
+		kit.SetAskUserBridge(askBridge)
 		toolkit = kit
 		toolExecutor = hooks.NewHookedExecutor(kit, hookDispatcher, "", rootDir)
 	}
@@ -512,6 +519,7 @@ func runTUI(args []string) error {
 		Skills:           discoveredSkills,
 		Memory:           memoryFiles,
 		Coordinator:      coord,
+		AskUserBridge:    askBridge,
 	}
 	if toolkit != nil {
 		cfgUI.OnSessionID = func(id string) {

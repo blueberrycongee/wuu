@@ -33,6 +33,7 @@ type Toolkit struct {
 	skills      []skills.Skill
 	sessionID   string
 	coordinator *coordinator.Coordinator
+	askBridge   AskUserBridge
 }
 
 // SetCoordinator attaches the orchestration runtime so the spawn_agent
@@ -41,6 +42,15 @@ type Toolkit struct {
 // session is set up.
 func (t *Toolkit) SetCoordinator(c *coordinator.Coordinator) {
 	t.coordinator = c
+}
+
+// SetAskUserBridge attaches the bridge used by the ask_user tool to
+// render a modal dialog in the TUI and receive the user's answer.
+// When unset, ask_user fails at execute time with a clear error —
+// this is how sub-agent workers are kept from interrupting the human
+// (their toolkit is constructed without a bridge).
+func (t *Toolkit) SetAskUserBridge(b AskUserBridge) {
+	t.askBridge = b
 }
 
 // Coordinator returns the attached orchestration runtime, or nil.
@@ -237,6 +247,74 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 			},
 		},
 		{
+			Name: "ask_user",
+			Description: "Pause your turn and ask the user a multiple-choice clarifying question. " +
+				"Use this BEFORE acting whenever the user's intent is unclear and the answer lives in " +
+				"their head (Path A tasks: they have a specific answer you just don't have yet), or " +
+				"to offer 2-4 concrete options WITH tradeoffs when the task is genuinely a choice " +
+				"(Path B tasks, only AFTER you've done the research that makes the options concrete). " +
+				"Send 1-4 questions per call, each with 2-4 options; an \"Other\" escape hatch is " +
+				"appended automatically so the user can type a free-text answer if none of your " +
+				"options fit. NEVER use this to ask something you could find by reading the code or " +
+				"running a command — questions are for things only the user can answer: requirements, " +
+				"preferences, tradeoffs, edge-case priorities. If you recommend a specific option, " +
+				"put it first in the options list and add \"(recommended)\" at the end of its label.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"questions": map[string]any{
+						"type":        "array",
+						"minItems":    1,
+						"maxItems":    4,
+						"description": "Questions to ask the user (1-4 per call, batched into one dialog).",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"question": map[string]any{
+									"type":        "string",
+									"description": "Full question text the user will read. End with a question mark. Must be unique across questions in this call (used as the answer-map key).",
+								},
+								"header": map[string]any{
+									"type":        "string",
+									"description": "Very short chip label (<= 12 chars) shown as a tag on the question nav bar. Examples: \"Auth method\", \"DB driver\", \"Approach\".",
+								},
+								"options": map[string]any{
+									"type":        "array",
+									"minItems":    2,
+									"maxItems":    4,
+									"description": "Available choices (2-4). Each option label must be unique. Do NOT include an \"Other\" option — it is appended automatically.",
+									"items": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"label": map[string]any{
+												"type":        "string",
+												"description": "Short display label (1-5 words). Add \"(recommended)\" to the label if this is your recommendation.",
+											},
+											"description": map[string]any{
+												"type":        "string",
+												"description": "Explanation of what this option means or what its tradeoffs are. Shown under the label so the user can make an informed choice.",
+											},
+											"preview": map[string]any{
+												"type":        "string",
+												"description": "Optional markdown preview (code snippet, ASCII mockup, diagram) rendered side-by-side with the option list when any option in this question has one. Use it when the user needs to visually compare concrete artifacts, not for simple preference questions.",
+											},
+										},
+										"required": []string{"label", "description"},
+									},
+								},
+								"multi_select": map[string]any{
+									"type":        "boolean",
+									"description": "Set true when the options are NOT mutually exclusive (user may pick several). Default false.",
+								},
+							},
+							"required": []string{"question", "header", "options"},
+						},
+					},
+				},
+				"required": []string{"questions"},
+			},
+		},
+		{
 			Name: "spawn_agent",
 			Description: "Spawn a sub-agent to perform a focused task. The sub-agent has its own " +
 				"context and its own tools. There is exactly one worker type, 'worker', with the " +
@@ -379,6 +457,8 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 		return t.webFetch(ctx, call.Arguments)
 	case "load_skill":
 		return t.loadSkill(ctx, call.Arguments)
+	case "ask_user":
+		return t.askUser(ctx, call.Arguments)
 	case "spawn_agent":
 		return t.spawnAgent(ctx, call.Arguments)
 	case "send_message_to_agent":
@@ -390,6 +470,36 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 	default:
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
+}
+
+// askUser decodes an ask_user tool call, forwards it to the bridge,
+// and returns the user's answers as a JSON payload. Workers — whose
+// toolkit is built without a bridge — hit the "bridge not configured"
+// branch, which is the intended isolation: only the main agent
+// running inside a live TUI is allowed to interrupt the human.
+func (t *Toolkit) askUser(ctx context.Context, argsJSON string) (string, error) {
+	if t.askBridge == nil {
+		return "", errors.New("ask_user is only available to the main agent in an interactive TUI session (sub-agents cannot interrupt the human)")
+	}
+	var req AskUserRequest
+	if err := decodeArgs(argsJSON, &req); err != nil {
+		return "", fmt.Errorf("ask_user: decode arguments: %w", err)
+	}
+	if err := req.Validate(); err != nil {
+		return "", err
+	}
+	resp, err := t.askBridge.AskUser(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("ask_user: %w", err)
+	}
+	if resp.Cancelled {
+		return "", errors.New("ask_user: user dismissed the dialog without answering; reconsider the plan before trying again")
+	}
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("ask_user: marshal response: %w", err)
+	}
+	return string(payload), nil
 }
 
 func (t *Toolkit) sendMessageToAgent(argsJSON string) (string, error) {

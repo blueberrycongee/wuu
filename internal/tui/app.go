@@ -33,6 +33,7 @@ type Config struct {
 	Skills           []skills.Skill      // discovered skills, for /<skill-name> shorthand
 	Memory           []memory.File       // discovered CLAUDE.md / AGENTS.md files
 	Coordinator      *coordinator.Coordinator // optional, enables worker status panel + result injection
+	AskUserBridge    *AskUserBridge           // optional, enables the ask_user modal dialog
 }
 
 // Run starts the interactive terminal UI.

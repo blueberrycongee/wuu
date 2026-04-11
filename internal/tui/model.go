@@ -281,6 +281,15 @@ type Model struct {
 
 	// Resume picker (modal sub-screen).
 	resumePicker *resumePicker
+
+	// Ask-user bridge + active modal. When the main agent calls the
+	// ask_user tool, the bridge publishes a pending request to
+	// askBridge.Requests(); a tea.Cmd reads it and delivers an
+	// askRequestMsg which wires up activeAsk. While activeAsk != nil
+	// the modal takes over key routing and View rendering, same
+	// pattern as resumePicker.
+	askBridge *AskUserBridge
+	activeAsk *askUserModal
 }
 
 // NewModel builds the initial UI model.
@@ -312,6 +321,7 @@ func NewModel(cfg Config) Model {
 		skills:            cfg.Skills,
 		memoryFiles:       cfg.Memory,
 		coordinator:       cfg.Coordinator,
+		askBridge:         cfg.AskUserBridge,
 		maxContextTokens:  cfg.MaxContextTokens,
 		requestTimeout:    cfg.RequestTimeout,
 		viewport:          vp,
@@ -436,6 +446,9 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
 	if m.workerNotifyCh != nil {
 		cmds = append(cmds, waitWorkerNotify(m.workerNotifyCh))
+	}
+	if m.askBridge != nil {
+		cmds = append(cmds, waitAskRequest(m.askBridge.Requests()))
 	}
 	return tea.Batch(cmds...)
 }
@@ -581,6 +594,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
+	}
+
+	// ask_user modal takes over keyboard + window events. Other
+	// events (stream, tick, worker notify) still fall through to the
+	// normal switch below — the agent goroutine is blocked inside
+	// the tool call but other background channels keep flowing.
+	if m.activeAsk != nil {
+		switch msg.(type) {
+		case tea.WindowSizeMsg, tea.KeyMsg:
+			updated, cmd := m.activeAsk.Update(msg)
+			m.activeAsk = updated
+			if updated.done || updated.cancelled {
+				// Deliver the response back to the bridge so the
+				// blocked tool call unblocks. The respCh is
+				// buffered so this never blocks.
+				resp := updated.Response()
+				updated.pending.respCh <- askBridgeResponse{resp: resp}
+				m.activeAsk = nil
+				if resp.Cancelled {
+					m.statusLine = "ask_user cancelled"
+				} else {
+					m.statusLine = "ask_user answered"
+				}
+				m.refreshViewport(false)
+				return m, cmd
+			}
+			return m, cmd
+		}
+	}
+
+	// askRequestMsg is delivered when the agent calls ask_user. Spin
+	// up the modal and immediately re-issue waitAskRequest so the
+	// bridge keeps listening for the next call.
+	if req, ok := msg.(askRequestMsg); ok {
+		if m.activeAsk == nil {
+			m.activeAsk = newAskUserModal(req.pending, m.width, m.height)
+			m.statusLine = "waiting for your answer"
+		} else {
+			// Should not happen — bridge channel is buffer 1 and the
+			// tool blocks until the previous modal closes — but be
+			// defensive and reject the second call cleanly.
+			req.pending.respCh <- askBridgeResponse{
+				err: errAskUserBusy,
+			}
+		}
+		return m, waitAskRequest(m.askBridge.Requests())
 	}
 
 	switch msg := msg.(type) {
@@ -2149,6 +2208,11 @@ func (m Model) View() string {
 	// When the resume picker is active, it owns the entire screen.
 	if m.resumePicker != nil {
 		return m.resumePicker.View()
+	}
+
+	// When the ask_user modal is active, it owns the entire screen.
+	if m.activeAsk != nil {
+		return m.activeAsk.View()
 	}
 
 	// Header — left: brand info, right: hints + clock.
