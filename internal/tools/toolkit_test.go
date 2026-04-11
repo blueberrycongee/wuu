@@ -196,6 +196,24 @@ func TestToolkit_AskUser_ValidatesInput(t *testing.T) {
 	}
 }
 
+func TestToolkit_SendMessageToAgent_RegisteredInDefinitions(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defs := kit.Definitions()
+	for _, d := range defs {
+		if d.Name == "send_message_to_agent" {
+			if strings.Contains(strings.ToLower(d.Description), "currently unavailable") {
+				t.Fatalf("send_message_to_agent description should not say unavailable: %q", d.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("send_message_to_agent must be present in tool definitions")
+}
+
 func TestToolkit_ForkAgent_RegisteredInDefinitions(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)

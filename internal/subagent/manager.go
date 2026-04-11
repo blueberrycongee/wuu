@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -121,6 +122,10 @@ func (m *Manager) run(ctx context.Context, sa *SubAgent, opts SpawnOptions) {
 		OnUsage:      onUsage,
 	}
 
+	beforeStep := func() []providers.ChatMessage {
+		return sa.popPendingUserMessages()
+	}
+
 	var (
 		content string
 		err     error
@@ -138,10 +143,12 @@ func (m *Manager) run(ctx context.Context, sa *SubAgent, opts SpawnOptions) {
 			Role:    "user",
 			Content: sa.prompt,
 		})
+		runner.BeforeStep = beforeStep
 		content, _, err = runner.RunWithCallback(ctx, history, nil)
 	} else {
 		// Spawn path: fresh conversation built from the worker's
 		// own system prompt + the user prompt as the first message.
+		runner.BeforeStep = beforeStep
 		content, err = runner.Run(ctx, sa.prompt)
 	}
 
@@ -227,6 +234,38 @@ func (m *Manager) StopAll() {
 	}
 }
 
+// QueueMessage appends a follow-up user instruction for a running
+// sub-agent. The message is injected before the next model round.
+// Returns false if the agent is unknown.
+func (m *Manager) QueueMessage(id, message string) bool {
+	sa := m.Get(id)
+	if sa == nil {
+		return false
+	}
+	sa.pushPendingMessage(message)
+	return true
+}
+
+// NextPendingMessage returns and removes the oldest queued follow-up
+// message for an agent. Used by tests and diagnostics.
+func (m *Manager) NextPendingMessage(id string) (string, bool) {
+	sa := m.Get(id)
+	if sa == nil {
+		return "", false
+	}
+	return sa.popPendingMessage()
+}
+
+// PendingMessageCount reports how many follow-up messages are queued
+// for an agent.
+func (m *Manager) PendingMessageCount(id string) int {
+	sa := m.Get(id)
+	if sa == nil {
+		return 0
+	}
+	return sa.pendingCount()
+}
+
 // Wait blocks until the sub-agent finishes or the context is cancelled.
 // Returns the final snapshot.
 func (m *Manager) Wait(ctx context.Context, id string) (SubAgentSnapshot, error) {
@@ -256,6 +295,48 @@ func (m *Manager) CountRunning() int {
 		sa.mu.Unlock()
 	}
 	return n
+}
+
+func (s *SubAgent) pushPendingMessage(message string) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingMessages = append(s.pendingMessages, trimmed)
+}
+
+func (s *SubAgent) popPendingMessage() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pendingMessages) == 0 {
+		return "", false
+	}
+	msg := s.pendingMessages[0]
+	s.pendingMessages[0] = ""
+	s.pendingMessages = s.pendingMessages[1:]
+	return msg, true
+}
+
+func (s *SubAgent) popPendingUserMessages() []providers.ChatMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pendingMessages) == 0 {
+		return nil
+	}
+	out := make([]providers.ChatMessage, 0, len(s.pendingMessages))
+	for _, msg := range s.pendingMessages {
+		out = append(out, providers.ChatMessage{Role: "user", Content: msg})
+	}
+	s.pendingMessages = nil
+	return out
+}
+
+func (s *SubAgent) pendingCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pendingMessages)
 }
 
 // newAgentID generates a short, sortable identifier for a sub-agent.

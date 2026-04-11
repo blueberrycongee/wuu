@@ -63,7 +63,7 @@ git push origin v$(cat VERSION)
 - 工具可用范围：
   - 主交互代理（TUI 会话）：可用全部工具
   - 子代理：不可用 `ask_user` 与编排工具（`spawn_agent`、`fork_agent`、`send_message_to_agent`、`stop_agent`、`list_agents`）
-- 当前限制：`send_message_to_agent` 目前仅保留接口，follow-up messaging 尚未在此构建中实现；调用会返回明确错误
+- Follow-up 控制：`send_message_to_agent` 可向运行中的子代理排队发送简短指令；消息会在子代理下一轮模型请求前作为 user turn 注入
 - 文件工具沙箱化，限制在当前工作区内
 - 会话隔离，支持恢复
 - 长对话自动压缩上下文

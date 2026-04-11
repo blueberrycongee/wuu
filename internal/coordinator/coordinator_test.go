@@ -385,6 +385,88 @@ func (slowClient) StreamChat(ctx context.Context, _ providers.ChatRequest) (<-ch
 	return ch, nil
 }
 
+func TestSendMessage_QueuesWhileRunning(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	// Keep worker running so we can enqueue a follow-up.
+	slow := &slowClient{}
+	c, err := New(Config{
+		Client:        slow,
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, "wt"),
+		SessionID:     "sess-send-running",
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := c.Spawn(context.Background(), SpawnRequest{
+		Type: "worker", Description: "slow", Prompt: "p",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SendMessage(res.AgentID, "please also check logs"); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if got := c.Manager().PendingMessageCount(res.AgentID); got != 1 {
+		t.Fatalf("expected pending queue size=1, got %d", got)
+	}
+
+	c.StopAll()
+}
+
+func TestSendMessage_RejectsCompletedWorker(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	c, err := New(Config{
+		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, "wt"),
+		SessionID:     "sess-send-complete",
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := c.Spawn(context.Background(), SpawnRequest{
+		Type: "worker", Description: "quick", Prompt: "p", Synchronous: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "completed" {
+		t.Fatalf("expected completed spawn, got %s", res.Status)
+	}
+	if err := c.SendMessage(res.AgentID, "extra instruction"); err == nil {
+		t.Fatal("expected error when sending to completed worker")
+	}
+}
+
+func TestSendMessage_RejectsEmptyFields(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+	c, _ := New(Config{
+		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, "wt"),
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err := c.SendMessage("", "x"); err == nil {
+		t.Fatal("expected agent_id required error")
+	}
+	if err := c.SendMessage("worker-123", ""); err == nil {
+		t.Fatal("expected message required error")
+	}
+}
+
 func TestFormatWorkerResult(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)

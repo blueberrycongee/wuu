@@ -86,6 +86,13 @@ func RunToolLoop(
 	threshold := proactiveCompactThreshold(cfg)
 
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
+		if cfg.BeforeStep != nil {
+			injected := cfg.BeforeStep()
+			if len(injected) > 0 {
+				messages = append(messages, injected...)
+				usage.RecordPendingMessages(injected)
+			}
+		}
 		req := providers.ChatRequest{
 			Model:       cfg.Model,
 			Messages:    messages,

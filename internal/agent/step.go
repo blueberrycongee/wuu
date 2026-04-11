@@ -103,6 +103,12 @@ type LoopConfig struct {
 	// triggers a proactive compact. Defaults to 0.9 (90%) when zero.
 	// Aligned with Codex CLI's auto_compact_token_limit default.
 	CompactThresholdPct float64
+	// BeforeStep, when set, is called at the start of each model
+	// round. Any returned messages are appended to the live history
+	// before the next provider request is built. This is used by
+	// sub-agent follow-up messaging: send_message_to_agent queues
+	// user-role messages that are injected on the next round.
+	BeforeStep func() []providers.ChatMessage
 	// OnUsage is invoked once per LLM round-trip with the per-call
 	// token counts when the provider reports them. The loop also
 	// accumulates totals into LoopResult.

@@ -433,6 +433,35 @@ func TestRunToolLoop_OverflowCompactFiresOnCompactCallback(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_BeforeStepInjectsMessages(t *testing.T) {
+	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
+	injected := false
+	cfg := LoopConfig{
+		Model: "m",
+		BeforeStep: func() []providers.ChatMessage {
+			if injected {
+				return nil
+			}
+			injected = true
+			return []providers.ChatMessage{{Role: "user", Content: "follow-up"}}
+		},
+	}
+	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(step.calls) != 1 {
+		t.Fatalf("expected one step call, got %d", len(step.calls))
+	}
+	msgs := step.calls[0].Messages
+	if len(msgs) != 2 {
+		t.Fatalf("expected injected message in request, got %d messages", len(msgs))
+	}
+	if msgs[1].Role != "user" || msgs[1].Content != "follow-up" {
+		t.Fatalf("unexpected injected message: %+v", msgs[1])
+	}
+}
+
 func TestRunToolLoop_EmptyAnswerIsError(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "  "}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)

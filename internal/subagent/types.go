@@ -107,6 +107,10 @@ type SubAgent struct {
 	toolkit        agent.ToolExecutor
 	historyPath    string
 	initialHistory []providers.ChatMessage
+	// Follow-up messages queued by the coordinator while this worker
+	// is already running. Manager.run drains this queue between model
+	// turns and appends each entry as a new user message.
+	pendingMessages []string
 
 	// LLM client for the sub-agent's runner. Workers run through the
 	// streaming runner so they share the same transport semantics as

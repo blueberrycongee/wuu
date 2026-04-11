@@ -381,6 +381,48 @@ func TestSpawn_WithoutInitialHistory_UsesSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestQueueMessageFIFO(t *testing.T) {
+	sa := &SubAgent{}
+	sa.pushPendingMessage("first")
+	sa.pushPendingMessage("second")
+
+	if got := sa.pendingCount(); got != 2 {
+		t.Fatalf("expected pending=2, got %d", got)
+	}
+	m1, ok := sa.popPendingMessage()
+	if !ok || m1 != "first" {
+		t.Fatalf("expected first message, got %q ok=%v", m1, ok)
+	}
+	m2, ok := sa.popPendingMessage()
+	if !ok || m2 != "second" {
+		t.Fatalf("expected second message, got %q ok=%v", m2, ok)
+	}
+	if _, ok := sa.popPendingMessage(); ok {
+		t.Fatal("expected empty queue after pops")
+	}
+}
+
+func TestQueueMessageTrimAndDrainToUserMessages(t *testing.T) {
+	sa := &SubAgent{}
+	sa.pushPendingMessage("  hello  ")
+	sa.pushPendingMessage("\t\n") // ignored
+	sa.pushPendingMessage("world")
+
+	msgs := sa.popPendingUserMessages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 drained messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[0].Content != "hello" {
+		t.Fatalf("unexpected first drained message: %+v", msgs[0])
+	}
+	if msgs[1].Role != "user" || msgs[1].Content != "world" {
+		t.Fatalf("unexpected second drained message: %+v", msgs[1])
+	}
+	if got := sa.pendingCount(); got != 0 {
+		t.Fatalf("expected queue drained, pending=%d", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

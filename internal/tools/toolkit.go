@@ -1,9 +1,9 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -405,9 +405,10 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 		},
 		{
 			Name: "send_message_to_agent",
-			Description: "(Currently unavailable) Follow-up messaging is not implemented in this build. " +
-				"Calls to this tool will return an explicit error. Keep sub-agent control one-shot " +
-				"for now (spawn new workers instead of resuming an old one).",
+			Description: "Send a follow-up instruction to an existing sub-agent. " +
+				"If the worker is still running, the message is queued and injected as a " +
+				"user turn before its next model round. Sending to completed / failed / " +
+				"cancelled workers returns an error.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

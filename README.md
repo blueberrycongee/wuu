@@ -65,7 +65,7 @@ When a `v*` tag is pushed, GitHub Actions + GoReleaser publishes release artifac
 - Tool availability model:
   - Main interactive agent (TUI session): full tool set
   - Sub-agents: no `ask_user` and no orchestration tools (`spawn_agent`, `fork_agent`, `send_message_to_agent`, `stop_agent`, `list_agents`)
-- Current limitation: `send_message_to_agent` is intentionally exposed but follow-up messaging is not implemented in this build yet; calls return an explicit error
+- Follow-up control: `send_message_to_agent` can queue short instructions for running workers; they are injected as user turns before the worker's next model round
 - File tools are sandboxed to the current workspace
 - Session isolation with resume support
 - Context compaction for long conversations

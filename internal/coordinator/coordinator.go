@@ -47,15 +47,15 @@ type Config struct {
 	// coordinator will share. It must be a StreamClient (not just a
 	// Client) so workers run through the same streaming transport as
 	// the interactive main agent.
-	Client       providers.StreamClient
-	DefaultModel string
-	ParentRepo   string // absolute path to the user's workspace (must be a git repo)
-	WorktreeRoot string // .wuu/worktrees/
-	HistoryDir   string // .wuu/sessions/{session-id}/workers/
-	SessionID    string
+	Client          providers.StreamClient
+	DefaultModel    string
+	ParentRepo      string // absolute path to the user's workspace (must be a git repo)
+	WorktreeRoot    string // .wuu/worktrees/
+	HistoryDir      string // .wuu/sessions/{session-id}/workers/
+	SessionID       string
 	WorkerSysPrompt string
-	WorkerFactory WorkerToolkitFactory
-	MaxParallel  int
+	WorkerFactory   WorkerToolkitFactory
+	MaxParallel     int
 }
 
 // New constructs a Coordinator. Returns an error if the parent repo
@@ -127,7 +127,7 @@ type SpawnRequest struct {
 type SpawnResult struct {
 	AgentID      string `json:"agent_id"`
 	Status       string `json:"status"`
-	Isolation    string `json:"isolation"`              // "inplace" or "worktree"
+	Isolation    string `json:"isolation"`               // "inplace" or "worktree"
 	WorktreePath string `json:"worktree_path,omitempty"` // empty for inplace spawns
 	Result       string `json:"result,omitempty"`
 	Error        string `json:"error,omitempty"`
@@ -408,14 +408,30 @@ func (c *Coordinator) List() []subagent.SubAgentSnapshot {
 }
 
 // SendMessage delivers a follow-up message to a specific sub-agent.
-// In Phase 3 this is a stub that will be filled in once the manager
-// supports message injection — for now it returns an error explaining
-// the feature is not yet implemented.
+// Messages are queued while the worker is running and injected as
+// user-role turns before the next model round.
 func (c *Coordinator) SendMessage(agentID, message string) error {
-	if c.manager.Get(agentID) == nil {
-		return fmt.Errorf("agent %q not found", agentID)
+	id := strings.TrimSpace(agentID)
+	if id == "" {
+		return errors.New("agent_id is required")
 	}
-	return errors.New("send_message: follow-up messaging is not yet implemented in this build (worker is one-shot)")
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		return errors.New("message is required")
+	}
+	sa := c.manager.Get(id)
+	if sa == nil {
+		return fmt.Errorf("agent %q not found", id)
+	}
+	snap := sa.Snapshot()
+	switch snap.Status {
+	case subagent.StatusCompleted, subagent.StatusFailed, subagent.StatusCancelled:
+		return fmt.Errorf("agent %q is %s and cannot receive follow-up messages", id, snap.Status)
+	}
+	if ok := c.manager.QueueMessage(id, msg); !ok {
+		return fmt.Errorf("agent %q not found", id)
+	}
+	return nil
 }
 
 // Subscribe forwards to the underlying manager so the TUI can receive

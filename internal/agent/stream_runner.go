@@ -48,6 +48,11 @@ type StreamRunner struct {
 	// The reactive context-overflow recovery still runs. Off by default.
 	DisableAutoCompact bool
 
+	// BeforeStep, when set, is called at the start of each model
+	// round right before building the provider request. Any returned
+	// messages are appended to history for that round.
+	BeforeStep func() []providers.ChatMessage
+
 	// Stream reconnect policy (more aggressive than codex default 5).
 	// Zero values use built-in defaults.
 	StreamMaxRetries        int
@@ -99,6 +104,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		Temperature:      r.Temperature,
 		MaxSteps:         r.MaxSteps,
 		MaxContextTokens: maxCtx,
+		BeforeStep:       r.BeforeStep,
 		OnUsage:          r.OnUsage,
 		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
 			return compact.Compact(ctx, messages, r.Client, r.Model)
