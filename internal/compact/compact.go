@@ -76,12 +76,13 @@ func Compact(ctx context.Context, messages []providers.ChatMessage, client provi
 
 	// Find compaction boundary: keep the last 2 exchanges (4 messages)
 	keepCount := 4
-	if keepCount >= len(messages) {
+	keepStart := compactKeepStart(messages, keepCount)
+	if keepStart <= 0 {
 		return messages, nil
 	}
 
-	toSummarize := messages[:len(messages)-keepCount]
-	toKeep := messages[len(messages)-keepCount:]
+	toSummarize := messages[:keepStart]
+	toKeep := messages[keepStart:]
 
 	for attempt := 0; ; attempt++ {
 		summaryInput := buildSummaryPrompt(toSummarize)
@@ -117,6 +118,30 @@ func Compact(ctx context.Context, messages []providers.ChatMessage, client provi
 		compacted = append(compacted, toKeep...)
 		return compacted, nil
 	}
+}
+
+// compactKeepStart returns the index where the un-compacted tail should begin.
+// The boundary must not split an assistant tool_call block from its tool
+// results, or the resulting history becomes invalid for chat-completions APIs.
+func compactKeepStart(messages []providers.ChatMessage, keepCount int) int {
+	if keepCount >= len(messages) {
+		return 0
+	}
+
+	start := len(messages) - keepCount
+	if messages[start].Role != "tool" {
+		return start
+	}
+
+	// Boundary landed inside a tool-result block. Shift left to include every
+	// contiguous tool result and the assistant tool_calls turn that started it.
+	for start > 0 && messages[start-1].Role == "tool" {
+		start--
+	}
+	if start > 0 && messages[start-1].Role == "assistant" && len(messages[start-1].ToolCalls) > 0 {
+		start--
+	}
+	return start
 }
 
 // compactInstructionPrompt is the framing wuu wraps every

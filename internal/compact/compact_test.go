@@ -194,3 +194,33 @@ func TestCompact_IncludesToolCallsInSummary(t *testing.T) {
 		t.Fatalf("expected system summary, got %s", result[0].Role)
 	}
 }
+
+func TestCompact_DoesNotLeaveDanglingToolResults(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "older question"},
+		{Role: "assistant", Content: "older answer"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{
+			{ID: "c1", Name: "read_file", Arguments: `{"path":"README.md"}`},
+			{ID: "c2", Name: "read_file", Arguments: `{"path":"README_zh.md"}`},
+		}},
+		{Role: "tool", Name: "read_file", ToolCallID: "c1", Content: "english"},
+		{Role: "tool", Name: "read_file", ToolCallID: "c2", Content: "chinese"},
+		{Role: "assistant", Content: "done"},
+		{Role: "user", Content: "what next?"},
+	}
+
+	client := &mockCompactClient{response: "summary of older turns"}
+	result, err := Compact(context.Background(), messages, client, "test")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if len(result) != 6 {
+		t.Fatalf("expected summary + intact tool chain, got %d messages", len(result))
+	}
+	if result[1].Role != "assistant" || len(result[1].ToolCalls) != 2 {
+		t.Fatalf("expected assistant tool_call turn preserved, got %+v", result[1])
+	}
+	if result[2].Role != "tool" || result[3].Role != "tool" {
+		t.Fatalf("expected tool results preserved after assistant tool_call, got %+v %+v", result[2], result[3])
+	}
+}
