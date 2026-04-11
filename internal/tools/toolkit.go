@@ -30,11 +30,12 @@ const (
 
 // Toolkit executes local coding tools for the agent.
 type Toolkit struct {
-	rootDir     string
-	skills      []skills.Skill
-	sessionID   string
-	coordinator *coordinator.Coordinator
-	askBridge   AskUserBridge
+	rootDir       string
+	skills        []skills.Skill
+	sessionID     string
+	coordinator   *coordinator.Coordinator
+	askBridge     AskUserBridge
+	disabledTools map[string]struct{}
 }
 
 // SetCoordinator attaches the orchestration runtime so the spawn_agent
@@ -52,6 +53,29 @@ func (t *Toolkit) SetCoordinator(c *coordinator.Coordinator) {
 // (their toolkit is constructed without a bridge).
 func (t *Toolkit) SetAskUserBridge(b AskUserBridge) {
 	t.askBridge = b
+}
+
+// DisableTools removes specific tools from this toolkit instance.
+// Disabled tools are hidden from Definitions() and rejected at Execute().
+func (t *Toolkit) DisableTools(names ...string) {
+	if t.disabledTools == nil {
+		t.disabledTools = make(map[string]struct{}, len(names))
+	}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		t.disabledTools[n] = struct{}{}
+	}
+}
+
+func (t *Toolkit) isToolDisabled(name string) bool {
+	if len(t.disabledTools) == 0 {
+		return false
+	}
+	_, ok := t.disabledTools[name]
+	return ok
 }
 
 // Coordinator returns the attached orchestration runtime, or nil.
@@ -93,7 +117,18 @@ func New(rootDir string) (*Toolkit, error) {
 // tool surface. Differentiation is the model's job, expressed through
 // the system prompt and the agent's choice of which tool to call.
 func (t *Toolkit) Definitions() []providers.ToolDefinition {
-	return t.allDefinitions()
+	defs := t.allDefinitions()
+	if len(t.disabledTools) == 0 {
+		return defs
+	}
+	out := make([]providers.ToolDefinition, 0, len(defs))
+	for _, d := range defs {
+		if t.isToolDisabled(d.Name) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
@@ -476,6 +511,9 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 
 // Execute runs one tool call and returns JSON result.
 func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	if t.isToolDisabled(call.Name) {
+		return "", fmt.Errorf("tool %q is disabled in this session", call.Name)
+	}
 	switch call.Name {
 	case "run_shell":
 		return t.runShell(ctx, call.Arguments)

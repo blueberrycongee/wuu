@@ -297,6 +297,44 @@ func TestStripDanglingToolUses(t *testing.T) {
 	}
 }
 
+func TestToolkit_DisableTools_HidesDefinitionsAndBlocksExecute(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	kit.DisableTools("write_file", "edit_file", "run_shell")
+
+	defs := kit.Definitions()
+	for _, d := range defs {
+		if d.Name == "write_file" || d.Name == "edit_file" || d.Name == "run_shell" {
+			t.Fatalf("disabled tool %q should not appear in definitions", d.Name)
+		}
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"a.txt","content":"x"}`,
+	})
+	if err == nil {
+		t.Fatal("expected disabled write_file to error")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled error, got: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "run_shell",
+		Arguments: `{"command":"echo hi"}`,
+	})
+	if err == nil {
+		t.Fatal("expected disabled run_shell to error")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled error, got: %v", err)
+	}
+}
+
 func TestToolkit_RunShell(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)

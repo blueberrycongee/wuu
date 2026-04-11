@@ -19,15 +19,15 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/memory"
-	"github.com/blueberrycongee/wuu/internal/worktree"
+	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/tui"
 	"github.com/blueberrycongee/wuu/internal/version"
+	"github.com/blueberrycongee/wuu/internal/worktree"
 )
 
 func main() {
@@ -167,6 +167,8 @@ func runTask(args []string) error {
 		if newErr != nil {
 			return newErr
 		}
+		// Main agent is read-oriented: remove direct/indirect file-writing primitives.
+		kit.DisableTools("write_file", "edit_file", "run_shell")
 		toolExecutor = kit
 	}
 
@@ -364,6 +366,8 @@ func runTUI(args []string) error {
 		if newErr != nil {
 			return newErr
 		}
+		// Main agent is read-oriented: remove direct/indirect file-writing primitives.
+		kit.DisableTools("write_file", "edit_file", "run_shell")
 		kit.SetSkills(discoveredSkills)
 		kit.SetAskUserBridge(askBridge)
 		toolkit = kit
