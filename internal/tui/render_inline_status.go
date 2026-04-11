@@ -36,6 +36,13 @@ type workStatus struct {
 	Running bool
 }
 
+type statusTextSegment struct {
+	Text   string
+	Base   lipgloss.Style
+	Strong lipgloss.Style
+	Bright lipgloss.Style
+}
+
 func deriveWorkStatus(status string) workStatus {
 	switch {
 	case status == "thinking":
@@ -142,44 +149,79 @@ func statusGlyph(ws workStatus, frame int) string {
 	}
 }
 
-func renderShimmerText(label string, frame int, running bool) string {
-	if label == "" {
-		return ""
+func statusTextSegments(ws workStatus) []statusTextSegment {
+	var segments []statusTextSegment
+	label := strings.TrimSpace(ws.Label)
+	if label != "" {
+		segments = append(segments, statusTextSegment{
+			Text:   label,
+			Base:   waitingStatusLabelStyle,
+			Strong: waitingStatusLabelStrongStyle,
+			Bright: waitingStatusLabelBrightStyle,
+		})
 	}
-	if !running {
-		return waitingStatusLabelStyle.Render(label)
+	if meta := strings.TrimSpace(ws.Meta); meta != "" && meta != ws.Label {
+		segments = append(segments, statusTextSegment{
+			Text:   " · " + trimToWidth(meta, 44),
+			Base:   waitingStatusMetaStyle,
+			Strong: waitingStatusLabelStrongStyle,
+			Bright: waitingStatusLabelBrightStyle,
+		})
 	}
-	runes := []rune(label)
-	if len(runes) == 0 {
-		return ""
+	return segments
+}
+
+func statusShimmerCycleLength(segments []statusTextSegment) int {
+	runes := 0
+	for _, segment := range segments {
+		runes += len([]rune(segment.Text))
 	}
-	cycle := len(runes) + statusShimmerTrail + statusShimmerLeadSpan
+	cycle := runes + statusShimmerTrail + statusShimmerLeadSpan
 	if cycle <= 0 {
 		cycle = 1
 	}
-	offset := frame % cycle
+	return cycle
+}
+
+func renderShimmerText(segments []statusTextSegment, frame int, running bool) string {
+	if len(segments) == 0 {
+		return ""
+	}
+	if !running {
+		var plain strings.Builder
+		for _, segment := range segments {
+			plain.WriteString(segment.Base.Render(segment.Text))
+		}
+		return plain.String()
+	}
+
+	offset := frame % statusShimmerCycleLength(segments)
 	if offset < 0 {
-		offset += cycle
+		offset += statusShimmerCycleLength(segments)
 	}
 
 	var styled strings.Builder
-	for i, r := range runes {
-		styled.WriteString(statusShimmerStyleAt(i, offset).Render(string(r)))
+	runeIndex := 0
+	for _, segment := range segments {
+		for _, r := range []rune(segment.Text) {
+			styled.WriteString(statusShimmerStyleAt(segment, runeIndex, offset).Render(string(r)))
+			runeIndex++
+		}
 	}
 	return styled.String()
 }
 
-func statusShimmerStyleAt(idx int, offset int) lipgloss.Style {
+func statusShimmerStyleAt(segment statusTextSegment, idx int, offset int) lipgloss.Style {
 	delta := idx - offset
 	switch {
 	case delta == 0:
-		return waitingStatusLabelBrightStyle
+		return segment.Bright
 	case delta > 0 && delta <= statusShimmerLeadSpan:
-		return waitingStatusLabelStrongStyle
+		return segment.Strong
 	case delta < 0 && delta >= -statusShimmerTrail:
-		return waitingStatusLabelStrongStyle
+		return segment.Strong
 	default:
-		return waitingStatusLabelStyle
+		return segment.Base
 	}
 }
 
@@ -187,14 +229,14 @@ func renderStatusHeader(ws workStatus, frame int) string {
 	if ws.Phase == workPhaseIdle {
 		return ""
 	}
-	parts := []string{
+	segments := statusTextSegments(ws)
+	if len(segments) == 0 {
+		return waitingStatusPrefixStyle.Render(statusGlyph(ws, frame))
+	}
+	return strings.Join([]string{
 		waitingStatusPrefixStyle.Render(statusGlyph(ws, frame)),
-		renderShimmerText(ws.Label, frame, ws.Running),
-	}
-	if meta := strings.TrimSpace(ws.Meta); meta != "" && meta != ws.Label {
-		parts = append(parts, waitingStatusMetaStyle.Render("· "+trimToWidth(meta, 44)))
-	}
-	return strings.Join(parts, " ")
+		renderShimmerText(segments, frame, ws.Running),
+	}, " ")
 }
 
 func renderInlineStatus(status string, frame int, width int) string {

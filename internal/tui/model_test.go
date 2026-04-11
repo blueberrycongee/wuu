@@ -751,9 +751,30 @@ func TestRenderInlineStatus_AnimatesAcrossFrames(t *testing.T) {
 	}
 }
 
+func TestRenderInlineStatus_ShimmerContinuesIntoMeta(t *testing.T) {
+	frameAtLabelCycle := renderInlineStatus("streaming", len([]rune("Responding"))+statusShimmerTrail+statusShimmerLeadSpan, 80)
+	frameAtStart := renderInlineStatus("streaming", 0, 80)
+	if frameAtLabelCycle == frameAtStart {
+		t.Fatalf("expected shimmer to continue past the label into meta text instead of restarting")
+	}
+	got := ansi.Strip(frameAtLabelCycle)
+	if !strings.Contains(got, "Responding · Writing the reply") {
+		t.Fatalf("expected full status sentence in output, got %q", got)
+	}
+}
+
+func TestStatusShimmerCycleLength_CoversWholeRespondingSentence(t *testing.T) {
+	ws := deriveWorkStatus("streaming")
+	segments := statusTextSegments(ws)
+	want := len([]rune("Responding · Writing the reply")) + statusShimmerTrail + statusShimmerLeadSpan
+	if got := statusShimmerCycleLength(segments); got != want {
+		t.Fatalf("expected full sentence shimmer cycle length %d, got %d", want, got)
+	}
+}
+
 func TestNextStatusFrame_CoversWholeRespondingShimmerCycle(t *testing.T) {
 	frame := 0
-	cycle := len([]rune("Responding")) + statusShimmerTrail + statusShimmerLeadSpan
+	cycle := statusShimmerCycleLength(statusTextSegments(deriveWorkStatus("streaming")))
 	for i := 0; i < cycle; i++ {
 		frame = nextStatusFrame(frame)
 	}
