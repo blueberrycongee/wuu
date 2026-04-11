@@ -109,13 +109,10 @@ func isWaitingStatus(status string) bool {
 }
 
 func nextStatusFrame(frame int) int {
-	if len(statusSpinnerFrames) == 0 {
-		return 0
-	}
 	if frame < 0 {
 		frame = 0
 	}
-	return (frame + 1) % len(statusSpinnerFrames)
+	return frame + 1
 }
 
 func statusSpinner(frame int) string {

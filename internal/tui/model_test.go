@@ -751,6 +751,17 @@ func TestRenderInlineStatus_AnimatesAcrossFrames(t *testing.T) {
 	}
 }
 
+func TestNextStatusFrame_CoversWholeRespondingShimmerCycle(t *testing.T) {
+	frame := 0
+	cycle := len([]rune("Responding")) + statusShimmerTrail + statusShimmerLeadSpan
+	for i := 0; i < cycle; i++ {
+		frame = nextStatusFrame(frame)
+	}
+	if frame != cycle {
+		t.Fatalf("expected shimmer frame to advance across the whole cycle: got %d want %d", frame, cycle)
+	}
+}
+
 func TestRenderInlineStatus_ShowsWaitingLabels(t *testing.T) {
 	cases := map[string]string{
 		"thinking":             "Thinking",
