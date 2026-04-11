@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -616,4 +617,221 @@ func (m *askUserModal) renderOtherInputBody(q *tools.AskUserQuestion) string {
 
 	return lipgloss.JoinVertical(lipgloss.Left, hint, "", "  "+input)
 }
+
+// -------------------------------------------------------------------
+// Chat-viewport card rendering
+// -------------------------------------------------------------------
+//
+// renderToolCard dispatches ask_user calls to renderAskUserCard
+// instead of the generic JSON-dump formatter, so the chat history
+// shows a clean "User answered:" card with question→answer pairs.
+// This mirrors Claude Code's AskUserQuestionResultMessage layout.
+
+// renderAskUserCard formats one ask_user tool call entry for the
+// chat viewport. Handles both the success path (answers map) and
+// the error path (cancelled / validation failure / bridge missing).
+func renderAskUserCard(tc ToolCallEntry, width int) string {
+	t := currentTheme
+	iconStyle := lipgloss.NewStyle().Foreground(t.ToolBorder)
+	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(t.ToolBorder)
+	statusDone := lipgloss.NewStyle().Foreground(t.Success)
+	statusRunning := lipgloss.NewStyle().Foreground(t.Warning)
+	statusError := lipgloss.NewStyle().Foreground(t.Error)
+	summaryStyle := lipgloss.NewStyle().Foreground(t.Inactive)
+
+	questionTexts := parseAskUserQuestionList(tc.Args)
+	answers, errMsg := parseAskUserResult(tc.Result)
+
+	var b strings.Builder
+
+	// --- Header line: icon + name + status ---
+	b.WriteString(" ")
+	b.WriteString(iconStyle.Render("⚡"))
+	b.WriteString(" ")
+	b.WriteString(nameStyle.Render("ask_user"))
+
+	switch {
+	case tc.Status == ToolCallRunning:
+		b.WriteString("  ")
+		b.WriteString(statusRunning.Render("⏳ waiting for user"))
+	case errMsg != "" || tc.Status == ToolCallError:
+		b.WriteString("  ")
+		display := errMsg
+		if display == "" {
+			display = "error"
+		}
+		b.WriteString(statusError.Render("✗ " + truncateInline(display, 60)))
+	default:
+		b.WriteString("  ")
+		b.WriteString(statusDone.Render("✓ answered"))
+	}
+
+	// --- Collapsed: short summary on the header line ---
+	if tc.Collapsed {
+		if errMsg == "" && len(questionTexts) > 0 {
+			n := len(questionTexts)
+			label := "question"
+			if n != 1 {
+				label = "questions"
+			}
+			sample := questionTexts[0]
+			maxSample := width - 40
+			if maxSample < 20 {
+				maxSample = 20
+			}
+			sample = truncateInline(sample, maxSample)
+			b.WriteString(" ── ")
+			b.WriteString(summaryStyle.Render(fmt.Sprintf("%d %s: %q", n, label, sample)))
+		}
+		return b.String()
+	}
+
+	// --- Expanded: render each question→answer line ---
+	if errMsg != "" || len(answers) == 0 {
+		// Header alone is enough — no body needed for errors or
+		// empty responses.
+		return b.String()
+	}
+
+	headerLineStyle := lipgloss.NewStyle().Foreground(t.Text)
+	qaQuestionStyle := lipgloss.NewStyle().Foreground(t.Subtle)
+	qaAnswerStyle := lipgloss.NewStyle().Bold(true).Foreground(t.Text)
+	bullet := lipgloss.NewStyle().Foreground(t.Brand).Bold(true).Render("●")
+	dot := lipgloss.NewStyle().Foreground(t.Inactive).Render("·")
+	arrow := lipgloss.NewStyle().Foreground(t.Subtle).Render("→")
+
+	innerW := width - 6
+	if innerW < 30 {
+		innerW = 30
+	}
+	// Reserve room for the dot, two spaces, the arrow, and one
+	// space on each side of it. We split the remainder evenly
+	// between question and answer truncation, but only when one
+	// of them actually overflows.
+	qBudget := innerW - 6 // " · " + " → " padding
+	if qBudget < 20 {
+		qBudget = 20
+	}
+
+	var body strings.Builder
+	body.WriteString("  " + bullet + " " + headerLineStyle.Render("User answered:"))
+
+	// Walk the questions in the order they were asked so the
+	// rendered list matches the dialog flow.
+	seen := make(map[string]bool, len(answers))
+	for _, q := range questionTexts {
+		ans, ok := answers[q]
+		if !ok {
+			continue
+		}
+		seen[q] = true
+		body.WriteString("\n")
+		body.WriteString(renderAskQALine(q, ans, qBudget, dot, arrow, qaQuestionStyle, qaAnswerStyle))
+	}
+	// Defensive: any answer not matched to a question (shouldn't
+	// happen, but be safe — bridge always keys by question text).
+	for q, ans := range answers {
+		if seen[q] {
+			continue
+		}
+		body.WriteString("\n")
+		body.WriteString(renderAskQALine(q, ans, qBudget, dot, arrow, qaQuestionStyle, qaAnswerStyle))
+	}
+
+	return b.String() + "\n" + body.String()
+}
+
+// renderAskQALine renders one "  · question → answer" row, splitting
+// the budget between question and answer when either is too long.
+func renderAskQALine(question, answer string, budget int, dot, arrow string, qStyle, aStyle lipgloss.Style) string {
+	q := strings.TrimSpace(question)
+	a := strings.TrimSpace(answer)
+
+	// Split the line budget between question and answer. Prefer
+	// answer-readability: give the answer at least 20 chars, the
+	// rest goes to the question.
+	aBudget := budget - len([]rune(q)) - 3 // " → "
+	if aBudget < 20 {
+		aBudget = 20
+		qBudget := budget - aBudget - 3
+		if qBudget < 20 {
+			qBudget = 20
+		}
+		q = truncateInline(q, qBudget)
+	}
+	a = truncateInline(a, aBudget)
+
+	return "    " + dot + " " + qStyle.Render(q) + " " + arrow + " " + aStyle.Render(a)
+}
+
+// truncateInline shortens a string to maxLen runes, appending an
+// ellipsis when truncated. Operates on runes so multi-byte chars
+// (CJK, emoji) don't get sliced mid-character.
+func truncateInline(s string, maxLen int) string {
+	if maxLen <= 1 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	if maxLen <= 1 {
+		return "…"
+	}
+	return string(r[:maxLen-1]) + "…"
+}
+
+// parseAskUserQuestionList extracts the question texts from an
+// ask_user tool call args JSON, in the order they were asked.
+// Returns nil on parse failure (the caller renders without a
+// summary in that case).
+func parseAskUserQuestionList(argsJSON string) []string {
+	if strings.TrimSpace(argsJSON) == "" {
+		return nil
+	}
+	var parsed struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &parsed); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(parsed.Questions))
+	for _, q := range parsed.Questions {
+		if strings.TrimSpace(q.Question) != "" {
+			out = append(out, q.Question)
+		}
+	}
+	return out
+}
+
+// parseAskUserResult parses an ask_user tool result. Returns either
+// the answers map (success) or a non-empty error message (failure
+// or cancellation). The two return values are mutually exclusive.
+func parseAskUserResult(resultJSON string) (map[string]string, string) {
+	if strings.TrimSpace(resultJSON) == "" {
+		return nil, ""
+	}
+	// Tool errors are surfaced as {"error":"..."} JSON by the
+	// loop's errorJSON helper. Probe for that shape first.
+	var errProbe struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(resultJSON), &errProbe) == nil && errProbe.Error != "" {
+		// Strip the "ask_user: " prefix for cleaner display
+		// since the card already labels itself as ask_user.
+		msg := strings.TrimPrefix(errProbe.Error, "ask_user: ")
+		return nil, msg
+	}
+	var resp tools.AskUserResponse
+	if err := json.Unmarshal([]byte(resultJSON), &resp); err != nil {
+		return nil, ""
+	}
+	if resp.Cancelled {
+		return nil, "user cancelled"
+	}
+	return resp.Answers, ""
+}
+
 
