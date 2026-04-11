@@ -33,35 +33,6 @@ type Toolkit struct {
 	skills      []skills.Skill
 	sessionID   string
 	coordinator *coordinator.Coordinator
-	// coordinatorOnly, when true, restricts Definitions() to the
-	// 6-tool coordinator surface (orchestration + non-polluting
-	// read-only helpers). This is the wuu default once Phase 6 is
-	// active.
-	coordinatorOnly bool
-}
-
-// SetCoordinatorOnly toggles the coordinator-only tool surface. When
-// enabled, Definitions() returns only the 6 tools the orchestrator
-// is allowed to use: spawn_agent, send_message_to_agent, stop_agent,
-// list_agents, list_files, glob.
-func (t *Toolkit) SetCoordinatorOnly(b bool) {
-	t.coordinatorOnly = b
-}
-
-// CoordinatorOnly reports whether the toolkit is in coordinator-only
-// mode.
-func (t *Toolkit) CoordinatorOnly() bool {
-	return t.coordinatorOnly
-}
-
-// coordinatorTools is the allowed tool set for the orchestrator.
-var coordinatorTools = map[string]struct{}{
-	"spawn_agent":           {},
-	"send_message_to_agent": {},
-	"stop_agent":            {},
-	"list_agents":           {},
-	"list_files":            {},
-	"glob":                  {},
 }
 
 // SetCoordinator attaches the orchestration runtime so the spawn_agent
@@ -105,21 +76,13 @@ func New(rootDir string) (*Toolkit, error) {
 	return &Toolkit{rootDir: abs}, nil
 }
 
-// Definitions returns JSON-schema tool definitions. When the toolkit
-// is in coordinator-only mode, only the 6 orchestration-surface tools
-// are returned.
+// Definitions returns JSON-schema tool definitions for every tool the
+// agent can call. There is no role-based filtering: every agent — the
+// one talking to the user and any sub-agent it spawns — sees the same
+// tool surface. Differentiation is the model's job, expressed through
+// the system prompt and the agent's choice of which tool to call.
 func (t *Toolkit) Definitions() []providers.ToolDefinition {
-	all := t.allDefinitions()
-	if !t.coordinatorOnly {
-		return all
-	}
-	out := make([]providers.ToolDefinition, 0, len(coordinatorTools))
-	for _, def := range all {
-		if _, ok := coordinatorTools[def.Name]; ok {
-			out = append(out, def)
-		}
-	}
-	return out
+	return t.allDefinitions()
 }
 
 func (t *Toolkit) allDefinitions() []providers.ToolDefinition {

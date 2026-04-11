@@ -436,11 +436,11 @@ func runTUI(args []string) error {
 		if cerr == nil {
 			coord = c
 			toolkit.SetCoordinator(coord)
-			toolkit.SetCoordinatorOnly(true)
-			// Prepend coordinator role instructions to the main agent's
-			// system prompt. The coordinator preamble comes first so
-			// the model establishes its role before reading project
-			// memory and skills.
+			// Prepend the orchestration preamble to the main agent's
+			// system prompt. The preamble teaches the three-plane
+			// discipline (data via filesystem, control via messages,
+			// trajectories as history) and the spawn / fork judgment
+			// heuristic, then defers to project memory and skills.
 			systemPromptText = coordinator.SystemPromptPreamble() + "\n\n" + systemPromptText
 		}
 	}
