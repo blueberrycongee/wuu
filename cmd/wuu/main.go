@@ -53,7 +53,7 @@ func run(args []string) error {
 		if args[0] == "version" {
 			return runVersion(args[1:])
 		}
-		return runVersion(nil)
+		return runVersion(args[1:])
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
