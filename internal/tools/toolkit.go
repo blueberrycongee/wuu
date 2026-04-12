@@ -1087,12 +1087,9 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 		return "", errors.New("grep requires pattern")
 	}
 
-	re, err := regexp.Compile(args.Pattern)
-	if err != nil {
+	if _, err := regexp.Compile(args.Pattern); err != nil {
 		return "", fmt.Errorf("invalid regex: %w", err)
 	}
-
-	limit := 250
 
 	searchRoot := t.rootDir
 	if strings.TrimSpace(args.Path) != "" {
@@ -1103,13 +1100,94 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 		searchRoot = resolved
 	}
 
-	type match struct {
-		File    string `json:"file"`
-		Line    int    `json:"line"`
-		Content string `json:"content"`
+	const limit = 250
+	matches, err := t.grepWithRipgrep(context.Background(), args.Pattern, searchRoot, args.Include, limit)
+	if err != nil {
+		matches, err = t.grepWithFallback(args.Pattern, searchRoot, args.Include, limit)
+		if err != nil {
+			return "", err
+		}
 	}
-	var matches []match
 
+	result := map[string]any{
+		"pattern":   args.Pattern,
+		"total":     len(matches),
+		"truncated": len(matches) >= limit,
+		"matches":   matches,
+	}
+	return mustJSON(result)
+}
+
+func (t *Toolkit) grepWithRipgrep(ctx context.Context, pattern, searchRoot, include string, limit int) ([]grepMatch, error) {
+	relSearchRoot, err := filepath.Rel(t.rootDir, searchRoot)
+	if err != nil {
+		return nil, err
+	}
+	if relSearchRoot == "." {
+		relSearchRoot = ""
+	}
+	cmd := buildRGGrepCommand(ctx, pattern, relSearchRoot, include)
+	if cmd != nil {
+		cmd.Dir = t.rootDir
+	}
+	if cmd == nil {
+		return nil, errors.New("ripgrep not available")
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return []grepMatch{}, nil
+		}
+		return nil, err
+	}
+
+	matches := make([]grepMatch, 0, min(limit, 16))
+	for _, line := range bytes.Split(bytes.TrimSpace(output), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var event rgJSONEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return nil, fmt.Errorf("parse ripgrep output: %w", err)
+		}
+		if event.Type != "match" {
+			continue
+		}
+		matchPath := event.Data.Path.Text
+		if !filepath.IsAbs(matchPath) {
+			matchPath = filepath.Join(t.rootDir, matchPath)
+		}
+		rel, err := filepath.Rel(t.rootDir, matchPath)
+		if err != nil {
+			continue
+		}
+		matches = append(matches, grepMatch{
+			File:    filepath.ToSlash(rel),
+			Line:    event.Data.LineNumber,
+			Content: strings.TrimRight(event.Data.Lines.Text, "\r\n"),
+		})
+		if len(matches) >= limit {
+			break
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].File == matches[j].File {
+			return matches[i].Line < matches[j].Line
+		}
+		return matches[i].File < matches[j].File
+	})
+	return matches, nil
+}
+
+func (t *Toolkit) grepWithFallback(pattern, searchRoot, include string, limit int) ([]grepMatch, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex: %w", err)
+	}
+
+	matches := make([]grepMatch, 0, min(limit, 16))
 	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -1123,8 +1201,13 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 		if len(matches) >= limit {
 			return filepath.SkipAll
 		}
-		rel, _ := filepath.Rel(t.rootDir, path)
-		if args.Include != "" && !matchGlob(args.Include, rel) {
+
+		rel, err := filepath.Rel(t.rootDir, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if include != "" && !matchGlob(include, rel) {
 			return nil
 		}
 		if isBinaryFile(path) {
@@ -1143,7 +1226,7 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 			lineNum++
 			line := scanner.Text()
 			if re.MatchString(line) {
-				matches = append(matches, match{
+				matches = append(matches, grepMatch{
 					File:    rel,
 					Line:    lineNum,
 					Content: line,
@@ -1159,16 +1242,15 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 		return nil
 	})
 	if walkErr != nil {
-		return "", walkErr
+		return nil, walkErr
 	}
-
-	result := map[string]any{
-		"pattern":   args.Pattern,
-		"total":     len(matches),
-		"truncated": len(matches) >= limit,
-		"matches":   matches,
-	}
-	return mustJSON(result)
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].File == matches[j].File {
+			return matches[i].Line < matches[j].Line
+		}
+		return matches[i].File < matches[j].File
+	})
+	return matches, nil
 }
 
 func (t *Toolkit) glob(argsJSON string) (string, error) {

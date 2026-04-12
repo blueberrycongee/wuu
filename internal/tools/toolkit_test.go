@@ -128,6 +128,11 @@ func TestToolkit_GrepIncludeMatchesRelativePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
+
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	files := map[string]string{
 		"internal/a.go":   "package internal\nvar target = true\n",
@@ -185,6 +190,11 @@ func TestToolkit_GrepIncludeMatchesRelativePaths(t *testing.T) {
 func TestToolkit_GrepReturnsScannerErrors(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
+
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -574,5 +584,61 @@ func TestToolkit_GlobFallbackWithoutRG(t *testing.T) {
 	}
 	if !reflect.DeepEqual(parsed.Files, []string{"src/app/main.ts"}) {
 		t.Fatalf("unexpected fallback matches: %+v", parsed.Files)
+	}
+}
+
+func TestToolkit_GrepIncludeMatchesRelativePaths_Ripgrep(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	files := map[string]string{
+		"internal/a.go":   "package internal\nvar target = true\n",
+		"internal/a.txt":  "target\n",
+		"src/app/main.ts": "const target = true;\n",
+		"src/app/util.js": "const target = true;\n",
+	}
+	for path, content := range files {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target","include":"internal/*.go"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep internal/*.go: %v", err)
+	}
+	var parsed struct {
+		Matches []grepMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "internal/a.go" {
+		t.Fatalf("unexpected matches for internal/*.go: %+v", parsed.Matches)
+	}
+
+	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target","include":"src/**/*.ts"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep src/**/*.ts: %v", err)
+	}
+	parsed.Matches = nil
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "src/app/main.ts" {
+		t.Fatalf("unexpected matches for src/**/*.ts: %+v", parsed.Matches)
 	}
 }
