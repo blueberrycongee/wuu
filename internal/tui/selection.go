@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -487,6 +488,8 @@ func highlightLineRange(line string, colStart, colEnd int) string {
 	bgOpen := selectionBgSGROpen()
 	bgClose := selectionBgSGRClose()
 
+	selected = stripBackgroundSGR(selected)
+
 	// Re-establish the selection bg after any in-slice SGR reset.
 	// Markdown rendering and syntax highlighting commonly emit
 	// `\x1b[0m` mid-line; without this re-emit the bg overlay would
@@ -523,6 +526,87 @@ func selectionBgSGROpen() string {
 // line had active when the selection ended.
 func selectionBgSGRClose() string {
 	return "\x1b[49m"
+}
+
+// stripBackgroundSGR removes background-related SGR params from a styled
+// string while preserving all non-background styling (foreground, bold, etc).
+// This prevents pre-existing message bubble backgrounds from competing with
+// the selection overlay color.
+func stripBackgroundSGR(s string) string {
+	if s == "" {
+		return s
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if i+1 >= len(s) || s[i] != '\x1b' || s[i+1] != '[' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i + 2
+		for j < len(s) && s[j] != 'm' {
+			j++
+		}
+		if j >= len(s) {
+			b.WriteString(s[i:])
+			break
+		}
+
+		params := strings.Split(s[i+2:j], ";")
+		kept := make([]string, 0, len(params))
+		for p := 0; p < len(params); p++ {
+			param := params[p]
+			if param == "" {
+				kept = append(kept, param)
+				continue
+			}
+
+			// SGR also allows colon-form params (e.g. 48:2::r:g:b).
+			// Strip background prefixes while preserving non-background styles.
+			if strings.HasPrefix(param, "48:") || strings.HasPrefix(param, "49:") {
+				continue
+			}
+
+			n, err := strconv.Atoi(param)
+			if err != nil {
+				kept = append(kept, param)
+				continue
+			}
+
+			// 40-47 and 100-107 are standard/indexed background colors.
+			if (n >= 40 && n <= 47) || (n >= 100 && n <= 107) || n == 49 {
+				continue
+			}
+			// 48;5;<idx> and 48;2;<r>;<g>;<b> are extended background colors.
+			if n == 48 {
+				if p+1 < len(params) {
+					mode, modeErr := strconv.Atoi(params[p+1])
+					if modeErr == nil {
+						skip := 1
+						switch mode {
+						case 5:
+							skip = 2
+						case 2:
+							skip = 4
+						}
+						p += skip
+						continue
+					}
+				}
+				continue
+			}
+			kept = append(kept, param)
+		}
+
+		if len(kept) > 0 {
+			b.WriteString("\x1b[")
+			b.WriteString(strings.Join(kept, ";"))
+			b.WriteByte('m')
+		}
+		i = j + 1
+	}
+	return b.String()
 }
 
 // parseHexRGB decodes a "#rrggbb" hex color string into 8-bit RGB

@@ -76,7 +76,7 @@ var darkTheme = theme{
 	UserBubbleBg: lipgloss.Color("#2F3842"), // blue-gray (not pure black)
 	UserBubbleFg: lipgloss.Color("#F5F7FA"), // near-white
 
-	SelectionBg: lipgloss.Color("#3A4250"), // slate blue-gray, distinct from UserBubbleBg
+	SelectionBg: lipgloss.Color("#5B6CFF"), // vivid indigo for clear contrast on user bubble
 }
 
 var lightTheme = theme{
@@ -104,7 +104,7 @@ var lightTheme = theme{
 	UserBubbleBg: lipgloss.Color("#EAF1FF"), // light blue bubble
 	UserBubbleFg: lipgloss.Color("#1F2328"), // dark text
 
-	SelectionBg: lipgloss.Color("#C8D7F0"), // muted blue, distinguishable from UserBubbleBg on light bg
+	SelectionBg: lipgloss.Color("#8FB4FF"), // stronger blue to stand out from light user bubble
 }
 
 type themeMode string

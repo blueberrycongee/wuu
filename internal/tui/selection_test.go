@@ -420,3 +420,46 @@ func TestSelectionBgSGROpen_HasNoFullResetNoForeground(t *testing.T) {
 		t.Errorf("bg open must not set a foreground color: %q", open)
 	}
 }
+
+func TestStripBackgroundSGR_RemovesBackgroundKeepsForeground(t *testing.T) {
+	in := "\x1b[1;38;2;1;2;3;48;2;4;5;6mX\x1b[0m"
+	out := stripBackgroundSGR(in)
+	if !strings.Contains(out, "38;2;1;2;3") {
+		t.Fatalf("expected foreground SGR to be preserved, got %q", out)
+	}
+	if strings.Contains(out, "48;") {
+		t.Fatalf("expected background SGR to be removed, got %q", out)
+	}
+}
+
+func TestStripBackgroundSGR_RemovesColonBackgroundKeepsForeground(t *testing.T) {
+	in := "\x1b[1;38:2::1:2:3;48:2::4:5:6mX\x1b[0m"
+	out := stripBackgroundSGR(in)
+	if !strings.Contains(out, "38:2::1:2:3") {
+		t.Fatalf("expected colon foreground SGR to be preserved, got %q", out)
+	}
+	if strings.Contains(out, "48:") {
+		t.Fatalf("expected colon background SGR to be removed, got %q", out)
+	}
+}
+
+func TestHighlightLineRange_StripsExistingBackgroundFromSelectionSlice(t *testing.T) {
+	prev := currentTheme
+	applyTheme(darkTheme)
+	t.Cleanup(func() { applyTheme(prev) })
+
+	line := userContentStyle.Render("hello")
+	out := highlightLineRange(line, 0, 5)
+
+	bgOpen := selectionBgSGROpen()
+	bgClose := selectionBgSGRClose()
+	openIdx := strings.Index(out, bgOpen)
+	closeIdx := strings.Index(out, bgClose)
+	if openIdx < 0 || closeIdx < 0 || closeIdx < openIdx {
+		t.Fatalf("missing selection bg wrapper in output: %q", out)
+	}
+	inside := out[openIdx+len(bgOpen) : closeIdx]
+	if strings.Contains(inside, "48;2;47;56;66") {
+		t.Fatalf("selected slice should drop original user-bubble background, got %q", inside)
+	}
+}
