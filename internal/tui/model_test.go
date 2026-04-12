@@ -1170,6 +1170,8 @@ func TestSubmitBusyTabQueuesMessage(t *testing.T) {
 		},
 	})
 	m.pendingRequest = true
+	m.streaming = true
+	m.statusLine = "streaming"
 	m.input.SetValue("tab queued")
 
 	nextModel, cmd := m.submit(true)
@@ -1185,6 +1187,9 @@ func TestSubmitBusyTabQueuesMessage(t *testing.T) {
 	}
 	if len(next.pendingSteers) != 0 {
 		t.Fatalf("expected no pending steers, got %d", len(next.pendingSteers))
+	}
+	if next.statusLine != "streaming" {
+		t.Fatalf("expected streaming status to remain active while queueing, got %q", next.statusLine)
 	}
 }
 

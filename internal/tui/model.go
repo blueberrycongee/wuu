@@ -1319,9 +1319,12 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 	m.pendingImages = nil
 
 	if m.pendingRequest && shouldQueue {
-		// Tab while busy — queue the message.
+		// Tab while busy — queue the message without hiding the active
+		// inline waiting status for the current turn.
 		m.messageQueue = append(m.messageQueue, message)
-		m.statusLine = fmt.Sprintf("queued (%d pending)", len(m.messageQueue))
+		if !m.streaming && !isWaitingStatus(m.statusLine) {
+			m.statusLine = fmt.Sprintf("queued (%d pending)", len(m.messageQueue))
+		}
 		return m, nil
 	}
 

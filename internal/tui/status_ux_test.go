@@ -14,12 +14,15 @@ func TestShouldRenderInlineStatusSuppressesTranscriptDuplicates(t *testing.T) {
 	}
 }
 
-func TestShouldRenderInlineStatusKeepsGlobalRespondingStatus(t *testing.T) {
-	m := Model{streaming: true, statusLine: "streaming"}
-	m.entries = []transcriptEntry{{Role: "ASSISTANT", ThinkingContent: "working", ThinkingDone: false}}
+func TestShouldRenderInlineStatusKeepsRespondingWhileQueuedMessageAdded(t *testing.T) {
+	m := Model{pendingRequest: true, streaming: true, statusLine: "streaming"}
+	m.messageQueue = []queuedMessage{{Text: "queued follow-up"}}
 
 	if !m.shouldRenderInlineStatus() {
-		t.Fatal("expected inline responding status to remain visible as the main global status")
+		t.Fatal("expected inline responding status to stay visible while follow-up messages are queued")
+	}
+	if got := deriveWorkStatus(m.statusLine).Label; got != "Responding" {
+		t.Fatalf("expected responding work status, got %q", got)
 	}
 }
 
