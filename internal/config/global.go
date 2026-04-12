@@ -15,7 +15,10 @@ type GlobalConfig struct {
 }
 
 func LoadGlobalConfig(home string) (GlobalConfig, error) {
-	path := filepath.Join(home, globalConfigRelPath)
+	path, err := globalConfigPath(home)
+	if err != nil {
+		return GlobalConfig{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -31,7 +34,10 @@ func LoadGlobalConfig(home string) (GlobalConfig, error) {
 }
 
 func SaveGlobalConfig(home string, gc GlobalConfig) error {
-	path := filepath.Join(home, globalConfigRelPath)
+	path, err := globalConfigPath(home)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create global config dir: %w", err)
 	}
@@ -40,4 +46,12 @@ func SaveGlobalConfig(home string, gc GlobalConfig) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func globalConfigPath(home string) (string, error) {
+	resolvedHome, err := requireHomeDir(home)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedHome, globalConfigRelPath), nil
 }

@@ -30,3 +30,19 @@ func TestGlobalConfig_DefaultsWhenMissing(t *testing.T) {
 		t.Fatalf("expected empty theme, got %q", gc.Theme)
 	}
 }
+
+func TestGlobalConfig_RequiresHomeDir(t *testing.T) {
+	for _, home := range []string{"", "   \t\n  "} {
+		t.Run("home", func(t *testing.T) {
+			_, err := LoadGlobalConfig(home)
+			if err == nil || err.Error() != "home directory is required" {
+				t.Fatalf("expected clear home error from LoadGlobalConfig, got %v", err)
+			}
+
+			err = SaveGlobalConfig(home, GlobalConfig{Theme: "dark"})
+			if err == nil || err.Error() != "home directory is required" {
+				t.Fatalf("expected clear home error from SaveGlobalConfig, got %v", err)
+			}
+		})
+	}
+}

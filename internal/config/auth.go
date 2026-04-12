@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const authRelativePath = ".config/wuu/auth.json"
@@ -14,7 +15,10 @@ type authStore struct {
 }
 
 func SaveAuthKey(home, providerName, apiKey string) error {
-	path := filepath.Join(home, authRelativePath)
+	path, err := authPath(home)
+	if err != nil {
+		return err
+	}
 	store, _ := loadAuthStore(path)
 	if store.Keys == nil {
 		store.Keys = make(map[string]string)
@@ -24,7 +28,10 @@ func SaveAuthKey(home, providerName, apiKey string) error {
 }
 
 func LoadAuthKey(home, providerName string) (string, error) {
-	path := filepath.Join(home, authRelativePath)
+	path, err := authPath(home)
+	if err != nil {
+		return "", err
+	}
 	store, err := loadAuthStore(path)
 	if err != nil {
 		return "", err
@@ -34,6 +41,21 @@ func LoadAuthKey(home, providerName string) (string, error) {
 		return "", fmt.Errorf("no auth key for provider %q", providerName)
 	}
 	return key, nil
+}
+
+func authPath(home string) (string, error) {
+	resolvedHome, err := requireHomeDir(home)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedHome, authRelativePath), nil
+}
+
+func requireHomeDir(home string) (string, error) {
+	if strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("home directory is required")
+	}
+	return home, nil
 }
 
 func loadAuthStore(path string) (authStore, error) {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,21 @@ func TestAuthStore_MultipleProviders(t *testing.T) {
 	}
 	if k2 != "sk-ant-xxx" {
 		t.Fatalf("anthropic key mismatch: %q", k2)
+	}
+}
+
+func TestAuthStore_RequiresHomeDir(t *testing.T) {
+	for _, home := range []string{"", "   \t\n  "} {
+		t.Run("home="+strings.TrimSpace(home), func(t *testing.T) {
+			err := SaveAuthKey(home, "openai", "sk-test")
+			if err == nil || err.Error() != "home directory is required" {
+				t.Fatalf("expected clear home error from SaveAuthKey, got %v", err)
+			}
+
+			_, err = LoadAuthKey(home, "openai")
+			if err == nil || err.Error() != "home directory is required" {
+				t.Fatalf("expected clear home error from LoadAuthKey, got %v", err)
+			}
+		})
 	}
 }
