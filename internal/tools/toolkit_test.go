@@ -1,8 +1,12 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -114,6 +118,91 @@ func (f *fakeAskBridge) AskUser(_ context.Context, req AskUserRequest) (AskUserR
 		}
 	}
 	return AskUserResponse{Answers: answers}, nil
+}
+
+func TestToolkit_GrepIncludeMatchesRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	files := map[string]string{
+		"internal/a.go":   "package internal\nvar target = true\n",
+		"internal/a.txt":  "target\n",
+		"src/app/main.ts": "const target = true;\n",
+		"src/app/util.js": "const target = true;\n",
+		"pkg/nested/x.go": "package nested\nvar target = true\n",
+		"main.go":         "package main\nvar target = true\n",
+	}
+	for path, content := range files {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target","include":"internal/*.go"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep internal/*.go: %v", err)
+	}
+	var parsed struct {
+		Matches []struct {
+			File string `json:"file"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "internal/a.go" {
+		t.Fatalf("unexpected matches for internal/*.go: %+v", parsed.Matches)
+	}
+
+	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target","include":"src/**/*.ts"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep src/**/*.ts: %v", err)
+	}
+	parsed.Matches = nil
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "src/app/main.ts" {
+		t.Fatalf("unexpected matches for src/**/*.ts: %+v", parsed.Matches)
+	}
+}
+
+func TestToolkit_GrepReturnsScannerErrors(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	path := filepath.Join(root, "huge.txt")
+	tooLongLine := strings.Repeat("a", bufio.MaxScanTokenSize+1)
+	if err := os.WriteFile(path, []byte(tooLongLine), 0o644); err != nil {
+		t.Fatalf("write huge.txt: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"needle","path":"huge.txt"}`,
+	})
+	if err == nil {
+		t.Fatal("expected scanner error")
+	}
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("expected bufio.ErrTooLong, got: %v", err)
+	}
 }
 
 func TestToolkit_AskUser_RegisteredInDefinitions(t *testing.T) {

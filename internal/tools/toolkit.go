@@ -1108,7 +1108,7 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 	}
 	var matches []match
 
-	filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -1121,10 +1121,9 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 		if len(matches) >= limit {
 			return filepath.SkipAll
 		}
-		if args.Include != "" {
-			if matched, _ := filepath.Match(args.Include, info.Name()); !matched {
-				return nil
-			}
+		rel, _ := filepath.Rel(t.rootDir, path)
+		if args.Include != "" && !matchGlob(args.Include, rel) {
+			return nil
 		}
 		if isBinaryFile(path) {
 			return nil
@@ -1136,7 +1135,6 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 		}
 		defer f.Close()
 
-		rel, _ := filepath.Rel(t.rootDir, path)
 		scanner := bufio.NewScanner(f)
 		lineNum := 0
 		for scanner.Scan() {
@@ -1153,8 +1151,14 @@ func (t *Toolkit) grep(argsJSON string) (string, error) {
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("scan %s: %w", rel, err)
+		}
 		return nil
 	})
+	if walkErr != nil {
+		return "", walkErr
+	}
 
 	result := map[string]any{
 		"pattern":   args.Pattern,
