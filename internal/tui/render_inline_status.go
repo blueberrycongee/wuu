@@ -299,8 +299,7 @@ func renderStatusHeaderWithOptions(ws workStatus, frame int, italic bool, wave b
 	}, " ")
 }
 
-func renderInlineStatus(status string, frame int, width int) string {
-	ws := deriveWorkStatus(status)
+func renderInlineWorkStatus(ws workStatus, frame int, width int) string {
 	if ws.Phase == workPhaseIdle {
 		return ""
 	}
@@ -309,4 +308,8 @@ func renderInlineStatus(status string, frame int, width int) string {
 		return line
 	}
 	return trimToWidth(line, width)
+}
+
+func renderInlineStatus(status string, frame int, width int) string {
+	return renderInlineWorkStatus(deriveWorkStatus(status), frame, width)
 }

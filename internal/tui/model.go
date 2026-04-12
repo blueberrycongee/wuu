@@ -155,10 +155,11 @@ type queuedMessage struct {
 }
 
 type pendingTurnResult struct {
-	baseHistory      []providers.ChatMessage
-	newMsgs          []providers.ChatMessage
-	preCompacted     bool
-	historyRewritten bool
+	baseHistory          []providers.ChatMessage
+	newMsgs              []providers.ChatMessage
+	preCompacted         bool
+	historyRewritten     bool
+	incrementalPersisted bool
 }
 
 type pendingChatClickState struct {
@@ -223,6 +224,7 @@ type Model struct {
 	showJump        bool
 	clock           string
 	statusLine      string
+	liveWorkStatus  workStatus
 	inlineSpinFrame int
 
 	streamCollector *markdown.StreamCollector
@@ -740,7 +742,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the viewport, so the frame increment is enough for
 		// BubbleTea to re-call View() and pick up the new frame.
 		// Worker panel height changes are handled by workerNotifyMsg.
-		if m.statusLine == "thinking" {
+		if m.currentWorkStatus().Phase == workPhaseThinking {
 			m.refreshViewport(false)
 		}
 		return m, tickCmd()
@@ -748,8 +750,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case inlineSpinMsg:
 		m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
 		m.spinnerFrame = nextStatusFrame(m.spinnerFrame)
-		if m.streaming || m.pendingRequest || m.statusLine == "thinking" || len(m.activeWorkerSnapshots()) > 0 {
-			if m.statusLine == "thinking" {
+		if m.streaming || m.pendingRequest || m.currentWorkStatus().Phase != workPhaseIdle || len(m.activeWorkerSnapshots()) > 0 {
+			if m.currentWorkStatus().Phase == workPhaseThinking {
 				// Thinking blocks live inside the viewport, so keep their
 				// spinner in sync with the shared status animation frame.
 				m.refreshViewport(false)
@@ -890,6 +892,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.streamCollector != nil {
 			m.streamCollector = nil
 		}
+		m.clearLiveWorkStatus()
 		m.statusLine = "ready"
 		m.cacheRenderedEntries()
 
@@ -909,9 +912,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatHistory = append(m.chatHistory, m.pendingTurn.newMsgs...)
 				rewriteHistory = true
 			default:
-				for _, msg := range m.pendingTurn.newMsgs {
-					m.chatHistory = append(m.chatHistory, msg)
-					_ = appendChatMessage(m.memoryPath, msg)
+				if !m.pendingTurn.incrementalPersisted {
+					for _, msg := range m.pendingTurn.newMsgs {
+						m.chatHistory = append(m.chatHistory, msg)
+						_ = appendChatMessage(m.memoryPath, msg)
+					}
 				}
 			}
 			if rewriteHistory {
@@ -974,6 +979,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamRunes = []rune(msg.answer)
 		m.streamCursor = 0
 		m.streamTarget = m.appendEntry("assistant", "")
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 		m.statusLine = "streaming response"
 		m.refreshViewport(true)
 		return m, streamTickCmd()
@@ -1474,9 +1480,11 @@ func (m Model) sendMessage(message queuedMessage) (tea.Model, tea.Cmd) {
 
 	if m.streamRunner != nil {
 		if shouldPreCompactHistory(m.chatHistory, m.maxContextTokens, m.streamRunner.Client) {
+			m.setLiveWorkStatus(workStatus{Phase: workPhaseCompacting, Label: "Compacting history", Meta: "Preparing the next turn", Running: true})
 			m.statusLine = compactingHistoryStatus + queueHint
 		} else {
 			m.streamTarget = m.appendEntry("assistant", "")
+			m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 			m.statusLine = "streaming" + queueHint
 		}
 		m.refreshViewport(true)
@@ -1575,9 +1583,16 @@ func (m Model) triggerAutoResume() (tea.Model, tea.Cmd) {
 	m.streaming = true
 	m.streamTarget = -1
 	if shouldPreCompactHistory(m.chatHistory, m.maxContextTokens, m.streamRunner.Client) {
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseCompacting, Label: "Compacting history", Meta: "Preparing the next turn", Running: true})
 		m.statusLine = compactingHistoryStatus
 	} else {
 		m.streamTarget = m.appendEntry("assistant", "")
+		m.setLiveWorkStatus(workStatus{
+			Phase:   workPhaseAutoResume,
+			Label:   "Continuing",
+			Meta:    fmt.Sprintf("Picking up after worker updates (%d/%d)", m.autoResumeChain, maxAutoResumeChain),
+			Running: true,
+		})
 		m.statusLine = fmt.Sprintf("auto-resume (%d/%d)", m.autoResumeChain, maxAutoResumeChain)
 	}
 	m.refreshViewport(true)
@@ -1694,6 +1709,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			e.rendered = rendered
 			e.renderedLen = len(e.Content)
 		}
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 		m.statusLine = "streaming"
 		m.refreshViewport(false)
 		return nextWait()
@@ -1714,6 +1730,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			Name:   toolName,
 			Status: ToolCallRunning,
 		})
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("Running %s", toolName), Meta: "Making progress with a tool", Running: true})
 		m.statusLine = fmt.Sprintf("tool: %s", toolName)
 		m.refreshViewport(false)
 		return nextWait()
@@ -1734,6 +1751,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 				}
 			}
 		}
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 		m.statusLine = "streaming"
 		m.refreshViewport(false)
 		return nextWait()
@@ -1766,6 +1784,33 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 				m.cacheEntryRendered(m.streamTarget)
 			}
 		}
+		m.clearLiveWorkStatus()
+		m.refreshViewport(false)
+		return nextWait()
+
+	case providers.EventMessage:
+		if event.Message != nil {
+			m.persistStreamMessage(*event.Message)
+		}
+		return nextWait()
+
+	case providers.EventLifecycle:
+		if event.Lifecycle != nil {
+			switch event.Lifecycle.Phase {
+			case providers.StreamPhaseConnecting:
+				m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Connecting", Meta: "Opening the live response", Running: true})
+			case providers.StreamPhaseConnected:
+				m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
+			case providers.StreamPhaseReconnecting:
+				meta := "Restoring the live response"
+				if event.Lifecycle.RetryCount > 0 && event.Lifecycle.MaxRetries > 0 {
+					meta = fmt.Sprintf("Retry %d/%d", event.Lifecycle.RetryCount, event.Lifecycle.MaxRetries)
+				}
+				m.setLiveWorkStatus(workStatus{Phase: workPhaseReconnecting, Label: "Reconnecting", Meta: meta, Running: true})
+			case providers.StreamPhaseFailed:
+				m.clearLiveWorkStatus()
+			}
+		}
 		m.refreshViewport(false)
 		return nextWait()
 
@@ -1774,6 +1819,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		if msg == "" {
 			msg = "Reconnecting..."
 		}
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseReconnecting, Label: "Reconnecting", Meta: "Restoring the live response", Running: true})
 		m.statusLine = msg
 		m.refreshViewport(false)
 		return nextWait()
@@ -1801,6 +1847,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		m.streaming = false
 		m.pendingRequest = false
 		m.pendingTurn = nil
+		m.clearLiveWorkStatus()
 		// Show accumulated content so far (if any) before the error.
 		if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
 			content := strings.TrimSpace(m.entries[m.streamTarget].Content)
@@ -1832,6 +1879,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			m.thinkingStart = time.Now()
 		}
 		e.ThinkingContent += event.Content
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseThinking, Label: "Thinking", Meta: "Working through the next step", Running: true})
 		m.statusLine = "thinking"
 		m.refreshViewport(false)
 		return nextWait()
@@ -1844,6 +1892,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 				e.ThinkingDuration = time.Since(m.thinkingStart)
 			}
 		}
+		m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 		m.statusLine = "streaming"
 		m.refreshViewport(false)
 		return nextWait()
@@ -1892,6 +1941,7 @@ func (m *Model) finishStream() {
 		m.entries[m.streamTarget].Content = raw
 	}
 	m.streamTarget = -1
+	m.clearLiveWorkStatus()
 	m.statusLine = fmt.Sprintf("response in %s", m.streamElapsed.Truncate(10*time.Millisecond))
 	m.refreshViewport(false)
 }
@@ -2430,11 +2480,34 @@ func (m *Model) relayout() {
 	m.refreshViewport(false)
 }
 
+func (m *Model) setLiveWorkStatus(status workStatus) {
+	m.liveWorkStatus = status
+}
+
+func (m *Model) clearLiveWorkStatus() {
+	m.liveWorkStatus = workStatus{}
+}
+
+func (m Model) currentWorkStatus() workStatus {
+	if m.liveWorkStatus.Phase != workPhaseIdle {
+		return m.liveWorkStatus
+	}
+	return deriveWorkStatus(m.statusLine)
+}
+
+func (m *Model) persistStreamMessage(msg providers.ChatMessage) {
+	m.chatHistory = append(m.chatHistory, msg)
+	_ = appendChatMessage(m.memoryPath, msg)
+	if m.pendingTurn != nil {
+		m.pendingTurn.incrementalPersisted = true
+	}
+}
+
 func (m Model) shouldRenderInlineStatus() bool {
 	if !m.streaming && !m.pendingRequest {
 		return false
 	}
-	ws := deriveWorkStatus(m.statusLine)
+	ws := m.currentWorkStatus()
 	if ws.Phase == workPhaseIdle {
 		return false
 	}
@@ -2557,7 +2630,7 @@ func (m Model) View() string {
 	// competing with thinking/tool/worker surfaces inside the transcript.
 	statusLine := ""
 	if m.shouldRenderInlineStatus() {
-		statusLine = indentLines(renderInlineStatus(m.statusLine, m.spinnerFrame, contentWidth(m.viewport.Width)), contentPadLeft)
+		statusLine = indentLines(renderInlineWorkStatus(m.currentWorkStatus(), m.spinnerFrame, contentWidth(m.viewport.Width)), contentPadLeft)
 	}
 
 	parts := []string{header, outputBox, statusLine}

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -789,6 +790,25 @@ func TestSetCopyStatusLine_UpdatesIdleStatus(t *testing.T) {
 	}
 }
 
+func TestSetCopyStatusLine_PreservesStructuredLiveWorkStatus(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, prompt string) (string, error) {
+			return prompt, nil
+		},
+	})
+	m.liveWorkStatus = workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true}
+	m.statusLine = "ready"
+
+	m.setCopyStatusLine("copied")
+
+	if m.statusLine != "ready" {
+		t.Fatalf("expected structured live work status to block copy feedback, got %q", m.statusLine)
+	}
+}
+
 func TestRefreshViewportKeepsOffsetWhileStreamingWhenUserScrolledUp(t *testing.T) {
 	m := newScrollableModelForScrollbarTest(t)
 	m.streaming = true
@@ -1220,6 +1240,119 @@ func TestStreamReconnectEventUpdatesStatusLine(t *testing.T) {
 	after := updated.(Model)
 	if after.statusLine != "Reconnecting... 1/6" {
 		t.Fatalf("unexpected status line: %q", after.statusLine)
+	}
+}
+
+func TestStreamLifecycleEventUpdatesStructuredWorkStatus(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
+			return "", nil
+		},
+	})
+	m.streaming = true
+	m.pendingRequest = true
+	m.streamCh = make(chan providers.StreamEvent)
+
+	updated, _ := m.Update(streamEventMsg{
+		event: providers.StreamEvent{
+			Type: providers.EventLifecycle,
+			Lifecycle: &providers.StreamLifecycle{
+				Phase:      providers.StreamPhaseReconnecting,
+				RetryCount: 2,
+				MaxRetries: 5,
+			},
+		},
+	})
+	after := updated.(Model)
+	if after.currentWorkStatus().Phase != workPhaseReconnecting {
+		t.Fatalf("expected reconnecting phase, got %+v", after.currentWorkStatus())
+	}
+	if after.currentWorkStatus().Meta != "Retry 2/5" {
+		t.Fatalf("unexpected reconnect meta: %q", after.currentWorkStatus().Meta)
+	}
+}
+
+func TestStreamMessageEventPersistsChatMessageIncrementally(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: filepath.Join(dir, ".wuu.json"),
+		MemoryPath: path,
+		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
+			return "", nil
+		},
+	})
+	m.pendingTurn = &pendingTurnResult{}
+
+	assistant := providers.ChatMessage{Role: "assistant", Content: "partial answer"}
+	updated, _ := m.Update(streamEventMsg{
+		event: providers.StreamEvent{
+			Type:    providers.EventMessage,
+			Message: &assistant,
+		},
+	})
+	after := updated.(Model)
+
+	if len(after.chatHistory) != 1 {
+		t.Fatalf("expected chat history append, got %d", len(after.chatHistory))
+	}
+	if after.chatHistory[0].Content != "partial answer" {
+		t.Fatalf("unexpected persisted content: %+v", after.chatHistory[0])
+	}
+	if after.pendingTurn == nil || !after.pendingTurn.incrementalPersisted {
+		t.Fatal("expected pending turn to record incremental persistence")
+	}
+
+	msgs, err := loadChatHistory(path)
+	if err != nil {
+		t.Fatalf("loadChatHistory: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Content != "partial answer" {
+		t.Fatalf("unexpected persisted history: %+v", msgs)
+	}
+}
+
+func TestStreamFinishedSkipsDuplicateAppendAfterIncrementalPersistence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: filepath.Join(dir, ".wuu.json"),
+		MemoryPath: path,
+		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
+			return "", nil
+		},
+	})
+	msg := providers.ChatMessage{Role: "assistant", Content: "already persisted"}
+	if err := appendChatMessage(path, msg); err != nil {
+		t.Fatalf("appendChatMessage: %v", err)
+	}
+	m.chatHistory = []providers.ChatMessage{msg}
+	m.pendingTurn = &pendingTurnResult{
+		newMsgs:              []providers.ChatMessage{msg},
+		incrementalPersisted: true,
+	}
+	m.streaming = true
+	m.pendingRequest = true
+
+	updated, _ := m.Update(streamFinishedMsg{})
+	after := updated.(Model)
+
+	msgs, err := loadChatHistory(path)
+	if err != nil {
+		t.Fatalf("loadChatHistory: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected no duplicate messages, got %+v", msgs)
+	}
+	if len(after.chatHistory) != 1 {
+		t.Fatalf("expected in-memory history to remain deduplicated, got %+v", after.chatHistory)
 	}
 }
 

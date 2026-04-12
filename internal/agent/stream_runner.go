@@ -109,6 +109,16 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		MaxContextTokens: maxCtx,
 		BeforeStep:       r.BeforeStep,
 		OnUsage:          r.OnUsage,
+		OnMessage: func(msg providers.ChatMessage) {
+			if onEvent == nil {
+				return
+			}
+			copyMsg := msg
+			onEvent(providers.StreamEvent{
+				Type:    providers.EventMessage,
+				Message: &copyMsg,
+			})
+		},
 		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
 			return compact.Compact(ctx, messages, r.Client, r.Model)
 		},

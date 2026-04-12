@@ -111,6 +111,7 @@ const (
 	EventToolUseStart  StreamEventType = "tool_use_start"
 	EventToolUseDelta  StreamEventType = "tool_use_delta"
 	EventToolUseEnd    StreamEventType = "tool_use_end"
+	EventMessage       StreamEventType = "message"
 	EventLifecycle     StreamEventType = "lifecycle"
 	EventReconnect     StreamEventType = "reconnect"
 	EventCompact       StreamEventType = "compact"
@@ -182,6 +183,7 @@ func (u TokenUsage) TotalContextTokens() int {
 type StreamEvent struct {
 	Type       StreamEventType
 	Content    string
+	Message    *ChatMessage
 	ToolCall   *ToolCall
 	ToolResult string
 	Lifecycle  *StreamLifecycle

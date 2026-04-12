@@ -340,7 +340,7 @@ func (m *Model) copySelectionToClipboard() {
 // active reply/tool/thinking indicator. While a request is in flight, the
 // waiting status is more important than transient clipboard feedback.
 func (m *Model) setCopyStatusLine(status string) {
-	if m.streaming || m.pendingRequest || isWaitingStatus(m.statusLine) {
+	if m.streaming || m.pendingRequest || m.currentWorkStatus().Phase != workPhaseIdle {
 		return
 	}
 	m.statusLine = status

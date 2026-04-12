@@ -117,6 +117,11 @@ type LoopConfig struct {
 	// token counts when the provider reports them. The loop also
 	// accumulates totals into LoopResult.
 	OnUsage func(input, output int)
+	// OnMessage is invoked whenever the loop appends a semantic chat
+	// message to its live history. Streaming callers use it to persist
+	// assistant/tool/internal follow-up messages incrementally instead of
+	// waiting for the whole turn to finish.
+	OnMessage func(msg providers.ChatMessage)
 	// OnToolResult is invoked after each tool execution with the
 	// (call, JSON result) pair. Used by streaming callers to feed
 	// live tool-result rendering into the TUI.

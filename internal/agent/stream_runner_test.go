@@ -93,8 +93,8 @@ func TestStreamRunner_SimpleContent(t *testing.T) {
 		t.Fatalf("unexpected result: %q", result)
 	}
 
-	if len(received) != 5 {
-		t.Fatalf("expected 5 events including lifecycle, got %d", len(received))
+	if len(received) != 6 {
+		t.Fatalf("expected 6 events including lifecycle/message, got %d", len(received))
 	}
 	if received[0].Type != providers.EventLifecycle || received[0].Lifecycle == nil || received[0].Lifecycle.Phase != providers.StreamPhaseConnecting {
 		t.Fatalf("unexpected first event: %+v", received[0])
@@ -106,7 +106,10 @@ func TestStreamRunner_SimpleContent(t *testing.T) {
 		t.Fatalf("unexpected first content event: %+v", received[2])
 	}
 	if received[4].Type != providers.EventDone {
-		t.Fatalf("expected last event to be done, got %s", received[4].Type)
+		t.Fatalf("expected done event before committed message, got %s", received[4].Type)
+	}
+	if received[5].Type != providers.EventMessage || received[5].Message == nil || received[5].Message.Role != "assistant" {
+		t.Fatalf("expected committed assistant message event, got %+v", received[5])
 	}
 }
 

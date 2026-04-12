@@ -85,12 +85,20 @@ func RunToolLoop(
 	// the first compact decision isn't biased toward "fresh session".
 	usage.RecordPendingMessages(history)
 	threshold := proactiveCompactThreshold(cfg)
+	appendMessage := func(msg providers.ChatMessage) {
+		messages = append(messages, msg)
+		if cfg.OnMessage != nil {
+			cfg.OnMessage(msg)
+		}
+	}
 
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
 		if cfg.BeforeStep != nil {
 			injected := cfg.BeforeStep()
 			if len(injected) > 0 {
-				messages = append(messages, injected...)
+				for _, msg := range injected {
+					appendMessage(msg)
+				}
 				usage.RecordPendingMessages(injected)
 			}
 		}
@@ -156,12 +164,12 @@ func RunToolLoop(
 		// the normal tool execution path below.
 		if result.Truncated && len(result.ToolCalls) == 0 && truncationRecoveries < maxTruncationRecoveries {
 			truncatedBuf.WriteString(result.Content)
-			messages = append(messages, providers.ChatMessage{
+			appendMessage(providers.ChatMessage{
 				Role:             "assistant",
 				Content:          result.Content,
 				ReasoningContent: result.ReasoningContent,
 			})
-			messages = append(messages, providers.ChatMessage{
+			appendMessage(providers.ChatMessage{
 				Role:    "user",
 				Content: truncationContinuePrompt,
 			})
@@ -175,7 +183,7 @@ func RunToolLoop(
 			ReasoningContent: result.ReasoningContent,
 			ToolCalls:        result.ToolCalls,
 		}
-		messages = append(messages, assistant)
+		appendMessage(assistant)
 
 		// No tool calls → model is done. Return concatenated content.
 		if len(result.ToolCalls) == 0 {
@@ -231,7 +239,7 @@ func RunToolLoop(
 				ToolCallID: call.ID,
 				Content:    toolResult,
 			}
-			messages = append(messages, toolMsg)
+			appendMessage(toolMsg)
 			// Tool results haven't been sent to the provider yet, so
 			// add a delta-estimate to the tracker.
 			usage.RecordPendingMessages([]providers.ChatMessage{toolMsg})
