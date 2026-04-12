@@ -263,6 +263,32 @@ func TestChat_DoesNotRetryAuthError(t *testing.T) {
 	}
 }
 
+func TestNewStreamingHTTPClient_DisablesOverallTimeout(t *testing.T) {
+	base := &http.Client{
+		Timeout:       5 * time.Second,
+		Transport:     http.DefaultTransport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	streamClient := newStreamingHTTPClient(base)
+
+	if streamClient == base {
+		t.Fatal("expected streaming client to clone the base client")
+	}
+	if streamClient.Timeout != 0 {
+		t.Fatalf("expected streaming client timeout disabled, got %s", streamClient.Timeout)
+	}
+	if streamClient.Transport != base.Transport {
+		t.Fatal("expected streaming client to preserve transport")
+	}
+	if streamClient.CheckRedirect == nil {
+		t.Fatal("expected streaming client to preserve redirect policy")
+	}
+	if base.Timeout != 5*time.Second {
+		t.Fatalf("expected base client timeout unchanged, got %s", base.Timeout)
+	}
+}
+
 func TestStreamChat_SSE(t *testing.T) {
 	ssePayload := "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n" +
 		"data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n" +

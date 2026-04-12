@@ -33,6 +33,15 @@ func streamIdleTimeout() time.Duration {
 	return defaultStreamIdleTimeout
 }
 
+func newStreamingHTTPClient(base *http.Client) *http.Client {
+	if base == nil {
+		return &http.Client{}
+	}
+	streamClient := *base
+	streamClient.Timeout = 0
+	return &streamClient
+}
+
 // ClientConfig configures an OpenAI-compatible chat completions endpoint.
 type ClientConfig struct {
 	BaseURL     string
@@ -217,8 +226,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Use a separate client without short timeout for long-lived SSE connections.
-	streamClient := &http.Client{Timeout: 10 * time.Minute}
+	// Streaming turns can legitimately outlive the buffered request timeout.
+	// Let the caller's ctx and the idle watchdog own cancellation instead.
+	streamClient := newStreamingHTTPClient(c.httpClient)
 	resp, err := c.doChatCompletionsRequest(ctx, streamClient, body, true)
 	if err != nil {
 		return nil, err

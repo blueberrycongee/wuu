@@ -204,7 +204,12 @@ func (c *Coordinator) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult
 	// 5. Spawn via manager. We pass the worker ID we already created
 	// the worktree under so they line up. Manager will pick its own
 	// internal ID; we surface BOTH.
-	sa, err := c.manager.Spawn(ctx, subagent.SpawnOptions{
+	workerCtx := ctx
+	if !req.Synchronous {
+		workerCtx = context.WithoutCancel(ctx)
+	}
+
+	sa, err := c.manager.Spawn(workerCtx, subagent.SpawnOptions{
 		Type:         wtype,
 		Description:  req.Description,
 		Prompt:       req.Prompt,
@@ -349,7 +354,12 @@ func (c *Coordinator) Fork(ctx context.Context, req ForkRequest, parentHistory [
 	// Note: we deliberately do NOT set SystemPrompt — when
 	// InitialHistory is non-nil, the subagent runner uses
 	// history[0] as the system message and ignores the option.
-	sa, err := c.manager.Spawn(ctx, subagent.SpawnOptions{
+	workerCtx := ctx
+	if !req.Synchronous {
+		workerCtx = context.WithoutCancel(ctx)
+	}
+
+	sa, err := c.manager.Spawn(workerCtx, subagent.SpawnOptions{
 		Type:           "fork",
 		Description:    req.Description,
 		Prompt:         req.Prompt,

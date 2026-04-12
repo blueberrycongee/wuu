@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -419,6 +420,89 @@ func TestSendMessage_QueuesWhileRunning(t *testing.T) {
 	c.StopAll()
 }
 
+func TestSpawn_AsyncDetachedFromParentContext(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	c, err := New(Config{
+		Client:        &slowClient{},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, "wt"),
+		SessionID:     "sess-detached-spawn",
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	res, err := c.Spawn(parentCtx, SpawnRequest{
+		Type: "worker", Description: "slow", Prompt: "p",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	cancelParent()
+	time.Sleep(50 * time.Millisecond)
+
+	sa := c.Manager().Get(res.AgentID)
+	if sa == nil {
+		t.Fatalf("expected worker %q to exist", res.AgentID)
+	}
+	if snap := sa.Snapshot(); snap.Status != subagent.StatusRunning {
+		t.Fatalf("expected detached async worker to keep running after parent cancel, got %s", snap.Status)
+	}
+
+	c.StopAll()
+	waitForRunningWorkersToStop(t, c.Manager(), time.Second)
+}
+
+func TestFork_AsyncDetachedFromParentContext(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+
+	c, err := New(Config{
+		Client:        &slowClient{},
+		DefaultModel:  "fake",
+		ParentRepo:    dir,
+		WorktreeRoot:  filepath.Join(dir, "wt"),
+		SessionID:     "sess-detached-fork",
+		WorkerFactory: func(string, WorkerType) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentHistory := []providers.ChatMessage{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "hello"},
+	}
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	res, err := c.Fork(parentCtx, ForkRequest{
+		Description: "slow fork",
+		Prompt:      "continue",
+	}, parentHistory)
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+
+	cancelParent()
+	time.Sleep(50 * time.Millisecond)
+
+	sa := c.Manager().Get(res.AgentID)
+	if sa == nil {
+		t.Fatalf("expected worker %q to exist", res.AgentID)
+	}
+	if snap := sa.Snapshot(); snap.Status != subagent.StatusRunning {
+		t.Fatalf("expected detached async fork to keep running after parent cancel, got %s", snap.Status)
+	}
+
+	c.StopAll()
+	waitForRunningWorkersToStop(t, c.Manager(), time.Second)
+}
+
 func TestSendMessage_RejectsCompletedWorker(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
@@ -498,6 +582,18 @@ func TestFormatWorkerResult(t *testing.T) {
 	if !contains(xml, "completed") {
 		t.Fatalf("status missing: %s", xml)
 	}
+}
+
+func waitForRunningWorkersToStop(t *testing.T, mgr *subagent.Manager, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if mgr.CountRunning() == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected workers to stop within %s, still have %d running", timeout, mgr.CountRunning())
 }
 
 func TestFormatWorkerResult_IncludesErrorClass(t *testing.T) {

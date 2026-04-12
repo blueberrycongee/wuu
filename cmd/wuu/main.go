@@ -225,7 +225,7 @@ func runTUI(args []string) error {
 	themeMode := fs.String("theme", "", "theme override: auto|dark|light")
 	workdir := fs.String("workdir", "", "workspace directory")
 	noTools := fs.Bool("no-tools", false, "disable local tools")
-	requestTimeout := fs.Duration("request-timeout", 10*time.Minute, "single request timeout (e.g. 2m)")
+	requestTimeout := fs.Duration("request-timeout", 0, "turn timeout (e.g. 2m, 0 disables)")
 	memoryFile := fs.String("memory-file", "", "session memory file path (deprecated, use sessions)")
 	resumeID := fs.String("resume", "", "resume session by ID (empty with flag = most recent)")
 	if err := fs.Parse(args); err != nil {
@@ -750,5 +750,5 @@ TUI flags:
   --workdir         workspace directory
   --no-tools        disable local tools
   --memory-file     session memory file path
-  --request-timeout single request timeout (default 10m)`)
+  --request-timeout turn timeout (default disabled)`)
 }

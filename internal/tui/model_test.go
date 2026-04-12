@@ -994,6 +994,26 @@ func TestNewModel_RequestTimeout(t *testing.T) {
 	}
 }
 
+func TestNewRequestContext_NoTimeoutHasNoDeadline(t *testing.T) {
+	m := Model{}
+	ctx, cancel := m.newRequestContext()
+	defer cancel()
+
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("expected no deadline when request timeout is disabled")
+	}
+}
+
+func TestNewRequestContext_WithTimeoutSetsDeadline(t *testing.T) {
+	m := Model{requestTimeout: 2 * time.Second}
+	ctx, cancel := m.newRequestContext()
+	defer cancel()
+
+	if _, ok := ctx.Deadline(); !ok {
+		t.Fatal("expected deadline when request timeout is configured")
+	}
+}
+
 func TestRenderToolCard_Done_Collapsed(t *testing.T) {
 	tc := ToolCallEntry{
 		Name:      "read_file",
