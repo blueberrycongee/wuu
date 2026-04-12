@@ -11,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -1180,12 +1182,57 @@ func (t *Toolkit) glob(argsJSON string) (string, error) {
 		return "", errors.New("glob requires pattern")
 	}
 
-	limit := 100
+	const limit = 100
+	matches, err := t.globWithRipgrep(context.Background(), args.Pattern, limit)
+	if err != nil {
+		matches, err = t.globWithFallback(args.Pattern, limit)
+		if err != nil {
+			return "", err
+		}
+	}
 
-	pattern := args.Pattern
-	var matches []string
+	result := map[string]any{
+		"pattern":   args.Pattern,
+		"total":     len(matches),
+		"truncated": len(matches) >= limit,
+		"files":     matches,
+	}
+	return mustJSON(result)
+}
 
-	filepath.Walk(t.rootDir, func(path string, info os.FileInfo, err error) error {
+func (t *Toolkit) globWithRipgrep(ctx context.Context, pattern string, limit int) ([]string, error) {
+	cmd := buildRGFilesCommand(ctx, pattern)
+	if cmd == nil {
+		return nil, errors.New("ripgrep not available")
+	}
+	cmd.Dir = t.rootDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	matches := make([]string, 0, min(limit, 16))
+	for _, entry := range bytes.Split(output, []byte{0}) {
+		if len(entry) == 0 {
+			continue
+		}
+		matches = append(matches, filepath.ToSlash(string(entry)))
+		if len(matches) >= limit {
+			break
+		}
+	}
+	sort.Strings(matches)
+	return matches, nil
+}
+
+func (t *Toolkit) globWithFallback(pattern string, limit int) ([]string, error) {
+	matches := make([]string, 0, min(limit, 16))
+	_ = filepath.Walk(t.rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -1196,7 +1243,11 @@ func (t *Toolkit) glob(argsJSON string) (string, error) {
 			return nil
 		}
 
-		rel, _ := filepath.Rel(t.rootDir, path)
+		rel, err := filepath.Rel(t.rootDir, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
 		if matchGlob(pattern, rel) {
 			matches = append(matches, rel)
 		}
@@ -1205,14 +1256,8 @@ func (t *Toolkit) glob(argsJSON string) (string, error) {
 		}
 		return nil
 	})
-
-	result := map[string]any{
-		"pattern":   pattern,
-		"total":     len(matches),
-		"truncated": len(matches) >= limit,
-		"files":     matches,
-	}
-	return mustJSON(result)
+	sort.Strings(matches)
+	return matches, nil
 }
 
 func (t *Toolkit) resolvePath(input string) (string, error) {
@@ -1280,6 +1325,71 @@ func normalizeDisplayPath(rootDir, absPath string) string {
 	return rel
 }
 
+var (
+	rgLookupPath = exec.LookPath
+	rgCommand    = exec.CommandContext
+	rgPathOnce   sync.Once
+	rgPath       string
+)
+
+func lookupRG() string {
+	rgPathOnce.Do(func() {
+		path, err := rgLookupPath("rg")
+		if err == nil {
+			rgPath = path
+		}
+	})
+	return rgPath
+}
+
+func resetRGForTests() {
+	rgPathOnce = sync.Once{}
+	rgPath = ""
+}
+
+func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
+	name := lookupRG()
+	if name == "" {
+		return nil
+	}
+	args := []string{"--files", "-0", "--glob", pattern}
+	return rgCommand(ctx, name, args...)
+}
+
+func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string) *exec.Cmd {
+	name := lookupRG()
+	if name == "" {
+		return nil
+	}
+	args := []string{"--json", "-H", "-n", pattern}
+	if include != "" {
+		args = append(args, "--glob", include)
+	}
+	if strings.TrimSpace(searchRoot) != "" {
+		args = append(args, searchRoot)
+	}
+	return rgCommand(ctx, name, args...)
+}
+
+type grepMatch struct {
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Content string `json:"content"`
+}
+
+type rgJSONEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		Path struct {
+			Text string `json:"text"`
+		} `json:"path"`
+		Lines struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+		LineNumber int `json:"line_number"`
+	} `json:"data"`
+}
+
 func isSkippedDir(name string) bool {
 	switch name {
 	case ".git", ".wuu", ".hg", ".svn", "node_modules", "vendor", "__pycache__", ".tox", ".venv":
@@ -1305,47 +1415,48 @@ func isBinaryFile(path string) bool {
 }
 
 func matchGlob(pattern, path string) bool {
-	// Handle **/ prefix: match suffix against any file in the tree
-	if strings.HasPrefix(pattern, "**/") {
-		suffix := pattern[3:]
-		// Match against just the filename
-		if matched, _ := filepath.Match(suffix, filepath.Base(path)); matched {
-			return true
-		}
-		// Match against each possible tail of the path
-		parts := strings.Split(path, string(filepath.Separator))
-		for i := range parts {
-			tail := strings.Join(parts[i:], string(filepath.Separator))
-			if matched, _ := filepath.Match(suffix, tail); matched {
-				return true
-			}
-		}
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	path = filepath.ToSlash(path)
+	if pattern == "" {
 		return false
 	}
-
-	// Handle patterns with ** in the middle (e.g. src/**/*.ts)
-	if idx := strings.Index(pattern, "/**/"); idx >= 0 {
-		prefix := pattern[:idx]
-		suffix := pattern[idx+4:]
-		parts := strings.Split(path, string(filepath.Separator))
-		for i := range parts {
-			dirPart := strings.Join(parts[:i], string(filepath.Separator))
-			filePart := strings.Join(parts[i:], string(filepath.Separator))
-			prefixMatch, _ := filepath.Match(prefix, dirPart)
-			suffixMatch, _ := filepath.Match(suffix, filepath.Base(filePart))
-			if prefixMatch && suffixMatch {
-				return true
-			}
-		}
+	if !strings.Contains(pattern, "/") {
+		matched, _ := filepath.Match(pattern, filepath.Base(path))
+		return matched
+	}
+	re, err := regexp.Compile(globToRegexp(pattern))
+	if err != nil {
 		return false
 	}
+	return re.MatchString(path)
+}
 
-	// Direct match
-	matched, _ := filepath.Match(pattern, path)
-	if matched {
-		return true
+func globToRegexp(pattern string) string {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					b.WriteString("(?:.*/)?")
+					i += 2
+					continue
+				}
+				b.WriteString(".*")
+				i++
+				continue
+			}
+			b.WriteString("[^/]*")
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(pattern[i])
+		default:
+			b.WriteByte(pattern[i])
+		}
 	}
-	// Also try matching just the filename for simple patterns
-	matched, _ = filepath.Match(pattern, filepath.Base(path))
-	return matched
+	b.WriteString("$")
+	return b.String()
 }

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -458,5 +460,119 @@ func TestToolkit_RunShell(t *testing.T) {
 	}
 	if !strings.Contains(parsed["output"].(string), "hi") {
 		t.Fatalf("unexpected output: %v", parsed["output"])
+	}
+}
+
+type execCommandFunc func(context.Context, string, ...string) *exec.Cmd
+
+func withRGTestHooks(t *testing.T, lookup func(string) (string, error), cmd execCommandFunc) {
+	t.Helper()
+	origLookup := rgLookupPath
+	origCmd := rgCommand
+	rgLookupPath = lookup
+	if cmd != nil {
+		rgCommand = cmd
+	}
+	resetRGForTests()
+	t.Cleanup(func() {
+		rgLookupPath = origLookup
+		rgCommand = origCmd
+		resetRGForTests()
+	})
+}
+
+func TestToolkit_GlobRipgrepFirst(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	files := map[string]string{
+		"src/app/main.ts": "export const main = true\n",
+		"src/lib/util.ts": "export const util = true\n",
+		"src/lib/util.js": "export const util = true\n",
+		"README.md":       "# readme\n",
+	}
+	for path, content := range files {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"*.md"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob *.md: %v", err)
+	}
+	var parsed struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	if len(parsed.Files) != 1 || parsed.Files[0] != "README.md" {
+		t.Fatalf("unexpected matches for *.md: %+v", parsed.Files)
+	}
+
+	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"src/**/*.ts"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob src/**/*.ts: %v", err)
+	}
+	parsed.Files = nil
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	want := []string{"src/app/main.ts", "src/lib/util.ts"}
+	if !reflect.DeepEqual(parsed.Files, want) {
+		t.Fatalf("unexpected matches for src/**/*.ts: got %+v want %+v", parsed.Files, want)
+	}
+}
+
+func TestToolkit_GlobFallbackWithoutRG(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
+
+	for path, content := range map[string]string{
+		"src/app/main.ts": "main\n",
+		"src/app/main.js": "main\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"src/**/*.ts"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob fallback: %v", err)
+	}
+	var parsed struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	if !reflect.DeepEqual(parsed.Files, []string{"src/app/main.ts"}) {
+		t.Fatalf("unexpected fallback matches: %+v", parsed.Files)
 	}
 }
