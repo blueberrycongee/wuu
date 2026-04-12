@@ -322,7 +322,7 @@ func NewModel(cfg Config) Model {
 	vp.SetContent("")
 	vp.MouseWheelDelta = 1
 
-	in := newInputTextarea()
+	in := defaultInputTextarea
 
 	m := Model{
 		provider:           cfg.Provider,

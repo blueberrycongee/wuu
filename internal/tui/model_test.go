@@ -599,7 +599,7 @@ func TestMouseDragSelectionAutoScrollsPastEdge(t *testing.T) {
 	m.setViewportOffset(0)
 	startOffset := m.viewport.YOffset
 
-	// Press inside the chat area to begin a pending click.
+	// Press inside the chat area to begin a selection.
 	pressX := m.layout.Chat.X + 2
 	pressY := m.layout.Chat.Y + 1
 	updated, _ := m.Update(tea.MouseMsg{
@@ -614,7 +614,7 @@ func TestMouseDragSelectionAutoScrollsPastEdge(t *testing.T) {
 	}
 
 	// Drag past the bottom of the chat area. The motion handler
-	// must scroll the viewport, start the selection, and start the auto-scroll ticker.
+	// must scroll the viewport AND start the auto-scroll ticker.
 	belowY := pressed.layout.Chat.Y + pressed.layout.Chat.Height + 2
 	updated, cmd := pressed.Update(tea.MouseMsg{
 		Action: tea.MouseActionMotion,
@@ -623,12 +623,12 @@ func TestMouseDragSelectionAutoScrollsPastEdge(t *testing.T) {
 		Y:      belowY,
 	})
 	afterMotion := updated.(Model)
-	if !afterMotion.selection.IsDragging {
-		t.Fatal("expected drag past edge to start selection")
-	}
 	if afterMotion.viewport.YOffset <= startOffset {
 		t.Fatalf("expected motion past edge to scroll viewport: start=%d after=%d",
 			startOffset, afterMotion.viewport.YOffset)
+	}
+	if !afterMotion.selection.IsDragging {
+		t.Fatal("expected motion past threshold to start selection drag")
 	}
 	if !afterMotion.selectionAutoScroll.active {
 		t.Fatal("expected auto-scroll state to be active after dragging past edge")
@@ -1668,5 +1668,45 @@ func TestRenderWorkerPanel_UsesSharedWaitingLanguage(t *testing.T) {
 	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
 	if got := m.renderWorkerPanel(80); got != "" {
 		t.Fatalf("expected empty worker panel without coordinator, got %q", got)
+	}
+}
+
+func TestNewInputTextarea_UsesThemeStyles(t *testing.T) {
+	m := newInputTextarea()
+	if got := m.FocusedStyle.Text.GetForeground(); got != currentTheme.Text {
+		t.Fatalf("expected focused text color %v, got %v", currentTheme.Text, got)
+	}
+	if got := m.FocusedStyle.Placeholder.GetForeground(); got != currentTheme.Inactive {
+		t.Fatalf("expected placeholder color %v, got %v", currentTheme.Inactive, got)
+	}
+	if got := m.FocusedStyle.Prompt.GetForeground(); got != currentTheme.Brand {
+		t.Fatalf("expected prompt color %v, got %v", currentTheme.Brand, got)
+	}
+	if got := m.BlurredStyle.Prompt.GetForeground(); got != currentTheme.Subtle {
+		t.Fatalf("expected blurred prompt color %v, got %v", currentTheme.Subtle, got)
+	}
+}
+
+func TestApplyThemeRefreshesTextareaDefaults(t *testing.T) {
+	orig := currentTheme
+	defer applyTheme(orig)
+
+	applyTheme(lightTheme)
+	lightInput := newInputTextarea()
+	if got := lightInput.FocusedStyle.Text.GetForeground(); got != lightTheme.Text {
+		t.Fatalf("expected light theme text color %v, got %v", lightTheme.Text, got)
+	}
+
+	applyTheme(darkTheme)
+	darkInput := newInputTextarea()
+	if got := darkInput.FocusedStyle.Text.GetForeground(); got != darkTheme.Text {
+		t.Fatalf("expected dark theme text color %v, got %v", darkTheme.Text, got)
+	}
+}
+
+func TestNewOnboardingTextarea_UsesThemeStyles(t *testing.T) {
+	m := newOnboardingTextarea()
+	if got := m.FocusedStyle.Text.GetForeground(); got != currentTheme.Text {
+		t.Fatalf("expected onboarding text color %v, got %v", currentTheme.Text, got)
 	}
 }
