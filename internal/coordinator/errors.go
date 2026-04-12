@@ -41,7 +41,7 @@ func ClassifyError(err error) ErrorClass {
 	if err == nil {
 		return ErrorClassFatal
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
 		return ErrorClassCancelled
 	}
 	if providers.IsContextOverflow(err) {

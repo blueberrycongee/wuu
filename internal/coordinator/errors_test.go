@@ -27,7 +27,12 @@ func TestClassifyError(t *testing.T) {
 		{
 			name: "context deadline exceeded",
 			err:  context.DeadlineExceeded,
-			want: ErrorClassCancelled,
+			want: ErrorClassRetryable,
+		},
+		{
+			name: "wrapped idle timeout stays retryable",
+			err:  errors.New("stream request failed: stream idle timeout after 5m0s: context deadline exceeded"),
+			want: ErrorClassRetryable,
 		},
 		{
 			name: "context overflow takes precedence over retryable",

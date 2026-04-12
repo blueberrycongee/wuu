@@ -54,6 +54,19 @@ func (m *mockStreamClient) StreamChat(_ context.Context, req providers.ChatReque
 	return ch, nil
 }
 
+func TestStreamRunner_DefaultRetryConfigMatchesCodex(t *testing.T) {
+	cfg := (&StreamRunner{}).streamRetryConfig()
+	if cfg.MaxRetries != 5 {
+		t.Fatalf("expected 5 retries, got %d", cfg.MaxRetries)
+	}
+	if cfg.InitialDelay != 200*time.Millisecond {
+		t.Fatalf("expected 200ms initial delay, got %s", cfg.InitialDelay)
+	}
+	if cfg.MaxDelay != 5*time.Second {
+		t.Fatalf("expected 5s max delay, got %s", cfg.MaxDelay)
+	}
+}
+
 func TestStreamRunner_SimpleContent(t *testing.T) {
 	client := &mockStreamClient{
 		events: []providers.StreamEvent{

@@ -21,8 +21,8 @@ import (
 const defaultTimeout = 120 * time.Second
 
 // defaultStreamIdleTimeout is the maximum silence between SSE chunks before
-// the watchdog aborts the stream. Aligned with Claude Code's 90s default.
-const defaultStreamIdleTimeout = 90 * time.Second
+// the watchdog aborts the stream. Matches Codex's default provider setting.
+const defaultStreamIdleTimeout = 300 * time.Second
 
 func streamIdleTimeout() time.Duration {
 	if v := os.Getenv("WUU_STREAM_IDLE_TIMEOUT_MS"); v != "" {

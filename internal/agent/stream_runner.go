@@ -53,8 +53,7 @@ type StreamRunner struct {
 	// messages are appended to history for that round.
 	BeforeStep func() []providers.ChatMessage
 
-	// Stream reconnect policy (more aggressive than codex default 5).
-	// Zero values use built-in defaults.
+	// Stream reconnect policy. Zero values use the Codex-aligned defaults.
 	StreamMaxRetries        int
 	StreamRetryInitialDelay time.Duration
 	StreamRetryMaxDelay     time.Duration
@@ -376,9 +375,8 @@ func (s *streamStep) runStreamWithReconnect(
 
 func (r *StreamRunner) streamRetryConfig() providers.RetryConfig {
 	cfg := providers.DefaultRetryConfig()
-	// Codex default is 5; we default to 6 to be slightly more aggressive.
-	cfg.MaxRetries = 6
-	cfg.InitialDelay = 250 * time.Millisecond
+	cfg.MaxRetries = 5
+	cfg.InitialDelay = 200 * time.Millisecond
 	cfg.MaxDelay = 5 * time.Second
 	if r.StreamMaxRetries > 0 {
 		cfg.MaxRetries = r.StreamMaxRetries
