@@ -1,6 +1,9 @@
 package providers
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ToolDefinition describes a callable tool exposed to the model.
 type ToolDefinition struct {
@@ -39,12 +42,15 @@ type ChatMessage struct {
 // CacheHint carries provider-agnostic prompt-cache guidance.
 //
 // The goal is not to model every provider's caching surface area.
-// wuu only needs two cross-provider signals:
+// wuu only needs a small set of cross-provider signals:
 //   - PromptCacheKey: a stable conversation-scoped cache key for
 //     OpenAI-compatible APIs that expose one.
 //   - StableSystem/StablePrefixMessages: which request prefix is
 //     stable enough to mark as cache-eligible on providers like
 //     Anthropic.
+//   - HasCompactSummary: whether the stable prefix starts with a
+//     compacted conversation summary, so providers can bias cache
+//     anchors toward that rewritten history root.
 //
 // Providers are free to ignore hints they don't support.
 type CacheHint struct {
@@ -59,6 +65,11 @@ type CacheHint struct {
 	// Providers that lift system prompts out of the normal message
 	// array can use this value directly without reindexing.
 	StablePrefixMessages int
+	// HasCompactSummary reports that the leading system prompt contains
+	// a compacted conversation summary. This lets providers prefer a
+	// cache anchor close to the rewritten history root without needing
+	// a heavier session-parts model.
+	HasCompactSummary bool
 }
 
 // ChatRequest is the normalized request payload for providers.
@@ -100,11 +111,34 @@ const (
 	EventToolUseStart  StreamEventType = "tool_use_start"
 	EventToolUseDelta  StreamEventType = "tool_use_delta"
 	EventToolUseEnd    StreamEventType = "tool_use_end"
+	EventLifecycle     StreamEventType = "lifecycle"
 	EventReconnect     StreamEventType = "reconnect"
 	EventCompact       StreamEventType = "compact"
 	EventDone          StreamEventType = "done"
 	EventError         StreamEventType = "error"
 )
+
+// StreamLifecyclePhase is the structured state of the live response transport.
+type StreamLifecyclePhase string
+
+const (
+	StreamPhaseConnecting   StreamLifecyclePhase = "connecting"
+	StreamPhaseConnected    StreamLifecyclePhase = "connected"
+	StreamPhaseReconnecting StreamLifecyclePhase = "reconnecting"
+	StreamPhaseFailed       StreamLifecyclePhase = "failed"
+)
+
+// StreamLifecycle carries retry metadata for one streaming connection attempt.
+// Attempt is 1-based and includes the initial connect.
+type StreamLifecycle struct {
+	Phase       StreamLifecyclePhase
+	Attempt     int
+	MaxAttempts int
+	RetryCount  int
+	MaxRetries  int
+	RetryIn     time.Duration
+	Reason      string
+}
 
 // TokenUsage reports token consumption for a single API call. Cache
 // fields are populated when the provider supports prompt caching:
@@ -150,6 +184,7 @@ type StreamEvent struct {
 	Content    string
 	ToolCall   *ToolCall
 	ToolResult string
+	Lifecycle  *StreamLifecycle
 	Error      error
 	Usage      *TokenUsage
 	// StopReason / Truncated are populated on the terminal EventDone

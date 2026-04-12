@@ -75,10 +75,11 @@ func buildClientWithRetry(provider config.ProviderConfig, providerName string, r
 	switch typeName {
 	case "openai", "openai-compatible", "codex":
 		client, newErr := openai.New(openai.ClientConfig{
-			BaseURL:     provider.BaseURL,
-			APIKey:      apiKey,
-			Headers:     provider.Headers,
-			RetryConfig: retry,
+			BaseURL:      provider.BaseURL,
+			APIKey:       apiKey,
+			Headers:      provider.Headers,
+			RetryConfig:  retry,
+			StreamConfig: providerStreamTransportConfig(provider),
 		})
 		if newErr != nil {
 			return nil, newErr
@@ -86,10 +87,11 @@ func buildClientWithRetry(provider config.ProviderConfig, providerName string, r
 		return client, nil
 	case "anthropic", "claude", "anthropic-official":
 		client, newErr := anthropic.New(anthropic.ClientConfig{
-			BaseURL:     provider.BaseURL,
-			APIKey:      apiKey,
-			Headers:     provider.Headers,
-			RetryConfig: retry,
+			BaseURL:      provider.BaseURL,
+			APIKey:       apiKey,
+			Headers:      provider.Headers,
+			RetryConfig:  retry,
+			StreamConfig: providerStreamTransportConfig(provider),
 		})
 		if newErr != nil {
 			return nil, newErr
@@ -98,6 +100,20 @@ func buildClientWithRetry(provider config.ProviderConfig, providerName string, r
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", provider.Type)
 	}
+}
+
+func providerStreamTransportConfig(provider config.ProviderConfig) *providers.StreamTransportConfig {
+	cfg := providers.StreamTransportConfig{}
+	if provider.StreamConnectTimeoutMS > 0 {
+		cfg.ConnectTimeout = time.Duration(provider.StreamConnectTimeoutMS) * time.Millisecond
+	}
+	if provider.StreamIdleTimeoutMS > 0 {
+		cfg.IdleTimeout = time.Duration(provider.StreamIdleTimeoutMS) * time.Millisecond
+	}
+	if cfg == (providers.StreamTransportConfig{}) {
+		return nil
+	}
+	return &cfg
 }
 
 func normalizeType(value string) string {

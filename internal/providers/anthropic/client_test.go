@@ -116,6 +116,81 @@ func TestChat_AnthropicAddsCacheControlFromHint(t *testing.T) {
 	}
 }
 
+func TestChat_AnthropicPrefersCompactSummaryAsCacheAnchor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) != 3 {
+			t.Fatalf("expected three non-system messages, got %#v", body["messages"])
+		}
+		first, ok := msgs[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected first message: %#v", msgs[0])
+		}
+		firstContent, ok := first["content"].([]any)
+		if !ok || len(firstContent) != 1 {
+			t.Fatalf("unexpected first content payload: %#v", first["content"])
+		}
+		firstBlock, ok := firstContent[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected first block: %#v", firstContent[0])
+		}
+		if firstBlock["text"] != "stable summary payload" {
+			t.Fatalf("unexpected summary payload: %#v", firstBlock)
+		}
+		cacheControl, ok := firstBlock["cache_control"].(map[string]any)
+		if !ok || cacheControl["type"] != "ephemeral" {
+			t.Fatalf("expected cache_control on compact summary anchor, got %#v", firstBlock["cache_control"])
+		}
+
+		second, ok := msgs[1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected second message: %#v", msgs[1])
+		}
+		secondContent, ok := second["content"].([]any)
+		if !ok || len(secondContent) != 1 {
+			t.Fatalf("unexpected second content payload: %#v", second["content"])
+		}
+		secondBlock, ok := secondContent[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected second block: %#v", secondContent[0])
+		}
+		if _, exists := secondBlock["cache_control"]; exists {
+			t.Fatalf("did not expect cache_control on latest stable message when compact summary is present: %#v", secondBlock)
+		}
+
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: "[Conversation summary]\nrewritten history"},
+			{Role: "user", Content: "stable summary payload"},
+			{Role: "assistant", Content: "older stable answer"},
+			{Role: "user", Content: "latest ask"},
+		},
+		CacheHint: &providers.CacheHint{
+			StableSystem:         true,
+			StablePrefixMessages: 2,
+			HasCompactSummary:    true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+}
+
 func TestChat_AnthropicOmitsCacheControlWithoutHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any

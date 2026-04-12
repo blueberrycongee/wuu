@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -20,35 +18,30 @@ import (
 
 const defaultTimeout = 120 * time.Second
 
-// defaultStreamIdleTimeout is the maximum silence between SSE chunks before
-// the watchdog aborts the stream. Matches Codex's default provider setting.
-const defaultStreamIdleTimeout = 300 * time.Second
-
-func streamIdleTimeout() time.Duration {
-	if v := os.Getenv("WUU_STREAM_IDLE_TIMEOUT_MS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return time.Duration(n) * time.Millisecond
-		}
-	}
-	return defaultStreamIdleTimeout
+func streamTransportConfig(cfg *providers.StreamTransportConfig) providers.StreamTransportConfig {
+	return providers.ResolveStreamTransportConfig(cfg)
 }
 
-func newStreamingHTTPClient(base *http.Client) *http.Client {
-	if base == nil {
-		return &http.Client{}
-	}
-	streamClient := *base
-	streamClient.Timeout = 0
-	return &streamClient
+func streamIdleTimeout() time.Duration {
+	return streamTransportConfig(nil).IdleTimeout
+}
+
+func streamConnectTimeout() time.Duration {
+	return streamTransportConfig(nil).ConnectTimeout
+}
+
+func newStreamingHTTPClient(base *http.Client, cfg providers.StreamTransportConfig) *http.Client {
+	return providers.BuildStreamingHTTPClient(base, cfg)
 }
 
 // ClientConfig configures an OpenAI-compatible chat completions endpoint.
 type ClientConfig struct {
-	BaseURL     string
-	APIKey      string
-	Headers     map[string]string
-	HTTPClient  *http.Client
-	RetryConfig *providers.RetryConfig
+	BaseURL      string
+	APIKey       string
+	Headers      map[string]string
+	HTTPClient   *http.Client
+	RetryConfig  *providers.RetryConfig
+	StreamConfig *providers.StreamTransportConfig
 }
 
 // Client sends tool-enabled chat requests to OpenAI-compatible APIs.
@@ -59,6 +52,7 @@ type Client struct {
 	httpClient           *http.Client
 	retryConfig          providers.RetryConfig
 	promptCacheKeyFormat promptCacheKeyFormat
+	streamConfig         providers.StreamTransportConfig
 }
 
 // New creates an OpenAI-compatible client.
@@ -87,6 +81,7 @@ func New(cfg ClientConfig) (*Client, error) {
 		httpClient:           hc,
 		retryConfig:          rc,
 		promptCacheKeyFormat: detectPromptCacheKeyFormat(cfg.BaseURL, cfg.Headers),
+		streamConfig:         streamTransportConfig(cfg.StreamConfig),
 	}, nil
 }
 
@@ -233,7 +228,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 
 	// Streaming turns can legitimately outlive the buffered request timeout.
 	// Let the caller's ctx and the idle watchdog own cancellation instead.
-	streamClient := newStreamingHTTPClient(c.httpClient)
+	streamClient := newStreamingHTTPClient(c.httpClient, c.streamConfig)
 	resp, err := c.doChatCompletionsRequest(ctx, streamClient, body, true)
 	if err != nil {
 		return nil, err
@@ -297,7 +292,7 @@ func (c *Client) readSSE(resp *http.Response, ch chan<- providers.StreamEvent) {
 	// Idle watchdog: if no chunk arrives within streamIdleTimeout(),
 	// close the body to abort the scanner. Wrap the surfaced error in
 	// context.DeadlineExceeded so the retry classifier picks it up.
-	idleTimeout := streamIdleTimeout()
+	idleTimeout := c.streamConfig.IdleTimeout
 	var idleFired atomic.Bool
 	idleTimer := time.AfterFunc(idleTimeout, func() {
 		idleFired.Store(true)

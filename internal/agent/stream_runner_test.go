@@ -93,15 +93,20 @@ func TestStreamRunner_SimpleContent(t *testing.T) {
 		t.Fatalf("unexpected result: %q", result)
 	}
 
-	// OnEvent should receive all events.
-	if len(received) != 3 {
-		t.Fatalf("expected 3 events, got %d", len(received))
+	if len(received) != 5 {
+		t.Fatalf("expected 5 events including lifecycle, got %d", len(received))
 	}
-	if received[0].Type != providers.EventContentDelta || received[0].Content != "Hello " {
+	if received[0].Type != providers.EventLifecycle || received[0].Lifecycle == nil || received[0].Lifecycle.Phase != providers.StreamPhaseConnecting {
 		t.Fatalf("unexpected first event: %+v", received[0])
 	}
-	if received[2].Type != providers.EventDone {
-		t.Fatalf("expected last event to be done, got %s", received[2].Type)
+	if received[1].Type != providers.EventLifecycle || received[1].Lifecycle == nil || received[1].Lifecycle.Phase != providers.StreamPhaseConnected {
+		t.Fatalf("unexpected second event: %+v", received[1])
+	}
+	if received[2].Type != providers.EventContentDelta || received[2].Content != "Hello " {
+		t.Fatalf("unexpected first content event: %+v", received[2])
+	}
+	if received[4].Type != providers.EventDone {
+		t.Fatalf("expected last event to be done, got %s", received[4].Type)
 	}
 }
 
@@ -222,6 +227,57 @@ func TestStreamRunner_RetryOnInitialConnectError(t *testing.T) {
 	}
 	if len(reconnectMsgs) != 1 {
 		t.Fatalf("expected 1 reconnect event, got %d", len(reconnectMsgs))
+	}
+}
+
+func TestStreamRunner_EmitsStructuredLifecycleEvents(t *testing.T) {
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{err: errors.New("EOF")},
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "ok"},
+					{Type: providers.EventDone},
+				},
+			},
+		},
+	}
+
+	var lifecycle []*providers.StreamLifecycle
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "m",
+		StreamMaxRetries:        2,
+		StreamRetryInitialDelay: time.Millisecond,
+		StreamRetryMaxDelay:     2 * time.Millisecond,
+		OnEvent: func(ev providers.StreamEvent) {
+			if ev.Type == providers.EventLifecycle && ev.Lifecycle != nil {
+				lifecycle = append(lifecycle, ev.Lifecycle)
+			}
+		},
+	}
+
+	result, err := runner.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("unexpected result: %q", result)
+	}
+	if len(lifecycle) < 4 {
+		t.Fatalf("expected lifecycle events, got %d", len(lifecycle))
+	}
+	if lifecycle[0].Phase != providers.StreamPhaseConnecting || lifecycle[0].Attempt != 1 {
+		t.Fatalf("unexpected first lifecycle event: %+v", lifecycle[0])
+	}
+	if lifecycle[1].Phase != providers.StreamPhaseReconnecting || lifecycle[1].RetryCount != 1 || lifecycle[1].Attempt != 2 {
+		t.Fatalf("unexpected reconnect lifecycle event: %+v", lifecycle[1])
+	}
+	if lifecycle[2].Phase != providers.StreamPhaseConnecting || lifecycle[2].Attempt != 2 {
+		t.Fatalf("unexpected second connecting event: %+v", lifecycle[2])
+	}
+	if lifecycle[3].Phase != providers.StreamPhaseConnected || lifecycle[3].Attempt != 2 {
+		t.Fatalf("unexpected connected lifecycle event: %+v", lifecycle[3])
 	}
 }
 

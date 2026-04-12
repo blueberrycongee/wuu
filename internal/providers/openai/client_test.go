@@ -207,6 +207,13 @@ func TestStreamIdleTimeout_DefaultMatchesCodex(t *testing.T) {
 	}
 }
 
+func TestStreamConnectTimeout_DefaultMatchesCodexStyleSplitDeadline(t *testing.T) {
+	t.Setenv("WUU_STREAM_CONNECT_TIMEOUT_MS", "")
+	if got := streamConnectTimeout(); got != 30*time.Second {
+		t.Fatalf("expected 30s default stream connect timeout, got %s", got)
+	}
+}
+
 func TestChat_SendsImageContentParts(t *testing.T) {
 	t.Helper()
 
@@ -528,7 +535,10 @@ func TestNewStreamingHTTPClient_DisablesOverallTimeout(t *testing.T) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	streamClient := newStreamingHTTPClient(base)
+	streamClient := newStreamingHTTPClient(base, providers.StreamTransportConfig{
+		ConnectTimeout: time.Second,
+		IdleTimeout:    5 * time.Second,
+	})
 
 	if streamClient == base {
 		t.Fatal("expected streaming client to clone the base client")
@@ -536,14 +546,53 @@ func TestNewStreamingHTTPClient_DisablesOverallTimeout(t *testing.T) {
 	if streamClient.Timeout != 0 {
 		t.Fatalf("expected streaming client timeout disabled, got %s", streamClient.Timeout)
 	}
-	if streamClient.Transport != base.Transport {
-		t.Fatal("expected streaming client to preserve transport")
+	if streamClient.Transport == base.Transport {
+		t.Fatal("expected streaming client transport to be cloned")
 	}
 	if streamClient.CheckRedirect == nil {
 		t.Fatal("expected streaming client to preserve redirect policy")
 	}
 	if base.Timeout != 5*time.Second {
 		t.Fatalf("expected base client timeout unchanged, got %s", base.Timeout)
+	}
+}
+
+func TestStreamChat_ConnectTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "test-key",
+		RetryConfig: &providers.RetryConfig{
+			MaxRetries:   0,
+			InitialDelay: time.Millisecond,
+			MaxDelay:     time.Millisecond,
+		},
+		StreamConfig: &providers.StreamTransportConfig{
+			ConnectTimeout: 50 * time.Millisecond,
+			IdleTimeout:    time.Second,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	start := time.Now()
+	_, err = client.StreamChat(context.Background(), providers.ChatRequest{
+		Model:    "gpt-test",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected connect timeout error")
+	}
+	if elapsed >= 250*time.Millisecond {
+		t.Fatalf("expected connect timeout to fail quickly, took %s", elapsed)
 	}
 }
 

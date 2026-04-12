@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -18,17 +16,16 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// defaultStreamIdleTimeout is the maximum silence between SSE chunks before
-// the watchdog aborts the stream. Matches Codex's default provider setting.
-const defaultStreamIdleTimeout = 300 * time.Second
+func streamTransportConfig(cfg *providers.StreamTransportConfig) providers.StreamTransportConfig {
+	return providers.ResolveStreamTransportConfig(cfg)
+}
 
 func streamIdleTimeout() time.Duration {
-	if v := os.Getenv("WUU_STREAM_IDLE_TIMEOUT_MS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return time.Duration(n) * time.Millisecond
-		}
-	}
-	return defaultStreamIdleTimeout
+	return streamTransportConfig(nil).IdleTimeout
+}
+
+func streamConnectTimeout() time.Duration {
+	return streamTransportConfig(nil).ConnectTimeout
 }
 
 const (
@@ -39,22 +36,24 @@ const (
 
 // ClientConfig configures an Anthropic messages endpoint.
 type ClientConfig struct {
-	BaseURL     string
-	APIKey      string
-	Headers     map[string]string
-	HTTPClient  *http.Client
-	MaxTokens   int
-	RetryConfig *providers.RetryConfig
+	BaseURL      string
+	APIKey       string
+	Headers      map[string]string
+	HTTPClient   *http.Client
+	MaxTokens    int
+	RetryConfig  *providers.RetryConfig
+	StreamConfig *providers.StreamTransportConfig
 }
 
 // Client sends tool-enabled chat requests to Anthropic APIs.
 type Client struct {
-	baseURL     string
-	apiKey      string
-	headers     map[string]string
-	httpClient  *http.Client
-	maxTokens   int
-	retryConfig providers.RetryConfig
+	baseURL      string
+	apiKey       string
+	headers      map[string]string
+	httpClient   *http.Client
+	maxTokens    int
+	retryConfig  providers.RetryConfig
+	streamConfig providers.StreamTransportConfig
 }
 
 // New creates an Anthropic client.
@@ -80,12 +79,13 @@ func New(cfg ClientConfig) (*Client, error) {
 	rc = providers.NormalizeRetryConfig(rc)
 
 	return &Client{
-		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:      cfg.APIKey,
-		headers:     cloneHeaders(cfg.Headers),
-		httpClient:  hc,
-		maxTokens:   maxTokens,
-		retryConfig: rc,
+		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:       cfg.APIKey,
+		headers:      cloneHeaders(cfg.Headers),
+		httpClient:   hc,
+		maxTokens:    maxTokens,
+		retryConfig:  rc,
+		streamConfig: streamTransportConfig(cfg.StreamConfig),
 	}, nil
 }
 
@@ -201,7 +201,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	sseClient := &http.Client{Timeout: 0}
+	sseClient := providers.BuildStreamingHTTPClient(c.httpClient, c.streamConfig)
 	resp, err := c.doMessagesRequest(ctx, sseClient, body)
 	if err != nil {
 		return nil, err
@@ -281,6 +281,10 @@ func applyAnthropicCacheHint(payload *anthropicRequest, hint *providers.CacheHin
 		stable = len(payload.Messages)
 	}
 	if stable == 0 {
+		return
+	}
+
+	if hint.HasCompactSummary && markAnthropicMessageForCache(&payload.Messages[0]) {
 		return
 	}
 	for i := stable - 1; i >= 0; i-- {
@@ -376,7 +380,7 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 	defer close(ch)
 	defer resp.Body.Close()
 
-	idleTimeout := streamIdleTimeout()
+	idleTimeout := c.streamConfig.IdleTimeout
 	var idleFired atomic.Bool
 	idleTimer := time.AfterFunc(idleTimeout, func() {
 		idleFired.Store(true)

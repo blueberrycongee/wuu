@@ -63,6 +63,12 @@ type ProviderConfig struct {
 	APIKeyEnv string            `json:"api_key_env,omitempty"`
 	Model     string            `json:"model"`
 	Headers   map[string]string `json:"headers,omitempty"`
+	// StreamConnectTimeoutMS bounds dial/TLS/response-header wait for one
+	// streaming connection attempt. It does not cap the whole turn.
+	StreamConnectTimeoutMS int `json:"stream_connect_timeout_ms,omitempty"`
+	// StreamIdleTimeoutMS bounds silence after the streaming response has
+	// started. It does not affect the initial connect stage.
+	StreamIdleTimeoutMS int `json:"stream_idle_timeout_ms,omitempty"`
 	// ContextWindow optionally overrides wuu's built-in registry for
 	// this provider's model. Use it for new models wuu doesn't know
 	// about yet, custom finetunes, private deployments, or proxies
@@ -187,6 +193,12 @@ func (c Config) Validate() error {
 		}
 		if provider.Model == "" {
 			return fmt.Errorf("providers.%s.model is required", name)
+		}
+		if provider.StreamConnectTimeoutMS < 0 {
+			return fmt.Errorf("providers.%s.stream_connect_timeout_ms cannot be negative", name)
+		}
+		if provider.StreamIdleTimeoutMS < 0 {
+			return fmt.Errorf("providers.%s.stream_idle_timeout_ms cannot be negative", name)
 		}
 	}
 

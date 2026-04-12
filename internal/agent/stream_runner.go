@@ -237,16 +237,38 @@ func (s *streamStep) runStreamWithReconnect(
 	cfg := s.retry
 	onEvent := s.onEvent
 	attempt := 0
+	emitLifecycle := func(phase providers.StreamLifecyclePhase, retryCount int, reason error, retryIn time.Duration) {
+		if onEvent == nil {
+			return
+		}
+		details := &providers.StreamLifecycle{
+			Phase:       phase,
+			Attempt:     retryCount + 1,
+			MaxAttempts: cfg.MaxRetries + 1,
+			RetryCount:  retryCount,
+			MaxRetries:  cfg.MaxRetries,
+			RetryIn:     retryIn,
+		}
+		if reason != nil {
+			details.Reason = reason.Error()
+		}
+		onEvent(providers.StreamEvent{
+			Type:      providers.EventLifecycle,
+			Lifecycle: details,
+		})
+	}
 	for {
 		// Don't retry if the caller's context is already done.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		emitLifecycle(providers.StreamPhaseConnecting, attempt, nil, 0)
 		ch, err := s.client.StreamChat(ctx, req)
 		if err != nil {
 			if ctx.Err() == nil && shouldRetryStreamError(err, attempt, cfg.MaxRetries) {
 				delay := streamRetryDelay(attempt, cfg.InitialDelay, cfg.MaxDelay)
 				providers.DebugLogf("stream connect failed, reconnecting (%d/%d) in %s: %v", attempt+1, cfg.MaxRetries, delay, err)
+				emitLifecycle(providers.StreamPhaseReconnecting, attempt+1, err, delay)
 				if onEvent != nil {
 					onEvent(providers.StreamEvent{
 						Type:    providers.EventReconnect,
@@ -259,8 +281,10 @@ func (s *streamStep) runStreamWithReconnect(
 				attempt++
 				continue
 			}
+			emitLifecycle(providers.StreamPhaseFailed, attempt, err, 0)
 			return err
 		}
+		emitLifecycle(providers.StreamPhaseConnected, attempt, nil, 0)
 
 		var (
 			streamErr error
@@ -353,6 +377,7 @@ func (s *streamStep) runStreamWithReconnect(
 		if !sawOutput && ctx.Err() == nil && shouldRetryStreamError(streamErr, attempt, cfg.MaxRetries) {
 			delay := streamRetryDelay(attempt, cfg.InitialDelay, cfg.MaxDelay)
 			providers.DebugLogf("stream disconnected early, reconnecting (%d/%d) in %s: %v", attempt+1, cfg.MaxRetries, delay, streamErr)
+			emitLifecycle(providers.StreamPhaseReconnecting, attempt+1, streamErr, delay)
 			if onEvent != nil {
 				onEvent(providers.StreamEvent{
 					Type:    providers.EventReconnect,
@@ -366,6 +391,7 @@ func (s *streamStep) runStreamWithReconnect(
 			continue
 		}
 
+		emitLifecycle(providers.StreamPhaseFailed, attempt, streamErr, 0)
 		if onEvent != nil {
 			onEvent(providers.StreamEvent{
 				Type:  providers.EventError,
