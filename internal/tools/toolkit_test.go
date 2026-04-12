@@ -491,6 +491,81 @@ func withRGTestHooks(t *testing.T, lookup func(string) (string, error), cmd exec
 	})
 }
 
+func TestToolkit_GlobRipgrepIncludesHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for path, content := range map[string]string{
+		".env":          "TOKEN=abc\n",
+		"visible.env":   "TOKEN=visible\n",
+		"dir/.env.test": "TOKEN=nested\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"*.env*"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob *.env*: %v", err)
+	}
+	var parsed struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	if !reflect.DeepEqual(parsed.Files, []string{".env", "dir/.env.test", "visible.env"}) {
+		t.Fatalf("unexpected hidden glob matches: %+v", parsed.Files)
+	}
+}
+
+func TestToolkit_GrepRipgrepIncludesHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for path, content := range map[string]string{
+		".env":        "API_KEY=secret\n",
+		"visible.env": "API_KEY=visible\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"API_KEY","include":"*.env"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep *.env: %v", err)
+	}
+	var parsed struct {
+		Matches []grepMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	want := []grepMatch{{File: ".env", Line: 1, Content: "API_KEY=secret"}, {File: "visible.env", Line: 1, Content: "API_KEY=visible"}}
+	if !reflect.DeepEqual(parsed.Matches, want) {
+		t.Fatalf("unexpected hidden grep matches: got %+v want %+v", parsed.Matches, want)
+	}
+}
+
 func TestToolkit_GlobRipgrepFirst(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)

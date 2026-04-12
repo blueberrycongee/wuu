@@ -1434,7 +1434,7 @@ func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
 	if name == "" {
 		return nil
 	}
-	args := []string{"--files", "-0", "--glob", pattern}
+	args := []string{"--files", "--hidden", "-0", "--glob", pattern}
 	return rgCommand(ctx, name, args...)
 }
 
@@ -1443,7 +1443,7 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 	if name == "" {
 		return nil
 	}
-	args := []string{"--json", "-H", "-n", pattern}
+	args := []string{"--json", "--hidden", "-H", "-n", pattern}
 	if include != "" {
 		args = append(args, "--glob", include)
 	}
