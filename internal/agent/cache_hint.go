@@ -8,7 +8,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-const volatileTurnUserRole = "user"
+const (
+	volatileTurnUserRole    = "user"
+	conversationSummaryHead = "[Conversation summary]"
+)
 
 // buildCacheHint derives a light-weight, provider-agnostic cache hint
 // from the current conversation state.
@@ -16,33 +19,42 @@ const volatileTurnUserRole = "user"
 // Design goals:
 //   - keep it conversation-shaped, not provider-shaped
 //   - preserve a stable prefix across the tool loop of the current turn
-//   - avoid coupling cache behavior to TUI/session plumbing
+//   - let a compacted summary become the new stable history root
+//     without introducing a heavier session-part model
 //
 // The stable prefix is everything before the most recent user message.
 // That makes the whole current turn (latest user prompt plus any
 // assistant tool calls / tool results produced while answering it)
 // intentionally volatile, while older context remains cache-friendly.
 //
-// PromptCacheKey is a conversation-scoped hash derived from the
-// earliest stable anchors (system prompt + first non-system message).
-// It stays stable across ordinary turns without needing a separate
-// session-ID plumbed through the stack.
+// After compact rewrites history, the synthetic conversation summary at
+// the front of the prompt becomes the best stable anchor we have. We
+// treat that summary-bearing system message as part of the cache root so
+// providers can keep reusing it across the remainder of the session.
+//
+// PromptCacheKey is a conversation-scoped hash derived from the stable
+// history root (system prompt, including a compact summary when present,
+// plus the first stable non-system message when available). That keeps
+// the key stable across ordinary turns, while still rotating when
+// compaction rewrites the durable prefix.
 func buildCacheHint(messages []providers.ChatMessage) *providers.CacheHint {
 	if len(messages) == 0 {
 		return nil
 	}
 
-	hint := &providers.CacheHint{
-		StableSystem: systemMessageCount(messages) > 0,
-	}
+	systemCount := systemMessageCount(messages)
 	lastUser := lastUserMessageIndex(messages)
-	stablePrefixMessages := lastUser - systemMessageCount(messages)
-	if stablePrefixMessages > 0 {
-		hint.StablePrefixMessages = stablePrefixMessages
-	}
-	hint.PromptCacheKey = buildPromptCacheKey(messages)
+	stablePrefixMessages := stablePrefixMessageCount(messages, systemCount, lastUser)
+	hasCompactSummary := leadingSystemHasCompactSummary(messages)
 
-	if !hint.StableSystem && hint.StablePrefixMessages == 0 && hint.PromptCacheKey == "" {
+	hint := &providers.CacheHint{
+		StableSystem:         systemCount > 0,
+		StablePrefixMessages: stablePrefixMessages,
+		HasCompactSummary:    hasCompactSummary,
+	}
+	hint.PromptCacheKey = buildPromptCacheKey(messages, systemCount, stablePrefixMessages)
+
+	if !hint.StableSystem && hint.StablePrefixMessages == 0 && hint.PromptCacheKey == "" && !hint.HasCompactSummary {
 		return nil
 	}
 	return hint
@@ -68,20 +80,47 @@ func lastUserMessageIndex(messages []providers.ChatMessage) int {
 	return -1
 }
 
-func buildPromptCacheKey(messages []providers.ChatMessage) string {
+func stablePrefixMessageCount(messages []providers.ChatMessage, systemCount, lastUser int) int {
+	if lastUser < 0 {
+		stable := len(messages) - systemCount
+		if stable < 0 {
+			return 0
+		}
+		return stable
+	}
+	stable := lastUser - systemCount
+	if stable < 0 {
+		return 0
+	}
+	return stable
+}
+
+func leadingSystemHasCompactSummary(messages []providers.ChatMessage) bool {
+	if len(messages) == 0 || !strings.EqualFold(messages[0].Role, "system") {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(messages[0].Content), conversationSummaryHead)
+}
+
+func buildPromptCacheKey(messages []providers.ChatMessage, systemCount, stablePrefixMessages int) string {
 	var b strings.Builder
-	b.WriteString("wuu:v1\n")
+	b.WriteString("wuu:v2\n")
 
 	added := false
-	for _, msg := range messages {
-		if strings.EqualFold(msg.Role, "system") {
-			writeCacheKeyMessage(&b, msg)
-			added = true
-			continue
-		}
-		writeCacheKeyMessage(&b, msg)
+	for i := 0; i < systemCount && i < len(messages); i++ {
+		writeCacheKeyMessage(&b, messages[i])
 		added = true
-		break
+	}
+	if stablePrefixMessages > 0 {
+		idx := systemCount
+		if idx >= 0 && idx < len(messages) {
+			writeCacheKeyMessage(&b, messages[idx])
+			added = true
+		}
+	}
+	if !added && len(messages) > 0 {
+		writeCacheKeyMessage(&b, messages[0])
+		added = true
 	}
 	if !added {
 		return ""

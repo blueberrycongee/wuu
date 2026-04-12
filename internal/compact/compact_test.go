@@ -3,6 +3,7 @@ package compact
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,10 +76,12 @@ func TestShouldCompact_ZeroThreshold(t *testing.T) {
 }
 
 type mockCompactClient struct {
-	response string
+	response    string
+	lastRequest providers.ChatRequest
 }
 
 func (m *mockCompactClient) Chat(_ context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	m.lastRequest = req
 	return providers.ChatResponse{Content: m.response}, nil
 }
 
@@ -256,5 +259,92 @@ func TestCompact_UsesInternalTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
 		t.Fatalf("expected internal compact timeout to stop quickly, took %s", elapsed)
+	}
+}
+
+func TestCompact_PrunesOldLargeToolResultsBeforeSummary(t *testing.T) {
+	large := strings.Repeat("x", toolResultPruneThresholdChars+50)
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "inspect logs"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "c1", Name: "read_file", Arguments: `{"path":"build.log"}`}}},
+		{Role: "tool", Name: "read_file", ToolCallID: "c1", Content: large},
+		{Role: "assistant", Content: "I checked the log."},
+		{Role: "user", Content: "continue"},
+		{Role: "assistant", Content: "working"},
+		{Role: "user", Content: "status?"},
+		{Role: "assistant", Content: "done"},
+	}
+
+	client := &mockCompactClient{response: "summary"}
+	_, err := Compact(context.Background(), messages, client, "test")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	summaryInput := client.lastRequest.Messages[0].Content
+	if strings.Contains(summaryInput, large) {
+		t.Fatal("expected old large tool result to be pruned from summary input")
+	}
+	if !strings.Contains(summaryInput, "[Old read_file result omitted during compact to save context.") {
+		t.Fatalf("expected placeholder in summary input, got: %s", summaryInput)
+	}
+}
+
+func TestCompact_DoesNotPruneRecentTailToolResults(t *testing.T) {
+	large := strings.Repeat("y", toolResultPruneThresholdChars+50)
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "older question"},
+		{Role: "assistant", Content: "older answer"},
+		{Role: "user", Content: "run tool"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "c2", Name: "read_file", Arguments: `{"path":"recent.log"}`}}},
+		{Role: "tool", Name: "read_file", ToolCallID: "c2", Content: large},
+		{Role: "assistant", Content: "recent analysis"},
+		{Role: "user", Content: "what changed?"},
+		{Role: "assistant", Content: "here's the update"},
+	}
+
+	client := &mockCompactClient{response: "summary"}
+	result, err := Compact(context.Background(), messages, client, "test")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	if len(result) < 4 {
+		t.Fatalf("expected compacted tail to be preserved, got %d messages", len(result))
+	}
+	found := false
+	for _, msg := range result {
+		if msg.Role == "tool" && msg.ToolCallID == "c2" {
+			found = true
+			if msg.Content != large {
+				t.Fatal("expected recent tail tool result to remain unchanged")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected recent tail tool result to be preserved in compacted output")
+	}
+}
+
+func TestPruneOldToolResults_PreservesToolCallPairing(t *testing.T) {
+	large := strings.Repeat("z", toolResultPruneThresholdChars+50)
+	messages := []providers.ChatMessage{
+		{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "c1", Name: "grep", Arguments: `{"pattern":"TODO"}`}}},
+		{Role: "tool", Name: "grep", ToolCallID: "c1", Content: large},
+		{Role: "assistant", Content: "done"},
+	}
+
+	pruned := pruneOldToolResults(messages)
+	if len(pruned) != len(messages) {
+		t.Fatalf("expected message count to stay the same, got %d vs %d", len(pruned), len(messages))
+	}
+	if len(pruned[0].ToolCalls) != 1 || pruned[0].ToolCalls[0].ID != "c1" {
+		t.Fatalf("expected assistant tool call metadata preserved, got %+v", pruned[0].ToolCalls)
+	}
+	if pruned[1].Role != "tool" || pruned[1].ToolCallID != "c1" {
+		t.Fatalf("expected tool pairing preserved, got %+v", pruned[1])
+	}
+	if pruned[1].Content == "" || strings.Contains(pruned[1].Content, large) {
+		t.Fatalf("expected tool result content replaced with placeholder, got %q", pruned[1].Content)
 	}
 }

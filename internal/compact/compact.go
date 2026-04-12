@@ -13,6 +13,7 @@ import (
 )
 
 const defaultCompactTimeout = 15 * time.Second
+const toolResultPruneThresholdChars = 400
 
 func compactTimeout() time.Duration {
 	if v := os.Getenv("WUU_COMPACT_TIMEOUT_MS"); v != "" {
@@ -111,7 +112,7 @@ func Compact(ctx context.Context, messages []providers.ChatMessage, client provi
 		return messages, nil
 	}
 
-	toSummarize := messages[:keepStart]
+	toSummarize := pruneOldToolResults(messages[:keepStart])
 	toKeep := messages[keepStart:]
 
 	for attempt := 0; ; attempt++ {
@@ -172,6 +173,43 @@ func compactKeepStart(messages []providers.ChatMessage, keepCount int) int {
 		start--
 	}
 	return start
+}
+
+func pruneOldToolResults(messages []providers.ChatMessage) []providers.ChatMessage {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	pruned := make([]providers.ChatMessage, len(messages))
+	copy(pruned, messages)
+
+	for i := range pruned {
+		if pruned[i].Role != "tool" {
+			continue
+		}
+		if len(pruned[i].Content) < toolResultPruneThresholdChars {
+			continue
+		}
+		pruned[i].Content = summarizePrunedToolResult(pruned[i])
+	}
+
+	return pruned
+}
+
+func summarizePrunedToolResult(msg providers.ChatMessage) string {
+	name := strings.TrimSpace(msg.Name)
+	if name == "" {
+		name = "unknown tool"
+	}
+	return fmt.Sprintf("[Old %s result omitted during compact to save context. Original output was %d characters. Tool call ID: %s]", name, len(msg.Content), toolCallLabel(msg.ToolCallID))
+}
+
+func toolCallLabel(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "unknown"
+	}
+	return id
 }
 
 // compactInstructionPrompt is the framing wuu wraps every

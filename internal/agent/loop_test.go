@@ -103,6 +103,56 @@ func TestRunToolLoop_BuildsCacheHintFromHistory(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_CompactRewritePromotesSummaryIntoCacheHint(t *testing.T) {
+	step := &fakeStep{results: []StepResult{
+		{ToolCalls: []providers.ToolCall{{ID: "c1", Name: "t", Arguments: `{}`}}, Usage: &providers.TokenUsage{InputTokens: 950}},
+		{Content: "done"},
+	}}
+	cfg := LoopConfig{
+		Model: "m",
+		Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "t"}}},
+		Compact: func(_ context.Context, _ []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			return []providers.ChatMessage{
+				{Role: "system", Content: "[Conversation summary]\nOlder turns were compacted."},
+				{Role: "user", Content: "latest ask"},
+			}, nil
+		},
+		MaxContextTokens: 1000,
+	}
+
+	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "old ask"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "latest ask"},
+	}, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("expected 2 step calls, got %d", len(step.calls))
+	}
+	secondHint := step.calls[1].CacheHint
+	if secondHint == nil {
+		t.Fatal("expected cache hint after compact")
+	}
+	if !secondHint.HasCompactSummary {
+		t.Fatal("expected compact summary flag after rewrite")
+	}
+	if secondHint.StablePrefixMessages != 0 {
+		t.Fatalf("expected current turn to remain volatile after rewrite, got %d", secondHint.StablePrefixMessages)
+	}
+	if !secondHint.StableSystem {
+		t.Fatal("expected summary system message to stay cacheable")
+	}
+	if secondHint.PromptCacheKey == "" {
+		t.Fatal("expected prompt cache key after compact")
+	}
+	if step.calls[1].Messages[0].Content != "[Conversation summary]\nOlder turns were compacted." {
+		t.Fatalf("expected compact summary at request root, got %+v", step.calls[1].Messages[0])
+	}
+}
+
 func TestRunToolLoop_ToolCallThenAnswer(t *testing.T) {
 	step := &fakeStep{results: []StepResult{
 		{ToolCalls: []providers.ToolCall{{ID: "c1", Name: "run_shell", Arguments: `{}`}}},
