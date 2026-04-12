@@ -98,6 +98,7 @@ func RunToolLoop(
 			Model:       cfg.Model,
 			Messages:    messages,
 			Temperature: cfg.Temperature,
+			CacheHint:   buildCacheHint(messages),
 		}
 		if cfg.Tools != nil {
 			req.Tools = cfg.Tools.Definitions()

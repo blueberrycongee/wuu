@@ -53,6 +53,256 @@ func TestChat_TextResponse(t *testing.T) {
 	}
 }
 
+func TestChat_AnthropicAddsCacheControlFromHint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		system, ok := body["system"].([]any)
+		if !ok || len(system) != 1 {
+			t.Fatalf("expected system blocks, got %#v", body["system"])
+		}
+		sysBlock, ok := system[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected system block: %#v", system[0])
+		}
+		cacheCtl, ok := sysBlock["cache_control"].(map[string]any)
+		if !ok || cacheCtl["type"] != "ephemeral" {
+			t.Fatalf("expected system cache_control, got %#v", sysBlock["cache_control"])
+		}
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) < 2 {
+			t.Fatalf("expected messages, got %#v", body["messages"])
+		}
+		second, ok := msgs[1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected message payload: %#v", msgs[1])
+		}
+		content, ok := second["content"].([]any)
+		if !ok || len(content) == 0 {
+			t.Fatalf("unexpected content blocks: %#v", second["content"])
+		}
+		lastBlock, ok := content[len(content)-1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected content block: %#v", content[len(content)-1])
+		}
+		cacheCtl, ok = lastBlock["cache_control"].(map[string]any)
+		if !ok || cacheCtl["type"] != "ephemeral" {
+			t.Fatalf("expected message cache_control, got %#v", lastBlock["cache_control"])
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "first"},
+			{Role: "assistant", Content: "stable reply"},
+			{Role: "user", Content: "latest"},
+		},
+		CacheHint: &providers.CacheHint{StableSystem: true, StablePrefixMessages: 2},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+}
+
+func TestChat_AnthropicOmitsCacheControlWithoutHint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if _, ok := body["system"].([]any); ok {
+			t.Fatalf("did not expect structured system blocks: %#v", body["system"])
+		}
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) == 0 {
+			t.Fatalf("expected messages, got %#v", body["messages"])
+		}
+		first, ok := msgs[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected message payload: %#v", msgs[0])
+		}
+		content, ok := first["content"].([]any)
+		if !ok || len(content) == 0 {
+			t.Fatalf("unexpected content blocks: %#v", first["content"])
+		}
+		block, ok := content[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected content block: %#v", content[0])
+		}
+		if _, ok := block["cache_control"]; ok {
+			t.Fatalf("did not expect cache_control: %#v", block["cache_control"])
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+}
+
+func TestChat_AddsCacheControlToStableAnthropicPrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		system, ok := body["system"].([]any)
+		if !ok || len(system) != 1 {
+			t.Fatalf("unexpected system payload: %#v", body["system"])
+		}
+		sysBlock, ok := system[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected system block: %#v", system[0])
+		}
+		if sysBlock["text"] != "sys" {
+			t.Fatalf("unexpected system text: %#v", sysBlock["text"])
+		}
+		cacheControl, ok := sysBlock["cache_control"].(map[string]any)
+		if !ok || cacheControl["type"] != "ephemeral" {
+			t.Fatalf("unexpected system cache_control: %#v", sysBlock["cache_control"])
+		}
+
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) != 2 {
+			t.Fatalf("unexpected messages payload: %#v", body["messages"])
+		}
+		firstMsg, ok := msgs[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected first message: %#v", msgs[0])
+		}
+		content, ok := firstMsg["content"].([]any)
+		if !ok || len(content) != 1 {
+			t.Fatalf("unexpected first content payload: %#v", firstMsg["content"])
+		}
+		textBlock, ok := content[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected first text block: %#v", content[0])
+		}
+		cacheControl, ok = textBlock["cache_control"].(map[string]any)
+		if !ok || cacheControl["type"] != "ephemeral" {
+			t.Fatalf("unexpected message cache_control: %#v", textBlock["cache_control"])
+		}
+
+		secondMsg, ok := msgs[1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected second message: %#v", msgs[1])
+		}
+		content, ok = secondMsg["content"].([]any)
+		if !ok || len(content) != 1 {
+			t.Fatalf("unexpected second content payload: %#v", secondMsg["content"])
+		}
+		textBlock, ok = content[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected second text block: %#v", content[0])
+		}
+		if _, exists := textBlock["cache_control"]; exists {
+			t.Fatalf("did not expect cache_control on volatile message: %#v", textBlock)
+		}
+
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "stable context"},
+			{Role: "user", Content: "volatile ask"},
+		},
+		CacheHint: &providers.CacheHint{
+			StableSystem:         true,
+			StablePrefixMessages: 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+}
+
+func TestChat_OmitsCacheControlWithoutHint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if system, exists := body["system"]; exists {
+			t.Fatalf("did not expect structured system payload: %#v", system)
+		}
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) != 1 {
+			t.Fatalf("unexpected messages payload: %#v", body["messages"])
+		}
+		msg, ok := msgs[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected message: %#v", msgs[0])
+		}
+		content, ok := msg["content"].([]any)
+		if !ok || len(content) != 1 {
+			t.Fatalf("unexpected content payload: %#v", msg["content"])
+		}
+		textBlock, ok := content[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected text block: %#v", content[0])
+		}
+		if _, exists := textBlock["cache_control"]; exists {
+			t.Fatalf("did not expect cache_control without hint: %#v", textBlock)
+		}
+
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hi"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+}
+
 func TestStreamIdleTimeout_DefaultMatchesCodex(t *testing.T) {
 	t.Setenv("WUU_STREAM_IDLE_TIMEOUT_MS", "")
 	if got := streamIdleTimeout(); got != 5*time.Minute {
@@ -162,6 +412,87 @@ func TestChat_SendsImageBlocks(t *testing.T) {
 					{MediaType: "image/png", Data: "AAA"},
 				},
 			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("chat error: %v", err)
+	}
+}
+
+func TestChat_AppliesCacheControlToStablePrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			System []struct {
+				Type         string `json:"type"`
+				Text         string `json:"text"`
+				CacheControl *struct {
+					Type string `json:"type"`
+				} `json:"cache_control,omitempty"`
+			} `json:"system"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type         string `json:"type"`
+					Text         string `json:"text,omitempty"`
+					CacheControl *struct {
+						Type string `json:"type"`
+					} `json:"cache_control,omitempty"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.System) != 1 {
+			t.Fatalf("expected one system block, got %#v", body.System)
+		}
+		if body.System[0].Text != "sys" {
+			t.Fatalf("unexpected system text: %q", body.System[0].Text)
+		}
+		if body.System[0].CacheControl == nil || body.System[0].CacheControl.Type != "ephemeral" {
+			t.Fatalf("expected cache_control on system block, got %#v", body.System[0].CacheControl)
+		}
+		if len(body.Messages) != 2 {
+			t.Fatalf("expected two non-system messages, got %d", len(body.Messages))
+		}
+		if body.Messages[0].Role != "user" {
+			t.Fatalf("unexpected first role: %q", body.Messages[0].Role)
+		}
+		lastBlock := body.Messages[0].Content[len(body.Messages[0].Content)-1]
+		if lastBlock.CacheControl == nil || lastBlock.CacheControl.Type != "ephemeral" {
+			t.Fatalf("expected cache_control on stable prefix boundary, got %#v", lastBlock.CacheControl)
+		}
+		if len(body.Messages[1].Content) == 0 {
+			t.Fatal("expected follow-up content")
+		}
+		followUpLast := body.Messages[1].Content[len(body.Messages[1].Content)-1]
+		if followUpLast.CacheControl != nil {
+			t.Fatalf("did not expect cache_control on volatile message, got %#v", followUpLast.CacheControl)
+		}
+
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "test-key",
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "first"},
+			{Role: "assistant", Content: "second"},
+		},
+		CacheHint: &providers.CacheHint{
+			StableSystem:         true,
+			StablePrefixMessages: 1,
 		},
 	})
 	if err != nil {

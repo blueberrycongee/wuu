@@ -24,16 +24,41 @@ type InputImage struct {
 
 // ChatMessage is a generic multi-provider chat message.
 type ChatMessage struct {
-	Role       string
-	Name       string
-	Content    string
+	Role    string
+	Name    string
+	Content string
 	// ReasoningContent stores provider-emitted hidden reasoning that
 	// must be replayed in follow-up assistant tool-call messages for
 	// providers like Kimi when thinking mode is enabled.
 	ReasoningContent string
-	Images     []InputImage
-	ToolCallID string
-	ToolCalls  []ToolCall
+	Images           []InputImage
+	ToolCallID       string
+	ToolCalls        []ToolCall
+}
+
+// CacheHint carries provider-agnostic prompt-cache guidance.
+//
+// The goal is not to model every provider's caching surface area.
+// wuu only needs two cross-provider signals:
+//   - PromptCacheKey: a stable conversation-scoped cache key for
+//     OpenAI-compatible APIs that expose one.
+//   - StableSystem/StablePrefixMessages: which request prefix is
+//     stable enough to mark as cache-eligible on providers like
+//     Anthropic.
+//
+// Providers are free to ignore hints they don't support.
+type CacheHint struct {
+	// PromptCacheKey is a stable key for providers exposing an explicit
+	// prompt cache key (for example promptCacheKey / prompt_cache_key).
+	PromptCacheKey string
+	// StableSystem marks the system prompt as part of the cacheable
+	// stable prefix. Ignored when the request has no system message.
+	StableSystem bool
+	// StablePrefixMessages is the number of leading non-system entries
+	// in ChatRequest.Messages that belong to the stable prefix.
+	// Providers that lift system prompts out of the normal message
+	// array can use this value directly without reindexing.
+	StablePrefixMessages int
 }
 
 // ChatRequest is the normalized request payload for providers.
@@ -42,6 +67,7 @@ type ChatRequest struct {
 	Messages    []ChatMessage
 	Tools       []ToolDefinition
 	Temperature float64
+	CacheHint   *CacheHint
 }
 
 // ChatResponse is the normalized response from providers.

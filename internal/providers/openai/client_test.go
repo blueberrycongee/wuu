@@ -90,6 +90,116 @@ func TestChat_SendsRequestAndParsesToolCall(t *testing.T) {
 	}
 }
 
+func TestChat_SendsPromptCacheKeyForOpenAICompatible(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["promptCacheKey"] != "cache-key-1" {
+			t.Fatalf("expected promptCacheKey, got %#v", body["promptCacheKey"])
+		}
+		if _, exists := body["prompt_cache_key"]; exists {
+			t.Fatalf("did not expect prompt_cache_key on standard OpenAI payload: %#v", body["prompt_cache_key"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "gpt-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hello"},
+		},
+		CacheHint: &providers.CacheHint{PromptCacheKey: "cache-key-1"},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
+func TestChat_SendsSnakeCasePromptCacheKeyForOpenRouter(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["prompt_cache_key"] != "cache-key-2" {
+			t.Fatalf("expected prompt_cache_key, got %#v", body["prompt_cache_key"])
+		}
+		if _, exists := body["promptCacheKey"]; exists {
+			t.Fatalf("did not expect promptCacheKey on OpenRouter payload: %#v", body["promptCacheKey"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key", Headers: map[string]string{"HTTP-Referer": "https://openrouter.ai/app"}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "openrouter-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hello"},
+		},
+		CacheHint: &providers.CacheHint{PromptCacheKey: "cache-key-2"},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
+func TestChat_OmitsPromptCacheKeyWithoutHint(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if _, exists := body["promptCacheKey"]; exists {
+			t.Fatalf("did not expect promptCacheKey without hint: %#v", body["promptCacheKey"])
+		}
+		if _, exists := body["prompt_cache_key"]; exists {
+			t.Fatalf("did not expect prompt_cache_key without hint: %#v", body["prompt_cache_key"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "gpt-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
 func TestStreamIdleTimeout_DefaultMatchesCodex(t *testing.T) {
 	t.Setenv("WUU_STREAM_IDLE_TIMEOUT_MS", "")
 	if got := streamIdleTimeout(); got != 5*time.Minute {
@@ -162,6 +272,44 @@ func TestChat_SendsImageContentParts(t *testing.T) {
 				},
 			},
 		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
+func TestChat_SendsPromptCacheKeyAliases(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			PromptCacheKey string `json:"promptCacheKey"`
+			AltCacheKey    string `json:"prompt_cache_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.PromptCacheKey != "cache-key-1" {
+			t.Fatalf("unexpected promptCacheKey: %q", body.PromptCacheKey)
+		}
+		if body.AltCacheKey != "" {
+			t.Fatalf("unexpected prompt_cache_key on OpenAI-compatible payload: %q", body.AltCacheKey)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "gpt-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "hello"},
+		},
+		CacheHint: &providers.CacheHint{PromptCacheKey: "cache-key-1"},
 	})
 	if err != nil {
 		t.Fatalf("Chat: %v", err)

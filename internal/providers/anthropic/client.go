@@ -98,41 +98,9 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		return providers.ChatResponse{}, errors.New("messages is required")
 	}
 
-	payload := anthropicRequest{
-		Model:     req.Model,
-		MaxTokens: c.maxTokens,
-		Messages:  make([]anthropicMessage, 0, len(req.Messages)),
-	}
-	if req.Temperature > 0 {
-		t := req.Temperature
-		payload.Temperature = &t
-	}
-
-	for _, msg := range req.Messages {
-		if strings.EqualFold(msg.Role, "system") {
-			if payload.System != "" {
-				payload.System += "\n"
-			}
-			payload.System += msg.Content
-			continue
-		}
-
-		mapped, err := mapMessage(msg)
-		if err != nil {
-			return providers.ChatResponse{}, err
-		}
-		payload.Messages = append(payload.Messages, mapped)
-	}
-
-	if len(req.Tools) > 0 {
-		payload.Tools = make([]anthropicTool, 0, len(req.Tools))
-		for _, tool := range req.Tools {
-			payload.Tools = append(payload.Tools, anthropicTool{
-				Name:        tool.Name,
-				Description: tool.Description,
-				InputSchema: tool.InputSchema,
-			})
-		}
+	payload, err := buildAnthropicRequest(req, c.maxTokens, false)
+	if err != nil {
+		return providers.ChatResponse{}, err
 	}
 
 	body, err := json.Marshal(payload)
@@ -198,7 +166,6 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		ToolCalls:  toolCalls,
 		StopReason: strings.ToLower(parsed.StopReason),
 	}
-	// Anthropic signals output truncation with stop_reason="max_tokens".
 	if resp.StopReason == "max_tokens" {
 		resp.Truncated = true
 	}
@@ -224,31 +191,54 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, errors.New("messages is required")
 	}
 
+	payload, err := buildAnthropicRequest(req, c.maxTokens, true)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	sseClient := &http.Client{Timeout: 0}
+	resp, err := c.doMessagesRequest(ctx, sseClient, body)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan providers.StreamEvent, 64)
+	go c.readSSEStream(resp, ch)
+	return ch, nil
+}
+
+func buildAnthropicRequest(req providers.ChatRequest, maxTokens int, stream bool) (anthropicRequest, error) {
 	payload := anthropicRequest{
 		Model:     req.Model,
-		MaxTokens: c.maxTokens,
+		MaxTokens: maxTokens,
 		Messages:  make([]anthropicMessage, 0, len(req.Messages)),
-		Stream:    true,
+		Stream:    stream,
 	}
 	if req.Temperature > 0 {
 		t := req.Temperature
 		payload.Temperature = &t
 	}
 
+	systemTexts := make([]string, 0, 1)
 	for _, msg := range req.Messages {
 		if strings.EqualFold(msg.Role, "system") {
-			if payload.System != "" {
-				payload.System += "\n"
-			}
-			payload.System += msg.Content
+			systemTexts = append(systemTexts, msg.Content)
 			continue
 		}
+
 		mapped, err := mapMessage(msg)
 		if err != nil {
-			return nil, err
+			return anthropicRequest{}, err
 		}
 		payload.Messages = append(payload.Messages, mapped)
 	}
+	payload.System = buildAnthropicSystem(systemTexts, req.CacheHint)
+	applyAnthropicCacheHint(&payload, req.CacheHint)
 
 	if len(req.Tools) > 0 {
 		payload.Tools = make([]anthropicTool, 0, len(req.Tools))
@@ -260,22 +250,75 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 			})
 		}
 	}
+	return payload, nil
+}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+func buildAnthropicSystem(systemTexts []string, hint *providers.CacheHint) any {
+	if len(systemTexts) == 0 {
+		return nil
 	}
-
-	// Use a separate client without timeout for long-lived SSE connections.
-	sseClient := &http.Client{Timeout: 0}
-	resp, err := c.doMessagesRequest(ctx, sseClient, body)
-	if err != nil {
-		return nil, err
+	joined := strings.Join(systemTexts, "\n")
+	if !shouldCacheAnthropicSystem(hint) {
+		return joined
 	}
+	return []anthropicSystemBlock{{
+		Type:         "text",
+		Text:         joined,
+		CacheControl: ephemeralCacheControl(),
+	}}
+}
 
-	ch := make(chan providers.StreamEvent, 64)
-	go c.readSSEStream(resp, ch)
-	return ch, nil
+func shouldCacheAnthropicSystem(hint *providers.CacheHint) bool {
+	return hint != nil && hint.StableSystem
+}
+
+func applyAnthropicCacheHint(payload *anthropicRequest, hint *providers.CacheHint) {
+	if payload == nil || hint == nil || hint.StablePrefixMessages <= 0 {
+		return
+	}
+	stable := hint.StablePrefixMessages
+	if stable > len(payload.Messages) {
+		stable = len(payload.Messages)
+	}
+	if stable == 0 {
+		return
+	}
+	for i := stable - 1; i >= 0; i-- {
+		if markAnthropicMessageForCache(&payload.Messages[i]) {
+			return
+		}
+	}
+}
+
+func markAnthropicMessageForCache(msg *anthropicMessage) bool {
+	if msg == nil {
+		return false
+	}
+	for i := len(msg.Content) - 1; i >= 0; i-- {
+		block := &msg.Content[i]
+		if !anthropicBlockSupportsCache(block) {
+			continue
+		}
+		block.CacheControl = ephemeralCacheControl()
+		return true
+	}
+	return false
+}
+
+func anthropicBlockSupportsCache(block *anthropicBlock) bool {
+	if block == nil {
+		return false
+	}
+	switch block.Type {
+	case "text", "tool_result":
+		return true
+	default:
+		return false
+	}
+}
+
+func ephemeralCacheControl() *anthropicCacheControl {
+	return &anthropicCacheControl{Type: "ephemeral"}
 }
 
 func (c *Client) doMessagesRequest(
@@ -333,7 +376,6 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 	defer close(ch)
 	defer resp.Body.Close()
 
-	// Idle watchdog: abort the body if no chunk arrives within the timeout.
 	idleTimeout := streamIdleTimeout()
 	var idleFired atomic.Bool
 	idleTimer := time.AfterFunc(idleTimeout, func() {
@@ -363,45 +405,30 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 			cur.Data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			continue
 		}
-
-		// Empty line signals end of an SSE frame.
 		if line == "" && cur.Event != "" {
 			c.handleSSEEvent(cur, &usage, &stopReason, blocks, ch)
 			cur = sseRawEvent{}
 		}
 	}
 
-	// Process any trailing event without a final blank line.
 	if cur.Event != "" {
 		c.handleSSEEvent(cur, &usage, &stopReason, blocks, ch)
 	}
 
 	if err := scanner.Err(); err != nil {
 		if idleFired.Load() {
-			ch <- providers.StreamEvent{
-				Type:  providers.EventError,
-				Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded),
-			}
+			ch <- providers.StreamEvent{Type: providers.EventError, Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded)}
 			return
 		}
 		ch <- providers.StreamEvent{Type: providers.EventError, Error: fmt.Errorf("read SSE stream: %w", err)}
 		return
 	}
 	if idleFired.Load() {
-		ch <- providers.StreamEvent{
-			Type:  providers.EventError,
-			Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded),
-		}
+		ch <- providers.StreamEvent{Type: providers.EventError, Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded)}
 	}
 }
 
-func (c *Client) handleSSEEvent(
-	raw sseRawEvent,
-	usage *providers.TokenUsage,
-	stopReason *string,
-	blocks map[int]*blockState,
-	ch chan<- providers.StreamEvent,
-) {
+func (c *Client) handleSSEEvent(raw sseRawEvent, usage *providers.TokenUsage, stopReason *string, blocks map[int]*blockState, ch chan<- providers.StreamEvent) {
 	switch raw.Event {
 	case "message_start":
 		var p messageStartPayload
@@ -410,7 +437,6 @@ func (c *Client) handleSSEEvent(
 			usage.CacheCreationTokens = p.Message.Usage.CacheCreationTokens
 			usage.CacheReadTokens = p.Message.Usage.CacheReadTokens
 		}
-
 	case "content_block_start":
 		var p contentBlockStartPayload
 		if json.Unmarshal([]byte(raw.Data), &p) == nil {
@@ -418,43 +444,26 @@ func (c *Client) handleSSEEvent(
 			if p.ContentBlock.Type == "tool_use" {
 				bs.toolID = p.ContentBlock.ID
 				bs.toolName = p.ContentBlock.Name
-				ch <- providers.StreamEvent{
-					Type: providers.EventToolUseStart,
-					ToolCall: &providers.ToolCall{
-						ID:   p.ContentBlock.ID,
-						Name: p.ContentBlock.Name,
-					},
-				}
+				ch <- providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: p.ContentBlock.ID, Name: p.ContentBlock.Name}}
 			}
 			blocks[p.Index] = bs
 		}
-
 	case "content_block_delta":
 		var p contentBlockDeltaPayload
 		if json.Unmarshal([]byte(raw.Data), &p) == nil {
 			bs := blocks[p.Index]
 			switch p.Delta.Type {
 			case "text_delta":
-				ch <- providers.StreamEvent{
-					Type:    providers.EventContentDelta,
-					Content: p.Delta.Text,
-				}
+				ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: p.Delta.Text}
 			case "input_json_delta":
 				if bs != nil {
 					bs.argsJSON.WriteString(p.Delta.PartialJSON)
 				}
-				ch <- providers.StreamEvent{
-					Type:    providers.EventToolUseDelta,
-					Content: p.Delta.PartialJSON,
-				}
+				ch <- providers.StreamEvent{Type: providers.EventToolUseDelta, Content: p.Delta.PartialJSON}
 			case "thinking_delta":
-				ch <- providers.StreamEvent{
-					Type:    providers.EventThinkingDelta,
-					Content: p.Delta.Thinking,
-				}
+				ch <- providers.StreamEvent{Type: providers.EventThinkingDelta, Content: p.Delta.Thinking}
 			}
 		}
-
 	case "content_block_stop":
 		var idx struct {
 			Index int `json:"index"`
@@ -462,14 +471,7 @@ func (c *Client) handleSSEEvent(
 		if json.Unmarshal([]byte(raw.Data), &idx) == nil {
 			if bs, ok := blocks[idx.Index]; ok {
 				if bs.blockType == "tool_use" {
-					ch <- providers.StreamEvent{
-						Type: providers.EventToolUseEnd,
-						ToolCall: &providers.ToolCall{
-							ID:        bs.toolID,
-							Name:      bs.toolName,
-							Arguments: bs.argsJSON.String(),
-						},
-					}
+					ch <- providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: bs.toolID, Name: bs.toolName, Arguments: bs.argsJSON.String()}}
 				}
 				if bs.blockType == "thinking" {
 					ch <- providers.StreamEvent{Type: providers.EventThinkingDone}
@@ -477,7 +479,6 @@ func (c *Client) handleSSEEvent(
 			}
 			delete(blocks, idx.Index)
 		}
-
 	case "message_delta":
 		var p messageDeltaPayload
 		if json.Unmarshal([]byte(raw.Data), &p) == nil {
@@ -486,19 +487,8 @@ func (c *Client) handleSSEEvent(
 				*stopReason = strings.ToLower(p.Delta.StopReason)
 			}
 		}
-
 	case "message_stop":
-		ch <- providers.StreamEvent{
-			Type: providers.EventDone,
-			Usage: &providers.TokenUsage{
-				InputTokens:         usage.InputTokens,
-				OutputTokens:        usage.OutputTokens,
-				CacheCreationTokens: usage.CacheCreationTokens,
-				CacheReadTokens:     usage.CacheReadTokens,
-			},
-			StopReason: *stopReason,
-			Truncated:  *stopReason == "max_tokens",
-		}
+		ch <- providers.StreamEvent{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationTokens: usage.CacheCreationTokens, CacheReadTokens: usage.CacheReadTokens}, StopReason: *stopReason, Truncated: *stopReason == "max_tokens"}
 	}
 }
 
@@ -507,10 +497,7 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 	case "user", "assistant":
 		blocks := make([]anthropicBlock, 0, len(msg.ToolCalls)+len(msg.Images)+1)
 		if strings.TrimSpace(msg.Content) != "" {
-			blocks = append(blocks, anthropicBlock{
-				Type: "text",
-				Text: msg.Content,
-			})
+			blocks = append(blocks, anthropicBlock{Type: "text", Text: msg.Content})
 		}
 		if msg.Role == "user" {
 			for _, image := range msg.Images {
@@ -522,14 +509,7 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 				if mediaType == "" {
 					mediaType = "image/png"
 				}
-				blocks = append(blocks, anthropicBlock{
-					Type: "image",
-					Source: &anthropicImageSource{
-						Type:      "base64",
-						MediaType: mediaType,
-						Data:      data,
-					},
-				})
+				blocks = append(blocks, anthropicBlock{Type: "image", Source: &anthropicImageSource{Type: "base64", MediaType: mediaType, Data: data}})
 			}
 		}
 		for _, call := range msg.ToolCalls {
@@ -540,26 +520,11 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 			} else if err := json.Unmarshal([]byte(raw), &input); err != nil {
 				return anthropicMessage{}, fmt.Errorf("parse tool call arguments for %s: %w", call.Name, err)
 			}
-			blocks = append(blocks, anthropicBlock{
-				Type:  "tool_use",
-				ID:    call.ID,
-				Name:  call.Name,
-				Input: input,
-			})
+			blocks = append(blocks, anthropicBlock{Type: "tool_use", ID: call.ID, Name: call.Name, Input: input})
 		}
-		return anthropicMessage{
-			Role:    msg.Role,
-			Content: blocks,
-		}, nil
+		return anthropicMessage{Role: msg.Role, Content: blocks}, nil
 	case "tool":
-		return anthropicMessage{
-			Role: "user",
-			Content: []anthropicBlock{{
-				Type:      "tool_result",
-				ToolUseID: msg.ToolCallID,
-				Content:   msg.Content,
-			}},
-		}, nil
+		return anthropicMessage{Role: "user", Content: []anthropicBlock{{Type: "tool_result", ToolUseID: msg.ToolCallID, Content: msg.Content}}}, nil
 	default:
 		return anthropicMessage{}, fmt.Errorf("unsupported message role %q", msg.Role)
 	}
@@ -578,7 +543,7 @@ func cloneHeaders(input map[string]string) map[string]string {
 
 type anthropicRequest struct {
 	Model       string             `json:"model"`
-	System      string             `json:"system,omitempty"`
+	System      any                `json:"system,omitempty"`
 	MaxTokens   int                `json:"max_tokens"`
 	Temperature *float64           `json:"temperature,omitempty"`
 	Messages    []anthropicMessage `json:"messages"`
@@ -592,14 +557,25 @@ type anthropicMessage struct {
 }
 
 type anthropicBlock struct {
-	Type      string                `json:"type"`
-	Text      string                `json:"text,omitempty"`
-	Source    *anthropicImageSource `json:"source,omitempty"`
-	ID        string                `json:"id,omitempty"`
-	Name      string                `json:"name,omitempty"`
-	Input     any                   `json:"input,omitempty"`
-	ToolUseID string                `json:"tool_use_id,omitempty"`
-	Content   string                `json:"content,omitempty"`
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	Source       *anthropicImageSource  `json:"source,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        any                    `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      string                 `json:"content,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicSystemBlock struct {
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"`
 }
 
 type anthropicImageSource struct {
@@ -624,8 +600,6 @@ type anthropicResponse struct {
 		CacheReadTokens     int `json:"cache_read_input_tokens,omitempty"`
 	} `json:"usage,omitempty"`
 }
-
-// SSE streaming types.
 
 type sseRawEvent struct {
 	Event string

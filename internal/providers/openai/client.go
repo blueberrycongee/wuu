@@ -53,11 +53,12 @@ type ClientConfig struct {
 
 // Client sends tool-enabled chat requests to OpenAI-compatible APIs.
 type Client struct {
-	baseURL     string
-	apiKey      string
-	headers     map[string]string
-	httpClient  *http.Client
-	retryConfig providers.RetryConfig
+	baseURL              string
+	apiKey               string
+	headers              map[string]string
+	httpClient           *http.Client
+	retryConfig          providers.RetryConfig
+	promptCacheKeyFormat promptCacheKeyFormat
 }
 
 // New creates an OpenAI-compatible client.
@@ -80,11 +81,12 @@ func New(cfg ClientConfig) (*Client, error) {
 	rc = providers.NormalizeRetryConfig(rc)
 
 	return &Client{
-		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:      cfg.APIKey,
-		headers:     cloneHeaders(cfg.Headers),
-		httpClient:  hc,
-		retryConfig: rc,
+		baseURL:              strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:               cfg.APIKey,
+		headers:              cloneHeaders(cfg.Headers),
+		httpClient:           hc,
+		retryConfig:          rc,
+		promptCacheKeyFormat: detectPromptCacheKeyFormat(cfg.BaseURL, cfg.Headers),
 	}, nil
 }
 
@@ -102,6 +104,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		Messages:    make([]chatMessage, 0, len(req.Messages)),
 		Temperature: req.Temperature,
 	}
+	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
 
 	for _, msg := range req.Messages {
 		payload.Messages = append(payload.Messages, mapMessage(msg))
@@ -121,7 +124,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		}
 	}
 
-	body, err := json.Marshal(payload)
+	body, err := marshalChatCompletionsRequest(payload)
 	if err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
@@ -204,6 +207,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		Temperature: req.Temperature,
 		Stream:      true,
 	}
+	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
 	for _, msg := range req.Messages {
 		payload.Messages = append(payload.Messages, mapMessage(msg))
 	}
@@ -222,7 +226,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		}
 	}
 
-	body, err := json.Marshal(payload)
+	body, err := marshalChatCompletionsRequest(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -553,13 +557,98 @@ func cloneHeaders(input map[string]string) map[string]string {
 	return out
 }
 
+func marshalChatCompletionsRequest(payload chatCompletionsRequest) ([]byte, error) {
+	type requestJSON struct {
+		Model          string           `json:"model"`
+		Messages       []chatMessage    `json:"messages"`
+		Tools          []toolDefinition `json:"tools,omitempty"`
+		ToolChoice     string           `json:"tool_choice,omitempty"`
+		Temperature    float64          `json:"temperature,omitempty"`
+		Stream         bool             `json:"stream,omitempty"`
+		PromptCacheKey string           `json:"promptCacheKey,omitempty"`
+	}
+
+	base := requestJSON{
+		Model:          payload.Model,
+		Messages:       payload.Messages,
+		Tools:          payload.Tools,
+		ToolChoice:     payload.ToolChoice,
+		Temperature:    payload.Temperature,
+		Stream:         payload.Stream,
+		PromptCacheKey: payload.PromptCacheKey,
+	}
+	if strings.TrimSpace(payload.AltCacheKey) == "" {
+		return json.Marshal(base)
+	}
+
+	raw, err := json.Marshal(base)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil, err
+	}
+	object["prompt_cache_key"] = payload.AltCacheKey
+	return json.Marshal(object)
+}
+
+func applyPromptCacheKey(payload *chatCompletionsRequest, hint *providers.CacheHint, format promptCacheKeyFormat) {
+	if payload == nil || hint == nil {
+		return
+	}
+	key := strings.TrimSpace(hint.PromptCacheKey)
+	if key == "" {
+		return
+	}
+	switch format {
+	case promptCacheKeySnake:
+		payload.AltCacheKey = key
+	default:
+		payload.PromptCacheKey = key
+	}
+}
+
+type promptCacheKeyFormat int
+
+const (
+	promptCacheKeyCamel promptCacheKeyFormat = iota
+	promptCacheKeySnake
+)
+
+func detectPromptCacheKeyFormat(baseURL string, headers map[string]string) promptCacheKeyFormat {
+	if promptCacheKeyHeaderPrefersSnake(headers) {
+		return promptCacheKeySnake
+	}
+	host := strings.ToLower(strings.TrimSpace(baseURL))
+	if strings.Contains(host, "openrouter.ai") {
+		return promptCacheKeySnake
+	}
+	return promptCacheKeyCamel
+}
+
+func promptCacheKeyHeaderPrefersSnake(headers map[string]string) bool {
+	for k, v := range headers {
+		key := strings.ToLower(strings.TrimSpace(k))
+		value := strings.ToLower(strings.TrimSpace(v))
+		if key == "x-openrouter-provider" || key == "http-referer" || key == "x-title" {
+			if value != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type chatCompletionsRequest struct {
-	Model       string           `json:"model"`
-	Messages    []chatMessage    `json:"messages"`
-	Tools       []toolDefinition `json:"tools,omitempty"`
-	ToolChoice  string           `json:"tool_choice,omitempty"`
-	Temperature float64          `json:"temperature,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
+	Model          string           `json:"model"`
+	Messages       []chatMessage    `json:"messages"`
+	Tools          []toolDefinition `json:"tools,omitempty"`
+	ToolChoice     string           `json:"tool_choice,omitempty"`
+	Temperature    float64          `json:"temperature,omitempty"`
+	Stream         bool             `json:"stream,omitempty"`
+	PromptCacheKey string           `json:"promptCacheKey,omitempty"`
+	AltCacheKey    string           `json:"prompt_cache_key,omitempty"`
 }
 
 type chatMessage struct {
