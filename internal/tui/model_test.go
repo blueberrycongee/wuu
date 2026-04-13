@@ -856,6 +856,78 @@ func TestRefreshViewportFollowsBottomWhileStreamingAtBottom(t *testing.T) {
 	}
 }
 
+func TestApplyStreamEvent_DoesNotRebuildViewportWhenStreamTargetOffscreen(t *testing.T) {
+	m := newScrollableModelForScrollbarTest(t)
+	m.streaming = true
+	m.pendingRequest = true
+	m.streamTarget = len(m.entries) - 1
+	m.statusLine = "streaming"
+	m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
+	m.refreshViewport(true)
+
+	m.viewport.SetYOffset(0)
+	m.autoFollow = false
+	m.showJump = true
+
+	const marker = "STREAM_OFFSCREEN_REBUILD_CANARY"
+	m.entries[0].Content = marker
+
+	_ = m.applyStreamEvent(providers.StreamEvent{
+		Type:    providers.EventContentDelta,
+		Content: "\nmore offscreen output\n",
+	}, false)
+
+	if strings.Contains(m.viewport.View(), marker) {
+		t.Fatal("offscreen stream delta must not rebuild the visible viewport content")
+	}
+	if !m.pendingViewportRefresh {
+		t.Fatal("expected offscreen stream delta to defer a viewport refresh")
+	}
+	if m.pendingViewportEntry != m.streamTarget {
+		t.Fatalf("expected deferred refresh to track stream target %d, got %d", m.streamTarget, m.pendingViewportEntry)
+	}
+	if !strings.Contains(m.entries[m.streamTarget].Content, "more offscreen output") {
+		t.Fatalf("expected stream content to keep advancing offscreen, got %q", m.entries[m.streamTarget].Content)
+	}
+
+	m.viewport.GotoBottom()
+	m.syncViewportState()
+
+	if m.pendingViewportRefresh {
+		t.Fatal("expected deferred viewport refresh to flush after returning to bottom")
+	}
+	if !strings.Contains(ansi.Strip(m.viewport.View()), "more offscreen output") {
+		t.Fatal("expected deferred stream content to appear after viewport catches up")
+	}
+}
+
+func TestShouldRenderInlineStatus_WhenRunningTranscriptStatusIsOffscreen(t *testing.T) {
+	m := newScrollableModelForScrollbarTest(t)
+	m.streaming = true
+	m.pendingRequest = true
+	m.streamTarget = len(m.entries) - 1
+	m.statusLine = "thinking"
+	m.setLiveWorkStatus(workStatus{Phase: workPhaseThinking, Label: "Thinking", Meta: "Working through the next step", Running: true})
+	m.entries[m.streamTarget].ThinkingContent = "inspect repo"
+	m.entries[m.streamTarget].ThinkingDone = false
+	m.refreshViewport(true)
+
+	m.viewport.SetYOffset(0)
+	m.autoFollow = false
+	m.showJump = true
+
+	if !m.shouldRenderInlineStatus() {
+		t.Fatal("expected inline status to stay visible when the running thinking block is offscreen")
+	}
+
+	m.viewport.GotoBottom()
+	m.syncViewportState()
+
+	if m.shouldRenderInlineStatus() {
+		t.Fatal("expected inline status to hide once the running thinking block is visible again")
+	}
+}
+
 func newScrollableModelForScrollbarTest(t *testing.T) Model {
 	t.Helper()
 	m := NewModel(Config{
