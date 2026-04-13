@@ -363,7 +363,7 @@ func shouldPersistAssistantMessage(msg providers.ChatMessage) bool {
 
 func isLegitimateEmptyCompletion(stopReason string) bool {
 	switch strings.TrimSpace(strings.ToLower(stopReason)) {
-	case "end_turn", "stop", "stop_sequence":
+	case "end_turn":
 		return true
 	default:
 		return false
