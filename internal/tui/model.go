@@ -267,6 +267,12 @@ type Model struct {
 	// have scrolled off-screen.
 	renderedContent string
 
+	// Cached token estimate for the header, updated only when entries change.
+	cachedTokenEstimate int
+
+	// Cached separator line, invalidated on width change.
+	cachedSep string
+
 	// Scrollbar drag state.
 	scrollbarDragging        bool
 	scrollbarDragStartRow    int
@@ -277,6 +283,9 @@ type Model struct {
 	// Scrollbar hover state.
 	scrollbarHoverActive bool
 	scrollbarHoverRow    int
+
+	// Cached scrollbar render, precomputed in Update() via refreshScrollbarCache().
+	cachedScrollbar string
 
 	// Text selection in viewport.
 	selection selectionState
@@ -322,7 +331,7 @@ type Model struct {
 func NewModel(cfg Config) Model {
 	vp := viewport.New(80, minOutputHeight)
 	vp.SetContent("")
-	vp.MouseWheelDelta = 1
+	vp.MouseWheelDelta = 3
 
 	in := defaultInputTextarea
 
@@ -1017,6 +1026,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport, cmd = m.viewport.Update(msg)
 				m.autoFollow = m.viewport.AtBottom()
 				m.showJump = !m.autoFollow
+				m.refreshScrollbarCache()
 				return m, cmd
 			}
 			// Wheel outside the chat area (e.g. input) — swallow.
@@ -1362,12 +1372,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Update slash command completion popup.
 	m.updateCompletion()
 
+	prevOffset := m.viewport.YOffset
 	m.viewport, cmd = m.viewport.Update(msg)
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	m.autoFollow = m.viewport.AtBottom()
 	m.showJump = !m.autoFollow
+	if m.viewport.YOffset != prevOffset {
+		m.refreshScrollbarCache()
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -2198,7 +2212,11 @@ func (m *Model) updateScrollbarHover(x, y int) bool {
 		m.scrollbarHoverActive = false
 		m.scrollbarHoverRow = -1
 	}
-	return m.scrollbarHoverActive != prevActive || m.scrollbarHoverRow != prevRow
+	changed := m.scrollbarHoverActive != prevActive || m.scrollbarHoverRow != prevRow
+	if changed {
+		m.refreshScrollbarCache()
+	}
+	return changed
 }
 
 func (m *Model) setViewportOffset(offset int) {
@@ -2211,6 +2229,26 @@ func (m *Model) setViewportOffset(offset int) {
 	m.viewport.YOffset = offset
 	m.autoFollow = m.viewport.AtBottom()
 	m.showJump = !m.viewport.AtBottom()
+	m.refreshScrollbarCache()
+}
+
+// refreshScrollbarCache rebuilds the scrollbar string. Called from any
+// code path that changes the viewport offset, hover, or drag state so
+// the value-receiver View() can read a pre-computed result.
+func (m *Model) refreshScrollbarCache() {
+	hoverRow := -1
+	if m.scrollbarHoverActive {
+		hoverRow = m.scrollbarHoverRow
+	}
+	m.cachedScrollbar = renderScrollbarWithHover(
+		m.layout.Chat.Height,
+		m.viewport.TotalLineCount(),
+		m.viewport.Height,
+		m.viewport.YOffset,
+		m.userMessageLineAnchors,
+		hoverRow,
+		m.scrollbarDragging,
+	)
 }
 
 func (m *Model) jumpToScrollbarRow(row int) {
@@ -2292,7 +2330,13 @@ func (m *Model) dragScrollbarToRow(row int) {
 		m.scrollbarDragMaxOffset = maxOffset
 	}
 	deltaRows := row - m.scrollbarDragStartRow
-	deltaOffset := roundDiv(deltaRows*maxOffset, trackSpace)
+	// Cap lines-per-row to one viewport page so long content doesn't
+	// cause huge jumps on each row of mouse movement.
+	linesPerRow := maxOffset / max(1, trackSpace)
+	if maxPerRow := m.viewport.Height; linesPerRow > maxPerRow {
+		linesPerRow = maxPerRow
+	}
+	deltaOffset := deltaRows * linesPerRow
 	m.setViewportOffset(m.scrollbarDragStartOffset + deltaOffset)
 }
 
@@ -2459,6 +2503,13 @@ func (m *Model) refreshViewport(forceBottom bool) {
 	m.userMessageLineAnchors = userAnchors
 	m.renderedContent = b.String()
 	m.viewport.SetContent(m.renderedContent)
+
+	// Update cached token estimate so View() doesn't re-scan entries every frame.
+	tokenEst := 0
+	for _, e := range m.entries {
+		tokenEst += len(e.Content) / 4
+	}
+	m.cachedTokenEstimate = tokenEst
 	if forceBottom || m.autoFollow {
 		m.viewport.GotoBottom()
 	} else if preserveOffset {
@@ -2478,6 +2529,7 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			m.scrollbarHoverRow = m.layout.Chat.Height - 1
 		}
 	}
+	m.refreshScrollbarCache()
 }
 
 func (m *Model) relayout() {
@@ -2491,6 +2543,9 @@ func (m *Model) relayout() {
 	m.input.SetHeight(m.layout.Input.Height)
 	m.viewport.Width = m.layout.Chat.Width
 	m.viewport.Height = m.layout.Chat.Height
+	m.cachedSep = lipgloss.NewStyle().
+		Foreground(currentTheme.Border).
+		Render(strings.Repeat("─", m.width))
 	m.refreshViewport(false)
 }
 
@@ -2564,11 +2619,7 @@ func (m Model) View() string {
 	}
 
 	// Header — left: brand info, right: hints + clock.
-	tokenEstimate := 0
-	for _, e := range m.entries {
-		tokenEstimate += len(e.Content) / 4
-	}
-	tokenStr := formatTokenCount(tokenEstimate)
+	tokenStr := formatTokenCount(m.cachedTokenEstimate)
 	headerLeft := fmt.Sprintf("wuu · %s/%s │ %s tokens", m.provider, m.modelName, tokenStr)
 
 	var hints []string
@@ -2608,22 +2659,9 @@ func (m Model) View() string {
 		outputBox = overlaySelection(outputBox, &m.selection, m.viewport.YOffset)
 	}
 
-	// Overlay scrollbar on the rightmost column of the viewport.
-	hoverRow := -1
-	if m.scrollbarHoverActive {
-		hoverRow = m.scrollbarHoverRow
-	}
-	sb := renderScrollbarWithHover(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-		m.userMessageLineAnchors,
-		hoverRow,
-		m.scrollbarDragging,
-	)
-	if sb != "" {
-		outputBox = overlayScrollbar(outputBox, sb, m.layout.Chat.Width)
+	// Overlay scrollbar — pre-computed in Update() via refreshScrollbarCache().
+	if m.cachedScrollbar != "" {
+		outputBox = overlayScrollbar(outputBox, m.cachedScrollbar, m.layout.Chat.Width)
 	}
 	inputBox := m.input.View()
 
@@ -2633,10 +2671,8 @@ func (m Model) View() string {
 		outputBox = overlayBottom(outputBox, popup, m.width)
 	}
 
-	// Separator line between chat and input.
-	sep := lipgloss.NewStyle().
-		Foreground(currentTheme.Border).
-		Render(strings.Repeat("─", m.width))
+	// Separator line — precomputed in relayout().
+	sep := m.cachedSep
 
 	// Inline status lives outside the viewport so its lightweight spinner
 	// can update without rebuilding the viewport content. Keep this area
