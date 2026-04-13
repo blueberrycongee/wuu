@@ -490,6 +490,42 @@ func TestLoadTokenUsageTotals(t *testing.T) {
 	}
 }
 
+func TestAppendTokenUsage_PersistsPerTurnDeltasAcrossTurns(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	turns := []struct {
+		input  int
+		output int
+	}{
+		{input: 10, output: 5},
+		{input: 7, output: 3},
+		{input: 4, output: 2},
+	}
+
+	for _, turn := range turns {
+		if err := appendTokenUsage(path, turn.input, turn.output); err != nil {
+			t.Fatalf("append token usage: %v", err)
+		}
+	}
+
+	meta, err := loadMetaEntries(path)
+	if err != nil {
+		t.Fatalf("loadMetaEntries: %v", err)
+	}
+	if len(meta) != len(turns) {
+		t.Fatalf("expected %d meta entries, got %d", len(turns), len(meta))
+	}
+	for i, rec := range meta {
+		if rec.Content != "token_usage" {
+			t.Fatalf("expected token_usage meta content, got %#v", rec)
+		}
+		if rec.InputTokens != turns[i].input || rec.OutputTokens != turns[i].output {
+			t.Fatalf("expected turn %d delta in=%d out=%d, got in=%d out=%d", i, turns[i].input, turns[i].output, rec.InputTokens, rec.OutputTokens)
+		}
+	}
+}
+
 func TestSessionReaders_HandleLargeJSONLRecords(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

@@ -461,22 +461,21 @@ func (m Model) loadMemory() Model {
 		m.statusLine = fmt.Sprintf("memory load failed: %v", err)
 		return m
 	}
-	if len(entries) == 0 {
-		return m
-	}
-	m.entries = append(m.entries, entries...)
+	if len(entries) > 0 {
+		m.entries = append(m.entries, entries...)
 
-	// Populate input history from loaded user messages.
-	for _, e := range entries {
-		if e.Role == "USER" {
-			content := strings.TrimSpace(stripUserImagePlaceholderLines(e.Content))
-			if content != "" && content != "(empty)" {
-				m.inputHistory = append(m.inputHistory, content)
+		// Populate input history from loaded user messages.
+		for _, e := range entries {
+			if e.Role == "USER" {
+				content := strings.TrimSpace(stripUserImagePlaceholderLines(e.Content))
+				if content != "" && content != "(empty)" {
+					m.inputHistory = append(m.inputHistory, content)
+				}
 			}
 		}
-	}
 
-	m.statusLine = fmt.Sprintf("resumed %d entries", len(entries))
+		m.statusLine = fmt.Sprintf("resumed %d entries", len(entries))
+	}
 	m.loadPersistedTokenUsage()
 	m.cacheRenderedEntries()
 	m.refreshViewport(true)
@@ -935,9 +934,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Persist token usage for this turn.
-		if m.mainInputTokens > 0 || m.mainOutputTokens > 0 {
-			_ = appendTokenUsage(m.memoryPath, m.mainInputTokens, m.mainOutputTokens)
+		if m.turnInputTokens > 0 || m.turnOutputTokens > 0 {
+			_ = appendTokenUsage(m.memoryPath, m.turnInputTokens, m.turnOutputTokens)
 		}
+		m.turnInputTokens = 0
+		m.turnOutputTokens = 0
 
 		// Dispatch Stop hook (fire-and-forget).
 		if m.hookDispatcher != nil && m.hookDispatcher.HasHooks(hooks.Stop) {
@@ -1658,7 +1659,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			Name:   toolName,
 			Status: ToolCallRunning,
 		})
-		m.setLiveWorkStatus(workStatus{Phase: workPhaseTool, Label: fmt.Sprintf("Running %s", toolName), Meta: "Making progress with a tool", Running: true})
+		m.setLiveWorkStatus(runningToolWorkStatus(toolName))
 		m.statusLine = fmt.Sprintf("tool: %s", toolName)
 		m.refreshViewportForEntry(m.streamTarget, false)
 		return nextWait()
@@ -2663,7 +2664,7 @@ func (m Model) shouldRenderInlineStatus() bool {
 		return false
 	}
 	if ws.Phase == workPhaseThinking || ws.Phase == workPhaseTool {
-		if m.hasVisibleRunningTranscriptStatus() {
+		if m.hasVisibleRunningTranscriptStatus() && !ws.PersistentInlineUI {
 			return false
 		}
 	}

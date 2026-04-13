@@ -144,6 +144,73 @@ func TestApplyStreamEvent_EventDoneAccumulatesMainUsage(t *testing.T) {
 	}
 }
 
+func TestStreamFinished_PersistsTurnTokenDeltasOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: filepath.Join(dir, ".wuu.json"),
+		MemoryPath: path,
+	})
+	m.mainInputTokens = 100
+	m.mainOutputTokens = 40
+	m.turnInputTokens = 7
+	m.turnOutputTokens = 3
+	m.streaming = true
+	m.pendingRequest = true
+
+	updated, _ := m.Update(streamFinishedMsg{})
+	after := updated.(Model)
+
+	if after.mainInputTokens != 100 || after.mainOutputTokens != 40 {
+		t.Fatalf("expected main totals preserved after persistence, got in=%d out=%d", after.mainInputTokens, after.mainOutputTokens)
+	}
+	if after.turnInputTokens != 0 || after.turnOutputTokens != 0 {
+		t.Fatalf("expected turn totals reset after persistence, got in=%d out=%d", after.turnInputTokens, after.turnOutputTokens)
+	}
+
+	inputTokens, outputTokens, err := loadTokenUsageTotals(path)
+	if err != nil {
+		t.Fatalf("loadTokenUsageTotals: %v", err)
+	}
+	if inputTokens != 7 || outputTokens != 3 {
+		t.Fatalf("expected persisted turn delta only, got in=%d out=%d", inputTokens, outputTokens)
+	}
+
+	if got := after.headerUsageSummary(); !strings.Contains(got, "main 100↑/40↓") {
+		t.Fatalf("expected header summary to keep cumulative main totals, got %q", got)
+	}
+}
+
+func TestLoadPersistedTokenUsage_RestoresMainTotalsFromTurnDeltas(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := appendTokenUsage(path, 11, 5); err != nil {
+		t.Fatalf("append first token usage: %v", err)
+	}
+	if err := appendTokenUsage(path, 7, 3); err != nil {
+		t.Fatalf("append second token usage: %v", err)
+	}
+
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: filepath.Join(dir, ".wuu.json"),
+		MemoryPath: path,
+	})
+
+	if m.mainInputTokens != 18 || m.mainOutputTokens != 8 {
+		t.Fatalf("expected restored main totals from persisted deltas, got in=%d out=%d", m.mainInputTokens, m.mainOutputTokens)
+	}
+	if m.turnInputTokens != 0 || m.turnOutputTokens != 0 {
+		t.Fatalf("expected restored turn totals to start at zero, got in=%d out=%d", m.turnInputTokens, m.turnOutputTokens)
+	}
+	if got := m.headerUsageSummary(); !strings.Contains(got, "main 18↑/8↓") {
+		t.Fatalf("expected header summary to use restored totals, got %q", got)
+	}
+}
+
 func TestWorkerNotifyRunningUsageAccumulatesAndPreservesCompletedTotals(t *testing.T) {
 	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
 	m.width = 100
@@ -1219,6 +1286,8 @@ func TestRenderInlineStatus_ShowsWaitingLabels(t *testing.T) {
 		"streaming":            "Responding",
 		"tool: run_shell":      "Running run_shell",
 		"executing tool: read": "Running read",
+		"tool: spawn_agent":    "Spawning worker",
+		"tool: fork_agent":     "Spawning worker",
 	}
 	for status, want := range cases {
 		got := ansi.Strip(renderInlineStatus(status, 1, 80))
