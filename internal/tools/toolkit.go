@@ -27,7 +27,12 @@ const (
 	maxShellTimeoutSeconds     = 600
 	defaultMaxFileBytes        = 256 * 1024
 	defaultMaxEntries          = 1000
-	maxToolOutputBytes         = 256 * 1024
+	// Per-tool output size limits (in bytes). Aligned with Claude Code's
+	// per-tool maxResultSizeChars: shell/grep produce verbose, low-density
+	// output and get a tighter cap; other tools use a generous default.
+	maxShellOutputBytes = 30 * 1024  // 30 KB — matches Claude Code BashTool
+	maxGrepOutputBytes  = 20 * 1024  // 20 KB — matches Claude Code GrepTool
+	maxToolOutputBytes  = 100 * 1024 // 100 KB — general cap for other tools
 )
 
 // Toolkit executes local coding tools for the agent.
@@ -147,7 +152,7 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 					},
 					"timeout_seconds": map[string]any{
 						"type":        "integer",
-						"description": "Max runtime in seconds (1-300).",
+						"description": "Max runtime in seconds (1-600).",
 					},
 				},
 				"required": []string{"command"},
@@ -878,7 +883,7 @@ func (t *Toolkit) runShell(ctx context.Context, argsJSON string) (string, error)
 	}
 
 	output := stdout.String() + stderr.String()
-	trimmed, truncated := truncate(output, maxToolOutputBytes)
+	trimmed, truncated := truncate(output, maxShellOutputBytes)
 
 	result := map[string]any{
 		"command":   args.Command,
