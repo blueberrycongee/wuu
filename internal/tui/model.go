@@ -303,6 +303,7 @@ type Model struct {
 	workerInputTokens  int
 	workerOutputTokens int
 	workerUsageByID    map[string]workerUsageSnapshot
+	workerSpawnedByID  map[string]bool
 	turnInputTokens    int
 	turnOutputTokens   int
 
@@ -356,6 +357,7 @@ func NewModel(cfg Config) Model {
 		pendingViewportEntry: -1,
 		streamTarget:         -1,
 		workerUsageByID:      make(map[string]workerUsageSnapshot),
+		workerSpawnedByID:    make(map[string]bool),
 		historyIndex:         -1,
 		scrollbarHoverRow:    -1,
 		insightProgressIdx:   -1,
@@ -608,6 +610,7 @@ func (m Model) applyResume(id string) (tea.Model, tea.Cmd) {
 	m.memoryPath = path
 	m.entries = entries
 	m.workerUsageByID = make(map[string]workerUsageSnapshot)
+	m.workerSpawnedByID = make(map[string]bool)
 	m.mainInputTokens = 0
 	m.mainOutputTokens = 0
 	m.workerInputTokens = 0
@@ -854,8 +857,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		injected := false
 		switch n.Status {
 		case subagent.StatusRunning:
-			m.appendEntry("system", fmt.Sprintf("⠋ %s spawned: %s — %s",
-				n.Snapshot.Type, n.Snapshot.ID, n.Snapshot.Description))
+			if !m.hasWorkerSpawned(n.Snapshot.ID) {
+				m.appendEntry("system", fmt.Sprintf("⠋ %s spawned: %s — %s",
+					n.Snapshot.Type, n.Snapshot.ID, n.Snapshot.Description))
+				m.markWorkerSpawned(n.Snapshot.ID)
+			}
 		case subagent.StatusCompleted, subagent.StatusFailed, subagent.StatusCancelled:
 			icon := "✓"
 			suffix := ""
@@ -1920,6 +1926,23 @@ func (m *Model) recordWorkerUsage(snapshot subagent.SubAgentSnapshot) {
 		inputTokens:  snapshot.InputTokens,
 		outputTokens: snapshot.OutputTokens,
 	}
+}
+
+func (m *Model) hasWorkerSpawned(id string) bool {
+	if m.workerSpawnedByID == nil {
+		return false
+	}
+	return m.workerSpawnedByID[id]
+}
+
+func (m *Model) markWorkerSpawned(id string) {
+	if id == "" {
+		return
+	}
+	if m.workerSpawnedByID == nil {
+		m.workerSpawnedByID = make(map[string]bool)
+	}
+	m.workerSpawnedByID[id] = true
 }
 
 func (m Model) headerUsageSummary() string {

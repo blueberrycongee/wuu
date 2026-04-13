@@ -238,6 +238,98 @@ func TestWorkerNotifyRunningUsageAccumulatesAndPreservesCompletedTotals(t *testi
 	}
 }
 
+func TestWorkerNotifyRunningAppendsSpawnedEntryOnce(t *testing.T) {
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
+
+	updated, _ := m.Update(workerNotifyMsg{notification: subagent.Notification{
+		Status: subagent.StatusRunning,
+		Snapshot: subagent.SubAgentSnapshot{
+			ID:          "worker-1",
+			Type:        "worker",
+			Description: "first",
+			Status:      subagent.StatusRunning,
+		},
+	}})
+	m = updated.(Model)
+
+	if len(m.entries) != 1 {
+		t.Fatalf("expected one spawned entry, got %d", len(m.entries))
+	}
+	if m.entries[0].Role != "SYSTEM" {
+		t.Fatalf("expected system entry, got %q", m.entries[0].Role)
+	}
+	if !strings.Contains(m.entries[0].Content, "worker spawned: worker-1") {
+		t.Fatalf("expected spawned entry content, got %q", m.entries[0].Content)
+	}
+}
+
+func TestWorkerNotifyRunningDeduplicatesSpawnedEntry(t *testing.T) {
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
+
+	for i := 0; i < 2; i++ {
+		updated, _ := m.Update(workerNotifyMsg{notification: subagent.Notification{
+			Status: subagent.StatusRunning,
+			Snapshot: subagent.SubAgentSnapshot{
+				ID:           "worker-1",
+				Type:         "worker",
+				Description:  "first",
+				Status:       subagent.StatusRunning,
+				InputTokens:  4 + i,
+				OutputTokens: 1 + i,
+			},
+		}})
+		m = updated.(Model)
+	}
+
+	if len(m.entries) != 1 {
+		t.Fatalf("expected one spawned entry after duplicate running notifications, got %d", len(m.entries))
+	}
+	if !strings.Contains(m.entries[0].Content, "worker spawned: worker-1") {
+		t.Fatalf("expected spawned entry content, got %q", m.entries[0].Content)
+	}
+}
+
+func TestWorkerNotifyTerminalStatusesStillAppendEntries(t *testing.T) {
+	cases := []struct {
+		name   string
+		status subagent.Status
+		icon   string
+		err    error
+		suffix string
+	}{
+		{name: "completed", status: subagent.StatusCompleted, icon: "✓"},
+		{name: "failed", status: subagent.StatusFailed, icon: "✗", err: fmt.Errorf("boom"), suffix: "boom"},
+		{name: "cancelled", status: subagent.StatusCancelled, icon: "⊘"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
+			updated, _ := m.Update(workerNotifyMsg{notification: subagent.Notification{
+				Status: tc.status,
+				Snapshot: subagent.SubAgentSnapshot{
+					ID:          "worker-1",
+					Type:        "worker",
+					Description: "first",
+					Status:      tc.status,
+					Error:       tc.err,
+				},
+			}})
+			m = updated.(Model)
+
+			if len(m.entries) != 1 {
+				t.Fatalf("expected one terminal entry, got %d", len(m.entries))
+			}
+			if !strings.Contains(m.entries[0].Content, tc.icon+" worker "+string(tc.status)+": first") {
+				t.Fatalf("expected terminal entry for %s, got %q", tc.status, m.entries[0].Content)
+			}
+			if tc.suffix != "" && !strings.Contains(m.entries[0].Content, tc.suffix) {
+				t.Fatalf("expected terminal entry suffix %q, got %q", tc.suffix, m.entries[0].Content)
+			}
+		})
+	}
+}
+
 func TestSubmitPromptFlow(t *testing.T) {
 	m := newTestModel(func(msgs []providers.ChatMessage) string {
 		last := msgs[len(msgs)-1].Content
