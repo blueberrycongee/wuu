@@ -743,6 +743,41 @@ func TestStreamChat_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestStreamChat_MissingDoneYieldsIncompleteError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+	}))
+	defer server.Close()
+
+	client, _ := New(ClientConfig{BaseURL: server.URL, APIKey: "k"})
+	ch, err := client.StreamChat(context.Background(), providers.ChatRequest{
+		Model:    "m",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var events []providers.StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected content delta + terminal error, got %d events", len(events))
+	}
+	if events[0].Type != providers.EventContentDelta || events[0].Content != "hi" {
+		t.Fatalf("unexpected first event: %+v", events[0])
+	}
+	if events[1].Type != providers.EventError {
+		t.Fatalf("expected terminal error, got %+v", events[1])
+	}
+	if events[1].Error == nil || !providers.IsRetryable(events[1].Error) {
+		t.Fatalf("expected retryable incomplete stream error, got %v", events[1].Error)
+	}
+}
+
 func TestStreamChat_IdleWatchdogFires(t *testing.T) {
 	// Set a very short idle timeout for the test.
 	t.Setenv("WUU_STREAM_IDLE_TIMEOUT_MS", "100")

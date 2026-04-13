@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"net"
@@ -60,6 +61,70 @@ func (e *HTTPError) Error() string {
 	return "HTTP " + strconv.Itoa(e.StatusCode) + ": " + e.Body
 }
 
+// StreamError wraps a terminal provider-stream failure that arrived inside
+// the live event stream rather than as an HTTP status code.
+type StreamError struct {
+	Message         string
+	Code            string
+	Retryable       bool
+	Auth            bool
+	ContextOverflow bool
+}
+
+func (e *StreamError) Error() string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case e.Code != "" && e.Message != "":
+		return fmt.Sprintf("stream error (%s): %s", e.Code, e.Message)
+	case e.Message != "":
+		return e.Message
+	case e.Code != "":
+		return "stream error (" + e.Code + ")"
+	default:
+		return "stream error"
+	}
+}
+
+// NewIncompleteStreamError marks an early stream close as retryable so the
+// runner can recover before any user-visible output has been committed.
+func NewIncompleteStreamError(message string) *StreamError {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = "stream closed before terminal event"
+	}
+	return &StreamError{
+		Message:   msg,
+		Retryable: true,
+	}
+}
+
+// NewProviderStreamError classifies a provider-reported streaming error that
+// arrived as an SSE event payload rather than as an HTTP status code.
+func NewProviderStreamError(code, message string) *StreamError {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = "provider reported a streaming error"
+	}
+	err := &StreamError{
+		Message: strings.TrimSpace(msg),
+		Code:    strings.TrimSpace(code),
+	}
+	if DetectContextOverflow(err.Message) {
+		err.ContextOverflow = true
+		return err
+	}
+	if isStreamAuthError(err.Code, err.Message) {
+		err.Auth = true
+		return err
+	}
+	if isRetryableStreamError(err.Code, err.Message) {
+		err.Retryable = true
+	}
+	return err
+}
+
 // DetectContextOverflow inspects a provider error body and reports
 // whether it represents a context-window-exceeded condition. The
 // matching is provider-agnostic: it covers both OpenAI's
@@ -86,6 +151,10 @@ func IsContextOverflow(err error) bool {
 	if errors.As(err, &httpErr) {
 		return httpErr.ContextOverflow
 	}
+	var streamErr *StreamError
+	if errors.As(err, &streamErr) {
+		return streamErr.ContextOverflow
+	}
 	return false
 }
 
@@ -93,6 +162,13 @@ func IsContextOverflow(err error) bool {
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
+	}
+	var streamErr *StreamError
+	if errors.As(err, &streamErr) {
+		if streamErr.ContextOverflow || streamErr.Auth {
+			return false
+		}
+		return streamErr.Retryable
 	}
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
@@ -121,6 +197,10 @@ func IsAuthError(err error) bool {
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode == 401 || httpErr.StatusCode == 403
+	}
+	var streamErr *StreamError
+	if errors.As(err, &streamErr) {
+		return streamErr.Auth
 	}
 	return false
 }
@@ -212,6 +292,38 @@ func isNetworkError(err error) bool {
 		strings.Contains(msg, "deadline exceeded") ||
 		strings.Contains(msg, "timeout") ||
 		strings.Contains(msg, "eof")
+}
+
+func isRetryableStreamError(code, message string) bool {
+	code = strings.ToLower(strings.TrimSpace(code))
+	switch code {
+	case "429", "529", "1305", "rate_limit_error", "overloaded_error":
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "too many requests") ||
+		strings.Contains(msg, "overloaded") ||
+		strings.Contains(msg, "temporarily unavailable") ||
+		strings.Contains(msg, "try again later") ||
+		strings.Contains(msg, "server error") ||
+		strings.Contains(msg, "internal error") ||
+		strings.Contains(msg, "访问量过大") ||
+		strings.Contains(msg, "稍后再试")
+}
+
+func isStreamAuthError(code, message string) bool {
+	code = strings.ToLower(strings.TrimSpace(code))
+	switch code {
+	case "401", "403", "authentication_error", "permission_error":
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(msg, "unauthorized") ||
+		strings.Contains(msg, "forbidden") ||
+		strings.Contains(msg, "invalid api key") ||
+		strings.Contains(msg, "authentication") ||
+		strings.Contains(msg, "api key")
 }
 
 // ParseRetryAfter extracts Retry-After duration from an HTTP response header.

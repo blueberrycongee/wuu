@@ -805,6 +805,92 @@ func TestStreamChat_ToolUse(t *testing.T) {
 	}
 }
 
+func TestStreamChat_ErrorEventSurfacesProviderError(t *testing.T) {
+	ssePayload := "event: error\n" +
+		"data: {\"error\":{\"code\":\"1305\",\"message\":\"该模型当前访问量过大，请您稍后再试\"}}\n\n" +
+		"data: [DONE]\n\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(ssePayload))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ch, err := client.StreamChat(context.Background(), providers.ChatRequest{
+		Model:    "claude-test",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var events []providers.StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 stream event, got %d", len(events))
+	}
+	if events[0].Type != providers.EventError {
+		t.Fatalf("expected error event, got %+v", events[0])
+	}
+	if events[0].Error == nil || !providers.IsRetryable(events[0].Error) {
+		t.Fatalf("expected retryable provider stream error, got %v", events[0].Error)
+	}
+}
+
+func TestStreamChat_MissingMessageStopYieldsIncompleteError(t *testing.T) {
+	ssePayload := "event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}\n\n" +
+		"event: content_block_start\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(ssePayload))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ch, err := client.StreamChat(context.Background(), providers.ChatRequest{
+		Model:    "claude-test",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var events []providers.StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected content delta + terminal error, got %d events", len(events))
+	}
+	if events[0].Type != providers.EventContentDelta || events[0].Content != "Hello" {
+		t.Fatalf("unexpected first event: %+v", events[0])
+	}
+	if events[1].Type != providers.EventError {
+		t.Fatalf("expected terminal error, got %+v", events[1])
+	}
+	if events[1].Error == nil || !providers.IsRetryable(events[1].Error) {
+		t.Fatalf("expected retryable incomplete stream error, got %v", events[1].Error)
+	}
+}
+
 func TestStreamChat_ValidationErrors(t *testing.T) {
 	client, _ := New(ClientConfig{BaseURL: "http://localhost", APIKey: "k"})
 

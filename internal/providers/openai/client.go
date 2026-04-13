@@ -458,6 +458,11 @@ func (c *Client) readSSE(resp *http.Response, ch chan<- providers.StreamEvent) {
 			Type:  providers.EventError,
 			Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded),
 		}
+		return
+	}
+	ch <- providers.StreamEvent{
+		Type:  providers.EventError,
+		Error: providers.NewIncompleteStreamError("stream closed before [DONE]"),
 	}
 }
 

@@ -390,10 +390,12 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 	resetIdle := func() { idleTimer.Reset(idleTimeout) }
 
 	var (
-		usage      providers.TokenUsage
-		stopReason string
-		blocks     = make(map[int]*blockState)
-		cur        sseRawEvent
+		usage          providers.TokenUsage
+		stopReason     string
+		blocks         = make(map[int]*blockState)
+		cur            sseRawEvent
+		sawMessageStop bool
+		sawStreamError bool
 	)
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -410,13 +412,13 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 			continue
 		}
 		if line == "" && cur.Event != "" {
-			c.handleSSEEvent(cur, &usage, &stopReason, blocks, ch)
+			c.handleSSEEvent(cur, &usage, &stopReason, blocks, ch, &sawMessageStop, &sawStreamError)
 			cur = sseRawEvent{}
 		}
 	}
 
 	if cur.Event != "" {
-		c.handleSSEEvent(cur, &usage, &stopReason, blocks, ch)
+		c.handleSSEEvent(cur, &usage, &stopReason, blocks, ch, &sawMessageStop, &sawStreamError)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -429,10 +431,25 @@ func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEv
 	}
 	if idleFired.Load() {
 		ch <- providers.StreamEvent{Type: providers.EventError, Error: fmt.Errorf("stream idle timeout after %s: %w", idleTimeout, context.DeadlineExceeded)}
+		return
+	}
+	if !sawMessageStop && !sawStreamError {
+		ch <- providers.StreamEvent{
+			Type:  providers.EventError,
+			Error: providers.NewIncompleteStreamError("stream closed before message_stop"),
+		}
 	}
 }
 
-func (c *Client) handleSSEEvent(raw sseRawEvent, usage *providers.TokenUsage, stopReason *string, blocks map[int]*blockState, ch chan<- providers.StreamEvent) {
+func (c *Client) handleSSEEvent(
+	raw sseRawEvent,
+	usage *providers.TokenUsage,
+	stopReason *string,
+	blocks map[int]*blockState,
+	ch chan<- providers.StreamEvent,
+	sawMessageStop *bool,
+	sawStreamError *bool,
+) {
 	switch raw.Event {
 	case "message_start":
 		var p messageStartPayload
@@ -492,7 +509,26 @@ func (c *Client) handleSSEEvent(raw sseRawEvent, usage *providers.TokenUsage, st
 			}
 		}
 	case "message_stop":
+		if sawMessageStop != nil {
+			*sawMessageStop = true
+		}
 		ch <- providers.StreamEvent{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationTokens: usage.CacheCreationTokens, CacheReadTokens: usage.CacheReadTokens}, StopReason: *stopReason, Truncated: *stopReason == "max_tokens"}
+	case "error":
+		if sawStreamError != nil {
+			*sawStreamError = true
+		}
+		var p anthropicErrorPayload
+		if err := json.Unmarshal([]byte(raw.Data), &p); err == nil {
+			ch <- providers.StreamEvent{
+				Type:  providers.EventError,
+				Error: providers.NewProviderStreamError(p.Error.Code, p.Error.Message),
+			}
+			return
+		}
+		ch <- providers.StreamEvent{
+			Type:  providers.EventError,
+			Error: providers.NewProviderStreamError("", raw.Data),
+		}
 	}
 }
 
@@ -608,6 +644,13 @@ type anthropicResponse struct {
 type sseRawEvent struct {
 	Event string
 	Data  string
+}
+
+type anthropicErrorPayload struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 type messageStartPayload struct {

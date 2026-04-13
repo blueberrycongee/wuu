@@ -437,7 +437,7 @@ func (s *streamStep) runStreamWithReconnect(
 		}
 
 		if streamErr == nil && !sawDone {
-			streamErr = errors.New("stream closed before done")
+			streamErr = providers.NewIncompleteStreamError("stream closed before done")
 		}
 		if streamErr == nil {
 			return nil

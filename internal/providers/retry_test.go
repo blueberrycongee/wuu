@@ -65,6 +65,39 @@ func TestIsRetryable_HTTPServerErrors(t *testing.T) {
 	}
 }
 
+func TestIsRetryable_IncompleteStreamError(t *testing.T) {
+	if !IsRetryable(NewIncompleteStreamError("stream closed before done")) {
+		t.Fatal("expected incomplete stream error to be retryable")
+	}
+}
+
+func TestNewProviderStreamError_Retryable(t *testing.T) {
+	err := NewProviderStreamError("1305", "该模型当前访问量过大，请您稍后再试")
+	if !IsRetryable(err) {
+		t.Fatal("expected zhipu 1305 stream error to be retryable")
+	}
+}
+
+func TestNewProviderStreamError_ContextOverflow(t *testing.T) {
+	err := NewProviderStreamError("400", "prompt is too long for this model")
+	if !IsContextOverflow(err) {
+		t.Fatal("expected stream error to be classified as context overflow")
+	}
+	if IsRetryable(err) {
+		t.Fatal("expected context overflow stream error to not be retryable")
+	}
+}
+
+func TestNewProviderStreamError_Auth(t *testing.T) {
+	err := NewProviderStreamError("authentication_error", "invalid api key")
+	if !IsAuthError(err) {
+		t.Fatal("expected stream error to be classified as auth")
+	}
+	if IsRetryable(err) {
+		t.Fatal("expected auth stream error to not be retryable")
+	}
+}
+
 func TestIsRetryable_StringFallback(t *testing.T) {
 	cases := []struct {
 		msg  string

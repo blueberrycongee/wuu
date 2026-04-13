@@ -244,6 +244,48 @@ func TestStreamRunner_RetryOnInitialConnectError(t *testing.T) {
 	}
 }
 
+func TestStreamRunner_RetriesOnIncompleteStreamBeforeOutput(t *testing.T) {
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{events: nil},
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "recovered"},
+					{Type: providers.EventDone},
+				},
+			},
+		},
+	}
+
+	var reconnectMsgs []string
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "m",
+		StreamMaxRetries:        2,
+		StreamRetryInitialDelay: time.Millisecond,
+		StreamRetryMaxDelay:     2 * time.Millisecond,
+		OnEvent: func(ev providers.StreamEvent) {
+			if ev.Type == providers.EventReconnect {
+				reconnectMsgs = append(reconnectMsgs, ev.Content)
+			}
+		},
+	}
+
+	result, err := runner.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result != "recovered" {
+		t.Fatalf("unexpected result: %q", result)
+	}
+	if client.callCount != 2 {
+		t.Fatalf("expected 2 stream attempts, got %d", client.callCount)
+	}
+	if len(reconnectMsgs) != 1 {
+		t.Fatalf("expected 1 reconnect event, got %d", len(reconnectMsgs))
+	}
+}
+
 func TestStreamRunner_EmitsStructuredLifecycleEvents(t *testing.T) {
 	client := &mockStreamClient{
 		attempts: []mockStreamAttempt{
@@ -372,6 +414,40 @@ func TestStreamRunner_DoesNotRetryAfterPartialOutput(t *testing.T) {
 				events: []providers.StreamEvent{
 					{Type: providers.EventContentDelta, Content: "partial"},
 					{Type: providers.EventError, Error: errors.New("EOF")},
+				},
+			},
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "second"},
+					{Type: providers.EventDone},
+				},
+			},
+		},
+	}
+
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "m",
+		StreamMaxRetries:        2,
+		StreamRetryInitialDelay: time.Millisecond,
+		StreamRetryMaxDelay:     2 * time.Millisecond,
+	}
+
+	_, err := runner.Run(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("expected stream error")
+	}
+	if client.callCount != 1 {
+		t.Fatalf("expected no reconnect after partial output, got %d attempts", client.callCount)
+	}
+}
+
+func TestStreamRunner_DoesNotRetryIncompleteStreamAfterPartialOutput(t *testing.T) {
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{
+				events: []providers.StreamEvent{
+					{Type: providers.EventContentDelta, Content: "partial"},
 				},
 			},
 			{
