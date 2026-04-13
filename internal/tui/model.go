@@ -1009,6 +1009,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
 		hoverChanged := m.updateScrollbarHover(msg.X, msg.Y)
 
+		// Mouse wheel — route to the correct panel so scrolling in the
+		// input area does not move the chat viewport.
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			if m.isInChatArea(msg.X, msg.Y) {
+				var cmd tea.Cmd
+				m.viewport, cmd = m.viewport.Update(msg)
+				m.autoFollow = m.viewport.AtBottom()
+				m.showJump = !m.autoFollow
+				return m, cmd
+			}
+			// Wheel outside the chat area (e.g. input) — swallow.
+			return m, nil
+		}
+
 		if msg.Action == tea.MouseActionRelease {
 			m.scrollbarDragging = false
 			m.scrollbarDragTrackSpace = 0
