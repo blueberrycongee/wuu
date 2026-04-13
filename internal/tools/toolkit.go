@@ -1491,12 +1491,31 @@ func isBinaryFile(path string) bool {
 		return false
 	}
 	defer f.Close()
-	buf := make([]byte, 512)
+
+	// Read up to 8192 bytes for binary detection. Aligned with
+	// Claude Code's BINARY_CHECK_SIZE — 512 bytes was too small
+	// and missed binary files whose headers lack null bytes
+	// (e.g. PDF starts with "%PDF-1.4\n").
+	const binaryCheckSize = 8192
+	buf := make([]byte, binaryCheckSize)
 	n, _ := f.Read(buf)
-	for _, b := range buf[:n] {
+	checkBuf := buf[:n]
+
+	nonPrintable := 0
+	for _, b := range checkBuf {
 		if b == 0 {
 			return true
 		}
+		// Count non-printable, non-whitespace bytes.
+		// Printable ASCII is 32-126, plus common whitespace (9=tab, 10=newline, 13=CR).
+		if b < 32 && b != 9 && b != 10 && b != 13 {
+			nonPrintable++
+		}
+	}
+
+	// If more than 10% non-printable, likely binary.
+	if len(checkBuf) > 0 && float64(nonPrintable)/float64(len(checkBuf)) > 0.1 {
+		return true
 	}
 	return false
 }
