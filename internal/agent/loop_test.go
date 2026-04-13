@@ -535,7 +535,19 @@ func TestRunToolLoop_BeforeStepInjectsMessages(t *testing.T) {
 func TestRunToolLoop_EmptyAnswerIsError(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "  "}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err == nil || !strings.Contains(err.Error(), "empty answer") {
-		t.Fatalf("expected empty-answer error, got %v", err)
+	if err == nil || !IsEmptyAnswer(err) {
+		t.Fatalf("expected EmptyAnswerError, got %v", err)
+	}
+}
+
+func TestRunToolLoop_EmptyAnswerCarriesStopReason(t *testing.T) {
+	step := &fakeStep{results: []StepResult{{Content: "", StopReason: "stop"}}}
+	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
+	if err == nil || !IsEmptyAnswer(err) {
+		t.Fatalf("expected EmptyAnswerError, got %v", err)
+	}
+	var emptyErr *EmptyAnswerError
+	if !errors.As(err, &emptyErr) || emptyErr.StopReason != "stop" {
+		t.Fatalf("expected StopReason=stop, got %+v", emptyErr)
 	}
 }

@@ -22,6 +22,31 @@ const maxTruncationRecoveries = 3
 // re-introducing the topic.
 const truncationContinuePrompt = "Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces."
 
+// EmptyAnswerError is returned when the model completes a turn without
+// producing any text content or tool calls. StopReason carries the
+// provider's finish signal (e.g. "stop", "end_turn") when one was
+// received, or "" when the stream ended without a normal stop — the
+// latter usually indicates a proxy/compatibility issue rather than
+// intentional model behaviour.
+type EmptyAnswerError struct {
+	StopReason string
+}
+
+func (e *EmptyAnswerError) Error() string {
+	if e.StopReason != "" {
+		return fmt.Sprintf("model returned empty answer (stop_reason=%s)", e.StopReason)
+	}
+	return "model returned empty answer"
+}
+
+// IsEmptyAnswer reports whether err (or any error in its chain) is an
+// EmptyAnswerError. Callers use this to distinguish empty-content
+// failures from other fatal errors.
+func IsEmptyAnswer(err error) bool {
+	var target *EmptyAnswerError
+	return errors.As(err, &target)
+}
+
 // RunToolLoop drives the shared multi-step tool-use loop both Runner
 // and StreamRunner depend on. It is transport-agnostic: callers
 // supply a Step that knows how to perform one model round-trip
@@ -217,7 +242,7 @@ func RunToolLoop(
 					HistoryRewritten: historyRewritten,
 					InputTokens:      totalIn,
 					OutputTokens:     totalOut,
-				}, errors.New("model returned empty answer")
+				}, &EmptyAnswerError{StopReason: result.StopReason}
 			}
 			return LoopResult{
 				Content:          finalContent,
