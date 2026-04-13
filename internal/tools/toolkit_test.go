@@ -315,6 +315,37 @@ func TestToolkit_SendMessageToAgent_RegisteredInDefinitions(t *testing.T) {
 	t.Fatal("send_message_to_agent must be present in tool definitions")
 }
 
+func TestToolkit_RunShellDefinition_RequiresNonInteractiveCommands(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defs := kit.Definitions()
+	for _, d := range defs {
+		if d.Name != "run_shell" {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(d.Description), "non-interactive") {
+			t.Fatalf("run_shell description must mention non-interactive use: %q", d.Description)
+		}
+		props, ok := d.InputSchema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("run_shell schema properties missing or wrong type: %#v", d.InputSchema["properties"])
+		}
+		commandProp, ok := props["command"].(map[string]any)
+		if !ok {
+			t.Fatalf("run_shell command schema missing or wrong type: %#v", props["command"])
+		}
+		desc, _ := commandProp["description"].(string)
+		if !strings.Contains(strings.ToLower(desc), "non-interactive") {
+			t.Fatalf("run_shell command description must mention non-interactive use: %q", desc)
+		}
+		return
+	}
+	t.Fatal("run_shell must be present in tool definitions")
+}
+
 func TestToolkit_ForkAgent_RegisteredInDefinitions(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)

@@ -142,13 +142,13 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 	return []providers.ToolDefinition{
 		{
 			Name:        "run_shell",
-			Description: "Run a shell command in the workspace and return output.",
+			Description: "Run a non-interactive shell command in the workspace and return output.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"command": map[string]any{
 						"type":        "string",
-						"description": "Shell command to execute.",
+						"description": "Shell command to execute. Must be non-interactive; never rely on editors, pagers, or terminal prompts.",
 					},
 					"timeout_seconds": map[string]any{
 						"type":        "integer",

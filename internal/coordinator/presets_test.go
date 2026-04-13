@@ -124,6 +124,21 @@ func TestSystemPromptPreamble_StatesMainAgentToolLimits(t *testing.T) {
 	}
 }
 
+func TestSystemPromptPreamble_TeachesNonInteractiveGit(t *testing.T) {
+	preamble := SystemPromptPreamble()
+	for _, want := range []string{
+		"non-interactive environment",
+		"`git commit -m`",
+		"`git commit -e`",
+		"`git rebase -i`",
+		"`git add -i`",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("SystemPromptPreamble missing non-interactive git guidance %q", want)
+		}
+	}
+}
+
 func TestComposeWorkerSystemPrompt_OverridesInheritedMainAgentLimits(t *testing.T) {
 	wt, err := LookupWorkerType("worker")
 	if err != nil {
@@ -135,5 +150,24 @@ func TestComposeWorkerSystemPrompt_OverridesInheritedMainAgentLimits(t *testing.
 	}
 	if !strings.Contains(got, "If a tool is in your tool list") {
 		t.Fatalf("worker system prompt must restore access to worker tools: %q", got)
+	}
+}
+
+func TestComposeWorkerSystemPrompt_TeachesNonInteractiveGit(t *testing.T) {
+	wt, err := LookupWorkerType("worker")
+	if err != nil {
+		t.Fatalf("LookupWorkerType(worker): %v", err)
+	}
+	got := composeWorkerSystemPrompt("", wt, "/tmp/repo", IsolationInplace)
+	for _, want := range []string{
+		"Treat shell commands as non-interactive",
+		"`git commit -m`",
+		"`git commit -e`",
+		"`git rebase -i`",
+		"`git add -i`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("worker system prompt missing non-interactive git guidance %q", want)
+		}
 	}
 }
