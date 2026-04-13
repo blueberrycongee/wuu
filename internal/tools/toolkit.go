@@ -920,7 +920,15 @@ func (t *Toolkit) readFile(argsJSON string) (string, error) {
 	returned := content
 	truncated := false
 	if fullSize > defaultMaxFileBytes {
-		returned = content[:defaultMaxFileBytes]
+		// Truncate at a valid UTF-8 boundary. Walk backward from
+		// the byte cut point until we find a valid rune start byte
+		// (any byte < 0x80 or 0xC0-0xFF). This avoids returning
+		// content that starts a multi-byte rune but doesn't finish it.
+		cut := defaultMaxFileBytes
+		for cut > 0 && content[cut-1]&0xC0 == 0x80 {
+			cut--
+		}
+		returned = content[:cut]
 		truncated = true
 	}
 
