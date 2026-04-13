@@ -1475,8 +1475,9 @@ func TestStreamLifecycleConnectingDuringRetryKeepsReconnectState(t *testing.T) {
 		Provider:   "test",
 		Model:      "test-model",
 		ConfigPath: "/tmp/.wuu.json",
-		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
-			return "", nil
+		StreamRunner: &agent.StreamRunner{
+			Client: &echoStreamClient{answer: func(_ []providers.ChatMessage) string { return "" }},
+			Model:  "test-model",
 		},
 	})
 	m.streaming = true
@@ -1523,8 +1524,9 @@ func TestStreamErrorEventUsesFriendlyDisplay(t *testing.T) {
 		Provider:   "test",
 		Model:      "test-model",
 		ConfigPath: "/tmp/.wuu.json",
-		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
-			return "", nil
+		StreamRunner: &agent.StreamRunner{
+			Client: &echoStreamClient{answer: func(_ []providers.ChatMessage) string { return "" }},
+			Model:  "test-model",
 		},
 	})
 	m.streaming = true
