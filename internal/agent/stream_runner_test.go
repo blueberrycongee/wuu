@@ -843,3 +843,63 @@ func TestStreamRunner_MaxStepsExceeded(t *testing.T) {
 		t.Fatalf("expected 2 tool executions, got %d", len(tools.calls))
 	}
 }
+
+func TestStreamRunner_NonStreamingFallbackOnEmptyStream(t *testing.T) {
+	// Stream returns empty content with no stop reason (proxy issue),
+	// but the non-streaming Chat() fallback succeeds.
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{events: []providers.StreamEvent{
+				{Type: providers.EventDone, StopReason: ""},
+			}},
+		},
+		chatResponses: []providers.ChatResponse{
+			{Content: "fallback answer", StopReason: "stop"},
+		},
+	}
+	runner := &StreamRunner{
+		Client:              client,
+		Model:               "test",
+		StreamMaxRetries:    0,
+		StreamRetryMaxDelay: time.Millisecond,
+	}
+	result, err := runner.Run(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "fallback answer" {
+		t.Fatalf("expected fallback answer, got %q", result)
+	}
+	if client.chatCallCount != 1 {
+		t.Fatalf("expected 1 Chat() call, got %d", client.chatCallCount)
+	}
+}
+
+func TestStreamRunner_NoFallbackOnNormalStop(t *testing.T) {
+	// Stream returns empty content with stop_reason=stop — this is a
+	// legitimate model choice, not a proxy issue. No fallback.
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{events: []providers.StreamEvent{
+				{Type: providers.EventDone, StopReason: "stop"},
+			}},
+		},
+	}
+	runner := &StreamRunner{
+		Client:              client,
+		Model:               "test",
+		StreamMaxRetries:    0,
+		StreamRetryMaxDelay: time.Millisecond,
+	}
+	_, err := runner.Run(context.Background(), "hello")
+	// Should produce an EmptyAnswerError (from the loop), not trigger fallback.
+	if err == nil {
+		t.Fatal("expected error for empty content with stop reason")
+	}
+	if !IsEmptyAnswer(err) {
+		t.Fatalf("expected EmptyAnswerError, got %v", err)
+	}
+	if client.chatCallCount != 0 {
+		t.Fatalf("expected 0 Chat() calls (no fallback), got %d", client.chatCallCount)
+	}
+}

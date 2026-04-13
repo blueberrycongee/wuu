@@ -246,6 +246,49 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 	}
 
+	// Non-streaming fallback: when the stream completed without
+	// producing any content or tool calls AND there is no normal
+	// stop reason, the stream was likely broken by a proxy or
+	// provider compatibility issue. Try one non-streaming Chat()
+	// call before giving up — this mirrors Claude Code's fallback
+	// strategy for empty SSE responses.
+	if strings.TrimSpace(contentBuf.String()) == "" && len(toolCalls) == 0 && !isNormalStop(stopReason) {
+		providers.DebugLogf("stream returned empty content with stop_reason=%q, attempting non-streaming fallback", stopReason)
+		if s.onEvent != nil {
+			s.onEvent(providers.StreamEvent{
+				Type:    providers.EventReconnect,
+				Content: "Empty stream response — trying non-streaming fallback...",
+			})
+		}
+		resp, err := s.client.Chat(ctx, req)
+		if err != nil {
+			return StepResult{}, fmt.Errorf("non-streaming fallback failed: %w", err)
+		}
+		fbToolCalls := make([]providers.ToolCall, len(resp.ToolCalls))
+		copy(fbToolCalls, resp.ToolCalls)
+		// Emit the fallback content through the streaming callback so
+		// the TUI can render it.
+		if s.onEvent != nil && strings.TrimSpace(resp.Content) != "" {
+			s.onEvent(providers.StreamEvent{
+				Type:    providers.EventContentDelta,
+				Content: resp.Content,
+			})
+			s.onEvent(providers.StreamEvent{
+				Type:       providers.EventDone,
+				Usage:      resp.Usage,
+				StopReason: resp.StopReason,
+			})
+		}
+		return StepResult{
+			Content:          resp.Content,
+			ReasoningContent: resp.ReasoningContent,
+			ToolCalls:        fbToolCalls,
+			Usage:            resp.Usage,
+			StopReason:       resp.StopReason,
+			Truncated:        resp.Truncated,
+		}, nil
+	}
+
 	return StepResult{
 		Content:          contentBuf.String(),
 		ReasoningContent: thinkingBuf.String(),
@@ -254,6 +297,16 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		StopReason:       stopReason,
 		Truncated:        truncated,
 	}, nil
+}
+
+// isNormalStop reports whether the stop reason indicates the model
+// intentionally ended its turn (as opposed to the stream breaking).
+func isNormalStop(reason string) bool {
+	switch reason {
+	case "stop", "end_turn":
+		return true
+	}
+	return false
 }
 
 func truncateLog(s string, maxLen int) string {
