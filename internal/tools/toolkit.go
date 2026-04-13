@@ -867,6 +867,7 @@ func (t *Toolkit) runShell(ctx context.Context, argsJSON string) (string, error)
 
 	cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
 	cmd.Dir = t.rootDir
+	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -897,6 +898,49 @@ func (t *Toolkit) runShell(ctx context.Context, argsJSON string) (string, error)
 		"output":    trimmed,
 	}
 	return mustJSON(result)
+}
+
+func nonInteractiveShellEnv() map[string]string {
+	return map[string]string{
+		"EDITOR":              "true",
+		"GIT_EDITOR":          "true",
+		"GIT_PAGER":           "cat",
+		"GIT_SEQUENCE_EDITOR": "true",
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PAGER":            "cat",
+		"NO_COLOR":            "1",
+		"PAGER":               "cat",
+		"VISUAL":              "true",
+	}
+}
+
+func mergeEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	merged := make(map[string]string, len(base)+len(overrides))
+	order := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if _, exists := merged[key]; !exists {
+			order = append(order, key)
+		}
+		merged[key] = value
+	}
+	for key, value := range overrides {
+		if _, exists := merged[key]; !exists {
+			order = append(order, key)
+		}
+		merged[key] = value
+	}
+	out := make([]string, 0, len(order))
+	for _, key := range order {
+		out = append(out, key+"="+merged[key])
+	}
+	return out
 }
 
 func (t *Toolkit) readFile(argsJSON string) (string, error) {

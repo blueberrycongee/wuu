@@ -473,6 +473,70 @@ func TestToolkit_RunShell(t *testing.T) {
 	}
 }
 
+func TestToolkit_RunShellSetsNonInteractiveEnv(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "run_shell",
+		Arguments: `{"command":"printf '%s|%s|%s|%s|%s|%s|%s|%s' \"$GIT_EDITOR\" \"$GIT_SEQUENCE_EDITOR\" \"$EDITOR\" \"$VISUAL\" \"$PAGER\" \"$GIT_PAGER\" \"$GH_PAGER\" \"$GIT_TERMINAL_PROMPT\""}`,
+	})
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if got := parsed["output"].(string); got != "true|true|true|true|cat|cat|cat|0" {
+		t.Fatalf("unexpected shell env: %q", got)
+	}
+}
+
+func TestToolkit_RunShellGitCommitEditUsesNonInteractiveEditor(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	cmd := strings.Join([]string{
+		"git init -q",
+		"git config user.email test@example.com",
+		"git config user.name test",
+		"printf 'one\\n' > note.txt",
+		"git add note.txt",
+		"git commit -qm init",
+		"printf 'two\\n' > note.txt",
+		"git add note.txt",
+		"git commit -e -m second",
+		"git log -1 --format=%s",
+	}, " && ")
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "run_shell",
+		Arguments: `{"command":"` + cmd + `","timeout_seconds":10}`,
+	})
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if parsed["exit_code"].(float64) != 0 {
+		t.Fatalf("unexpected exit code: %v output=%q", parsed["exit_code"], parsed["output"])
+	}
+	lines := strings.Split(strings.TrimSpace(parsed["output"].(string)), "\n")
+	if got := lines[len(lines)-1]; got != "second" {
+		t.Fatalf("unexpected git log output: %q", got)
+	}
+}
+
 type execCommandFunc func(context.Context, string, ...string) *exec.Cmd
 
 func withRGTestHooks(t *testing.T, lookup func(string) (string, error), cmd execCommandFunc) {
