@@ -1713,7 +1713,12 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		if event.Lifecycle != nil {
 			switch event.Lifecycle.Phase {
 			case providers.StreamPhaseConnecting:
-				m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Connecting", Meta: "Opening the live response", Running: true})
+				current := m.currentWorkStatus()
+				if event.Lifecycle.Attempt > 1 || current.Phase == workPhaseReconnecting {
+					m.setLiveWorkStatus(reconnectWorkStatus(event.Lifecycle))
+				} else {
+					m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Connecting", Meta: "Opening the live response", Running: true})
+				}
 			case providers.StreamPhaseConnected:
 				m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 			case providers.StreamPhaseReconnecting:
@@ -1775,7 +1780,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		m.streamTarget = -1
 		errMsg := "unknown stream error"
 		if event.Error != nil {
-			errMsg = event.Error.Error()
+			errMsg = providers.StreamErrorDisplay(event.Error)
 		}
 		// Display error in red in the chat area.
 		styledErr := lipgloss.NewStyle().
@@ -2563,7 +2568,7 @@ func reconnectWorkStatus(lifecycle *providers.StreamLifecycle) workStatus {
 	reason := compactStatusDetail(lifecycle.Reason, 44)
 	nextTry := ""
 	if delay := formatStatusDelay(lifecycle.RetryIn); delay != "" {
-		nextTry = "Next try in " + delay
+		nextTry = "Retrying in " + delay
 	}
 
 	switch {

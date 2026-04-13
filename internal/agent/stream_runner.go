@@ -321,7 +321,7 @@ func (s *streamStep) runStreamWithReconnect(
 			RetryIn:     retryIn,
 		}
 		if reason != nil {
-			details.Reason = reason.Error()
+			details.Reason = providers.StreamErrorSummary(reason)
 		}
 		onEvent(providers.StreamEvent{
 			Type:      providers.EventLifecycle,

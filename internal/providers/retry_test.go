@@ -98,6 +98,36 @@ func TestNewProviderStreamError_Auth(t *testing.T) {
 	}
 }
 
+func TestStreamErrorSummary_RetryableProviderOverload(t *testing.T) {
+	err := NewProviderStreamError("1305", "该模型当前访问量过大，请您稍后再试")
+	if got := StreamErrorSummary(err); got != "Provider is overloaded" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+	if got := StreamErrorDisplay(err); got != "Provider is overloaded. Try again in a moment." {
+		t.Fatalf("unexpected display: %q", got)
+	}
+}
+
+func TestStreamErrorSummary_IncompleteClose(t *testing.T) {
+	err := NewIncompleteStreamError("stream closed before done")
+	if got := StreamErrorSummary(err); got != "Connection ended before completion" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+	if got := StreamErrorDisplay(err); got != "The connection ended before the reply completed." {
+		t.Fatalf("unexpected display: %q", got)
+	}
+}
+
+func TestStreamErrorSummary_Timeout(t *testing.T) {
+	err := errors.New("stream idle timeout after 5m0s: context deadline exceeded")
+	if got := StreamErrorSummary(err); got != "Stream timed out" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+	if got := StreamErrorDisplay(err); got != "Stream timed out. No response chunks arrived in time." {
+		t.Fatalf("unexpected display: %q", got)
+	}
+}
+
 func TestIsRetryable_StringFallback(t *testing.T) {
 	cases := []struct {
 		msg  string

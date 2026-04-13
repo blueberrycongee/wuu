@@ -1068,18 +1068,18 @@ func TestRenderInlineWorkStatus_IncludesDetail(t *testing.T) {
 	raw := renderInlineWorkStatus(workStatus{
 		Phase:   workPhaseReconnecting,
 		Label:   "Reconnecting... 2/5",
-		Meta:    "Idle timeout waiting for SSE",
-		Detail:  "Next try in 1.5s",
+		Meta:    "Stream timed out",
+		Detail:  "Retrying in 1.5s",
 		Running: true,
 	}, 0, 120)
 	got := ansi.Strip(raw)
 	if !strings.Contains(got, "Reconnecting... 2/5") {
 		t.Fatalf("expected reconnect label in output, got %q", got)
 	}
-	if !strings.Contains(got, "Idle timeout waiting for SSE") {
+	if !strings.Contains(got, "Stream timed out") {
 		t.Fatalf("expected reconnect reason in output, got %q", got)
 	}
-	if !strings.Contains(got, "Next try in 1.5s") {
+	if !strings.Contains(got, "Retrying in 1.5s") {
 		t.Fatalf("expected reconnect retry delay in output, got %q", got)
 	}
 }
@@ -1407,7 +1407,7 @@ func TestStreamLifecycleReconnectIncludesReasonAndDelay(t *testing.T) {
 				RetryCount: 2,
 				MaxRetries: 5,
 				RetryIn:    1500 * time.Millisecond,
-				Reason:     "Idle timeout waiting for SSE",
+				Reason:     "Stream timed out",
 			},
 		},
 	})
@@ -1416,10 +1416,10 @@ func TestStreamLifecycleReconnectIncludesReasonAndDelay(t *testing.T) {
 	if ws.Label != "Reconnecting... 2/5" {
 		t.Fatalf("unexpected reconnect label: %q", ws.Label)
 	}
-	if ws.Meta != "Idle timeout waiting for SSE" {
+	if ws.Meta != "Stream timed out" {
 		t.Fatalf("unexpected reconnect meta: %q", ws.Meta)
 	}
-	if ws.Detail != "Next try in 1.5s" {
+	if ws.Detail != "Retrying in 1.5s" {
 		t.Fatalf("unexpected reconnect detail: %q", ws.Detail)
 	}
 }
@@ -1445,7 +1445,7 @@ func TestStreamReconnectEventPreservesLifecycleDetails(t *testing.T) {
 				RetryCount: 1,
 				MaxRetries: 5,
 				RetryIn:    200 * time.Millisecond,
-				Reason:     "stream closed before done",
+				Reason:     "Connection ended before completion",
 			},
 		},
 	})
@@ -1462,11 +1462,85 @@ func TestStreamReconnectEventPreservesLifecycleDetails(t *testing.T) {
 	if ws.Label != "Reconnecting... 1/5" {
 		t.Fatalf("unexpected reconnect label: %q", ws.Label)
 	}
-	if ws.Meta != "stream closed before done" {
+	if ws.Meta != "Connection ended before completion" {
 		t.Fatalf("expected reconnect reason to survive EventReconnect, got %q", ws.Meta)
 	}
-	if ws.Detail != "Next try in 200ms" {
+	if ws.Detail != "Retrying in 200ms" {
 		t.Fatalf("expected reconnect delay detail to survive EventReconnect, got %q", ws.Detail)
+	}
+}
+
+func TestStreamLifecycleConnectingDuringRetryKeepsReconnectState(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
+			return "", nil
+		},
+	})
+	m.streaming = true
+	m.pendingRequest = true
+
+	updated, _ := m.Update(streamEventMsg{
+		event: providers.StreamEvent{
+			Type: providers.EventLifecycle,
+			Lifecycle: &providers.StreamLifecycle{
+				Phase:      providers.StreamPhaseReconnecting,
+				RetryCount: 1,
+				MaxRetries: 5,
+				RetryIn:    250 * time.Millisecond,
+				Reason:     "Provider is overloaded",
+			},
+		},
+	})
+	withReconnect := updated.(Model)
+
+	updated, _ = withReconnect.Update(streamEventMsg{
+		event: providers.StreamEvent{
+			Type: providers.EventLifecycle,
+			Lifecycle: &providers.StreamLifecycle{
+				Phase:       providers.StreamPhaseConnecting,
+				Attempt:     2,
+				MaxAttempts: 6,
+				RetryCount:  1,
+				MaxRetries:  5,
+			},
+		},
+	})
+	after := updated.(Model)
+	ws := after.currentWorkStatus()
+	if ws.Phase != workPhaseReconnecting {
+		t.Fatalf("expected reconnecting phase, got %+v", ws)
+	}
+	if ws.Label != "Reconnecting... 1/5" {
+		t.Fatalf("unexpected reconnect label: %q", ws.Label)
+	}
+}
+
+func TestStreamErrorEventUsesFriendlyDisplay(t *testing.T) {
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: "/tmp/.wuu.json",
+		RunPrompt: func(_ctx context.Context, _prompt string) (string, error) {
+			return "", nil
+		},
+	})
+	m.streaming = true
+	m.pendingRequest = true
+	m.streamTarget = m.appendEntry("assistant", "")
+
+	updated, _ := m.Update(streamEventMsg{
+		event: providers.StreamEvent{
+			Type:  providers.EventError,
+			Error: providers.NewProviderStreamError("1305", "该模型当前访问量过大，请您稍后再试"),
+		},
+	})
+	after := updated.(Model)
+	last := after.entries[len(after.entries)-1]
+	if !strings.Contains(ansi.Strip(last.Content), "Provider is overloaded. Try again in a moment.") {
+		t.Fatalf("unexpected final error entry: %q", ansi.Strip(last.Content))
 	}
 }
 
