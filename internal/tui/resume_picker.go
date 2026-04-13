@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/blueberrycongee/wuu/internal/jsonl"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -70,28 +71,29 @@ func peekFirstUserMessage(path string) string {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	var title string
+	_ = jsonl.ForEachLine(f, func(raw []byte) error {
+		line := bytes.TrimSpace(raw)
+		if len(line) == 0 {
+			return nil
 		}
 		var rec struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		}
-		if json.Unmarshal([]byte(line), &rec) != nil {
-			continue
+		if json.Unmarshal(line, &rec) != nil {
+			return nil
 		}
 		if strings.EqualFold(rec.Role, "user") {
 			content := strings.TrimSpace(rec.Content)
 			if content != "" {
-				return content
+				title = content
+				return jsonl.ErrStop
 			}
 		}
-	}
-	return ""
+		return nil
+	})
+	return title
 }
 
 // loadPreview lazily reads the messages of the entry at idx.
@@ -489,13 +491,13 @@ func padRight(s string, w int) string {
 
 // Styles for the picker UI.
 var (
-	pickerHeaderStyle    lipgloss.Style
-	pickerFooterStyle    lipgloss.Style
-	pickerSepStyle       lipgloss.Style
-	pickerCursorStyle    lipgloss.Style
-	pickerFocusStyle     lipgloss.Style
-	pickerMetaStyle      lipgloss.Style
-	userPreviewStyle     lipgloss.Style
+	pickerHeaderStyle     lipgloss.Style
+	pickerFooterStyle     lipgloss.Style
+	pickerSepStyle        lipgloss.Style
+	pickerCursorStyle     lipgloss.Style
+	pickerFocusStyle      lipgloss.Style
+	pickerMetaStyle       lipgloss.Style
+	userPreviewStyle      lipgloss.Style
 	assistantPreviewStyle lipgloss.Style
 )
 
@@ -511,4 +513,3 @@ func initPickerStyles() {
 	userPreviewStyle = lipgloss.NewStyle().Bold(true).Foreground(currentTheme.Brand)
 	assistantPreviewStyle = lipgloss.NewStyle().Bold(true).Foreground(currentTheme.Success)
 }
-

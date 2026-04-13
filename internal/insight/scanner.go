@@ -1,25 +1,27 @@
 package insight
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/jsonl"
 )
 
 // memoryRecord mirrors the JSONL schema used by tui/memory.go.
 type memoryRecord struct {
-	Role         string          `json:"role"`
-	Content      string          `json:"content"`
-	At           time.Time       `json:"at"`
-	ToolCalls    []toolCallRec   `json:"tool_calls,omitempty"`
-	ToolCallID   string          `json:"tool_call_id,omitempty"`
-	Name         string          `json:"name,omitempty"`
-	InputTokens  int             `json:"input_tokens,omitempty"`
-	OutputTokens int             `json:"output_tokens,omitempty"`
+	Role         string        `json:"role"`
+	Content      string        `json:"content"`
+	At           time.Time     `json:"at"`
+	ToolCalls    []toolCallRec `json:"tool_calls,omitempty"`
+	ToolCallID   string        `json:"tool_call_id,omitempty"`
+	Name         string        `json:"name,omitempty"`
+	InputTokens  int           `json:"input_tokens,omitempty"`
+	OutputTokens int           `json:"output_tokens,omitempty"`
 }
 
 type toolCallRec struct {
@@ -115,9 +117,6 @@ func scanOneSession(path string, id string) (SessionMeta, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 1024), 2*1024*1024)
-
 	meta := SessionMeta{
 		ID:         id,
 		ToolCounts: make(map[string]int),
@@ -128,14 +127,14 @@ func scanOneSession(path string, id string) (SessionMeta, error) {
 	var firstTime, lastTime time.Time
 	var firstUserMsg string
 
-	for scanner.Scan() {
-		payload := strings.TrimSpace(scanner.Text())
-		if payload == "" {
-			continue
+	err = jsonl.ForEachLine(file, func(raw []byte) error {
+		payload := bytes.TrimSpace(raw)
+		if len(payload) == 0 {
+			return nil
 		}
 		var rec memoryRecord
-		if err := json.Unmarshal([]byte(payload), &rec); err != nil {
-			continue
+		if err := json.Unmarshal(payload, &rec); err != nil {
+			return nil
 		}
 
 		// Track time range.
@@ -189,6 +188,10 @@ func scanOneSession(path string, id string) (SessionMeta, error) {
 			meta.InputTokens += rec.InputTokens
 			meta.OutputTokens += rec.OutputTokens
 		}
+		return nil
+	})
+	if err != nil {
+		return meta, err
 	}
 
 	meta.CreatedAt = firstTime
@@ -198,7 +201,7 @@ func scanOneSession(path string, id string) (SessionMeta, error) {
 	meta.FirstUserMsg = firstUserMsg
 	meta.FilesModified = len(filesModified)
 
-	return meta, scanner.Err()
+	return meta, nil
 }
 
 // FormatTranscript builds a condensed text transcript of a session for LLM analysis.
@@ -210,20 +213,17 @@ func FormatTranscript(sessDir, sessionID string) (string, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 1024), 2*1024*1024)
-
 	var b strings.Builder
 	b.WriteString("Session: " + sessionID + "\n\n")
 
-	for scanner.Scan() {
-		payload := strings.TrimSpace(scanner.Text())
-		if payload == "" {
-			continue
+	err = jsonl.ForEachLine(file, func(raw []byte) error {
+		payload := bytes.TrimSpace(raw)
+		if len(payload) == 0 {
+			return nil
 		}
 		var rec memoryRecord
-		if err := json.Unmarshal([]byte(payload), &rec); err != nil {
-			continue
+		if err := json.Unmarshal(payload, &rec); err != nil {
+			return nil
 		}
 
 		role := strings.ToLower(strings.TrimSpace(rec.Role))
@@ -244,11 +244,15 @@ func FormatTranscript(sessDir, sessionID string) (string, error) {
 		// Cap total transcript size.
 		if b.Len() > 30000 {
 			b.WriteString("\n... (truncated)\n")
-			break
+			return jsonl.ErrStop
 		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 
-	return b.String(), scanner.Err()
+	return b.String(), nil
 }
 
 // Aggregate combines multiple SessionMeta and Facets into AggregatedData.
@@ -260,7 +264,7 @@ func Aggregate(metas []SessionMeta, facets map[string]Facet) AggregatedData {
 		Languages:          make(map[string]int),
 		GoalCategories:     make(map[string]int),
 		Outcomes:           make(map[string]int),
-		Satisfaction:        make(map[string]int),
+		Satisfaction:       make(map[string]int),
 		SessionTypes:       make(map[string]int),
 		Friction:           make(map[string]int),
 		Success:            make(map[string]int),
@@ -379,38 +383,38 @@ func truncateStr(s string, maxLen int) string {
 }
 
 var langExtMap = map[string]string{
-	".go":    "Go",
-	".ts":    "TypeScript",
-	".tsx":   "TypeScript",
-	".js":    "JavaScript",
-	".jsx":   "JavaScript",
-	".py":    "Python",
-	".rs":    "Rust",
-	".java":  "Java",
-	".rb":    "Ruby",
-	".c":     "C",
-	".cpp":   "C++",
-	".h":     "C",
-	".cs":    "C#",
-	".swift": "Swift",
-	".kt":    "Kotlin",
-	".php":   "PHP",
-	".sh":    "Shell",
-	".bash":  "Shell",
-	".zsh":   "Shell",
-	".sql":   "SQL",
-	".html":  "HTML",
-	".css":   "CSS",
-	".scss":  "CSS",
-	".json":  "JSON",
-	".yaml":  "YAML",
-	".yml":   "YAML",
-	".toml":  "TOML",
-	".md":    "Markdown",
-	".lua":   "Lua",
-	".zig":   "Zig",
-	".dart":  "Dart",
-	".vue":   "Vue",
+	".go":     "Go",
+	".ts":     "TypeScript",
+	".tsx":    "TypeScript",
+	".js":     "JavaScript",
+	".jsx":    "JavaScript",
+	".py":     "Python",
+	".rs":     "Rust",
+	".java":   "Java",
+	".rb":     "Ruby",
+	".c":      "C",
+	".cpp":    "C++",
+	".h":      "C",
+	".cs":     "C#",
+	".swift":  "Swift",
+	".kt":     "Kotlin",
+	".php":    "PHP",
+	".sh":     "Shell",
+	".bash":   "Shell",
+	".zsh":    "Shell",
+	".sql":    "SQL",
+	".html":   "HTML",
+	".css":    "CSS",
+	".scss":   "CSS",
+	".json":   "JSON",
+	".yaml":   "YAML",
+	".yml":    "YAML",
+	".toml":   "TOML",
+	".md":     "Markdown",
+	".lua":    "Lua",
+	".zig":    "Zig",
+	".dart":   "Dart",
+	".vue":    "Vue",
 	".svelte": "Svelte",
 }
 
