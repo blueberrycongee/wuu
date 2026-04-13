@@ -1632,7 +1632,12 @@ func globToRegexp(pattern string) string {
 					i += 2
 					continue
 				}
-				b.WriteString(".*")
+				if i+2 >= len(pattern) && i > 0 && pattern[i-1] == '/' {
+					b.WriteString(".*")
+					i++
+					continue
+				}
+				b.WriteString("[^/]*")
 				i++
 				continue
 			}
