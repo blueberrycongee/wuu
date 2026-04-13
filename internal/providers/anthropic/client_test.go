@@ -891,6 +891,59 @@ func TestStreamChat_MissingMessageStopYieldsIncompleteError(t *testing.T) {
 	}
 }
 
+func TestStreamChat_MessageDeltaCanBackfillInputTokens(t *testing.T) {
+	ssePayload := "event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"测试\"}}\n\n" +
+		"event: content_block_stop\n" +
+		"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\n" +
+		"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"cache_read_input_tokens\":0}}\n\n" +
+		"event: message_stop\n" +
+		"data: {\"type\":\"message_stop\"}\n\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(ssePayload))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ch, err := client.StreamChat(context.Background(), providers.ChatRequest{
+		Model:    "claude-test",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var events []providers.StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	last := events[len(events)-1]
+	if last.Type != providers.EventDone {
+		t.Fatalf("expected EventDone last, got %s", last.Type)
+	}
+	if last.Usage == nil {
+		t.Fatal("expected usage in done event")
+	}
+	if last.Usage.InputTokens != 10 {
+		t.Fatalf("expected backfilled input tokens 10, got %d", last.Usage.InputTokens)
+	}
+	if last.Usage.OutputTokens != 2 {
+		t.Fatalf("expected output tokens 2, got %d", last.Usage.OutputTokens)
+	}
+}
+
 func TestStreamChat_ValidationErrors(t *testing.T) {
 	client, _ := New(ClientConfig{BaseURL: "http://localhost", APIKey: "k"})
 

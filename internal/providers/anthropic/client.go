@@ -503,7 +503,18 @@ func (c *Client) handleSSEEvent(
 	case "message_delta":
 		var p messageDeltaPayload
 		if json.Unmarshal([]byte(raw.Data), &p) == nil {
-			usage.OutputTokens = p.Usage.OutputTokens
+			if p.Usage.InputTokens != nil {
+				usage.InputTokens = *p.Usage.InputTokens
+			}
+			if p.Usage.OutputTokens != nil {
+				usage.OutputTokens = *p.Usage.OutputTokens
+			}
+			if p.Usage.CacheCreationTokens != nil {
+				usage.CacheCreationTokens = *p.Usage.CacheCreationTokens
+			}
+			if p.Usage.CacheReadTokens != nil {
+				usage.CacheReadTokens = *p.Usage.CacheReadTokens
+			}
 			if p.Delta.StopReason != "" {
 				*stopReason = strings.ToLower(p.Delta.StopReason)
 			}
@@ -688,6 +699,9 @@ type messageDeltaPayload struct {
 		StopReason string `json:"stop_reason,omitempty"`
 	} `json:"delta"`
 	Usage struct {
-		OutputTokens int `json:"output_tokens"`
+		InputTokens         *int `json:"input_tokens,omitempty"`
+		OutputTokens        *int `json:"output_tokens,omitempty"`
+		CacheCreationTokens *int `json:"cache_creation_input_tokens,omitempty"`
+		CacheReadTokens     *int `json:"cache_read_input_tokens,omitempty"`
 	} `json:"usage"`
 }
