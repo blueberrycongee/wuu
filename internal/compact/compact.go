@@ -227,55 +227,61 @@ func toolCallLabel(id string) string {
 }
 
 // compactInstructionPrompt is the framing wuu wraps every
-// summarization request in. Structured handoff in the style of
-// Charmbracelet's crush template, but kept model-agnostic (no
-// Claude XML, no GPT-specific formatting) so it works equally well
-// on Anthropic, OpenAI, Gemini, DeepSeek, and any proxied model.
+// summarization request in. It keeps the existing single-user-message
+// compact flow, but tightens the handoff discipline so the generated
+// summary can safely serve as the only continuation context.
 //
-// The five-section structure exists because flat bullet lists
-// consistently lose the "what's actually being worked on right now"
-// signal — splitting Current State / Files / Technical Context /
-// Strategy / Next Steps gives the resuming model a clear scaffold
-// to follow.
+// The load-bearing requirements are:
+//   - no tool calls at all
+//   - the response must start with <analysis> and then <summary>
+//   - the summary must preserve enough detail to continue the work
+//     without access to the pre-compact conversation
 const compactInstructionPrompt = `You are summarizing a coding-agent conversation to preserve context for continuing the work later.
 
 CRITICAL: This summary will be the ONLY context available when the conversation resumes. Assume every previous message is about to be deleted. Be thorough — losing a detail here means the next agent will have to ask the user (or guess) to recover it.
 
-Produce the summary using exactly these five sections, in order:
+CRITICAL: Respond with text only. Do NOT call any tools. Do NOT use read_file, grep, glob, run_shell, or any other tool. Tool calls will fail this task.
 
-## Current State
-- The user's exact request (quote or paraphrase precisely; do not generalize)
-- What has been completed
-- What is in progress right now and how far along it is
-- What still has to happen for the task to be done
+Your response must contain exactly two top-level blocks, in this order:
+1. <analysis>...</analysis>
+2. <summary>...</summary>
 
-## Files & Changes
-- Files modified, with a one-line description of the change to each
+Use the <analysis> block to think through the conversation chronologically and make sure you did not miss anything load-bearing.
+
+In the <summary> block, cover at least these sections:
+
+## User Intent
+- The user's exact request, constraints, preferences, and success criteria
+- Any course corrections or explicit feedback from the user
+
+## Technical Concepts
+- Important technical concepts, design decisions, libraries, frameworks, and conventions
+
+## Files and Code
+- Files modified, with a one-line description of each change
 - Files read or analyzed and why they mattered
-- Files that haven't been touched yet but will need to be
+- Important code snippets, function signatures, data shapes, and exact paths the next agent should inspect
 - File paths and line numbers for code locations the next agent should jump to
 
-## Technical Context
-- Architecture / design decisions made and the reasoning
-- Patterns or conventions being followed (with examples)
-- Libraries, frameworks, and language/version details that matter
-- Commands that worked (exact form, plus what they were for)
+## Errors and Fixes
+- Errors encountered, what caused them, and how they were fixed or investigated
 - Commands that failed and what the failure looked like
+- Commands that worked and what they verified
 
-## Strategy & Approach
-- The overall approach being taken
-- Why this approach was chosen over alternatives
-- Key insights, gotchas, or surprises discovered along the way
-- Assumptions being made that the next agent should not silently inherit
-- Open risks or blockers
+## All User Messages
+- Every user message that is not just a tool result, including short clarifications and corrections
 
-## Exact Next Steps
-Be specific. Do not write "implement authentication" — write:
-1. Add JWT middleware to src/middleware/auth.js around line 15
-2. Update login handler in src/routes/user.js:45 to return the token
-3. Verify with: npm test -- auth.test.js
+## Unfinished Work
+- Pending tasks, open questions, blockers, and assumptions that still matter
 
-Tone: brief a teammate taking over mid-task. Include everything they would need to continue without asking the user a single question. No emojis. No filler. Err on the side of too much detail rather than too little — critical context is worth the tokens.
+## Current Work
+- What was being worked on immediately before this summary request
+- How far along it is
+
+## Next Step
+- The next concrete step that should happen, written so another agent can continue directly
+
+Tone: brief a teammate taking over mid-task. Include enough detail that they can continue without asking the user to repeat anything. No filler. No emojis.
 
 --- Conversation to summarize ---
 

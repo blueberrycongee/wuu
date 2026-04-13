@@ -117,6 +117,11 @@ func TestSystemPromptPreamble_StatesMainAgentToolLimits(t *testing.T) {
 		"does NOT have direct `write_file`, `edit_file`, or `run_shell` tools",
 		"delegate that step to a worker",
 		"create or update that file via a worker",
+		"Read file contents with `read_file`",
+		"Search for files with `glob`",
+		"Search file contents with `grep`",
+		"Use `run_shell` only for work that genuinely requires a shell",
+		"If multiple tool calls are independent, make them in parallel",
 	} {
 		if !strings.Contains(preamble, want) {
 			t.Errorf("SystemPromptPreamble missing main-agent constraint %q", want)
@@ -135,6 +140,34 @@ func TestSystemPromptPreamble_TeachesNonInteractiveGit(t *testing.T) {
 	} {
 		if !strings.Contains(preamble, want) {
 			t.Errorf("SystemPromptPreamble missing non-interactive git guidance %q", want)
+		}
+	}
+}
+
+func TestSystemPromptPreamble_TeachesWorkerResultSynthesisDiscipline(t *testing.T) {
+	preamble := SystemPromptPreamble()
+	for _, want := range []string{
+		"Workers cannot see your main conversation",
+		"based on your findings",
+		"concrete next task with explicit file paths, line numbers, constraints, and success criteria",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("SystemPromptPreamble missing worker-result synthesis guidance %q", want)
+		}
+	}
+}
+
+func TestSystemPromptPreamble_TeachesUserCommunicationDiscipline(t *testing.T) {
+	preamble := SystemPromptPreamble()
+	for _, want := range []string{
+		"Before your first tool call, give one short sentence",
+		"send short updates at meaningful moments",
+		"rejoin cold",
+		"No fluff",
+		"Don't force headers, lists, or tables",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("SystemPromptPreamble missing user-communication guidance %q", want)
 		}
 	}
 }

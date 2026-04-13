@@ -114,6 +114,38 @@ func (f *flakyOverflowClient) StreamChat(_ context.Context, _ providers.ChatRequ
 	return nil, errors.New("not implemented")
 }
 
+func TestCompactInstructionPrompt_EnforcesNoToolsAndFormat(t *testing.T) {
+	for _, want := range []string{
+		"ONLY context available when the conversation resumes",
+		"Do NOT call any tools",
+		"Do NOT use read_file, grep, glob, run_shell",
+		"<analysis>",
+		"<summary>",
+		"exactly two top-level blocks",
+	} {
+		if !strings.Contains(compactInstructionPrompt, want) {
+			t.Errorf("compactInstructionPrompt missing %q", want)
+		}
+	}
+}
+
+func TestCompactInstructionPrompt_CoversHandoffSections(t *testing.T) {
+	for _, want := range []string{
+		"## User Intent",
+		"## Technical Concepts",
+		"## Files and Code",
+		"## Errors and Fixes",
+		"## All User Messages",
+		"## Unfinished Work",
+		"## Current Work",
+		"## Next Step",
+	} {
+		if !strings.Contains(compactInstructionPrompt, want) {
+			t.Errorf("compactInstructionPrompt missing section %q", want)
+		}
+	}
+}
+
 func TestCompact_DefensiveTrimOnOverflow(t *testing.T) {
 	// 8 messages, summary request overflows twice then succeeds.
 	// The final compact result should still contain the summary +
