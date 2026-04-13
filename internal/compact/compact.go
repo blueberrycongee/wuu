@@ -147,7 +147,11 @@ func Compact(ctx context.Context, messages []providers.ChatMessage, client provi
 
 		summary := strings.TrimSpace(resp.Content)
 		if len(summary) > maxCompactOutputChars {
-			summary = summary[:maxCompactOutputChars]
+			cut := maxCompactOutputChars
+			for cut > 0 && summary[cut-1]&0xC0 == 0x80 {
+				cut--
+			}
+			summary = summary[:cut]
 		}
 		if summary == "" {
 			return messages, nil
