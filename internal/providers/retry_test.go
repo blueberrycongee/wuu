@@ -118,6 +118,23 @@ func TestStreamErrorSummary_IncompleteClose(t *testing.T) {
 	}
 }
 
+func TestStreamErrorSummary_EmptyAnswer(t *testing.T) {
+	err := errors.New("model returned empty answer")
+	if got := StreamErrorSummary(err); got != "Model returned empty response" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+	if got := StreamErrorDisplay(err); got != "The model returned an empty response. This is usually a provider compatibility issue — try again or rephrase your prompt." {
+		t.Fatalf("unexpected display: %q", got)
+	}
+}
+
+func TestStreamErrorSummary_EmptyAnswerWithStopReason(t *testing.T) {
+	err := fmt.Errorf("stream request failed: %w", errors.New("model returned empty answer (stop_reason=stop)"))
+	if got := StreamErrorSummary(err); got != "Model returned empty response" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+}
+
 func TestStreamErrorSummary_Timeout(t *testing.T) {
 	err := errors.New("stream idle timeout after 5m0s: context deadline exceeded")
 	if got := StreamErrorSummary(err); got != "Stream timed out" {

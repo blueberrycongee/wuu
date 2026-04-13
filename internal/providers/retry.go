@@ -131,6 +131,9 @@ func StreamErrorSummary(err error) string {
 	if err == nil {
 		return ""
 	}
+	if isEmptyAnswerMessage(err.Error()) {
+		return "Model returned empty response"
+	}
 	if IsAuthError(err) {
 		return "Authentication failed"
 	}
@@ -204,6 +207,8 @@ func StreamErrorDisplay(err error) string {
 		return "The connection ended before the reply completed."
 	case "Connection dropped":
 		return "The connection dropped while streaming the reply."
+	case "Model returned empty response":
+		return "The model returned an empty response. This is usually a provider compatibility issue — try again or rephrase your prompt."
 	default:
 		return StreamErrorSummary(err)
 	}
@@ -456,6 +461,10 @@ func isConnectionDropMessage(message string) bool {
 		strings.Contains(msg, " eof") ||
 		strings.HasSuffix(msg, "eof") ||
 		strings.Contains(msg, "no such host")
+}
+
+func isEmptyAnswerMessage(message string) bool {
+	return strings.Contains(strings.ToLower(message), "model returned empty answer")
 }
 
 // ParseRetryAfter extracts Retry-After duration from an HTTP response header.
