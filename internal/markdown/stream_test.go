@@ -65,6 +65,67 @@ func TestStreamCollector_CodeBlock(t *testing.T) {
 	}
 }
 
+func TestStreamCollector_CommitWithTrailing_PartialLine(t *testing.T) {
+	c := NewStreamCollector(80, DefaultStyles())
+
+	// Push partial line — CommitWithTrailing should return it immediately.
+	c.Push("Hello ")
+	out := c.CommitWithTrailing()
+	if out == "" {
+		t.Fatal("expected partial text from CommitWithTrailing, got empty")
+	}
+	if !strings.Contains(out, "Hello") {
+		t.Fatalf("expected 'Hello' in output, got %q", out)
+	}
+
+	// Push more — trailing grows.
+	c.Push("world")
+	out = c.CommitWithTrailing()
+	if !strings.Contains(out, "Hello world") {
+		t.Fatalf("expected 'Hello world' in trailing, got %q", out)
+	}
+}
+
+func TestStreamCollector_CommitWithTrailing_CompletePlusPartial(t *testing.T) {
+	c := NewStreamCollector(80, DefaultStyles())
+
+	// Push a complete line + partial next line.
+	c.Push("First line\nSecond ")
+	out := c.CommitWithTrailing()
+	if out == "" {
+		t.Fatal("expected output, got empty")
+	}
+	// Should contain the rendered first line AND the raw trailing text.
+	if !strings.Contains(out, "First line") {
+		t.Fatalf("expected 'First line' in output, got %q", out)
+	}
+	if !strings.Contains(out, "Second") {
+		t.Fatalf("expected trailing 'Second' in output, got %q", out)
+	}
+}
+
+func TestStreamCollector_CommitWithTrailing_NoTrailingAfterNewline(t *testing.T) {
+	c := NewStreamCollector(80, DefaultStyles())
+
+	// Push content ending with newline — no trailing partial.
+	c.Push("Complete line\n")
+	out := c.CommitWithTrailing()
+	if out == "" {
+		t.Fatal("expected output, got empty")
+	}
+	if !strings.Contains(out, "Complete line") {
+		t.Fatalf("expected 'Complete line' in output, got %q", out)
+	}
+}
+
+func TestStreamCollector_CommitWithTrailing_Empty(t *testing.T) {
+	c := NewStreamCollector(80, DefaultStyles())
+	out := c.CommitWithTrailing()
+	if out != "" {
+		t.Fatalf("expected empty for empty buffer, got %q", out)
+	}
+}
+
 func TestStreamCollector_TableStreaming(t *testing.T) {
 	c := NewStreamCollector(80, DefaultStyles())
 

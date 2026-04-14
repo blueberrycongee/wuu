@@ -41,6 +41,34 @@ func (c *StreamCollector) CommitCompleteLines() string {
 	return strings.TrimRight(rendered, "\n")
 }
 
+// CommitWithTrailing renders complete lines with full markdown and
+// appends any trailing partial line as raw text. This makes streaming
+// text visible immediately — the user sees words appear as they arrive
+// instead of waiting for the next newline. The trailing raw text gets
+// properly rendered on the next CommitCompleteLines or Finalize call
+// once a newline arrives.
+//
+// Returns "" only when the buffer is completely empty.
+func (c *StreamCollector) CommitWithTrailing() string {
+	src := c.buffer.String()
+	if src == "" {
+		return ""
+	}
+	lastNL := strings.LastIndexByte(src, '\n')
+	if lastNL < 0 {
+		// No complete lines yet — return raw text so the user sees
+		// something immediately rather than staring at a blank.
+		return src
+	}
+	rendered := Render(src[:lastNL+1], c.width, c.styles)
+	rendered = strings.TrimRight(rendered, "\n")
+	trailing := src[lastNL+1:]
+	if trailing != "" {
+		rendered += "\n" + trailing
+	}
+	return rendered
+}
+
 // Finalize renders any remaining buffer content and resets state.
 func (c *StreamCollector) Finalize() string {
 	src := c.buffer.String()

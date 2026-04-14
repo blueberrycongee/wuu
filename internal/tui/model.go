@@ -1748,7 +1748,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		}
 		m.entries[m.streamTarget].Content += event.Content
 		m.streamCollector.Push(event.Content)
-		if rendered := m.streamCollector.CommitCompleteLines(); rendered != "" {
+		if rendered := m.streamCollector.CommitWithTrailing(); rendered != "" {
 			e := &m.entries[m.streamTarget]
 			e.rendered = rendered
 			e.renderedLen = len(e.Content)
