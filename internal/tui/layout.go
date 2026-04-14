@@ -18,7 +18,8 @@ type layout struct {
 // inputLines is the current number of lines in the input area (clamped 3-15).
 // workerPanelLines is the height of the optional worker activity panel
 // (0 when no workers are active).
-func computeLayout(termWidth, termHeight, inputLines, workerPanelLines int) layout {
+// imageBarLines is 1 when images are attached, 0 otherwise.
+func computeLayout(termWidth, termHeight, inputLines, workerPanelLines, imageBarLines int) layout {
 	compact := termWidth < 80
 
 	headerH := 1
@@ -33,7 +34,7 @@ func computeLayout(termWidth, termHeight, inputLines, workerPanelLines int) layo
 	// full viewport rebuild on every frame — see renderInlineStatus usage
 	// in Model.View and the inlineSpinMsg handler.
 	inlineStatusH := 1
-	chatH := termHeight - headerH - inputOuterH - sepH - workerPanelLines - inlineStatusH
+	chatH := termHeight - headerH - inputOuterH - sepH - workerPanelLines - inlineStatusH - imageBarLines
 	if chatH < 4 {
 		chatH = 4
 	}

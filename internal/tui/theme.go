@@ -256,4 +256,5 @@ func applyTheme(t theme) {
 	initPickerStyles()
 	initWorkerPanelStyles()
 	initProcessPanelStyles()
+	initImageBarStyles()
 }

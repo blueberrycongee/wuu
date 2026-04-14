@@ -249,7 +249,9 @@ type Model struct {
 	pendingSteers []queuedMessage
 
 	// Pending image attachments for the next user message.
-	pendingImages []providers.InputImage
+	pendingImages    []providers.InputImage
+	imageBarFocused  bool // true when user is navigating the image bar
+	selectedImageIdx int  // index of the selected image pill
 
 	// Anchors (content line offsets) for user messages in the rendered viewport.
 	userMessageLineAnchors []int
@@ -1251,6 +1253,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inputSelection.clear()
 		}
 
+		// Handle image bar navigation when focused.
+		if m.imageBarFocused {
+			switch msg.String() {
+			case "left":
+				if m.selectedImageIdx > 0 {
+					m.selectedImageIdx--
+				}
+				return m, nil
+			case "right":
+				if m.selectedImageIdx < len(m.pendingImages)-1 {
+					m.selectedImageIdx++
+				}
+				return m, nil
+			case "backspace", "delete":
+				if len(m.pendingImages) > 0 && m.selectedImageIdx < len(m.pendingImages) {
+					m.pendingImages = append(m.pendingImages[:m.selectedImageIdx], m.pendingImages[m.selectedImageIdx+1:]...)
+					if len(m.pendingImages) == 0 {
+						m.imageBarFocused = false
+						m.selectedImageIdx = 0
+					} else if m.selectedImageIdx >= len(m.pendingImages) {
+						m.selectedImageIdx = len(m.pendingImages) - 1
+					}
+					m.relayout()
+				}
+				return m, nil
+			case "esc", "up":
+				m.imageBarFocused = false
+				return m, nil
+			}
+			// Ignore other keys while image bar is focused.
+			return m, nil
+		}
+
 		// Handle completion popup navigation first.
 		if m.completionVisible {
 			switch msg.String() {
@@ -1315,6 +1350,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "esc" && m.input.Value() != "" {
 			m.input.SetValue("")
 			m.pendingImages = nil
+			m.imageBarFocused = false
+			m.selectedImageIdx = 0
 			m.historyIndex = -1
 			m.historyDraft = ""
 			m.relayout()
@@ -1369,6 +1406,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cmd+Backspace / Ctrl+U: clear input to beginning of line.
 			m.input.SetValue("")
 			m.pendingImages = nil
+			m.imageBarFocused = false
+			m.selectedImageIdx = 0
 			m.historyIndex = -1
 			m.historyDraft = ""
 			m.completionVisible = false
@@ -1419,6 +1458,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down":
 			if m.historyIndex >= 0 {
 				return m.historyDown()
+			}
+			if len(m.pendingImages) > 0 {
+				m.imageBarFocused = true
+				m.selectedImageIdx = 0
+				return m, nil
 			}
 		case "ctrl+j", "end":
 			m.viewport.GotoBottom()
@@ -1523,6 +1567,8 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 		Images: append([]providers.InputImage(nil), m.pendingImages...),
 	}
 	m.pendingImages = nil
+	m.imageBarFocused = false
+	m.selectedImageIdx = 0
 
 	if m.pendingRequest && shouldQueue {
 		// Tab while busy — queue the message without hiding the active
@@ -2689,7 +2735,11 @@ func (m *Model) relayout() {
 	}
 	m.inputLines = clampInputLines(strings.Count(m.input.Value(), "\n")+1, 15)
 	processPanelLines := m.processPanelHeight()
-	m.layout = computeLayout(m.width, m.height, m.inputLines, m.workerPanelHeight()+processPanelLines)
+	imageBarH := 0
+	if len(m.pendingImages) > 0 {
+		imageBarH = 1
+	}
+	m.layout = computeLayout(m.width, m.height, m.inputLines, m.workerPanelHeight()+processPanelLines, imageBarH)
 
 	m.input.SetWidth(m.layout.Input.Width)
 	m.input.SetHeight(m.layout.Input.Height)
@@ -2862,9 +2912,7 @@ func (m Model) View() string {
 	if len(m.messageQueue) > 0 {
 		hints = append(hints, fmt.Sprintf("queue:%d", len(m.messageQueue)))
 	}
-	if len(m.pendingImages) > 0 {
-		hints = append(hints, fmt.Sprintf("img:%d", len(m.pendingImages)))
-	}
+	// Image count is now shown in the image bar; no header hint needed.
 	if m.showJump {
 		hints = append(hints, "▼")
 	}
@@ -2923,7 +2971,11 @@ func (m Model) View() string {
 	if panel := m.renderProcessPanel(m.width); panel != "" {
 		parts = append(parts, sep, panel)
 	}
-	parts = append(parts, sep, inputBox)
+	parts = append(parts, sep)
+	if bar := renderImageBar(len(m.pendingImages), m.selectedImageIdx, m.imageBarFocused, m.width); bar != "" {
+		parts = append(parts, bar)
+	}
+	parts = append(parts, inputBox)
 
 	return strings.Join(parts, "\n")
 }

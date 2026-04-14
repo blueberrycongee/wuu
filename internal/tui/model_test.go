@@ -549,7 +549,7 @@ func TestRelayoutFitsWindow(t *testing.T) {
 	m.height = 24
 	m.relayout()
 
-	l := computeLayout(m.width, m.height, m.inputLines, 0)
+	l := computeLayout(m.width, m.height, m.inputLines, 0, 0)
 	totalHeight := l.Header.Height + l.Chat.Height + l.Input.Height
 	if totalHeight > m.height {
 		t.Fatalf("layout exceeds window height: used=%d window=%d", totalHeight, m.height)
@@ -2355,8 +2355,8 @@ func TestComputeLayout_ReservesInlineStatusLine(t *testing.T) {
 	const termWidth, termHeight = 100, 40
 	const inputLines = 3
 
-	// No worker panel.
-	l := computeLayout(termWidth, termHeight, inputLines, 0)
+	// No worker panel, no image bar.
+	l := computeLayout(termWidth, termHeight, inputLines, 0, 0)
 	// Expected total lines in View(): header + chat + inlineStatus + sep + input
 	// = 1 + chatH + 1 + 1 + inputLines = termHeight
 	expected := 1 + l.Chat.Height + 1 + 1 + inputLines
@@ -2367,7 +2367,7 @@ func TestComputeLayout_ReservesInlineStatusLine(t *testing.T) {
 
 	// With worker panel (2 workers → 3 rows: title + 2 rows).
 	const workerRows = 3
-	lw := computeLayout(termWidth, termHeight, inputLines, workerRows)
+	lw := computeLayout(termWidth, termHeight, inputLines, workerRows, 0)
 	// Expected: header + chat + inlineStatus + sep + panel + sep + input
 	expectedW := 1 + lw.Chat.Height + 1 + 1 + workerRows + 1 + inputLines
 	if expectedW != termHeight {

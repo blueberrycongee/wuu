@@ -338,6 +338,8 @@ func cmdNew(_ string, m *Model) string {
 	m.messageQueue = nil
 	m.pendingSteers = nil
 	m.pendingImages = nil
+	m.imageBarFocused = false
+	m.selectedImageIdx = 0
 
 	// Create new session if session isolation is active.
 	if m.sessionDir != "" {
