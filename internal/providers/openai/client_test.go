@@ -200,17 +200,17 @@ func TestChat_OmitsPromptCacheKeyWithoutHint(t *testing.T) {
 	}
 }
 
-func TestStreamIdleTimeout_DefaultMatchesCodex(t *testing.T) {
+func TestStreamIdleTimeout_DefaultMatchesCC(t *testing.T) {
 	t.Setenv("WUU_STREAM_IDLE_TIMEOUT_MS", "")
-	if got := streamIdleTimeout(); got != 5*time.Minute {
-		t.Fatalf("expected 5m default stream idle timeout, got %s", got)
+	if got := streamIdleTimeout(); got != 90*time.Second {
+		t.Fatalf("expected 90s default stream idle timeout, got %s", got)
 	}
 }
 
-func TestStreamConnectTimeout_DefaultMatchesCodexStyleSplitDeadline(t *testing.T) {
+func TestStreamConnectTimeout_DefaultAccommodatesRelay(t *testing.T) {
 	t.Setenv("WUU_STREAM_CONNECT_TIMEOUT_MS", "")
-	if got := streamConnectTimeout(); got != 30*time.Second {
-		t.Fatalf("expected 30s default stream connect timeout, got %s", got)
+	if got := streamConnectTimeout(); got != 120*time.Second {
+		t.Fatalf("expected 120s default stream connect timeout, got %s", got)
 	}
 }
 

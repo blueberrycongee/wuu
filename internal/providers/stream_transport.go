@@ -10,8 +10,13 @@ import (
 )
 
 const (
-	defaultStreamConnectTimeout = 30 * time.Second
-	defaultStreamIdleTimeout    = 300 * time.Second
+	// CC uses a 600s SDK timeout covering the initial fetch. With relay
+	// proxying and large context, first-byte latency can exceed 30s easily.
+	// 120s accommodates relay overhead + Opus thinking warm-up.
+	defaultStreamConnectTimeout = 120 * time.Second
+	// CC uses 90s idle timeout (CLAUDE_STREAM_IDLE_TIMEOUT_MS default).
+	// 300s was far too patient for detecting silently dropped connections.
+	defaultStreamIdleTimeout = 90 * time.Second
 )
 
 // StreamTransportConfig splits the transport deadlines that govern one live

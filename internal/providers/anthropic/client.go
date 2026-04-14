@@ -205,7 +205,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	}
 
 	sseClient := providers.BuildStreamingHTTPClient(c.httpClient, c.streamConfig)
-	resp, err := c.doMessagesRequest(ctx, sseClient, body)
+	// Use the single-attempt request — the stream runner's
+	// runStreamWithReconnect handles retries with proper UI feedback.
+	resp, err := c.doSingleMessagesRequest(ctx, sseClient, body)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +330,56 @@ func ephemeralCacheControl() *anthropicCacheControl {
 	return &anthropicCacheControl{Type: "ephemeral"}
 }
 
+// doSingleMessagesRequest sends one HTTP request to the messages endpoint
+// without any retry logic. Callers that need retries should wrap this with
+// providers.WithRetry.
+func (c *Client) doSingleMessagesRequest(
+	ctx context.Context,
+	httpClient *http.Client,
+	body []byte,
+) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("content-type", "application/json")
+	if c.apiKey != "" {
+		httpReq.Header.Set("x-api-key", c.apiKey)
+	}
+	if c.authToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+	httpReq.Header.Set("anthropic-version", defaultAnthropicVersion)
+	if c.authToken != "" {
+		httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	}
+	httpReq.Header.Set("User-Agent", "claude-cli/2.1.96")
+	httpReq.Header.Set("x-app", "cli")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	for k, v := range c.headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+		_ = resp.Body.Close()
+		body := fmt.Sprintf("%s: %s", resp.Status, string(snippet))
+		return nil, &providers.HTTPError{
+			StatusCode:      resp.StatusCode,
+			Body:            body,
+			RetryAfter:      providers.ParseRetryAfter(resp),
+			ContextOverflow: providers.DetectContextOverflow(body),
+		}
+	}
+	return resp, nil
+}
+
+// doMessagesRequest sends an HTTP request with automatic retries.
+// Used by the non-streaming Chat path.
 func (c *Client) doMessagesRequest(
 	ctx context.Context,
 	httpClient *http.Client,
@@ -335,44 +387,10 @@ func (c *Client) doMessagesRequest(
 ) (*http.Response, error) {
 	var httpResp *http.Response
 	err := providers.WithRetry(ctx, c.retryConfig, func() error {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(body))
+		resp, err := c.doSingleMessagesRequest(ctx, httpClient, body)
 		if err != nil {
-			return fmt.Errorf("build request: %w", err)
+			return err
 		}
-		httpReq.Header.Set("content-type", "application/json")
-		if c.apiKey != "" {
-			httpReq.Header.Set("x-api-key", c.apiKey)
-		}
-		if c.authToken != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+c.authToken)
-		}
-		httpReq.Header.Set("anthropic-version", defaultAnthropicVersion)
-		if c.authToken != "" {
-			httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
-		}
-		httpReq.Header.Set("User-Agent", "claude-cli/2.1.96")
-		httpReq.Header.Set("x-app", "cli")
-		httpReq.Header.Set("Accept", "text/event-stream")
-		for k, v := range c.headers {
-			httpReq.Header.Set(k, v)
-		}
-
-		resp, err := httpClient.Do(httpReq)
-		if err != nil {
-			return fmt.Errorf("request failed: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
-			_ = resp.Body.Close()
-			body := fmt.Sprintf("%s: %s", resp.Status, string(snippet))
-			return &providers.HTTPError{
-				StatusCode:      resp.StatusCode,
-				Body:            body,
-				RetryAfter:      providers.ParseRetryAfter(resp),
-				ContextOverflow: providers.DetectContextOverflow(body),
-			}
-		}
-
 		httpResp = resp
 		return nil
 	})

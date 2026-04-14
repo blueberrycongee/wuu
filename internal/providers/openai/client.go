@@ -228,8 +228,10 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 
 	// Streaming turns can legitimately outlive the buffered request timeout.
 	// Let the caller's ctx and the idle watchdog own cancellation instead.
+	// Use the single-attempt request — the stream runner's
+	// runStreamWithReconnect handles retries with proper UI feedback.
 	streamClient := newStreamingHTTPClient(c.httpClient, c.streamConfig)
-	resp, err := c.doChatCompletionsRequest(ctx, streamClient, body, true)
+	resp, err := c.doSingleChatCompletionsRequest(ctx, streamClient, body, true)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +241,46 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	return ch, nil
 }
 
+// doSingleChatCompletionsRequest sends one HTTP request without retry.
+func (c *Client) doSingleChatCompletionsRequest(
+	ctx context.Context,
+	httpClient *http.Client,
+	body []byte,
+	acceptStream bool,
+) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	if acceptStream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	for k, v := range c.headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+		_ = resp.Body.Close()
+		body := fmt.Sprintf("%s: %s", resp.Status, string(snippet))
+		return nil, &providers.HTTPError{
+			StatusCode:      resp.StatusCode,
+			Body:            body,
+			RetryAfter:      providers.ParseRetryAfter(resp),
+			ContextOverflow: providers.DetectContextOverflow(body),
+		}
+	}
+	return resp, nil
+}
+
+// doChatCompletionsRequest sends an HTTP request with automatic retries.
+// Used by the non-streaming Chat path.
 func (c *Client) doChatCompletionsRequest(
 	ctx context.Context,
 	httpClient *http.Client,
@@ -247,35 +289,10 @@ func (c *Client) doChatCompletionsRequest(
 ) (*http.Response, error) {
 	var httpResp *http.Response
 	err := providers.WithRetry(ctx, c.retryConfig, func() error {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+		resp, err := c.doSingleChatCompletionsRequest(ctx, httpClient, body, acceptStream)
 		if err != nil {
-			return fmt.Errorf("build request: %w", err)
+			return err
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-		if acceptStream {
-			httpReq.Header.Set("Accept", "text/event-stream")
-		}
-		for k, v := range c.headers {
-			httpReq.Header.Set(k, v)
-		}
-
-		resp, err := httpClient.Do(httpReq)
-		if err != nil {
-			return fmt.Errorf("request failed: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
-			_ = resp.Body.Close()
-			body := fmt.Sprintf("%s: %s", resp.Status, string(snippet))
-			return &providers.HTTPError{
-				StatusCode:      resp.StatusCode,
-				Body:            body,
-				RetryAfter:      providers.ParseRetryAfter(resp),
-				ContextOverflow: providers.DetectContextOverflow(body),
-			}
-		}
-
 		httpResp = resp
 		return nil
 	})

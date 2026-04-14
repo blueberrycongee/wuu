@@ -378,10 +378,10 @@ func TestChat_OmitsCacheControlWithoutHint(t *testing.T) {
 	}
 }
 
-func TestStreamIdleTimeout_DefaultMatchesCodex(t *testing.T) {
+func TestStreamIdleTimeout_DefaultMatchesCC(t *testing.T) {
 	t.Setenv("WUU_STREAM_IDLE_TIMEOUT_MS", "")
-	if got := streamIdleTimeout(); got != 5*time.Minute {
-		t.Fatalf("expected 5m default stream idle timeout, got %s", got)
+	if got := streamIdleTimeout(); got != 90*time.Second {
+		t.Fatalf("expected 90s default stream idle timeout, got %s", got)
 	}
 }
 
