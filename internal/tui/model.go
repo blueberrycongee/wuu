@@ -1050,22 +1050,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyStreamEvent(msg.event, true)
 
 	case tea.MouseMsg:
-		m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
-		hoverChanged := m.updateScrollbarHover(msg.X, msg.Y)
-
-		// Mouse wheel — route to the correct panel so scrolling in the
-		// input area does not move the chat viewport.
+		// Mouse wheel must be applied BEFORE draining queued stream
+		// events. Otherwise, when autoFollow is true and new content
+		// is waiting in the channel, the drain calls refreshViewport
+		// → GotoBottom over the newly-grown content, and the wheel
+		// delta is then applied from that lower offset — so a wheel-up
+		// can end up moving the viewport DOWN. Applying the wheel
+		// first updates autoFollow via syncViewportState, so the
+		// subsequent drain preserves the user's scroll position.
 		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
 			if m.isInChatArea(msg.X, msg.Y) {
 				var cmd tea.Cmd
 				m.viewport, cmd = m.viewport.Update(msg)
 				m.syncViewportState()
+				m.updateScrollbarHover(msg.X, msg.Y)
 				m.refreshScrollbarCache()
+				m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
 				return m, cmd
 			}
-			// Wheel outside the chat area (e.g. input) — swallow.
+			// Wheel outside the chat area (e.g. input) — swallow,
+			// but still drain so rendering stays responsive.
+			m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
 			return m, nil
 		}
+
+		m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
+		hoverChanged := m.updateScrollbarHover(msg.X, msg.Y)
 
 		if msg.Action == tea.MouseActionRelease {
 			m.scrollbarDragging = false
