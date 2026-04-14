@@ -25,6 +25,10 @@ type Env struct {
 	AskBridge   AskUserBridge
 	Coordinator *coordinator.Coordinator
 	Skills      []skills.Skill
+	// OnFileChanged is called after write_file/edit_file successfully
+	// modifies a file. Enables FileChanged hook dispatch without
+	// coupling the tools package to the hooks package.
+	OnFileChanged func(absPath string)
 }
 
 // ResolvePath resolves a user-supplied relative or absolute path to

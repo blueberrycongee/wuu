@@ -152,6 +152,9 @@ func (t *WriteFileTool) Execute(_ context.Context, argsJSON string) (string, err
 	if err := os.WriteFile(resolved, []byte(args.Content), 0o644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
+	if t.env.OnFileChanged != nil {
+		t.env.OnFileChanged(resolved)
+	}
 
 	result := map[string]any{
 		"path":          t.env.NormalizeDisplayPath(resolved),
@@ -335,6 +338,9 @@ func (t *EditFileTool) Execute(_ context.Context, argsJSON string) (string, erro
 	newContent := strings.Replace(text, args.OldText, args.NewText, 1)
 	if err := os.WriteFile(resolved, []byte(newContent), 0o644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
+	}
+	if t.env.OnFileChanged != nil {
+		t.env.OnFileChanged(resolved)
 	}
 
 	diff := computeDiff(text, newContent, 3)

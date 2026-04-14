@@ -22,17 +22,31 @@ type Skill struct {
 	Dir         string // directory containing the skill (parent of SKILL.md, or file's parent for flat)
 	ArgumentHint string // gray help text shown after skill name in /<name> ...
 
-	// CC-compatible fields parsed but not yet acted on (kept for forward compat).
-	Model              string   // "sonnet", "haiku", "opus", "inherit"
-	Context            string   // "inline" (default) or "fork"
-	Agent              string   // sub-agent type when Context=fork
-	AllowedTools       []string // tools the skill is allowed to call
-	UserInvocable      bool     // can the user type /<name> to invoke
-	DisableModelInvoke bool     // hide from model auto-invocation
-	Paths              []string // glob patterns for conditional activation
-	Effort             string   // thinking effort hint
-	Version            string   // skill version string
-	Shell              string   // "bash" or "powershell"
+	// CC-compatible fields.
+	Model              string     // "sonnet", "haiku", "opus", "inherit"
+	Context            string     // "inline" (default) or "fork"
+	Agent              string     // sub-agent type when Context=fork
+	AllowedTools       []string   // tools the skill is allowed to call
+	UserInvocable      bool       // can the user type /<name> to invoke
+	DisableModelInvoke bool       // hide from model auto-invocation
+	Paths              []string   // glob patterns for conditional activation
+	Effort             string     // thinking effort hint
+	Version            string     // skill version string
+	Shell              string     // "bash" or "powershell"
+	// Hooks declares lifecycle hooks this skill registers when loaded.
+	// Parsed from YAML frontmatter. Keys are event names, values are
+	// lists of hook configs. Aligned with Claude Code's skill frontmatter hooks.
+	Hooks              map[string][]SkillHookConfig `json:"-"`
+}
+
+// SkillHookConfig is a hook entry declared in skill frontmatter.
+type SkillHookConfig struct {
+	Matcher string `json:"matcher,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Command string `json:"command,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Timeout int    `json:"timeout,omitempty"`
 }
 
 // Discover scans the given directories for skills and returns a deduplicated

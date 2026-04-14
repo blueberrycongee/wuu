@@ -25,7 +25,10 @@ var ErrConfigNotFound = errors.New("config not found")
 // HookEntry defines a single hook command bound to a lifecycle event.
 type HookEntry struct {
 	Matcher string `json:"matcher,omitempty"` // tool name pattern, "*" or empty = match all
-	Command string `json:"command"`           // shell command to execute
+	Type    string `json:"type,omitempty"`    // "command" (default) or "prompt"
+	Command string `json:"command,omitempty"` // for type=command — shell command
+	Prompt  string `json:"prompt,omitempty"`  // for type=prompt — evaluation prompt
+	Model   string `json:"model,omitempty"`   // for type=prompt — model to use
 	Timeout int    `json:"timeout,omitempty"` // seconds, default 30
 }
 

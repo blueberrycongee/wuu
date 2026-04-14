@@ -11,6 +11,9 @@ const (
 	SessionStart       Event = "SessionStart"
 	SessionEnd         Event = "SessionEnd"
 	Stop               Event = "Stop"
+	// FileChanged fires after a tool successfully writes or edits a
+	// file. Aligned with Claude Code's FileChanged hook event.
+	FileChanged Event = "FileChanged"
 )
 
 var validEvents = map[Event]bool{
@@ -21,6 +24,7 @@ var validEvents = map[Event]bool{
 	SessionStart:       true,
 	SessionEnd:         true,
 	Stop:               true,
+	FileChanged:        true,
 }
 
 // IsValid returns true if ev is a recognized event.

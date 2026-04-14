@@ -138,6 +138,12 @@ func (t *Toolkit) SetSessionDir(dir string) {
 	t.env.SessionDir = dir
 }
 
+// SetOnFileChanged sets the callback fired after write_file/edit_file
+// successfully modifies a file. Used to dispatch FileChanged hooks.
+func (t *Toolkit) SetOnFileChanged(fn func(absPath string)) {
+	t.env.OnFileChanged = fn
+}
+
 // Coordinator returns the attached orchestration runtime, or nil.
 func (t *Toolkit) Coordinator() *coordinator.Coordinator {
 	return t.env.Coordinator

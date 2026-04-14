@@ -342,7 +342,10 @@ func runTUI(args []string) error {
 		for _, e := range entries {
 			hookEntries[ev] = append(hookEntries[ev], hooks.HookConfig{
 				Matcher: e.Matcher,
+				Type:    e.Type,
 				Command: e.Command,
+				Prompt:  e.Prompt,
+				Model:   e.Model,
 				Timeout: e.Timeout,
 			})
 		}
@@ -381,6 +384,13 @@ func runTUI(args []string) error {
 		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
 		kit.SetAskUserBridge(askBridge)
+		// Wire FileChanged hook dispatch from write_file/edit_file.
+		kit.SetOnFileChanged(func(absPath string) {
+			_, _ = hookDispatcher.Dispatch(context.Background(), hooks.FileChanged, &hooks.Input{
+				CWD:      rootDir,
+				FilePath: absPath,
+			})
+		})
 		toolkit = kit
 		toolExecutor = hooks.NewHookedExecutor(kit, hookDispatcher, "", rootDir)
 	}

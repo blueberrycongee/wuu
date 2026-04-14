@@ -14,4 +14,5 @@ type Input struct {
 	ToolResponse string          `json:"tool_response,omitempty"`
 	Error        string          `json:"error,omitempty"`
 	Prompt       string          `json:"prompt,omitempty"`
+	FilePath     string          `json:"file_path,omitempty"` // for FileChanged events
 }

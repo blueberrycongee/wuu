@@ -497,6 +497,10 @@ func executeBatch(
 	batch toolBatch,
 	onResult func(providers.ToolCall, string),
 ) []providers.ChatMessage {
+	// Check if the executor supports additional context injection
+	// (e.g. HookedExecutor propagating PostToolUse hook context).
+	ctxProvider, hasCtxProvider := executor.(ToolContextProvider)
+
 	if !batch.concurrent || len(batch.calls) == 1 {
 		// Serial execution.
 		msgs := make([]providers.ChatMessage, 0, len(batch.calls))
@@ -514,6 +518,18 @@ func executeBatch(
 				ToolCallID: call.ID,
 				Content:    result,
 			})
+			// Inject hook-provided additional context as a system
+			// message right after the tool result, so the model sees
+			// it in context. Aligned with Claude Code's
+			// hook_additional_context attachment pattern.
+			if hasCtxProvider {
+				if extra := ctxProvider.LastAdditionalContext(); extra != "" {
+					msgs = append(msgs, providers.ChatMessage{
+						Role:    "user",
+						Content: "[Hook context for " + call.Name + "]: " + extra,
+					})
+				}
+			}
 		}
 		return msgs
 	}

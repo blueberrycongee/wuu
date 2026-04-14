@@ -30,6 +30,19 @@ type ToolMetadataProvider interface {
 	ToolMetadata(name string) (ToolMetadata, bool)
 }
 
+// ToolContextProvider is an optional interface a ToolExecutor can
+// implement to return additional context alongside tool results.
+// Hook systems use this to inject context into the conversation
+// after PostToolUse hooks run. Aligned with Claude Code's
+// additionalContext hook output mechanism.
+type ToolContextProvider interface {
+	// LastAdditionalContext returns the additional context string
+	// from the most recent Execute call, if any. Callers should
+	// check this after each Execute and inject non-empty values
+	// as system messages.
+	LastAdditionalContext() string
+}
+
 // Runner manages one multi-step coding turn. It is a thin wrapper
 // around RunToolLoop that always executes through the streaming Step
 // path; unary clients are adapted underneath via AdaptStreamClient.
