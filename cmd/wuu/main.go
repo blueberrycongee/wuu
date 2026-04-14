@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/memory"
 	processruntime "github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/prompt"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -403,13 +404,22 @@ func runTUI(args []string) error {
 		memoryFiles = memory.Discover(rootDir, homeDir, memOpts)
 	}
 
-	systemPromptText := cfg.Agent.SystemPrompt
-	if len(memoryFiles) > 0 {
-		systemPromptText = appendMemoryToPrompt(systemPromptText, memoryFiles)
+	// Assemble system prompt via the section-based builder. Static
+	// sections (base prompt, coordinator preamble) are placed first for
+	// prompt-cache stability; dynamic sections (memory, skills, git)
+	// follow. Memory files are auto-truncated to 200 lines / 25 KB.
+	var pb prompt.Builder
+	pb.AddSection("base", cfg.Agent.SystemPrompt, true)
+	pb.AddMemory(memoryFiles)
+	pb.AddSkills(discoveredSkills)
+
+	// Inject git context when the workspace is a git repo.
+	if worktree.IsGitRepo(rootDir) {
+		gitCtx := prompt.NewGitContext(rootDir)
+		pb.AddGitContext(gitCtx.Collect())
 	}
-	if len(discoveredSkills) > 0 {
-		systemPromptText = appendSkillsToPrompt(systemPromptText, discoveredSkills)
-	}
+
+	systemPromptText := pb.Build()
 
 	// Ensure the cross-agent shared filesystem region exists. Agents
 	// use .wuu/shared/{findings,plans,status,reports} as the data
@@ -470,12 +480,10 @@ func runTUI(args []string) error {
 		if cerr == nil {
 			coord = c
 			toolkit.SetCoordinator(coord)
-			// Prepend the orchestration preamble to the main agent's
-			// system prompt. The preamble teaches the three-plane
-			// discipline (data via filesystem, control via messages,
-			// trajectories as history) and the spawn / fork judgment
-			// heuristic, then defers to project memory and skills.
-			systemPromptText = coordinator.SystemPromptPreamble() + "\n\n" + systemPromptText
+			// Prepend the orchestration preamble as a static section
+			// (it goes before the base prompt in the cache prefix).
+			pb.AddSection("coordinator", coordinator.SystemPromptPreamble(), true)
+			systemPromptText = pb.Build()
 		}
 	}
 
@@ -653,80 +661,8 @@ func envContextInjector(rootDir string) func() []providers.ChatMessage {
 	}
 }
 
-// appendMemoryToPrompt prepends the contents of discovered memory files
-// (CLAUDE.md / AGENTS.md) into the system prompt under a clearly-labeled
-// section. Each file is shown with its source and path so the model can
-// track which conventions came from where.
-func appendMemoryToPrompt(base string, files []memory.File) string {
-	var b strings.Builder
-	b.WriteString(strings.TrimRight(base, "\n"))
-	if b.Len() > 0 {
-		b.WriteString("\n\n")
-	}
-	b.WriteString("# Memory\n\n")
-	b.WriteString("The following memory files contain project- and user-defined conventions, ")
-	b.WriteString("style guides, and constraints. Treat them as binding instructions for this session.\n\n")
-	for _, f := range files {
-		fmt.Fprintf(&b, "## %s _[%s · %s]_\n\n", f.Name, f.Source, f.Path)
-		b.WriteString(strings.TrimRight(f.Content, "\n"))
-		b.WriteString("\n\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// appendSkillsToPrompt adds a "Session-specific guidance" section that lists
-// available skills, their descriptions, and instructions for invocation.
-// Format mirrors Claude Code's session_guidance system prompt section so the
-// model treats wuu skills with the same conventions.
-func appendSkillsToPrompt(base string, sks []skills.Skill) string {
-	// Filter out skills hidden from model invocation.
-	visible := make([]skills.Skill, 0, len(sks))
-	for _, s := range sks {
-		if s.DisableModelInvoke {
-			continue
-		}
-		visible = append(visible, s)
-	}
-	if len(visible) == 0 {
-		return base
-	}
-
-	var b strings.Builder
-	b.WriteString(strings.TrimRight(base, "\n"))
-	if b.Len() > 0 {
-		b.WriteString("\n\n")
-	}
-
-	b.WriteString("# Session-specific guidance\n\n")
-	b.WriteString("## Skills\n\n")
-	b.WriteString("The following skills are available in this session. Each skill is a reusable, ")
-	b.WriteString("project- or user-defined instruction set that encodes conventions, recipes, or workflows.\n\n")
-	b.WriteString("**How to use skills:**\n")
-	b.WriteString("1. Read the skill catalog below — match the user's intent against each skill's description and \"when to use\" guidance.\n")
-	b.WriteString("2. When a skill applies, call the `load_skill` tool with the skill's name to retrieve the full body. ")
-	b.WriteString("Pass any user-supplied arguments via the `arguments` parameter.\n")
-	b.WriteString("3. Follow the loaded skill's instructions exactly. If the skill body contains tool restrictions or step orderings, respect them.\n")
-	b.WriteString("4. Users can also invoke skills directly by typing `/<skill-name>` (e.g. `/commit`). When that happens, the skill body is injected as a user message — no need to call `load_skill` separately.\n\n")
-
-	b.WriteString("**Skill catalog:**\n\n")
-	for _, s := range visible {
-		desc := s.Description
-		if desc == "" {
-			desc = "(no description)"
-		}
-		fmt.Fprintf(&b, "- **%s** _[%s]_ — %s\n", s.Name, s.Source, desc)
-		if s.WhenToUse != "" {
-			fmt.Fprintf(&b, "  - When to use: %s\n", s.WhenToUse)
-		}
-		if s.ArgumentHint != "" {
-			fmt.Fprintf(&b, "  - Usage: `/%s %s`\n", s.Name, s.ArgumentHint)
-		}
-		if len(s.AllowedTools) > 0 {
-			fmt.Fprintf(&b, "  - Allowed tools: %s\n", strings.Join(s.AllowedTools, ", "))
-		}
-	}
-	return b.String()
-}
+// appendMemoryToPrompt and appendSkillsToPrompt removed — replaced by
+// the section-based prompt.Builder in internal/prompt/.
 
 func resolvePrompt(args []string) (string, error) {
 	if len(args) > 0 {
