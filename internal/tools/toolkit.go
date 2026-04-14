@@ -276,6 +276,25 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 			},
 		},
 		{
+			Name:        "git",
+			Description: "Run read-only git commands (log, status, diff, show, blame, branch --list, etc.). Does NOT support write operations (commit, push, rebase, merge, stash pop, etc.) — for those, delegate to a worker.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"subcommand": map[string]any{
+						"type":        "string",
+						"description": "Git subcommand. Allowed: log, show, diff, status, blame, branch, tag, reflog, stash list, stash show, ls-files, ls-remote, remote, config, rev-parse, rev-list, describe, cat-file, for-each-ref, grep, worktree list, merge-base, shortlog.",
+					},
+					"args": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Arguments to pass to the git subcommand.",
+					},
+				},
+				"required": []string{"subcommand"},
+			},
+		},
+		{
 			Name:        "web_search",
 			Description: "Search the web using DuckDuckGo. Returns titles, URLs, and snippets.",
 			InputSchema: map[string]any{
@@ -561,6 +580,8 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 		return t.grep(call.Arguments)
 	case "glob":
 		return t.glob(call.Arguments)
+	case "git":
+		return t.git(ctx, call.Arguments)
 	case "web_search":
 		return t.webSearch(ctx, call.Arguments)
 	case "web_fetch":

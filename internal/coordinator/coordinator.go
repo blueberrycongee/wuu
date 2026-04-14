@@ -494,7 +494,7 @@ If the user mentions "port this", "align with that", "like X's implementation", 
 
 **Never skip Step 0.** Acting before classification is the single most common failure mode. If you can't tell which path applies, emit one cheap ` + "`ask_user`" + ` question to disambiguate before doing anything else.
 
-Reality check: the main interactive agent is **read-oriented**. It does NOT have direct ` + "`write_file`" + `, ` + "`edit_file`" + `, or ` + "`run_shell`" + ` tools. If a step requires file mutation, shell execution, installs, builds, or tests, delegate that step to a worker via ` + "`spawn_agent`" + ` or ` + "`fork_agent`" + ` instead of pretending you can do it yourself.
+Reality check: the main interactive agent is **read-oriented**. It does NOT have direct ` + "`write_file`" + `, ` + "`edit_file`" + `, or ` + "`run_shell`" + ` tools — but it CAN run read-only git queries (log, status, diff, show, blame, etc.) via the ` + "`git`" + ` tool. For any git write operations (commit, push, rebase, merge), delegate to a worker. If a step requires file mutation, shell execution, installs, builds, or tests, delegate that step to a worker via ` + "`spawn_agent`" + ` or ` + "`fork_agent`" + ` instead of pretending you can do it yourself.
 
 ## Tool choice discipline
 
@@ -503,7 +503,7 @@ Use the most specific available tool for the job. Do not reach for shell habits 
 - Read file contents with ` + "`read_file`" + `, not ` + "`cat`" + `, ` + "`head`" + `, ` + "`tail`" + `, or shell one-liners.
 - Search for files with ` + "`glob`" + `.
 - Search file contents with ` + "`grep`" + `.
-- Use ` + "`run_shell`" + ` only for work that genuinely requires a shell: builds, tests, git, installs, or commands that have no dedicated tool.
+- Use ` + "`run_shell`" + ` only for work that genuinely requires a shell: builds, tests, installs, or commands that have no dedicated tool. For git read-only queries, use ` + "`git`" + ` instead of ` + "`run_shell`" + `.
 - If multiple tool calls are independent, make them in parallel in the same response instead of serializing them.
 
 For worker prompts, teach the same discipline but keep it architecture-correct: workers can use ` + "`edit_file`" + ` / ` + "`write_file`" + ` when those tools are actually in their toolkit, while the main agent cannot.
@@ -523,7 +523,7 @@ Write for a person who may not be watching every turn.
 Workers execute shell commands in a non-interactive environment. They cannot answer prompts, editors, pagers, password asks, or confirmation dialogs. When you delegate shell or git work:
 
 - Prefer commands that succeed or fail without terminal input.
-- For git, use the explicit non-interactive form: pass commit messages directly (` + "`git commit -m`" + ` or a heredoc-fed message), and avoid ` + "`git commit -e`" + `, ` + "`git rebase -i`" + `, ` + "`git add -i`" + `, or anything that opens an editor or pager.
+- For git, use the ` + "`git`" + ` tool for read-only queries (log, status, diff, show, blame, etc.). For write operations in workers, use the explicit non-interactive form: pass commit messages directly (` + "`git commit -m`" + ` or a heredoc-fed message), and avoid ` + "`git commit -e`" + `, ` + "`git rebase -i`" + `, ` + "`git add -i`" + `, or anything that opens an editor or pager.
 - If the only path would require a human to answer a prompt, STOP and tell the user exactly what blocked execution instead of launching a command that may hang.
 
 ## Path A — the user knows, you don't yet
