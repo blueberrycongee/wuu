@@ -7,29 +7,54 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const gitTimeout = 30 * time.Second
 
-// allowedGitSubcommands is the whitelist of git subcommands available to the
-// main agent. Multi-word commands use space separation (e.g. "stash list").
+// ── flag-level policy types ─────────────────────────────────────────
+
+// flagArgType describes what kind of argument a flag consumes.
+type flagArgType int
+
+const (
+	flagNone   flagArgType = iota // flag takes no argument
+	flagString                    // flag takes a string argument
+	flagNumber                    // flag takes a numeric argument
+)
+
+// subcommandPolicy defines the allowed flags and an optional semantic
+// check for a git subcommand that needs flag-level enforcement.
+type subcommandPolicy struct {
+	safeFlags   map[string]flagArgType
+	isDangerous func(args []string) bool // nil = no extra check
+}
+
+// fileEntry represents a single file in structured git status output.
+type fileEntry struct {
+	File   string `json:"file"`
+	Status string `json:"status"`
+}
+
+// ── subcommand whitelists ───────────────────────────────────────────
+
+// allowedGitSubcommands is the whitelist of git subcommands that need
+// no per-flag validation (inherently read-only or handled by their own
+// switch-case in validateGitArgs).
 var allowedGitSubcommands = map[string]bool{
 	"log":           true,
 	"show":          true,
 	"diff":          true,
-	"status":        true,
 	"blame":         true,
-	"branch":        true,
-	"tag":           true,
 	"reflog":        true,
 	"stash list":    true,
 	"stash show":    true,
 	"ls-files":      true,
 	"ls-remote":     true,
-	"remote":        true,
-	"config":        true,
 	"rev-parse":     true,
 	"rev-list":      true,
 	"describe":      true,
@@ -42,6 +67,326 @@ var allowedGitSubcommands = map[string]bool{
 	"commit":        true,
 	"push":          true,
 }
+
+// policiedSubcommands require flag-level validation via subcommandPolicy.
+var policiedSubcommands = map[string]*subcommandPolicy{
+	"branch":        branchPolicy,
+	"tag":           tagPolicy,
+	"remote":        remotePolicy,
+	"remote show":   remoteShowPolicy,
+	"config --get":     configGetPolicy,
+	"config --get-all": configGetPolicy,
+	"config --list":    configListPolicy,
+	"status":        statusPolicy,
+}
+
+// ── policy definitions (ported from CC readOnlyCommandValidation.ts) ─
+
+var branchPolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"-l": flagNone, "--list": flagNone,
+		"-a": flagNone, "--all": flagNone,
+		"-r": flagNone, "--remotes": flagNone,
+		"-v": flagNone, "-vv": flagNone, "--verbose": flagNone,
+		"--color": flagNone, "--no-color": flagNone,
+		"--column": flagNone, "--no-column": flagNone,
+		"--abbrev": flagNumber, "--no-abbrev": flagNone,
+		"--contains": flagString, "--no-contains": flagString,
+		"--merged": flagNone, "--no-merged": flagNone,
+		"--points-at": flagString, "--sort": flagString,
+		"--show-current": flagNone,
+		"-i": flagNone, "--ignore-case": flagNone,
+	},
+	isDangerous: branchIsDangerous,
+}
+
+var tagPolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"-l": flagNone, "--list": flagNone,
+		"-n":            flagNumber,
+		"--contains":    flagString, "--no-contains": flagString,
+		"--merged":      flagString, "--no-merged": flagString,
+		"--sort":        flagString, "--format": flagString,
+		"--points-at":   flagString,
+		"--column":      flagNone, "--no-column": flagNone,
+		"-i":            flagNone, "--ignore-case": flagNone,
+	},
+	isDangerous: tagIsDangerous,
+}
+
+var remotePolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"-v": flagNone, "--verbose": flagNone,
+	},
+	isDangerous: func(args []string) bool {
+		for _, a := range args {
+			if a != "-v" && a != "--verbose" {
+				return true
+			}
+		}
+		return false
+	},
+}
+
+var remoteShowPolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"-n": flagNone,
+	},
+	isDangerous: func(args []string) bool {
+		var positional []string
+		for _, a := range args {
+			if a != "-n" {
+				positional = append(positional, a)
+			}
+		}
+		if len(positional) != 1 {
+			return true
+		}
+		matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, positional[0])
+		return !matched
+	},
+}
+
+var configGetPolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"--local": flagNone, "--global": flagNone,
+		"--system": flagNone, "--worktree": flagNone,
+		"--default": flagString, "--type": flagString,
+		"--bool": flagNone, "--int": flagNone,
+		"--bool-or-int": flagNone, "--path": flagNone,
+		"--expiry-date": flagNone,
+		"-z": flagNone, "--null": flagNone,
+		"--name-only": flagNone, "--show-origin": flagNone,
+		"--show-scope": flagNone,
+	},
+	isDangerous: nil, // positional args are config key names, harmless
+}
+
+var configListPolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"--local": flagNone, "--global": flagNone,
+		"--system": flagNone, "--worktree": flagNone,
+		"--type": flagString,
+		"--bool": flagNone, "--int": flagNone,
+		"--bool-or-int": flagNone, "--path": flagNone,
+		"--expiry-date": flagNone,
+		"-z": flagNone, "--null": flagNone,
+		"--name-only": flagNone, "--show-origin": flagNone,
+		"--show-scope": flagNone,
+	},
+	isDangerous: func(args []string) bool {
+		// --list takes no key argument; block any positional args
+		for _, a := range args {
+			if !strings.HasPrefix(a, "-") {
+				return true
+			}
+		}
+		return false
+	},
+}
+
+var statusPolicy = &subcommandPolicy{
+	safeFlags: map[string]flagArgType{
+		"--short": flagNone, "-s": flagNone,
+		"--branch": flagNone, "-b": flagNone,
+		"--porcelain": flagNone,
+		"--long": flagNone,
+		"--verbose": flagNone, "-v": flagNone,
+		"--untracked-files": flagString, "-u": flagString,
+		"--ignored":           flagNone,
+		"--ignore-submodules": flagString,
+		"--column": flagNone, "--no-column": flagNone,
+		"--ahead-behind": flagNone, "--no-ahead-behind": flagNone,
+		"--renames": flagNone, "--no-renames": flagNone,
+		"--find-renames": flagString, "-M": flagString,
+	},
+	isDangerous: nil,
+}
+
+// ── isDangerous callbacks ───────────────────────────────────────────
+
+// branchIsDangerous blocks positional args (branch creation/deletion)
+// unless -l/--list is present. Handles -- end-of-options.
+func branchIsDangerous(args []string) bool {
+	flagsWithArgs := map[string]bool{
+		"--contains": true, "--no-contains": true,
+		"--points-at": true, "--sort": true,
+	}
+	flagsWithOptionalArgs := map[string]bool{
+		"--merged": true, "--no-merged": true,
+	}
+
+	var (
+		i            int
+		lastFlag     string
+		seenListFlag bool
+		seenDashDash bool
+	)
+	for i < len(args) {
+		token := args[i]
+		if token == "--" && !seenDashDash {
+			seenDashDash = true
+			lastFlag = ""
+			i++
+			continue
+		}
+		if !seenDashDash && strings.HasPrefix(token, "-") {
+			if token == "--list" || token == "-l" {
+				seenListFlag = true
+			} else if len(token) > 2 && token[0] == '-' && token[1] != '-' && !strings.Contains(token, "=") && strings.ContainsRune(token[1:], 'l') {
+				seenListFlag = true
+			}
+			if strings.Contains(token, "=") {
+				lastFlag = strings.SplitN(token, "=", 2)[0]
+				i++
+			} else if flagsWithArgs[token] {
+				lastFlag = token
+				i += 2
+			} else {
+				lastFlag = token
+				i++
+			}
+		} else {
+			// Positional arg — dangerous unless listing or after optional-arg flag
+			if !seenListFlag && !flagsWithOptionalArgs[lastFlag] {
+				return true
+			}
+			i++
+		}
+	}
+	return false
+}
+
+// tagIsDangerous blocks positional args (tag creation) unless -l/--list
+// is present. Handles -- end-of-options.
+func tagIsDangerous(args []string) bool {
+	flagsWithArgs := map[string]bool{
+		"--contains": true, "--no-contains": true,
+		"--merged": true, "--no-merged": true,
+		"--points-at": true, "--sort": true,
+		"--format": true, "-n": true,
+	}
+
+	var (
+		i            int
+		seenListFlag bool
+		seenDashDash bool
+	)
+	for i < len(args) {
+		token := args[i]
+		if token == "--" && !seenDashDash {
+			seenDashDash = true
+			i++
+			continue
+		}
+		if !seenDashDash && strings.HasPrefix(token, "-") {
+			if token == "--list" || token == "-l" {
+				seenListFlag = true
+			} else if len(token) > 2 && token[0] == '-' && token[1] != '-' && !strings.Contains(token, "=") && strings.ContainsRune(token[1:], 'l') {
+				seenListFlag = true
+			}
+			if strings.Contains(token, "=") {
+				i++
+			} else if flagsWithArgs[token] {
+				i += 2
+			} else {
+				i++
+			}
+		} else {
+			if !seenListFlag {
+				return true
+			}
+			i++
+		}
+	}
+	return false
+}
+
+// ── generic flag validation ─────────────────────────────────────────
+
+// validateSubcommandFlags checks every flag in args against the policy's
+// safeFlags whitelist, then runs the isDangerous callback if present.
+func validateSubcommandFlags(subcmd string, policy *subcommandPolicy, args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// -- ends flag parsing; rest is positional (left to isDangerous)
+		if arg == "--" {
+			break
+		}
+
+		if !strings.HasPrefix(arg, "-") {
+			continue // positional arg, handled by isDangerous
+		}
+
+		// Split --flag=value
+		flagName := arg
+		hasEquals := false
+		if idx := strings.Index(arg, "="); idx >= 0 {
+			flagName = arg[:idx]
+			hasEquals = true
+		}
+
+		argType, known := policy.safeFlags[flagName]
+		if !known {
+			// Try combined short flags like -avl
+			if len(flagName) > 2 && flagName[0] == '-' && flagName[1] != '-' && !hasEquals {
+				if err := validateCombinedShortFlags(subcmd, policy, flagName[1:]); err != nil {
+					return err
+				}
+				continue
+			}
+			return fmt.Errorf("git %s flag %q is not allowed in restricted mode", subcmd, flagName)
+		}
+
+		switch argType {
+		case flagNone:
+			// no-arg flag; reject --flag=value form
+			if hasEquals {
+				return fmt.Errorf("git %s flag %q does not accept a value", subcmd, flagName)
+			}
+		case flagString:
+			if !hasEquals {
+				i++ // consume next token as value
+			}
+		case flagNumber:
+			var val string
+			if hasEquals {
+				val = arg[strings.Index(arg, "=")+1:]
+			} else {
+				i++
+				if i < len(args) {
+					val = args[i]
+				}
+			}
+			if val != "" {
+				if _, err := strconv.Atoi(val); err != nil {
+					return fmt.Errorf("git %s flag %q requires a numeric value, got %q", subcmd, flagName, val)
+				}
+			}
+		}
+	}
+
+	if policy.isDangerous != nil && policy.isDangerous(args) {
+		return fmt.Errorf("git %s: operation not allowed in restricted mode", subcmd)
+	}
+	return nil
+}
+
+// validateCombinedShortFlags checks that every character in a short-flag
+// bundle (e.g. "avl" from "-avl") is a known flagNone flag.
+func validateCombinedShortFlags(subcmd string, policy *subcommandPolicy, chars string) error {
+	for _, ch := range chars {
+		flag := "-" + string(ch)
+		argType, known := policy.safeFlags[flag]
+		if !known || argType != flagNone {
+			return fmt.Errorf("git %s flag %q is not allowed in restricted mode", subcmd, flag)
+		}
+	}
+	return nil
+}
+
+// ── global arg checks ───────────────────────────────────────────────
 
 // blockedGlobalArgPrefixes are git flags that can lead to code execution or
 // bypass the restricted-git intent. These are blocked before any subcommand-
@@ -93,20 +438,37 @@ func (t *Toolkit) git(ctx context.Context, argsJSON string) (string, error) {
 	subcmd := strings.TrimSpace(args.Subcommand)
 	remainingArgs := args.Args
 
-	if !allowedGitSubcommands[subcmd] && len(remainingArgs) > 0 {
+	// Try multi-word subcommand matching (check both maps).
+	if !allowedGitSubcommands[subcmd] && policiedSubcommands[subcmd] == nil && len(remainingArgs) > 0 {
 		combined := subcmd + " " + remainingArgs[0]
-		if allowedGitSubcommands[combined] {
+		if allowedGitSubcommands[combined] || policiedSubcommands[combined] != nil {
 			subcmd = combined
 			remainingArgs = remainingArgs[1:]
 		}
 	}
 
-	if !allowedGitSubcommands[subcmd] {
+	// Run global arg checks (blocked prefixes + shell metacharacters)
+	// regardless of which path we take.
+	if err := validateGlobalGitArgs(subcmd, remainingArgs); err != nil {
+		return "", err
+	}
+
+	// Dispatch: policied → flag-level validation, allowed → legacy validation.
+	if policy := policiedSubcommands[subcmd]; policy != nil {
+		if err := validateSubcommandFlags(subcmd, policy, remainingArgs); err != nil {
+			return "", err
+		}
+	} else if allowedGitSubcommands[subcmd] {
+		if err := validateGitArgs(subcmd, remainingArgs); err != nil {
+			return "", err
+		}
+	} else {
 		return "", fmt.Errorf("git subcommand %q is not allowed in restricted mode", args.Subcommand)
 	}
 
-	if err := validateGitArgs(subcmd, remainingArgs); err != nil {
-		return "", err
+	// Structured output for git status.
+	if subcmd == "status" {
+		return t.gitStatus(ctx, remainingArgs)
 	}
 
 	subcmdParts := strings.Fields(subcmd)
@@ -120,6 +482,11 @@ func (t *Toolkit) git(ctx context.Context, argsJSON string) (string, error) {
 		gitArgs = append([]string{"--no-optional-locks", "push"}, normalized...)
 	}
 
+	return t.runGit(ctx, subcmd, gitArgs)
+}
+
+// runGit executes a git command and returns the standard JSON envelope.
+func (t *Toolkit) runGit(ctx context.Context, subcmd string, gitArgs []string) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 
@@ -162,7 +529,153 @@ func (t *Toolkit) git(ctx context.Context, argsJSON string) (string, error) {
 	return mustJSON(result)
 }
 
-func validateGitArgs(subcmd string, args []string) error {
+// ── structured git status ───────────────────────────────────────────
+
+// gitStatus runs git status --porcelain and returns structured output
+// with staged, unstaged, and untracked file lists.
+func (t *Toolkit) gitStatus(ctx context.Context, userArgs []string) (string, error) {
+	// Build args: always use --porcelain, forward behavior-relevant flags.
+	gitArgs := []string{"--no-optional-locks", "status", "--porcelain"}
+	for i := 0; i < len(userArgs); i++ {
+		switch userArgs[i] {
+		case "-u", "--untracked-files":
+			if i+1 < len(userArgs) {
+				gitArgs = append(gitArgs, userArgs[i], userArgs[i+1])
+				i++
+			}
+		case "--ignore-submodules":
+			if i+1 < len(userArgs) {
+				gitArgs = append(gitArgs, userArgs[i], userArgs[i+1])
+				i++
+			}
+		case "--find-renames", "-M":
+			if i+1 < len(userArgs) {
+				gitArgs = append(gitArgs, userArgs[i], userArgs[i+1])
+				i++
+			}
+		case "--renames", "--no-renames", "--ignored":
+			gitArgs = append(gitArgs, userArgs[i])
+		default:
+			// Handle --flag=value forms for behavior flags.
+			for _, prefix := range []string{"--untracked-files=", "--ignore-submodules=", "--find-renames=", "-M"} {
+				if strings.HasPrefix(userArgs[i], prefix) {
+					gitArgs = append(gitArgs, userArgs[i])
+					break
+				}
+			}
+		}
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, gitTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, "git", gitArgs...)
+	cmd.Dir = t.rootDir
+	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	timedOut := false
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			exitCode = 124
+			timedOut = true
+		} else {
+			return "", fmt.Errorf("git status: %w", err)
+		}
+	}
+
+	staged, unstaged, untracked := parseGitPorcelain(stdout.String())
+
+	rawOutput := stdout.String() + stderr.String()
+	trimmed, truncated := truncate(rawOutput, maxShellOutputBytes)
+
+	result := map[string]any{
+		"subcommand": "status",
+		"exit_code":  exitCode,
+		"staged":     staged,
+		"unstaged":   unstaged,
+		"untracked":  untracked,
+		"output":     trimmed,
+		"timed_out":  timedOut,
+	}
+	if truncated {
+		result["truncated"] = true
+	}
+	return mustJSON(result)
+}
+
+// parseGitPorcelain parses `git status --porcelain` output into
+// structured staged, unstaged, and untracked file lists.
+func parseGitPorcelain(output string) (staged, unstaged []fileEntry, untracked []string) {
+	staged = []fileEntry{}
+	unstaged = []fileEntry{}
+	untracked = []string{}
+
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 3 {
+			continue
+		}
+		x := line[0] // index status
+		y := line[1] // worktree status
+		filename := strings.TrimLeftFunc(line[2:], unicode.IsSpace)
+
+		if x == '?' && y == '?' {
+			untracked = append(untracked, filename)
+			continue
+		}
+		if x == '!' && y == '!' {
+			continue // ignored
+		}
+		if x != ' ' && x != '?' {
+			staged = append(staged, fileEntry{
+				File:   filename,
+				Status: statusDescription(x),
+			})
+		}
+		if y != ' ' && y != '?' {
+			unstaged = append(unstaged, fileEntry{
+				File:   filename,
+				Status: statusDescription(y),
+			})
+		}
+	}
+	return
+}
+
+// statusDescription maps a porcelain status character to a human-readable string.
+func statusDescription(code byte) string {
+	switch code {
+	case 'A':
+		return "added"
+	case 'M':
+		return "modified"
+	case 'D':
+		return "deleted"
+	case 'R':
+		return "renamed"
+	case 'C':
+		return "copied"
+	case 'T':
+		return "type_changed"
+	case 'U':
+		return "unmerged"
+	default:
+		return "unknown"
+	}
+}
+
+// validateGlobalGitArgs checks blocked global arg prefixes and shell
+// metacharacters. Called for all subcommands before specific validation.
+func validateGlobalGitArgs(subcmd string, args []string) error {
 	for i, arg := range args {
 		for _, prefix := range blockedGlobalArgPrefixes {
 			if arg == prefix || strings.HasPrefix(arg, prefix+"=") {
@@ -175,7 +688,12 @@ func validateGitArgs(subcmd string, args []string) error {
 			}
 		}
 	}
+	return nil
+}
 
+// validateGitArgs runs subcommand-specific validation for non-policied
+// subcommands (commit, push, and everything else in allowedGitSubcommands).
+func validateGitArgs(subcmd string, args []string) error {
 	switch subcmd {
 	case "commit":
 		return validateCommitArgs(args)

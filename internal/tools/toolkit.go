@@ -277,13 +277,13 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 		},
 		{
 			Name:        "git",
-			Description: "Run restricted git commands from the main agent: read-only queries (log, status, diff, show, blame, branch --list, etc.) plus simple git operations like commit and push. Complex or destructive operations (rebase, merge, cherry-pick, clean, reset --hard, stash pop/apply/drop/clear, force push, etc.) are not supported and should be delegated to a worker.",
+			Description: "Run restricted git commands from the main agent: read-only queries (log, status, diff, show, blame, branch (list only), tag (list only), remote -v, remote show, config --get/--get-all/--list, etc.) plus simple git operations like commit and push. branch/tag/remote/config are restricted to read-only operations with flag-level enforcement. git status returns structured {staged, unstaged, untracked} output. Complex or destructive operations (rebase, merge, cherry-pick, clean, reset --hard, stash pop/apply/drop/clear, force push, branch create/delete, tag create/delete, etc.) are not supported and should be delegated to a worker.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"subcommand": map[string]any{
 						"type":        "string",
-						"description": "Git subcommand. Supported read/query commands include: log, show, diff, status, blame, branch, tag, reflog, stash list, stash show, ls-files, ls-remote, remote, config, rev-parse, rev-list, describe, cat-file, for-each-ref, grep, worktree list, merge-base, shortlog. Supported restricted write commands: commit, push.",
+						"description": "Git subcommand. Supported read/query commands: log, show, diff, status, blame, branch (list-only flags), tag (list-only flags), reflog, stash list, stash show, ls-files, ls-remote, remote (-v only), remote show, config --get, config --get-all, config --list, rev-parse, rev-list, describe, cat-file, for-each-ref, grep, worktree list, merge-base, shortlog. Supported restricted write commands: commit, push.",
 					},
 					"args": map[string]any{
 						"type":        "array",
