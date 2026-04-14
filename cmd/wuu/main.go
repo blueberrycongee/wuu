@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -491,6 +492,7 @@ func runTUI(args []string) error {
 			cfg.Agent.MaxContextTokens,
 		),
 		DisableAutoCompact: cfg.Agent.DisableAutoCompact,
+		BeforeStep:         envContextInjector(rootDir),
 	}
 	if *maxSteps > 0 {
 		streamRunner.MaxSteps = *maxSteps
@@ -627,6 +629,26 @@ func resolveContextWindow(model string, providerOverride, agentOverride int) int
 		return agentOverride
 	}
 	return providers.ContextWindowFor(model)
+}
+
+// envContextInjector returns a BeforeStep callback that injects dynamic
+// environment context (CWD, date, git branch/status) as a system-reminder
+// user message before each model round. This aligns with Claude Code's
+// per-turn context injection — the model always knows where it is and
+// what the current state looks like.
+//
+// The injected message is ephemeral: it goes into the live history for
+// the current round but the conversation loop naturally replaces it on
+// the next round. This keeps the context fresh without bloating history.
+func envContextInjector(rootDir string) func() []providers.ChatMessage {
+	return func() []providers.ChatMessage {
+		env := wuucontext.Snapshot(rootDir)
+		reminder := wuucontext.FormatSystemReminder(env)
+		return []providers.ChatMessage{{
+			Role:    "user",
+			Content: reminder,
+		}}
+	}
 }
 
 // appendMemoryToPrompt prepends the contents of discovered memory files
