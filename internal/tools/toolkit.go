@@ -18,6 +18,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
+	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
 )
@@ -42,6 +43,7 @@ type Toolkit struct {
 	sessionID     string
 	coordinator   *coordinator.Coordinator
 	askBridge     AskUserBridge
+	processMgr    *proc.Manager
 	disabledTools map[string]struct{}
 }
 
@@ -60,6 +62,10 @@ func (t *Toolkit) SetCoordinator(c *coordinator.Coordinator) {
 // (their toolkit is constructed without a bridge).
 func (t *Toolkit) SetAskUserBridge(b AskUserBridge) {
 	t.askBridge = b
+}
+
+func (t *Toolkit) SetProcessManager(m *proc.Manager) {
+	t.processMgr = m
 }
 
 // DisableTools removes specific tools from this toolkit instance.
@@ -503,6 +509,13 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 			},
 		},
 		{
+			Name: "start_process", Description: "Start a managed background OS process in the workspace.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "cwd": map[string]any{"type": "string"}, "owner_kind": map[string]any{"type": "string", "enum": []string{"main_agent", "subagent"}}, "owner_id": map[string]any{"type": "string"}, "lifecycle": map[string]any{"type": "string", "enum": []string{"session", "managed"}}}, "required": []string{"command", "owner_kind"}},
+		},
+		{Name: "list_processes", Description: "List wuu-managed background OS processes.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+		{Name: "stop_process", Description: "Stop a background process by process group, graceful then kill.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"process_id": map[string]any{"type": "string"}}, "required": []string{"process_id"}}},
+		{Name: "read_process_output", Description: "Read recent output from a background process log.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"process_id": map[string]any{"type": "string"}, "max_bytes": map[string]any{"type": "integer"}}, "required": []string{"process_id"}}},
+		{
 			Name: "load_skill",
 			Description: "Load the full body of a named skill from the project's .claude/skills/ or " +
 				"the user's ~/.claude/skills/ directory. Skills are reusable instructions that you " +
@@ -566,6 +579,14 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 		return t.stopAgent(call.Arguments)
 	case "list_agents":
 		return t.listAgents()
+	case "start_process":
+		return t.startProcess(ctx, call.Arguments)
+	case "list_processes":
+		return t.listProcesses()
+	case "stop_process":
+		return t.stopProcess(call.Arguments)
+	case "read_process_output":
+		return t.readProcessOutput(call.Arguments)
 	default:
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
@@ -1653,4 +1674,74 @@ func globToRegexp(pattern string) string {
 	}
 	b.WriteString("$")
 	return b.String()
+}
+
+func (t *Toolkit) processManager() (*proc.Manager, error) {
+	if t.processMgr != nil {
+		return t.processMgr, nil
+	}
+	return proc.NewManager(t.rootDir)
+}
+
+func (t *Toolkit) startProcess(ctx context.Context, argsJSON string) (string, error) {
+	var args struct{ Command, CWD, OwnerKind, OwnerID, Lifecycle string }
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	m, err := t.processManager()
+	if err != nil {
+		return "", err
+	}
+	p, err := m.Start(context.WithoutCancel(ctx), proc.StartOptions{Command: args.Command, CWD: args.CWD, OwnerKind: proc.OwnerKind(args.OwnerKind), OwnerID: args.OwnerID, Lifecycle: proc.Lifecycle(args.Lifecycle)})
+	out, _ := mustJSON(p)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+func (t *Toolkit) listProcesses() (string, error) {
+	m, err := t.processManager()
+	if err != nil {
+		return "", err
+	}
+	ps, err := m.List()
+	if err != nil {
+		return "", err
+	}
+	return mustJSON(ps)
+}
+func (t *Toolkit) stopProcess(argsJSON string) (string, error) {
+	var args struct {
+		ProcessID string `json:"process_id"`
+	}
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	m, err := t.processManager()
+	if err != nil {
+		return "", err
+	}
+	p, err := m.Stop(args.ProcessID)
+	if err != nil {
+		return "", err
+	}
+	return mustJSON(p)
+}
+func (t *Toolkit) readProcessOutput(argsJSON string) (string, error) {
+	var args struct {
+		ProcessID string `json:"process_id"`
+		MaxBytes  int    `json:"max_bytes"`
+	}
+	if err := decodeArgs(argsJSON, &args); err != nil {
+		return "", err
+	}
+	m, err := t.processManager()
+	if err != nil {
+		return "", err
+	}
+	out, tr, err := m.ReadOutput(args.ProcessID, args.MaxBytes)
+	if err != nil {
+		return "", err
+	}
+	return mustJSON(map[string]any{"process_id": args.ProcessID, "output": out, "truncated": tr})
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/memory"
+	processruntime "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -162,6 +163,11 @@ func runTask(args []string) error {
 	}
 
 	var toolExecutor agent.ToolExecutor
+	var processMgr *processruntime.Manager
+	processMgr, err = processruntime.NewManager(rootDir)
+	if err != nil {
+		return err
+	}
 	if !*noTools {
 		kit, newErr := tools.New(rootDir)
 		if newErr != nil {
@@ -169,6 +175,7 @@ func runTask(args []string) error {
 		}
 		// Main agent is read-oriented: remove direct/indirect file-writing primitives.
 		kit.DisableTools("write_file", "edit_file", "run_shell")
+		kit.SetProcessManager(processMgr)
 		toolExecutor = kit
 	}
 
@@ -357,6 +364,11 @@ func runTUI(args []string) error {
 
 	var toolExecutor agent.ToolExecutor
 	var toolkit *tools.Toolkit
+	var processMgr *processruntime.Manager
+	processMgr, err = processruntime.NewManager(rootDir)
+	if err != nil {
+		return err
+	}
 	if !*noTools {
 		kit, newErr := tools.New(rootDir)
 		if newErr != nil {
@@ -364,6 +376,7 @@ func runTUI(args []string) error {
 		}
 		// Main agent is read-oriented: remove direct/indirect file-writing primitives.
 		kit.DisableTools("write_file", "edit_file", "run_shell")
+		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
 		kit.SetAskUserBridge(askBridge)
 		toolkit = kit
@@ -446,6 +459,7 @@ func runTUI(args []string) error {
 				if werr != nil {
 					return nil, werr
 				}
+				wkit.SetProcessManager(processMgr)
 				wkit.SetSkills(discoveredSkills)
 				// Workers do NOT get a coordinator (no recursive spawns).
 				return wkit, nil
@@ -533,6 +547,14 @@ func runTUI(args []string) error {
 			}
 		}
 	}
+	defer func() {
+		if processMgr != nil {
+			_ = processMgr.CleanupSession()
+		}
+		if coord != nil {
+			_ = coord.CleanupSession()
+		}
+	}()
 	return tui.Run(cfgUI)
 }
 
