@@ -134,6 +134,15 @@ type LoopConfig struct {
 	// same compact decision before the first request of a new turn
 	// that it would make mid-run after receiving fresh usage.
 	UsageTracker *UsageTracker
+
+	// DefaultMaxTokens is the output token cap sent on every request.
+	// Zero means the provider's default (e.g. 16 384 for Anthropic).
+	// Aligned with Claude Code's initial max_tokens.
+	DefaultMaxTokens int
+	// EscalatedMaxTokens is the output token cap used after the first
+	// truncation recovery. Zero defaults to 65 536. Aligned with
+	// Claude Code's "start low, escalate on truncation" strategy.
+	EscalatedMaxTokens int
 }
 
 // defaultCompactThresholdPct is the proactive trigger if the caller

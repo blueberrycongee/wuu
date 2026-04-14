@@ -79,6 +79,10 @@ type ChatRequest struct {
 	Tools       []ToolDefinition
 	Temperature float64
 	CacheHint   *CacheHint
+	// MaxTokens caps the model's output length. Zero means the provider
+	// should use its own default. The agent loop sets this and escalates
+	// it automatically on truncation recovery (e.g. 16 384 → 65 536).
+	MaxTokens int
 }
 
 // ChatResponse is the normalized response from providers.

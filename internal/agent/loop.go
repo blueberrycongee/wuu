@@ -85,6 +85,12 @@ func RunToolLoop(
 	copy(messages, history)
 	startLen := len(messages)
 
+	// Output token escalation: start with DefaultMaxTokens, escalate
+	// to EscalatedMaxTokens after the first truncation recovery.
+	// Aligned with Claude Code's "start low, escalate on truncation".
+	const defaultEscalatedMaxTokens = 65536
+	currentMaxTokens := cfg.DefaultMaxTokens // 0 = provider default
+
 	var (
 		totalIn, totalOut int
 		// Accumulates partial assistant text across truncation-recovery
@@ -153,6 +159,7 @@ func RunToolLoop(
 			Model:       cfg.Model,
 			Messages:    messages,
 			Temperature: cfg.Temperature,
+			MaxTokens:   currentMaxTokens,
 			CacheHint:   buildCacheHint(messages),
 		}
 		if cfg.Tools != nil {
@@ -221,6 +228,16 @@ func RunToolLoop(
 				Role:    "user",
 				Content: truncationContinuePrompt,
 			})
+			// Escalate output token cap on first truncation so the
+			// continuation has room to finish. Matches Claude Code's
+			// "start low (16K), escalate to 64K on truncation" pattern.
+			if truncationRecoveries == 0 {
+				esc := cfg.EscalatedMaxTokens
+				if esc <= 0 {
+					esc = defaultEscalatedMaxTokens
+				}
+				currentMaxTokens = esc
+			}
 			truncationRecoveries++
 			continue
 		}

@@ -31,8 +31,17 @@ func streamConnectTimeout() time.Duration {
 const (
 	defaultTimeout          = 120 * time.Second
 	defaultAnthropicVersion = "2023-06-01"
-	defaultMaxTokens        = 4096
+	defaultMaxTokens        = 16384
 )
+
+// resolveMaxTokens picks the per-request override if positive,
+// otherwise falls back to the client-level configured value.
+func resolveMaxTokens(perRequest, clientDefault int) int {
+	if perRequest > 0 {
+		return perRequest
+	}
+	return clientDefault
+}
 
 // ClientConfig configures an Anthropic messages endpoint.
 type ClientConfig struct {
@@ -101,7 +110,8 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		return providers.ChatResponse{}, errors.New("messages is required")
 	}
 
-	payload, err := buildAnthropicRequest(req, c.maxTokens, false)
+	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens)
+	payload, err := buildAnthropicRequest(req, maxTok, false)
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
@@ -194,7 +204,8 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, errors.New("messages is required")
 	}
 
-	payload, err := buildAnthropicRequest(req, c.maxTokens, true)
+	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens)
+	payload, err := buildAnthropicRequest(req, maxTok, true)
 	if err != nil {
 		return nil, err
 	}

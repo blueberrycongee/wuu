@@ -98,6 +98,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		Model:       req.Model,
 		Messages:    make([]chatMessage, 0, len(req.Messages)),
 		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
 	}
 	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
 
@@ -200,6 +201,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		Model:       req.Model,
 		Messages:    make([]chatMessage, 0, len(req.Messages)),
 		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
 		Stream:      true,
 	}
 	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
@@ -663,6 +665,7 @@ type chatCompletionsRequest struct {
 	Tools          []toolDefinition `json:"tools,omitempty"`
 	ToolChoice     string           `json:"tool_choice,omitempty"`
 	Temperature    float64          `json:"temperature,omitempty"`
+	MaxTokens      int              `json:"max_tokens,omitempty"`
 	Stream         bool             `json:"stream,omitempty"`
 	PromptCacheKey string           `json:"promptCacheKey,omitempty"`
 	AltCacheKey    string           `json:"prompt_cache_key,omitempty"`
