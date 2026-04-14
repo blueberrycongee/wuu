@@ -544,8 +544,10 @@ func runTUI(args []string) error {
 	if toolkit != nil {
 		cfgUI.OnSessionID = func(id string) {
 			toolkit.SetSessionID(id)
+			sessionDir := filepath.Join(rootDir, ".wuu", "sessions", id)
+			toolkit.SetSessionDir(sessionDir)
 			if coord != nil {
-				historyDir := filepath.Join(rootDir, ".wuu", "sessions", id, "workers")
+				historyDir := filepath.Join(sessionDir, "workers")
 				coord.SetSessionInfo(id, historyDir)
 			}
 		}

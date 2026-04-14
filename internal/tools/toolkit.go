@@ -133,6 +133,11 @@ func (t *Toolkit) SetSessionID(id string) {
 	t.env.SessionID = id
 }
 
+// SetSessionDir sets the session directory for result budgeting.
+func (t *Toolkit) SetSessionDir(dir string) {
+	t.env.SessionDir = dir
+}
+
 // Coordinator returns the attached orchestration runtime, or nil.
 func (t *Toolkit) Coordinator() *coordinator.Coordinator {
 	return t.env.Coordinator
@@ -182,6 +187,10 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 
 // Execute runs one tool call and returns JSON result. This is the
 // registry-based dispatch that replaces the old switch-case.
+//
+// Large results are automatically persisted to disk when a SessionDir
+// is configured, so the model receives a compact reference instead of
+// a truncated blob. Aligned with Claude Code's tool result budgeting.
 func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
 	if t.isToolDisabled(call.Name) {
 		return "", fmt.Errorf("tool %q is disabled in this session", call.Name)
@@ -190,7 +199,11 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 	if tool == nil {
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
-	return tool.Execute(ctx, call.Arguments)
+	result, err := tool.Execute(ctx, call.Arguments)
+	if err != nil {
+		return result, err
+	}
+	return MaybePersistResult(t.env.SessionDir, call.Name, call.ID, result, defaultResultBudget), nil
 }
 
 // LookupTool returns the Tool with the given name, or nil. This
