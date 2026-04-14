@@ -444,7 +444,7 @@ func partitionToolCalls(executor ToolExecutor, calls []providers.ToolCall) []too
 
 	for i, call := range calls {
 		meta, ok := mp.ToolMetadata(call.Name)
-		canConcur := ok && meta.ReadOnly && meta.ConcurrencySafe
+		canConcur := ok && meta.ConcurrencySafe
 
 		if i == 0 {
 			currentConcurrent = canConcur

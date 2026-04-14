@@ -130,7 +130,7 @@ func NewSpawnAgentTool(env *Env) *SpawnAgentTool { return &SpawnAgentTool{env: e
 
 func (t *SpawnAgentTool) Name() string            { return "spawn_agent" }
 func (t *SpawnAgentTool) IsReadOnly() bool         { return false }
-func (t *SpawnAgentTool) IsConcurrencySafe() bool  { return false }
+func (t *SpawnAgentTool) IsConcurrencySafe() bool  { return true }
 
 func (t *SpawnAgentTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
