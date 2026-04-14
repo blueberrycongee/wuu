@@ -2523,6 +2523,77 @@ func TestProcessNotifyAppendsLifecycleEntriesOnce(t *testing.T) {
 	}
 }
 
+func TestStopProcessSlashByIDSuccess(t *testing.T) {
+	mgr := newTestProcessManager(t)
+	p := startTestProcess(t, mgr, "sleep 30", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
+
+	out := cmdStopProcess(p.ID, &m)
+	if !strings.Contains(out, "stop-process: stopped "+p.ID) {
+		t.Fatalf("expected stop success output, got: %s", out)
+	}
+}
+
+func TestStopProcessSlashBySubstringSuccess(t *testing.T) {
+	mgr := newTestProcessManager(t)
+	p := startTestProcess(t, mgr, "npm run electron-dev", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
+
+	out := cmdStopProcess("electron-dev", &m)
+	if !strings.Contains(out, "stop-process: stopped "+p.ID) {
+		t.Fatalf("expected substring match stop success, got: %s", out)
+	}
+}
+
+func TestStopProcessSlashAmbiguousError(t *testing.T) {
+	mgr := newTestProcessManager(t)
+	startTestProcess(t, mgr, "npm run dev --port 3000", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	startTestProcess(t, mgr, "npm run dev --port 3001", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
+
+	out := cmdStopProcess("npm run dev", &m)
+	if !strings.Contains(out, "stop-process: ambiguous process match") {
+		t.Fatalf("expected ambiguous error, got: %s", out)
+	}
+}
+
+func TestLogsSlashIncludesProcessAndOutput(t *testing.T) {
+	mgr := newTestProcessManager(t)
+	p := startTestProcess(t, mgr, "printf 'ready\n'; sleep 30", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	time.Sleep(150 * time.Millisecond)
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
+
+	out := cmdLogs(p.ID, &m)
+	if !strings.Contains(out, "process: "+p.ID) {
+		t.Fatalf("expected process id in logs output, got: %s", out)
+	}
+	if !strings.Contains(out, "command: printf 'ready") {
+		t.Fatalf("expected command summary in logs output, got: %s", out)
+	}
+	if !strings.Contains(out, "truncated: false") {
+		t.Fatalf("expected truncated marker in logs output, got: %s", out)
+	}
+	if !strings.Contains(out, "ready") {
+		t.Fatalf("expected log content in logs output, got: %s", out)
+	}
+}
+
+func TestLogsSlashErrorsForNotFoundAndAmbiguous(t *testing.T) {
+	mgr := newTestProcessManager(t)
+	startTestProcess(t, mgr, "npm run dev --port 3000", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	startTestProcess(t, mgr, "npm run dev --port 3001", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
+
+	notFound := cmdLogs("missing-proc", &m)
+	if !strings.Contains(notFound, "logs: no process matched") {
+		t.Fatalf("expected not found error, got: %s", notFound)
+	}
+	ambiguous := cmdLogs("npm run dev", &m)
+	if !strings.Contains(ambiguous, "logs: ambiguous process match") {
+		t.Fatalf("expected ambiguous error, got: %s", ambiguous)
+	}
+}
+
 func TestProcessNotifyCleanupUpdatesTranscriptAndStatusLine(t *testing.T) {
 	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json"})
 	proc := processruntime.Process{ID: "proc-2", Command: "vite", LastError: "exit status 1"}

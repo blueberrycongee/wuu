@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/insight"
+	processruntime "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
 )
@@ -68,6 +70,8 @@ func init() {
 		{Name: "memory", Description: "Show loaded memory files (CLAUDE.md / AGENTS.md)", Type: cmdTypeLocal, Execute: cmdMemory},
 		{Name: "workers", Description: "List active and recent sub-agents", Type: cmdTypeLocal, Execute: cmdWorkers},
 		{Name: "processes", Description: "List managed background processes", Type: cmdTypeLocal, Execute: cmdProcesses},
+		{Name: "stop-process", Description: "Stop a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdStopProcess},
+		{Name: "logs", Description: "Show recent output from a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLogs},
 		{Name: "cleanup-worktrees", Description: "Remove all sub-agent worktrees for this session", Type: cmdTypeLocal, Execute: cmdCleanupWorktrees},
 		{Name: "insight", Description: "Session stats and diagnostics", Type: cmdTypeLocal, Execute: cmdInsight},
 		{Name: "exit", Aliases: []string{"quit"}, Description: "Exit wuu", Type: cmdTypeLocal, Execute: cmdExit},
@@ -454,6 +458,58 @@ func cmdWorkers(_ string, m *Model) string {
 	return b.String()
 }
 
+func cmdStopProcess(args string, m *Model) string {
+	if m.processManager == nil {
+		return "stop-process: process manager not available"
+	}
+	query := strings.TrimSpace(args)
+	if query == "" {
+		return "stop-process: requires <id-or-substring>"
+	}
+	p, err := resolveProcessQuery(m.processManager, query)
+	if err != nil {
+		return fmt.Sprintf("stop-process: %v", err)
+	}
+	stopped, err := m.processManager.Stop(p.ID)
+	if err != nil {
+		return fmt.Sprintf("stop-process: %v", err)
+	}
+	if stopped == nil {
+		return fmt.Sprintf("stop-process: process %s stopped", p.ID)
+	}
+	return fmt.Sprintf("stop-process: stopped %s (%s) — status:%s", stopped.ID, processDisplayName(*stopped), stopped.Status)
+}
+
+func cmdLogs(args string, m *Model) string {
+	if m.processManager == nil {
+		return "logs: process manager not available"
+	}
+	query := strings.TrimSpace(args)
+	if query == "" {
+		return "logs: requires <id-or-substring>"
+	}
+	p, err := resolveProcessQuery(m.processManager, query)
+	if err != nil {
+		return fmt.Sprintf("logs: %v", err)
+	}
+	output, truncated, err := m.processManager.ReadOutput(p.ID, defaultProcessLogTailBytes)
+	if err != nil {
+		return fmt.Sprintf("logs: %v", err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "process: %s\n", p.ID)
+	fmt.Fprintf(&b, "command: %s\n", processDisplayName(*p))
+	fmt.Fprintf(&b, "truncated: %t", truncated)
+	trimmed := strings.TrimRight(output, "\n")
+	if trimmed == "" {
+		b.WriteString("\n\n(no recent output)")
+	} else {
+		b.WriteString("\n\n")
+		b.WriteString(trimmed)
+	}
+	return b.String()
+}
+
 func cmdProcesses(_ string, m *Model) string {
 	if m.processManager == nil {
 		return "processes: process manager not available"
@@ -477,6 +533,55 @@ func cmdProcesses(_ string, m *Model) string {
 		)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+const defaultProcessLogTailBytes = 8 * 1024
+
+type processMatch struct {
+	Process processruntime.Process
+	Field   string
+}
+
+func resolveProcessQuery(manager *processruntime.Manager, query string) (*processruntime.Process, error) {
+	list, err := manager.List()
+	if err != nil {
+		return nil, err
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("requires <id-or-substring>")
+	}
+	for _, p := range list {
+		if p.ID == query {
+			cp := p
+			return &cp, nil
+		}
+	}
+	matches := make([]processMatch, 0, len(list))
+	for _, p := range list {
+		if strings.Contains(p.Command, query) {
+			matches = append(matches, processMatch{Process: p, Field: "command"})
+			continue
+		}
+		name := processDisplayName(p)
+		if name != p.Command && strings.Contains(name, query) {
+			matches = append(matches, processMatch{Process: p, Field: "display"})
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("no process matched %q", query)
+	case 1:
+		cp := matches[0].Process
+		return &cp, nil
+	default:
+		sort.Slice(matches, func(i, j int) bool { return matches[i].Process.StartedAt.Before(matches[j].Process.StartedAt) })
+		lines := make([]string, 0, len(matches))
+		for _, match := range matches {
+			lines = append(lines, fmt.Sprintf("%s (%s via %s)", match.Process.ID, processDisplayName(match.Process), match.Field))
+		}
+		return nil, fmt.Errorf("ambiguous process match %q:\n  %s", query, strings.Join(lines, "\n  "))
+	}
 }
 
 func cmdCleanupWorktrees(_ string, m *Model) string {
