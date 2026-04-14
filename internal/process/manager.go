@@ -140,7 +140,16 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 		m.publish(Event{Type: EventFailed, Process: *p})
 		return p, err
 	}
-	cmd := exec.CommandContext(ctx, "bash", "-lc", opt.Command)
+	if err := ctx.Err(); err != nil {
+		_ = logf.Close()
+		p.Status = StatusFailed
+		p.LastError = err.Error()
+		p.UpdatedAt = time.Now()
+		_ = m.save(p)
+		m.publish(Event{Type: EventFailed, Process: *p})
+		return p, err
+	}
+	cmd := exec.Command("bash", "-lc", opt.Command)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	cmd.Stdout = logf

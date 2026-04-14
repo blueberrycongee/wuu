@@ -146,12 +146,15 @@ func TestView_WorkerAndProcessPanelsCanRenderTogether(t *testing.T) {
 	}
 }
 
-func TestSlashProcessesIncludesLifecycleOwnerAndStatus(t *testing.T) {
+func TestSlashProcessesIncludesWorkspaceScopedLabelLifecycleOwnerAndStatus(t *testing.T) {
 	mgr := newTestProcessManager(t)
 	p := startTestProcess(t, mgr, "sleep 30", processruntime.OwnerMainAgent, "main", processruntime.LifecycleManaged)
 	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
 
 	out := cmdProcesses("", &m)
+	if !strings.Contains(out, "workspace managed processes (1 total):") {
+		t.Fatalf("expected workspace-scoped header, got: %s", out)
+	}
 	if !strings.Contains(out, p.ID) {
 		t.Fatalf("expected process id in output, got: %s", out)
 	}
@@ -163,6 +166,19 @@ func TestSlashProcessesIncludesLifecycleOwnerAndStatus(t *testing.T) {
 	}
 	if !strings.Contains(out, "status:running") {
 		t.Fatalf("expected status in output, got: %s", out)
+	}
+}
+
+func TestSlashProcessesEmptyStateUsesWorkspaceScopedLanguage(t *testing.T) {
+	mgr := newTestProcessManager(t)
+	m := NewModel(Config{Provider: "test", Model: "test-model", ConfigPath: "/tmp/.wuu.json", ProcessManager: mgr})
+
+	out := cmdProcesses("", &m)
+	if out != "processes: no workspace managed processes found" {
+		t.Fatalf("unexpected empty state output: %s", out)
+	}
+	if strings.Contains(out, "this session yet") {
+		t.Fatalf("output should not claim session scope: %s", out)
 	}
 }
 

@@ -463,10 +463,10 @@ func cmdProcesses(_ string, m *Model) string {
 		return fmt.Sprintf("processes: %v", err)
 	}
 	if len(list) == 0 {
-		return "processes: none started in this session yet"
+		return "processes: no workspace managed processes found"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "processes (%d total):\n", len(list))
+	fmt.Fprintf(&b, "workspace managed processes (%d total):\n", len(list))
 	for _, p := range list {
 		fmt.Fprintf(&b, "  %s — %s — owner:%s — lifecycle:%s — status:%s\n",
 			p.ID,

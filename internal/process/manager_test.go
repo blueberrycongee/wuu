@@ -35,6 +35,44 @@ func TestStartListAndPersist(t *testing.T) {
 	}
 }
 
+func TestStartDetachesProcessLifecycleFromStartContext(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p, err := m.Start(ctx, StartOptions{Command: "sleep 30", OwnerKind: OwnerMainAgent, OwnerID: "main", Lifecycle: LifecycleManaged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	time.Sleep(200 * time.Millisecond)
+
+	list, err := m.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status Status
+	for _, proc := range list {
+		if proc.ID == p.ID {
+			status = proc.Status
+			break
+		}
+	}
+	if status != StatusRunning {
+		t.Fatalf("expected process to keep running after start context cancel, got %s", status)
+	}
+
+	stopped, err := m.Stop(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped == nil || (stopped.Status != StatusStopped && stopped.Status != StatusFailed) {
+		t.Fatalf("expected manager stop to end process, got %+v", stopped)
+	}
+}
+
 func TestStopStopsProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	m, _ := NewManager(root)
