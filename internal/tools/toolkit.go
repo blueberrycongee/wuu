@@ -277,18 +277,18 @@ func (t *Toolkit) allDefinitions() []providers.ToolDefinition {
 		},
 		{
 			Name:        "git",
-			Description: "Run read-only git commands (log, status, diff, show, blame, branch --list, etc.). Does NOT support write operations (commit, push, rebase, merge, stash pop, etc.) — for those, delegate to a worker.",
+			Description: "Run restricted git commands from the main agent: read-only queries (log, status, diff, show, blame, branch --list, etc.) plus simple git operations like commit and push. Complex or destructive operations (rebase, merge, cherry-pick, clean, reset --hard, stash pop/apply/drop/clear, force push, etc.) are not supported and should be delegated to a worker.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"subcommand": map[string]any{
 						"type":        "string",
-						"description": "Git subcommand. Allowed: log, show, diff, status, blame, branch, tag, reflog, stash list, stash show, ls-files, ls-remote, remote, config, rev-parse, rev-list, describe, cat-file, for-each-ref, grep, worktree list, merge-base, shortlog.",
+						"description": "Git subcommand. Supported read/query commands include: log, show, diff, status, blame, branch, tag, reflog, stash list, stash show, ls-files, ls-remote, remote, config, rev-parse, rev-list, describe, cat-file, for-each-ref, grep, worktree list, merge-base, shortlog. Supported restricted write commands: commit, push.",
 					},
 					"args": map[string]any{
 						"type":        "array",
 						"items":       map[string]any{"type": "string"},
-						"description": "Arguments to pass to the git subcommand.",
+						"description": "Arguments to pass to the git subcommand. commit only supports explicit -m/--message forms on staged changes; push only supports plain push or -u/--set-upstream origin <current-branch>.",
 					},
 				},
 				"required": []string{"subcommand"},
