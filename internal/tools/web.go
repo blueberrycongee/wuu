@@ -65,7 +65,7 @@ func randomAcceptLang() string {
 // web_search
 // ---------------------------------------------------------------------------
 
-func (t *Toolkit) webSearch(ctx context.Context, argsJSON string) (string, error) {
+func webSearchExecute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		Query string `json:"query"`
 	}
@@ -232,7 +232,7 @@ func cleanDDGURL(raw string) string {
 // web_fetch
 // ---------------------------------------------------------------------------
 
-func (t *Toolkit) webFetch(ctx context.Context, argsJSON string) (string, error) {
+func webFetchExecute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		URL string `json:"url"`
 	}

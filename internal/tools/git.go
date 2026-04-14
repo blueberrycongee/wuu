@@ -423,7 +423,7 @@ var blockedCommitFlags = map[string]bool{
 	"--edit":                true,
 }
 
-func (t *Toolkit) git(ctx context.Context, argsJSON string) (string, error) {
+func gitExecute(env *Env, ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		Subcommand string   `json:"subcommand"`
 		Args       []string `json:"args"`
@@ -468,30 +468,30 @@ func (t *Toolkit) git(ctx context.Context, argsJSON string) (string, error) {
 
 	// Structured output for git status.
 	if subcmd == "status" {
-		return t.gitStatus(ctx, remainingArgs)
+		return gitStatus(env, ctx, remainingArgs)
 	}
 
 	subcmdParts := strings.Fields(subcmd)
 	gitArgs := append([]string{"--no-optional-locks"}, subcmdParts...)
 	gitArgs = append(gitArgs, remainingArgs...)
 	if subcmd == "push" {
-		normalized, err := t.normalizePushArgs(ctx, remainingArgs)
+		normalized, err := normalizePushArgs(env, ctx, remainingArgs)
 		if err != nil {
 			return "", err
 		}
 		gitArgs = append([]string{"--no-optional-locks", "push"}, normalized...)
 	}
 
-	return t.runGit(ctx, subcmd, gitArgs)
+	return runGit(env, ctx, subcmd, gitArgs)
 }
 
 // runGit executes a git command and returns the standard JSON envelope.
-func (t *Toolkit) runGit(ctx context.Context, subcmd string, gitArgs []string) (string, error) {
+func runGit(env *Env, ctx context.Context, subcmd string, gitArgs []string) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "git", gitArgs...)
-	cmd.Dir = t.rootDir
+	cmd.Dir = env.RootDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
 
 	var stdout bytes.Buffer
@@ -533,7 +533,7 @@ func (t *Toolkit) runGit(ctx context.Context, subcmd string, gitArgs []string) (
 
 // gitStatus runs git status --porcelain and returns structured output
 // with staged, unstaged, and untracked file lists.
-func (t *Toolkit) gitStatus(ctx context.Context, userArgs []string) (string, error) {
+func gitStatus(env *Env, ctx context.Context, userArgs []string) (string, error) {
 	// Build args: always use --porcelain, forward behavior-relevant flags.
 	gitArgs := []string{"--no-optional-locks", "status", "--porcelain"}
 	for i := 0; i < len(userArgs); i++ {
@@ -570,7 +570,7 @@ func (t *Toolkit) gitStatus(ctx context.Context, userArgs []string) (string, err
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "git", gitArgs...)
-	cmd.Dir = t.rootDir
+	cmd.Dir = env.RootDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
 
 	var stdout bytes.Buffer
@@ -809,11 +809,11 @@ func validatePushArgs(args []string) error {
 	return errors.New("git push only supports: no args, -u origin <current-branch>, or --set-upstream origin <current-branch>")
 }
 
-func (t *Toolkit) normalizePushArgs(ctx context.Context, args []string) ([]string, error) {
+func normalizePushArgs(env *Env, ctx context.Context, args []string) ([]string, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
-	branch, err := t.currentBranch(ctx)
+	branch, err := currentBranch(env, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -829,11 +829,11 @@ func (t *Toolkit) normalizePushArgs(ctx context.Context, args []string) ([]strin
 	return nil, errors.New("git push only supports: no args, -u origin <current-branch>, or --set-upstream origin <current-branch>")
 }
 
-func (t *Toolkit) currentBranch(ctx context.Context) (string, error) {
+func currentBranch(env *Env, ctx context.Context) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "git", "--no-optional-locks", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = t.rootDir
+	cmd.Dir = env.RootDir
 	cmd.Env = mergeEnv(os.Environ(), nonInteractiveShellEnv())
 	out, err := cmd.Output()
 	if err != nil {
