@@ -131,6 +131,14 @@ func (m *Model) isInChatArea(x, y int) bool {
 	return x >= left && x <= right && y >= top && y < bottom
 }
 
+// isInInlineStatusArea reports whether screen coordinates fall on the
+// inline status line (the "Finished" / "Running tool" row just below
+// the chat viewport). Wheel events here should scroll the chat too.
+func (m *Model) isInInlineStatusArea(_, y int) bool {
+	statusY := m.layout.Chat.Y + m.layout.Chat.Height
+	return y == statusY
+}
+
 // refreshSelectionAutoScroll inspects a fresh mouse motion event and
 // updates the auto-scroll state machine. If the cursor is past the
 // chat area's top or bottom edge, it stores the direction and a

@@ -1059,7 +1059,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// first updates autoFollow via syncViewportState, so the
 		// subsequent drain preserves the user's scroll position.
 		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-			if m.isInChatArea(msg.X, msg.Y) {
+			if m.isInChatArea(msg.X, msg.Y) || m.isInInlineStatusArea(msg.X, msg.Y) {
 				var cmd tea.Cmd
 				m.viewport, cmd = m.viewport.Update(msg)
 				m.syncViewportState()
