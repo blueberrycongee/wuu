@@ -36,6 +36,11 @@ type StepResult struct {
 	// Usage is the per-round token consumption when the provider
 	// reports it. nil is allowed.
 	Usage *providers.TokenUsage
+	// PrecomputedResults maps tool call IDs to their results for
+	// tools that were started during streaming (before the model
+	// finished). The loop skips re-executing these. Populated only
+	// when StreamingToolExecution is enabled.
+	PrecomputedResults map[string]string
 }
 
 // Step performs exactly one model round-trip and returns the result

@@ -303,7 +303,7 @@ func RunToolLoop(
 		toolCtx := withHistory(ctx, messages)
 		batches := partitionToolCalls(cfg.Tools, result.ToolCalls)
 		for _, batch := range batches {
-			toolMessages := executeBatch(toolCtx, cfg.Tools, batch, cfg.OnToolResult)
+			toolMessages := executeBatch(toolCtx, cfg.Tools, batch, cfg.OnToolResult, result.PrecomputedResults)
 			for _, toolMsg := range toolMessages {
 				appendMessage(toolMsg)
 			}
@@ -491,11 +491,16 @@ func partitionToolCalls(executor ToolExecutor, calls []providers.ToolCall) []too
 // executeBatch runs a batch of tool calls. Concurrent batches run up
 // to maxToolConcurrency calls in parallel; serial batches run each
 // call in order. Results are returned in the original call order.
+//
+// precomputed, when non-nil, contains results for tools that were
+// already executed during streaming. These are used as-is and the
+// tool is not re-executed.
 func executeBatch(
 	ctx context.Context,
 	executor ToolExecutor,
 	batch toolBatch,
 	onResult func(providers.ToolCall, string),
+	precomputed map[string]string,
 ) []providers.ChatMessage {
 	// Check if the executor supports additional context injection
 	// (e.g. HookedExecutor propagating PostToolUse hook context).
@@ -505,9 +510,14 @@ func executeBatch(
 		// Serial execution.
 		msgs := make([]providers.ChatMessage, 0, len(batch.calls))
 		for _, call := range batch.calls {
-			result, err := executor.Execute(ctx, call)
-			if err != nil {
-				result = errorJSON(err)
+			// Check for precomputed results from streaming tool execution.
+			result, ok := precomputed[call.ID]
+			if !ok {
+				var err error
+				result, err = executor.Execute(ctx, call)
+				if err != nil {
+					result = errorJSON(err)
+				}
 			}
 			if onResult != nil {
 				onResult(call, result)

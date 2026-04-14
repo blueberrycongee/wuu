@@ -49,6 +49,12 @@ type StreamRunner struct {
 	// The reactive context-overflow recovery still runs. Off by default.
 	DisableAutoCompact bool
 
+	// StreamingToolExecution, when true, starts executing read-only
+	// tools during model streaming (before the full response arrives).
+	// Off by default until stabilized. Aligned with Claude Code's
+	// StreamingToolExecutor pattern.
+	StreamingToolExecution bool
+
 	// BeforeStep, when set, is called at the start of each model
 	// round right before building the provider request. Any returned
 	// messages are appended to history for that round.
@@ -95,9 +101,11 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	runUsage, baseHistoryLen := r.prepareUsageTracker(history)
 
 	step := &streamStep{
-		client:  r.Client,
-		onEvent: onEvent,
-		retry:   r.streamReconnectCfg(),
+		client:                  r.Client,
+		onEvent:                 onEvent,
+		retry:                   r.streamReconnectCfg(),
+		tools:                   r.Tools,
+		enableStreamingToolExec: r.StreamingToolExecution,
 	}
 
 	maxCtx := r.ContextWindowOverride
@@ -223,9 +231,19 @@ type streamStep struct {
 	client  providers.StreamClient
 	onEvent StreamCallback
 	retry   streamReconnectConfig
+	// Streaming tool execution: when set, read-only tools start
+	// executing as soon as their arguments are fully received,
+	// overlapping with continued model output.
+	tools                  ToolExecutor
+	enableStreamingToolExec bool
 }
 
 func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (StepResult, error) {
+	// Streaming tool execution: collect results from tools started
+	// mid-stream. Protected by mu since goroutines write concurrently.
+	var precomputeMu sync.Mutex
+	precomputed := map[string]string{} // tool call ID → result
+
 	var (
 		contentBuf   strings.Builder
 		thinkingBuf  strings.Builder
@@ -234,9 +252,41 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		stopReason   string
 		truncated    bool
 	)
+
+	// Wrap the event callback to intercept ToolUseEnd and kick off
+	// read-only tool execution during streaming.
+	origOnEvent := s.onEvent
+	if s.enableStreamingToolExec && s.tools != nil {
+		s.onEvent = func(ev providers.StreamEvent) {
+			if ev.Type == providers.EventToolUseEnd && ev.ToolCall != nil {
+				tc := ev.ToolCall
+				if tc.ID != "" && tc.Arguments != "" && isReadOnlyTool(s.tools, tc.Name) {
+					go func() {
+						result, err := s.tools.Execute(ctx, providers.ToolCall{
+							ID:        tc.ID,
+							Name:      tc.Name,
+							Arguments: tc.Arguments,
+						})
+						if err != nil {
+							return // skip precompute on error
+						}
+						precomputeMu.Lock()
+						precomputed[tc.ID] = result
+						precomputeMu.Unlock()
+					}()
+				}
+			}
+			if origOnEvent != nil {
+				origOnEvent(ev)
+			}
+		}
+	}
+
 	if err := s.runStreamWithReconnect(ctx, req, &contentBuf, &thinkingBuf, pendingTools, &usage, &stopReason, &truncated); err != nil {
+		s.onEvent = origOnEvent // restore
 		return StepResult{}, fmt.Errorf("stream request failed: %w", err)
 	}
+	s.onEvent = origOnEvent // restore
 
 	// Build ordered tool calls list from the pending map.
 	toolCalls := make([]providers.ToolCall, 0, len(pendingTools))
@@ -289,13 +339,22 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}, nil
 	}
 
+	// Collect any precomputed results from streaming tool execution.
+	precomputeMu.Lock()
+	var pc map[string]string
+	if len(precomputed) > 0 {
+		pc = precomputed
+	}
+	precomputeMu.Unlock()
+
 	return StepResult{
-		Content:          contentBuf.String(),
-		ReasoningContent: thinkingBuf.String(),
-		ToolCalls:        toolCalls,
-		Usage:            usage,
-		StopReason:       stopReason,
-		Truncated:        truncated,
+		Content:            contentBuf.String(),
+		ReasoningContent:   thinkingBuf.String(),
+		ToolCalls:          toolCalls,
+		Usage:              usage,
+		StopReason:         stopReason,
+		Truncated:          truncated,
+		PrecomputedResults: pc,
 	}, nil
 }
 
@@ -543,6 +602,17 @@ func (s *streamStep) runStreamWithReconnect(
 		}
 		return streamErr
 	}
+}
+
+// isReadOnlyTool checks if a tool is read-only and concurrency-safe
+// via the ToolMetadataProvider interface.
+func isReadOnlyTool(executor ToolExecutor, name string) bool {
+	mp, ok := executor.(ToolMetadataProvider)
+	if !ok {
+		return false
+	}
+	meta, found := mp.ToolMetadata(name)
+	return found && meta.ReadOnly && meta.ConcurrencySafe
 }
 
 // streamReconnectConfig holds CC-aligned time-budget reconnection parameters.
