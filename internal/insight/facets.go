@@ -55,13 +55,10 @@ func parseFacetResponse(content string) (Facet, error) {
 		}
 	}
 
-	// Fallback: try to find any JSON object in the response.
-	if start := strings.Index(content, "{"); start >= 0 {
-		if end := strings.LastIndex(content, "}"); end > start {
-			candidate := content[start : end+1]
-			if err := json.Unmarshal([]byte(candidate), &facet); err == nil {
-				return facet, nil
-			}
+	// Fallback: extract the first syntactically valid JSON object.
+	if candidate := extractFirstJSONObject(content); candidate != "" {
+		if err := json.Unmarshal([]byte(candidate), &facet); err == nil {
+			return facet, nil
 		}
 	}
 
@@ -81,4 +78,20 @@ func extractJSON(s string) string {
 		return strings.TrimSpace(matches[1])
 	}
 	return ""
+}
+
+// extractFirstJSONObject finds the first valid JSON object in s using
+// json.Decoder. Unlike strings.Index("{") + strings.LastIndex("}"),
+// this handles nested braces, escaped strings, and multiple objects.
+func extractFirstJSONObject(s string) string {
+	idx := strings.Index(s, "{")
+	if idx < 0 {
+		return ""
+	}
+	dec := json.NewDecoder(strings.NewReader(s[idx:]))
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return ""
+	}
+	return string(raw)
 }

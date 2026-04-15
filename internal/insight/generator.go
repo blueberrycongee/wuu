@@ -157,12 +157,10 @@ func parseAtAGlanceResponse(content string) (AtAGlance, error) {
 		}
 	}
 
-	// Fallback: extract any JSON object.
-	if start := strings.Index(content, "{"); start >= 0 {
-		if end := strings.LastIndex(content, "}"); end > start {
-			if err := json.Unmarshal([]byte(content[start:end+1]), &glance); err == nil {
-				return glance, nil
-			}
+	// Fallback: extract the first syntactically valid JSON object.
+	if candidate := extractFirstJSONObject(content); candidate != "" {
+		if err := json.Unmarshal([]byte(candidate), &glance); err == nil {
+			return glance, nil
 		}
 	}
 
