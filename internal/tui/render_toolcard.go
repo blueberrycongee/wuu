@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -162,8 +163,5 @@ func formatToolArgs(toolName, args string) string {
 
 // truncateToolResult shortens tool output for display.
 func truncateToolResult(result string, maxLen int) string {
-	if len(result) <= maxLen {
-		return result
-	}
-	return result[:maxLen] + "\n… (truncated)"
+	return stringutil.Truncate(result, maxLen, "\n… (truncated)")
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // StreamCallback receives streaming events for TUI rendering.
@@ -369,10 +370,7 @@ func isNormalStop(reason string) bool {
 }
 
 func truncateLog(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	return stringutil.Truncate(s, maxLen, "...")
 }
 
 // formatCompactNotice produces the human-readable string surfaced via

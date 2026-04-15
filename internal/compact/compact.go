@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 const defaultCompactTimeout = 15 * time.Second
@@ -315,8 +316,5 @@ func isCJK(r rune) bool {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	return stringutil.Truncate(s, maxLen, "...")
 }

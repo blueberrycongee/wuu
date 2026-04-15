@@ -17,6 +17,7 @@ import (
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 const (
@@ -301,7 +302,7 @@ func truncate(value string, maxBytes int) (string, bool) {
 	if len(value) <= maxBytes {
 		return value, false
 	}
-	return value[:maxBytes], true
+	return stringutil.Truncate(value, maxBytes, ""), true
 }
 
 func normalizeDisplayPath(rootDir, absPath string) string {

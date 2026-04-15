@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/jsonl"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // resumePickerEntry holds one session and a lazily-loaded preview.
@@ -435,10 +436,7 @@ func firstUserPreview(entries []transcriptEntry) string {
 func truncateForPreview(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ⏎ ")
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "…"
+	return stringutil.Truncate(s, maxLen, "…")
 }
 
 func wrapLineForPreview(line string, width int) []string {

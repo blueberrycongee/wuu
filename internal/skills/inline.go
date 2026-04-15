@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // ProcessOptions controls how a skill body is transformed before being
@@ -137,5 +139,5 @@ func truncateOutput(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
 	}
-	return s[:maxBytes] + fmt.Sprintf("\n... [truncated, %d more bytes]", len(s)-maxBytes)
+	return stringutil.Truncate(s, maxBytes, fmt.Sprintf("\n... [truncated, %d more bytes]", len(s)-maxBytes))
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/jsonl"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // memoryRecord mirrors the JSONL schema used by tui/memory.go.
@@ -376,10 +377,7 @@ func isSubstantiveSession(meta SessionMeta) bool {
 
 func truncateStr(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	return stringutil.Truncate(s, maxLen, "...")
 }
 
 var langExtMap = map[string]string{

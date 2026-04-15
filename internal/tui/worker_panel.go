@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
@@ -138,13 +139,10 @@ func formatElapsed(d time.Duration) string {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+	if n <= 0 {
+		return ""
 	}
-	if n <= 1 {
-		return s[:n]
-	}
-	return s[:n-1] + "…"
+	return stringutil.Truncate(s, n, "…")
 }
 
 var (

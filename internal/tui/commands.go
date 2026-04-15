@@ -11,11 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	processruntime "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -220,8 +222,27 @@ func cmdStatus(_ string, m *Model) string {
 		m.provider, m.modelName, m.configPath, len(m.entries), m.workspaceRoot)
 }
 
-func cmdCompact(_ string, _ *Model) string {
-	return "compact: not yet implemented"
+func cmdCompact(_ string, m *Model) string {
+	if m.streamRunner == nil {
+		return "compact: no stream runner configured"
+	}
+	if len(m.chatHistory) <= 2 {
+		return "compact: conversation too short to compact"
+	}
+
+	before := len(m.chatHistory)
+	tokensBefore := compact.EstimateMessagesTokens(m.chatHistory)
+
+	compacted, err := compact.Compact(context.Background(), m.chatHistory, m.streamRunner.Client, m.streamRunner.Model)
+	if err != nil {
+		return fmt.Sprintf("compact: %v", err)
+	}
+
+	m.chatHistory = compacted
+	after := len(m.chatHistory)
+	tokensAfter := compact.EstimateMessagesTokens(m.chatHistory)
+
+	return fmt.Sprintf("Compacted: %d → %d messages (~%d → ~%d tokens)", before, after, tokensBefore, tokensAfter)
 }
 
 func cmdModelSwitch(args string, m *Model) string {
@@ -672,10 +693,7 @@ func firstUserSummary(entries []transcriptEntry) string {
 	for _, e := range entries {
 		if e.Role == "USER" {
 			s := strings.TrimSpace(e.Content)
-			if len(s) > 60 {
-				return s[:60] + "..."
-			}
-			return s
+			return stringutil.Truncate(s, 60, "...")
 		}
 	}
 	return ""

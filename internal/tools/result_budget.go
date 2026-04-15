@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // Result budgeting: large tool outputs are persisted to disk so the
@@ -73,13 +75,10 @@ func persistResult(sessionDir, callID, content string) (string, error) {
 // when a large result has been persisted. It includes a head/tail
 // preview and instructions to use read_file for the full content.
 func buildReference(path, content string, originalSize int) string {
-	head := content
-	if len(head) > previewHeadChars {
-		head = head[:previewHeadChars]
-	}
+	head := stringutil.Truncate(content, previewHeadChars, "")
 	tail := ""
 	if len(content) > previewHeadChars+previewTailChars {
-		tail = content[len(content)-previewTailChars:]
+		tail = stringutil.Truncate(content[len(content)-previewTailChars:], previewTailChars, "")
 	}
 
 	var b strings.Builder
