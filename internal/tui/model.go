@@ -2715,6 +2715,10 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 	return result
 }
 
+// overscanLines is the number of extra lines rendered above/below the
+// visible viewport. Aligned with Claude Code's OVERSCAN_ROWS = 80.
+const overscanLines = 80
+
 func (m *Model) refreshViewport(forceBottom bool) {
 	preserveOffset := !forceBottom && !m.autoFollow
 	prevOffset := m.viewport.YOffset
@@ -2723,61 +2727,122 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		m.entries[i].renderEnd = -1
 	}
 
-	var b strings.Builder
-	lineCount := 0
-	appendText := func(text string) {
-		if text == "" {
-			return
-		}
-		b.WriteString(text)
-		newlines := strings.Count(text, "\n")
-		if lineCount == 0 {
-			lineCount = newlines + 1
-			return
-		}
-		lineCount += newlines
-	}
-	currentLine := func() int {
-		if lineCount == 0 {
-			return 0
-		}
-		return lineCount - 1
-	}
 	userAnchors := make([]int, 0, len(m.entries))
 
 	if len(m.entries) == 0 && !m.pendingRequest {
-		// Show welcome screen when chat is empty.
-		appendText(welcomeScreen(m.viewport.Width, m.provider, m.modelName, m.sessionID))
-	} else {
-		renderedAny := false
-		for i, entry := range m.entries {
-			if entry.Role == "TOOL" {
-				continue
-			}
-			if renderedAny {
-				appendText("\n\n")
-			}
-			entryStartLine := currentLine()
-			if entry.Role == "USER" {
-				userAnchors = append(userAnchors, entryStartLine)
-			}
-			renderedAny = true
+		m.renderedContent = welcomeScreen(m.viewport.Width, m.provider, m.modelName, m.sessionID)
+		m.userMessageLineAnchors = nil
+		m.pendingViewportRefresh = false
+		m.pendingViewportEntry = -1
+		m.viewport.SetContent(m.renderedContent)
+		m.refreshScrollbarCache()
+		return
+	}
 
-			// Use cached composited output when available.
-			// This is the key optimization: entries that haven't
-			// changed since last render skip all tool card, thinking,
-			// content wrapping, and indent work entirely.
-			isStreamTarget := m.streaming && i == m.streamTarget
-			comp := m.compositeEntry(i, isStreamTarget)
-			appendText(comp)
-
-			entryEndLine := currentLine()
-			if entryEndLine < entryStartLine {
-				entryEndLine = entryStartLine
-			}
-			m.entries[i].renderStart = entryStartLine
-			m.entries[i].renderEnd = entryEndLine
+	// ── Pass 1: collect visible entry indices and cumulative heights ──
+	// Build a list of non-TOOL entries with their composited heights.
+	// Heights come from the composited cache (compositedH), computed
+	// eagerly for all entries so we know total height for scrollbar.
+	type entrySlot struct {
+		idx    int // index into m.entries
+		height int // line count including 2-line gap
+		offset int // cumulative start line
+	}
+	slots := make([]entrySlot, 0, len(m.entries))
+	totalLines := 0
+	for i := range m.entries {
+		if m.entries[i].Role == "TOOL" {
+			continue
 		}
+		// Ensure compositedH is populated (compositeEntry caches it).
+		isStreamTarget := m.streaming && i == m.streamTarget
+		m.compositeEntry(i, isStreamTarget)
+
+		h := m.entries[i].compositedH
+		if len(slots) > 0 {
+			h += 2 // gap between entries ("\n\n")
+		}
+		slots = append(slots, entrySlot{idx: i, height: h, offset: totalLines})
+		totalLines += h
+	}
+
+	// ── Pass 2: determine visible range ──
+	vpHeight := m.layout.Chat.Height
+	scrollTop := prevOffset
+	if forceBottom || m.autoFollow {
+		scrollTop = totalLines - vpHeight
+		if scrollTop < 0 {
+			scrollTop = 0
+		}
+	}
+	visibleTop := scrollTop - overscanLines
+	visibleBottom := scrollTop + vpHeight + overscanLines
+	if visibleTop < 0 {
+		visibleTop = 0
+	}
+	if visibleBottom > totalLines {
+		visibleBottom = totalLines
+	}
+
+	// Find first and last visible slots.
+	firstVisible, lastVisible := -1, -1
+	for si, slot := range slots {
+		slotEnd := slot.offset + slot.height
+		if slotEnd > visibleTop && slot.offset < visibleBottom {
+			if firstVisible < 0 {
+				firstVisible = si
+			}
+			lastVisible = si
+		}
+	}
+	if firstVisible < 0 {
+		firstVisible = 0
+		lastVisible = len(slots) - 1
+	}
+
+	// ── Pass 3: build viewport content with virtual padding ──
+	var b strings.Builder
+
+	// Top padding: empty lines for entries above visible range.
+	topPadLines := 0
+	if firstVisible > 0 {
+		topPadLines = slots[firstVisible].offset
+	}
+	if topPadLines > 0 {
+		b.WriteString(strings.Repeat("\n", topPadLines))
+	}
+
+	// Render visible entries.
+	lineCount := topPadLines
+	for si := firstVisible; si <= lastVisible && si < len(slots); si++ {
+		slot := slots[si]
+		e := &m.entries[slot.idx]
+
+		if si > firstVisible {
+			b.WriteString("\n\n")
+			lineCount += 2
+		}
+
+		entryStartLine := lineCount
+		if e.Role == "USER" {
+			userAnchors = append(userAnchors, entryStartLine)
+		}
+
+		b.WriteString(e.composited)
+		lineCount += e.compositedH
+
+		entryEndLine := lineCount - 1
+		if entryEndLine < entryStartLine {
+			entryEndLine = entryStartLine
+		}
+		m.entries[slot.idx].renderStart = entryStartLine
+		m.entries[slot.idx].renderEnd = entryEndLine
+	}
+
+	// Bottom padding: empty lines for entries below visible range.
+	bottomPadLines := totalLines - lineCount
+	if bottomPadLines > 0 {
+		b.WriteString(strings.Repeat("\n", bottomPadLines))
 	}
 
 	m.userMessageLineAnchors = userAnchors
