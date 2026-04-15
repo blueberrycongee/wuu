@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	processruntime "github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
@@ -258,7 +259,27 @@ func cmdModelSwitch(args string, m *Model) string {
 	if err := config.UpdateProviderModel(m.configPath, m.provider, name); err != nil {
 		return fmt.Sprintf("model switched: %s -> %s (save failed: %v)", old, name, err)
 	}
-	return fmt.Sprintf("model switched: %s -> %s (saved)", old, name)
+
+	// Model downshift detection: if the new model has a smaller context
+	// window and the current history exceeds ~80% of it, proactively
+	// compact to avoid an immediate overflow on the next turn.
+	// Aligned with Codex CLI's CompactionReason::ModelDownshift.
+	msg := fmt.Sprintf("model switched: %s -> %s (saved)", old, name)
+	if m.streamRunner != nil && len(m.chatHistory) > 2 {
+		newWindow := providers.ContextWindowFor(name)
+		estimated := compact.EstimateMessagesTokens(m.chatHistory)
+		threshold := int(float64(newWindow) * 0.8)
+		if estimated > threshold {
+			before := len(m.chatHistory)
+			compacted, err := compact.Compact(context.Background(), m.chatHistory, m.streamRunner.Client, name)
+			if err == nil && len(compacted) < before {
+				m.chatHistory = compacted
+				msg += fmt.Sprintf("\n⚡ Auto-compacted: history exceeded new model's context window (%d → %d messages)",
+					before, len(compacted))
+			}
+		}
+	}
+	return msg
 }
 
 func cmdResume(args string, m *Model) string {
