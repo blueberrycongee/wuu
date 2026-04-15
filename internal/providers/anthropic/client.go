@@ -275,10 +275,11 @@ func buildAnthropicRequest(req providers.ChatRequest, maxTokens int, stream bool
 			if canMergeBlocks(payload.Messages[n-1].Content, mapped.Content) {
 				payload.Messages[n-1].Content = append(payload.Messages[n-1].Content, mapped.Content...)
 			} else {
-				// Insert a minimal empty assistant message to maintain
-				// alternation without mixing block types.
+				// Insert a minimal assistant message to maintain
+				// alternation without mixing block types. Use " "
+				// not "" — omitempty strips empty strings.
 				payload.Messages = append(payload.Messages,
-					anthropicMessage{Role: "assistant", Content: []anthropicBlock{{Type: "text", Text: ""}}},
+					anthropicMessage{Role: "assistant", Content: []anthropicBlock{{Type: "text", Text: " "}}},
 					mapped,
 				)
 			}
@@ -662,10 +663,16 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 	switch msg.Role {
 	case "user", "assistant":
 		blocks := make([]anthropicBlock, 0, len(msg.ToolCalls)+len(msg.Images)+1)
-		// Always include a text block — the API rejects messages with
-		// empty content arrays, and {"type":"text"} without a "text"
-		// field is also invalid. Empty string is fine.
-		blocks = append(blocks, anthropicBlock{Type: "text", Text: msg.Content})
+		// Always include a text block for every user/assistant message.
+		// When Content is empty, use a single space — omitempty would
+		// strip "" producing {"type":"text"} without a "text" field,
+		// which proxies reject. A space is semantically invisible to
+		// the model but keeps the JSON structure valid.
+		text := msg.Content
+		if strings.TrimSpace(text) == "" {
+			text = " "
+		}
+		blocks = append(blocks, anthropicBlock{Type: "text", Text: text})
 		if msg.Role == "user" {
 			for _, image := range msg.Images {
 				data := strings.TrimSpace(image.Data)
@@ -765,11 +772,7 @@ type anthropicMessage struct {
 
 type anthropicBlock struct {
 	Type         string                 `json:"type"`
-	// Do NOT use omitempty — empty text blocks serialize as
-	// {"type":"text","text":""} which is valid. With omitempty,
-	// empty text produces {"type":"text"} (no text field) which
-	// proxies reject as invalid.
-	Text         string                 `json:"text"`
+	Text         string                 `json:"text,omitempty"`
 	Source       *anthropicImageSource  `json:"source,omitempty"`
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name,omitempty"`
