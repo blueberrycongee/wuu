@@ -122,6 +122,13 @@ type ToolCallEntry struct {
 	Result    string
 	Status    ToolCallStatus
 	Collapsed bool
+
+	// cachedCard is the fully rendered tool card string. Invalidated
+	// when Status, Result, Collapsed, or Args changes. Avoids
+	// re-parsing JSON and re-rendering on every viewport refresh.
+	cachedCard      string
+	cachedCardKey   string // "status:collapsed:argsLen:resultLen"
+	cachedCardWidth int
 }
 
 type transcriptEntry struct {
@@ -852,7 +859,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					e.renderedLen = len(e.Content)
 				}
 				m.refreshViewportForEntry(m.streamTarget, false)
-			} else if m.currentWorkStatus().Phase == workPhaseThinking {
+			} else if m.streaming && m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
+				// Refresh for tool status changes even when no text delta.
 				m.refreshViewportForEntry(m.streamTarget, false)
 			}
 			return m, statusAnimationCmd()
@@ -1871,7 +1879,8 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		e.blockOrder = append(e.blockOrder, fmt.Sprintf("tool:%d", toolIdx))
 		m.setLiveWorkStatus(runningToolWorkStatus(toolName))
 		m.statusLine = fmt.Sprintf("tool: %s", toolName)
-		m.refreshViewportForEntry(m.streamTarget, false)
+		// Don't refresh viewport here — the 100ms tick handles it.
+		// Avoids N×refreshViewport for N parallel tool starts.
 		return nextWait()
 
 	case providers.EventToolUseEnd:
@@ -1892,7 +1901,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		}
 		m.setLiveWorkStatus(workStatus{Phase: workPhaseGenerating, Label: "Responding", Meta: "Writing the reply", Running: true})
 		m.statusLine = "streaming"
-		m.refreshViewportForEntry(m.streamTarget, false)
+		// Don't refresh viewport here — the 100ms tick handles it.
 		return nextWait()
 
 	case providers.EventDone:
@@ -2723,7 +2732,7 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 	}
 	renderTool := func(idx int) {
 		if idx >= 0 && idx < len(e.ToolCalls) {
-			parts = append(parts, indentLines(renderToolCard(e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
+			parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
 		}
 	}
 
@@ -2748,15 +2757,15 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 				covered[idx] = true
 			}
 		}
-		for idx, tc := range e.ToolCalls {
+		for idx := range e.ToolCalls {
 			if !covered[idx] {
-				parts = append(parts, indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
+				parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
 			}
 		}
 	} else {
 		// Legacy fallback: tools first, then content.
-		for _, tc := range e.ToolCalls {
-			parts = append(parts, indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
+		for idx := range e.ToolCalls {
+			parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
 		}
 		renderText()
 	}

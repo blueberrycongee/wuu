@@ -2,19 +2,29 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderToolCard renders a single tool call card.
-func renderToolCard(tc ToolCallEntry, width int, frame int) string {
+// renderToolCard renders a single tool call card with caching.
+// The cache avoids re-parsing JSON args/results on every viewport
+// refresh. Only invalidated when the card's inputs change.
+func renderToolCard(tc *ToolCallEntry, width int, frame int) string {
+	// Running tools have an animated spinner — don't cache those.
+	if tc.Status != ToolCallRunning {
+		key := fmt.Sprintf("%s:%v:%d:%d", tc.Status, tc.Collapsed, len(tc.Args), len(tc.Result))
+		if tc.cachedCard != "" && tc.cachedCardKey == key && tc.cachedCardWidth == width {
+			return tc.cachedCard
+		}
+	}
 	// ask_user has its own card layout that mirrors Claude Code's
 	// "User answered:" rendering — nicer than dumping the JSON
 	// answer payload through the generic body formatter.
 	if tc.Name == "ask_user" {
-		return renderAskUserCard(tc, width)
+		return renderAskUserCard(*tc, width)
 	}
 
 	metaStyle := waitingStatusMetaStyle
@@ -23,9 +33,10 @@ func renderToolCard(tc ToolCallEntry, width int, frame int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(currentTheme.Border)
 
-	ws := toolCallStatus(tc)
+	ws := toolCallStatus(*tc)
 	headerParts := []string{renderStatusHeader(ws, frame)}
 
+	var result string
 	if tc.Collapsed {
 		summary := toolArgsSummary(tc.Name, tc.Args, width-28)
 		if summary != "" {
@@ -36,37 +47,45 @@ func renderToolCard(tc ToolCallEntry, width int, frame int) string {
 				headerParts = append(headerParts, diffStats(dr))
 			}
 		}
-		return strings.Join(headerParts, " ")
-	}
-
-	var content strings.Builder
-	if tc.Args != "" {
-		formatted := formatToolArgs(tc.Name, tc.Args)
-		content.WriteString(contentStyle.Render(wrapText(formatted, width-6)))
-	}
-	if tc.Result != "" {
-		if content.Len() > 0 {
-			content.WriteString("\n")
-			content.WriteString(metaStyle.Render(strings.Repeat("─", min(width-6, 32))))
-			content.WriteString("\n")
+		result = strings.Join(headerParts, " ")
+	} else {
+		var content strings.Builder
+		if tc.Args != "" {
+			formatted := formatToolArgs(tc.Name, tc.Args)
+			content.WriteString(contentStyle.Render(wrapText(formatted, width-6)))
 		}
-		if dr := diffResultFromJSON(tc.Result); dr != nil {
-			content.WriteString(renderDiff(dr, max(20, width-6)))
+		if tc.Result != "" {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+				content.WriteString(metaStyle.Render(strings.Repeat("─", min(width-6, 32))))
+				content.WriteString("\n")
+			}
+			if dr := diffResultFromJSON(tc.Result); dr != nil {
+				content.WriteString(renderDiff(dr, max(20, width-6)))
+			} else {
+				content.WriteString(contentStyle.Render(wrapText(truncateToolResult(tc.Result, 500), max(20, width-6))))
+			}
+		}
+
+		if content.Len() == 0 {
+			result = strings.Join(headerParts, " ")
 		} else {
-			content.WriteString(contentStyle.Render(wrapText(truncateToolResult(tc.Result, 500), max(20, width-6))))
+			innerW := width - 4
+			if innerW < 20 {
+				innerW = 20
+			}
+			box := borderStyle.Width(innerW).Render(content.String())
+			result = strings.Join(headerParts, " ") + "\n" + box
 		}
 	}
 
-	if content.Len() == 0 {
-		return strings.Join(headerParts, " ")
+	// Cache for non-running tools (running ones have animated spinner).
+	if tc.Status != ToolCallRunning {
+		tc.cachedCard = result
+		tc.cachedCardKey = fmt.Sprintf("%s:%v:%d:%d", tc.Status, tc.Collapsed, len(tc.Args), len(tc.Result))
+		tc.cachedCardWidth = width
 	}
-
-	innerW := width - 4
-	if innerW < 20 {
-		innerW = 20
-	}
-	box := borderStyle.Width(innerW).Render(content.String())
-	return strings.Join(headerParts, " ") + "\n" + box
+	return result
 }
 
 // toolArgsSummary extracts a human-readable one-line summary from tool arguments.

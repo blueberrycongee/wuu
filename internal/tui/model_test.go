@@ -1576,7 +1576,7 @@ func TestRenderToolCard_Running(t *testing.T) {
 		Args:   `{"cmd":"go build ./..."}`,
 		Status: ToolCallRunning,
 	}
-	result := ansi.Strip(renderToolCard(tc, 80, 0))
+	result := ansi.Strip(renderToolCard(&tc, 80, 0))
 	if !strings.Contains(result, "run_shell") {
 		t.Fatalf("expected tool name in output: %s", result)
 	}
@@ -1631,7 +1631,7 @@ func TestRenderToolCard_Done_Collapsed(t *testing.T) {
 		Status:    ToolCallDone,
 		Collapsed: true,
 	}
-	result := ansi.Strip(renderToolCard(tc, 80, 0))
+	result := ansi.Strip(renderToolCard(&tc, 80, 0))
 	if !strings.Contains(result, "read_file") {
 		t.Fatalf("expected tool name: %s", result)
 	}
@@ -1645,7 +1645,7 @@ func TestRenderToolCard_Error(t *testing.T) {
 		Name:   "run_shell",
 		Status: ToolCallError,
 	}
-	result := ansi.Strip(renderToolCard(tc, 80, 0))
+	result := ansi.Strip(renderToolCard(&tc, 80, 0))
 	if !strings.Contains(strings.ToLower(result), "failed") {
 		t.Fatalf("expected failed status: %s", result)
 	}
