@@ -158,6 +158,13 @@ type transcriptEntry struct {
 
 	// Tool calls in this assistant turn.
 	ToolCalls []ToolCallEntry
+
+	// blockOrder records the stream-order sequence of content blocks.
+	// Each entry is either "text" (for Content segments) or "tool:N"
+	// (for ToolCalls[N]). Rendering follows this order to match
+	// Claude Code's interleaved display. When empty, falls back to
+	// legacy order (thinking → tools → content).
+	blockOrder []string
 }
 
 type queuedMessage struct {
@@ -1832,6 +1839,10 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		e.streamBuf.WriteString(event.Content)
 		e.Content = e.streamBuf.String()
 		m.streamCollector.Push(event.Content)
+		// Record block order: if the last block isn't "text", start a new text segment.
+		if len(e.blockOrder) == 0 || e.blockOrder[len(e.blockOrder)-1] != "text" {
+			e.blockOrder = append(e.blockOrder, "text")
+		}
 		// During streaming: accumulate only, do NOT refresh viewport.
 		// The 100ms inlineSpinMsg tick flushes accumulated content to
 		// screen in batches — aligned with Codex's 80ms commit tick.
@@ -1851,11 +1862,13 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			toolID = event.ToolCall.ID
 		}
 		e := &m.entries[m.streamTarget]
+		toolIdx := len(e.ToolCalls)
 		e.ToolCalls = append(e.ToolCalls, ToolCallEntry{
 			ID:     toolID,
 			Name:   toolName,
 			Status: ToolCallRunning,
 		})
+		e.blockOrder = append(e.blockOrder, fmt.Sprintf("tool:%d", toolIdx))
 		m.setLiveWorkStatus(runningToolWorkStatus(toolName))
 		m.statusLine = fmt.Sprintf("tool: %s", toolName)
 		m.refreshViewportForEntry(m.streamTarget, false)
@@ -2675,7 +2688,7 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 		parts = append(parts, indentLines(systemLabelStyle.Render(e.Role), contentPadLeft))
 	}
 
-	// Thinking block.
+	// Thinking block (always first, before any content/tools).
 	if e.ThinkingContent != "" {
 		elapsed := e.ThinkingDuration
 		if !e.ThinkingDone && !m.thinkingStart.IsZero() {
@@ -2687,14 +2700,15 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 		), contentPadLeft))
 	}
 
-	// Tool cards.
-	for _, tc := range e.ToolCalls {
-		parts = append(parts, indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
-	}
-
-	// Main content.
-	content := truncateForDisplay(e.Content)
-	if content != "(empty)" {
+	// Render content blocks in stream order (text segments and tool
+	// cards interleaved as they arrived). Aligned with Claude Code's
+	// per-content-block rendering. Falls back to legacy order when
+	// blockOrder is empty (e.g. loaded from session history).
+	renderText := func() {
+		content := truncateForDisplay(e.Content)
+		if content == "(empty)" {
+			return
+		}
 		if e.Role == "USER" {
 			wrapped := userContentStyle.Render(wrapText(content, cw-2))
 			parts = append(parts, indentLines(wrapped, contentPadLeft))
@@ -2706,6 +2720,45 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 		if isStreamTarget {
 			parts = append(parts, "▌")
 		}
+	}
+	renderTool := func(idx int) {
+		if idx >= 0 && idx < len(e.ToolCalls) {
+			parts = append(parts, indentLines(renderToolCard(e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
+		}
+	}
+
+	if len(e.blockOrder) > 0 {
+		// Stream-order rendering.
+		for _, block := range e.blockOrder {
+			if block == "text" {
+				renderText()
+			} else if strings.HasPrefix(block, "tool:") {
+				var idx int
+				fmt.Sscanf(block, "tool:%d", &idx)
+				renderTool(idx)
+			}
+		}
+		// Render any tools not covered by blockOrder (e.g. added
+		// after the stream ended via tool result events).
+		covered := make(map[int]bool)
+		for _, block := range e.blockOrder {
+			if strings.HasPrefix(block, "tool:") {
+				var idx int
+				fmt.Sscanf(block, "tool:%d", &idx)
+				covered[idx] = true
+			}
+		}
+		for idx, tc := range e.ToolCalls {
+			if !covered[idx] {
+				parts = append(parts, indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
+			}
+		}
+	} else {
+		// Legacy fallback: tools first, then content.
+		for _, tc := range e.ToolCalls {
+			parts = append(parts, indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
+		}
+		renderText()
 	}
 
 	result := strings.Join(parts, "\n")
