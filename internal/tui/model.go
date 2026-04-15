@@ -133,6 +133,16 @@ type transcriptEntry struct {
 	renderStart int    // inclusive content line in the last rendered viewport snapshot
 	renderEnd   int    // inclusive content line in the last rendered viewport snapshot
 
+	// composited is the fully rendered entry output including tool
+	// cards, thinking blocks, content, indent wrapping — everything
+	// that refreshViewport would compute. Keyed by compositedKey.
+	// When valid, refreshViewport skips all per-entry render work
+	// and just concatenates cached strings. Aligned with Claude
+	// Code's component-level caching and Codex's committed_line_count.
+	composited    string
+	compositedKey uint64 // hash of inputs that produced composited
+	compositedH   int    // line count of composited (for virtual viewport)
+
 	// streamBuf accumulates content deltas during streaming via
 	// WriteString (O(1) amortized). When streaming ends, Content is
 	// set to streamBuf.String() once. This replaces the old
@@ -872,6 +882,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.entries[m.insightProgressIdx].Content = insight.FormatReport(msg.event.Report)
 				m.entries[m.insightProgressIdx].rendered = ""
 				m.entries[m.insightProgressIdx].renderedLen = 0
+				m.entries[m.insightProgressIdx].composited = ""
 			} else if msg.event.Report != nil {
 				m.appendEntry("assistant", insight.FormatReport(msg.event.Report))
 			}
@@ -2604,6 +2615,106 @@ func (m *Model) jumpToPreviousUserAnchor() {
 	m.setViewportOffset(m.userMessageLineAnchors[0])
 }
 
+// compositeEntryKey computes a fast hash of all inputs that affect an
+// entry's rendered output. If the key matches, the cached composited
+// string is still valid. Uses FNV-1a for speed (not crypto).
+func compositeEntryKey(e *transcriptEntry, vpWidth int, isStreaming bool, spinnerFrame int) uint64 {
+	h := uint64(14695981039346656037) // FNV offset basis
+	fnv := func(b byte) { h ^= uint64(b); h *= 1099511628211 }
+	for i := 0; i < len(e.Content); i++ {
+		fnv(e.Content[i])
+	}
+	fnv(byte(len(e.Content) >> 8))
+	fnv(byte(len(e.Content)))
+	fnv(byte(vpWidth >> 8))
+	fnv(byte(vpWidth))
+	fnv(byte(len(e.ToolCalls)))
+	for j := range e.ToolCalls {
+		for k := 0; k < len(e.ToolCalls[j].Status); k++ {
+			fnv(e.ToolCalls[j].Status[k])
+		}
+		for k := 0; k < len(e.ToolCalls[j].Result) && k < 32; k++ {
+			fnv(e.ToolCalls[j].Result[k])
+		}
+	}
+	fnv(byte(len(e.ThinkingContent)))
+	if e.ThinkingDone {
+		fnv(1)
+	}
+	if e.ThinkingExpanded {
+		fnv(2)
+	}
+	if isStreaming {
+		fnv(byte(spinnerFrame))
+	}
+	fnv(byte(len(e.rendered)))
+	return h
+}
+
+// compositeEntry renders a single entry to its full display string
+// (tool cards + thinking + content + indent). Returns the cached
+// version if the key matches. This is the core of the entry-level
+// render cache that makes refreshViewport O(n×concat) instead of
+// O(n×render).
+func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
+	e := &m.entries[i]
+	key := compositeEntryKey(e, m.viewport.Width, isStreamTarget, m.spinnerFrame)
+	if e.compositedKey == key && e.composited != "" {
+		return e.composited
+	}
+
+	cw := contentWidth(m.viewport.Width)
+	innerWidth := cw
+	var parts []string
+
+	// Role label.
+	switch e.Role {
+	case "USER", "ASSISTANT":
+		// No label.
+	default:
+		parts = append(parts, indentLines(systemLabelStyle.Render(e.Role), contentPadLeft))
+	}
+
+	// Thinking block.
+	if e.ThinkingContent != "" {
+		elapsed := e.ThinkingDuration
+		if !e.ThinkingDone && !m.thinkingStart.IsZero() {
+			elapsed = time.Since(m.thinkingStart)
+		}
+		parts = append(parts, indentLines(renderThinkingBlock(
+			e.ThinkingContent, e.ThinkingDone, e.ThinkingExpanded,
+			elapsed, innerWidth, m.spinnerFrame,
+		), contentPadLeft))
+	}
+
+	// Tool cards.
+	for _, tc := range e.ToolCalls {
+		parts = append(parts, indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
+	}
+
+	// Main content.
+	content := truncateForDisplay(e.Content)
+	if content != "(empty)" {
+		if e.Role == "USER" {
+			wrapped := userContentStyle.Render(wrapText(content, cw-2))
+			parts = append(parts, indentLines(wrapped, contentPadLeft))
+		} else if e.rendered != "" {
+			parts = append(parts, indentLines(wrapText(e.rendered, cw), contentPadLeft))
+		} else {
+			parts = append(parts, indentLines(wrapText(content, cw), contentPadLeft))
+		}
+		if isStreamTarget {
+			parts = append(parts, "▌")
+		}
+	}
+
+	result := strings.Join(parts, "\n")
+	e.composited = result
+	e.compositedKey = key
+	e.compositedH = strings.Count(result, "\n") + 1
+	return result
+}
+
 func (m *Model) refreshViewport(forceBottom bool) {
 	preserveOffset := !forceBottom && !m.autoFollow
 	prevOffset := m.viewport.YOffset
@@ -2640,7 +2751,6 @@ func (m *Model) refreshViewport(forceBottom bool) {
 	} else {
 		renderedAny := false
 		for i, entry := range m.entries {
-			// Skip tool entries — they are merged into assistant entries.
 			if entry.Role == "TOOL" {
 				continue
 			}
@@ -2652,71 +2762,15 @@ func (m *Model) refreshViewport(forceBottom bool) {
 				userAnchors = append(userAnchors, entryStartLine)
 			}
 			renderedAny = true
-			cw := contentWidth(m.viewport.Width)
-			// Tool/thinking cards use the same width as regular text
-			// content. Previously we expanded by contentPadRight, but
-			// that pushed the rounded box's right border `│` into the
-			// column directly adjacent to the scrollbar track `│` —
-			// the two identical glyphs separated by a single space
-			// looked like a doubled scrollbar.
-			innerWidth := cw
-			// Role indicator — icon only, no text label.
-			switch entry.Role {
-			case "USER":
-				// No label for user — bubble background distinguishes it.
-			case "ASSISTANT":
-				// No label for assistant — content speaks for itself.
-			default:
-				appendText(indentLines(systemLabelStyle.Render(entry.Role), contentPadLeft))
-				appendText("\n")
-			}
 
-			// Thinking block (if present).
-			if entry.ThinkingContent != "" {
-				elapsed := entry.ThinkingDuration
-				if !entry.ThinkingDone && !m.thinkingStart.IsZero() {
-					elapsed = time.Since(m.thinkingStart)
-				}
-				appendText(indentLines(renderThinkingBlock(
-					entry.ThinkingContent,
-					entry.ThinkingDone,
-					entry.ThinkingExpanded,
-					elapsed,
-					innerWidth,
-					m.spinnerFrame,
-				), contentPadLeft))
-				appendText("\n")
-			}
+			// Use cached composited output when available.
+			// This is the key optimization: entries that haven't
+			// changed since last render skip all tool card, thinking,
+			// content wrapping, and indent work entirely.
+			isStreamTarget := m.streaming && i == m.streamTarget
+			comp := m.compositeEntry(i, isStreamTarget)
+			appendText(comp)
 
-			// Tool call cards.
-			for _, tc := range entry.ToolCalls {
-				appendText(indentLines(renderToolCard(tc, innerWidth, m.spinnerFrame), contentPadLeft))
-				appendText("\n")
-			}
-
-			// Main content.
-			content := truncateForDisplay(entry.Content)
-
-			if content != "(empty)" {
-				if entry.Role == "USER" {
-					// userContentStyle has Padding(0,1) = 1 char each side, so
-					// wrap to cw-2 to leave room for it.
-					wrapped := userContentStyle.Render(wrapText(content, cw-2))
-					appendText(indentLines(wrapped, contentPadLeft))
-				} else if entry.rendered != "" {
-					appendText(indentLines(wrapText(entry.rendered, cw), contentPadLeft))
-				} else {
-					appendText(indentLines(wrapText(content, cw), contentPadLeft))
-				}
-				// Streaming cursor.
-				if m.streaming && i == m.streamTarget {
-					appendText("▌")
-				}
-			}
-
-			// NOTE: inline status (Generating / Running tool / Thinking)
-			// is rendered outside the viewport in View() to avoid
-			// spinner animation driving full viewport rebuilds.
 			entryEndLine := currentLine()
 			if entryEndLine < entryStartLine {
 				entryEndLine = entryStartLine
@@ -2781,6 +2835,8 @@ func (m *Model) relayout() {
 		for i := range m.entries {
 			m.entries[i].rendered = ""
 			m.entries[i].renderedLen = 0
+			m.entries[i].composited = ""
+			m.entries[i].compositedKey = 0
 		}
 	}
 	m.refreshViewport(false)
