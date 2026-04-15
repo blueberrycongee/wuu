@@ -2736,11 +2736,22 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 		}
 	}
 
+	// Find the last "text" position in blockOrder so we render
+	// the full text content exactly once, at its final position.
+	lastTextIdx := -1
+	for bi, block := range e.blockOrder {
+		if block == "text" {
+			lastTextIdx = bi
+		}
+	}
+
 	if len(e.blockOrder) > 0 {
 		// Stream-order rendering.
-		for _, block := range e.blockOrder {
+		for bi, block := range e.blockOrder {
 			if block == "text" {
-				renderText()
+				if bi == lastTextIdx {
+					renderText()
+				}
 			} else if strings.HasPrefix(block, "tool:") {
 				var idx int
 				fmt.Sscanf(block, "tool:%d", &idx)
