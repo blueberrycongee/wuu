@@ -662,9 +662,10 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 	switch msg.Role {
 	case "user", "assistant":
 		blocks := make([]anthropicBlock, 0, len(msg.ToolCalls)+len(msg.Images)+1)
-		if strings.TrimSpace(msg.Content) != "" {
-			blocks = append(blocks, anthropicBlock{Type: "text", Text: msg.Content})
-		}
+		// Always include a text block — the API rejects messages with
+		// empty content arrays, and {"type":"text"} without a "text"
+		// field is also invalid. Empty string is fine.
+		blocks = append(blocks, anthropicBlock{Type: "text", Text: msg.Content})
 		if msg.Role == "user" {
 			for _, image := range msg.Images {
 				data := strings.TrimSpace(image.Data)
@@ -764,7 +765,11 @@ type anthropicMessage struct {
 
 type anthropicBlock struct {
 	Type         string                 `json:"type"`
-	Text         string                 `json:"text,omitempty"`
+	// Do NOT use omitempty — empty text blocks serialize as
+	// {"type":"text","text":""} which is valid. With omitempty,
+	// empty text produces {"type":"text"} (no text field) which
+	// proxies reject as invalid.
+	Text         string                 `json:"text"`
 	Source       *anthropicImageSource  `json:"source,omitempty"`
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name,omitempty"`
