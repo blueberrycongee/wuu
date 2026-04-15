@@ -48,7 +48,7 @@ func (c command) completionEnterBehavior() slashCompletionEnterBehavior {
 		return slashCompletionInsertOnly
 	}
 	switch c.Name {
-	case "help", "clear", "status", "compact", "fork", "new", "diff", "copy", "skills", "memory", "workers", "processes", "cleanup-worktrees", "insight", "exit":
+	case "help", "clear", "status", "context", "compact", "fork", "new", "diff", "copy", "skills", "memory", "workers", "processes", "cleanup-worktrees", "insight", "exit":
 		return slashCompletionExecute
 	default:
 		return slashCompletionInsertOnly
@@ -62,6 +62,7 @@ func init() {
 		{Name: "help", Description: "Show available commands", Type: cmdTypeLocal, Execute: cmdHelp},
 		{Name: "clear", Description: "Clear screen", Type: cmdTypeLocal, Execute: cmdClear},
 		{Name: "status", Description: "Show session config and token usage", Type: cmdTypeLocal, Execute: cmdStatus},
+		{Name: "context", Description: "Show context window usage breakdown", Type: cmdTypeLocal, Execute: cmdContext},
 		{Name: "compact", Description: "Compress conversation context", Type: cmdTypeLocal, Execute: cmdCompact},
 		{Name: "model", Description: "Switch model/provider", ArgHint: "<model-name>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdModelSwitch},
 		{Name: "effort", Description: "Set reasoning effort level", ArgHint: "[low|medium|high|max]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdEffort},
@@ -222,6 +223,123 @@ func cmdClear(_ string, m *Model) string {
 func cmdStatus(_ string, m *Model) string {
 	return fmt.Sprintf("provider: %s\nmodel: %s\nconfig: %s\nentries: %d\nworkspace: %s",
 		m.provider, m.modelName, m.configPath, len(m.entries), m.workspaceRoot)
+}
+
+func cmdContext(_ string, m *Model) string {
+	if m.streamRunner == nil {
+		return "context: no stream runner configured"
+	}
+
+	model := m.modelName
+	window := providers.ContextWindowFor(model)
+	if m.streamRunner.ContextWindowOverride > 0 {
+		window = m.streamRunner.ContextWindowOverride
+	}
+
+	// Category breakdown.
+	var sysTokens, toolTokens, msgTokens int
+	for _, msg := range m.chatHistory {
+		est := compact.EstimateMessagesTokens([]providers.ChatMessage{msg})
+		switch msg.Role {
+		case "system":
+			sysTokens += est
+		default:
+			msgTokens += est
+		}
+	}
+	if m.streamRunner.Tools != nil {
+		for _, def := range m.streamRunner.Tools.Definitions() {
+			toolTokens += compact.EstimateTokens(def.Name)
+			toolTokens += compact.EstimateTokens(def.Description)
+			toolTokens += 20 // schema overhead per tool
+		}
+		toolTokens += 500 // tool definition preamble (aligned with CC)
+	}
+
+	// Memory files.
+	var memTokens int
+	for _, mf := range m.memoryFiles {
+		memTokens += compact.EstimateTokens(mf.Content)
+	}
+	// Skills.
+	var skillTokens int
+	for _, sk := range m.skills {
+		skillTokens += compact.EstimateTokens(sk.Content)
+	}
+
+	totalUsed := sysTokens + toolTokens + memTokens + skillTokens + msgTokens
+	free := window - totalUsed
+	if free < 0 {
+		free = 0
+	}
+	compactBuffer := int(float64(window) * 0.1) // 10% reserved for compact
+
+	pct := func(n int) string {
+		if window == 0 {
+			return "0.0%"
+		}
+		return fmt.Sprintf("%.1f%%", float64(n)/float64(window)*100)
+	}
+	fmtK := func(n int) string {
+		if n < 1000 {
+			return fmt.Sprintf("%d", n)
+		}
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+
+	// Visual bar (20 chars wide).
+	barWidth := 20
+	usedSlots := 0
+	if window > 0 {
+		usedSlots = totalUsed * barWidth / window
+		if usedSlots > barWidth {
+			usedSlots = barWidth
+		}
+	}
+	bar := strings.Repeat("█", usedSlots) + strings.Repeat("░", barWidth-usedSlots)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Context Usage  %s/%s  %s  %s\n", model, m.provider, fmtK(totalUsed)+"/"+fmtK(window)+" tokens", pct(totalUsed))
+	fmt.Fprintf(&b, "%s\n\n", bar)
+	fmt.Fprintf(&b, "  System prompt:  %6s tokens (%s)\n", fmtK(sysTokens), pct(sysTokens))
+	fmt.Fprintf(&b, "  Tool defs:      %6s tokens (%s)\n", fmtK(toolTokens), pct(toolTokens))
+	fmt.Fprintf(&b, "  Memory files:   %6s tokens (%s)\n", fmtK(memTokens), pct(memTokens))
+	fmt.Fprintf(&b, "  Skills:         %6s tokens (%s)\n", fmtK(skillTokens), pct(skillTokens))
+	fmt.Fprintf(&b, "  Messages:       %6s tokens (%s)\n", fmtK(msgTokens), pct(msgTokens))
+	fmt.Fprintf(&b, "  Free:           %6s tokens (%s)\n", fmtK(free), pct(free))
+	fmt.Fprintf(&b, "  Compact buffer: %6s tokens (%s)\n", fmtK(compactBuffer), pct(compactBuffer))
+
+	// Message breakdown.
+	userMsgs, assistMsgs, toolMsgs := 0, 0, 0
+	for _, msg := range m.chatHistory {
+		switch msg.Role {
+		case "user":
+			userMsgs++
+		case "assistant":
+			assistMsgs++
+		case "tool":
+			toolMsgs++
+		}
+	}
+	fmt.Fprintf(&b, "\n  Messages: %d total (%d user, %d assistant, %d tool)\n", len(m.chatHistory), userMsgs, assistMsgs, toolMsgs)
+
+	// Memory files list.
+	if len(m.memoryFiles) > 0 {
+		b.WriteString("\nMemory files:\n")
+		for _, mf := range m.memoryFiles {
+			fmt.Fprintf(&b, "  %s: %s tokens\n", mf.Path, fmtK(compact.EstimateTokens(mf.Content)))
+		}
+	}
+
+	// Skills list.
+	if len(m.skills) > 0 {
+		b.WriteString("\nSkills:\n")
+		for _, sk := range m.skills {
+			fmt.Fprintf(&b, "  %s: %s tokens\n", sk.Name, fmtK(compact.EstimateTokens(sk.Content)))
+		}
+	}
+
+	return b.String()
 }
 
 func cmdCompact(_ string, m *Model) string {
