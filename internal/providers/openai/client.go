@@ -103,7 +103,18 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
 
 	for _, msg := range req.Messages {
-		payload.Messages = append(payload.Messages, mapMessage(msg))
+		mapped := mapMessage(msg)
+		// Merge consecutive messages with the same role. Some
+		// OpenAI-compatible proxies reject consecutive user messages
+		// produced by tool_result + hook context injection. Tool-role
+		// messages are kept separate (each tied to a specific tool_call_id).
+		if mapped.Role != "tool" && mapped.ToolCallID == "" {
+			if n := len(payload.Messages); n > 0 && payload.Messages[n-1].Role == mapped.Role && payload.Messages[n-1].ToolCallID == "" {
+				payload.Messages[n-1].Content = mergeContent(payload.Messages[n-1].Content, mapped.Content)
+				continue
+			}
+		}
+		payload.Messages = append(payload.Messages, mapped)
 	}
 	if len(req.Tools) > 0 {
 		payload.ToolChoice = "auto"
@@ -206,7 +217,14 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	}
 	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
 	for _, msg := range req.Messages {
-		payload.Messages = append(payload.Messages, mapMessage(msg))
+		mapped := mapMessage(msg)
+		if mapped.Role != "tool" && mapped.ToolCallID == "" {
+			if n := len(payload.Messages); n > 0 && payload.Messages[n-1].Role == mapped.Role && payload.Messages[n-1].ToolCallID == "" {
+				payload.Messages[n-1].Content = mergeContent(payload.Messages[n-1].Content, mapped.Content)
+				continue
+			}
+		}
+		payload.Messages = append(payload.Messages, mapped)
 	}
 	if len(req.Tools) > 0 {
 		payload.ToolChoice = "auto"
@@ -536,6 +554,38 @@ func mapMessage(msg providers.ChatMessage) chatMessage {
 		}
 	}
 	return mapped
+}
+
+// mergeContent combines two chatMessage Content values. Content can
+// be a plain string or a []chatContentPart array; this normalizes
+// both to text and concatenates with a newline separator.
+func mergeContent(existing, incoming any) any {
+	a := contentToString(existing)
+	b := contentToString(incoming)
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	return a + "\n" + b
+}
+
+func contentToString(v any) string {
+	switch c := v.(type) {
+	case string:
+		return c
+	case []chatContentPart:
+		var parts []string
+		for _, p := range c {
+			if p.Text != "" {
+				parts = append(parts, p.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 func parseContent(raw json.RawMessage) (string, error) {
