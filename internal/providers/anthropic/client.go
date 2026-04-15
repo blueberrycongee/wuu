@@ -404,9 +404,15 @@ func (c *Client) doSingleMessagesRequest(
 		httpReq.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 	httpReq.Header.Set("anthropic-version", defaultAnthropicVersion)
+	// Beta headers: prompt-caching is required when cache_control
+	// appears in the request body (which it does whenever CacheHint
+	// is set). Without this header, proxies reject with
+	// "Invalid request data". oauth is needed for auth-token flow.
+	betaHeaders := "prompt-caching-2024-07-31"
 	if c.authToken != "" {
-		httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		betaHeaders += ",oauth-2025-04-20"
 	}
+	httpReq.Header.Set("anthropic-beta", betaHeaders)
 	httpReq.Header.Set("User-Agent", "claude-cli/2.1.96")
 	httpReq.Header.Set("x-app", "cli")
 	httpReq.Header.Set("Accept", "text/event-stream")
