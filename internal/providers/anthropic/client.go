@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -35,12 +36,16 @@ const (
 )
 
 // resolveMaxTokens picks the per-request override if positive,
-// otherwise falls back to the client-level configured value.
-func resolveMaxTokens(perRequest, clientDefault int) int {
+// then the client-level configured value, then falls back to a
+// model-aware default from the registry.
+func resolveMaxTokens(perRequest, clientDefault int, model string) int {
 	if perRequest > 0 {
 		return perRequest
 	}
-	return clientDefault
+	if clientDefault > 0 {
+		return clientDefault
+	}
+	return providers.MaxOutputTokensFor(model)
 }
 
 // ClientConfig configures an Anthropic messages endpoint.
@@ -80,9 +85,7 @@ func New(cfg ClientConfig) (*Client, error) {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
 	maxTokens := cfg.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
-	}
+	// When 0, resolveMaxTokens falls back to model-aware defaults.
 	rc := providers.DefaultRetryConfig()
 	if cfg.RetryConfig != nil {
 		rc = *cfg.RetryConfig
@@ -110,7 +113,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 		return providers.ChatResponse{}, errors.New("messages is required")
 	}
 
-	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens)
+	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens, req.Model)
 	payload, err := buildAnthropicRequest(req, maxTok, false)
 	if err != nil {
 		return providers.ChatResponse{}, err
@@ -204,7 +207,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, errors.New("messages is required")
 	}
 
-	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens)
+	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens, req.Model)
 	payload, err := buildAnthropicRequest(req, maxTok, true)
 	if err != nil {
 		return nil, err
@@ -218,8 +221,16 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	sseClient := providers.BuildStreamingHTTPClient(c.httpClient, c.streamConfig)
 	// Use the single-attempt request — the stream runner's
 	// runStreamWithReconnect handles retries with proper UI feedback.
+	providers.DebugLogf("StreamChat: sending %d bytes to %s/v1/messages (max_tokens=%d, model=%s, msgs=%d)",
+		len(body), c.baseURL, maxTok, req.Model, len(req.Messages))
+	// Dump request body for debugging 503 issues.
+	if dumpPath := os.Getenv("WUU_DUMP_REQUEST"); dumpPath != "" {
+		_ = os.WriteFile(dumpPath, body, 0o644)
+		providers.DebugLogf("StreamChat: dumped request body to %s", dumpPath)
+	}
 	resp, err := c.doSingleMessagesRequest(ctx, sseClient, body)
 	if err != nil {
+		providers.DebugLogf("StreamChat: error: %v", err)
 		return nil, err
 	}
 
@@ -251,8 +262,18 @@ func buildAnthropicRequest(req providers.ChatRequest, maxTokens int, stream bool
 		if err != nil {
 			return anthropicRequest{}, err
 		}
-		payload.Messages = append(payload.Messages, mapped)
+		// Merge consecutive messages with the same role. The Anthropic
+		// API requires strict user/assistant alternation; some relays
+		// and Console-backed proxies reject violations with 503.
+		// WUU produces consecutive user messages from tool_result +
+		// BeforeStep environment injection, so we coalesce here.
+		if n := len(payload.Messages); n > 0 && payload.Messages[n-1].Role == mapped.Role {
+			payload.Messages[n-1].Content = append(payload.Messages[n-1].Content, mapped.Content...)
+		} else {
+			payload.Messages = append(payload.Messages, mapped)
+		}
 	}
+	providers.DebugLogf("buildAnthropicRequest: %d input msgs → %d merged msgs", len(req.Messages), len(payload.Messages))
 	payload.System = buildAnthropicSystem(systemTexts, req.CacheHint)
 	applyAnthropicCacheHint(&payload, req.CacheHint)
 

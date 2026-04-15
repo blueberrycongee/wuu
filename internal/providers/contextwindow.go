@@ -157,3 +157,59 @@ var contextWindowRegistry = []contextWindowEntry{
 	{"qwen2.5", 128_000},
 	{"qwen", 32_000},
 }
+
+// MaxOutputTokensFor returns the default max output tokens for the
+// given model, aligned with Claude Code's production values.
+func MaxOutputTokensFor(model string) int {
+	if model == "" {
+		return defaultMaxOutputTokens
+	}
+	lower := strings.ToLower(strings.TrimSpace(model))
+	stripped := lower
+	if idx := strings.LastIndex(lower, "/"); idx >= 0 {
+		stripped = lower[idx+1:]
+	}
+	for _, entry := range maxOutputTokensRegistry {
+		if strings.Contains(lower, entry.pattern) || strings.Contains(stripped, entry.pattern) {
+			return entry.size
+		}
+	}
+	return defaultMaxOutputTokens
+}
+
+const defaultMaxOutputTokens = 16_000
+
+var maxOutputTokensRegistry = []contextWindowEntry{
+	// Anthropic Claude 4.6
+	{"opus-4-6", 64_000},
+	{"sonnet-4-6", 32_000},
+	// Anthropic Claude 4.x
+	{"opus-4", 32_000},
+	{"sonnet-4", 32_000},
+	{"haiku-4", 32_000},
+	// Anthropic Claude 3.7
+	{"claude-3-7-sonnet", 32_000},
+	// Anthropic Claude 3.5
+	{"claude-3-5-sonnet", 8_192},
+	{"claude-3-5-haiku", 8_192},
+	// Anthropic Claude 3
+	{"claude-3-opus", 4_096},
+	{"claude-3-sonnet", 8_192},
+	{"claude-3-haiku", 4_096},
+	// Generic Claude fallback
+	{"claude", 16_000},
+	// OpenAI
+	{"gpt-5", 32_000},
+	{"gpt-4o", 16_384},
+	{"gpt-4.1", 32_768},
+	{"gpt-4-turbo", 4_096},
+	{"gpt-4", 4_096},
+	{"o3", 100_000},
+	{"o1", 32_768},
+	// DeepSeek
+	{"deepseek", 8_192},
+	// Gemini
+	{"gemini-2.5-pro", 65_536},
+	{"gemini-2", 8_192},
+	{"gemini", 8_192},
+}
