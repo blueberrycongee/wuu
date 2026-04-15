@@ -359,7 +359,7 @@ func (c *Coordinator) Fork(ctx context.Context, req ForkRequest, parentHistory [
 	}
 
 	workerID := newCoordinatorWorkerID("fork")
-	workerRoot := c.worktrees.ParentRepo()
+	workerRoot := c.parentRepo
 
 	workerKit, err := c.workerFact(workerRoot, wt)
 	if err != nil {
@@ -755,6 +755,9 @@ func FormatWorkerResult(snap subagent.SubAgentSnapshot) string {
 
 // CleanupSession removes all worktrees belonging to this session.
 func (c *Coordinator) CleanupSession() error {
+	if c.worktrees == nil {
+		return nil // non-git workspace, no worktrees to clean
+	}
 	return c.worktrees.CleanupSession(c.sessionID)
 }
 
