@@ -2637,7 +2637,7 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			// Role indicator — icon only, no text label.
 			switch entry.Role {
 			case "USER":
-				// Label rendered inline with content below.
+				// No label for user — bubble background distinguishes it.
 			case "ASSISTANT":
 				// No label for assistant — content speaks for itself.
 			default:
@@ -2671,28 +2671,12 @@ func (m *Model) refreshViewport(forceBottom bool) {
 			// Main content.
 			content := truncateForDisplay(entry.Content)
 
-			if entry.Role == "USER" && content == "(empty)" {
-				// Empty user message — show label alone.
-				appendText(indentLines(userLabelStyle.Render("❯"), contentPadLeft))
-			}
-
 			if content != "(empty)" {
 				if entry.Role == "USER" {
-					// userContentStyle has Padding(0,1) = 1 char each side.
-					// The "❯ " prefix occupies 2 visual columns outside the
-					// bubble, so shrink the wrap width by an additional 2.
-					label := userLabelStyle.Render("❯") + " "
-					wrapped := userContentStyle.Render(wrapText(content, cw-4))
-					lines := strings.Split(wrapped, "\n")
-					for j, line := range lines {
-						if j == 0 {
-							lines[j] = label + line
-						} else {
-							// Align subsequent lines with the bubble start.
-							lines[j] = "  " + line
-						}
-					}
-					appendText(indentLines(strings.Join(lines, "\n"), contentPadLeft))
+					// userContentStyle has Padding(0,1) = 1 char each side, so
+					// wrap to cw-2 to leave room for it.
+					wrapped := userContentStyle.Render(wrapText(content, cw-2))
+					appendText(indentLines(wrapped, contentPadLeft))
 				} else if entry.rendered != "" {
 					appendText(indentLines(wrapText(entry.rendered, cw), contentPadLeft))
 				} else {
