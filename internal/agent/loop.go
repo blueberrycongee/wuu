@@ -304,6 +304,7 @@ func RunToolLoop(
 		batches := partitionToolCalls(cfg.Tools, result.ToolCalls)
 		for _, batch := range batches {
 			toolMessages := executeBatch(toolCtx, cfg.Tools, batch, cfg.OnToolResult, result.PrecomputedResults)
+			enforceAggregateResultBudget(toolMessages)
 			for _, toolMsg := range toolMessages {
 				appendMessage(toolMsg)
 			}
@@ -582,4 +583,46 @@ func executeBatch(
 		}
 	}
 	return msgs
+}
+
+// maxAggregateResultChars caps the total content of all tool-role
+// messages in a single batch. Prevents N parallel tools × 50K each
+// from bloating the prompt. Aligned with Claude Code's per-message
+// 200K aggregate budget.
+const maxAggregateResultChars = 200_000
+
+// enforceAggregateResultBudget trims tool messages in-place so their
+// total content stays within the aggregate budget. Trims the largest
+// results first to minimize information loss.
+func enforceAggregateResultBudget(msgs []providers.ChatMessage) {
+	total := 0
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			total += len(m.Content)
+		}
+	}
+	if total <= maxAggregateResultChars {
+		return
+	}
+	// Trim the longest tool results first.
+	for total > maxAggregateResultChars {
+		maxIdx, maxLen := -1, 0
+		for i, m := range msgs {
+			if m.Role == "tool" && len(m.Content) > maxLen {
+				maxIdx = i
+				maxLen = len(m.Content)
+			}
+		}
+		if maxIdx < 0 || maxLen <= 200 {
+			break
+		}
+		excess := total - maxAggregateResultChars
+		newLen := maxLen - excess
+		if newLen < 200 {
+			newLen = 200
+		}
+		msgs[maxIdx].Content = msgs[maxIdx].Content[:newLen] +
+			fmt.Sprintf("\n[trimmed: original %d chars, aggregate budget %d]", maxLen, maxAggregateResultChars)
+		total = total - maxLen + len(msgs[maxIdx].Content)
+	}
 }

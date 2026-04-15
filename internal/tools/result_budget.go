@@ -20,6 +20,11 @@ const (
 	// enough that most tool outputs pass through unchanged, small enough
 	// to prevent prompt bloat from runaway grep/shell output.
 	defaultResultBudget = 50_000
+	// MaxAggregateResultChars is the per-message aggregate cap for all
+	// tool results in one turn. Prevents N parallel tools × 50K each
+	// from creating an enormous message. Aligned with Claude Code's
+	// per-message 200K aggregate budget.
+	MaxAggregateResultChars = 200_000
 	// previewHeadChars / previewTailChars control the preview shown to
 	// the model when a result is persisted. Enough to see the beginning
 	// and end without wasting context.
@@ -55,6 +60,38 @@ func MaybePersistResult(sessionDir, toolName, callID, result string, threshold i
 	// Fallback: hard truncation (preserves old behaviour when no
 	// session dir is available).
 	return result[:threshold] + "\n\n[truncated — output too large]"
+}
+
+// EnforceAggregateBudget trims tool result messages so that their
+// total content length stays within MaxAggregateResultChars. Results
+// are trimmed in reverse order (newest first) since earlier results
+// are more likely to have been referenced by subsequent tool calls.
+func EnforceAggregateBudget(results []string) []string {
+	total := 0
+	for _, r := range results {
+		total += len(r)
+	}
+	if total <= MaxAggregateResultChars {
+		return results
+	}
+
+	out := make([]string, len(results))
+	copy(out, results)
+
+	// Trim from the end — later results are more expendable.
+	for i := len(out) - 1; i >= 0 && total > MaxAggregateResultChars; i-- {
+		excess := total - MaxAggregateResultChars
+		if len(out[i]) > excess+500 {
+			// Partial trim is enough.
+			out[i] = stringutil.Truncate(out[i], len(out[i])-excess, "\n[trimmed to fit aggregate budget]")
+			break
+		}
+		// Full replacement with a short stub.
+		saved := len(out[i])
+		out[i] = fmt.Sprintf("[Result truncated to fit aggregate budget — original was %d chars]", saved)
+		total -= saved - len(out[i])
+	}
+	return out
 }
 
 // persistResult writes content to .wuu/sessions/{sid}/tool-results/{callID}.txt
