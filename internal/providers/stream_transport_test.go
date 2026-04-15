@@ -11,11 +11,11 @@ func TestResolveStreamTransportConfig_Defaults(t *testing.T) {
 	t.Setenv("WUU_STREAM_IDLE_TIMEOUT_MS", "")
 
 	cfg := ResolveStreamTransportConfig(nil)
-	if cfg.ConnectTimeout != 30*time.Second {
-		t.Fatalf("expected 30s connect timeout, got %s", cfg.ConnectTimeout)
+	if cfg.ConnectTimeout != 600*time.Second {
+		t.Fatalf("expected 600s connect timeout, got %s", cfg.ConnectTimeout)
 	}
-	if cfg.IdleTimeout != 5*time.Minute {
-		t.Fatalf("expected 5m idle timeout, got %s", cfg.IdleTimeout)
+	if cfg.IdleTimeout != 90*time.Second {
+		t.Fatalf("expected 90s idle timeout, got %s", cfg.IdleTimeout)
 	}
 }
 

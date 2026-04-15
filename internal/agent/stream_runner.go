@@ -466,6 +466,15 @@ func (s *streamStep) runStreamWithReconnect(
 		attempt++
 		providers.DebugLogf("stream reconnecting (%d, %s/%s) in %s: %v",
 			attempt, el.Round(time.Second), cfg.Budget, delay, err)
+		// Log full error details for post-mortem analysis.
+		var httpErr *providers.HTTPError
+		if errors.As(err, &httpErr) {
+			providers.DebugLogf("  HTTP %d body: %s", httpErr.StatusCode, httpErr.Body)
+		}
+		var streamErr *providers.StreamError
+		if errors.As(err, &streamErr) {
+			providers.DebugLogf("  stream error code=%s msg=%s", streamErr.Code, streamErr.Message)
+		}
 		emitLifecycle(providers.StreamPhaseReconnecting, attempt, err, delay)
 		if onEvent != nil {
 			onEvent(providers.StreamEvent{

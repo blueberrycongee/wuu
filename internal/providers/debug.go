@@ -19,7 +19,13 @@ func InitDebugLog(dir string) {
 		logDir := filepath.Join(dir, ".wuu")
 		os.MkdirAll(logDir, 0o755)
 		path := filepath.Join(logDir, "debug.log")
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		// Rotate if the log exceeds 2 MB to prevent unbounded growth.
+		if info, err := os.Stat(path); err == nil && info.Size() > 2*1024*1024 {
+			prev := path + ".1"
+			os.Remove(prev)
+			os.Rename(path, prev)
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			return
 		}

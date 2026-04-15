@@ -251,6 +251,8 @@ func runTUI(args []string) error {
 		return err
 	}
 
+	providers.InitDebugLog(rootDir)
+
 	homeDir := os.Getenv("HOME")
 
 	resolvedTheme, err := resolveTUIThemeMode(homeDir, strings.TrimSpace(*themeMode))
