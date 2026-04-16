@@ -2766,37 +2766,43 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 		if segContent == "(empty)" || strings.TrimSpace(segContent) == "" {
 			return
 		}
+		var textPart string
 		if e.Role == "USER" {
-			wrapped := userContentStyle.Render(wrapText(segContent, cw-2))
-			parts = append(parts, indentLines(wrapped, contentPadLeft))
+			textPart = indentLines(userContentStyle.Render(wrapText(segContent, cw-2)), contentPadLeft)
 		} else if segRendered != "" {
 			// Rendered markdown is already width-constrained by the
 			// renderer (tables use box-drawing, paragraphs are word-
 			// wrapped). Do NOT re-wrap — it destroys table layout.
-			parts = append(parts, indentLines(segRendered, contentPadLeft))
+			textPart = indentLines(segRendered, contentPadLeft)
 		} else {
-			parts = append(parts, indentLines(wrapText(segContent, cw), contentPadLeft))
+			textPart = indentLines(wrapText(segContent, cw), contentPadLeft)
 		}
+		// Append the streaming cursor to the last line of text, not as
+		// a separate part. A standalone "▌" between text and tool card
+		// creates an extra blank line that disappears when streaming
+		// ends, causing visible position jumps.
 		if isStreamTarget && isLastSegment(segIdx) {
-			parts = append(parts, "▌")
+			textPart += "▌"
 		}
+		parts = append(parts, textPart)
 	}
 	renderTextFull := func() {
 		content := truncateForDisplay(e.Content)
 		if content == "(empty)" {
 			return
 		}
+		var textPart string
 		if e.Role == "USER" {
-			wrapped := userContentStyle.Render(wrapText(content, cw-2))
-			parts = append(parts, indentLines(wrapped, contentPadLeft))
+			textPart = indentLines(userContentStyle.Render(wrapText(content, cw-2)), contentPadLeft)
 		} else if e.rendered != "" {
-			parts = append(parts, indentLines(e.rendered, contentPadLeft))
+			textPart = indentLines(e.rendered, contentPadLeft)
 		} else {
-			parts = append(parts, indentLines(wrapText(content, cw), contentPadLeft))
+			textPart = indentLines(wrapText(content, cw), contentPadLeft)
 		}
 		if isStreamTarget {
-			parts = append(parts, "▌")
+			textPart += "▌"
 		}
+		parts = append(parts, textPart)
 	}
 	renderTool := func(idx int) {
 		if idx >= 0 && idx < len(e.ToolCalls) {
