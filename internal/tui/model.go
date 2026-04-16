@@ -2772,7 +2772,10 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 			wrapped := userContentStyle.Render(wrapText(segContent, cw-2))
 			parts = append(parts, indentLines(wrapped, contentPadLeft))
 		} else if segRendered != "" {
-			parts = append(parts, indentLines(wrapText(segRendered, cw), contentPadLeft))
+			// Rendered markdown is already width-constrained by the
+			// renderer (tables use box-drawing, paragraphs are word-
+			// wrapped). Do NOT re-wrap — it destroys table layout.
+			parts = append(parts, indentLines(segRendered, contentPadLeft))
 		} else {
 			parts = append(parts, indentLines(wrapText(segContent, cw), contentPadLeft))
 		}
@@ -2789,7 +2792,7 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 			wrapped := userContentStyle.Render(wrapText(content, cw-2))
 			parts = append(parts, indentLines(wrapped, contentPadLeft))
 		} else if e.rendered != "" {
-			parts = append(parts, indentLines(wrapText(e.rendered, cw), contentPadLeft))
+			parts = append(parts, indentLines(e.rendered, contentPadLeft))
 		} else {
 			parts = append(parts, indentLines(wrapText(content, cw), contentPadLeft))
 		}
