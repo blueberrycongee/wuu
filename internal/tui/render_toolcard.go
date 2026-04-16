@@ -9,9 +9,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderToolCard renders a single tool call card with caching.
-// The cache avoids re-parsing JSON args/results on every viewport
-// refresh. Only invalidated when the card's inputs change.
+// Codex-aligned tool card styles: lightweight tree indentation instead
+// of heavy box-drawing borders. Tool calls render as:
+//
+//	• Called read_file · main.go
+//	  └ package main...
+//
+// Running tools show a spinner, success shows green •, failure red •.
+var (
+	toolBulletSuccess = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)  // green
+	toolBulletFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)  // red
+	toolVerbStyle     = lipgloss.NewStyle().Bold(true)
+	toolNameStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // cyan
+	toolMetaDim       = lipgloss.NewStyle().Faint(true)
+	toolResultDim     = lipgloss.NewStyle().Faint(true)
+	toolTreeBranch    = toolMetaDim.Render("  └ ")
+	toolTreeIndent    = "    " // continuation indent after └
+)
+
+// renderToolCard renders a single tool call in Codex-aligned tree style.
 func renderToolCard(tc *ToolCallEntry, width int, frame int) string {
 	// Running tools have an animated spinner — don't cache those.
 	if tc.Status != ToolCallRunning {
@@ -20,72 +36,109 @@ func renderToolCard(tc *ToolCallEntry, width int, frame int) string {
 			return tc.cachedCard
 		}
 	}
-	// ask_user has its own card layout that mirrors Claude Code's
-	// "User answered:" rendering — nicer than dumping the JSON
-	// answer payload through the generic body formatter.
+
+	// ask_user has its own card layout.
 	if tc.Name == "ask_user" {
 		return renderAskUserCard(*tc, width)
 	}
 
-	metaStyle := waitingStatusMetaStyle
-	contentStyle := lipgloss.NewStyle().Foreground(currentTheme.Inactive)
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(currentTheme.Border)
+	// ── Header line: bullet + verb + tool_name · summary ──
+	bullet := toolBullet(tc.Status, frame)
+	verb := "Called"
+	if tc.Status == ToolCallRunning {
+		verb = "Calling"
+	}
 
-	ws := toolCallStatus(*tc)
-	headerParts := []string{renderStatusHeader(ws, frame)}
+	headerParts := []string{
+		bullet,
+		toolVerbStyle.Render(verb),
+		toolNameStyle.Render(tc.Name),
+	}
 
-	var result string
-	if tc.Collapsed {
-		summary := toolArgsSummary(tc.Name, tc.Args, width-28)
-		if summary != "" {
-			headerParts = append(headerParts, metaStyle.Render("· "+summary))
-		}
-		if tc.Result != "" {
-			if dr := diffResultFromJSON(tc.Result); dr != nil {
-				headerParts = append(headerParts, diffStats(dr))
-			}
-		}
-		result = strings.Join(headerParts, " ")
-	} else {
-		var content strings.Builder
-		if tc.Args != "" {
-			formatted := formatToolArgs(tc.Name, tc.Args)
-			content.WriteString(contentStyle.Render(wrapText(formatted, width-6)))
-		}
-		if tc.Result != "" {
-			if content.Len() > 0 {
-				content.WriteString("\n")
-				content.WriteString(metaStyle.Render(strings.Repeat("─", min(width-6, 32))))
-				content.WriteString("\n")
-			}
-			if dr := diffResultFromJSON(tc.Result); dr != nil {
-				content.WriteString(renderDiff(dr, max(20, width-6)))
-			} else {
-				content.WriteString(contentStyle.Render(wrapText(truncateToolResult(tc.Result, 500), max(20, width-6))))
-			}
-		}
+	// Inline summary (path, command, pattern, etc.)
+	summary := toolArgsSummary(tc.Name, tc.Args, width-lipgloss.Width(strings.Join(headerParts, " "))-6)
+	if summary != "" {
+		headerParts = append(headerParts, toolMetaDim.Render("· "+summary))
+	}
 
-		if content.Len() == 0 {
-			result = strings.Join(headerParts, " ")
-		} else {
-			innerW := width - 4
-			if innerW < 20 {
-				innerW = 20
-			}
-			box := borderStyle.Width(innerW).Render(content.String())
-			result = strings.Join(headerParts, " ") + "\n" + box
+	// Diff stats for edit/write tools.
+	if tc.Result != "" {
+		if dr := diffResultFromJSON(tc.Result); dr != nil {
+			headerParts = append(headerParts, diffStats(dr))
 		}
 	}
 
-	// Cache for non-running tools (running ones have animated spinner).
+	header := strings.Join(headerParts, " ")
+
+	// ── Result body (tree-indented, dimmed) ──
+	var result string
+	if tc.Collapsed || tc.Result == "" {
+		result = header
+	} else {
+		resultContent := formatToolResult(tc, width-4)
+		if strings.TrimSpace(resultContent) == "" {
+			result = header
+		} else {
+			result = header + "\n" + resultContent
+		}
+	}
+
+	// Cache for non-running tools.
 	if tc.Status != ToolCallRunning {
 		tc.cachedCard = result
 		tc.cachedCardKey = fmt.Sprintf("%s:%v:%d:%d", tc.Status, tc.Collapsed, len(tc.Args), len(tc.Result))
 		tc.cachedCardWidth = width
 	}
 	return result
+}
+
+// toolBullet returns the status bullet: spinner (running), green • (done), red • (error).
+func toolBullet(status ToolCallStatus, frame int) string {
+	switch status {
+	case ToolCallRunning:
+		return waitingStatusPrefixStyle.Render(statusSpinner(frame))
+	case ToolCallError:
+		return toolBulletFail.Render("✗")
+	default:
+		return toolBulletSuccess.Render("•")
+	}
+}
+
+// formatToolResult renders the tool result in tree-indented dimmed style.
+func formatToolResult(tc *ToolCallEntry, maxWidth int) string {
+	if tc.Result == "" {
+		return ""
+	}
+
+	// Diff results get their own renderer.
+	if dr := diffResultFromJSON(tc.Result); dr != nil {
+		diffOut := renderDiff(dr, max(20, maxWidth))
+		return indentTreeResult(diffOut, maxWidth)
+	}
+
+	// Regular results: truncate and dim.
+	content := truncateToolResult(tc.Result, 500)
+	content = wrapText(content, max(20, maxWidth))
+	return indentTreeResult(toolResultDim.Render(content), maxWidth)
+}
+
+// indentTreeResult prefixes the first line with └ and subsequent lines
+// with continuation indent, matching Codex's tree style.
+func indentTreeResult(content string, _ int) string {
+	lines := strings.Split(content, "\n")
+	var out strings.Builder
+	for i, line := range lines {
+		if i == 0 {
+			out.WriteString(toolTreeBranch)
+		} else {
+			out.WriteString(toolTreeIndent)
+		}
+		out.WriteString(line)
+		if i < len(lines)-1 {
+			out.WriteString("\n")
+		}
+	}
+	return out.String()
 }
 
 // toolArgsSummary extracts a human-readable one-line summary from tool arguments.
@@ -96,7 +149,6 @@ func toolArgsSummary(toolName, args string, maxWidth int) string {
 
 	var parsed map[string]any
 	if json.Unmarshal([]byte(args), &parsed) != nil {
-		// Fallback: strip JSON braces.
 		s := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(args), "}"), "{")
 		s = strings.TrimSpace(s)
 		if len(s) > maxWidth {
@@ -137,10 +189,23 @@ func toolArgsSummary(toolName, args string, maxWidth int) string {
 		if u, ok := parsed["url"].(string); ok {
 			summary = u
 		}
+	case "git":
+		if s, ok := parsed["subcommand"].(string); ok {
+			summary = s
+		}
+	case "spawn_agent", "fork_agent":
+		if d, ok := parsed["description"].(string); ok {
+			summary = d
+		} else if p, ok := parsed["prompt"].(string); ok {
+			if len(p) > 60 {
+				summary = p[:60] + "…"
+			} else {
+				summary = p
+			}
+		}
 	}
 
 	if summary == "" {
-		// Generic fallback: first string value.
 		for _, v := range parsed {
 			if s, ok := v.(string); ok && s != "" {
 				summary = s
@@ -166,7 +231,6 @@ func formatToolArgs(toolName, args string) string {
 	for k, v := range parsed {
 		switch val := v.(type) {
 		case string:
-			// Skip very long values (like file content) in the display.
 			if len(val) > 200 {
 				lines = append(lines, k+": ("+string(rune(len(val)))+" chars)")
 			} else {
