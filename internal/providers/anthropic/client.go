@@ -262,14 +262,14 @@ func buildAnthropicRequest(req providers.ChatRequest, maxTokens int, stream bool
 		if err != nil {
 			return anthropicRequest{}, err
 		}
-		// Merge consecutive messages with the same role. The Anthropic
-		// API requires strict user/assistant alternation. Proxies
-		// reject both consecutive same-role messages AND synthetic
-		// empty assistant separators. So we always merge — the
-		// Anthropic API accepts mixed tool_result+text blocks in a
-		// single user message (CC produces these too when tool
-		// results and user context land in the same turn).
 		if n := len(payload.Messages); n > 0 && payload.Messages[n-1].Role == mapped.Role {
+			// Anthropic's Messages API accepts mixed text + tool_result
+			// blocks in a single user message.  Always merge consecutive
+			// same-role messages instead of silently dropping when
+			// canMergeBlocks returned false (the previous behaviour
+			// caused tool results to vanish when a worker-result text
+			// block landed between an assistant tool_call and its
+			// tool_result).
 			payload.Messages[n-1].Content = append(payload.Messages[n-1].Content, mapped.Content...)
 		} else {
 			payload.Messages = append(payload.Messages, mapped)
@@ -690,31 +690,6 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 	default:
 		return anthropicMessage{}, fmt.Errorf("unsupported message role %q", msg.Role)
 	}
-}
-
-// canMergeBlocks reports whether two content block slices can be
-// combined into a single message without mixing incompatible types.
-// tool_result blocks must not coexist with text/image blocks — many
-// proxies reject this structure.
-func canMergeBlocks(existing, incoming []anthropicBlock) bool {
-	hasToolResult := false
-	hasNonToolResult := false
-	for _, b := range existing {
-		if b.Type == "tool_result" {
-			hasToolResult = true
-		} else {
-			hasNonToolResult = true
-		}
-	}
-	for _, b := range incoming {
-		if b.Type == "tool_result" {
-			hasToolResult = true
-		} else {
-			hasNonToolResult = true
-		}
-	}
-	// Reject if the merged result would have both types.
-	return !(hasToolResult && hasNonToolResult)
 }
 
 func cloneHeaders(input map[string]string) map[string]string {

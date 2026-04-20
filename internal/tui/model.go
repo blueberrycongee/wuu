@@ -1723,9 +1723,11 @@ func (m Model) startStreamingTurn() (tea.Model, tea.Cmd) {
 	ctx, cancel := m.newRequestContext()
 	m.cancelStream = cancel
 
-	// Copy history for the goroutine (defensive copy).
-	history := make([]providers.ChatMessage, len(m.chatHistory))
-	copy(history, m.chatHistory)
+	// Normalize history to repair any corrupted ordering before the
+	// API sees it.  Defense-in-depth on top of pendingWorkerResults.
+	normalized := normalizeChatHistory(m.chatHistory)
+	history := make([]providers.ChatMessage, len(normalized))
+	copy(history, normalized)
 
 	result := &pendingTurnResult{}
 	m.pendingTurn = result
@@ -2792,15 +2794,21 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 				covered[idx] = true
 			}
 		}
+		var uncovered []ToolCallEntry
 		for idx := range e.ToolCalls {
 			if !covered[idx] {
-				parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
+				uncovered = append(uncovered, e.ToolCalls[idx])
 			}
 		}
+		grouped := renderToolCallsGrouped(uncovered, innerWidth, m.spinnerFrame)
+		for _, gp := range grouped {
+			parts = append(parts, indentLines(gp, contentPadLeft))
+		}
 	} else {
-		// Legacy fallback: tools first, then content.
-		for idx := range e.ToolCalls {
-			parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
+		// Legacy fallback: tools first, then content, with grouping.
+		grouped := renderToolCallsGrouped(e.ToolCalls, innerWidth, m.spinnerFrame)
+		for _, gp := range grouped {
+			parts = append(parts, indentLines(gp, contentPadLeft))
 		}
 		renderText()
 	}

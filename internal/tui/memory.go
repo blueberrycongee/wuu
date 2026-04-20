@@ -345,7 +345,7 @@ func loadChatHistory(path string) ([]providers.ChatMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan memory file: %w", err)
 	}
-	return msgs, nil
+	return normalizeChatHistory(msgs), nil
 }
 
 func loadMetaEntries(path string) ([]memoryEntry, error) {
