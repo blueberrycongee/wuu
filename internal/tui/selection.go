@@ -127,7 +127,7 @@ func (m *Model) isInChatArea(x, y int) bool {
 	top := m.layout.Chat.Y
 	bottom := top + m.layout.Chat.Height
 	left := m.layout.Chat.X
-	right := m.layout.Chat.X + m.layout.Chat.Width - 2 - contentPadRight
+	right := m.layout.Chat.X + m.layout.Chat.Width - 1
 	return x >= left && x <= right && y >= top && y < bottom
 }
 

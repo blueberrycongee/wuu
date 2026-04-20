@@ -611,7 +611,7 @@ func TestMouseClickPositionsCursor(t *testing.T) {
 }
 
 func TestMouseClickChatAreaFocusesInputOnRelease(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.input.Blur()
 
 	updated, _ := m.Update(tea.MouseMsg{
@@ -652,7 +652,7 @@ func TestMouseClickChatAreaFocusesInputOnRelease(t *testing.T) {
 }
 
 func TestMouseDragChatAreaStartsSelectionAfterThreshold(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.input.Focus()
 	pressX := m.layout.Chat.X + 2
 	pressY := m.layout.Chat.Y + 1
@@ -763,271 +763,6 @@ func TestMouseClickPositionsCursorMultiLine(t *testing.T) {
 	}
 }
 
-func TestMouseDragScrollbarThumbTracksMotion(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
-
-	thumbPos, thumbSize, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		t.Fatal("expected visible scrollbar thumb")
-	}
-	if thumbSize < 2 {
-		t.Fatalf("expected thumb size >= 2 for midpoint drag test, got %d", thumbSize)
-	}
-
-	clickX := m.layout.Chat.X + m.layout.Chat.Width - 1
-	grabRow := thumbPos + thumbSize/2
-	pressY := m.layout.Chat.Y + grabRow
-
-	updated, _ := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
-		X:      clickX,
-		Y:      pressY,
-	})
-	dragging := updated.(Model)
-	if !dragging.scrollbarDragging {
-		t.Fatal("expected scrollbarDragging=true after pressing thumb")
-	}
-	if dragging.scrollbarDragGrabOffset != grabRow-thumbPos {
-		t.Fatalf("expected grab offset %d, got %d", grabRow-thumbPos, dragging.scrollbarDragGrabOffset)
-	}
-
-	targetRow := min(dragging.layout.Chat.Height-1, grabRow+3)
-	updated, _ = dragging.Update(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonLeft,
-		X:      dragging.layout.Chat.X,
-		Y:      dragging.layout.Chat.Y + targetRow,
-	})
-	afterMotion := updated.(Model)
-	want := scrollbarOffsetForThumbPos(targetRow-dragging.scrollbarDragGrabOffset, trackSpace, maxOffset)
-	if afterMotion.viewport.YOffset != want {
-		t.Fatalf("expected viewport offset %d after drag motion, got %d", want, afterMotion.viewport.YOffset)
-	}
-	if !afterMotion.scrollbarDragging {
-		t.Fatal("expected scrollbarDragging=true during drag")
-	}
-
-	updated, _ = afterMotion.Update(tea.MouseMsg{
-		Action: tea.MouseActionRelease,
-		Button: tea.MouseButtonLeft,
-		X:      clickX,
-		Y:      dragging.layout.Chat.Y + targetRow,
-	})
-	afterRelease := updated.(Model)
-	if afterRelease.scrollbarDragging {
-		t.Fatal("expected scrollbarDragging=false after release")
-	}
-}
-
-func TestMouseClickScrollbarTrackJumpsProportionally(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
-
-	thumbPos, thumbSize, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		t.Fatal("expected visible scrollbar thumb")
-	}
-
-	row := thumbPos + thumbSize
-	if row >= m.layout.Chat.Height {
-		row = thumbPos - 1
-	}
-	if row < 0 || row >= m.layout.Chat.Height {
-		t.Fatalf("failed to choose a track row outside thumb: row=%d", row)
-	}
-
-	absoluteTarget := scrollbarOffsetForThumbPos(row-thumbSize/2, trackSpace, maxOffset)
-	clickX := m.layout.Chat.X + m.layout.Chat.Width - 1
-	clickY := m.layout.Chat.Y + row
-	updated, _ := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
-		X:      clickX,
-		Y:      clickY,
-	})
-	after := updated.(Model)
-	if after.scrollbarDragging {
-		t.Fatal("expected scrollbarDragging=false after track click")
-	}
-	if after.viewport.YOffset <= m.viewport.YOffset {
-		t.Fatalf("expected track click to move toward target, before=%d after=%d", m.viewport.YOffset, after.viewport.YOffset)
-	}
-	if absoluteTarget-m.viewport.YOffset > m.viewport.Height && after.viewport.YOffset >= absoluteTarget {
-		t.Fatalf("expected softened track click to stop before absolute target %d, got %d", absoluteTarget, after.viewport.YOffset)
-	}
-}
-
-func TestMouseDragScrollbarReanchorsWhenThumbGeometryChanges(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
-	maxOffset := max(0, m.viewport.TotalLineCount()-m.viewport.Height)
-	m.setViewportOffset(maxOffset / 2)
-
-	thumbPos, thumbSize, _, _, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		t.Fatal("expected visible scrollbar thumb")
-	}
-	grabRow := thumbPos
-	if thumbSize > 1 {
-		grabRow = thumbPos + thumbSize/2
-	}
-	clickX := m.layout.Chat.X + m.layout.Chat.Width - 1
-	pressY := m.layout.Chat.Y + grabRow
-	updated, _ := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
-		X:      clickX,
-		Y:      pressY,
-	})
-	dragging := updated.(Model)
-	if !dragging.scrollbarDragging {
-		t.Fatal("expected scrollbarDragging=true after thumb press")
-	}
-	offsetBeforeGrowth := dragging.viewport.YOffset
-
-	dragging.appendEntry("ASSISTANT", strings.Repeat("new line\n", 120)+"end")
-	dragging.refreshViewport(false)
-	updated, _ = dragging.Update(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonLeft,
-		X:      clickX,
-		Y:      pressY,
-	})
-	after := updated.(Model)
-
-	diff := after.viewport.YOffset - offsetBeforeGrowth
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > 2 {
-		t.Fatalf("expected offset stable after geometry change with zero drag delta, got before=%d after=%d", offsetBeforeGrowth, after.viewport.YOffset)
-	}
-}
-
-func TestMouseMotionScrollbarHoverState(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
-	rightX := m.layout.Chat.X + m.layout.Chat.Width - 1
-	hoverRow := min(2, m.layout.Chat.Height-1)
-
-	updated, _ := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonNone,
-		X:      rightX,
-		Y:      m.layout.Chat.Y + hoverRow,
-	})
-	hovered := updated.(Model)
-	if !hovered.scrollbarHoverActive {
-		t.Fatal("expected hover active while pointer is on scrollbar")
-	}
-	if hovered.scrollbarHoverRow != hoverRow {
-		t.Fatalf("expected hover row %d, got %d", hoverRow, hovered.scrollbarHoverRow)
-	}
-
-	updated, _ = hovered.Update(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonNone,
-		X:      hovered.layout.Chat.X,
-		Y:      hovered.layout.Chat.Y + hoverRow,
-	})
-	afterLeave := updated.(Model)
-	if afterLeave.scrollbarHoverActive {
-		t.Fatal("expected hover inactive after leaving scrollbar")
-	}
-	if afterLeave.scrollbarHoverRow != -1 {
-		t.Fatalf("expected hover row reset to -1, got %d", afterLeave.scrollbarHoverRow)
-	}
-}
-
-func TestMouseHoverScrollbarWithinHitboxTolerance(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
-	rightX := m.layout.Chat.X + m.layout.Chat.Width - 1
-	leftToleranceX := rightX - 1
-	if leftToleranceX < m.layout.Chat.X {
-		leftToleranceX = m.layout.Chat.X
-	}
-	hoverY := m.layout.Chat.Y + min(2, m.layout.Chat.Height-1)
-
-	updated, _ := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonNone,
-		X:      leftToleranceX,
-		Y:      hoverY,
-	})
-	after := updated.(Model)
-	if !after.scrollbarHoverActive {
-		t.Fatal("expected hover active inside scrollbar hitbox tolerance")
-	}
-}
-
-func TestMouseAltClickScrollbarAnchorJumpsToUserMessage(t *testing.T) {
-	m := NewModel(Config{
-		Provider:   "test",
-		Model:      "test-model",
-		ConfigPath: "/tmp/.wuu.json",
-		StreamRunner: &agent.StreamRunner{
-			Client: &echoStreamClient{answer: func(msgs []providers.ChatMessage) string { return msgs[len(msgs)-1].Content }},
-			Model:  "test-model",
-		},
-	})
-	m.width = 100
-	m.height = 20
-	m.relayout()
-
-	for i := 0; i < 3; i++ {
-		m.appendEntry("USER", fmt.Sprintf("user %d", i))
-		m.appendEntry("ASSISTANT", strings.Repeat("line\n", 20)+"end")
-	}
-	m.refreshViewport(false)
-
-	if len(m.userMessageLineAnchors) < 2 {
-		t.Fatalf("expected at least 2 user anchors, got %d", len(m.userMessageLineAnchors))
-	}
-	maxOffset := max(0, m.viewport.TotalLineCount()-m.viewport.Height)
-	target := 1
-	if m.userMessageLineAnchors[target] >= maxOffset {
-		target = 0
-	}
-	anchorRows := contentLinesToScrollbarRows(
-		m.userMessageLineAnchors,
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-	)
-	clickX := m.layout.Chat.X + m.layout.Chat.Width - 1
-	clickY := m.layout.Chat.Y + anchorRows[target]
-
-	updated, _ := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
-		Alt:    true,
-		X:      clickX,
-		Y:      clickY,
-	})
-	after := updated.(Model)
-
-	want := after.userMessageLineAnchors[target]
-	maxOffset = max(0, after.viewport.TotalLineCount()-after.viewport.Height)
-	if want > maxOffset {
-		want = maxOffset
-	}
-	if after.viewport.YOffset != want {
-		t.Fatalf("expected viewport offset %d after anchor click, got %d", want, after.viewport.YOffset)
-	}
-}
-
 // TestMouseDragSelectionAutoScrollsPastEdge covers the bug where a
 // drag-select held past the chat viewport's bottom edge couldn't
 // extend the selection into off-screen content. The motion handler
@@ -1036,7 +771,7 @@ func TestMouseAltClickScrollbarAnchorJumpsToUserMessage(t *testing.T) {
 // tick when the user holds the cursor still past the edge — that
 // second part is the part the user explicitly asked for.
 func TestMouseDragSelectionAutoScrollsPastEdge(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.setViewportOffset(0)
 	startOffset := m.viewport.YOffset
 
@@ -1152,7 +887,7 @@ func TestMouseDragSelectionAutoScrollsPastEdge(t *testing.T) {
 }
 
 func TestMouseSelectionDrainsQueuedStreamEvents(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.streaming = true
 	m.pendingRequest = true
 	m.streamTarget = len(m.entries) - 1
@@ -1253,7 +988,7 @@ func TestSetCopyStatusLine_PreservesStructuredLiveWorkStatus(t *testing.T) {
 }
 
 func TestRefreshViewportKeepsOffsetWhileStreamingWhenUserScrolledUp(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.streaming = true
 	m.pendingRequest = true
 	m.streamTarget = len(m.entries) - 1
@@ -1274,7 +1009,7 @@ func TestRefreshViewportKeepsOffsetWhileStreamingWhenUserScrolledUp(t *testing.T
 }
 
 func TestRefreshViewportFollowsBottomWhileStreamingAtBottom(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.streaming = true
 	m.pendingRequest = true
 	m.streamTarget = len(m.entries) - 1
@@ -1300,7 +1035,7 @@ func TestRefreshViewportFollowsBottomWhileStreamingAtBottom(t *testing.T) {
 }
 
 func TestApplyStreamEvent_AccumulatesWithoutViewportRefresh(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.streaming = true
 	m.pendingRequest = true
 	m.streamTarget = len(m.entries) - 1
@@ -1332,7 +1067,7 @@ func TestApplyStreamEvent_AccumulatesWithoutViewportRefresh(t *testing.T) {
 }
 
 func TestShouldRenderInlineStatus_WhenRunningTranscriptStatusIsOffscreen(t *testing.T) {
-	m := newScrollableModelForScrollbarTest(t)
+	m := newScrollableModelForViewportTest(t)
 	m.streaming = true
 	m.pendingRequest = true
 	m.streamTarget = len(m.entries) - 1
@@ -1358,7 +1093,7 @@ func TestShouldRenderInlineStatus_WhenRunningTranscriptStatusIsOffscreen(t *test
 	}
 }
 
-func newScrollableModelForScrollbarTest(t *testing.T) Model {
+func newScrollableModelForViewportTest(t *testing.T) Model {
 	t.Helper()
 	m := NewModel(Config{
 		Provider:   "test",
@@ -2378,7 +2113,7 @@ func TestComputeLayout_ReservesInlineStatusLine(t *testing.T) {
 // TestInlineSpinMsg_DoesNotRebuildViewport locks in the fix: inlineSpinMsg
 // must not trigger a viewport content rebuild. If it does, the viewport's
 // YOffset will shift on every 150ms spinner tick and break bubbletea's
-// line-diff, causing tool card flicker and scrollbar jitter.
+// line-diff, causing tool card flicker and viewport jitter.
 func TestInlineSpinMsg_DoesNotRebuildViewport(t *testing.T) {
 	m := NewModel(Config{
 		Provider:   "test",

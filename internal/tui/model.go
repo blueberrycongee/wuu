@@ -38,9 +38,7 @@ const (
 	queuePreviewMaxItems = 2
 	queuePreviewMaxChars = 28
 
-	scrollbarAnchorClickTolerance = 1
-	scrollbarHitboxTolerance      = 1
-	chatSelectionDragThreshold    = 1
+	chatSelectionDragThreshold = 1
 
 	// maxAutoResumeChain caps how many turns the main agent can
 	// auto-fire in response to worker completions without seeing
@@ -291,9 +289,6 @@ type Model struct {
 	imageBarFocused  bool // true when user is navigating the image bar
 	selectedImageIdx int  // index of the selected image pill
 
-	// Anchors (content line offsets) for user messages in the rendered viewport.
-	userMessageLineAnchors []int
-
 	// renderedContent is the full multi-line string most recently
 	// passed to viewport.SetContent. We hold our own copy because
 	// the bubbletea viewport's View() only returns the visible
@@ -313,19 +308,6 @@ type Model struct {
 	// visible again (or the user returns to bottom).
 	pendingViewportRefresh bool
 	pendingViewportEntry   int
-
-	// Scrollbar drag state.
-	scrollbarDragging       bool
-	scrollbarDragGrabOffset int
-	scrollbarDragTrackSpace int
-	scrollbarDragMaxOffset  int
-
-	// Scrollbar hover state.
-	scrollbarHoverActive bool
-	scrollbarHoverRow    int
-
-	// Cached scrollbar render, precomputed in Update() via refreshScrollbarCache().
-	cachedScrollbar string
 
 	// Text selection in viewport.
 	selection selectionState
@@ -413,7 +395,6 @@ func NewModel(cfg Config) Model {
 		workerSpawnedByID:    make(map[string]bool),
 		processEventSeen:     make(map[string]bool),
 		historyIndex:         -1,
-		scrollbarHoverRow:    -1,
 		insightProgressIdx:   -1,
 	}
 
@@ -1113,8 +1094,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.viewport, cmd = m.viewport.Update(msg)
 				m.syncViewportState()
-				m.updateScrollbarHover(msg.X, msg.Y)
-				m.refreshScrollbarCache()
 				m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
 				return m, cmd
 			}
@@ -1125,12 +1104,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
-		hoverChanged := m.updateScrollbarHover(msg.X, msg.Y)
 
 		if msg.Action == tea.MouseActionRelease {
-			m.scrollbarDragging = false
-			m.scrollbarDragTrackSpace = 0
-			m.scrollbarDragMaxOffset = 0
 			if m.selection.IsDragging {
 				m.stopSelectionAutoScroll()
 				m.selection.finish()
@@ -1207,9 +1182,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selection.update(vpCol, vpRow)
 				return m, cmd
 			}
-			if hoverChanged {
-				return m, nil
-			}
 		}
 
 		if msg.Action == tea.MouseActionMotion && m.selection.IsDragging {
@@ -1224,37 +1196,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			vpRow, vpCol := m.screenToViewportCoords(msg.X, msg.Y)
 			m.selection.update(vpCol, vpRow)
 			return m, cmd
-		}
-		if msg.Action == tea.MouseActionMotion && m.scrollbarDragging {
-			m.dragScrollbarToRow(msg.Y - m.layout.Chat.Y)
-			return m, nil
-		}
-		if msg.Action == tea.MouseActionMotion && hoverChanged {
-			return m, nil
-		}
-
-		if msg.Action == tea.MouseActionPress &&
-			msg.Button == tea.MouseButtonLeft &&
-			m.isScrollbarClick(msg.X, msg.Y) {
-			m.blurInput()
-			m.clearPendingChatClick()
-			m.selection.clear()
-			row := msg.Y - m.layout.Chat.Y
-			if msg.Alt {
-				if !m.jumpToNearestUserAnchorAtRow(row) {
-					if row == 0 {
-						m.jumpToPreviousUserAnchor()
-					} else {
-						m.jumpToScrollbarRow(row)
-					}
-				}
-				return m, nil
-			}
-			if m.startScrollbarDrag(row) {
-				return m, nil
-			}
-			m.jumpToScrollbarRow(row)
-			return m, nil
 		}
 
 		if m.showJump &&
@@ -1553,15 +1494,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Update slash command completion popup.
 	m.updateCompletion()
 
-	prevOffset := m.viewport.YOffset
 	m.viewport, cmd = m.viewport.Update(msg)
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	m.syncViewportState()
-	if m.viewport.YOffset != prevOffset {
-		m.refreshScrollbarCache()
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -2384,41 +2321,6 @@ func (m Model) historyDown() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) hasScrollableContent() bool {
-	return m.layout.Chat.Height > 0 && m.viewport.TotalLineCount() > m.viewport.Height
-}
-
-func (m *Model) isScrollbarClick(x, y int) bool {
-	if !m.hasScrollableContent() {
-		return false
-	}
-	right := m.layout.Chat.X + m.layout.Chat.Width - 1
-	left := right - scrollbarHitboxTolerance
-	if left < m.layout.Chat.X {
-		left = m.layout.Chat.X
-	}
-	top := m.layout.Chat.Y
-	bottom := top + m.layout.Chat.Height
-	return x >= left && x <= right && y >= top && y < bottom
-}
-
-func (m *Model) updateScrollbarHover(x, y int) bool {
-	prevActive := m.scrollbarHoverActive
-	prevRow := m.scrollbarHoverRow
-	if m.isScrollbarClick(x, y) {
-		m.scrollbarHoverActive = true
-		m.scrollbarHoverRow = y - m.layout.Chat.Y
-	} else {
-		m.scrollbarHoverActive = false
-		m.scrollbarHoverRow = -1
-	}
-	changed := m.scrollbarHoverActive != prevActive || m.scrollbarHoverRow != prevRow
-	if changed {
-		m.refreshScrollbarCache()
-	}
-	return changed
-}
-
 func (m Model) viewportVisibleLineRange() (start, end int, ok bool) {
 	if m.viewport.Height <= 0 {
 		return 0, 0, false
@@ -2502,152 +2404,6 @@ func (m *Model) setViewportOffset(offset int) {
 	}
 	m.viewport.YOffset = offset
 	m.syncViewportState()
-	m.refreshScrollbarCache()
-}
-
-// refreshScrollbarCache rebuilds the scrollbar string. Called from any
-// code path that changes the viewport offset, hover, or drag state so
-// the value-receiver View() can read a pre-computed result.
-func (m *Model) refreshScrollbarCache() {
-	hoverRow := -1
-	if m.scrollbarHoverActive {
-		hoverRow = m.scrollbarHoverRow
-	}
-	m.cachedScrollbar = renderScrollbarWithHover(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-		m.userMessageLineAnchors,
-		hoverRow,
-		m.scrollbarDragging,
-	)
-}
-
-func (m *Model) jumpToScrollbarRow(row int) {
-	height := m.layout.Chat.Height
-	if height <= 0 {
-		m.setViewportOffset(0)
-		return
-	}
-	if row < 0 {
-		row = 0
-	} else if row >= height {
-		row = height - 1
-	}
-	_, thumbSize, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		m.setViewportOffset(0)
-		return
-	}
-	targetThumbPos := row - thumbSize/2
-	absoluteTarget := scrollbarOffsetForThumbPos(targetThumbPos, trackSpace, maxOffset)
-	m.setViewportOffset(softenScrollbarTrackOffset(m.viewport.YOffset, absoluteTarget, m.viewport.Height, maxOffset))
-}
-
-func (m *Model) startScrollbarDrag(row int) bool {
-	thumbPos, thumbSize, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		return false
-	}
-	if row < thumbPos || row >= thumbPos+thumbSize {
-		return false
-	}
-	m.scrollbarDragging = true
-	m.scrollbarDragGrabOffset = row - thumbPos
-	m.scrollbarDragTrackSpace = trackSpace
-	m.scrollbarDragMaxOffset = maxOffset
-	return true
-}
-
-func (m *Model) dragScrollbarToRow(row int) {
-	height := m.layout.Chat.Height
-	if height <= 0 {
-		return
-	}
-	if row < 0 {
-		row = 0
-	} else if row >= height {
-		row = height - 1
-	}
-	thumbPos, _, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		m.setViewportOffset(0)
-		return
-	}
-	if trackSpace <= 0 || maxOffset <= 0 {
-		m.setViewportOffset(0)
-		return
-	}
-	if m.scrollbarDragTrackSpace != trackSpace || m.scrollbarDragMaxOffset != maxOffset {
-		m.scrollbarDragGrabOffset = row - thumbPos
-		m.scrollbarDragTrackSpace = trackSpace
-		m.scrollbarDragMaxOffset = maxOffset
-	}
-	targetThumbPos := row - m.scrollbarDragGrabOffset
-	m.setViewportOffset(scrollbarOffsetForThumbPos(targetThumbPos, trackSpace, maxOffset))
-}
-
-func (m *Model) jumpToNearestUserAnchorAtRow(row int) bool {
-	if len(m.userMessageLineAnchors) == 0 {
-		return false
-	}
-	anchorRows := contentLinesToScrollbarRows(
-		m.userMessageLineAnchors,
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-	)
-	nearest := -1
-	bestDistance := scrollbarAnchorClickTolerance + 1
-	for i, anchorRow := range anchorRows {
-		distance := anchorRow - row
-		if distance < 0 {
-			distance = -distance
-		}
-		if distance < bestDistance {
-			bestDistance = distance
-			nearest = i
-		}
-	}
-	if nearest < 0 || bestDistance > scrollbarAnchorClickTolerance {
-		return false
-	}
-	m.setViewportOffset(m.userMessageLineAnchors[nearest])
-	return true
-}
-
-// jumpToPreviousUserAnchor scrolls to the nearest user message anchor that
-// is above the current viewport offset. If no such anchor exists it jumps to
-// the very first anchor.
-func (m *Model) jumpToPreviousUserAnchor() {
-	if len(m.userMessageLineAnchors) == 0 {
-		return
-	}
-	offset := m.viewport.YOffset
-	// Walk anchors in reverse to find the first one above the current view.
-	for i := len(m.userMessageLineAnchors) - 1; i >= 0; i-- {
-		if m.userMessageLineAnchors[i] < offset {
-			m.setViewportOffset(m.userMessageLineAnchors[i])
-			return
-		}
-	}
-	// All anchors are at or below current offset — jump to the first one.
-	m.setViewportOffset(m.userMessageLineAnchors[0])
 }
 
 // compositeEntryKey computes a fast hash of all inputs that affect an
@@ -2874,22 +2630,19 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		m.entries[i].renderEnd = -1
 	}
 
-	userAnchors := make([]int, 0, len(m.entries))
-
 	if len(m.entries) == 0 && !m.pendingRequest {
 		m.renderedContent = welcomeScreen(m.viewport.Width, m.provider, m.modelName, m.sessionID)
-		m.userMessageLineAnchors = nil
 		m.pendingViewportRefresh = false
 		m.pendingViewportEntry = -1
 		m.viewport.SetContent(m.renderedContent)
-		m.refreshScrollbarCache()
 		return
 	}
 
 	// ── Pass 1: collect visible entry indices and cumulative heights ──
 	// Build a list of non-TOOL entries with their composited heights.
 	// Heights come from the composited cache (compositedH), computed
-	// eagerly for all entries so we know total height for scrollbar.
+	// eagerly for all entries so viewport virtualization can preserve
+	// scroll offsets without rebuilding every entry on every tick.
 	type entrySlot struct {
 		idx    int // index into m.entries
 		height int // line count including 2-line gap
@@ -2971,10 +2724,6 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		}
 
 		entryStartLine := lineCount
-		if e.Role == "USER" {
-			userAnchors = append(userAnchors, entryStartLine)
-		}
-
 		b.WriteString(e.composited)
 		lineCount += e.compositedH
 
@@ -2992,7 +2741,6 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		b.WriteString(strings.Repeat("\n", bottomPadLines))
 	}
 
-	m.userMessageLineAnchors = userAnchors
 	m.renderedContent = b.String()
 	m.pendingViewportRefresh = false
 	m.pendingViewportEntry = -1
@@ -3004,20 +2752,6 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		m.setViewportOffset(prevOffset)
 	}
 	m.showJump = !m.viewport.AtBottom()
-	if !m.hasScrollableContent() {
-		m.scrollbarHoverActive = false
-		m.scrollbarHoverRow = -1
-		m.scrollbarDragging = false
-		m.scrollbarDragTrackSpace = 0
-		m.scrollbarDragMaxOffset = 0
-	} else if m.scrollbarHoverActive {
-		if m.scrollbarHoverRow < 0 {
-			m.scrollbarHoverRow = 0
-		} else if m.scrollbarHoverRow >= m.layout.Chat.Height {
-			m.scrollbarHoverRow = m.layout.Chat.Height - 1
-		}
-	}
-	m.refreshScrollbarCache()
 }
 
 func (m *Model) relayout() {
@@ -3240,10 +2974,6 @@ func (m Model) View() string {
 		outputBox = overlaySelection(outputBox, &m.selection, m.viewport.YOffset, m.viewport.Width)
 	}
 
-	// Overlay scrollbar — pre-computed in Update() via refreshScrollbarCache().
-	if m.cachedScrollbar != "" {
-		outputBox = overlayScrollbar(outputBox, m.cachedScrollbar, m.layout.Chat.Width)
-	}
 	inputBox := m.input.View()
 	if m.inputSelection.hasSelection() {
 		inputBox = overlayInputSelection(inputBox, &m.inputSelection)
