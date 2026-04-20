@@ -1723,8 +1723,10 @@ func (m Model) startStreamingTurn() (tea.Model, tea.Cmd) {
 	ctx, cancel := m.newRequestContext()
 	m.cancelStream = cancel
 
-	// Normalize history to repair any corrupted ordering before the
-	// API sees it.  Defense-in-depth on top of pendingWorkerResults.
+	// Normalize history to repair any corrupted ordering (orphan tool
+	// results, interleaved worker results, missing results) before the
+	// API sees it.  This is defense-in-depth on top of the real-time
+	// pendingWorkerResults buffer.
 	normalized := normalizeChatHistory(m.chatHistory)
 	history := make([]providers.ChatMessage, len(normalized))
 	copy(history, normalized)
