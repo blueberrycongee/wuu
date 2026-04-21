@@ -28,6 +28,7 @@ type theme struct {
 	HeaderBg    lipgloss.Color // header background accent
 	ToolBorder  lipgloss.Color // tool call borders
 	InputBorder lipgloss.Color // input box border
+	Divider     lipgloss.Color // horizontal separator lines
 
 	// Diff.
 	DiffAddBg    lipgloss.Color // insert line background
@@ -48,6 +49,20 @@ type theme struct {
 	// any other styled element in the chat (otherwise the selection
 	// vanishes over those regions).
 	SelectionBg lipgloss.Color
+
+	// Search highlight — used for in-viewport search match overlay.
+	SearchMatchBg   lipgloss.Color
+	SearchCurrentBg lipgloss.Color
+
+	// Metadata row — model name / timestamp in transcript mode.
+	MetadataFg lipgloss.Color
+
+	// Thinking block.
+	ThinkingBorder lipgloss.Color
+	ThinkingFg     lipgloss.Color
+
+	// Scroll indicator (jump-to-bottom arrow).
+	ScrollIndicatorFg lipgloss.Color
 }
 
 // darkTheme is the default color palette.
@@ -67,6 +82,7 @@ var darkTheme = theme{
 	HeaderBg:    lipgloss.Color("#D77757"), // brand orange
 	ToolBorder:  lipgloss.Color("#B1B9F9"), // blue-purple
 	InputBorder: lipgloss.Color("#888888"), // medium gray
+	Divider:     lipgloss.Color("#3A3A3A"), // subtle separator
 
 	DiffAddBg:    lipgloss.Color("#213A2B"), // dark green
 	DiffAddFg:    lipgloss.Color("#4EBA65"), // bright green
@@ -77,6 +93,16 @@ var darkTheme = theme{
 	UserBubbleFg: lipgloss.Color("#F5F7FA"), // near-white
 
 	SelectionBg: lipgloss.Color("#264F78"), // muted dark blue (VS Code / Claude Code dark selection)
+
+	SearchMatchBg:   lipgloss.Color("#5C4033"), // warm muted brown
+	SearchCurrentBg: lipgloss.Color("#8B6914"), // golden brown
+
+	MetadataFg: lipgloss.Color("#6A737D"), // muted metadata gray
+
+	ThinkingBorder: lipgloss.Color("#555555"), // subtle when done
+	ThinkingFg:     lipgloss.Color("#888888"), // dimmed thinking text
+
+	ScrollIndicatorFg: lipgloss.Color("#D77757"), // brand color for jump indicator
 }
 
 var lightTheme = theme{
@@ -95,6 +121,7 @@ var lightTheme = theme{
 	HeaderBg:    lipgloss.Color("#EDEFF2"), // light header background
 	ToolBorder:  lipgloss.Color("#4C61C9"), // readable indigo
 	InputBorder: lipgloss.Color("#B6BEC7"), // input border
+	Divider:     lipgloss.Color("#DEE3E9"), // light separator
 
 	DiffAddBg:    lipgloss.Color("#E8F7EC"), // light green bg
 	DiffAddFg:    lipgloss.Color("#1E7E34"), // dark green text
@@ -105,6 +132,16 @@ var lightTheme = theme{
 	UserBubbleFg: lipgloss.Color("#1F2328"), // dark text
 
 	SelectionBg: lipgloss.Color("#B4D5FF"), // soft pastel blue (VS Code / Claude Code light selection)
+
+	SearchMatchBg:   lipgloss.Color("#FFF3CD"), // warm yellow
+	SearchCurrentBg: lipgloss.Color("#FFE082"), // golden yellow
+
+	MetadataFg: lipgloss.Color("#8A939C"), // light metadata gray
+
+	ThinkingBorder: lipgloss.Color("#C9D1D9"), // subtle when done
+	ThinkingFg:     lipgloss.Color("#5C6670"), // dimmed thinking text
+
+	ScrollIndicatorFg: lipgloss.Color("#B85A39"), // brand color for jump indicator
 }
 
 type themeMode string
@@ -169,6 +206,13 @@ var (
 	waitingStatusLabelStrongStyle lipgloss.Style
 	waitingStatusLabelBrightStyle lipgloss.Style
 	waitingStatusMetaStyle        lipgloss.Style
+
+	// ── New styles for improved visual hierarchy ──
+	dividerStyle         lipgloss.Style
+	metadataStyle        lipgloss.Style
+	searchMatchStyle     lipgloss.Style
+	searchCurrentStyle   lipgloss.Style
+	scrollIndicatorStyle lipgloss.Style
 )
 
 func init() {
@@ -251,6 +295,13 @@ func applyTheme(t theme) {
 	waitingStatusLabelStrongStyle = lipgloss.NewStyle().Bold(true).Foreground(t.Brand)
 	waitingStatusLabelBrightStyle = lipgloss.NewStyle().Bold(true).Foreground(t.BrandLight)
 	waitingStatusMetaStyle = lipgloss.NewStyle().Foreground(t.Subtle)
+
+	// ── New styles for improved visual hierarchy ──
+	dividerStyle = lipgloss.NewStyle().Foreground(t.Divider)
+	metadataStyle = lipgloss.NewStyle().Foreground(t.MetadataFg).Italic(true)
+	searchMatchStyle = lipgloss.NewStyle().Background(t.SearchMatchBg)
+	searchCurrentStyle = lipgloss.NewStyle().Background(t.SearchCurrentBg).Bold(true)
+	scrollIndicatorStyle = lipgloss.NewStyle().Foreground(t.ScrollIndicatorFg).Bold(true)
 
 	refreshTextareasForTheme()
 	initPickerStyles()
