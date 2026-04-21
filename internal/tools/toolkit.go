@@ -99,6 +99,10 @@ func (t *Toolkit) rebuildRegistry() {
 		NewListProcessesTool(e),
 		NewStopProcessTool(e),
 		NewReadProcessOutputTool(e),
+		// Cron scheduling
+		NewScheduleCronTool(e),
+		NewCancelCronTool(e),
+		NewListCronTool(e),
 	)
 }
 
