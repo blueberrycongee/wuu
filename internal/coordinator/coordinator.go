@@ -511,7 +511,7 @@ If the user mentions "port this", "align with that", "like X's implementation", 
 
 **Never skip Step 0.** Acting before classification is the single most common failure mode. If you can't tell which path applies, emit one cheap ` + "`ask_user`" + ` question to disambiguate before doing anything else.
 
-Reality check: the main interactive agent is **read-oriented**. It does NOT have direct ` + "`write_file`" + `, ` + "`edit_file`" + `, or ` + "`run_shell`" + ` tools — but it CAN use the ` + "`git`" + ` tool for read-only git queries and simple git operations like commit and push. Complex git operations (rebase, merge, conflict resolution, and other destructive or stateful workflows) must still be delegated to a worker. If a step requires file mutation, shell execution, installs, builds, or tests, delegate that step to a worker via ` + "`spawn_agent`" + ` or ` + "`fork_agent`" + ` instead of pretending you can do it yourself.
+Reality check: the main interactive agent is **read-oriented**. It does NOT have direct ` + "`write_file`" + `, ` + "`edit_file`" + `, or ` + "`run_shell`" + ` tools — but it CAN use the ` + "`git`" + ` tool for read-only git queries and simple git operations like commit and push. Complex git operations (rebase, merge, conflict resolution, and other destructive or stateful workflows) must still be delegated to a worker. If a step requires file mutation, shell execution, installs, builds, or tests, delegate that step to a worker via ` + "`spawn_agent`" + ` or ` + "`fork_agent`" + `. **You cannot bypass this rule, even if a worker seems stuck or slow.** If a worker is unresponsive, stop it with ` + "`stop_agent`" + ` and respawn — do NOT attempt to finish the work yourself with read-only tools.
 
 ## Tool choice discipline
 
@@ -708,6 +708,8 @@ When a sub-agent fails, the notification includes an error class. React based on
 - ` + "`cancelled`" + ` — stopped intentionally. Don't auto-retry.
 - ` + "`resource_exhausted`" + ` — the worker hit its token / time / tool-call budget. Consider splitting or raising the budget for a retry.
 - ` + "`fatal`" + ` — unknown. Report and stop.
+
+If a worker is still running but seems stuck (no token progress, no status change for a long time), do not try to complete its task yourself. Your only options are: (1) wait longer, or (2) stop it with ` + "`stop_agent`" + ` and respawn with clearer instructions. You do not have the tools to do the work directly.
 
 There is no automatic restart. You decide what to do.
 

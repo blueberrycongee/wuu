@@ -3,6 +3,9 @@ package markdown
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func TestRender_Paragraph(t *testing.T) {
@@ -76,10 +79,22 @@ func TestRender_InlineCode(t *testing.T) {
 }
 
 func TestRender_Bold(t *testing.T) {
+	// Force TrueColor so lipgloss emits ANSI escapes for bold.
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(oldProfile)
+
 	input := "This is **bold** text"
 	got := Render(input, 80, DefaultStyles())
+	if strings.Contains(got, "**") {
+		t.Fatalf("expected ** to be stripped, got %q", got)
+	}
 	if !strings.Contains(got, "bold") {
-		t.Fatalf("expected bold text, got %q", got)
+		t.Fatalf("expected 'bold' text, got %q", got)
+	}
+	// Verify ANSI bold escape is present
+	if !strings.Contains(got, "\x1b[1m") {
+		t.Fatalf("expected ANSI bold escape, got %q", got)
 	}
 }
 

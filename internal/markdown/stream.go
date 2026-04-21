@@ -5,28 +5,24 @@ import (
 )
 
 // StreamCollector accumulates streaming text deltas and renders
-// markdown incrementally on each Commit tick (100ms). This eliminates
-// the visible jump between raw text (during streaming) and rendered
-// markdown (at stream end) that occurred with the old raw-then-render
-// approach.
+// markdown incrementally on newline boundaries. A line is only
+// "committed" (returned) once it ends with \n, which avoids the
+// visual instability of re-rendering partial lines on every tick.
 //
 // Aligned with Codex CLI's approach: markdown is rendered on newline
 // boundaries during streaming, so the visual output is stable
 // throughout the response — no sudden reformatting at EventDone.
 type StreamCollector struct {
-	buffer strings.Builder
-	width  int
-	styles Styles
-	// dirty tracks whether new content was pushed since last Commit.
-	dirty bool
+	buffer             strings.Builder
+	width              int
+	styles             Styles
+	dirty              bool
+	committedLineCount int
 }
 
 // NewStreamCollector creates a new collector for streaming markdown.
 func NewStreamCollector(width int, styles Styles) *StreamCollector {
-	return &StreamCollector{
-		width:  width,
-		styles: styles,
-	}
+	return &StreamCollector{width: width, styles: styles}
 }
 
 // Push appends a delta to the buffer.
@@ -40,43 +36,62 @@ func (c *StreamCollector) Dirty() bool {
 	return c.dirty
 }
 
-// Commit renders the accumulated buffer through the markdown pipeline
-// and clears the dirty flag. Called on each 100ms tick during
-// streaming. Rendering on every tick (not every token) keeps the cost
-// manageable while producing stable, visually consistent output that
-// won't jump when the stream ends.
-func (c *StreamCollector) Commit() string {
+// Commit renders the accumulated buffer and returns ONLY the newly completed
+// lines since the last commit. A line is "complete" only if it ends with \n.
+// If the buffer has no \n, returns nil (nothing to commit yet).
+// NO raw fallback — if Render returns "", return nil.
+func (c *StreamCollector) Commit() []string {
 	c.dirty = false
 	src := c.buffer.String()
+	lastNL := strings.LastIndex(src, "\n")
+	if lastNL < 0 {
+		return nil
+	}
+	source := src[:lastNL+1]
+	rendered := Render(source, c.width, c.styles)
+	if rendered == "" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	if len(lines) <= c.committedLineCount {
+		return nil
+	}
+	out := make([]string, len(lines)-c.committedLineCount)
+	copy(out, lines[c.committedLineCount:])
+	c.committedLineCount = len(lines)
+	return out
+}
+
+// Finalize renders the complete buffer (appending a temporary \n if missing)
+// and returns any remaining lines beyond the last commit. Then resets state.
+// NO raw fallback.
+func (c *StreamCollector) Finalize() []string {
+	src := c.buffer.String()
 	if src == "" {
-		return ""
+		c.reset()
+		return nil
 	}
 	if !strings.HasSuffix(src, "\n") {
 		src += "\n"
 	}
 	rendered := Render(src, c.width, c.styles)
 	if rendered == "" {
-		return src // fallback to raw if render produces nothing
+		c.reset()
+		return nil
 	}
-	return strings.TrimRight(rendered, "\n")
+	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	prevCommitted := c.committedLineCount
+	c.reset()
+	if len(lines) <= prevCommitted {
+		return nil
+	}
+	out := make([]string, len(lines)-prevCommitted)
+	copy(out, lines[prevCommitted:])
+	return out
 }
 
-// Finalize renders the complete buffer through the markdown pipeline
-// and resets state. Called once when the stream ends (EventDone).
-// Since Commit already renders markdown on each tick, this is mostly
-// a final pass to ensure the last partial line is included.
-func (c *StreamCollector) Finalize() string {
-	src := c.buffer.String()
-	if src == "" {
-		c.buffer.Reset()
-		return ""
-	}
-	if !strings.HasSuffix(src, "\n") {
-		src += "\n"
-	}
-
-	rendered := Render(src, c.width, c.styles)
+func (c *StreamCollector) reset() {
 	c.buffer.Reset()
 	c.dirty = false
-	return strings.TrimRight(rendered, "\n")
+	c.committedLineCount = 0
 }

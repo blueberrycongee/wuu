@@ -138,8 +138,7 @@ type transcriptEntry struct {
 	Role        string
 	Content     string // raw content
 	rendered    string // markdown-rendered text (cached)
-	renderedLen int    // Content length when rendered was last computed
-	renderedW   int    // viewport width when rendered was last computed
+	renderedLines []string // lines accumulated from StreamCollector commits
 	renderStart int    // inclusive content line in the last rendered viewport snapshot
 	renderEnd   int    // inclusive content line in the last rendered viewport snapshot
 
@@ -230,8 +229,9 @@ type Model struct {
 	workerNotifyCh  chan subagent.Notification
 
 	// Cron scheduler: fires scheduled prompts into messageQueue.
-	scheduler  *cron.Scheduler
-	cronFireCh chan string
+	scheduler      *cron.Scheduler
+	cronFireCh     chan string
+	schedulerLock  *cron.Lock
 
 	// Auto-resume state: when a worker completes while the main agent
 	// is busy, we set pendingAutoResume so the streamFinishedMsg
@@ -560,8 +560,10 @@ func (m Model) loadMemory() Model {
 
 	// Start cron scheduler for durable tasks.
 	schedPath := filepath.Join(m.workspaceRoot, ".wuu", "scheduled_tasks.json")
+	lockPath := filepath.Join(m.workspaceRoot, ".wuu", "scheduled_tasks.lock")
 	schedStore := cron.NewTaskStore(schedPath)
 	m.cronFireCh = make(chan string, 8)
+	m.schedulerLock = cron.NewLock(lockPath, m.sessionID)
 	m.scheduler = cron.NewScheduler(cron.SchedulerConfig{
 		Store: schedStore,
 		OnFire: func(p string) {
@@ -570,7 +572,10 @@ func (m Model) loadMemory() Model {
 			default:
 			}
 		},
-		IsOwner: func() bool { return true },
+		IsOwner: func() bool {
+			ok, _ := m.schedulerLock.TryAcquire()
+			return ok
+		},
 	})
 	m.scheduler.Start()
 
@@ -881,10 +886,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refreshing — this tick is the render heartbeat, aligned
 			// with Codex's 80ms commit tick pattern.
 			if m.streamCollector != nil && m.streamCollector.Dirty() && m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
-				if raw := m.streamCollector.Commit(); raw != "" {
+				if newLines := m.streamCollector.Commit(); len(newLines) > 0 {
 					e := &m.entries[m.streamTarget]
-					e.rendered = raw
-					e.renderedLen = len(e.Content)
+					e.renderedLines = append(e.renderedLines, newLines...)
+					e.rendered = strings.Join(e.renderedLines, "\n")
 				}
 				m.refreshViewportForEntry(m.streamTarget, false)
 			} else if m.streaming && m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
@@ -924,7 +929,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.insightProgressIdx >= 0 && m.insightProgressIdx < len(m.entries) {
 				m.entries[m.insightProgressIdx].Content = insight.FormatReport(msg.event.Report)
 				m.entries[m.insightProgressIdx].rendered = ""
-				m.entries[m.insightProgressIdx].renderedLen = 0
 				m.entries[m.insightProgressIdx].composited = ""
 			} else if msg.event.Report != nil {
 				m.appendEntry("assistant", insight.FormatReport(msg.event.Report))
@@ -953,7 +957,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.insightProgressIdx < len(m.entries) {
 				m.entries[m.insightProgressIdx].Content += "\n" + line
 				m.entries[m.insightProgressIdx].rendered = ""
-				m.entries[m.insightProgressIdx].renderedLen = 0
 			}
 			m.statusLine = fmt.Sprintf("insight: %s", msg.event.Detail)
 			m.refreshViewport(true)
@@ -1513,6 +1516,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.scheduler != nil {
 					m.scheduler.Stop()
 				}
+				if m.schedulerLock != nil {
+					m.schedulerLock.Release()
+				}
 				m.dispatchSessionEnd()
 				m.quitting = true
 				return m, tea.Quit
@@ -1656,6 +1662,9 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 				}
 				if m.scheduler != nil {
 					m.scheduler.Stop()
+				}
+				if m.schedulerLock != nil {
+					m.schedulerLock.Release()
 				}
 				m.dispatchSessionEnd()
 				m.quitting = true
@@ -1911,16 +1920,7 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 				contentWidth(m.viewport.Width),
 				markdown.DefaultStyles(),
 			)
-			e := &m.entries[m.streamTarget]
-			if e.streamBuf == nil {
-				e.streamBuf = &strings.Builder{}
-			}
-			if existing := e.Content; existing != "" {
-				m.streamCollector.Push(existing)
-				e.streamBuf.WriteString(existing)
-			}
 		}
-		// O(1) amortized append via Builder instead of O(n) string copy.
 		e := &m.entries[m.streamTarget]
 		if e.streamBuf == nil {
 			e.streamBuf = &strings.Builder{}
@@ -2004,12 +2004,13 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		// One SSE stream finished. The runner may continue with tool
 		// execution and start another stream, so keep listening.
 		if m.streamCollector != nil {
-			if final := m.streamCollector.Finalize(); final != "" {
+			if finalLines := m.streamCollector.Finalize(); len(finalLines) > 0 {
 				if m.streamTarget >= 0 && m.streamTarget < len(m.entries) {
 					e := &m.entries[m.streamTarget]
-					e.streamBuf = nil // release builder memory
-					e.rendered = final
-					e.renderedLen = len(e.Content)
+					e.renderedLines = append(e.renderedLines, finalLines...)
+					e.rendered = strings.Join(e.renderedLines, "\n")
+					e.streamBuf = nil
+					e.renderedLines = nil
 				}
 			}
 			m.streamCollector = nil
@@ -2337,7 +2338,6 @@ func (m *Model) cacheEntryRendered(idx int) {
 	if e.Role == "ASSISTANT" {
 		if r, err := m.renderMarkdown(e.Content); err == nil {
 			e.rendered = r
-			e.renderedLen = len(e.Content)
 		}
 	}
 }
@@ -2976,7 +2976,6 @@ func (m *Model) relayout() {
 	if m.layout.Chat.Width != oldChatW {
 		for i := range m.entries {
 			m.entries[i].rendered = ""
-			m.entries[i].renderedLen = 0
 			m.entries[i].composited = ""
 			m.entries[i].compositedKey = 0
 		}

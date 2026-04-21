@@ -60,6 +60,10 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) check() {
+	if s.cfg.IsOwner != nil && !s.cfg.IsOwner() {
+		return
+	}
+
 	tasks, err := s.cfg.Store.List()
 	if err != nil {
 		return
