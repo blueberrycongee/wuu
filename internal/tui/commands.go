@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/cron"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	processruntime "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -80,6 +81,8 @@ func init() {
 		{Name: "logs", Description: "Show recent output from a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLogs},
 		{Name: "cleanup-worktrees", Description: "Remove all sub-agent worktrees for this session", Type: cmdTypeLocal, Execute: cmdCleanupWorktrees},
 		{Name: "insight", Description: "Session stats and diagnostics", Type: cmdTypeLocal, Execute: cmdInsight},
+		{Name: "loop", Description: "Create a scheduled recurring task", ArgHint: "<interval> <prompt>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLoop},
+		{Name: "loops", Description: "List scheduled tasks", Type: cmdTypeLocal, Execute: cmdLoops},
 		{Name: "exit", Aliases: []string{"quit"}, Description: "Exit wuu", Type: cmdTypeLocal, Execute: cmdExit},
 	}
 }
@@ -824,6 +827,115 @@ func cmdInsight(_ string, m *Model) string {
 
 func cmdExit(_ string, _ *Model) string {
 	return "__exit__"
+}
+
+func cmdLoop(args string, m *Model) string {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return "usage: /loop <interval> <prompt>\n  interval: 5m, 2h, 1d (default 10m)\n  example: /loop 5m check the deploy"
+	}
+
+	interval, prompt := parseLoopArgs(args)
+	if prompt == "" {
+		return "usage: /loop <interval> <prompt>"
+	}
+
+	cronStr, err := cron.IntervalToCron(interval)
+	if err != nil {
+		return fmt.Sprintf("loop: invalid interval %q", interval)
+	}
+
+	store := cron.NewTaskStore(filepath.Join(m.workspaceRoot, ".wuu", "scheduled_tasks.json"))
+	tasks, _ := store.List()
+	if len(tasks) >= cron.MaxJobs {
+		return fmt.Sprintf("loop: maximum number of scheduled tasks reached (%d)", cron.MaxJobs)
+	}
+
+	task := cron.Task{
+		ID:        cron.GenerateTaskID(),
+		Cron:      cronStr,
+		Prompt:    prompt,
+		CreatedAt: time.Now().UnixMilli(),
+		Recurring: true,
+	}
+	if err := store.Add(task); err != nil {
+		return fmt.Sprintf("loop: failed to save task: %v", err)
+	}
+
+	// Queue the prompt for immediate execution (UX: don't wait for first cron fire).
+	m.messageQueue = append(m.messageQueue, queuedMessage{Text: prompt})
+
+	return fmt.Sprintf("loop: scheduling '%s' every %s (%s)", prompt, interval, cronStr)
+}
+
+func cmdLoops(_ string, m *Model) string {
+	store := cron.NewTaskStore(filepath.Join(m.workspaceRoot, ".wuu", "scheduled_tasks.json"))
+	tasks, err := store.List()
+	if err != nil {
+		return fmt.Sprintf("loops: %v", err)
+	}
+	if len(tasks) == 0 {
+		return "loops: no scheduled tasks"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "scheduled tasks (%d):\n", len(tasks))
+	now := time.Now().UnixMilli()
+	for _, task := range tasks {
+		typeLabel := "one-shot"
+		if task.Recurring {
+			typeLabel = "recurring"
+		}
+		if cron.IsExpired(task, now) {
+			typeLabel += " [expired]"
+		}
+		fmt.Fprintf(&b, "  %s — %s — %s: %s\n", task.ID, task.Cron, typeLabel, stringutil.Truncate(task.Prompt, 40, "..."))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// parseLoopArgs extracts interval and prompt from /loop arguments.
+// Priority: leading interval token, then trailing "every" clause, then default 10m.
+func parseLoopArgs(input string) (interval, prompt string) {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return "10m", ""
+	}
+
+	first := strings.ToLower(fields[0])
+	if isIntervalToken(first) {
+		return first, strings.TrimSpace(strings.TrimPrefix(input, fields[0]))
+	}
+
+	if len(fields) >= 3 {
+		last := strings.ToLower(fields[len(fields)-1])
+		secondLast := strings.ToLower(fields[len(fields)-2])
+		if secondLast == "every" && isIntervalToken(last) {
+			promptParts := fields[:len(fields)-2]
+			return last, strings.Join(promptParts, " ")
+		}
+	}
+
+	return "10m", input
+}
+
+func isIntervalToken(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	unit := s[len(s)-1]
+	if unit != 's' && unit != 'm' && unit != 'h' && unit != 'd' {
+		return false
+	}
+	num := s[:len(s)-1]
+	if num == "" {
+		return false
+	}
+	for _, c := range num {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
