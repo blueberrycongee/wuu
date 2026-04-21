@@ -84,6 +84,25 @@ func TestNormalizeMessages_multipleAssistants(t *testing.T) {
 	}
 }
 
+func TestNormalizeMessages_interleavedUserMovedAfterToolResults(t *testing.T) {
+	msgs := []ChatMessage{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Name: "a"}}},
+		{Role: "user", Content: "<worker-result>done</worker-result>"},
+		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
+	}
+	got := NormalizeMessages(msgs)
+	if len(got) != 4 {
+		t.Fatalf("expected 4 messages, got %d: %+v", len(got), roles(got))
+	}
+	if got[1].Role != "assistant" || got[2].Role != "tool" || got[3].Role != "user" {
+		t.Fatalf("expected assistant/tool/user ordering after repair, got %+v", got)
+	}
+	if got[2].ToolCallID != "call_1" || got[3].Content != "<worker-result>done</worker-result>" {
+		t.Fatalf("unexpected repaired messages: %+v", got)
+	}
+}
+
 func TestNormalizeMessages_allOutputsPresent(t *testing.T) {
 	msgs := []ChatMessage{
 		{Role: "user", Content: "hello"},
@@ -142,15 +161,19 @@ func TestNormalizeAndValidateMessages_repairsMissingOutput(t *testing.T) {
 	}
 }
 
-func TestNormalizeAndValidateMessages_rejectsNonContiguousToolResult(t *testing.T) {
+func TestNormalizeAndValidateMessages_repairsNonContiguousToolResult(t *testing.T) {
 	msgs := []ChatMessage{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Name: "a"}}},
 		{Role: "user", Content: "mid"},
 		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
 	}
-	if _, err := NormalizeAndValidateMessages(msgs); err == nil {
-		t.Fatal("expected irreparable interleaving to be rejected")
+	got, err := NormalizeAndValidateMessages(msgs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got[1].Role != "assistant" || got[2].Role != "tool" || got[3].Role != "user" {
+		t.Fatalf("expected repaired ordering, got %+v", got)
 	}
 }
 

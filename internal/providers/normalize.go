@@ -5,80 +5,69 @@ import (
 )
 
 // NormalizeMessages ensures every assistant message that contains
-// tool_calls is followed by a matching tool result, and removes any
-// orphan tool results that lack a corresponding tool_call.
+// tool_calls is followed immediately by matching tool results,
+// repairing interleaved history when needed and removing orphan tool
+// outputs that lack a corresponding tool_call.
 //
 // This is aligned with Codex's ensure_call_outputs_present +
-// remove_orphan_outputs in codex-rs/core/src/context_manager/normalize.rs.
-// Missing outputs are synthesised with {"error":"aborted"} so the
-// conversation stays valid for chat-completions APIs.
+// remove_orphan_outputs, with one extra repair: if non-tool messages
+// were mistakenly inserted between an assistant tool_call and its
+// tool results, the tool results are pulled back up so the provider
+// still receives a valid sequence.
 func NormalizeMessages(msgs []ChatMessage) []ChatMessage {
 	if len(msgs) == 0 {
 		return nil
 	}
 
-	// 1. Collect every tool-call ID declared by assistant messages.
+	// 1. Collect every declared tool-call ID and the first matching
+	// tool result we saw for it. Duplicate outputs are dropped so one
+	// bad write cannot keep the history invalid forever.
 	callIDs := make(map[string]struct{}, 8)
+	toolResults := make(map[string]ChatMessage, 8)
 	for _, msg := range msgs {
-		if msg.Role != "assistant" {
+		switch msg.Role {
+		case "assistant":
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					callIDs[tc.ID] = struct{}{}
+				}
+			}
+		case "tool":
+			if msg.ToolCallID == "" {
+				continue
+			}
+			if _, ok := toolResults[msg.ToolCallID]; ok {
+				continue
+			}
+			toolResults[msg.ToolCallID] = msg
+		}
+	}
+
+	// 2. Rebuild the history with tool results attached directly to
+	// their declaring assistant. Any interleaved non-tool messages are
+	// kept, but they naturally fall after the assistant's tool block.
+	out := make([]ChatMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg.Role == "tool" {
 			continue
 		}
-		for _, tc := range msg.ToolCalls {
-			if tc.ID != "" {
-				callIDs[tc.ID] = struct{}{}
-			}
-		}
-	}
-
-	// 2. First pass — strip orphan tool results (no matching call).
-	filtered := make([]ChatMessage, 0, len(msgs))
-	for _, msg := range msgs {
-		if msg.Role == "tool" && msg.ToolCallID != "" {
-			if _, ok := callIDs[msg.ToolCallID]; !ok {
-				continue // orphan
-			}
-		}
-		filtered = append(filtered, msg)
-	}
-
-	// 3. Second pass — group each assistant with its contiguous tool
-	//    results, reorder to match assistant.ToolCalls order, and pad
-	//    missing outputs.
-	out := make([]ChatMessage, 0, len(filtered))
-	for i := 0; i < len(filtered); {
-		msg := filtered[i]
 		out = append(out, msg)
 
 		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
-			i++
 			continue
 		}
 
-		// Collect the contiguous tool block that follows this assistant.
-		i++ // advance past assistant
-		toolBlock := make([]ChatMessage, 0, len(msg.ToolCalls))
-		for i < len(filtered) && filtered[i].Role == "tool" {
-			toolBlock = append(toolBlock, filtered[i])
-			i++
-		}
-
-		// Reorder / pad to match the assistant's tool_calls declaration.
 		ordered := make([]ChatMessage, 0, len(msg.ToolCalls))
 		for _, tc := range msg.ToolCalls {
 			if tc.ID == "" {
 				continue
 			}
-			found := -1
-			for j, tm := range toolBlock {
-				if tm.ToolCallID == tc.ID {
-					found = j
-					break
-				}
+			if _, ok := callIDs[tc.ID]; !ok {
+				continue
 			}
-			if found >= 0 {
-				ordered = append(ordered, toolBlock[found])
-				// Remove consumed entry so it can't be reused.
-				toolBlock = append(toolBlock[:found], toolBlock[found+1:]...)
+			if tm, ok := toolResults[tc.ID]; ok {
+				ordered = append(ordered, tm)
+				delete(toolResults, tc.ID)
 			} else {
 				ordered = append(ordered, ChatMessage{
 					Role:       "tool",
@@ -90,10 +79,6 @@ func NormalizeMessages(msgs []ChatMessage) []ChatMessage {
 		}
 
 		out = append(out, ordered...)
-		// Any remaining tool messages that didn't match this assistant's
-		// calls are kept in-place. In a well-formed history this never
-		// happens; dropping them silently would hide bugs.
-		out = append(out, toolBlock...)
 	}
 
 	return out

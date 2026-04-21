@@ -525,6 +525,18 @@ func (m Model) loadMemory() Model {
 		return m
 	}
 
+	// Load structured history first. This may repair and rewrite old
+	// sessions before the transcript view is reconstructed from disk.
+	chatMsgs, chatErr := loadChatHistory(m.memoryPath)
+	if chatErr == nil && len(chatMsgs) > 0 {
+		// If we already have a system prompt in chatHistory, keep it and append loaded messages.
+		if len(m.chatHistory) > 0 && m.chatHistory[0].Role == "system" {
+			m.chatHistory = append(m.chatHistory[:1], chatMsgs...)
+		} else {
+			m.chatHistory = chatMsgs
+		}
+	}
+
 	entries, err := loadMemoryEntries(m.memoryPath)
 	if err != nil {
 		m.statusLine = fmt.Sprintf("memory load failed: %v", err)
@@ -548,17 +560,6 @@ func (m Model) loadMemory() Model {
 	m.loadPersistedTokenUsage()
 	m.cacheRenderedEntries()
 	m.refreshViewport(true)
-
-	// Also load structured chat history for API calls.
-	chatMsgs, chatErr := loadChatHistory(m.memoryPath)
-	if chatErr == nil && len(chatMsgs) > 0 {
-		// If we already have a system prompt in chatHistory, keep it and append loaded messages.
-		if len(m.chatHistory) > 0 && m.chatHistory[0].Role == "system" {
-			m.chatHistory = append(m.chatHistory[:1], chatMsgs...)
-		} else {
-			m.chatHistory = chatMsgs
-		}
-	}
 
 	// Start cron scheduler for durable tasks.
 	schedPath := filepath.Join(m.workspaceRoot, ".wuu", "scheduled_tasks.json")
@@ -704,6 +705,8 @@ func (m Model) applyResume(id string) (tea.Model, tea.Cmd) {
 		m.refreshViewport(false)
 		return m, nil
 	}
+	// Repair the persisted history before rebuilding transcript UI.
+	chatMsgs, chatErr := loadChatHistory(path)
 	entries, err := loadMemoryEntries(path)
 	if err != nil {
 		m.statusLine = fmt.Sprintf("resume: failed to load: %v", err)
@@ -723,7 +726,7 @@ func (m Model) applyResume(id string) (tea.Model, tea.Cmd) {
 	m.cacheRenderedEntries()
 
 	// Reload chat history for API calls.
-	if chatMsgs, chatErr := loadChatHistory(path); chatErr == nil && len(chatMsgs) > 0 {
+	if chatErr == nil && len(chatMsgs) > 0 {
 		if len(m.chatHistory) > 0 && m.chatHistory[0].Role == "system" {
 			m.chatHistory = append(m.chatHistory[:1], chatMsgs...)
 		} else {
@@ -1617,6 +1620,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		case "o":
+			if m.toggleLastToolBurstGroup() {
+				m.refreshViewport(false)
+			}
+			return m, nil
 		}
 	}
 
@@ -1965,9 +1973,10 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		e := &m.entries[m.streamTarget]
 		toolIdx := len(e.ToolCalls)
 		e.ToolCalls = append(e.ToolCalls, ToolCallEntry{
-			ID:     toolID,
-			Name:   toolName,
-			Status: ToolCallRunning,
+			ID:        toolID,
+			Name:      toolName,
+			Status:    ToolCallRunning,
+			Collapsed: shouldCollapseToolBurstByDefault(toolName),
 		})
 		e.blockOrder = append(e.blockOrder, fmt.Sprintf("tool:%d", toolIdx))
 		m.setLiveWorkStatus(runningToolWorkStatus(toolName))
@@ -2567,8 +2576,17 @@ func compositeEntryKey(e *transcriptEntry, vpWidth int, isStreaming bool, spinne
 	fnv(byte(vpWidth))
 	fnv(byte(len(e.ToolCalls)))
 	for j := range e.ToolCalls {
+		for k := 0; k < len(e.ToolCalls[j].Name); k++ {
+			fnv(e.ToolCalls[j].Name[k])
+		}
 		for k := 0; k < len(e.ToolCalls[j].Status); k++ {
 			fnv(e.ToolCalls[j].Status[k])
+		}
+		if e.ToolCalls[j].Collapsed {
+			fnv(1)
+		}
+		for k := 0; k < len(e.ToolCalls[j].Args) && k < 32; k++ {
+			fnv(e.ToolCalls[j].Args[k])
 		}
 		for k := 0; k < len(e.ToolCalls[j].Result) && k < 32; k++ {
 			fnv(e.ToolCalls[j].Result[k])
@@ -2724,39 +2742,110 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 			parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
 		}
 	}
+	renderToolRun := func(indices []int) {
+		if len(indices) == 0 {
+			return
+		}
+		if len(indices) == 1 {
+			renderTool(indices[0])
+			return
+		}
+		calls := make([]ToolCallEntry, 0, len(indices))
+		for _, idx := range indices {
+			if idx >= 0 && idx < len(e.ToolCalls) {
+				calls = append(calls, e.ToolCalls[idx])
+			}
+		}
+		if len(calls) == 0 {
+			return
+		}
+		parts = append(parts, indentLines(renderToolBurstGroup(calls, innerWidth, m.spinnerFrame), contentPadLeft))
+	}
 
 	if len(e.blockOrder) > 0 {
 		// Stream-order rendering with per-segment text.
 		textSegIdx := 0
-		for _, block := range e.blockOrder {
+		for blockIdx := 0; blockIdx < len(e.blockOrder); {
+			block := e.blockOrder[blockIdx]
 			if block == "text" {
 				renderTextSegment(textSegIdx)
 				textSegIdx++
-			} else if strings.HasPrefix(block, "tool:") {
-				var idx int
-				fmt.Sscanf(block, "tool:%d", &idx)
-				renderTool(idx)
+				blockIdx++
+				continue
 			}
+			idx, ok := parseToolBlockIndex(block)
+			if !ok {
+				blockIdx++
+				continue
+			}
+			if idx < 0 || idx >= len(e.ToolCalls) {
+				blockIdx++
+				continue
+			}
+			if classifyToolBurstTool(e.ToolCalls[idx].Name) == toolBurstNone {
+				renderTool(idx)
+				blockIdx++
+				continue
+			}
+			run := []int{idx}
+			next := blockIdx + 1
+			for next < len(e.blockOrder) {
+				nextIdx, ok := parseToolBlockIndex(e.blockOrder[next])
+				if !ok || nextIdx < 0 || nextIdx >= len(e.ToolCalls) {
+					break
+				}
+				if classifyToolBurstTool(e.ToolCalls[nextIdx].Name) == toolBurstNone {
+					break
+				}
+				run = append(run, nextIdx)
+				next++
+			}
+			renderToolRun(run)
+			blockIdx = next
 		}
 		// Render any tools not covered by blockOrder (e.g. added
 		// after the stream ended via tool result events).
 		covered := make(map[int]bool)
 		for _, block := range e.blockOrder {
-			if strings.HasPrefix(block, "tool:") {
-				var idx int
-				fmt.Sscanf(block, "tool:%d", &idx)
+			if idx, ok := parseToolBlockIndex(block); ok {
 				covered[idx] = true
 			}
 		}
-		for idx := range e.ToolCalls {
-			if !covered[idx] {
-				parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
+		for idx := 0; idx < len(e.ToolCalls); {
+			if covered[idx] {
+				idx++
+				continue
 			}
+			if classifyToolBurstTool(e.ToolCalls[idx].Name) == toolBurstNone {
+				renderTool(idx)
+				idx++
+				continue
+			}
+			run := []int{idx}
+			next := idx + 1
+			for next < len(e.ToolCalls) && !covered[next] && classifyToolBurstTool(e.ToolCalls[next].Name) != toolBurstNone {
+				run = append(run, next)
+				next++
+			}
+			renderToolRun(run)
+			idx = next
 		}
 	} else {
 		// Legacy fallback: tools first, then content.
-		for idx := range e.ToolCalls {
-			parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
+		for idx := 0; idx < len(e.ToolCalls); {
+			if classifyToolBurstTool(e.ToolCalls[idx].Name) == toolBurstNone {
+				renderTool(idx)
+				idx++
+				continue
+			}
+			run := []int{idx}
+			next := idx + 1
+			for next < len(e.ToolCalls) && classifyToolBurstTool(e.ToolCalls[next].Name) != toolBurstNone {
+				run = append(run, next)
+				next++
+			}
+			renderToolRun(run)
+			idx = next
 		}
 		renderTextFull()
 	}

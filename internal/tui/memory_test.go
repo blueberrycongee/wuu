@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -333,6 +334,65 @@ func TestLoadChatHistory_SkipsNonChatRoles(t *testing.T) {
 	}
 	if msgs[0].Role != "user" || msgs[0].Content != "hello" {
 		t.Fatalf("unexpected restored chat message: %#v", msgs[0])
+	}
+}
+
+func TestLoadChatHistory_RepairsAndRewritesInterleavedWorkerResult(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	assistant := providers.ChatMessage{
+		Role:      "assistant",
+		Content:   "",
+		ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "spawn_agent"}},
+	}
+	worker := providers.ChatMessage{
+		Role:    "user",
+		Content: "<worker-result agent_id=\"worker-1\">done</worker-result>",
+	}
+	tool := providers.ChatMessage{
+		Role:       "tool",
+		Name:       "spawn_agent",
+		ToolCallID: "call_1",
+		Content:    `{"agent_id":"worker-1","status":"running"}`,
+	}
+	if err := appendChatMessage(path, assistant); err != nil {
+		t.Fatalf("append assistant: %v", err)
+	}
+	if err := appendChatMessage(path, worker); err != nil {
+		t.Fatalf("append worker result: %v", err)
+	}
+	if err := appendChatMessage(path, tool); err != nil {
+		t.Fatalf("append tool: %v", err)
+	}
+
+	msgs, err := loadChatHistory(path)
+	if err != nil {
+		t.Fatalf("load chat history: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 normalized messages, got %+v", msgs)
+	}
+	if msgs[0].Role != "assistant" || msgs[1].Role != "tool" || msgs[2].Role != "user" {
+		t.Fatalf("unexpected normalized order: %+v", msgs)
+	}
+	if err := providers.ValidateMessageSequence(msgs); err != nil {
+		t.Fatalf("expected repaired history to validate, got %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read rewritten session: %v", err)
+	}
+	content := string(raw)
+	assistantPos := strings.Index(content, `"role":"assistant"`)
+	toolPos := strings.Index(content, `"role":"tool"`)
+	userPos := strings.LastIndex(content, `"role":"user"`)
+	if assistantPos < 0 || toolPos < 0 || userPos < 0 {
+		t.Fatalf("expected rewritten file to contain assistant/tool/user entries, got %q", content)
+	}
+	if !(assistantPos < toolPos && toolPos < userPos) {
+		t.Fatalf("expected rewritten assistant/tool/user ordering, got %q", content)
 	}
 }
 

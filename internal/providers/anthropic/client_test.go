@@ -1308,9 +1308,7 @@ func TestStreamChat_RejectsInvalidMessageSequenceBeforeRequest(t *testing.T) {
 		Model: "m",
 		Messages: []providers.ChatMessage{
 			{Role: "user", Content: "hello"},
-			{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "read_file"}}},
-			{Role: "user", Content: "mid"},
-			{Role: "tool", ToolCallID: "call_1", Content: "ok"},
+			{Role: "system", Content: "late system"},
 		},
 	})
 	if err == nil {
