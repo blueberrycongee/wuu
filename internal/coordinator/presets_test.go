@@ -191,6 +191,23 @@ func TestSystemPromptPreamble_TeachesUserCommunicationDiscipline(t *testing.T) {
 	}
 }
 
+func TestSystemPromptPreamble_TeachesAlignmentBeforeDelegation(t *testing.T) {
+	// The preamble must require alignment before delegation, with a clear
+	// exception for preliminary / draft work so the model doesn't block
+	// on alignment when the user explicitly asked for a rough pass.
+	preamble := SystemPromptPreamble()
+	for _, want := range []string{
+		"Intent alignment",
+		"Context alignment",
+		"Before spawning any worker",
+		"preliminary result",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Errorf("SystemPromptPreamble missing alignment-before-delegation phrase %q", want)
+		}
+	}
+}
+
 func TestComposeWorkerSystemPrompt_OverridesInheritedMainAgentLimits(t *testing.T) {
 	wt, err := LookupWorkerType("worker")
 	if err != nil {
