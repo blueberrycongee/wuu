@@ -2976,6 +2976,7 @@ func (m *Model) relayout() {
 	if m.layout.Chat.Width != oldChatW {
 		for i := range m.entries {
 			m.entries[i].rendered = ""
+			m.entries[i].renderedLines = nil
 			m.entries[i].composited = ""
 			m.entries[i].compositedKey = 0
 		}
