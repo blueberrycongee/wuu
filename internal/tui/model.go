@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
+	"github.com/blueberrycongee/wuu/internal/cron"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/markdown"
@@ -61,6 +62,10 @@ type streamFinishedMsg struct{}
 type ctrlCResetMsg struct{}
 
 type queueDrainMsg struct{}
+
+type cronFireMsg struct {
+	prompt string
+}
 
 type inlineSpinMsg struct{}
 type processPollMsg struct{}
@@ -223,6 +228,10 @@ type Model struct {
 	processManager  *processruntime.Manager
 	processNotifyCh chan processruntime.Event
 	workerNotifyCh  chan subagent.Notification
+
+	// Cron scheduler: fires scheduled prompts into messageQueue.
+	scheduler  *cron.Scheduler
+	cronFireCh chan string
 
 	// Auto-resume state: when a worker completes while the main agent
 	// is busy, we set pendingAutoResume so the streamFinishedMsg
@@ -546,6 +555,22 @@ func (m Model) loadMemory() Model {
 		}
 	}
 
+	// Start cron scheduler for durable tasks.
+	schedPath := filepath.Join(m.workspaceRoot, ".wuu", "scheduled_tasks.json")
+	schedStore := cron.NewTaskStore(schedPath)
+	m.cronFireCh = make(chan string, 8)
+	m.scheduler = cron.NewScheduler(cron.SchedulerConfig{
+		Store: schedStore,
+		OnFire: func(p string) {
+			select {
+			case m.cronFireCh <- p:
+			default:
+			}
+		},
+		IsOwner: func() bool { return true },
+	})
+	m.scheduler.Start()
+
 	return m
 }
 
@@ -581,6 +606,9 @@ func (m Model) Init() tea.Cmd {
 	if m.processManager != nil {
 		cmds = append(cmds, processPollCmd())
 		cmds = append(cmds, waitProcessNotify(m.processNotifyCh))
+	}
+	if m.cronFireCh != nil {
+		cmds = append(cmds, waitCronFire(m.cronFireCh))
 	}
 	return tea.Batch(cmds...)
 }
@@ -708,6 +736,12 @@ func waitInsightEvent(ch <-chan insight.ProgressEvent) tea.Cmd {
 			return insightFinishedMsg{}
 		}
 		return insightProgressMsg{event: event}
+	}
+}
+
+func waitCronFire(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		return cronFireMsg{prompt: <-ch}
 	}
 }
 
@@ -1092,6 +1126,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case queueDrainMsg:
 		return m.drainQueue()
 
+	case cronFireMsg:
+		m.appendEntry("system", fmt.Sprintf("Running scheduled task (%s)", time.Now().Format("Jan 2 3:04pm")))
+		m.messageQueue = append(m.messageQueue, queuedMessage{Text: msg.prompt})
+		return m, waitCronFire(m.cronFireCh)
+
 	case streamEventMsg:
 		return m, m.applyStreamEvent(msg.event, true)
 
@@ -1397,6 +1436,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cancelStream != nil {
 					m.cancelStream()
 				}
+				if m.scheduler != nil {
+					m.scheduler.Stop()
+				}
 				m.dispatchSessionEnd()
 				m.quitting = true
 				return m, tea.Quit
@@ -1537,6 +1579,9 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 			if output == "__exit__" {
 				if m.cancelStream != nil {
 					m.cancelStream()
+				}
+				if m.scheduler != nil {
+					m.scheduler.Stop()
 				}
 				m.dispatchSessionEnd()
 				m.quitting = true
