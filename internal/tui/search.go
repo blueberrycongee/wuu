@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -283,13 +284,7 @@ func mergeSegs(segs []highlightSeg) []highlightSeg {
 		return segs
 	}
 	// Sort by start.
-	for i := 0; i < len(segs)-1; i++ {
-		for j := i + 1; j < len(segs); j++ {
-			if segs[j].start < segs[i].start {
-				segs[i], segs[j] = segs[j], segs[i]
-			}
-		}
-	}
+	sort.Slice(segs, func(i, j int) bool { return segs[i].start < segs[j].start })
 	merged := []highlightSeg{segs[0]}
 	for i := 1; i < len(segs); i++ {
 		last := &merged[len(merged)-1]
