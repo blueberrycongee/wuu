@@ -32,7 +32,15 @@ func (a adaptedStreamClient) StreamChat(ctx context.Context, req ChatRequest) (<
 	}
 
 	events := make([]StreamEvent, 0, 1+len(resp.ToolCalls)*2+1)
-	if resp.ReasoningContent != "" {
+	if len(resp.ReasoningBlocks) > 0 {
+		for _, block := range resp.ReasoningBlocks {
+			if block.Thinking != "" {
+				events = append(events, StreamEvent{Type: EventThinkingDelta, Content: block.Thinking})
+			}
+			reasoningBlock := block
+			events = append(events, StreamEvent{Type: EventThinkingDone, ReasoningBlock: &reasoningBlock})
+		}
+	} else if resp.ReasoningContent != "" {
 		events = append(events, StreamEvent{Type: EventThinkingDelta, Content: resp.ReasoningContent})
 		events = append(events, StreamEvent{Type: EventThinkingDone})
 	}

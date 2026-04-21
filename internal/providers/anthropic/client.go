@@ -158,6 +158,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	}
 
 	var textParts []string
+	reasoningBlocks := make([]providers.ReasoningBlock, 0, 2)
 	toolCalls := make([]providers.ToolCall, 0, 2)
 	for _, block := range parsed.Content {
 		switch block.Type {
@@ -165,6 +166,8 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 			if strings.TrimSpace(block.Text) != "" {
 				textParts = append(textParts, block.Text)
 			}
+		case "thinking", "redacted_thinking":
+			reasoningBlocks = append(reasoningBlocks, anthropicReasoningBlock(block))
 		case "tool_use":
 			args, err := json.Marshal(block.Input)
 			if err != nil {
@@ -179,9 +182,11 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	}
 
 	resp := providers.ChatResponse{
-		Content:    strings.TrimSpace(strings.Join(textParts, "\n")),
-		ToolCalls:  toolCalls,
-		StopReason: strings.ToLower(parsed.StopReason),
+		Content:          strings.TrimSpace(strings.Join(textParts, "\n")),
+		ReasoningContent: joinReasoningText(reasoningBlocks),
+		ReasoningBlocks:  reasoningBlocks,
+		ToolCalls:        toolCalls,
+		StopReason:       strings.ToLower(parsed.StopReason),
 	}
 	if resp.StopReason == "max_tokens" {
 		resp.Truncated = true
@@ -241,6 +246,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 }
 
 func buildAnthropicRequest(req providers.ChatRequest, maxTokens int, stream bool) (anthropicRequest, error) {
+	req.Messages = providers.NormalizeMessages(req.Messages)
 	payload := anthropicRequest{
 		Model:     req.Model,
 		MaxTokens: maxTokens,
@@ -476,6 +482,7 @@ type blockState struct {
 	toolID    string
 	toolName  string
 	argsJSON  strings.Builder
+	reasoning providers.ReasoningBlock
 }
 
 func (c *Client) readSSEStream(resp *http.Response, ch chan<- providers.StreamEvent) {
@@ -567,7 +574,15 @@ func (c *Client) handleSSEEvent(
 	case "content_block_start":
 		var p contentBlockStartPayload
 		if json.Unmarshal([]byte(raw.Data), &p) == nil {
-			bs := &blockState{blockType: p.ContentBlock.Type}
+			bs := &blockState{
+				blockType: p.ContentBlock.Type,
+				reasoning: providers.ReasoningBlock{
+					Type:      p.ContentBlock.Type,
+					Thinking:  p.ContentBlock.Thinking,
+					Signature: p.ContentBlock.Signature,
+					Data:      p.ContentBlock.Data,
+				},
+			}
 			if p.ContentBlock.Type == "tool_use" {
 				bs.toolID = p.ContentBlock.ID
 				bs.toolName = p.ContentBlock.Name
@@ -588,7 +603,14 @@ func (c *Client) handleSSEEvent(
 				}
 				ch <- providers.StreamEvent{Type: providers.EventToolUseDelta, Content: p.Delta.PartialJSON}
 			case "thinking_delta":
+				if bs != nil {
+					bs.reasoning.Thinking += p.Delta.Thinking
+				}
 				ch <- providers.StreamEvent{Type: providers.EventThinkingDelta, Content: p.Delta.Thinking}
+			case "signature_delta":
+				if bs != nil {
+					bs.reasoning.Signature += p.Delta.Signature
+				}
 			}
 		}
 	case "content_block_stop":
@@ -600,8 +622,9 @@ func (c *Client) handleSSEEvent(
 				if bs.blockType == "tool_use" {
 					ch <- providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: bs.toolID, Name: bs.toolName, Arguments: bs.argsJSON.String()}}
 				}
-				if bs.blockType == "thinking" {
-					ch <- providers.StreamEvent{Type: providers.EventThinkingDone}
+				if bs.blockType == "thinking" || bs.blockType == "redacted_thinking" {
+					reasoningBlock := bs.reasoning
+					ch <- providers.StreamEvent{Type: providers.EventThinkingDone, ReasoningBlock: &reasoningBlock}
 				}
 			}
 			delete(blocks, idx.Index)
@@ -653,30 +676,47 @@ func (c *Client) handleSSEEvent(
 
 func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 	switch msg.Role {
-	case "user", "assistant":
-		blocks := make([]anthropicBlock, 0, len(msg.ToolCalls)+len(msg.Images)+1)
-		// Always include a text block for every user/assistant message.
-		// When Content is empty, use a single space — omitempty would
-		// strip "" producing {"type":"text"} without a "text" field,
-		// which proxies reject. A space is semantically invisible to
-		// the model but keeps the JSON structure valid.
+	case "user":
+		blocks := make([]anthropicBlock, 0, len(msg.Images)+1)
 		text := msg.Content
 		if strings.TrimSpace(text) == "" {
 			text = " "
 		}
 		blocks = append(blocks, anthropicBlock{Type: "text", Text: text})
-		if msg.Role == "user" {
-			for _, image := range msg.Images {
-				data := strings.TrimSpace(image.Data)
-				if data == "" {
-					continue
-				}
-				mediaType := strings.TrimSpace(image.MediaType)
-				if mediaType == "" {
-					mediaType = "image/png"
-				}
-				blocks = append(blocks, anthropicBlock{Type: "image", Source: &anthropicImageSource{Type: "base64", MediaType: mediaType, Data: data}})
+		for _, image := range msg.Images {
+			data := strings.TrimSpace(image.Data)
+			if data == "" {
+				continue
 			}
+			mediaType := strings.TrimSpace(image.MediaType)
+			if mediaType == "" {
+				mediaType = "image/png"
+			}
+			blocks = append(blocks, anthropicBlock{Type: "image", Source: &anthropicImageSource{Type: "base64", MediaType: mediaType, Data: data}})
+		}
+		return anthropicMessage{Role: msg.Role, Content: blocks}, nil
+	case "assistant":
+		reasoningBlocks := msg.ReasoningBlocks
+		if len(reasoningBlocks) == 0 && strings.TrimSpace(msg.ReasoningContent) != "" {
+			// Backward compatibility: sessions persisted before native
+			// thinking-block support only have ReasoningContent text.
+			reasoningBlocks = []providers.ReasoningBlock{{
+				Type:     "thinking",
+				Thinking: msg.ReasoningContent,
+			}}
+		}
+		blocks := make([]anthropicBlock, 0, len(reasoningBlocks)+len(msg.ToolCalls)+1)
+		blocks = append(blocks, mapReasoningBlocks(reasoningBlocks)...)
+		// Assistant tool-use turns should replay provider-native
+		// thinking blocks before tool_use. Only synthesize a text
+		// block when there is visible assistant text, or when this
+		// would otherwise become an empty message.
+		if strings.TrimSpace(msg.Content) != "" || (len(blocks) == 0 && len(msg.ToolCalls) == 0) {
+			text := msg.Content
+			if strings.TrimSpace(text) == "" {
+				text = " "
+			}
+			blocks = append(blocks, anthropicBlock{Type: "text", Text: text})
 		}
 		for _, call := range msg.ToolCalls {
 			var input any
@@ -694,6 +734,47 @@ func mapMessage(msg providers.ChatMessage) (anthropicMessage, error) {
 	default:
 		return anthropicMessage{}, fmt.Errorf("unsupported message role %q", msg.Role)
 	}
+}
+
+func mapReasoningBlocks(blocks []providers.ReasoningBlock) []anthropicBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]anthropicBlock, 0, len(blocks))
+	for _, block := range blocks {
+		switch block.Type {
+		case "thinking", "redacted_thinking":
+			out = append(out, anthropicBlock{
+				Type:      block.Type,
+				Thinking:  block.Thinking,
+				Signature: block.Signature,
+				Data:      block.Data,
+			})
+		}
+	}
+	return out
+}
+
+func anthropicReasoningBlock(block anthropicBlock) providers.ReasoningBlock {
+	return providers.ReasoningBlock{
+		Type:      block.Type,
+		Thinking:  block.Thinking,
+		Signature: block.Signature,
+		Data:      block.Data,
+	}
+}
+
+func joinReasoningText(blocks []providers.ReasoningBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if strings.TrimSpace(block.Thinking) != "" {
+			parts = append(parts, block.Thinking)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func smooshSystemReminderBlocks(msg anthropicMessage) anthropicMessage {
@@ -774,6 +855,9 @@ type anthropicMessage struct {
 type anthropicBlock struct {
 	Type         string                 `json:"type"`
 	Text         string                 `json:"text,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`
+	Signature    string                 `json:"signature,omitempty"`
+	Data         string                 `json:"data,omitempty"`
 	Source       *anthropicImageSource  `json:"source,omitempty"`
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name,omitempty"`
@@ -841,10 +925,13 @@ type messageStartPayload struct {
 type contentBlockStartPayload struct {
 	Index        int `json:"index"`
 	ContentBlock struct {
-		Type  string `json:"type"`
-		ID    string `json:"id,omitempty"`
-		Name  string `json:"name,omitempty"`
-		Input any    `json:"input,omitempty"`
+		Type      string `json:"type"`
+		ID        string `json:"id,omitempty"`
+		Name      string `json:"name,omitempty"`
+		Input     any    `json:"input,omitempty"`
+		Thinking  string `json:"thinking,omitempty"`
+		Signature string `json:"signature,omitempty"`
+		Data      string `json:"data,omitempty"`
 	} `json:"content_block"`
 }
 
@@ -855,6 +942,7 @@ type contentBlockDeltaPayload struct {
 		Text        string `json:"text,omitempty"`
 		PartialJSON string `json:"partial_json,omitempty"`
 		Thinking    string `json:"thinking,omitempty"`
+		Signature   string `json:"signature,omitempty"`
 	} `json:"delta"`
 }
 

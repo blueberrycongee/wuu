@@ -55,6 +55,163 @@ func TestChat_TextResponse(t *testing.T) {
 	}
 }
 
+func TestChat_AnthropicReplaysReasoningBlocksForAssistantToolUse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) != 3 {
+			t.Fatalf("expected 3 messages, got %#v", body["messages"])
+		}
+		assistant, ok := msgs[1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected assistant message: %#v", msgs[1])
+		}
+		content, ok := assistant["content"].([]any)
+		if !ok || len(content) != 2 {
+			t.Fatalf("expected thinking + tool_use content, got %#v", assistant["content"])
+		}
+		thinking, ok := content[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected thinking block: %#v", content[0])
+		}
+		if thinking["type"] != "thinking" || thinking["thinking"] != "inspect repo before tool use" || thinking["signature"] != "sig_1" {
+			t.Fatalf("unexpected thinking block payload: %#v", thinking)
+		}
+		toolUse, ok := content[1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected tool_use block: %#v", content[1])
+		}
+		if toolUse["type"] != "tool_use" || toolUse["id"] != "call_1" || toolUse["name"] != "list_files" {
+			t.Fatalf("unexpected tool_use payload: %#v", toolUse)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "inspect repo"},
+			{
+				Role:             "assistant",
+				ReasoningContent: "inspect repo before tool use",
+				ReasoningBlocks: []providers.ReasoningBlock{
+					{Type: "thinking", Thinking: "inspect repo before tool use", Signature: "sig_1"},
+				},
+				ToolCalls: []providers.ToolCall{
+					{ID: "call_1", Name: "list_files", Arguments: `{}`},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_1", Name: "list_files", Content: "[]"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
+func TestChat_AnthropicFallsBackToReasoningContentReplay(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		msgs, ok := body["messages"].([]any)
+		if !ok || len(msgs) != 3 {
+			t.Fatalf("expected 3 messages, got %#v", body["messages"])
+		}
+		assistant, ok := msgs[1].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected assistant message: %#v", msgs[1])
+		}
+		content, ok := assistant["content"].([]any)
+		if !ok || len(content) != 2 {
+			t.Fatalf("expected synthetic thinking + tool_use content, got %#v", assistant["content"])
+		}
+		thinking, ok := content[0].(map[string]any)
+		if !ok || thinking["type"] != "thinking" || thinking["thinking"] != "inspect repo before tool use" {
+			t.Fatalf("unexpected synthetic thinking block payload: %#v", content[0])
+		}
+		if _, ok := thinking["signature"]; ok {
+			t.Fatalf("did not expect synthetic signature on legacy replay: %#v", thinking)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model: "claude-test",
+		Messages: []providers.ChatMessage{
+			{Role: "user", Content: "inspect repo"},
+			{
+				Role:             "assistant",
+				ReasoningContent: "inspect repo before tool use",
+				ToolCalls: []providers.ToolCall{
+					{ID: "call_1", Name: "list_files", Arguments: `{}`},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_1", Name: "list_files", Content: "[]"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
+func TestChat_ParsesReasoningBlocks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{
+  "content": [
+    {"type":"thinking","thinking":"inspect repo before tool use","signature":"sig_1"},
+    {"type":"tool_use","id":"call_1","name":"list_files","input":{}}
+  ],
+  "stop_reason":"tool_use"
+}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	resp, err := client.Chat(context.Background(), providers.ChatRequest{
+		Model:    "claude-test",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "inspect repo"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if resp.ReasoningContent != "inspect repo before tool use" {
+		t.Fatalf("unexpected reasoning content: %q", resp.ReasoningContent)
+	}
+	if len(resp.ReasoningBlocks) != 1 {
+		t.Fatalf("expected 1 reasoning block, got %+v", resp.ReasoningBlocks)
+	}
+	if resp.ReasoningBlocks[0].Signature != "sig_1" {
+		t.Fatalf("unexpected reasoning block: %+v", resp.ReasoningBlocks[0])
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("unexpected tool calls: %+v", resp.ToolCalls)
+	}
+}
+
 func TestChat_AnthropicAddsCacheControlFromHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -900,6 +1057,61 @@ func TestStreamChat_ToolUse(t *testing.T) {
 	last := events[len(events)-1]
 	if last.Type != providers.EventDone {
 		t.Fatalf("expected EventDone last, got %s", last.Type)
+	}
+}
+
+func TestStreamChat_ThinkingDoneIncludesReasoningBlock(t *testing.T) {
+	ssePayload := "event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":15}}}\n\n" +
+		"event: content_block_start\n" +
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"inspect repo\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_1\"}}\n\n" +
+		"event: content_block_stop\n" +
+		"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\n" +
+		"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":8}}\n\n" +
+		"event: message_stop\n" +
+		"data: {\"type\":\"message_stop\"}\n\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(ssePayload))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ch, err := client.StreamChat(context.Background(), providers.ChatRequest{
+		Model:    "claude-test",
+		Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var events []providers.StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected thinking delta + thinking done + done, got %d events", len(events))
+	}
+	if events[0].Type != providers.EventThinkingDelta || events[0].Content != "inspect repo" {
+		t.Fatalf("unexpected first event: %+v", events[0])
+	}
+	if events[1].Type != providers.EventThinkingDone || events[1].ReasoningBlock == nil {
+		t.Fatalf("expected thinking_done with reasoning block, got %+v", events[1])
+	}
+	if events[1].ReasoningBlock.Signature != "sig_1" || events[1].ReasoningBlock.Thinking != "inspect repo" {
+		t.Fatalf("unexpected reasoning block: %+v", events[1].ReasoningBlock)
 	}
 }
 

@@ -25,16 +25,17 @@ type imageEntry struct {
 }
 
 type memoryEntry struct {
-	Role             string          `json:"role"`
-	Content          string          `json:"content"`
-	ReasoningContent string          `json:"reasoning_content,omitempty"`
-	Images           []imageEntry    `json:"images,omitempty"`
-	At               time.Time       `json:"at"`
-	ToolCalls        []toolCallEntry `json:"tool_calls,omitempty"`
-	ToolCallID       string          `json:"tool_call_id,omitempty"`
-	Name             string          `json:"name,omitempty"`
-	InputTokens      int             `json:"input_tokens,omitempty"`
-	OutputTokens     int             `json:"output_tokens,omitempty"`
+	Role             string                     `json:"role"`
+	Content          string                     `json:"content"`
+	ReasoningContent string                     `json:"reasoning_content,omitempty"`
+	ReasoningBlocks  []providers.ReasoningBlock `json:"reasoning_blocks,omitempty"`
+	Images           []imageEntry               `json:"images,omitempty"`
+	At               time.Time                  `json:"at"`
+	ToolCalls        []toolCallEntry            `json:"tool_calls,omitempty"`
+	ToolCallID       string                     `json:"tool_call_id,omitempty"`
+	Name             string                     `json:"name,omitempty"`
+	InputTokens      int                        `json:"input_tokens,omitempty"`
+	OutputTokens     int                        `json:"output_tokens,omitempty"`
 }
 
 func loadMemoryEntries(path string) ([]transcriptEntry, error) {
@@ -211,6 +212,7 @@ func memoryEntryFromChatMessage(msg providers.ChatMessage) memoryEntry {
 		Role:             strings.ToLower(msg.Role),
 		Content:          msg.Content,
 		ReasoningContent: msg.ReasoningContent,
+		ReasoningBlocks:  append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
 		Images:           imgs,
 		At:               time.Now().UTC(),
 		ToolCalls:        tcs,
@@ -336,6 +338,7 @@ func loadChatHistory(path string) ([]providers.ChatMessage, error) {
 			Name:             rec.Name,
 			Content:          rec.Content,
 			ReasoningContent: rec.ReasoningContent,
+			ReasoningBlocks:  append([]providers.ReasoningBlock(nil), rec.ReasoningBlocks...),
 			Images:           imgs,
 			ToolCallID:       rec.ToolCallID,
 			ToolCalls:        tcs,

@@ -25,6 +25,15 @@ type InputImage struct {
 	Data      string
 }
 
+// ReasoningBlock preserves provider-native thinking payloads that must be
+// replayed verbatim on follow-up requests for some APIs.
+type ReasoningBlock struct {
+	Type      string
+	Thinking  string
+	Signature string
+	Data      string
+}
+
 // ChatMessage is a generic multi-provider chat message.
 type ChatMessage struct {
 	Role    string
@@ -34,6 +43,7 @@ type ChatMessage struct {
 	// must be replayed in follow-up assistant tool-call messages for
 	// providers like Kimi when thinking mode is enabled.
 	ReasoningContent string
+	ReasoningBlocks  []ReasoningBlock
 	Images           []InputImage
 	ToolCallID       string
 	ToolCalls        []ToolCall
@@ -97,6 +107,7 @@ type ChatRequest struct {
 type ChatResponse struct {
 	Content          string
 	ReasoningContent string
+	ReasoningBlocks  []ReasoningBlock
 	ToolCalls        []ToolCall
 	Usage            *TokenUsage // optional; nil when the provider didn't return usage
 	// StopReason is the raw provider stop signal, normalized to lowercase.
@@ -195,14 +206,15 @@ func (u TokenUsage) TotalContextTokens() int {
 
 // StreamEvent is a single event from a streaming chat response.
 type StreamEvent struct {
-	Type       StreamEventType
-	Content    string
-	Message    *ChatMessage
-	ToolCall   *ToolCall
-	ToolResult string
-	Lifecycle  *StreamLifecycle
-	Error      error
-	Usage      *TokenUsage
+	Type           StreamEventType
+	Content        string
+	Message        *ChatMessage
+	ReasoningBlock *ReasoningBlock
+	ToolCall       *ToolCall
+	ToolResult     string
+	Lifecycle      *StreamLifecycle
+	Error          error
+	Usage          *TokenUsage
 	// StopReason / Truncated are populated on the terminal EventDone
 	// when the provider reports them. They mirror the same fields on
 	// ChatResponse so streaming callers can drive truncation-recovery

@@ -276,12 +276,13 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	precomputed := map[string]string{} // tool call ID → result
 
 	var (
-		contentBuf   strings.Builder
-		thinkingBuf  strings.Builder
-		pendingTools = map[int]*providers.ToolCall{}
-		usage        *providers.TokenUsage
-		stopReason   string
-		truncated    bool
+		contentBuf      strings.Builder
+		thinkingBuf     strings.Builder
+		reasoningBlocks []providers.ReasoningBlock
+		pendingTools    = map[int]*providers.ToolCall{}
+		usage           *providers.TokenUsage
+		stopReason      string
+		truncated       bool
 	)
 
 	// Wrap the event callback to intercept ToolUseEnd and kick off
@@ -313,7 +314,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 	}
 
-	if err := s.runStreamWithReconnect(ctx, req, &contentBuf, &thinkingBuf, pendingTools, &usage, &stopReason, &truncated); err != nil {
+	if err := s.runStreamWithReconnect(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, pendingTools, &usage, &stopReason, &truncated); err != nil {
 		s.onEvent = origOnEvent // restore
 		return StepResult{}, fmt.Errorf("stream request failed: %w", err)
 	}
@@ -363,6 +364,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		return StepResult{
 			Content:          resp.Content,
 			ReasoningContent: resp.ReasoningContent,
+			ReasoningBlocks:  cloneReasoningBlocks(resp.ReasoningBlocks),
 			ToolCalls:        fbToolCalls,
 			Usage:            resp.Usage,
 			StopReason:       resp.StopReason,
@@ -381,6 +383,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	return StepResult{
 		Content:            contentBuf.String(),
 		ReasoningContent:   thinkingBuf.String(),
+		ReasoningBlocks:    cloneReasoningBlocks(reasoningBlocks),
 		ToolCalls:          toolCalls,
 		Usage:              usage,
 		StopReason:         stopReason,
@@ -440,6 +443,7 @@ func (s *streamStep) runStreamWithReconnect(
 	req providers.ChatRequest,
 	contentBuf *strings.Builder,
 	thinkingBuf *strings.Builder,
+	reasoningBlocks *[]providers.ReasoningBlock,
 	pendingTools map[int]*providers.ToolCall,
 	usage **providers.TokenUsage,
 	stopReason *string,
@@ -566,6 +570,11 @@ func (s *streamStep) runStreamWithReconnect(
 
 			case providers.EventThinkingDelta:
 				thinkingBuf.WriteString(event.Content)
+
+			case providers.EventThinkingDone:
+				if event.ReasoningBlock != nil {
+					*reasoningBlocks = append(*reasoningBlocks, *event.ReasoningBlock)
+				}
 
 			case providers.EventToolUseStart:
 				if event.ToolCall != nil {

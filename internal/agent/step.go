@@ -23,6 +23,9 @@ type StepResult struct {
 	// round. Some OpenAI-compatible providers require replaying it
 	// verbatim on follow-up assistant tool-call messages.
 	ReasoningContent string
+	// ReasoningBlocks preserves provider-native thinking payloads that
+	// cannot safely be reconstructed from ReasoningContent text alone.
+	ReasoningBlocks []providers.ReasoningBlock
 	// ToolCalls is the ordered list of tool invocations the model
 	// requested in this round, fully assembled (arguments included).
 	ToolCalls []providers.ToolCall

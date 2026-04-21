@@ -224,6 +224,7 @@ func RunToolLoop(
 				Role:             "assistant",
 				Content:          result.Content,
 				ReasoningContent: result.ReasoningContent,
+				ReasoningBlocks:  cloneReasoningBlocks(result.ReasoningBlocks),
 			})
 			appendMessage(providers.ChatMessage{
 				Role:    "user",
@@ -247,6 +248,7 @@ func RunToolLoop(
 			Role:             "assistant",
 			Content:          result.Content,
 			ReasoningContent: result.ReasoningContent,
+			ReasoningBlocks:  cloneReasoningBlocks(result.ReasoningBlocks),
 			ToolCalls:        result.ToolCalls,
 		}
 		if shouldPersistAssistantMessage(assistant) {
@@ -359,11 +361,23 @@ func newMessagesForReturn(messages []providers.ChatMessage, startLen int, histor
 	return copyMessages(messages[startLen:])
 }
 
+func cloneReasoningBlocks(blocks []providers.ReasoningBlock) []providers.ReasoningBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]providers.ReasoningBlock, len(blocks))
+	copy(out, blocks)
+	return out
+}
+
 func shouldPersistAssistantMessage(msg providers.ChatMessage) bool {
 	if strings.TrimSpace(msg.Content) != "" {
 		return true
 	}
 	if strings.TrimSpace(msg.ReasoningContent) != "" {
+		return true
+	}
+	if len(msg.ReasoningBlocks) > 0 {
 		return true
 	}
 	return len(msg.ToolCalls) > 0

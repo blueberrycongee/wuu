@@ -152,6 +152,9 @@ func TestAppendAndLoadChatHistory_WithReasoningContent(t *testing.T) {
 	assistantMsg := providers.ChatMessage{
 		Role:             "assistant",
 		ReasoningContent: "inspect repo before tool use",
+		ReasoningBlocks: []providers.ReasoningBlock{
+			{Type: "thinking", Thinking: "inspect repo before tool use", Signature: "sig_1"},
+		},
 		ToolCalls: []providers.ToolCall{
 			{ID: "call_1", Name: "list_files", Arguments: `{}`},
 		},
@@ -169,6 +172,12 @@ func TestAppendAndLoadChatHistory_WithReasoningContent(t *testing.T) {
 	}
 	if msgs[0].ReasoningContent != "inspect repo before tool use" {
 		t.Fatalf("unexpected reasoning content: %q", msgs[0].ReasoningContent)
+	}
+	if len(msgs[0].ReasoningBlocks) != 1 {
+		t.Fatalf("expected 1 reasoning block, got %+v", msgs[0].ReasoningBlocks)
+	}
+	if msgs[0].ReasoningBlocks[0].Signature != "sig_1" {
+		t.Fatalf("unexpected reasoning signature: %+v", msgs[0].ReasoningBlocks[0])
 	}
 
 	entries, err := loadMemoryEntries(path)

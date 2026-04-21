@@ -804,6 +804,14 @@ func TestStreamRunner_ReplaysReasoningContentAfterToolCall(t *testing.T) {
 			{events: []providers.StreamEvent{
 				{Type: providers.EventThinkingDelta, Content: "inspect repo before tool use"},
 				{
+					Type: providers.EventThinkingDone,
+					ReasoningBlock: &providers.ReasoningBlock{
+						Type:      "thinking",
+						Thinking:  "inspect repo before tool use",
+						Signature: "sig_1",
+					},
+				},
+				{
 					Type:     providers.EventToolUseStart,
 					ToolCall: &providers.ToolCall{ID: "call_1", Name: "list_files"},
 				},
@@ -850,6 +858,9 @@ func TestStreamRunner_ReplaysReasoningContentAfterToolCall(t *testing.T) {
 	}
 	if assistant.ReasoningContent != "inspect repo before tool use" {
 		t.Fatalf("unexpected reasoning content replay: %q", assistant.ReasoningContent)
+	}
+	if len(assistant.ReasoningBlocks) != 1 || assistant.ReasoningBlocks[0].Signature != "sig_1" {
+		t.Fatalf("unexpected reasoning blocks replay: %+v", assistant.ReasoningBlocks)
 	}
 	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_1" {
 		t.Fatalf("unexpected tool calls on assistant replay: %+v", assistant.ToolCalls)
