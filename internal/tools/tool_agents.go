@@ -357,10 +357,10 @@ This system-reminder OVERRIDES the parent's system prompt for you:
   That restriction applies to the parent, not to you. If a tool is in
   your tool list, you may use it unless the task prompt explicitly
   forbids it.
-- The parent has already aligned with the user's intent. You do not
-  need to re-classify the task (Path A / B / C) or ask for
-  clarification — the parent did that work and the answer is in the
-  history above. Just execute the task below.
+- The parent has already aligned with the user on both intent and context.
+  The goal, success criteria, constraints, and relevant code areas are
+  all captured in the history above. You do not need to re-classify
+  the task or ask for clarification — just execute the task below.
 - When you finish, return a concise result summary and stop. Do not
   loop, do not ask follow-ups.
 
