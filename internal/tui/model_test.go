@@ -607,6 +607,87 @@ func TestStreamFinishedFlushesBufferedWorkerResultsAfterHistoryRewrite(t *testin
 	}
 }
 
+func TestBusyEnterSteerSendsOnlyAfterActiveTurnFinishes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	m := NewModel(Config{
+		Provider:   "test",
+		Model:      "test-model",
+		ConfigPath: filepath.Join(dir, ".wuu.json"),
+		MemoryPath: path,
+		StreamRunner: &agent.StreamRunner{
+			Client: &echoStreamClient{answer: func(msgs []providers.ChatMessage) string { return "answer to: " + msgs[len(msgs)-1].Content }},
+			Model:  "test-model",
+		},
+	})
+	m.pendingRequest = true
+	m.streaming = true
+	cancelCalled := false
+	m.cancelStream = func() { cancelCalled = true }
+	m.pendingTurn = &pendingTurnResult{
+		newMsgs: []providers.ChatMessage{
+			{
+				Role:      "assistant",
+				Content:   "",
+				ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "spawn_agent"}},
+			},
+			{
+				Role:       "tool",
+				Name:       "spawn_agent",
+				ToolCallID: "call_1",
+				Content:    `{"agent_id":"worker-1","status":"running"}`,
+			},
+		},
+	}
+	m.input.SetValue("steer now")
+
+	updated, _ := m.submit(false)
+	afterSubmit := updated.(Model)
+	if !cancelCalled {
+		t.Fatal("expected busy Enter to cancel the active stream")
+	}
+	if len(afterSubmit.pendingSteers) != 1 {
+		t.Fatalf("expected one pending steer, got %d", len(afterSubmit.pendingSteers))
+	}
+	if len(afterSubmit.chatHistory) != 0 {
+		t.Fatalf("expected steer not to append immediately, got %+v", afterSubmit.chatHistory)
+	}
+
+	updated, cmd := afterSubmit.Update(streamFinishedMsg{})
+	afterFinish := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected queue drain command after stream finishes")
+	}
+	if len(afterFinish.chatHistory) != 2 {
+		t.Fatalf("expected only active-turn messages after finish, got %+v", afterFinish.chatHistory)
+	}
+	if afterFinish.chatHistory[0].Role != "assistant" || afterFinish.chatHistory[1].Role != "tool" {
+		t.Fatalf("unexpected active-turn order: %+v", afterFinish.chatHistory)
+	}
+
+	msg := cmd()
+	if _, ok := msg.(queueDrainMsg); !ok {
+		t.Fatalf("expected queueDrainMsg, got %T", msg)
+	}
+	updated, steerCmd := afterFinish.Update(msg)
+	afterDrain := updated.(Model)
+	if steerCmd == nil {
+		t.Fatal("expected follow-up steer turn to start")
+	}
+	if len(afterDrain.chatHistory) != 3 {
+		t.Fatalf("expected steer appended after tool result, got %+v", afterDrain.chatHistory)
+	}
+	if afterDrain.chatHistory[0].Role != "assistant" || afterDrain.chatHistory[1].Role != "tool" || afterDrain.chatHistory[2].Role != "user" {
+		t.Fatalf("unexpected history after steer drain: %+v", afterDrain.chatHistory)
+	}
+	if afterDrain.chatHistory[2].Content != "steer now" {
+		t.Fatalf("unexpected steer content: %+v", afterDrain.chatHistory[2])
+	}
+	if err := providers.ValidateMessageSequence(afterDrain.chatHistory); err != nil {
+		t.Fatalf("expected valid history after busy Enter steer, got %v", err)
+	}
+}
+
 func TestSubmitPromptFlow(t *testing.T) {
 	m := newTestModel(func(msgs []providers.ChatMessage) string {
 		last := msgs[len(msgs)-1].Content
