@@ -16,6 +16,7 @@ import (
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/version"
 )
 
 func streamTransportConfig(cfg *providers.StreamTransportConfig) providers.StreamTransportConfig {
@@ -420,7 +421,7 @@ func (c *Client) doSingleMessagesRequest(
 		httpReq.Header.Set("Authorization", "Bearer "+c.authToken)
 	}
 	httpReq.Header.Set("anthropic-version", defaultAnthropicVersion)
-	// Beta headers aligned with Claude Code's getMergedBetas().
+	// Beta headers required for certain Anthropic API features.
 	// The proxy routes requests based on these headers; missing
 	// ones can cause "Invalid request data" or 503 on certain
 	// Console accounts.
@@ -433,8 +434,8 @@ func (c *Client) doSingleMessagesRequest(
 		betas = append(betas, "oauth-2025-04-20")
 	}
 	httpReq.Header.Set("anthropic-beta", strings.Join(betas, ","))
-	httpReq.Header.Set("User-Agent", "claude-cli/2.1.96")
-	httpReq.Header.Set("x-app", "cli")
+	httpReq.Header.Set("User-Agent", "wuu/"+version.Version)
+	httpReq.Header.Set("x-app", "wuu")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	for k, v := range c.headers {
 		httpReq.Header.Set(k, v)
