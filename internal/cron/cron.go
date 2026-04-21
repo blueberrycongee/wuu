@@ -40,7 +40,7 @@ var fieldBounds = [5]struct{ min, max int }{
 	{0, 23},  // hour
 	{1, 31},  // day of month
 	{1, 12},  // month
-	{0, 6},   // day of week
+	{0, 7},   // day of week (7 = Sunday, mapped to 0)
 }
 
 func isValidCronField(field string, position int) bool {
@@ -59,7 +59,8 @@ func isValidCronField(field string, position int) bool {
 			if len(parts) != 2 {
 				return false
 			}
-			if _, err := strconv.Atoi(parts[1]); err != nil {
+			stepVal, err := strconv.Atoi(parts[1])
+			if err != nil || stepVal <= 0 {
 				return false
 			}
 			base = parts[0]
@@ -105,11 +106,21 @@ func (ce CronExpression) NextRun(after time.Time) (time.Time, error) {
 }
 
 func (ce CronExpression) matches(t time.Time) bool {
+	// Standard cron: if neither DayOfMonth nor DayOfWeek is "*" or "?",
+	// they are ORed (match either). Otherwise they are ANDed.
+	domStar := ce.DayOfMonth == "*" || ce.DayOfMonth == "?"
+	dowStar := ce.DayOfWeek == "*" || ce.DayOfWeek == "?"
+	dayMatch := matchField(ce.DayOfMonth, t.Day(), 1, 31) &&
+		matchField(ce.DayOfWeek, int(t.Weekday()), 0, 6)
+	if !domStar && !dowStar {
+		dayMatch = matchField(ce.DayOfMonth, t.Day(), 1, 31) ||
+			matchField(ce.DayOfWeek, int(t.Weekday()), 0, 6)
+	}
+
 	return matchField(ce.Minute, t.Minute(), 0, 59) &&
 		matchField(ce.Hour, t.Hour(), 0, 23) &&
-		matchField(ce.DayOfMonth, t.Day(), 1, 31) &&
 		matchField(ce.Month, int(t.Month()), 1, 12) &&
-		matchField(ce.DayOfWeek, int(t.Weekday()), 0, 6)
+		dayMatch
 }
 
 func matchField(field string, value, min, max int) bool {
@@ -172,7 +183,7 @@ func IntervalToCron(interval string) (string, error) {
 		if n <= 59 {
 			return fmt.Sprintf("*/%d * * * *", n), nil
 		}
-		h := n / 60
+		h := (n + 59) / 60 // Round up, consistent with seconds path.
 		return fmt.Sprintf("0 */%d * * *", h), nil
 	case "h":
 		if n <= 23 {
