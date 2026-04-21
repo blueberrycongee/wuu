@@ -628,23 +628,27 @@ func cloneHeaders(input map[string]string) map[string]string {
 
 func marshalChatCompletionsRequest(payload chatCompletionsRequest) ([]byte, error) {
 	type requestJSON struct {
-		Model          string           `json:"model"`
-		Messages       []chatMessage    `json:"messages"`
-		Tools          []toolDefinition `json:"tools,omitempty"`
-		ToolChoice     string           `json:"tool_choice,omitempty"`
-		Temperature    float64          `json:"temperature,omitempty"`
-		Stream         bool             `json:"stream,omitempty"`
-		PromptCacheKey string           `json:"promptCacheKey,omitempty"`
+		Model           string           `json:"model"`
+		Messages        []chatMessage    `json:"messages"`
+		Tools           []toolDefinition `json:"tools,omitempty"`
+		ToolChoice      string           `json:"tool_choice,omitempty"`
+		Temperature     float64          `json:"temperature,omitempty"`
+		MaxTokens       int              `json:"max_tokens,omitempty"`
+		Stream          bool             `json:"stream,omitempty"`
+		PromptCacheKey  string           `json:"promptCacheKey,omitempty"`
+		ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 	}
 
 	base := requestJSON{
-		Model:          payload.Model,
-		Messages:       payload.Messages,
-		Tools:          payload.Tools,
-		ToolChoice:     payload.ToolChoice,
-		Temperature:    payload.Temperature,
-		Stream:         payload.Stream,
-		PromptCacheKey: payload.PromptCacheKey,
+		Model:           payload.Model,
+		Messages:        payload.Messages,
+		Tools:           payload.Tools,
+		ToolChoice:      payload.ToolChoice,
+		Temperature:     payload.Temperature,
+		MaxTokens:       payload.MaxTokens,
+		Stream:          payload.Stream,
+		PromptCacheKey:  payload.PromptCacheKey,
+		ReasoningEffort: payload.ReasoningEffort,
 	}
 	if strings.TrimSpace(payload.AltCacheKey) == "" {
 		return json.Marshal(base)
@@ -710,16 +714,16 @@ func promptCacheKeyHeaderPrefersSnake(headers map[string]string) bool {
 }
 
 type chatCompletionsRequest struct {
-	Model            string           `json:"model"`
-	Messages         []chatMessage    `json:"messages"`
-	Tools            []toolDefinition `json:"tools,omitempty"`
-	ToolChoice       string           `json:"tool_choice,omitempty"`
-	Temperature      float64          `json:"temperature,omitempty"`
-	MaxTokens        int              `json:"max_tokens,omitempty"`
-	Stream           bool             `json:"stream,omitempty"`
-	PromptCacheKey   string           `json:"promptCacheKey,omitempty"`
-	AltCacheKey      string           `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort  string           `json:"reasoning_effort,omitempty"`
+	Model           string           `json:"model"`
+	Messages        []chatMessage    `json:"messages"`
+	Tools           []toolDefinition `json:"tools,omitempty"`
+	ToolChoice      string           `json:"tool_choice,omitempty"`
+	Temperature     float64          `json:"temperature,omitempty"`
+	MaxTokens       int              `json:"max_tokens,omitempty"`
+	Stream          bool             `json:"stream,omitempty"`
+	PromptCacheKey  string           `json:"promptCacheKey,omitempty"`
+	AltCacheKey     string           `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 }
 
 type chatMessage struct {

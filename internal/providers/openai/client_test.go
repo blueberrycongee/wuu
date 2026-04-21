@@ -90,6 +90,40 @@ func TestChat_SendsRequestAndParsesToolCall(t *testing.T) {
 	}
 }
 
+func TestChat_SendsMaxTokensAndReasoningEffort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["max_tokens"] != float64(321) {
+			t.Fatalf("expected max_tokens=321, got %#v", body["max_tokens"])
+		}
+		if body["reasoning_effort"] != "high" {
+			t.Fatalf("expected reasoning_effort=high, got %#v", body["reasoning_effort"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model:     "gpt-test",
+		Messages:  []providers.ChatMessage{{Role: "user", Content: "hello"}},
+		MaxTokens: 321,
+		Effort:    "high",
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
 func TestChat_SendsPromptCacheKeyForOpenAICompatible(t *testing.T) {
 	t.Helper()
 
