@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -558,6 +559,62 @@ func TestStreamRunner_AcceptsHistory(t *testing.T) {
 	}
 	if newMsgs[0].Content != "turn2 reply" {
 		t.Fatalf("unexpected new message content: %q", newMsgs[0].Content)
+	}
+}
+
+func TestStreamRunner_FiltersSystemReminderHistoryAndEvents(t *testing.T) {
+	client := &mockStreamClient{
+		events: []providers.StreamEvent{
+			{Type: providers.EventDone, StopReason: "end_turn"},
+		},
+	}
+
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "you are helpful"},
+		{Role: "user", Content: "hello"},
+		{Role: "user", Name: wuucontext.SystemReminderMessageName, Content: "<system-reminder>\n# Environment\n- CWD: /tmp\n</system-reminder>"},
+	}
+
+	var received []providers.StreamEvent
+	runner := StreamRunner{
+		Client: client,
+		Model:  "test-model",
+		BeforeStep: func() []providers.ChatMessage {
+			return []providers.ChatMessage{{
+				Role:    "user",
+				Name:    wuucontext.SystemReminderMessageName,
+				Content: "<system-reminder>\n# Environment\n- CWD: /tmp\n</system-reminder>",
+			}}
+		},
+	}
+
+	res, err := runner.RunWithCallback(context.Background(), history, func(ev providers.StreamEvent) {
+		received = append(received, ev)
+	})
+	if err != nil {
+		t.Fatalf("RunWithCallback: %v", err)
+	}
+
+	if len(client.requests) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(client.requests))
+	}
+	sent := client.requests[0].Messages
+	if len(sent) != 2 {
+		t.Fatalf("expected reminder messages to be filtered from request, got %+v", sent)
+	}
+	for _, msg := range sent {
+		if wuucontext.IsSystemReminder(msg.Name, msg.Content) {
+			t.Fatalf("unexpected system reminder in request: %+v", msg)
+		}
+	}
+
+	if len(res.NewMessages) != 0 {
+		t.Fatalf("expected no persisted messages from reminder-only turn, got %+v", res.NewMessages)
+	}
+	for _, ev := range received {
+		if ev.Type == providers.EventMessage && ev.Message != nil && wuucontext.IsSystemReminder(ev.Message.Name, ev.Message.Content) {
+			t.Fatalf("unexpected reminder event: %+v", ev)
+		}
 	}
 }
 

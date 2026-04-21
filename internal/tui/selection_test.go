@@ -131,16 +131,16 @@ func TestSelectionSelectedText_UsesPerLineBaseIndent(t *testing.T) {
 	}
 }
 
-func TestIsInChatArea_ExcludesRightContentPadding(t *testing.T) {
+func TestIsInChatArea_IncludesFullChatWidth(t *testing.T) {
 	m := &Model{}
 	m.layout.Chat = layoutRect{X: 0, Y: 0, Width: 80, Height: 10}
 
-	insideRight := m.layout.Chat.X + m.layout.Chat.Width - 2 - contentPadRight
+	insideRight := m.layout.Chat.X + m.layout.Chat.Width - 1
 	if !m.isInChatArea(insideRight, 0) {
 		t.Fatalf("expected x=%d inside chat area", insideRight)
 	}
 	if m.isInChatArea(insideRight+1, 0) {
-		t.Fatalf("expected x=%d outside chat area (right content padding)", insideRight+1)
+		t.Fatalf("expected x=%d outside chat area", insideRight+1)
 	}
 }
 

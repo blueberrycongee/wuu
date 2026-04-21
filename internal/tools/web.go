@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -21,6 +22,81 @@ const (
 	webFetchMaxBytes = 1 * 1024 * 1024 // 1MB
 	webFetchTimeout  = 30 * time.Second
 )
+
+// isBlockedIP returns true if the IP should not be reachable from web_fetch.
+// Covers loopback (127/8, ::1), RFC1918 private space, link-local
+// (169.254/16 — includes AWS/GCP/Azure metadata endpoints), unspecified
+// (0.0.0.0, ::), and multicast. Callers also reject non-http(s) schemes.
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast() ||
+		ip.IsInterfaceLocalMulticast()
+}
+
+// validateFetchURL rejects URLs that target internal addresses or use
+// schemes other than http/https. Called on the original URL and on every
+// redirect target.
+func validateFetchURL(u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("blocked: missing URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("blocked: unsupported scheme %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("blocked: missing host")
+	}
+	if ip := net.ParseIP(host); ip != nil && isBlockedIP(ip) {
+		return fmt.Errorf("blocked: internal address %s", ip)
+	}
+	return nil
+}
+
+// safeDialContext refuses connections to internal addresses. This catches
+// DNS rebinding and redirects whose host resolves to a private IP, which
+// validateFetchURL alone cannot detect.
+func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("blocked: no addresses for %q", host)
+	}
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return nil, fmt.Errorf("blocked: %q resolves to internal address %s", host, ip)
+		}
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+}
+
+func safeHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: webFetchTimeout,
+		Transport: &http.Transport{
+			DialContext:           safeDialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 20 * time.Second,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			return validateFetchURL(req.URL)
+		},
+	}
+}
 
 var browserUserAgents = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -118,7 +194,7 @@ func duckDuckGoSearch(ctx context.Context, query string, maxResults int) ([]sear
 	req.Header.Set("Accept-Language", randomAcceptLang())
 	req.Header.Set("Accept-Encoding", "identity")
 
-	client := &http.Client{Timeout: webFetchTimeout}
+	client := safeHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute search: %w", err)
@@ -243,13 +319,27 @@ func webFetchExecute(ctx context.Context, argsJSON string) (string, error) {
 		return "", fmt.Errorf("web_fetch requires url")
 	}
 
+	parsed, parseErr := url.Parse(strings.TrimSpace(args.URL))
+	if parseErr != nil {
+		return mustJSON(map[string]any{
+			"url":   args.URL,
+			"error": fmt.Sprintf("invalid URL: %s", parseErr),
+		})
+	}
+	if err := validateFetchURL(parsed); err != nil {
+		return mustJSON(map[string]any{
+			"url":   args.URL,
+			"error": err.Error(),
+		})
+	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, webFetchTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", args.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", parsed.String(), nil)
 	if err != nil {
 		return mustJSON(map[string]any{
 			"error": fmt.Sprintf("invalid URL: %s", err),
@@ -259,7 +349,7 @@ func webFetchExecute(ctx context.Context, argsJSON string) (string, error) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", randomAcceptLang())
 
-	client := &http.Client{Timeout: webFetchTimeout}
+	client := safeHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return mustJSON(map[string]any{

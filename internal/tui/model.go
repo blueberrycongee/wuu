@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/insight"
@@ -39,9 +38,7 @@ const (
 	queuePreviewMaxItems = 2
 	queuePreviewMaxChars = 28
 
-	scrollbarAnchorClickTolerance = 1
-	scrollbarHitboxTolerance      = 1
-	chatSelectionDragThreshold    = 1
+	chatSelectionDragThreshold = 1
 
 	// maxAutoResumeChain caps how many turns the main agent can
 	// auto-fire in response to worker completions without seeing
@@ -173,6 +170,12 @@ type transcriptEntry struct {
 	// Claude Code's interleaved display. When empty, falls back to
 	// legacy order (thinking → tools → content).
 	blockOrder []string
+
+	// textSegmentOffsets tracks byte offsets into Content where each
+	// "text" segment begins. Used to split Content into per-segment
+	// slices for interleaved rendering. len(textSegmentOffsets) ==
+	// number of "text" entries in blockOrder.
+	textSegmentOffsets []int
 }
 
 type queuedMessage struct {
@@ -184,6 +187,10 @@ type pendingTurnResult struct {
 	newMsgs              []providers.ChatMessage
 	historyRewritten     bool
 	incrementalPersisted bool
+	// workerResults holds <worker-result> messages that arrived while
+	// this turn was still running. They must be re-injected after a
+	// history rewrite so they are not lost by the compaction.
+	workerResults []providers.ChatMessage
 }
 
 type pendingChatClickState struct {
@@ -224,13 +231,6 @@ type Model struct {
 	// without user input — used as a runaway safety net.
 	pendingAutoResume bool
 	autoResumeChain   int
-
-	// pendingWorkerResults holds worker-result XML strings that arrived
-	// while a turn was in progress. They are injected into chatHistory
-	// only after the turn's newMsgs have been committed, preventing the
-	// worker-result from landing between an assistant tool_call and its
-	// tool_result — which Anthropic rejects with HTTP 400.
-	pendingWorkerResults []string
 
 	requestTimeout time.Duration
 
@@ -293,9 +293,6 @@ type Model struct {
 	imageBarFocused  bool // true when user is navigating the image bar
 	selectedImageIdx int  // index of the selected image pill
 
-	// Anchors (content line offsets) for user messages in the rendered viewport.
-	userMessageLineAnchors []int
-
 	// renderedContent is the full multi-line string most recently
 	// passed to viewport.SetContent. We hold our own copy because
 	// the bubbletea viewport's View() only returns the visible
@@ -316,21 +313,11 @@ type Model struct {
 	pendingViewportRefresh bool
 	pendingViewportEntry   int
 
-	// Scrollbar drag state.
-	scrollbarDragging       bool
-	scrollbarDragGrabOffset int
-	scrollbarDragTrackSpace int
-	scrollbarDragMaxOffset  int
-
-	// Scrollbar hover state.
-	scrollbarHoverActive bool
-	scrollbarHoverRow    int
-
-	// Cached scrollbar render, precomputed in Update() via refreshScrollbarCache().
-	cachedScrollbar string
-
 	// Text selection in viewport.
 	selection selectionState
+
+	// In-viewport search overlay state.
+	search searchState
 
 	// Pending click in the chat area. A plain click should focus the
 	// input on release; only once motion exceeds a small threshold do
@@ -415,7 +402,6 @@ func NewModel(cfg Config) Model {
 		workerSpawnedByID:    make(map[string]bool),
 		processEventSeen:     make(map[string]bool),
 		historyIndex:         -1,
-		scrollbarHoverRow:    -1,
 		insightProgressIdx:   -1,
 	}
 
@@ -986,18 +972,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendEntry("system", fmt.Sprintf("%s %s %s: %s%s",
 				icon, n.Snapshot.Type, n.Status, n.Snapshot.Description, suffix))
 			// Inject the worker-result XML into the orchestrator's
-			// next API request as a user-role message. If a turn is in
-			// progress, buffer it — injecting directly would interleave
-			// the worker-result between an assistant tool_call and its
-			// tool_result, which Anthropic rejects with HTTP 400.
+			// next API request as a user-role message.
 			xml := coordinator.FormatWorkerResult(n.Snapshot)
-			if m.streaming || m.pendingRequest {
-				m.pendingWorkerResults = append(m.pendingWorkerResults, xml)
-			} else {
-				m.chatHistory = append(m.chatHistory, providers.ChatMessage{
-					Role:    "user",
-					Content: xml,
-				})
+			workerMsg := providers.ChatMessage{
+				Role:    "user",
+				Content: xml,
+			}
+			m.chatHistory = append(m.chatHistory, workerMsg)
+			// If a turn is in flight, also stash the result on the
+			// pendingTurn so it survives a history-rewrite compaction.
+			if m.pendingTurn != nil {
+				m.pendingTurn.workerResults = append(m.pendingTurn.workerResults, workerMsg)
 			}
 			injected = true
 		}
@@ -1026,6 +1011,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		finishedEntry := m.streamTarget
 		m.streaming = false
 		m.pendingRequest = false
+		// Clear the composited cache for the finished entry so the
+		// streaming cursor (▌) is removed on the next render.
+		// Without this, OffscreenFreeze skips re-rendering because
+		// compositedH > 0, leaving the cursor artifact visible.
+		if finishedEntry >= 0 && finishedEntry < len(m.entries) {
+			m.entries[finishedEntry].composited = ""
+			m.entries[finishedEntry].compositedH = 0
+		}
 		m.streamTarget = -1
 		m.thinkingStart = time.Time{}
 		if m.streamCollector != nil {
@@ -1040,14 +1033,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rewriteHistory := false
 			switch {
 			case m.pendingTurn.historyRewritten:
-				filtered := filterPersistableChatMessages(m.pendingTurn.newMsgs)
-				base := make([]providers.ChatMessage, len(filtered))
-				copy(base, filtered)
+				base := make([]providers.ChatMessage, len(m.pendingTurn.newMsgs))
+				copy(base, m.pendingTurn.newMsgs)
 				m.chatHistory = base
+				// Re-append any worker results that arrived while the turn
+				// was running so they are not swallowed by the rewrite.
+				for _, wmsg := range m.pendingTurn.workerResults {
+					m.chatHistory = append(m.chatHistory, wmsg)
+				}
 				rewriteHistory = true
 			default:
 				if !m.pendingTurn.incrementalPersisted {
-					for _, msg := range filterPersistableChatMessages(m.pendingTurn.newMsgs) {
+					for _, msg := range m.pendingTurn.newMsgs {
 						m.chatHistory = append(m.chatHistory, msg)
 						_ = appendChatMessage(m.memoryPath, msg)
 					}
@@ -1060,16 +1057,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.pendingTurn = nil
 		}
-
-		// Flush any worker results that arrived during the turn. These
-		// must be appended AFTER newMsgs so they never land between an
-		// assistant tool_call and its tool_result.
-		for _, xml := range m.pendingWorkerResults {
-			msg := providers.ChatMessage{Role: "user", Content: xml}
-			m.chatHistory = append(m.chatHistory, msg)
-			_ = appendChatMessage(m.memoryPath, msg)
-		}
-		m.pendingWorkerResults = nil
 
 		// Persist token usage for this turn.
 		if m.turnInputTokens > 0 || m.turnOutputTokens > 0 {
@@ -1133,8 +1120,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.viewport, cmd = m.viewport.Update(msg)
 				m.syncViewportState()
-				m.updateScrollbarHover(msg.X, msg.Y)
-				m.refreshScrollbarCache()
 				m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
 				return m, cmd
 			}
@@ -1145,12 +1130,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.drainQueuedStreamEvents(interactiveStreamDrainLimit)
-		hoverChanged := m.updateScrollbarHover(msg.X, msg.Y)
 
 		if msg.Action == tea.MouseActionRelease {
-			m.scrollbarDragging = false
-			m.scrollbarDragTrackSpace = 0
-			m.scrollbarDragMaxOffset = 0
 			if m.selection.IsDragging {
 				m.stopSelectionAutoScroll()
 				m.selection.finish()
@@ -1227,9 +1208,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selection.update(vpCol, vpRow)
 				return m, cmd
 			}
-			if hoverChanged {
-				return m, nil
-			}
 		}
 
 		if msg.Action == tea.MouseActionMotion && m.selection.IsDragging {
@@ -1244,37 +1222,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			vpRow, vpCol := m.screenToViewportCoords(msg.X, msg.Y)
 			m.selection.update(vpCol, vpRow)
 			return m, cmd
-		}
-		if msg.Action == tea.MouseActionMotion && m.scrollbarDragging {
-			m.dragScrollbarToRow(msg.Y - m.layout.Chat.Y)
-			return m, nil
-		}
-		if msg.Action == tea.MouseActionMotion && hoverChanged {
-			return m, nil
-		}
-
-		if msg.Action == tea.MouseActionPress &&
-			msg.Button == tea.MouseButtonLeft &&
-			m.isScrollbarClick(msg.X, msg.Y) {
-			m.blurInput()
-			m.clearPendingChatClick()
-			m.selection.clear()
-			row := msg.Y - m.layout.Chat.Y
-			if msg.Alt {
-				if !m.jumpToNearestUserAnchorAtRow(row) {
-					if row == 0 {
-						m.jumpToPreviousUserAnchor()
-					} else {
-						m.jumpToScrollbarRow(row)
-					}
-				}
-				return m, nil
-			}
-			if m.startScrollbarDrag(row) {
-				return m, nil
-			}
-			m.jumpToScrollbarRow(row)
-			return m, nil
 		}
 
 		if m.showJump &&
@@ -1426,7 +1373,70 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// ── Search mode keyboard handling ──
+		// When search is active, keyboard input routes to search instead
+		// of the input textarea. This follows Claude Code's overlay pattern
+		// where search is a modal-like overlay above the transcript.
+		if m.search.Active {
+			switch msg.String() {
+			case "esc":
+				m.search.clear()
+				m.statusLine = "search cancelled"
+				return m, nil
+			case "enter", "n":
+				m.search.next()
+				if m.search.hasMatches() {
+					m.statusLine = fmt.Sprintf("search: %d/%d", m.search.CurrentIdx+1, len(m.search.Matches))
+				} else {
+					m.statusLine = fmt.Sprintf("search: no matches for %q", m.search.Query)
+				}
+				return m, nil
+			case "N":
+				m.search.prev()
+				if m.search.hasMatches() {
+					m.statusLine = fmt.Sprintf("search: %d/%d", m.search.CurrentIdx+1, len(m.search.Matches))
+				}
+				return m, nil
+			case "backspace":
+				if len(m.search.Query) > 0 {
+					m.search.Query = m.search.Query[:len(m.search.Query)-1]
+					m.search.Matches = searchInContent(m.renderedContent, m.search.Query, m.search.CaseSensitive)
+					m.search.CurrentIdx = 0
+					if m.search.hasMatches() {
+						m.statusLine = fmt.Sprintf("search: %d matches for %q", len(m.search.Matches), m.search.Query)
+					} else {
+						m.statusLine = fmt.Sprintf("search: no matches for %q", m.search.Query)
+					}
+				}
+				return m, nil
+			case "ctrl+c":
+				m.search.clear()
+				m.statusLine = "search cancelled"
+				return m, nil
+			default:
+				// Append typed character to search query.
+				if len(msg.String()) == 1 {
+					m.search.Query += msg.String()
+					m.search.Matches = searchInContent(m.renderedContent, m.search.Query, m.search.CaseSensitive)
+					m.search.CurrentIdx = 0
+					if m.search.hasMatches() {
+						m.statusLine = fmt.Sprintf("search: %d matches for %q", len(m.search.Matches), m.search.Query)
+					} else {
+						m.statusLine = fmt.Sprintf("search: no matches for %q", m.search.Query)
+					}
+					return m, nil
+				}
+			}
+		}
+
 		switch msg.String() {
+		case "ctrl+f":
+			m.search.Active = true
+			m.search.Query = ""
+			m.search.Matches = nil
+			m.search.CurrentIdx = 0
+			m.statusLine = "search: type to search"
+			return m, nil
 		case "ctrl+c":
 			// If insight is running, first ctrl+c cancels it instead of quitting.
 			if m.insightRunning && m.cancelInsight != nil {
@@ -1573,15 +1583,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Update slash command completion popup.
 	m.updateCompletion()
 
-	prevOffset := m.viewport.YOffset
 	m.viewport, cmd = m.viewport.Update(msg)
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	m.syncViewportState()
-	if m.viewport.YOffset != prevOffset {
-		m.refreshScrollbarCache()
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -1725,13 +1731,9 @@ func (m Model) startStreamingTurn() (tea.Model, tea.Cmd) {
 	ctx, cancel := m.newRequestContext()
 	m.cancelStream = cancel
 
-	// Normalize history to repair any corrupted ordering (orphan tool
-	// results, interleaved worker results, missing results) before the
-	// API sees it.  This is defense-in-depth on top of the real-time
-	// pendingWorkerResults buffer.
-	normalized := normalizeChatHistory(filterPersistableChatMessages(m.chatHistory))
-	history := make([]providers.ChatMessage, len(normalized))
-	copy(history, normalized)
+	// Copy history for the goroutine (defensive copy).
+	history := make([]providers.ChatMessage, len(m.chatHistory))
+	copy(history, m.chatHistory)
 
 	result := &pendingTurnResult{}
 	m.pendingTurn = result
@@ -1880,6 +1882,13 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 		// Record block order: if the last block isn't "text", start a new text segment.
 		if len(e.blockOrder) == 0 || e.blockOrder[len(e.blockOrder)-1] != "text" {
 			e.blockOrder = append(e.blockOrder, "text")
+			// Record the byte offset where this text segment starts
+			// so compositeEntry can render each segment independently.
+			offset := len(e.Content) - len(event.Content)
+			if offset < 0 {
+				offset = 0
+			}
+			e.textSegmentOffsets = append(e.textSegmentOffsets, offset)
 		}
 		// During streaming: accumulate only, do NOT refresh viewport.
 		// The 100ms inlineSpinMsg tick flushes accumulated content to
@@ -2043,6 +2052,9 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			if content == "" || content == "(empty)" {
 				m.entries[m.streamTarget].Content = ""
 			}
+			// Force re-render to clear the streaming cursor artifact.
+			m.entries[m.streamTarget].composited = ""
+			m.entries[m.streamTarget].compositedH = 0
 		}
 		m.streamTarget = -1
 		errMsg := "unknown stream error"
@@ -2401,41 +2413,6 @@ func (m Model) historyDown() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) hasScrollableContent() bool {
-	return m.layout.Chat.Height > 0 && m.viewport.TotalLineCount() > m.viewport.Height
-}
-
-func (m *Model) isScrollbarClick(x, y int) bool {
-	if !m.hasScrollableContent() {
-		return false
-	}
-	right := m.layout.Chat.X + m.layout.Chat.Width - 1
-	left := right - scrollbarHitboxTolerance
-	if left < m.layout.Chat.X {
-		left = m.layout.Chat.X
-	}
-	top := m.layout.Chat.Y
-	bottom := top + m.layout.Chat.Height
-	return x >= left && x <= right && y >= top && y < bottom
-}
-
-func (m *Model) updateScrollbarHover(x, y int) bool {
-	prevActive := m.scrollbarHoverActive
-	prevRow := m.scrollbarHoverRow
-	if m.isScrollbarClick(x, y) {
-		m.scrollbarHoverActive = true
-		m.scrollbarHoverRow = y - m.layout.Chat.Y
-	} else {
-		m.scrollbarHoverActive = false
-		m.scrollbarHoverRow = -1
-	}
-	changed := m.scrollbarHoverActive != prevActive || m.scrollbarHoverRow != prevRow
-	if changed {
-		m.refreshScrollbarCache()
-	}
-	return changed
-}
-
 func (m Model) viewportVisibleLineRange() (start, end int, ok bool) {
 	if m.viewport.Height <= 0 {
 		return 0, 0, false
@@ -2519,152 +2496,6 @@ func (m *Model) setViewportOffset(offset int) {
 	}
 	m.viewport.YOffset = offset
 	m.syncViewportState()
-	m.refreshScrollbarCache()
-}
-
-// refreshScrollbarCache rebuilds the scrollbar string. Called from any
-// code path that changes the viewport offset, hover, or drag state so
-// the value-receiver View() can read a pre-computed result.
-func (m *Model) refreshScrollbarCache() {
-	hoverRow := -1
-	if m.scrollbarHoverActive {
-		hoverRow = m.scrollbarHoverRow
-	}
-	m.cachedScrollbar = renderScrollbarWithHover(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-		m.userMessageLineAnchors,
-		hoverRow,
-		m.scrollbarDragging,
-	)
-}
-
-func (m *Model) jumpToScrollbarRow(row int) {
-	height := m.layout.Chat.Height
-	if height <= 0 {
-		m.setViewportOffset(0)
-		return
-	}
-	if row < 0 {
-		row = 0
-	} else if row >= height {
-		row = height - 1
-	}
-	_, thumbSize, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		m.setViewportOffset(0)
-		return
-	}
-	targetThumbPos := row - thumbSize/2
-	absoluteTarget := scrollbarOffsetForThumbPos(targetThumbPos, trackSpace, maxOffset)
-	m.setViewportOffset(softenScrollbarTrackOffset(m.viewport.YOffset, absoluteTarget, m.viewport.Height, maxOffset))
-}
-
-func (m *Model) startScrollbarDrag(row int) bool {
-	thumbPos, thumbSize, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		return false
-	}
-	if row < thumbPos || row >= thumbPos+thumbSize {
-		return false
-	}
-	m.scrollbarDragging = true
-	m.scrollbarDragGrabOffset = row - thumbPos
-	m.scrollbarDragTrackSpace = trackSpace
-	m.scrollbarDragMaxOffset = maxOffset
-	return true
-}
-
-func (m *Model) dragScrollbarToRow(row int) {
-	height := m.layout.Chat.Height
-	if height <= 0 {
-		return
-	}
-	if row < 0 {
-		row = 0
-	} else if row >= height {
-		row = height - 1
-	}
-	thumbPos, _, trackSpace, maxOffset, ok := scrollbarThumbGeometry(
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-		m.viewport.Height,
-		m.viewport.YOffset,
-	)
-	if !ok {
-		m.setViewportOffset(0)
-		return
-	}
-	if trackSpace <= 0 || maxOffset <= 0 {
-		m.setViewportOffset(0)
-		return
-	}
-	if m.scrollbarDragTrackSpace != trackSpace || m.scrollbarDragMaxOffset != maxOffset {
-		m.scrollbarDragGrabOffset = row - thumbPos
-		m.scrollbarDragTrackSpace = trackSpace
-		m.scrollbarDragMaxOffset = maxOffset
-	}
-	targetThumbPos := row - m.scrollbarDragGrabOffset
-	m.setViewportOffset(scrollbarOffsetForThumbPos(targetThumbPos, trackSpace, maxOffset))
-}
-
-func (m *Model) jumpToNearestUserAnchorAtRow(row int) bool {
-	if len(m.userMessageLineAnchors) == 0 {
-		return false
-	}
-	anchorRows := contentLinesToScrollbarRows(
-		m.userMessageLineAnchors,
-		m.layout.Chat.Height,
-		m.viewport.TotalLineCount(),
-	)
-	nearest := -1
-	bestDistance := scrollbarAnchorClickTolerance + 1
-	for i, anchorRow := range anchorRows {
-		distance := anchorRow - row
-		if distance < 0 {
-			distance = -distance
-		}
-		if distance < bestDistance {
-			bestDistance = distance
-			nearest = i
-		}
-	}
-	if nearest < 0 || bestDistance > scrollbarAnchorClickTolerance {
-		return false
-	}
-	m.setViewportOffset(m.userMessageLineAnchors[nearest])
-	return true
-}
-
-// jumpToPreviousUserAnchor scrolls to the nearest user message anchor that
-// is above the current viewport offset. If no such anchor exists it jumps to
-// the very first anchor.
-func (m *Model) jumpToPreviousUserAnchor() {
-	if len(m.userMessageLineAnchors) == 0 {
-		return
-	}
-	offset := m.viewport.YOffset
-	// Walk anchors in reverse to find the first one above the current view.
-	for i := len(m.userMessageLineAnchors) - 1; i >= 0; i-- {
-		if m.userMessageLineAnchors[i] < offset {
-			m.setViewportOffset(m.userMessageLineAnchors[i])
-			return
-		}
-	}
-	// All anchors are at or below current offset — jump to the first one.
-	m.setViewportOffset(m.userMessageLineAnchors[0])
 }
 
 // compositeEntryKey computes a fast hash of all inputs that affect an
@@ -2719,10 +2550,14 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 	innerWidth := cw
 	var parts []string
 
-	// Role label.
+	// Role label + metadata row.
 	switch e.Role {
-	case "USER", "ASSISTANT":
-		// No label.
+	case "USER":
+		// No label — user messages have the bubble style.
+	case "ASSISTANT":
+		// Subtle metadata row for assistant messages.
+		meta := metadataStyle.Render(fmt.Sprintf("%s · %s", m.modelName, time.Now().Format("15:04")))
+		parts = append(parts, indentLines(meta, contentPadLeft))
 	default:
 		parts = append(parts, indentLines(systemLabelStyle.Render(e.Role), contentPadLeft))
 	}
@@ -2743,22 +2578,92 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 	// cards interleaved as they arrived). Aligned with Claude Code's
 	// per-content-block rendering. Falls back to legacy order when
 	// blockOrder is empty (e.g. loaded from session history).
-	renderText := func() {
-		content := truncateForDisplay(e.Content)
-		if content == "(empty)" {
+	fullContent := e.Content
+	// Use the markdown-rendered version when available. Since Commit()
+	// now renders markdown on every tick (not just at Finalize), the
+	// rendered output is available during streaming too — no more
+	// raw→rendered jump at EventDone.
+	fullRendered := e.rendered
+	isLastSegment := func(segIdx int) bool {
+		return segIdx == len(e.textSegmentOffsets)-1
+	}
+
+	renderTextSegment := func(segIdx int) {
+		// Extract the text for this specific segment.
+		var segContent, segRendered string
+		if segIdx < len(e.textSegmentOffsets) {
+			start := e.textSegmentOffsets[segIdx]
+			if isLastSegment(segIdx) {
+				segContent = fullContent[start:]
+			} else if segIdx+1 < len(e.textSegmentOffsets) {
+				segContent = fullContent[start:e.textSegmentOffsets[segIdx+1]]
+			}
+			// Use the rendered markdown for single-segment entries
+			// (the common case). For multi-segment (interleaved with
+			// tools), use rendered only when this is the sole segment
+			// (start == 0), otherwise fall back to raw per-segment.
+			if isLastSegment(segIdx) && fullRendered != "" {
+				segRendered = fullRendered
+				if start > 0 {
+					// Multi-segment: can't split rendered markdown by
+					// byte offset. Fall back to raw for this segment.
+					segRendered = ""
+				}
+			}
+		} else {
+			segContent = fullContent
+			segRendered = fullRendered
+		}
+		segContent = truncateForDisplay(segContent)
+		if segContent == "(empty)" || strings.TrimSpace(segContent) == "" {
+			if isStreamTarget && isLastSegment(segIdx) {
+				parts = append(parts, strings.Repeat(" ", contentPadLeft)+"▌")
+			}
 			return
 		}
+		var textPart string
 		if e.Role == "USER" {
-			wrapped := userContentStyle.Render(wrapText(content, cw-2))
-			parts = append(parts, indentLines(wrapped, contentPadLeft))
-		} else if e.rendered != "" {
-			parts = append(parts, indentLines(wrapText(e.rendered, cw), contentPadLeft))
+			textPart = indentLines(userContentStyle.Render(wrapText(segContent, cw-2)), contentPadLeft)
+		} else if segRendered != "" {
+			// Rendered markdown is already width-constrained by the
+			// renderer (tables use box-drawing, paragraphs are word-
+			// wrapped). Do NOT re-wrap — it destroys table layout.
+			textPart = indentLines(segRendered, contentPadLeft)
 		} else {
-			parts = append(parts, indentLines(wrapText(content, cw), contentPadLeft))
+			textPart = indentLines(wrapText(segContent, cw), contentPadLeft)
+		}
+		// Append the streaming cursor to the last line of text, not as
+		// a separate part. A standalone "▌" between text and tool card
+		// creates an extra blank line that disappears when streaming
+		// ends, causing visible position jumps.
+		if isStreamTarget && isLastSegment(segIdx) {
+			textPart += "▌"
+		}
+		parts = append(parts, textPart)
+	}
+	renderTextFull := func() {
+		content := truncateForDisplay(e.Content)
+		if content == "(empty)" {
+			// Empty content — but if we're the streaming target, still
+			// reserve a line with the cursor so the viewport doesn't
+			// jump when the first token arrives.
+			if isStreamTarget {
+				parts = append(parts, strings.Repeat(" ", contentPadLeft)+"▌")
+			}
+			return
+		}
+		var textPart string
+		if e.Role == "USER" {
+			textPart = indentLines(userContentStyle.Render(wrapText(content, cw-2)), contentPadLeft)
+		} else if e.rendered != "" {
+			textPart = indentLines(e.rendered, contentPadLeft)
+		} else {
+			textPart = indentLines(wrapText(content, cw), contentPadLeft)
 		}
 		if isStreamTarget {
-			parts = append(parts, "▌")
+			textPart += "▌"
 		}
+		parts = append(parts, textPart)
 	}
 	renderTool := func(idx int) {
 		if idx >= 0 && idx < len(e.ToolCalls) {
@@ -2766,22 +2671,13 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 		}
 	}
 
-	// Find the last "text" position in blockOrder so we render
-	// the full text content exactly once, at its final position.
-	lastTextIdx := -1
-	for bi, block := range e.blockOrder {
-		if block == "text" {
-			lastTextIdx = bi
-		}
-	}
-
 	if len(e.blockOrder) > 0 {
-		// Stream-order rendering.
-		for bi, block := range e.blockOrder {
+		// Stream-order rendering with per-segment text.
+		textSegIdx := 0
+		for _, block := range e.blockOrder {
 			if block == "text" {
-				if bi == lastTextIdx {
-					renderText()
-				}
+				renderTextSegment(textSegIdx)
+				textSegIdx++
 			} else if strings.HasPrefix(block, "tool:") {
 				var idx int
 				fmt.Sscanf(block, "tool:%d", &idx)
@@ -2798,23 +2694,17 @@ func (m *Model) compositeEntry(i int, isStreamTarget bool) string {
 				covered[idx] = true
 			}
 		}
-		var uncovered []ToolCallEntry
 		for idx := range e.ToolCalls {
 			if !covered[idx] {
-				uncovered = append(uncovered, e.ToolCalls[idx])
+				parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
 			}
 		}
-		grouped := renderToolCallsGrouped(uncovered, innerWidth, m.spinnerFrame)
-		for _, gp := range grouped {
-			parts = append(parts, indentLines(gp, contentPadLeft))
-		}
 	} else {
-		// Legacy fallback: tools first, then content, with grouping.
-		grouped := renderToolCallsGrouped(e.ToolCalls, innerWidth, m.spinnerFrame)
-		for _, gp := range grouped {
-			parts = append(parts, indentLines(gp, contentPadLeft))
+		// Legacy fallback: tools first, then content.
+		for idx := range e.ToolCalls {
+			parts = append(parts, indentLines(renderToolCard(&e.ToolCalls[idx], innerWidth, m.spinnerFrame), contentPadLeft))
 		}
-		renderText()
+		renderTextFull()
 	}
 
 	result := strings.Join(parts, "\n")
@@ -2836,22 +2726,24 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		m.entries[i].renderEnd = -1
 	}
 
-	userAnchors := make([]int, 0, len(m.entries))
-
 	if len(m.entries) == 0 && !m.pendingRequest {
 		m.renderedContent = welcomeScreen(m.viewport.Width, m.provider, m.modelName, m.sessionID)
-		m.userMessageLineAnchors = nil
 		m.pendingViewportRefresh = false
 		m.pendingViewportEntry = -1
 		m.viewport.SetContent(m.renderedContent)
-		m.refreshScrollbarCache()
 		return
 	}
 
-	// ── Pass 1: collect visible entry indices and cumulative heights ──
-	// Build a list of non-TOOL entries with their composited heights.
-	// Heights come from the composited cache (compositedH), computed
-	// eagerly for all entries so we know total height for scrollbar.
+	// ── Pass 1: compute heights with OffscreenFreeze ──
+	// For entries that have scrolled far out of viewport, skip
+	// re-rendering even if their state changed (spinner, elapsed).
+	// This is the BubbleTea equivalent of Claude Code's OffscreenFreeze:
+	// once a subtree is in scrollback, return the cached element.
+	//
+	// We do this in two sub-passes:
+	//   1a. Quick height-only pass using cached compositedH when available.
+	//   1b. Determine visible range.
+	//   1c. Re-render only entries inside visible range + margin.
 	type entrySlot struct {
 		idx    int // index into m.entries
 		height int // line count including 2-line gap
@@ -2863,11 +2755,20 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		if m.entries[i].Role == "TOOL" {
 			continue
 		}
-		// Ensure compositedH is populated (compositeEntry caches it).
+		// OffscreenFreeze: if we have a cached height, use it without
+		// re-rendering. Only the stream target is exempt (it must stay
+		// live even when off-screen so the first visible token appears
+		// immediately when the user scrolls back).
 		isStreamTarget := m.streaming && i == m.streamTarget
-		m.compositeEntry(i, isStreamTarget)
-
+		if !isStreamTarget && m.entries[i].compositedH > 0 {
+			// Cached height available — skip render for now.
+		} else {
+			m.compositeEntry(i, isStreamTarget)
+		}
 		h := m.entries[i].compositedH
+		if h <= 0 {
+			h = 1 // safety minimum
+		}
 		if len(slots) > 0 {
 			h += 2 // gap between entries ("\n\n")
 		}
@@ -2909,6 +2810,37 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		lastVisible = len(slots) - 1
 	}
 
+	// ── Pass 2.5: OffscreenFreeze margin ──
+	// Expand the "must render" window by 2x overscan so entries
+	// just outside the visible range still get updated (smooth scroll).
+	// Entries beyond this margin are truly frozen.
+	freezeMargin := overscanLines * 2
+	freezeTop := visibleTop - freezeMargin
+	freezeBottom := visibleBottom + freezeMargin
+	if freezeTop < 0 {
+		freezeTop = 0
+	}
+	if freezeBottom > totalLines {
+		freezeBottom = totalLines
+	}
+	for si, slot := range slots {
+		slotEnd := slot.offset + slot.height
+		inFreezeZone := slotEnd > freezeTop && slot.offset < freezeBottom
+		isStreamTarget := m.streaming && slot.idx == m.streamTarget
+		if (inFreezeZone || isStreamTarget) && m.entries[slot.idx].composited == "" {
+			// Inside freeze zone but never rendered — render now.
+			m.compositeEntry(slot.idx, isStreamTarget)
+			slot.height = m.entries[slot.idx].compositedH
+			if slot.height <= 0 {
+				slot.height = 1
+			}
+			if si > 0 {
+				slot.height += 2
+			}
+			slots[si] = slot
+		}
+	}
+
 	// ── Pass 3: build viewport content with virtual padding ──
 	var b strings.Builder
 
@@ -2933,10 +2865,6 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		}
 
 		entryStartLine := lineCount
-		if e.Role == "USER" {
-			userAnchors = append(userAnchors, entryStartLine)
-		}
-
 		b.WriteString(e.composited)
 		lineCount += e.compositedH
 
@@ -2954,11 +2882,18 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		b.WriteString(strings.Repeat("\n", bottomPadLines))
 	}
 
-	m.userMessageLineAnchors = userAnchors
 	m.renderedContent = b.String()
 	m.pendingViewportRefresh = false
 	m.pendingViewportEntry = -1
 	m.viewport.SetContent(m.renderedContent)
+
+	// Refresh search matches when content changes.
+	if m.search.Active && m.search.Query != "" {
+		m.search.Matches = searchInContent(m.renderedContent, m.search.Query, m.search.CaseSensitive)
+		if m.search.CurrentIdx >= len(m.search.Matches) {
+			m.search.CurrentIdx = 0
+		}
+	}
 
 	if forceBottom || m.autoFollow {
 		m.viewport.GotoBottom()
@@ -2966,20 +2901,6 @@ func (m *Model) refreshViewport(forceBottom bool) {
 		m.setViewportOffset(prevOffset)
 	}
 	m.showJump = !m.viewport.AtBottom()
-	if !m.hasScrollableContent() {
-		m.scrollbarHoverActive = false
-		m.scrollbarHoverRow = -1
-		m.scrollbarDragging = false
-		m.scrollbarDragTrackSpace = 0
-		m.scrollbarDragMaxOffset = 0
-	} else if m.scrollbarHoverActive {
-		if m.scrollbarHoverRow < 0 {
-			m.scrollbarHoverRow = 0
-		} else if m.scrollbarHoverRow >= m.layout.Chat.Height {
-			m.scrollbarHoverRow = m.layout.Chat.Height - 1
-		}
-	}
-	m.refreshScrollbarCache()
 }
 
 func (m *Model) relayout() {
@@ -2999,9 +2920,7 @@ func (m *Model) relayout() {
 	m.input.SetHeight(m.layout.Input.Height)
 	m.viewport.Width = m.layout.Chat.Width
 	m.viewport.Height = m.layout.Chat.Height
-	m.cachedSep = lipgloss.NewStyle().
-		Foreground(currentTheme.Border).
-		Render(strings.Repeat("─", m.width))
+	m.cachedSep = dividerStyle.Render(strings.Repeat("─", m.width))
 
 	// Invalidate cached renders when chat width changes — text
 	// rendered for the old width wraps incorrectly at the new width.
@@ -3104,34 +3023,11 @@ func (m Model) currentWorkStatus() workStatus {
 }
 
 func (m *Model) persistStreamMessage(msg providers.ChatMessage) {
-	if !shouldPersistChatMessage(msg) {
-		return
-	}
 	m.chatHistory = append(m.chatHistory, msg)
 	_ = appendChatMessage(m.memoryPath, msg)
 	if m.pendingTurn != nil {
 		m.pendingTurn.incrementalPersisted = true
 	}
-}
-
-func shouldPersistChatMessage(msg providers.ChatMessage) bool {
-	if msg.Role != "user" {
-		return true
-	}
-	return !wuucontext.IsSystemReminder(msg.Name, msg.Content)
-}
-
-func filterPersistableChatMessages(msgs []providers.ChatMessage) []providers.ChatMessage {
-	if len(msgs) == 0 {
-		return nil
-	}
-	filtered := make([]providers.ChatMessage, 0, len(msgs))
-	for _, msg := range msgs {
-		if shouldPersistChatMessage(msg) {
-			filtered = append(filtered, msg)
-		}
-	}
-	return filtered
 }
 
 func (m Model) shouldRenderInlineStatus() bool {
@@ -3202,7 +3098,7 @@ func (m Model) View() string {
 	}
 	// Image count is now shown in the image bar; no header hint needed.
 	if m.showJump {
-		hints = append(hints, "▼")
+		hints = append(hints, scrollIndicatorStyle.Render("▼"))
 	}
 	hints = append(hints, m.clock)
 	headerRight := strings.Join(hints, " · ")
@@ -3225,10 +3121,13 @@ func (m Model) View() string {
 		outputBox = overlaySelection(outputBox, &m.selection, m.viewport.YOffset, m.viewport.Width)
 	}
 
-	// Overlay scrollbar — pre-computed in Update() via refreshScrollbarCache().
-	if m.cachedScrollbar != "" {
-		outputBox = overlayScrollbar(outputBox, m.cachedScrollbar, m.layout.Chat.Width)
+	// Overlay search highlight matches on top of the viewport.
+	// Search is a screen overlay — matches are found in renderedContent
+	// and highlighted via SGR, not by re-rendering message components.
+	if m.search.Active && m.search.hasMatches() {
+		outputBox = overlaySearchHighlight(outputBox, &m.search, m.viewport.YOffset, m.viewport.Width)
 	}
+
 	inputBox := m.input.View()
 	if m.inputSelection.hasSelection() {
 		inputBox = overlayInputSelection(inputBox, &m.inputSelection)
@@ -3252,7 +3151,26 @@ func (m Model) View() string {
 		statusLine = indentLines(renderInlineWorkStatus(m.currentWorkStatus(), m.spinnerFrame, contentWidth(m.viewport.Width)), contentPadLeft)
 	}
 
+	// Search status bar — shown when search overlay is active.
+	var searchBar string
+	if m.search.Active {
+		searchPrompt := "/" + m.search.Query + "▌"
+		matchInfo := ""
+		if m.search.hasMatches() {
+			matchInfo = fmt.Sprintf(" %d/%d", m.search.CurrentIdx+1, len(m.search.Matches))
+		}
+		searchBar = indentLines(
+			waitingStatusLabelStrongStyle.Render("Search: ")+
+				waitingStatusLabelStyle.Render(searchPrompt)+
+				waitingStatusMetaStyle.Render(matchInfo+"  ·  n next  ·  N prev  ·  Esc close"),
+			contentPadLeft,
+		)
+	}
+
 	parts := []string{header, outputBox, statusLine}
+	if searchBar != "" {
+		parts = append(parts, searchBar)
+	}
 	if panel := m.renderWorkerPanel(m.width); panel != "" {
 		parts = append(parts, sep, panel)
 	}

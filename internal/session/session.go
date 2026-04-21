@@ -10,8 +10,34 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// withIndexLock serializes access to the session index file across
+// processes. Two concurrent wuu sessions in the same workspace can
+// otherwise race between appendIndex and UpdateIndex's truncate-rewrite,
+// losing session entries. Blocking is fine — index operations are brief.
+func withIndexLock(sessDir string, exclusive bool, fn func() error) error {
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		return fmt.Errorf("create sessions dir: %w", err)
+	}
+	lockPath := filepath.Join(sessDir, ".index.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("open index lock: %w", err)
+	}
+	defer f.Close()
+	mode := syscall.LOCK_SH
+	if exclusive {
+		mode = syscall.LOCK_EX
+	}
+	if err := syscall.Flock(int(f.Fd()), mode); err != nil {
+		return fmt.Errorf("acquire index lock: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
 
 // Session represents one conversation session.
 type Session struct {
@@ -60,24 +86,36 @@ func Create(sessDir string, id ...string) (*Session, error) {
 		CreatedAt: time.Now().UTC(),
 	}
 
-	// Create empty data file.
-	dataPath := FilePath(sessDir, sess.ID)
-	f, err := os.Create(dataPath)
-	if err != nil {
-		return nil, fmt.Errorf("create session file: %w", err)
-	}
-	f.Close()
-
-	// Append to index.
-	if err := appendIndex(sessDir, sess); err != nil {
+	// Hold the index lock for both the data-file create and the index
+	// append so a concurrent UpdateIndex cannot snapshot the index
+	// between the two and rewrite it without this session's entry.
+	if err := withIndexLock(sessDir, true, func() error {
+		dataPath := FilePath(sessDir, sess.ID)
+		f, err := os.Create(dataPath)
+		if err != nil {
+			return fmt.Errorf("create session file: %w", err)
+		}
+		f.Close()
+		return appendIndexLocked(sessDir, sess)
+	}); err != nil {
 		return nil, err
 	}
-
 	return sess, nil
 }
 
 // List reads the index and returns the most recent sessions (up to limit).
 func List(sessDir string, limit int) ([]Session, error) {
+	var sessions []Session
+	err := withIndexLock(sessDir, false, func() error {
+		var err error
+		sessions, err = listLocked(sessDir, limit)
+		return err
+	})
+	return sessions, err
+}
+
+// listLocked reads the index assuming the caller already holds the lock.
+func listLocked(sessDir string, limit int) ([]Session, error) {
 	indexPath := IndexPath(sessDir)
 	f, err := os.Open(indexPath)
 	if err != nil {
@@ -105,7 +143,6 @@ func List(sessDir string, limit int) ([]Session, error) {
 		return nil, fmt.Errorf("scan index: %w", err)
 	}
 
-	// Sort by created_at descending (most recent first).
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
 	})
@@ -127,46 +164,57 @@ func Load(sessDir, id string) (string, error) {
 
 // UpdateIndex updates the entries count and summary for a session in the index.
 func UpdateIndex(sessDir string, id string, entries int, summary string) error {
-	indexPath := IndexPath(sessDir)
-
-	// Read all entries.
-	sessions, err := List(sessDir, 0)
-	if err != nil {
-		return err
-	}
-
-	// Update the matching session.
-	found := false
-	for i := range sessions {
-		if sessions[i].ID == id {
-			sessions[i].Entries = entries
-			if summary != "" && sessions[i].Summary == "" {
-				sessions[i].Summary = summary
-			}
-			found = true
-			break
+	return withIndexLock(sessDir, true, func() error {
+		sessions, err := listLocked(sessDir, 0)
+		if err != nil {
+			return err
 		}
-	}
-	if !found {
-		return nil // nothing to update
-	}
 
-	// Rewrite index.
-	f, err := os.Create(indexPath)
-	if err != nil {
-		return fmt.Errorf("rewrite index: %w", err)
-	}
-	defer f.Close()
+		found := false
+		for i := range sessions {
+			if sessions[i].ID == id {
+				sessions[i].Entries = entries
+				if summary != "" && sessions[i].Summary == "" {
+					sessions[i].Summary = summary
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
 
-	enc := json.NewEncoder(f)
-	// Sort chronologically for stable output.
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+		// Sort chronologically for stable output, then write to a
+		// temp file + rename so a crash mid-write can't leave a
+		// truncated index.
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+		})
+		indexPath := IndexPath(sessDir)
+		tmp, err := os.CreateTemp(sessDir, ".index.*.tmp")
+		if err != nil {
+			return fmt.Errorf("rewrite index: %w", err)
+		}
+		tmpName := tmp.Name()
+		enc := json.NewEncoder(tmp)
+		for _, s := range sessions {
+			if err := enc.Encode(s); err != nil {
+				tmp.Close()
+				os.Remove(tmpName)
+				return fmt.Errorf("write index: %w", err)
+			}
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpName)
+			return fmt.Errorf("close index tmp: %w", err)
+		}
+		if err := os.Rename(tmpName, indexPath); err != nil {
+			os.Remove(tmpName)
+			return fmt.Errorf("rename index: %w", err)
+		}
+		return nil
 	})
-	for _, s := range sessions {
-		enc.Encode(s)
-	}
-	return nil
 }
 
 // MostRecent returns the most recent session ID, or empty string if none.
@@ -181,7 +229,11 @@ func MostRecent(sessDir string) (string, error) {
 	return sessions[0].ID, nil
 }
 
-func appendIndex(sessDir string, sess *Session) error {
+// appendIndexLocked appends to the index assuming the caller already holds
+// the exclusive lock (via withIndexLock). O_APPEND is atomic for small
+// writes, but the Create→append sequence in Create must be atomic as a
+// whole against UpdateIndex, which is why the lock is required.
+func appendIndexLocked(sessDir string, sess *Session) error {
 	indexPath := IndexPath(sessDir)
 	f, err := os.OpenFile(indexPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {

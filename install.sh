@@ -35,9 +35,35 @@ echo "Latest version: v${VERSION}"
 # Download.
 FILENAME="wuu_${VERSION}_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/${FILENAME}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt"
 TMPDIR="$(mktemp -d)"
 echo "Downloading ${URL}..."
 curl -fsSL "$URL" -o "${TMPDIR}/${FILENAME}"
+
+# Verify checksum. The release artifact lives on GitHub behind HTTPS,
+# but a tampered or partially uploaded tarball would still be accepted
+# without this check. Fail hard if the checksum doesn't match.
+echo "Verifying checksum..."
+curl -fsSL "$CHECKSUMS_URL" -o "${TMPDIR}/checksums.txt"
+EXPECTED="$(grep "  ${FILENAME}$" "${TMPDIR}/checksums.txt" | awk '{print $1}')"
+if [ -z "$EXPECTED" ]; then
+  echo "No checksum entry for ${FILENAME} in checksums.txt"
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "${TMPDIR}/${FILENAME}" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "${TMPDIR}/${FILENAME}" | awk '{print $1}')"
+else
+  echo "No sha256sum or shasum available; cannot verify checksum."
+  exit 1
+fi
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "Checksum mismatch for ${FILENAME}"
+  echo "  expected: ${EXPECTED}"
+  echo "  got:      ${ACTUAL}"
+  exit 1
+fi
 
 # Extract.
 tar -xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
@@ -102,6 +103,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	if strings.TrimSpace(r.Model) == "" {
 		return LoopResult{}, errors.New("model is required")
 	}
+	history = filterEphemeralHistory(history)
 	runUsage, baseHistoryLen := r.prepareUsageTracker(history)
 
 	step := &streamStep{
@@ -119,16 +121,22 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	if r.DisableAutoCompact {
 		maxCtx = 0 // disables the proactive trigger inside RunToolLoop
 	}
+	beforeStep := r.BeforeStep
+	if beforeStep != nil {
+		beforeStep = func() []providers.ChatMessage {
+			return filterEphemeralHistory(r.BeforeStep())
+		}
+	}
 	cfg := LoopConfig{
 		Tools:            r.Tools,
 		Model:            r.Model,
 		Temperature:      r.Temperature,
 		MaxSteps:         r.MaxSteps,
 		MaxContextTokens: maxCtx,
-		BeforeStep:       r.BeforeStep,
+		BeforeStep:       beforeStep,
 		OnUsage:          r.OnUsage,
 		OnMessage: func(msg providers.ChatMessage) {
-			if onEvent == nil {
+			if onEvent == nil || isEphemeralHistoryMessage(msg) {
 				return
 			}
 			copyMsg := msg
@@ -171,6 +179,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	}
 
 	res, err := RunToolLoop(ctx, history, cfg, step)
+	res.NewMessages = filterEphemeralHistory(res.NewMessages)
 	if err != nil {
 		r.commitUsageTracker(runUsage, baseHistoryLen)
 		return res, err
@@ -227,6 +236,23 @@ func (r *StreamRunner) commitUsageTracker(tracker *UsageTracker, historyLen int)
 	r.trackedHistoryLen = historyLen
 }
 
+func isEphemeralHistoryMessage(msg providers.ChatMessage) bool {
+	return msg.Role == "user" && wuucontext.IsSystemReminder(msg.Name, msg.Content)
+}
+
+func filterEphemeralHistory(msgs []providers.ChatMessage) []providers.ChatMessage {
+	if len(msgs) == 0 {
+		return nil
+	}
+	filtered := make([]providers.ChatMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		if !isEphemeralHistoryMessage(msg) {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
+}
+
 // streamStep adapts providers.StreamClient (with reconnect) to the
 // transport-agnostic Step interface. One Execute call opens an SSE
 // stream, consumes it to completion (with mid-attempt reconnect on
@@ -235,11 +261,11 @@ func (r *StreamRunner) commitUsageTracker(tracker *UsageTracker, historyLen int)
 type streamStep struct {
 	client  providers.StreamClient
 	onEvent StreamCallback
-	retry streamReconnectConfig
+	retry   streamReconnectConfig
 	// Streaming tool execution: when set, read-only tools start
 	// executing as soon as their arguments are fully received,
 	// overlapping with continued model output.
-	tools                  ToolExecutor
+	tools                   ToolExecutor
 	enableStreamingToolExec bool
 }
 

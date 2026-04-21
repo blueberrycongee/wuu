@@ -8,9 +8,11 @@ import (
 )
 
 // renderThinkingBlock renders the thinking indicator and optional content.
+// Visual hierarchy aligned with Claude Code: subtle border when done,
+// brand-colored border while active, compact preview when collapsed.
 func renderThinkingBlock(content string, done bool, expanded bool, duration time.Duration, width int, tick int) string {
-	contentStyle := lipgloss.NewStyle().Foreground(currentTheme.Subtle)
-	borderColor := currentTheme.Border
+	contentStyle := lipgloss.NewStyle().Foreground(currentTheme.ThinkingFg)
+	borderColor := currentTheme.ThinkingBorder
 	if !done {
 		borderColor = currentTheme.Brand
 	}
@@ -24,9 +26,11 @@ func renderThinkingBlock(content string, done bool, expanded bool, duration time
 		return header
 	}
 	if !expanded {
-		preview := trimToWidth(strings.Join(strings.Fields(trimmed), " "), max(24, width-20))
+		// Collapsed: show a one-line preview with an expand hint.
+		preview := trimToWidth(strings.Join(strings.Fields(trimmed), " "), max(24, width-24))
 		if preview != "" {
-			return header + "\n" + indentLines(waitingStatusMetaStyle.Render(preview), 2)
+			expandHint := waitingStatusMetaStyle.Render(" · press 't' to expand")
+			return header + "\n" + indentLines(waitingStatusMetaStyle.Render(preview)+expandHint, 2)
 		}
 		return header
 	}

@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 const os = require("os");
+const crypto = require("crypto");
 
 const REPO = "blueberrycongee/wuu";
 
@@ -47,6 +48,35 @@ function fetchJSON(url) {
   });
 }
 
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, { headers: { "User-Agent": "wuu-npm-installer" } }, (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          return fetchText(res.headers.location).then(resolve, reject);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`GET ${url} → ${res.statusCode}`));
+        }
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => resolve(data));
+        res.on("error", reject);
+      })
+      .on("error", reject);
+  });
+}
+
+function sha256(filePath) {
+  const hash = crypto.createHash("sha256");
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest("hex");
+}
+
 async function main() {
   const platform = getPlatform();
   const arch = getArch();
@@ -72,6 +102,28 @@ async function main() {
 
   console.log(`Downloading ${asset.browser_download_url}...`);
   execSync(`curl -fsSL "${asset.browser_download_url}" -o "${tarPath}"`);
+
+  // Verify checksum against the release's checksums.txt. HTTPS protects
+  // the transport but a tampered or partial upload would still be
+  // accepted without this check.
+  const checksumsAsset = release.assets.find((a) => a.name === "checksums.txt");
+  if (!checksumsAsset) {
+    throw new Error(`checksums.txt not found in release ${release.tag_name}`);
+  }
+  const checksumsText = await fetchText(checksumsAsset.browser_download_url);
+  const line = checksumsText
+    .split("\n")
+    .find((l) => l.trim().endsWith(`  ${filename}`));
+  if (!line) {
+    throw new Error(`No checksum entry for ${filename}`);
+  }
+  const expected = line.trim().split(/\s+/)[0];
+  const actual = sha256(tarPath);
+  if (actual !== expected) {
+    throw new Error(
+      `Checksum mismatch for ${filename}\n  expected: ${expected}\n  got:      ${actual}`,
+    );
+  }
 
   // Extract.
   execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`);

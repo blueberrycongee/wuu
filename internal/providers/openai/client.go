@@ -103,6 +103,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	}
 	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
 
+	req.Messages = providers.NormalizeMessages(req.Messages)
 	for _, msg := range req.Messages {
 		mapped := mapMessage(msg)
 		if mapped.Role != "tool" && mapped.ToolCallID == "" {
@@ -214,6 +215,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		ReasoningEffort: req.Effort,
 	}
 	applyPromptCacheKey(&payload, req.CacheHint, c.promptCacheKeyFormat)
+	req.Messages = providers.NormalizeMessages(req.Messages)
 	for _, msg := range req.Messages {
 		mapped := mapMessage(msg)
 		if mapped.Role != "tool" && mapped.ToolCallID == "" {

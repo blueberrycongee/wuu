@@ -5,13 +5,34 @@ type layoutRect struct {
 	X, Y, Width, Height int
 }
 
+// layoutZone identifies a semantic region of the fullscreen TUI.
+// Aligned with Claude Code's FullscreenLayout topology:
+//   - scrollable: main transcript content (scrolls with history)
+//   - bottom: fixed bottom pane (input, image bar, panels)
+//   - overlay: rendered on top of scrollable but still in scroll context
+//   - modal: floating pane above everything (resume picker, ask_user)
+//   - bottomFloat: corner elements that float over scroll area
+type layoutZone int
+
+const (
+	zoneScrollable layoutZone = iota
+	zoneBottom
+	zoneOverlay
+	zoneModal
+	zoneBottomFloat
+)
+
 // layout holds computed rectangles for all UI regions.
 type layout struct {
 	Terminal layoutRect
 	Header   layoutRect
-	Chat     layoutRect
+	Chat     layoutRect // scrollable content area
 	Input    layoutRect
 	Compact  bool // true when terminal width < 80
+
+	// Bottom pane aggregate height (input + separators + panels + image bar).
+	// Used to compute the scrollable region independently.
+	BottomPaneHeight int
 }
 
 // computeLayout calculates all layout rectangles from terminal dimensions.
@@ -34,7 +55,17 @@ func computeLayout(termWidth, termHeight, inputLines, workerPanelLines, imageBar
 	// full viewport rebuild on every frame — see renderInlineStatus usage
 	// in Model.View and the inlineSpinMsg handler.
 	inlineStatusH := 1
-	chatH := termHeight - headerH - inputOuterH - sepH - workerPanelLines - inlineStatusH - imageBarLines
+
+	// ── FullscreenLayout-style bottom pane height ──
+	// Everything that stays fixed at the bottom: inline status, separators,
+	// worker/process panels, image bar, input.
+	bottomH := inlineStatusH + workerPanelLines + imageBarLines + inputOuterH
+	if workerPanelLines > 0 {
+		bottomH += 1 // sep above worker panel
+	}
+	bottomH += 1 // main chat↔bottom separator
+
+	chatH := termHeight - headerH - bottomH
 	if chatH < 4 {
 		chatH = 4
 	}
@@ -54,11 +85,12 @@ func computeLayout(termWidth, termHeight, inputLines, workerPanelLines, imageBar
 	input := layoutRect{X: 0, Y: y, Width: innerW, Height: inputLines}
 
 	return layout{
-		Terminal: layoutRect{X: 0, Y: 0, Width: termWidth, Height: termHeight},
-		Header:   header,
-		Chat:     chat,
-		Input:    input,
-		Compact:  compact,
+		Terminal:         layoutRect{X: 0, Y: 0, Width: termWidth, Height: termHeight},
+		Header:           header,
+		Chat:             chat,
+		Input:            input,
+		Compact:          compact,
+		BottomPaneHeight: bottomH,
 	}
 }
 

@@ -4,13 +4,15 @@ import (
 	"strings"
 )
 
-// StreamCollector accumulates streaming text deltas and returns the
-// raw text during streaming. Markdown is NOT parsed during streaming
-// — this eliminates the O(n²) re-parse-on-every-token bottleneck.
-// Markdown rendering happens once at Finalize() when the stream ends.
+// StreamCollector accumulates streaming text deltas and renders
+// markdown incrementally on each Commit tick (100ms). This eliminates
+// the visible jump between raw text (during streaming) and rendered
+// markdown (at stream end) that occurred with the old raw-then-render
+// approach.
 //
-// Aligned with Claude Code's approach: streaming text is displayed as
-// plain text; final message is parsed once and cached.
+// Aligned with Codex CLI's approach: markdown is rendered on newline
+// boundaries during streaming, so the visual output is stable
+// throughout the response — no sudden reformatting at EventDone.
 type StreamCollector struct {
 	buffer strings.Builder
 	width  int
@@ -38,23 +40,31 @@ func (c *StreamCollector) Dirty() bool {
 	return c.dirty
 }
 
-// Commit returns the full accumulated text as-is (no markdown parse)
-// and clears the dirty flag. Returns "" only when the buffer is empty.
-// The raw text is displayed directly during streaming — users see
-// words appear immediately without any rendering overhead.
+// Commit renders the accumulated buffer through the markdown pipeline
+// and clears the dirty flag. Called on each 100ms tick during
+// streaming. Rendering on every tick (not every token) keeps the cost
+// manageable while producing stable, visually consistent output that
+// won't jump when the stream ends.
 func (c *StreamCollector) Commit() string {
 	c.dirty = false
 	src := c.buffer.String()
 	if src == "" {
 		return ""
 	}
-	return src
+	if !strings.HasSuffix(src, "\n") {
+		src += "\n"
+	}
+	rendered := Render(src, c.width, c.styles)
+	if rendered == "" {
+		return src // fallback to raw if render produces nothing
+	}
+	return strings.TrimRight(rendered, "\n")
 }
 
 // Finalize renders the complete buffer through the markdown pipeline
 // and resets state. Called once when the stream ends (EventDone).
-// This is the ONLY point where goldmark is invoked — converting the
-// 200 per-token parses to exactly 1.
+// Since Commit already renders markdown on each tick, this is mostly
+// a final pass to ensure the last partial line is included.
 func (c *StreamCollector) Finalize() string {
 	src := c.buffer.String()
 	if src == "" {

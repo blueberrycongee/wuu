@@ -81,7 +81,7 @@ func (w *Writer) walk(n ast.Node) {
 			if entering {
 				w.startBlock()
 			} else {
-				w.flushPendingLine()
+				w.flushParagraph()
 				w.needsNewline = true
 			}
 		case *ast.TextBlock:
@@ -266,6 +266,49 @@ func (w *Writer) startBlock() {
 // openLine ensures lineBuf is initialized for the current line.
 // (no-op placeholder for clarity)
 func (w *Writer) openLine() {}
+
+// flushParagraph flushes the current line buffer with word-wrapping
+// applied, so paragraph text respects the terminal width. Tables and
+// code blocks handle their own width; only paragraph text needs this.
+func (w *Writer) flushParagraph() {
+	if w.lineBuf.Len() == 0 && w.pendingMarker == "" {
+		return
+	}
+
+	// Build indent prefix.
+	var prefix strings.Builder
+	for i, ctx := range w.indentStack {
+		if i == len(w.indentStack)-1 && ctx.marker != "" {
+			prefix.WriteString(ctx.marker)
+			w.indentStack[i].marker = ""
+		} else {
+			prefix.WriteString(ctx.prefix)
+		}
+	}
+
+	raw := w.lineBuf.String()
+	pfx := prefix.String()
+	pfxWidth := lipgloss.Width(pfx)
+
+	// Word-wrap the paragraph text to the available width (terminal
+	// width minus indent prefix). This is the ONLY wrapping point —
+	// the TUI must not re-wrap rendered output.
+	contentWidth := w.width - pfxWidth
+	if contentWidth <= 0 {
+		contentWidth = w.width
+	}
+	wrapped := wordwrap.String(raw, contentWidth)
+	for i, line := range strings.Split(wrapped, "\n") {
+		if i == 0 {
+			w.out.WriteString(pfx + line + "\n")
+		} else {
+			// Continuation lines get the indent prefix (no marker).
+			contIndent := strings.Repeat(" ", pfxWidth)
+			w.out.WriteString(contIndent + line + "\n")
+		}
+	}
+	w.lineBuf.Reset()
+}
 
 func (w *Writer) flushPendingLine() {
 	if w.lineBuf.Len() == 0 && w.pendingMarker == "" {
