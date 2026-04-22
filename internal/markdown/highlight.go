@@ -8,13 +8,33 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 )
 
-// HighlightCode applies syntax highlighting to a code block.
-// Returns the original code unchanged if the language is unknown or empty.
+// HighlightCode applies syntax highlighting to a code block. Results are
+// memoized by (lang, code) in a process-global LRU so repeated renders of
+// the same source (common in streaming markdown, where every newline commit
+// re-renders the accumulated buffer) are served in microseconds instead of
+// re-running chroma's regex lexer.
+//
+// The style is hardcoded to "monokai" below and does not depend on the TUI
+// theme, so theme switches do not require cache invalidation. If the style
+// is ever made configurable, include it in highlightKey.
 func HighlightCode(code, lang string) string {
-	if strings.TrimSpace(lang) == "" {
+	lang = strings.TrimSpace(lang)
+	if lang == "" {
 		return code
 	}
+	if len(code) > highlightCacheMaxCode {
+		return highlightUncached(code, lang)
+	}
+	key := highlightKey{lang: strings.ToLower(lang), code: code}
+	if v, ok := highlightCacheSingleton.Get(key); ok {
+		return v
+	}
+	v := highlightUncached(code, lang)
+	highlightCacheSingleton.Put(key, v)
+	return v
+}
 
+func highlightUncached(code, lang string) string {
 	lexer := lexers.Get(lang)
 	if lexer == nil {
 		lexer = lexers.Fallback
