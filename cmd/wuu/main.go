@@ -21,6 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/memory"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	processruntime "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/prompt"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
@@ -398,6 +399,32 @@ func runTUI(args []string) error {
 		})
 		toolkit = kit
 		toolExecutor = hooks.NewHookedExecutor(kit, hookDispatcher, "", rootDir)
+
+		// ── MCP integration ───────────────────────────────────────────────
+		// Connect to configured MCP servers in the background so tool
+		// discovery doesn't block TUI startup. MCP tools are appended
+		// after built-ins to preserve prompt cache stability.
+		if len(cfg.MCPServers) > 0 {
+			mcpMgr := mcp.NewManager()
+			toolkit.SetMCPManager(mcpMgr)
+			go func() {
+				ctx := context.Background()
+				for name, mcpCfg := range cfg.MCPServers {
+					serverCfg := mcp.ServerConfig{
+						Name:    name,
+						Command: mcpCfg.Command,
+						Args:    mcpCfg.Args,
+						URL:     mcpCfg.URL,
+						Env:     mcpCfg.Env,
+					}
+					if err := mcpMgr.Add(ctx, serverCfg); err != nil {
+						providers.DebugLogf("mcp server %q failed to connect: %v", name, err)
+					} else {
+						providers.DebugLogf("mcp server %q connected (%d tools)", name, mcpMgr.Status()[name].ToolCount)
+					}
+				}
+			}()
+		}
 	}
 
 	// Discover memory files (AGENTS.md / CLAUDE.md / AGENTS.override.md)

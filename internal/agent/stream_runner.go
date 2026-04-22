@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/eventbus"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
@@ -32,6 +33,11 @@ type StreamRunner struct {
 	MaxSteps     int
 	Temperature  float64
 	OnEvent      StreamCallback
+
+	// Bus, when non-nil, publishes all stream events to the event bus
+	// in addition to OnEvent. This decouples the core agent loop from
+	// UI consumers and enables headless / multi-client / remote use cases.
+	Bus *eventbus.Bus
 
 	// OnUsage, when non-nil, is invoked once per LLM round-trip with
 	// the per-call token counts reported by the provider. This mirrors
@@ -119,9 +125,20 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	history = filterEphemeralHistory(history)
 	runUsage, baseHistoryLen := r.prepareUsageTracker(history)
 
+	// Wrap the caller's callback so events also flow to the bus, if wired.
+	effectiveOnEvent := onEvent
+	if r.Bus != nil {
+		effectiveOnEvent = func(ev providers.StreamEvent) {
+			if onEvent != nil {
+				onEvent(ev)
+			}
+			r.Bus.Publish(eventbus.AdaptStreamEvent(ev))
+		}
+	}
+
 	step := &streamStep{
 		client:                  r.Client,
-		onEvent:                 onEvent,
+		onEvent:                 effectiveOnEvent,
 		retry:                   r.streamReconnectCfg(),
 		tools:                   r.Tools,
 		enableStreamingToolExec: r.StreamingToolExecution,
@@ -149,11 +166,11 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		BeforeStep:       beforeStep,
 		OnUsage:          r.OnUsage,
 		OnMessage: func(msg providers.ChatMessage) {
-			if onEvent == nil || isEphemeralHistoryMessage(msg) {
+			if effectiveOnEvent == nil || isEphemeralHistoryMessage(msg) {
 				return
 			}
 			copyMsg := msg
-			onEvent(providers.StreamEvent{
+			effectiveOnEvent(providers.StreamEvent{
 				Type:    providers.EventMessage,
 				Message: &copyMsg,
 			})
@@ -165,10 +182,10 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		// the TUI can render the tool card live (the loop itself only
 		// records the tool message into the history).
 		OnToolResult: func(call providers.ToolCall, result string) {
-			if onEvent == nil {
+			if effectiveOnEvent == nil {
 				return
 			}
-			onEvent(providers.StreamEvent{
+			effectiveOnEvent(providers.StreamEvent{
 				Type:       providers.EventToolUseEnd,
 				ToolCall:   &providers.ToolCall{ID: call.ID, Name: call.Name},
 				ToolResult: truncateLog(result, 2000),
@@ -179,10 +196,10 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		// messages (~12k tokens)". The loop fires this for both the
 		// proactive and the reactive overflow path.
 		OnCompact: func(info CompactInfo) {
-			if onEvent == nil {
+			if effectiveOnEvent == nil {
 				return
 			}
-			onEvent(providers.StreamEvent{
+			effectiveOnEvent(providers.StreamEvent{
 				Type:    providers.EventCompact,
 				Content: formatCompactNotice(info),
 			})
@@ -563,20 +580,9 @@ func (s *streamStep) runStreamWithReconnect(
 		var (
 			streamErr error
 			sawDone   bool
-			sawOutput bool
 		)
 
 		for event := range ch {
-			switch event.Type {
-			case providers.EventContentDelta,
-				providers.EventToolUseStart,
-				providers.EventToolUseDelta,
-				providers.EventToolUseEnd,
-				providers.EventThinkingDelta,
-				providers.EventThinkingDone:
-				sawOutput = true
-			}
-
 			switch event.Type {
 			case providers.EventContentDelta:
 				contentBuf.WriteString(event.Content)
@@ -647,9 +653,10 @@ func (s *streamStep) runStreamWithReconnect(
 			return nil
 		}
 
-		// Only retry when the stream failed before producing any user-visible
-		// output AND the parent context is still alive.
-		if !sawOutput && ctx.Err() == nil {
+		// Retry on any retryable error while the parent context is still alive.
+		// Aligned with Codex: retries the entire turn (new HTTP request) up to
+		// the configured budget, regardless of whether output was already seen.
+		if ctx.Err() == nil {
 			if delay, ok := reconnect(streamErr); ok {
 				if waitErr := waitWithContext(ctx, delay); waitErr != nil {
 					return waitErr

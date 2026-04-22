@@ -14,8 +14,8 @@ func TestResolveStreamTransportConfig_Defaults(t *testing.T) {
 	if cfg.ConnectTimeout != 600*time.Second {
 		t.Fatalf("expected 600s connect timeout, got %s", cfg.ConnectTimeout)
 	}
-	if cfg.IdleTimeout != 90*time.Second {
-		t.Fatalf("expected 90s idle timeout, got %s", cfg.IdleTimeout)
+	if cfg.IdleTimeout != 300*time.Second {
+		t.Fatalf("expected 300s idle timeout, got %s", cfg.IdleTimeout)
 	}
 }
 

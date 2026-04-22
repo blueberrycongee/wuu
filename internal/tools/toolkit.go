@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -43,6 +44,10 @@ type Toolkit struct {
 	env           *Env
 	registry      *Registry
 	disabledTools map[string]struct{}
+	// mcpManager, when set, exposes MCP server tools alongside built-in
+	// tools. MCP tools are appended after built-ins to preserve prompt
+	// cache stability (the built-in prefix stays constant).
+	mcpManager *mcp.Manager
 }
 
 // New creates a tool executor rooted in a workspace.
@@ -148,6 +153,11 @@ func (t *Toolkit) SetOnFileChanged(fn func(absPath string)) {
 	t.env.OnFileChanged = fn
 }
 
+// SetMCPManager attaches the MCP manager so its tools are exposed to the agent.
+func (t *Toolkit) SetMCPManager(m *mcp.Manager) {
+	t.mcpManager = m
+}
+
 // Coordinator returns the attached orchestration runtime, or nil.
 func (t *Toolkit) Coordinator() *coordinator.Coordinator {
 	return t.env.Coordinator
@@ -194,6 +204,12 @@ func (t *Toolkit) isToolDisabled(name string) bool {
 // tool the agent can call.
 func (t *Toolkit) Definitions() []providers.ToolDefinition {
 	all := t.registry.Definitions()
+	// Append MCP tools after built-ins to preserve prompt cache stability.
+	if t.mcpManager != nil {
+		for _, tool := range t.mcpManager.AllTools() {
+			all = append(all, tool.Definition())
+		}
+	}
 	if len(t.disabledTools) == 0 {
 		return all
 	}
@@ -218,6 +234,18 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 	}
 	tool := t.registry.Lookup(call.Name)
 	if tool == nil {
+		// Fallback to MCP manager.
+		if t.mcpManager != nil {
+			for _, mcpTool := range t.mcpManager.AllTools() {
+				if mcpTool.Name() == call.Name {
+					result, err := mcpTool.Execute(ctx, call.Arguments)
+					if err != nil {
+						return result, err
+					}
+					return MaybePersistResult(t.env.SessionDir, call.Name, call.ID, result, defaultResultBudget), nil
+				}
+			}
+		}
 		return "", fmt.Errorf("unknown tool %q", call.Name)
 	}
 	result, err := tool.Execute(ctx, call.Arguments)
@@ -231,14 +259,24 @@ func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string,
 // allows callers (e.g. the agent loop) to inspect tool metadata
 // like IsReadOnly() and IsConcurrencySafe() for scheduling.
 func (t *Toolkit) LookupTool(name string) Tool {
-	return t.registry.Lookup(name)
+	if tool := t.registry.Lookup(name); tool != nil {
+		return tool
+	}
+	if t.mcpManager != nil {
+		for _, tool := range t.mcpManager.AllTools() {
+			if tool.Name() == name {
+				return tool
+			}
+		}
+	}
+	return nil
 }
 
 // ToolMetadata implements agent.ToolMetadataProvider so the loop can
 // partition tool calls into concurrent (read-only) and serial (write)
 // batches without importing the tools package.
 func (t *Toolkit) ToolMetadata(name string) (agent.ToolMetadata, bool) {
-	tool := t.registry.Lookup(name)
+	tool := t.LookupTool(name)
 	if tool == nil {
 		return agent.ToolMetadata{}, false
 	}

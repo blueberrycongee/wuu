@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/cron"
+	"github.com/blueberrycongee/wuu/internal/eventbus"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/markdown"
@@ -219,6 +220,7 @@ type Model struct {
 	streamRunner    *agent.StreamRunner
 	hookDispatcher  *hooks.Dispatcher
 	streamCh        chan providers.StreamEvent
+	eventBus        *eventbus.Bus
 	onSessionID     func(string)
 	skills          []skills.Skill
 	memoryFiles     []memory.File
@@ -438,6 +440,14 @@ func NewModel(cfg Config) Model {
 		processEventSeen:     make(map[string]bool),
 		historyIndex:         -1,
 		insightProgressIdx:   -1,
+	}
+
+	// Initialise the event bus and wire it into the stream runner so
+	// core agent events are available to multiple consumers (TUI,
+	// headless mode, future web frontend, etc.).
+	m.eventBus = eventbus.New()
+	if m.streamRunner != nil {
+		m.streamRunner.Bus = m.eventBus
 	}
 
 	// Session isolation: create or resume session.

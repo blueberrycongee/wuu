@@ -32,6 +32,14 @@ type HookEntry struct {
 	Timeout int    `json:"timeout,omitempty"` // seconds, default 30
 }
 
+// MCPServerConfig configures one MCP server connection.
+type MCPServerConfig struct {
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
 // Config holds CLI runtime settings.
 type Config struct {
 	DefaultProvider string                    `json:"default_provider"`
@@ -39,6 +47,11 @@ type Config struct {
 	Agent           AgentConfig               `json:"agent"`
 	Hooks           map[string][]HookEntry    `json:"hooks,omitempty"`
 	Memory          MemoryConfig              `json:"memory,omitempty"`
+	// MCPServers maps server name → connection config. When present, wuu
+	// connects to each server at startup (in the background) and exposes
+	// its tools to the agent. Aligned with Claude Code's mcpServers config
+	// and Codex CLI's mcp.servers field.
+	MCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }
 
 // MemoryConfig overrides the defaults for memory file discovery

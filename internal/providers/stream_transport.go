@@ -13,8 +13,9 @@ const (
 	// Aligned with CC's SDK timeout (API_TIMEOUT_MS default: 600s).
 	// Covers relay overhead + large context + Opus thinking warm-up.
 	defaultStreamConnectTimeout = 600 * time.Second
-	// Aligned with CC's CLAUDE_STREAM_IDLE_TIMEOUT_MS default (90s).
-	defaultStreamIdleTimeout = 90 * time.Second
+	// Aligned with Codex's DEFAULT_STREAM_IDLE_TIMEOUT_MS (300s).
+	// Longer timeout is needed for models with extended thinking phases.
+	defaultStreamIdleTimeout = 300 * time.Second
 )
 
 // StreamTransportConfig splits the transport deadlines that govern one live
