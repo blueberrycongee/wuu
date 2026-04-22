@@ -2066,8 +2066,14 @@ func TestSubmitBusyEnterQueuesSteerAndCancelsStream(t *testing.T) {
 	if len(next.messageQueue) != 0 {
 		t.Fatalf("expected no queued follow-up, got %d", len(next.messageQueue))
 	}
-	if next.statusLine != "steering (1 pending)" {
+	// The status line now advertises /queue so users discover the
+	// management command; assert the prefix stays stable so the test
+	// doesn't break every time the hint wording is tuned.
+	if !strings.HasPrefix(next.statusLine, "steering (1 pending)") {
 		t.Fatalf("unexpected status line: %q", next.statusLine)
+	}
+	if !strings.Contains(next.statusLine, "/queue") {
+		t.Fatalf("status line should mention /queue hint: %q", next.statusLine)
 	}
 }
 

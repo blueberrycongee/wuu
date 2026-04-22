@@ -1761,7 +1761,7 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 		// inline waiting status for the current turn.
 		m.messageQueue = append(m.messageQueue, message)
 		if !m.streaming && !isWaitingStatus(m.statusLine) {
-			m.statusLine = fmt.Sprintf("queued (%d pending)", len(m.messageQueue))
+			m.statusLine = fmt.Sprintf("queued (%d pending) · /queue to manage", len(m.messageQueue))
 		}
 		return m, nil
 	}
@@ -1771,9 +1771,9 @@ func (m Model) submit(shouldQueue bool) (tea.Model, tea.Cmd) {
 		m.pendingSteers = append(m.pendingSteers, message)
 		if m.cancelStream != nil {
 			m.cancelStream()
-			m.statusLine = fmt.Sprintf("steering (%d pending)", len(m.pendingSteers))
+			m.statusLine = fmt.Sprintf("steering (%d pending) · /queue to manage", len(m.pendingSteers))
 		} else {
-			m.statusLine = fmt.Sprintf("steer queued (%d pending)", len(m.pendingSteers))
+			m.statusLine = fmt.Sprintf("steer queued (%d pending) · /queue to manage", len(m.pendingSteers))
 		}
 		return m, nil
 	}
@@ -3382,6 +3382,13 @@ func (m Model) View() string {
 	}
 	if len(m.messageQueue) > 0 {
 		hints = append(hints, fmt.Sprintf("queue:%d", len(m.messageQueue)))
+	}
+	// Surface the /queue command alongside the counts so users can
+	// discover the inspection/cancel affordance without digging through
+	// /help. Only added when something is actually pending — no point
+	// advertising it on an empty queue.
+	if len(m.pendingSteers)+len(m.messageQueue) > 0 {
+		hints = append(hints, scrollIndicatorStyle.Render("/queue"))
 	}
 	// Image count is now shown in the image bar; no header hint needed.
 	if m.showJump {
