@@ -106,16 +106,19 @@ func TestLoadFrom_Defaults(t *testing.T) {
 	}
 }
 
-func TestDefaultSystemPrompt_ReadOrientedMainAgent(t *testing.T) {
+func TestDefaultSystemPrompt_ToolUsingMainAgent(t *testing.T) {
 	prompt := Default().Agent.SystemPrompt
-	if !strings.Contains(prompt, "read-oriented") {
-		t.Fatalf("default system prompt must describe the main agent as read-oriented: %q", prompt)
+	if !strings.Contains(prompt, "wuu") {
+		t.Fatalf("default system prompt must identify the agent: %q", prompt)
 	}
-	if !strings.Contains(prompt, "delegate") || !strings.Contains(prompt, "workers") {
-		t.Fatalf("default system prompt must teach delegation to workers: %q", prompt)
+	if !strings.Contains(prompt, "make real changes") {
+		t.Fatalf("default system prompt must encourage tool use: %q", prompt)
 	}
-	if strings.Contains(prompt, "When writing files") {
-		t.Fatalf("default system prompt still teaches direct file writes: %q", prompt)
+	if !strings.Contains(prompt, "minimal changes") {
+		t.Fatalf("default system prompt must teach minimal changes: %q", prompt)
+	}
+	if strings.Contains(prompt, "read-oriented") {
+		t.Fatalf("default system prompt still describes main agent as read-oriented: %q", prompt)
 	}
 }
 

@@ -497,7 +497,7 @@ func (m *Model) resetChatHistory() {
 	}
 }
 
-// setCoordinatorMode switches between normal mode (main agent has write tools)
+// setCoordinatorMode switches between normal mode (main agent has full tools)
 // and coordinator mode (main agent is read-only, delegates to workers).
 // It updates the toolkit, system prompt, and chatHistory in place.
 func (m *Model) setCoordinatorMode(enabled bool) string {

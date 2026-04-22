@@ -213,7 +213,7 @@ func TestComposeWorkerSystemPrompt_OverridesInheritedMainAgentLimits(t *testing.
 	if err != nil {
 		t.Fatalf("LookupWorkerType(worker): %v", err)
 	}
-	got := composeWorkerSystemPrompt("The main interactive agent is read-oriented and delegates shell commands.", wt, "/tmp/repo", IsolationInplace)
+	got := composeWorkerSystemPrompt("You are wuu, a pragmatic CLI coding assistant. Use tools to make real changes.", wt, "/tmp/repo", IsolationInplace)
 	if !strings.Contains(got, "Worker override:") {
 		t.Fatalf("worker system prompt missing inherited-limit override: %q", got)
 	}
