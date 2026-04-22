@@ -1324,6 +1324,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Intercept clicks that land on the floating previous-message
+		// peek bar (row 0 of the chat area when scrolled up) BEFORE the
+		// generic chat-area handler starts a selection. The peek bar is
+		// a jump affordance, not a text region to select from.
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if m.peekBarClick(msg.X, msg.Y) && m.jumpToPrevEntry() {
+				m.statusLine = "jumped to previous message"
+				return m, nil
+			}
+		}
+
 		// Start pending click on left-click in viewport area.
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			if m.isInChatArea(msg.X, msg.Y) {
@@ -1631,6 +1642,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.ViewDown()
 			m.syncViewportState()
 			return m, nil
+		case "[":
+			// Jump to the start of the previous message whose top has
+			// scrolled above the viewport. The floating peek bar
+			// advertises this binding; keep them in sync if either
+			// moves.
+			if m.jumpToPrevEntry() {
+				m.statusLine = "jumped to previous message"
+				return m, nil
+			}
 		case "t":
 			// Toggle thinking block expand/collapse.
 			for i := len(m.entries) - 1; i >= 0; i-- {
@@ -3393,6 +3413,17 @@ func (m Model) View() string {
 	// and highlighted via SGR, not by re-rendering message components.
 	if m.search.Active && m.search.hasMatches() {
 		outputBox = overlaySearchHighlight(outputBox, &m.search, m.viewport.YOffset, m.viewport.Width)
+	}
+
+	// Floating peek for the previous message when the viewport is
+	// scrolled away from the top. Occupies the first row of the chat
+	// area; clickable (see MouseMsg handler). Only shown when a
+	// selection isn't active — the bar would otherwise block the
+	// first row of a user's copy selection.
+	if !m.selection.hasSelection() {
+		if peek := m.renderPrevEntryPeek(m.viewport.Width); peek != "" {
+			outputBox = overlayPrevEntryPeek(outputBox, peek)
+		}
 	}
 
 	inputBox := m.input.View()
