@@ -24,3 +24,7 @@ docs/
 
 # macOS
 .DS_Store
+
+# Zig build artifacts
+zig-out/
+.zig-cache/
