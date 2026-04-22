@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -37,9 +38,16 @@ type Tool interface {
 
 // Registry holds the set of available tools and provides name-based
 // lookup. It replaces the old switch-case dispatch in Toolkit.Execute.
+//
+// After NewRegistry returns, the tool set is immutable — there is no
+// public Register method. This lets Definitions() memoize the JSON
+// schema slice safely.
 type Registry struct {
 	tools []Tool
 	index map[string]Tool
+
+	defsOnce   sync.Once
+	cachedDefs []providers.ToolDefinition
 }
 
 // NewRegistry builds a registry from the given tools. Duplicate names
@@ -68,12 +76,22 @@ func (r *Registry) Lookup(name string) Tool {
 
 // Definitions returns JSON-schema definitions for every registered
 // tool, in registration order.
+//
+// The slice is built once on first call and reused thereafter: each
+// tool's Definition() produces nested map[string]any schemas whose
+// construction is non-trivial, and the set never changes after
+// NewRegistry. The returned slice (and the definitions within) MUST
+// be treated as read-only by callers — a downstream mutation would be
+// observed by every future caller. Current callers (agent/loop.go,
+// tui/commands.go, hooks/executor.go, toolkit.go) only read.
 func (r *Registry) Definitions() []providers.ToolDefinition {
-	defs := make([]providers.ToolDefinition, len(r.tools))
-	for i, t := range r.tools {
-		defs[i] = t.Definition()
-	}
-	return defs
+	r.defsOnce.Do(func() {
+		r.cachedDefs = make([]providers.ToolDefinition, len(r.tools))
+		for i, t := range r.tools {
+			r.cachedDefs[i] = t.Definition()
+		}
+	})
+	return r.cachedDefs
 }
 
 // All returns all registered tools in registration order.
