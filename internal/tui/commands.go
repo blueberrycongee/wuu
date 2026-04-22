@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ const (
 
 type command struct {
 	Name        string
+	Group       string // one of commandGroupOrder; "Other" falls to the tail
 	Aliases     []string
 	Description string
 	ArgHint     string
@@ -42,6 +44,22 @@ type command struct {
 	Hidden      bool
 	Type        commandType
 	Execute     func(args string, m *Model) string
+}
+
+// commandGroupOrder dictates /help's section ordering. Commands that
+// don't match any entry here land in an "Other" bucket rendered last,
+// so adding a command without updating this list still produces a
+// sensible help screen.
+var commandGroupOrder = []string{
+	"Session",
+	"Context",
+	"Info",
+	"Config",
+	"Output",
+	"Worktree",
+	"Processes",
+	"Scheduling",
+	"App",
 }
 
 func (c command) completionEnterBehavior() slashCompletionEnterBehavior {
@@ -60,31 +78,49 @@ var commandRegistry []command
 
 func init() {
 	commandRegistry = []command{
-		{Name: "help", Description: "Show available commands", Type: cmdTypeLocal, Execute: cmdHelp},
-		{Name: "clear", Description: "Clear screen", Type: cmdTypeLocal, Execute: cmdClear},
-		{Name: "status", Description: "Show session config and token usage", Type: cmdTypeLocal, Execute: cmdStatus},
-		{Name: "context", Description: "Show context window usage breakdown", Type: cmdTypeLocal, Execute: cmdContext},
-		{Name: "compact", Description: "Compress conversation context", Type: cmdTypeLocal, Execute: cmdCompact},
-		{Name: "model", Description: "Switch model/provider", ArgHint: "<model-name>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdModelSwitch},
-		{Name: "effort", Description: "Set reasoning effort level", ArgHint: "[low|medium|high|max]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdEffort},
-		{Name: "resume", Description: "Resume previous session", ArgHint: "[session-id]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdResume},
-		{Name: "fork", Description: "Fork current session", Type: cmdTypeLocal, Execute: cmdFork},
-		{Name: "new", Description: "Start new conversation", Type: cmdTypeLocal, Execute: cmdNew},
-		{Name: "diff", Description: "Show git diff", Type: cmdTypeLocal, Execute: cmdDiff},
-		{Name: "copy", Description: "Copy last output to clipboard", Type: cmdTypeLocal, Execute: cmdCopy},
-		{Name: "worktree", Description: "Create/switch git worktree", ArgHint: "<name>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdWorktree},
-		{Name: "skills", Description: "List available skills", Type: cmdTypeLocal, Execute: cmdSkills},
-		{Name: "memory", Description: "Show loaded memory files (CLAUDE.md / AGENTS.md)", Type: cmdTypeLocal, Execute: cmdMemory},
-		{Name: "workers", Description: "List active and recent sub-agents", Type: cmdTypeLocal, Execute: cmdWorkers},
-		{Name: "processes", Description: "List managed background processes", Type: cmdTypeLocal, Execute: cmdProcesses},
-		{Name: "stop-process", Description: "Stop a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdStopProcess},
-		{Name: "logs", Description: "Show recent output from a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLogs},
-		{Name: "cleanup-worktrees", Description: "Remove all sub-agent worktrees for this session", Type: cmdTypeLocal, Execute: cmdCleanupWorktrees},
-		{Name: "insight", Description: "Session stats and diagnostics", Type: cmdTypeLocal, Execute: cmdInsight},
-		{Name: "loop", Description: "Create a session-only recurring task", ArgHint: "<interval> <prompt>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLoop},
-		{Name: "unloop", Description: "Cancel a scheduled task by id", ArgHint: "<task-id>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdUnloop},
-		{Name: "tasks", Description: "List scheduled tasks", Type: cmdTypeLocal, Execute: cmdTasks},
-		{Name: "exit", Aliases: []string{"quit"}, Description: "Exit wuu", Type: cmdTypeLocal, Execute: cmdExit},
+		// ── App ────────────────────────────────────────────────────
+		{Name: "help", Group: "App", Description: "Show available commands", Type: cmdTypeLocal, Execute: cmdHelp},
+		{Name: "exit", Group: "App", Aliases: []string{"quit"}, Description: "Exit wuu", Type: cmdTypeLocal, Execute: cmdExit},
+
+		// ── Session ────────────────────────────────────────────────
+		{Name: "clear", Group: "Session", Description: "Clear screen", Type: cmdTypeLocal, Execute: cmdClear},
+		{Name: "new", Group: "Session", Description: "Start new conversation", Type: cmdTypeLocal, Execute: cmdNew},
+		{Name: "resume", Group: "Session", Description: "Resume previous session", ArgHint: "[session-id]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdResume},
+		{Name: "fork", Group: "Session", Description: "Fork current session", Type: cmdTypeLocal, Execute: cmdFork},
+		{Name: "queue", Group: "Session", Description: "List or manage queued messages", ArgHint: "[rm <n> | clear]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdQueue},
+
+		// ── Context ────────────────────────────────────────────────
+		{Name: "compact", Group: "Context", Description: "Compress conversation context", Type: cmdTypeLocal, Execute: cmdCompact},
+		{Name: "context", Group: "Context", Description: "Show context window usage breakdown", Type: cmdTypeLocal, Execute: cmdContext},
+
+		// ── Info ───────────────────────────────────────────────────
+		{Name: "status", Group: "Info", Description: "Show session config and token usage", Type: cmdTypeLocal, Execute: cmdStatus},
+		{Name: "skills", Group: "Info", Description: "List available skills", Type: cmdTypeLocal, Execute: cmdSkills},
+		{Name: "memory", Group: "Info", Description: "Show loaded memory files (CLAUDE.md / AGENTS.md)", Type: cmdTypeLocal, Execute: cmdMemory},
+		{Name: "insight", Group: "Info", Description: "Session stats and diagnostics", Type: cmdTypeLocal, Execute: cmdInsight},
+
+		// ── Config ─────────────────────────────────────────────────
+		{Name: "model", Group: "Config", Description: "Switch model/provider", ArgHint: "<model-name>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdModelSwitch},
+		{Name: "effort", Group: "Config", Description: "Set reasoning effort level", ArgHint: "[low|medium|high|max]", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdEffort},
+
+		// ── Output ─────────────────────────────────────────────────
+		{Name: "diff", Group: "Output", Description: "Show git diff", Type: cmdTypeLocal, Execute: cmdDiff},
+		{Name: "copy", Group: "Output", Description: "Copy last output to clipboard", Type: cmdTypeLocal, Execute: cmdCopy},
+
+		// ── Worktree ───────────────────────────────────────────────
+		{Name: "worktree", Group: "Worktree", Description: "Create/switch git worktree", ArgHint: "<name>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdWorktree},
+		{Name: "cleanup-worktrees", Group: "Worktree", Description: "Remove all sub-agent worktrees for this session", Type: cmdTypeLocal, Execute: cmdCleanupWorktrees},
+
+		// ── Processes ──────────────────────────────────────────────
+		{Name: "workers", Group: "Processes", Description: "List active and recent sub-agents", Type: cmdTypeLocal, Execute: cmdWorkers},
+		{Name: "processes", Group: "Processes", Description: "List managed background processes", Type: cmdTypeLocal, Execute: cmdProcesses},
+		{Name: "stop-process", Group: "Processes", Description: "Stop a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdStopProcess},
+		{Name: "logs", Group: "Processes", Description: "Show recent output from a managed background process", ArgHint: "<id-or-substring>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLogs},
+
+		// ── Scheduling ─────────────────────────────────────────────
+		{Name: "loop", Group: "Scheduling", Description: "Create a session-only recurring task", ArgHint: "<interval> <prompt>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdLoop},
+		{Name: "unloop", Group: "Scheduling", Description: "Cancel a scheduled task by id", ArgHint: "<task-id>", InlineArgs: true, Type: cmdTypeLocal, Execute: cmdUnloop},
+		{Name: "tasks", Group: "Scheduling", Description: "List scheduled tasks", Type: cmdTypeLocal, Execute: cmdTasks},
 	}
 }
 
@@ -203,25 +239,166 @@ func containsAlias(aliases []string, name string) bool {
 // ---------------------------------------------------------------------------
 
 func cmdHelp(_ string, _ *Model) string {
-	var b strings.Builder
-	b.WriteString("Available commands:\n")
+	// Bucket commands by their declared group. Commands that forgot to
+	// set one land in "Other" so the screen degrades gracefully instead
+	// of silently hiding them.
+	byGroup := make(map[string][]command)
 	for _, cmd := range commandRegistry {
 		if cmd.Hidden {
 			continue
 		}
-		hint := ""
-		if cmd.ArgHint != "" {
-			hint = " " + cmd.ArgHint
+		g := cmd.Group
+		if g == "" {
+			g = "Other"
 		}
-		b.WriteString(fmt.Sprintf("  /%s%s - %s\n", cmd.Name, hint, cmd.Description))
+		byGroup[g] = append(byGroup[g], cmd)
+	}
+
+	// Stable left-column width across the whole help screen: find the
+	// longest "/name <arg-hint>" so colons line up regardless of group.
+	maxLead := 0
+	for _, cmds := range byGroup {
+		for _, cmd := range cmds {
+			if w := len(formatCommandLead(cmd)); w > maxLead {
+				maxLead = w
+			}
+		}
+	}
+
+	emit := func(b *strings.Builder, group string) {
+		cmds, ok := byGroup[group]
+		if !ok || len(cmds) == 0 {
+			return
+		}
+		fmt.Fprintf(b, "\n%s:\n", group)
+		for _, cmd := range cmds {
+			lead := formatCommandLead(cmd)
+			pad := strings.Repeat(" ", maxLead-len(lead))
+			fmt.Fprintf(b, "  %s%s  %s\n", lead, pad, cmd.Description)
+		}
+		delete(byGroup, group)
+	}
+
+	var b strings.Builder
+	b.WriteString("Available commands:\n")
+	for _, g := range commandGroupOrder {
+		emit(&b, g)
+	}
+	// Any groups not mentioned in commandGroupOrder (including "Other")
+	// come last in insertion-order-stable alphabetical form.
+	remaining := make([]string, 0, len(byGroup))
+	for g := range byGroup {
+		remaining = append(remaining, g)
+	}
+	sort.Strings(remaining)
+	for _, g := range remaining {
+		emit(&b, g)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatCommandLead renders the "/name [hint]" prefix for a help row.
+// Extracted so the column alignment pass computes widths from the same
+// string that the render pass prints.
+func formatCommandLead(cmd command) string {
+	if cmd.ArgHint != "" {
+		return "/" + cmd.Name + " " + cmd.ArgHint
+	}
+	return "/" + cmd.Name
 }
 
 func cmdClear(_ string, m *Model) string {
 	m.entries = nil
 	m.refreshViewport(true)
 	return "screen cleared"
+}
+
+// cmdQueue inspects and mutates the two pending message buffers the
+// header advertises as "queue:N". The two buffers are intentionally
+// treated as a single numbered list from the user's perspective:
+//
+//   - pendingSteers first (0-indexed), because these will be flushed
+//     into the stream immediately once the current turn yields,
+//   - messageQueue second, which fires one-by-one on subsequent turns.
+//
+// Commands:
+//
+//	/queue              → list
+//	/queue clear        → drop both buffers
+//	/queue rm <n>       → drop the nth pending item (0-indexed)
+func cmdQueue(args string, m *Model) string {
+	raw := strings.TrimSpace(args)
+	if raw == "" {
+		return renderQueueList(m.pendingSteers, m.messageQueue)
+	}
+
+	fields := strings.Fields(raw)
+	switch strings.ToLower(fields[0]) {
+	case "clear":
+		total := len(m.pendingSteers) + len(m.messageQueue)
+		if total == 0 {
+			return "queue is already empty"
+		}
+		m.pendingSteers = nil
+		m.messageQueue = nil
+		return fmt.Sprintf("cleared %d queued item(s)", total)
+
+	case "rm", "remove", "delete":
+		if len(fields) < 2 {
+			return "usage: /queue rm <n> (see /queue for indices)"
+		}
+		idx, err := strconv.Atoi(fields[1])
+		if err != nil || idx < 0 {
+			return fmt.Sprintf("not a valid index: %q", fields[1])
+		}
+		removed, ok := removeQueuedAt(m, idx)
+		if !ok {
+			return fmt.Sprintf("index %d is out of range", idx)
+		}
+		return fmt.Sprintf("removed #%d: %s", idx, summarizeQueuedMessage(removed))
+
+	default:
+		return fmt.Sprintf("unknown /queue subcommand: %q (try /queue, /queue rm <n>, /queue clear)", fields[0])
+	}
+}
+
+func renderQueueList(steers, queue []queuedMessage) string {
+	if len(steers)+len(queue) == 0 {
+		return "queue is empty"
+	}
+	var b strings.Builder
+	b.WriteString("Queued messages (rm with /queue rm <n>):\n")
+	idx := 0
+	for _, item := range steers {
+		fmt.Fprintf(&b, "  %d  [steer]  %s\n", idx, summarizeQueuedMessage(item))
+		idx++
+	}
+	for _, item := range queue {
+		fmt.Fprintf(&b, "  %d  [queue]  %s\n", idx, summarizeQueuedMessage(item))
+		idx++
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// removeQueuedAt deletes the idx-th item across the two logical queues
+// (pendingSteers first, then messageQueue) and returns it. Returns a
+// zero queuedMessage and false when idx is out of range.
+func removeQueuedAt(m *Model, idx int) (queuedMessage, bool) {
+	if idx < 0 {
+		return queuedMessage{}, false
+	}
+	if idx < len(m.pendingSteers) {
+		out := m.pendingSteers[idx]
+		m.pendingSteers = append(m.pendingSteers[:idx], m.pendingSteers[idx+1:]...)
+		return out, true
+	}
+	idx -= len(m.pendingSteers)
+	if idx < len(m.messageQueue) {
+		out := m.messageQueue[idx]
+		m.messageQueue = append(m.messageQueue[:idx], m.messageQueue[idx+1:]...)
+		return out, true
+	}
+	return queuedMessage{}, false
 }
 
 func cmdStatus(_ string, m *Model) string {
