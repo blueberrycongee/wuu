@@ -115,6 +115,24 @@ func workerRunningStatus(desc string) workStatus {
 	return workStatus{Phase: workPhaseWorker, Label: "Running", Meta: meta, Running: true}
 }
 
+// workerActivityStatus builds a status whose headline is the current
+// activity phrase ("→ read_file", "thinking", etc.) while the spawn
+// description rides along as the dimmed meta tail. Falls back to the
+// plain "Running" variant when the activity phrase is empty.
+func workerActivityStatus(activity, desc string) workStatus {
+	activity = strings.TrimSpace(activity)
+	if activity == "" {
+		return workerRunningStatus(desc)
+	}
+	// Keep the label compact — the panel row is one line per worker.
+	label := trimToWidth(activity, 32)
+	meta := "Running in the background"
+	if trimmed := strings.TrimSpace(desc); trimmed != "" {
+		meta = trimToWidth(trimmed, 40)
+	}
+	return workStatus{Phase: workPhaseWorker, Label: label, Meta: meta, Running: true}
+}
+
 func thinkingBlockStatus(done bool, duration time.Duration) workStatus {
 	if done {
 		return workStatus{

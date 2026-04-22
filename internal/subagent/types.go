@@ -109,6 +109,14 @@ type SubAgent struct {
 	InputTokens  int    // cumulative input tokens used so far
 	OutputTokens int    // cumulative output tokens used so far
 
+	// Activity is a short, human-readable phrase describing what the
+	// sub-agent is currently doing ("→ read_file", "thinking",
+	// "responding"). Mutated by the event callback in Manager.run and
+	// read via Snapshot. Only changes when the phase changes, so the
+	// observer sees transitions rather than a stream of deltas.
+	Activity   string
+	ActivityAt time.Time
+
 	// Internal state — read-only from outside.
 	prompt         string
 	systemPrompt   string
@@ -153,6 +161,8 @@ func (s *SubAgent) Snapshot() SubAgentSnapshot {
 		Error:        s.Error,
 		InputTokens:  s.InputTokens,
 		OutputTokens: s.OutputTokens,
+		Activity:     s.Activity,
+		ActivityAt:   s.ActivityAt,
 	}
 }
 
@@ -169,6 +179,8 @@ type SubAgentSnapshot struct {
 	Error        error
 	InputTokens  int
 	OutputTokens int
+	Activity     string
+	ActivityAt   time.Time
 }
 
 // Notification is sent to listeners when a sub-agent's status changes

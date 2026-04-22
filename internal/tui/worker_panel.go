@@ -86,9 +86,20 @@ func (m Model) renderWorkerPanel(width int) string {
 		if desc == "" {
 			desc = "working"
 		}
+		// Prefer the live activity phrase when the worker has reported
+		// one ("→ read_file", "thinking", "responding"). Otherwise fall
+		// back to the spawn-time description. The description still
+		// rides along as Meta in both cases so users keep the "why"
+		// context even when the activity phrase dominates the label.
+		var status workStatus
+		if s.Activity != "" {
+			status = workerActivityStatus(s.Activity, desc)
+		} else {
+			status = workerRunningStatus(desc)
+		}
 		left := strings.Join([]string{
 			waitingStatusMetaStyle.Render(truncate(s.ID, 14)),
-			renderStatusHeader(workerRunningStatus(desc), m.spinnerFrame+i),
+			renderStatusHeader(status, m.spinnerFrame+i),
 		}, "  ")
 		right := elapsed
 		if s.InputTokens > 0 || s.OutputTokens > 0 {

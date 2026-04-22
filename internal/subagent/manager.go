@@ -127,6 +127,27 @@ func (m *Manager) run(ctx context.Context, sa *SubAgent, opts SpawnOptions) {
 		m.BroadcastSnapshot(sa)
 	}
 
+	// Activity tracker: watch the worker's stream events and update
+	// sa.Activity on phase transitions only (thinking → responding,
+	// new tool call, tool finished). Event-per-delta would flood the
+	// UI, so the callback short-circuits when the derived phrase
+	// matches what's already set — the observer only sees changes.
+	onEvent := func(ev providers.StreamEvent) {
+		act := deriveWorkerActivity(ev)
+		if act == "" {
+			return
+		}
+		sa.mu.Lock()
+		if sa.Activity == act {
+			sa.mu.Unlock()
+			return
+		}
+		sa.Activity = act
+		sa.ActivityAt = time.Now()
+		sa.mu.Unlock()
+		m.BroadcastSnapshot(sa)
+	}
+
 	runner := &agent.StreamRunner{
 		Client:       sa.client,
 		Tools:        sa.toolkit,
@@ -135,6 +156,7 @@ func (m *Manager) run(ctx context.Context, sa *SubAgent, opts SpawnOptions) {
 		MaxSteps:     opts.MaxSteps,
 		Temperature:  0.2,
 		OnUsage:      onUsage,
+		OnEvent:      onEvent,
 	}
 
 	beforeStep := func() []providers.ChatMessage {
