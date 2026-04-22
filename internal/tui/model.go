@@ -2161,11 +2161,17 @@ func (m *Model) applyStreamEvent(event providers.StreamEvent, rearm bool) tea.Cm
 			m.appendEntry("system", styledWarn)
 			m.statusLine = "empty response — press Enter to retry"
 		} else {
-			styledErr := lipgloss.NewStyle().
+			headline := lipgloss.NewStyle().
 				Foreground(currentTheme.Error).
 				Bold(true).
 				Render("ERROR: " + errMsg)
-			m.appendEntry("system", styledErr)
+			detail := formatErrorDetails(event.Error)
+			body := headline
+			if detail != "" {
+				dim := lipgloss.NewStyle().Foreground(currentTheme.Subtle)
+				body += "\n" + dim.Render(detail)
+			}
+			m.appendEntry("system", body)
 			m.statusLine = "request failed — press Enter to retry"
 		}
 		m.refreshViewport(true)
