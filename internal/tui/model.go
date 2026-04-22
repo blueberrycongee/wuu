@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/coordinator"
 	"github.com/blueberrycongee/wuu/internal/cron"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -359,6 +360,14 @@ type Model struct {
 	processEventSeen   map[string]bool
 	turnInputTokens    int
 	turnOutputTokens   int
+
+	// Projected input-token count for the next provider request —
+	// system prompt + tool schemas + chat history. Recomputed in
+	// refreshViewport so the header can show the live context
+	// utilization %. Intentionally slight overestimate (counts tool
+	// schemas even on the first turn when no tool_use has happened
+	// yet) so the warning/error colour triggers fire a bit early.
+	contextTokens int
 
 	// Insight generation state.
 	insightRunning     bool
@@ -2272,7 +2281,7 @@ func (m *Model) markWorkerSpawned(id string) {
 }
 
 func (m Model) headerUsageSummary() string {
-	return fmt.Sprintf(
+	base := fmt.Sprintf(
 		"wuu · %s/%s │ main %s↑/%s↓ · workers %s↑/%s↓",
 		m.provider,
 		m.modelName,
@@ -2281,6 +2290,81 @@ func (m Model) headerUsageSummary() string {
 		formatCompactNum(m.workerInputTokens),
 		formatCompactNum(m.workerOutputTokens),
 	)
+	if ctx := m.renderContextUsage(); ctx != "" {
+		base += " · " + ctx
+	}
+	return base
+}
+
+// renderContextUsage returns a one-segment "ctx N% (Y/Z)" string
+// colored by utilization, or empty when no usable estimate is
+// available. Resolution order for the window size:
+//   - StreamRunner.ContextWindowOverride (user config wins)
+//   - providers.ContextWindowFor(model) (registry lookup)
+// Small-context models (8K–32K) show the same format; the percentage
+// scales naturally so a 32K model hits the 75% warning three times
+// earlier than a 128K one without any special case.
+func (m Model) renderContextUsage() string {
+	used := m.contextTokens
+	if used <= 0 {
+		return ""
+	}
+	window := 0
+	if m.streamRunner != nil && m.streamRunner.ContextWindowOverride > 0 {
+		window = m.streamRunner.ContextWindowOverride
+	}
+	if window <= 0 {
+		window = providers.ContextWindowFor(m.modelName)
+	}
+	if window <= 0 {
+		// Registry fallback returns a positive default; guard regardless.
+		return ""
+	}
+	pct := used * 100 / window
+	// Clamp display at 999 so a bad estimate can't push the header off-screen.
+	if pct > 999 {
+		pct = 999
+	}
+
+	label := fmt.Sprintf("ctx %d%% (%s/%s)",
+		pct, formatCompactNum(used), formatCompactNum(window))
+
+	// Color by utilization, matching the thresholds Claude Code uses.
+	var style lipgloss.Style
+	switch {
+	case pct >= 90:
+		style = lipgloss.NewStyle().Bold(true).Foreground(currentTheme.Error)
+	case pct >= 75:
+		style = lipgloss.NewStyle().Foreground(currentTheme.Warning)
+	case pct >= 50:
+		style = lipgloss.NewStyle().Foreground(currentTheme.Text)
+	default:
+		style = lipgloss.NewStyle().Foreground(currentTheme.Subtle)
+	}
+	return style.Render(label)
+}
+
+// recomputeContextTokens estimates how many input tokens the next
+// provider request will carry: system prompt + tool schema summaries +
+// full chat history. The result is cached in m.contextTokens for the
+// header to read cheaply in View().
+//
+// Called from refreshViewport so it keeps pace with history mutations
+// (appends, compaction, resume) without adding a per-frame hot path.
+// Cost is ~1 ms for a 100-msg, 5 KB-avg history; acceptable given
+// refreshViewport is already millisecond-scale.
+func (m *Model) recomputeContextTokens() {
+	total := compact.EstimateMessagesTokens(m.chatHistory)
+	if m.streamRunner != nil {
+		total += compact.EstimateTokens(m.streamRunner.SystemPrompt)
+		if m.streamRunner.Tools != nil {
+			for _, def := range m.streamRunner.Tools.Definitions() {
+				total += compact.EstimateTokens(def.Name)
+				total += compact.EstimateTokens(def.Description)
+			}
+		}
+	}
+	m.contextTokens = total
 }
 
 func (m *Model) renderMarkdown(content string) (string, error) {
@@ -3057,6 +3141,12 @@ func (m *Model) refreshViewport(forceBottom bool) {
 	m.pendingViewportRefresh = false
 	m.pendingViewportEntry = -1
 	m.viewport.SetContent(m.renderedContent)
+
+	// Recompute the header's context-utilization estimate whenever the
+	// transcript (and by extension m.chatHistory) changes. Keeping it
+	// here means it stays in sync with appends, compaction and resume
+	// without adding a per-frame recompute in View().
+	m.recomputeContextTokens()
 
 	// Refresh search matches when content changes.
 	if m.search.Active && m.search.Query != "" {
