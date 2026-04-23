@@ -56,3 +56,21 @@ func BenchmarkEstimateMessagesTokens(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkEstimateMessagesTokens_Simple measures the bare cost for
+// uniform short messages (no tool calls, no mixed roles).
+func BenchmarkEstimateMessagesTokens_Simple(b *testing.B) {
+	for _, n := range []int{10, 100, 500} {
+		msgs := make([]providers.ChatMessage, n)
+		for i := range msgs {
+			msgs[i] = providers.ChatMessage{Role: "user", Content: "Short message here."}
+		}
+		b.Run(fmt.Sprintf("%dmsgs", n), func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = EstimateMessagesTokens(msgs)
+			}
+		})
+	}
+}
