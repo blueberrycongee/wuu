@@ -274,13 +274,16 @@ func filterEphemeralHistory(msgs []providers.ChatMessage) []providers.ChatMessag
 	if len(msgs) == 0 {
 		return nil
 	}
-	filtered := make([]providers.ChatMessage, 0, len(msgs))
+	// In-place filter: ephemeral messages are rare (usually 0-1 per turn),
+	// so the write-back cost is negligible and we avoid a heap allocation.
+	n := 0
 	for _, msg := range msgs {
 		if !isEphemeralHistoryMessage(msg) {
-			filtered = append(filtered, msg)
+			msgs[n] = msg
+			n++
 		}
 	}
-	return filtered
+	return msgs[:n]
 }
 
 // streamStep adapts providers.StreamClient (with reconnect) to the
