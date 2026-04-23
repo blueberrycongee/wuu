@@ -267,7 +267,7 @@ func (r *StreamRunner) commitUsageTracker(tracker *UsageTracker, historyLen int)
 }
 
 func isEphemeralHistoryMessage(msg providers.ChatMessage) bool {
-	return msg.Role == "user" && wuucontext.IsSystemReminder(msg.Name, msg.Content)
+	return msg.Role == "user" && strings.TrimSpace(msg.Name) == wuucontext.SystemReminderMessageName
 }
 
 func filterEphemeralHistory(msgs []providers.ChatMessage) []providers.ChatMessage {
