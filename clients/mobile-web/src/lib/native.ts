@@ -29,6 +29,7 @@ export const secretStorage = {
 };
 export async function startNativeLifecycle(): Promise<void> {
   if (!isNative) return;
+  await pruneSharedFiles();
   document.documentElement.dataset.native = Capacitor.getPlatform();
   const wake = () => window.dispatchEvent(new Event("online"));
   await App.addListener("appStateChange", ({ isActive }) => {
@@ -58,20 +59,32 @@ export async function shareNativeFile(
 ): Promise<void> {
   const safe =
     name.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-150) || "attachment";
-  const path = "shared/" + Date.now() + "-" + safe;
+  await pruneSharedFiles();
+  const path = "shared/" + Date.now() + '-' + Math.random().toString(36).slice(2) + '/' + safe;
   const result = await Filesystem.writeFile({
     path,
     data,
     directory: Directory.Cache,
     recursive: true,
   });
-  try {
-    await Share.share({ files: [result.uri], title: name });
-  } finally {
-    await Filesystem.deleteFile({ path, directory: Directory.Cache }).catch(
-      () => {},
-    );
+  // Android may return from its chooser before the destination reads the URI.
+  // Keep the original filename and retain its cache file for that handoff.
+  await Share.share({ files: [result.uri], title: name });
+}
+
+async function pruneSharedFiles(): Promise<void> {
+  const entries = await Filesystem.readdir({ path: 'shared', directory: Directory.Cache }).catch(() => ({ files: [] }));
+  for (const entry of entries.files) {
+    const created = Number(entry.name.split('-')[0]);
+    if (!Number.isFinite(created) || created <= 0 || Date.now() - created < 24 * 60 * 60 * 1000) continue;
+    const options = { path: 'shared/' + entry.name, directory: Directory.Cache };
+    if (entry.type === 'directory') await Filesystem.rmdir({ ...options, recursive: true }).catch(() => {});
+    else await Filesystem.deleteFile(options).catch(() => {});
   }
+}
+
+export async function clearNativeShareCache(): Promise<void> {
+  if (isNative) await Filesystem.rmdir({ path: 'shared', directory: Directory.Cache, recursive: true }).catch(() => {});
 }
 
 export async function openNativeURL(url: string): Promise<void> {

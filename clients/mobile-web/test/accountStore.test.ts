@@ -4,6 +4,7 @@ import { AccountRequestError } from "@wuu/remote-core";
 import { accountDriver, loadAccount } from "../src/lib/accountStore";
 import { webCredStore } from "../src/lib/credStore";
 vi.mock("../src/lib/native", () => ({
+  clearNativeShareCache: vi.fn(async () => {}),
   secretStorage: {
     get: async (key: string) => localStorage.getItem(key),
     set: async (key: string, value: string) => localStorage.setItem(key, value),

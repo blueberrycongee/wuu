@@ -9,7 +9,7 @@ import type {
   AccountView,
 } from "../../../../desktop/src/renderer/AccountPanel";
 import { webCredStore } from "./credStore";
-import { secretStorage } from "./native";
+import { secretStorage, clearNativeShareCache } from "./native";
 
 const key = "wuu.account.v1";
 let persistence: Promise<unknown> = Promise.resolve();
@@ -25,6 +25,7 @@ async function clearAccount(expected: AccountSession): Promise<void> {
       return;
     await secretStorage.remove(key);
     await webCredStore.clear();
+    await clearNativeShareCache();
     // Shared renderer preferences may contain workspace paths and provider choices.
     for (const name of Object.keys(localStorage))
       if (name.startsWith("wuu.")) localStorage.removeItem(name);
