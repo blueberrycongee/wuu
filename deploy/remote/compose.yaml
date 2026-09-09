@@ -1,0 +1,28 @@
+services:
+  accounts:
+    build:
+      context: ../..
+      dockerfile: deploy/remote/Dockerfile
+    command: ["--registration"]
+    restart: unless-stopped
+    volumes:
+      - accounts:/data
+    networks: [remote]
+  proxy:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      WUU_DOMAIN: ${WUU_DOMAIN:?Set WUU_DOMAIN to your server domain}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - proxy_config:/config
+    networks: [remote]
+    depends_on: [accounts]
+volumes:
+  accounts:
+  certificates:
+  proxy_config:
+networks:
+  remote:
