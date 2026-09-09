@@ -160,7 +160,7 @@ describe("StreamingMarkdown", () => {
     expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(true);
   });
 
-  it.each(["\n\n", "\n\n\n", "\n\n\n\n\n"])("keeps the cursor on visible prose with trailing blank lines %j", (ending) => {
+  it.each(["\n", "\r\n", "\n\n", "\n\n\n", "\n\n\n\n\n"])("keeps the cursor on visible prose with trailing blank lines %j", (ending) => {
     const key = streamTextKey("turn", "s13", "text");
     const text = `好的，当前在 \`main\` 分支。我现在启动 dev 环境。${ending}`;
     streamTextStore.seed(key, text);

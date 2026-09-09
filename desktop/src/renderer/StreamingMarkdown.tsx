@@ -250,8 +250,10 @@ export function StreamingMarkdown({
     tailHasOpenMermaidFence ||
     (tailIsEmpty && lastStableBlockIndex >= 0 && cursorStableBlockIndex < 0)
   );
+  // A cursor after a trailing newline creates an extra line box even when
+  // settled CSS hides it. Anchor it to the last visible text in the tail too.
   const tailText = showCursor && !cursorNeedsBlockTail && cursorStableBlockIndex < 0
-    ? `${split.tail}${CURSOR_MARKDOWN_BOUNDARY}${CURSOR_SENTINEL}`
+    ? insertCursorBeforeTrailingWhitespace(split.tail)
     : split.tail;
 
   /* ------------------------------- Render -------------------------------- */
