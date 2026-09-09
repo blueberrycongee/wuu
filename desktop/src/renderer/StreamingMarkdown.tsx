@@ -224,8 +224,15 @@ export function StreamingMarkdown({
   // after the last visible character. A closed fence remains the one shape
   // that cannot safely accept the sentinel without creating a paragraph below
   // the code card, so it keeps the zero-flow-height sibling fallback.
-  const lastStableBlockIndex = split.blocks.length - 1;
-  const lastStableBlock = split.blocks[lastStableBlockIndex] ?? "";
+  // Repeated blank lines are preserved by the scanner, but must not become
+  // empty flex children: each would add a prose gap and could draw the cursor
+  // in an otherwise empty paragraph below the visible message.
+  const visibleBlocks = useMemo(
+    () => split.blocks.filter((block) => block.trim().length > 0),
+    [split.blocks],
+  );
+  const lastStableBlockIndex = visibleBlocks.length - 1;
+  const lastStableBlock = visibleBlocks[lastStableBlockIndex] ?? "";
   const tailIsEmpty = split.tail.trim().length === 0;
   const cursorStableBlockIndex = showCursor &&
     tailIsEmpty &&
@@ -254,7 +261,7 @@ export function StreamingMarkdown({
       data-stream-state={phase}
       data-cursor-state={cursorState}
     >
-      {split.blocks.map((block, index) => (
+      {visibleBlocks.map((block, index) => (
         // Keep stable blocks keyed separately so settled text does not remount
         // into one large markdown tree when streaming ends.
         <div className="streaming-markdown-block" key={index}>

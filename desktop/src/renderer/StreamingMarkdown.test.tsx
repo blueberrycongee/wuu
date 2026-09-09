@@ -160,9 +160,9 @@ describe("StreamingMarkdown", () => {
     expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(true);
   });
 
-  it("leaves no trailing cursor paragraph when settled prose ends in blank lines", () => {
+  it.each(["\n\n", "\n\n\n", "\n\n\n\n\n"])("keeps the cursor on visible prose with trailing blank lines %j", (ending) => {
     const key = streamTextKey("turn", "s13", "text");
-    const text = "好的，当前在 `main` 分支。我现在启动 dev 环境。\n\n";
+    const text = `好的，当前在 \`main\` 分支。我现在启动 dev 环境。${ending}`;
     streamTextStore.seed(key, text);
     mount({ streamKey: key, initialText: text, isLive: false, phase: "commentary" });
 
@@ -174,6 +174,28 @@ describe("StreamingMarkdown", () => {
     const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
     expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(false);
     expect(cursor?.closest(".rich-paragraph")).toBe(paragraphs[0]);
+    expect(Array.from(surface.children).filter((child) => !child.textContent?.trim())).toHaveLength(0);
+  });
+
+  it("does not add empty paragraphs as blank lines arrive between streamed updates", () => {
+    const props = {
+      streamKey: streamTextKey("turn", "blank-line-updates", "text"),
+      initialText: "第一组验证通过。\n\n",
+      isLive: true,
+      phase: "commentary" as const,
+    };
+    mount(props);
+    for (const initialText of [
+      "第一组验证通过。\n\n\n\n",
+      "第一组验证通过。\n\n\n\n正在检查桌面接入。\n\n\n",
+    ]) {
+      rerender({ ...props, initialText });
+      const surface = container!.querySelector(".streaming-markdown")!;
+      expect(surface.querySelector(".rich-paragraph")?.textContent).toBe("第一组验证通过。");
+      expect(Array.from(surface.children).every((child) => Boolean(child.textContent?.trim()))).toBe(true);
+      const paragraphs = surface.querySelectorAll(".rich-paragraph");
+      expect(surface.querySelector(".stream-cursor")?.closest(".rich-paragraph")).toBe(paragraphs[paragraphs.length - 1]);
+    }
   });
 
   it("renders the visible text as markdown during streaming", async () => {
