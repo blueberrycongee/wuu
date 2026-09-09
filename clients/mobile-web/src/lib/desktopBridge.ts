@@ -1,3 +1,5 @@
+import { pickComputerFolder } from "./folderPicker";
+import { isNative, openNativeURL, saveNativeArtifact } from "./native";
 import {
   RemoteClient,
   pair,
@@ -24,6 +26,7 @@ import type {
   ThemePreference,
   VoiceInputSettings,
   WuuDesktopApi,
+  TerminalSessionEvent,
 } from "@wuu/protocol";
 
 export type WebConnectionSnapshot = {
@@ -153,17 +156,7 @@ function sanitizeWebExtensionIcon(
 }
 
 const unavailableWebMethods = [
-  "createBlankProject",
-  "chooseProjectFolder",
-  "removeProject",
   "cleanupProjectState",
-  "relocateProject",
-  "listWorkspaceFiles",
-  "writeWorkspaceFile",
-  "startTerminalSession",
-  "writeTerminalSession",
-  "resizeTerminalSession",
-  "stopTerminalSession",
   "getBuildInfo",
   "startSpeechRecognition",
   "stopSpeechRecognition",
@@ -200,6 +193,8 @@ const unavailableWebActions = Object.fromEntries(
 /** Browser host adapter for the shared desktop renderer. */
 export class RemoteDesktopBridge {
   private readonly client: RemoteClient;
+  private readonly terminalIDs = new Set<string>();
+  private readonly terminalListeners = new Set<(event:TerminalSessionEvent)=>void>();
   private readonly serverListeners = new Set<ServerEventListener>();
   private readonly runningListeners = new Set<RunningListener>();
   private readonly themeListeners = new Set<PreferenceListener<ThemePreference>>();
@@ -374,6 +369,7 @@ export class RemoteDesktopBridge {
       // Do not use mobile_chat: the shared workbench needs the full event
       // stream, including tools, activities, usage, and lifecycle events.
       onNotification: (method, params, workdir) => {
+        if(method==="desktop/terminal/event"){const event=params as TerminalSessionEvent;if(event.type!=="data")this.terminalIDs.delete(event.id);for(const listener of this.terminalListeners)listener(params as TerminalSessionEvent);return;}
         params = webHostPayload(params);
         this.recordThreadLocations(params);
         this.recordQuestionLocations(params, workdir || this.eventWorkdir(params));
@@ -393,6 +389,8 @@ export class RemoteDesktopBridge {
         const first = !this.attachedOnce;
         this.attachedOnce = true;
         if (!resumed) {
+          for(const id of this.terminalIDs)for(const listener of this.terminalListeners)listener({type:'error',id,message:'Connection restarted. Reopen the terminal.',finished_at:new Date().toISOString()});
+          this.terminalIDs.clear();
           this.clearPendingRequests();
           this.needsRestore = true;
         }
@@ -473,6 +471,7 @@ export class RemoteDesktopBridge {
   private requestWorkdir(params: unknown): string {
     const input = params && typeof params === "object" ? params as Record<string, unknown> : {};
     if (typeof input.request_id === "string" && this.questionWorkdirs.has(input.request_id)) return this.questionWorkdirs.get(input.request_id)!;
+    if (typeof input.root === "string" && (this.projects.some(project=>project.path===input.root) || [...this.threadLocations.values()].some(thread=>thread.cwd===input.root)))return input.root;
     const id = input.thread_id ?? input.session_id ?? input.main_thread_id;
     const thread = typeof id === "string" ? this.threadLocations.get(id) : undefined;
     if (thread) return this.threadWorkdir(thread);
@@ -584,6 +583,12 @@ export class RemoteDesktopBridge {
     });
   }
 
+  private applyProjectState(state:ProjectListResult):ProjectListResult {this.projects=state.projects;this.activeContext=state.active_context;return state;}
+  private async chooseComputerFolder(create:boolean,id?:string):Promise<ProjectListResult>{
+   const path=await pickComputerFolder((method,params)=>this.call(method,params),create);
+   if(!path)return this.projectState();
+   return this.applyProjectState(await this.call(id?'desktop/projects/relocate':'desktop/projects/add',{path,id}));
+  }
   private createApi(): WuuDesktopApi {
     const initialVoiceInputSettings: VoiceInputSettings = {
       polish_enabled: false,
@@ -592,6 +597,13 @@ export class RemoteDesktopBridge {
     const target: WuuDesktopApi = {
       ...unavailableWebActions,
       hostKind: "web",
+      createBlankProject: () => this.chooseComputerFolder(true),
+      chooseProjectFolder: () => this.chooseComputerFolder(false),
+      relocateProject: (id) => this.chooseComputerFolder(false,id),
+      removeProject: async (id) => this.applyProjectState(await this.call('desktop/projects/remove',{id})),
+      ...(isNative ? { saveArtifactFile: saveNativeArtifact } : {}),
+      listWorkspaceFiles: (root) => this.call("desktop/file/list", {root:root || this.workdir()}),
+      writeWorkspaceFile: (params,root) => this.call("desktop/file/write",{params,root:root || this.workdir()}),
       onRuntimeRestore: (listener) => {
         this.restoreListeners.add(listener);
         return () => this.restoreListeners.delete(listener);
@@ -629,6 +641,7 @@ export class RemoteDesktopBridge {
         return this.projectState();
       },
       selectNoProject: async (fresh, cwd) => {
+        if(fresh || !cwd)return this.applyProjectState(await this.call('desktop/projects/no-project',{fresh,cwd}));
         if (fresh || !cwd || ![...this.threadLocations.values()].some((thread) => thread.cwd === cwd)) {
           throw new UnavailableHostOperationError("selectNoProject");
         }
@@ -859,7 +872,11 @@ export class RemoteDesktopBridge {
       onSpeechRecognitionEvent: () => () => {},
       onRemoteControlEvent: () => () => {},
       onCodexPetJumpRequest: () => () => {},
-      onTerminalEvent: () => () => {},
+      startTerminalSession: async (params) => {const result=await this.call<import("@wuu/protocol").TerminalSessionStartResult>("desktop/terminal/start",{params,root:params?.cwd});this.terminalIDs.add(result.id);return result;},
+      writeTerminalSession: (id,data) => this.call("desktop/terminal/write",{id,data}),
+      resizeTerminalSession: (id,cols,rows) => this.call("desktop/terminal/resize",{id,cols,rows}),
+      stopTerminalSession: (id) => {this.terminalIDs.delete(id);return this.stopped?Promise.resolve({ok:false}):this.call("desktop/terminal/stop",{id});},
+      onTerminalEvent: (listener) => {this.terminalListeners.add(listener);return()=>this.terminalListeners.delete(listener);},
       onWindowResizeState: () => () => {},
       getThemePreference: async () => storedTheme(),
       setThemePreference: async (theme: ThemePreference) => {
@@ -910,7 +927,8 @@ export class RemoteDesktopBridge {
         if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
           throw new Error("Only HTTP and HTTPS links can be opened");
         }
-        window.open(parsed.href, "_blank", "noopener,noreferrer");
+        if(isNative) await openNativeURL(parsed.href);
+        else window.open(parsed.href, "_blank", "noopener,noreferrer");
       },
       showSystemNotification: async ({ title, body }: { title: string; body: string }) => {
         if ("Notification" in window && Notification.permission === "granted") {

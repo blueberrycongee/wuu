@@ -13,6 +13,13 @@
     "test:e2e": "node test/workbench.e2e.mjs"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/browser": "^8.0.4",
+    "@capacitor/core": "^8.5.1",
+    "@capacitor/filesystem": "^8.1.3",
+    "@capacitor/keyboard": "^8.0.5",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/share": "^8.0.1",
     "@wuu/protocol": "file:../../packages/protocol",
     "@wuu/remote-core": "file:../core",
     "react": "19.2.3",

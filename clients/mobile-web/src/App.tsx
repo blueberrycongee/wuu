@@ -16,7 +16,7 @@ type Phase =
   | { kind: "ready" }
   | { kind: "error"; message: string };
 
-export default function App(): React.JSX.Element {
+export default function App({ onAccountBack }: { onAccountBack?: () => void } = {}): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>({ kind: "boot" });
   const [scannedPair] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get("pair"));
   const bridgeRef = useRef<RemoteDesktopBridge | null>(null);
@@ -65,6 +65,7 @@ export default function App(): React.JSX.Element {
   };
 
   const resetPairing = async (): Promise<void> => {
+    if (onAccountBack) { onAccountBack(); return; }
     connectionAttemptRef.current += 1;
     const bridge = bridgeRef.current;
     bridgeRef.current = null;
@@ -117,7 +118,7 @@ export default function App(): React.JSX.Element {
   if (phase.kind === "ready") {
     return (
       <Suspense fallback={<StatusCard title="正在载入工作台…" />}>
-        <ConnectedWorkbench bridge={bridgeRef.current!} onReset={() => void resetPairing()} />
+        <ConnectedWorkbench bridge={bridgeRef.current!} onReset={() => void resetPairing()} resetLabel={onAccountBack ? "返回电脑列表" : "重新配对"} />
       </Suspense>
     );
   }
@@ -160,7 +161,7 @@ export default function App(): React.JSX.Element {
           type="button"
           onClick={() => void resetPairing()}
         >
-          重新配对
+          {onAccountBack ? "返回电脑列表" : "重新配对"}
         </button>
       </StatusCard>
     );
@@ -178,7 +179,7 @@ export default function App(): React.JSX.Element {
     return (
       <StatusCard title="正在连接电脑…" detail="请保持电脑上的 Wuu 运行。">
         <button type="button" onClick={() => void resetPairing()}>
-          清除旧配对
+          {onAccountBack ? "返回电脑列表" : "清除旧配对"}
         </button>
       </StatusCard>
     );
@@ -250,9 +251,10 @@ function StatusCard({
 }
 
 
-function ConnectedWorkbench({ bridge, onReset }: {
+function ConnectedWorkbench({ bridge, onReset, resetLabel }: {
   bridge: RemoteDesktopBridge;
   onReset: () => void;
+  resetLabel: string;
 }): React.JSX.Element {
   const connection = useSyncExternalStore(bridge.subscribeConnection, bridge.getConnectionSnapshot);
   const ready = connection.phase === "connected";
@@ -270,7 +272,7 @@ function ConnectedWorkbench({ bridge, onReset }: {
           {connection.phase === "error" ? (
             <button type="button" onClick={() => void bridge.retryRestore().catch(() => {})}>重试恢复</button>
           ) : null}
-          <button type="button" onClick={onReset}>重新配对</button>
+          <button type="button" onClick={onReset}>{resetLabel}</button>
         </aside>
       ) : null}
     </>

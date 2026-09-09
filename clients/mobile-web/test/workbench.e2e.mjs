@@ -15,7 +15,7 @@ const repoDir = path.resolve(clientDir, '../..');
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'wuu-web-e2e-'));
 const workspace = path.join(temp, 'workspace'), state = path.join(temp, 'state');
 const processes = [];
-let browser, provider, throttled;
+let browser, provider, throttled, page;
 const downloadBps = Number(process.env.WUU_E2E_DOWNLOAD_BPS || 0);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label, timeout = 30000) {
@@ -137,7 +137,7 @@ try {
   browser = await chromium.launch({ channel: process.env.WUU_BROWSER_CHANNEL || undefined });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'zh-CN' });
   if (downloadBps) context.setDefaultTimeout(90000);
-  const page = await context.newPage(); const pageErrors = [];
+  page = await context.newPage(); const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.addInitScript(() => {
     const Native = window.WebSocket;
@@ -236,7 +236,7 @@ try {
       }
       await until(async () => {
         const rect = await page.locator('.app-shell').boundingBox();
-        return rect && Math.abs(rect.height - height) <= 1;
+        return rect && rect.y >= 0 && Math.abs(rect.y + rect.height - height) <= 1;
       }, `workbench follows ${visualOnly ? 'visual' : 'layout'} viewport at ${height}`);
     };
     await resizeKeyboard(420);
@@ -276,7 +276,8 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
   await until(async () => {
     const brand = await page.locator('.sidebar-brand').boundingBox();
-    return brand && brand.x >= 0 && brand.y < 30;
+    const workbench = await page.locator('.app-shell').boundingBox();
+    return brand && workbench && brand.x >= 0 && brand.y - workbench.y < 30;
   }, 'web sidebar starts near the top without native window chrome');
   }
   if (process.env.WUU_E2E_REMOTE_HISTORY === '1') {
@@ -333,6 +334,12 @@ try {
     : 'PASS: shared desktop/phone execution, bidirectional live messages, pairing, host tool execution, offline completion, snapshot and draft restoration, host restart, Git review, file navigation and phone viewports',
     { downloadBps, generatedFileBytes: Buffer.byteLength(fileText) });
 } catch (error) {
+  if (page && !page.isClosed()) {
+    const evidence = path.join(os.tmpdir(), 'wuu-web-e2e-failure.png');
+    await page.screenshot({path:evidence}).catch(() => {});
+    console.error('UI failure screenshot:', evidence);
+    console.error('Connection status:', await page.locator('.web-connection-status').allTextContents().catch(() => []));
+  }
   for (const run of processes) console.error(run.output.slice(-3000).replace(/"token":"[^"]+"/g, '"token":"[redacted]"').replace(/wuu:\/\/pair\?[^\s]+/g, '[pairing URI]'));
   throw error;
 } finally {

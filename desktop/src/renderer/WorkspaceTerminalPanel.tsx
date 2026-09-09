@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XtermTerminal, type ITerminalOptions, type ITheme } from "@xterm/xterm";
@@ -1085,6 +1086,9 @@ function UserTerminalPane({
       >
         <div className="workspace-terminal-host" ref={containerRef} />
       </div>
+      {isTouchWebShell() && terminalState === 'ready' && <div className="workspace-terminal-touch-keys" aria-label="Terminal keys">
+        {([['Esc','\x1b'],['Tab','\t'],['Ctrl-C','\x03'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']] as const).map(([label,data])=><button key={label} type="button" onPointerDown={event=>event.preventDefault()} onClick={()=>{const id=sessionIDRef.current;if(id)void window.wuu.writeTerminalSession(id,data).catch(()=>setTerminalState('error'));}}>{label}</button>)}
+      </div>}
       {terminalState === "exited" || terminalState === "error" ? (
         <button className="workspace-terminal-restart" type="button" onClick={() => setRestartKey((current) => current + 1)}>
           {t("workspace.terminal.restart")}

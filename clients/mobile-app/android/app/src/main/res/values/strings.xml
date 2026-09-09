@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Wuu</string>
+    <string name="title_activity_main">Wuu</string>
+    <string name="package_name">com.blueberrycongee.wuu</string>
+    <string name="custom_url_scheme">com.blueberrycongee.wuu</string>
+</resources>

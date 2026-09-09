@@ -2863,6 +2863,8 @@ export type WuuDesktopApi = {
   listInstructionFiles: () => Promise<InstructionsListResult>;
   // 远程控制（设置 → 远程）。管理机器级 remote host 守护进程与手机配对,
   // 走主进程 RemoteHostManager 而非 app-server 协议。
+  /** Save a locally rendered artifact through the mobile system share sheet. */
+  saveArtifactFile?: (name: string, source: string) => Promise<void>;
   remoteAccount?: (action: 'status' | 'login' | 'register' | 'logout' | 'revoke' | 'password' | 'recover', input?: Record<string,string>) => Promise<{username?: string; server?: string; pub?: string; recovery?: string; devices?: Array<{pub:string;account:string;name:string;role:'host'|'phone';online:boolean;added_at:number}>}>;
   getRemoteControlSnapshot: () => Promise<RemoteControlSnapshot>;
   setRemoteRelay: (relayUrl: string) => Promise<RemoteControlSnapshot>;

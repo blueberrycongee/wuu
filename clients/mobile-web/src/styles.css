@@ -108,3 +108,24 @@ input, textarea {
   height: var(--web-viewport-height, 100dvh);
   min-height: 0;
 }
+
+.account-home { height:100%; overflow:auto; padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); box-sizing:border-box; }
+.account-workbench { height:100%; display:flex; flex-direction:column; padding-top:env(safe-area-inset-top); box-sizing:border-box; }
+.account-toolbar { flex:none; display:flex; gap:12px; align-items:center; padding-left:env(safe-area-inset-left); }
+.account-workbench-content { flex:1; min-height:0; position:relative; overflow:hidden; }
+.account-workbench-content .app-shell { height:100%; }
+.account-pair-link { display:block; margin:24px auto; }
+.computer-folder-overlay { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; background:Canvas; color:CanvasText; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+.computer-folder-picker { width:min(100%,560px); max-height:100%; display:flex; flex-direction:column; gap:12px; padding:16px; box-sizing:border-box; }
+.computer-folder-picker form, .computer-folder-picker footer { display:flex; gap:8px; }
+.computer-folder-picker label { flex:1; min-width:0; }
+.computer-folder-picker input { width:100%; box-sizing:border-box; font-size:16px; min-height:44px; }
+.computer-folder-picker button { min-height:44px; font:inherit; }
+.computer-folder-list { overflow:auto; flex:1; min-height:44px; }
+.computer-folder-list button { display:block; width:100%; text-align:left; background:transparent; color:inherit; border:0; padding:12px; }
+.workspace-terminal-touch-keys { display:flex; gap:4px; overflow:auto; padding:6px 6px max(6px,env(safe-area-inset-bottom)); }
+.workspace-terminal-touch-keys button { min-width:44px; min-height:44px; font:inherit; background:transparent; color:inherit; border:1px solid currentColor; border-radius:6px; touch-action:manipulation; }
+
+.account-workbench-content .web-connection-status { position:absolute; top:8px; }
+.account-toolbar { min-height:44px; }
+.account-toolbar button { min-height:44px; padding:8px 12px; background:transparent; color:inherit; border:0; font:inherit; }

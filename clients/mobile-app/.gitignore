@@ -1,0 +1,7 @@
+node_modules/
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+.env*
+artifacts/

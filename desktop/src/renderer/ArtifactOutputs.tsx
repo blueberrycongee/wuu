@@ -274,6 +274,7 @@ function ArtifactPreviewOverlay({
 }): JSX.Element {
   const { t } = useI18n();
   const source = useArtifactPreviewSource(artifact, cwd);
+  const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement
@@ -317,6 +318,10 @@ function ArtifactPreviewOverlay({
 
   const download = (): void => {
     if (!source) return;
+    if (window.wuu.saveArtifactFile) {
+      void window.wuu.saveArtifactFile(artifact.name,source).catch(error=>setDownloadError(String(error)));
+      return;
+    }
     const anchor = document.createElement("a");
     anchor.href = source;
     anchor.download = artifact.name;
@@ -380,6 +385,7 @@ function ArtifactPreviewOverlay({
             </button>
           </div>
         </header>
+        {downloadError && <p role="alert">{downloadError}</p>}
         <div className="artifact-preview-body">{body}</div>
       </div>
     </div>

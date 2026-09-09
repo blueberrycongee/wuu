@@ -7,3 +7,5 @@
 .account-device { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 0; border-bottom:1px solid currentColor; }
 .account-device > div { flex:1; min-width:120px; }
 .account-actions { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0; }
+.account-panel button { border:1px solid currentColor; border-radius:10px; background:transparent; color:inherit; }
+.account-panel button:disabled { opacity:.45; cursor:default; }

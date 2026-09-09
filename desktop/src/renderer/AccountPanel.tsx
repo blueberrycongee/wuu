@@ -26,7 +26,7 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
  const perform = async (action: AccountAction, input?: Record<string,string>) => {
   if (busy) return; epoch.current++; setBusy(true); setError('');
   try {
-   const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery);
+   const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
    setPassword(''); setSecret(''); setMode('login'); setAccount(await driver('status'));
   } catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  };

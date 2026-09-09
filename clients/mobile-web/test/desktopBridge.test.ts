@@ -43,9 +43,9 @@ describe("browser host contract", () => {
     expect(host.reportBrowserBounds).toBeUndefined();
     expect(host.openSideThread).toBeUndefined();
     expect(host.onBrowserInvalidate).toBeUndefined();
-    expect(host.unsupportedMethods).toContain("startTerminalSession");
-    await expect(host.startTerminalSession()).rejects.toBeInstanceOf(UnavailableHostOperationError);
-    await expect(host.startTerminalSession({} as never)).rejects.toMatchObject({ code: "host_operation_unavailable" });
+    expect(host.unsupportedMethods).toContain("installPluginPackage");
+    await expect(host.installPluginPackage()).rejects.toBeInstanceOf(UnavailableHostOperationError);
+    await expect(host.installPluginPackage()).rejects.toMatchObject({ code: "host_operation_unavailable" });
     await expect(host.updateVoiceInputSettings({ polish_enabled: true, language: "en-US" }))
       .rejects.toBeInstanceOf(UnavailableHostOperationError);
     await expect(host.selectProject("another-computer")).rejects.toThrow("Unknown remote workspace");
@@ -353,7 +353,8 @@ describe("workspace routing", () => {
     await bridge.api.listAllThreads();
     expect((await bridge.api.selectNoProject(false, "/computer/scratch")).active_context)
       .toEqual({ kind: "no_project", cwd: "/computer/scratch" });
-    await expect(bridge.api.selectNoProject(true)).rejects.toBeInstanceOf(UnavailableHostOperationError);
+    await bridge.api.selectNoProject(true);
+    expect(remote.call).toHaveBeenLastCalledWith("desktop/projects/no-project", { fresh: true, cwd: undefined }, 30_000, expect.any(String));
     await expect(bridge.api.selectNoProject(false, "/unknown")).rejects.toBeInstanceOf(UnavailableHostOperationError);
   });
 
@@ -422,4 +423,16 @@ it("bounds thumbnail concurrency and routes cached previews to their source work
   await Promise.all(reads);
   await host.readRemoteAttachmentPreview!(refs[0]);
   expect(remote.call).toHaveBeenCalledTimes(3);
+});
+
+it("marks a terminal as ended when a new remote attachment replaces its owner", async () => {
+ const bridge=await connectBridge();
+ const events:unknown[]=[];bridge.api.onTerminalEvent(event=>events.push(event));
+ remote.call.mockResolvedValueOnce({id:'term-1',cwd:'/paired/workspace',shell:'/bin/sh',started_at:'now'});
+ await bridge.api.startTerminalSession();
+ remote.options.onNotification?.('desktop/terminal/event',{type:'data',id:'term-1',text:'output'},'/paired/workspace');
+ expect(events).toContainEqual({type:'data',id:'term-1',text:'output'});
+ remote.options.onDetach?.();remote.options.onAttach?.({session:'replacement',resumed:false});
+ expect(events).toContainEqual(expect.objectContaining({type:'error',id:'term-1'}));
+ await bridge.disconnect();
 });
