@@ -18,7 +18,8 @@ func TestAccountRelayIsolationAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	srv := New(Options{Accounts: store, AllowRegistration: true})
+	pusher := &recordingPusher{}
+	srv := New(Options{Accounts: store, AllowRegistration: true, Pusher: pusher})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/connect"
@@ -65,6 +66,18 @@ func TestAccountRelayIsolationAndRevocation(t *testing.T) {
 		if got := dest.c.recvType(wire.TypeFrame); got.From != p.Pub || got.Payload != "opaque" {
 			t.Fatalf("routing: %+v", got)
 		}
+	}
+	fc.send(wire.RelayMsg{Type: wire.TypePush, To: p.Pub, Hint: wire.PushAgentDone})
+	fc.send(wire.RelayMsg{Type: "ping"})
+	fc.recvType("pong")
+	if pusher.count() != 0 {
+		t.Fatal("foreign host sent account notification")
+	}
+	hc.send(wire.RelayMsg{Type: wire.TypePush, To: p.Pub, Hint: wire.PushAgentDone})
+	hc.send(wire.RelayMsg{Type: "ping"})
+	hc.recvType("pong")
+	if pusher.count() != 1 {
+		t.Fatal("account host notification was not delivered")
 	}
 	pc.send(wire.RelayMsg{Type: wire.TypeFrame, To: f.Pub, Payload: "forbidden"})
 	if got := pc.recvType(wire.TypeDeliverErr); got.Code != wire.CodeUnauthorized {

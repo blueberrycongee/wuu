@@ -60,6 +60,7 @@ func runRelay(args []string) error {
 	tlsKey := fs.String("tls-key", "", "TLS private key PEM file")
 	statePath := fs.String("state", "", "registry file (default <wuu home>/relay-state.json)")
 	pushWebhook := fs.String("push-webhook", "", "POST content-free push events to this URL")
+	pushConfig := fs.String("push-config", "", "JSON file configuring operator-owned APNs/FCM credentials")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -97,7 +98,19 @@ func runRelay(args []string) error {
 		}
 		defer accounts.Close()
 	}
-	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, AllowRegistration: *registration})
+	var pushPlatforms []string
+	if *pushConfig != "" {
+		if *pushWebhook != "" {
+			return errors.New("choose push-config or push-webhook")
+		}
+		native, err := relay.NewNativePusher(*pushConfig, accounts, func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) })
+		if err != nil {
+			return err
+		}
+		pusher = native
+		pushPlatforms = native.Platforms()
+	}
+	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, AllowRegistration: *registration, PushPlatforms: pushPlatforms})
 
 	handler := srv.Handler()
 	if *webRoot != "" {

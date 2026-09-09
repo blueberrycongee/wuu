@@ -14,6 +14,7 @@ import (
 type HTTP struct {
 	Store             *Store
 	AllowRegistration bool
+	PushPlatforms     []string
 	Online            func(string) bool
 	Changed           func(string)
 	mu                sync.Mutex
@@ -72,7 +73,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1/account")
 	if r.Method == "GET" && path == "/config" {
-		writeJSON(w, 200, map[string]any{"registration": h.AllowRegistration, "version": 1})
+		writeJSON(w, 200, map[string]any{"registration": h.AllowRegistration, "version": 1, "push_platforms": h.PushPlatforms})
 		return
 	}
 	if r.Method == "POST" && (path == "/login" || path == "/register" || path == "/recover" || path == "/password") {
@@ -148,6 +149,37 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, map[string]any{"devices": devices, "username": d.Account})
 		return
+	}
+	if path == "/push" {
+		if r.Method == "GET" {
+			registration, ok := h.Store.Push(d.Account, d.Pub)
+			writeJSON(w, 200, map[string]any{"enabled": ok, "platform": registration.Platform})
+			return
+		}
+		if r.Method == "POST" || r.Method == "DELETE" {
+			var registration PushRegistration
+			if r.Method == "POST" {
+				if !decode(&registration) {
+					return
+				}
+				allowed := false
+				for _, platform := range h.PushPlatforms {
+					if platform == registration.Platform {
+						allowed = true
+					}
+				}
+				if !allowed || registration.Token == "" {
+					writeJSON(w, 403, map[string]string{"error": "push is not configured for this platform"})
+					return
+				}
+			}
+			if err := h.Store.SetPush(d.Pub, registration); err != nil {
+				fail(err)
+				return
+			}
+			writeJSON(w, 200, map[string]bool{"ok": true})
+			return
+		}
 	}
 	if r.Method == "DELETE" && strings.HasPrefix(path, "/devices/") || r.Method == "POST" && path == "/logout" {
 		pub := strings.TrimPrefix(path, "/devices/")

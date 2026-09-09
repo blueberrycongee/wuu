@@ -18,6 +18,7 @@ type PushEvent struct {
 	Device  string    `json:"device"`
 	Hint    string    `json:"hint"`
 	At      time.Time `json:"at"`
+	Host    string    `json:"host,omitempty"`
 }
 
 // Pusher delivers push notifications to enrolled devices. Production

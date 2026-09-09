@@ -40,6 +40,7 @@ type Options struct {
 	Registry          *Registry
 	Accounts          *account.Store
 	AllowRegistration bool
+	PushPlatforms     []string
 	Pusher            Pusher
 	Logf              func(format string, args ...any)
 	// PushMinInterval throttles push events per device. Zero means the
@@ -93,6 +94,7 @@ func New(opts Options) *Server {
 	if opts.Accounts != nil {
 		s.accounts = opts.Accounts
 		s.accountHTTP = account.NewHTTP(opts.Accounts, opts.AllowRegistration)
+		s.accountHTTP.PushPlatforms = opts.PushPlatforms
 		s.accountHTTP.Online = func(pub string) bool { s.mu.Lock(); defer s.mu.Unlock(); return s.conns[pub] != nil }
 		s.accountHTTP.Changed = s.accountChanged
 	}
@@ -287,7 +289,7 @@ func (s *Server) serveAuthed(ctx context.Context, c *conn) {
 		if err != nil {
 			return
 		}
-		if s.accounts != nil && msg.Type != wire.TypeFrame && msg.Type != "ping" {
+		if s.accounts != nil && msg.Type != wire.TypeFrame && msg.Type != wire.TypePush && msg.Type != "ping" {
 			_ = c.send(wire.RelayMsg{Type: wire.TypeErr, Code: wire.CodeUnauthorized, Msg: "use the account API for device management"})
 			continue
 		}
@@ -508,8 +510,25 @@ func (s *Server) handlePush(c *conn, msg wire.RelayMsg) {
 	if c.role != wire.RoleHost {
 		return
 	}
+	if msg.Hint != wire.PushAgentDone && msg.Hint != wire.PushNeedsInput {
+		return
+	}
 	targets := []string{}
-	if msg.To != "" {
+	if s.accounts != nil {
+		source, ok := s.accounts.Device(c.pub)
+		if !ok || source.Account != c.account || source.Role != "host" {
+			return
+		}
+		devices, err := s.accounts.Devices(c.account)
+		if err != nil {
+			return
+		}
+		for _, device := range devices {
+			if device.Role == "phone" && (msg.To == "" || msg.To == device.Pub) {
+				targets = append(targets, device.Pub)
+			}
+		}
+	} else if msg.To != "" {
 		if s.reg.HasDevice(c.account, msg.To) {
 			targets = append(targets, msg.To)
 		}
@@ -535,6 +554,7 @@ func (s *Server) handlePush(c *conn, msg wire.RelayMsg) {
 			Device:  target,
 			Hint:    msg.Hint,
 			At:      now.UTC(),
+			Host:    c.pub,
 		})
 	}
 }

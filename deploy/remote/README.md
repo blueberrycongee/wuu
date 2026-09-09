@@ -37,6 +37,8 @@ Compose 中的 Caddy 自动管理证书并代理 WebSocket。`accounts` 不直�
 
 ## 电脑接入
 
+需要后台系统提醒时，按 [自部署推送说明](PUSH.md) 配置自己的 APNs/FCM 凭据。账号和连接服务不依赖这些凭据。
+
 在桌面 Wuu「设置 → 手机访问」填写服务端并登录。登录会启动已有桌面远程宿主，复用当前桌面 Go 服务池。退出账号会停用本机远程访问。仅电脑开机、Wuu 运行且连接服务端时显示在线。
 
 自动化或无界面电脑可以使用 `wuu remote account login` / `register`，JSON 从标准输入传入，字段为 `server`、`username`、`password`。密码不得出现在命令参数。再运行 `wuu remote host --workdir <工作目录>`；独立 CLI 宿主提供核心会话 RPC，桌面文件夹管理和终端等桌面能力需要桌面 App。

@@ -75,6 +75,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS accounts(username TEXT PRIMARY KEY,salt BLOB NOT NULL,password BLOB NOT NULL,recovery BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS devices(pub TEXT PRIMARY KEY,account TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE,name TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('host','phone')),added_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS sessions(hash BLOB PRIMARY KEY,pub TEXT NOT NULL REFERENCES devices(pub) ON DELETE CASCADE,expires INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS push_devices(pub TEXT PRIMARY KEY REFERENCES devices(pub) ON DELETE CASCADE,platform TEXT NOT NULL,token TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS devices_account ON devices(account);`)
 	if err != nil {
 		db.Close()
@@ -88,6 +89,33 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
+
+type PushRegistration struct {
+	Platform string `json:"platform"`
+	Token    string `json:"token"`
+}
+
+func (s *Store) SetPush(pub string, registration PushRegistration) error {
+	device, ok := s.Device(pub)
+	if !ok || device.Role != "phone" {
+		return ErrUnauthorized
+	}
+	if registration.Token == "" {
+		_, err := s.db.Exec(`DELETE FROM push_devices WHERE pub=?`, pub)
+		return err
+	}
+	if len(registration.Token) > 4096 || (registration.Platform != "ios" && registration.Platform != "android") {
+		return errors.New("invalid push registration")
+	}
+	_, err := s.db.Exec(`INSERT INTO push_devices(pub,platform,token) VALUES(?,?,?) ON CONFLICT(pub) DO UPDATE SET platform=excluded.platform,token=excluded.token`, pub, registration.Platform, registration.Token)
+	return err
+}
+
+func (s *Store) Push(account, pub string) (PushRegistration, bool) {
+	var result PushRegistration
+	err := s.db.QueryRow(`SELECT p.platform,p.token FROM push_devices p JOIN devices d ON d.pub=p.pub WHERE d.pub=? AND d.account=? AND d.role='phone'`, pub, account).Scan(&result.Platform, &result.Token)
+	return result, err == nil
+}
 func randomToken() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
