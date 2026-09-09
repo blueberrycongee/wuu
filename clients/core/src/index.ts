@@ -11,3 +11,5 @@ export * from "./secure";
 export * from "./wire";
 export * from "./rpc";
 export * from "./client";
+
+export * from "./account";

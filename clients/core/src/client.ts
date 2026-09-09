@@ -452,7 +452,7 @@ export class RemoteClient {
   }
 
   private async authenticate(sock: RelaySocket): Promise<boolean> {
-    sock.write({ type: TYPE_HELLO, proto: PROTO_VERSION, role: ROLE_PHONE, pub: encodeKey(this.id.public_()) });
+    sock.write({ type: TYPE_HELLO, proto: PROTO_VERSION, role: ROLE_PHONE, pub: encodeKey(this.id.public_()), to: encodeKey(this.hostPub) });
     const challenge = await sock.read();
     if (challenge.type !== TYPE_CHALLENGE) {
       throw new Error(`relay: expected challenge, got ${challenge.type} (${challenge.msg ?? ""})`);
