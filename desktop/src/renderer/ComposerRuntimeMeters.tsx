@@ -7,6 +7,10 @@ import { ComposerContextMeter } from "./ComposerContextMeter";
 // import { ComposerTokenGauge } from "./ComposerTokenGauge";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 
+function isExternalEngine(engine?: string): boolean {
+  return Boolean(engine && engine !== "wuu");
+}
+
 export function ComposerRuntimeMeters({
   running,
   turnID,
@@ -14,6 +18,7 @@ export function ComposerRuntimeMeters({
   fallbackSampledAt,
   fallbackSource = "none",
   fallbackContextUsage,
+  activeEngine,
 }: {
   running: boolean;
   turnID?: string;
@@ -21,7 +26,11 @@ export function ComposerRuntimeMeters({
   fallbackSampledAt?: number;
   fallbackSource?: "real" | "estimated" | "none";
   fallbackContextUsage?: TurnContextUsage | null;
-}): JSX.Element {
+  // External engines (Codex/Claude) currently report usage against a
+  // mismatched window, so the composer ring is hidden until that path is
+  // trustworthy. The built-in Wuu engine keeps the meter.
+  activeEngine?: string;
+}): JSX.Element | null {
   const telemetry = useSyncExternalStore(
     turnTelemetryStore.subscribe,
     () => turnTelemetryStore.getSnapshot(turnID),
@@ -37,6 +46,10 @@ export function ComposerRuntimeMeters({
         requestContext: fallbackContextUsage?.requestContext,
       }
     : fallbackContextUsage ?? undefined;
+
+  if (isExternalEngine(activeEngine)) {
+    return null;
+  }
 
   return (
     <>

@@ -1392,6 +1392,7 @@ export function Composer({
                       fallbackSampledAt={tokenSpeedSampledAt}
                       fallbackSource={tokenSpeedSource}
                       fallbackContextUsage={contextUsage}
+                      activeEngine={activeEngine}
                     />
                     {initialized ? (
                       <RuntimePicker
