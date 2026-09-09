@@ -20,6 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
 )
@@ -36,9 +37,11 @@ const (
 
 // Options configures a relay server.
 type Options struct {
-	Registry *Registry
-	Pusher   Pusher
-	Logf     func(format string, args ...any)
+	Registry          *Registry
+	Accounts          *account.Store
+	AllowRegistration bool
+	Pusher            Pusher
+	Logf              func(format string, args ...any)
 	// PushMinInterval throttles push events per device. Zero means the
 	// default of 30 seconds.
 	PushMinInterval time.Duration
@@ -47,6 +50,8 @@ type Options struct {
 // Server routes relay traffic. Wire it into an http.Server via Handler.
 type Server struct {
 	reg             *Registry
+	accounts        *account.Store
+	accountHTTP     *account.HTTP
 	pusher          Pusher
 	logf            func(format string, args ...any)
 	pushMinInterval time.Duration
@@ -75,7 +80,7 @@ func New(opts Options) *Server {
 	if interval == 0 {
 		interval = 30 * time.Second
 	}
-	return &Server{
+	s := &Server{
 		reg:             reg,
 		pusher:          pusher,
 		logf:            logf,
@@ -85,12 +90,22 @@ func New(opts Options) *Server {
 		pairWaiters:     map[string]*conn{},
 		pushLast:        map[string]time.Time{},
 	}
+	if opts.Accounts != nil {
+		s.accounts = opts.Accounts
+		s.accountHTTP = account.NewHTTP(opts.Accounts, opts.AllowRegistration)
+		s.accountHTTP.Online = func(pub string) bool { s.mu.Lock(); defer s.mu.Unlock(); return s.conns[pub] != nil }
+		s.accountHTTP.Changed = s.accountChanged
+	}
+	return s
 }
 
 // Handler returns the HTTP mux: GET /healthz and the websocket endpoint at
 // /v1/connect.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.accountHTTP != nil {
+		mux.Handle("/v1/account/", s.accountHTTP)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -137,6 +152,9 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	first, err := s.read(ctx, c)
 	if err != nil {
+		return
+	}
+	if s.accounts != nil && first.Type != wire.TypeHello {
 		return
 	}
 	switch first.Type {
@@ -207,21 +225,29 @@ func (s *Server) authenticate(ctx context.Context, c *conn, hello wire.RelayMsg)
 
 	pubKey := hello.Pub
 	var account string
-	switch hello.Role {
-	case wire.RoleHost:
-		account = pubKey
-		if err := s.reg.EnsureAccount(account); err != nil {
-			s.logf("relay: ensure account: %v", err)
-			return fail(wire.CodeBadRequest, "registry unavailable")
+	if s.accounts != nil {
+		d, ok := s.accounts.Device(pubKey)
+		if !ok || d.Role != hello.Role {
+			return fail(wire.CodeUnauthorized, "login required or device revoked")
 		}
-	case wire.RolePhone:
-		acct, ok := s.reg.AccountByDevice(pubKey)
-		if !ok {
-			return fail(wire.CodeUnknownDevice, "device not enrolled; pair first")
+		account = d.Account
+	} else {
+		switch hello.Role {
+		case wire.RoleHost:
+			account = pubKey
+			if err := s.reg.EnsureAccount(account); err != nil {
+				s.logf("relay: ensure account: %v", err)
+				return fail(wire.CodeBadRequest, "registry unavailable")
+			}
+		case wire.RolePhone:
+			acct, ok := s.reg.AccountByDevice(pubKey)
+			if !ok {
+				return fail(wire.CodeUnknownDevice, "device not enrolled; pair first")
+			}
+			account = acct
 		}
-		account = acct
-	}
 
+	}
 	c.pub = pubKey
 	c.role = hello.Role
 	c.account = account
@@ -234,7 +260,16 @@ func (s *Server) authenticate(ctx context.Context, c *conn, hello wire.RelayMsg)
 	s.conns[pubKey] = c
 	var peerOnline bool
 	if hello.Role == wire.RolePhone {
-		_, peerOnline = s.conns[account]
+		target := account
+		if s.accounts != nil {
+			target = hello.To
+			d, ok := s.accounts.Device(target)
+			if !ok || d.Account != account || d.Role != wire.RoleHost {
+				s.mu.Unlock()
+				return fail(wire.CodeUnauthorized, "unknown account computer")
+			}
+		}
+		_, peerOnline = s.conns[target]
 	}
 	s.mu.Unlock()
 
@@ -251,6 +286,10 @@ func (s *Server) serveAuthed(ctx context.Context, c *conn) {
 		msg, err := s.read(ctx, c)
 		if err != nil {
 			return
+		}
+		if s.accounts != nil && msg.Type != wire.TypeFrame && msg.Type != "ping" {
+			_ = c.send(wire.RelayMsg{Type: wire.TypeErr, Code: wire.CodeUnauthorized, Msg: "use the account API for device management"})
+			continue
 		}
 		switch msg.Type {
 		case wire.TypeFrame:
@@ -281,19 +320,28 @@ func (s *Server) serveAuthed(ctx context.Context, c *conn) {
 // enrolled phones. Any other pairing of endpoints is refused.
 func (s *Server) routeFrame(c *conn, msg wire.RelayMsg) {
 	target := msg.To
-	switch c.role {
-	case wire.RoleHost:
-		if !s.reg.HasDevice(c.account, target) {
-			_ = c.send(wire.RelayMsg{Type: wire.TypeDeliverErr, To: target, Code: wire.CodeUnknownDevice})
-			return
-		}
-	case wire.RolePhone:
-		if target == "" {
-			target = c.account
-		}
-		if target != c.account {
+	if s.accounts != nil {
+		from, ok := s.accounts.Device(c.pub)
+		dest, found := s.accounts.Device(target)
+		if !ok || !found || from.Account != dest.Account || from.Role == dest.Role {
 			_ = c.send(wire.RelayMsg{Type: wire.TypeDeliverErr, To: target, Code: wire.CodeUnauthorized})
 			return
+		}
+	} else {
+		switch c.role {
+		case wire.RoleHost:
+			if !s.reg.HasDevice(c.account, target) {
+				_ = c.send(wire.RelayMsg{Type: wire.TypeDeliverErr, To: target, Code: wire.CodeUnknownDevice})
+				return
+			}
+		case wire.RolePhone:
+			if target == "" {
+				target = c.account
+			}
+			if target != c.account {
+				_ = c.send(wire.RelayMsg{Type: wire.TypeDeliverErr, To: target, Code: wire.CodeUnauthorized})
+				return
+			}
 		}
 	}
 	s.mu.Lock()
@@ -499,15 +547,23 @@ func (s *Server) broadcastPresence(c *conn, online bool) {
 	}
 	s.mu.Lock()
 	var recipients []*conn
-	switch c.role {
-	case wire.RolePhone:
-		if host := s.conns[c.account]; host != nil {
-			recipients = append(recipients, host)
-		}
-	case wire.RoleHost:
-		for pub, other := range s.conns {
-			if other.role == wire.RolePhone && other.account == c.account && pub != c.pub {
+	if s.accounts != nil {
+		for _, other := range s.conns {
+			if other.account == c.account && other.role != c.role {
 				recipients = append(recipients, other)
+			}
+		}
+	} else {
+		switch c.role {
+		case wire.RolePhone:
+			if host := s.conns[c.account]; host != nil {
+				recipients = append(recipients, host)
+			}
+		case wire.RoleHost:
+			for pub, other := range s.conns {
+				if other.role == wire.RolePhone && other.account == c.account && pub != c.pub {
+					recipients = append(recipients, other)
+				}
 			}
 		}
 	}
@@ -549,4 +605,20 @@ func (s *Server) dropConn(c *conn) {
 		_ = w.ws.Close(websocket.StatusNormalClosure, "host disconnected")
 	}
 	s.broadcastPresence(c, false)
+}
+
+// Disconnect both endpoints when membership changes. This also invalidates the
+// host's current channel; a fresh handshake checks the authoritative directory.
+func (s *Server) accountChanged(account string) {
+	s.mu.Lock()
+	var conns []*conn
+	for _, c := range s.conns {
+		if c.account == account {
+			conns = append(conns, c)
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		_ = c.ws.CloseNow()
+	}
 }

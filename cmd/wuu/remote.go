@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
 	"github.com/blueberrycongee/wuu/internal/remote/phone"
 	"github.com/blueberrycongee/wuu/internal/remote/relay"
@@ -50,6 +51,8 @@ func defaultPhoneStorePath() (string, error) {
 func runRelay(args []string) error {
 	fs := flag.NewFlagSet("relay", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	accountDB := fs.String("accounts", "", "enable account authentication with this SQLite database")
+	registration := fs.Bool("registration", false, "allow account registration")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	webRoot := fs.String("web-root", "", "serve the built Wuu Web directory alongside the relay")
 	publicURL := fs.String("public-url", "", "browser-facing http(s) origin, including reverse proxy TLS termination")
@@ -86,7 +89,15 @@ func runRelay(args []string) error {
 	if strings.TrimSpace(*pushWebhook) != "" {
 		pusher = relay.WebhookPusher{URL: strings.TrimSpace(*pushWebhook)}
 	}
-	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher})
+	var accounts *account.Store
+	if *accountDB != "" {
+		accounts, err = account.Open(*accountDB)
+		if err != nil {
+			return err
+		}
+		defer accounts.Close()
+	}
+	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, AllowRegistration: *registration})
 
 	handler := srv.Handler()
 	if *webRoot != "" {

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 )
 
@@ -26,11 +27,12 @@ type StoredDevice struct {
 }
 
 type storeFile struct {
-	V        int            `json:"v"`
-	HostSeed string         `json:"host_seed"` // base64url Ed25519 seed
-	HostName string         `json:"host_name,omitempty"`
-	RelayURL string         `json:"relay_url,omitempty"`
-	Devices  []StoredDevice `json:"devices,omitempty"`
+	V        int                  `json:"v"`
+	Account  *account.Credentials `json:"account,omitempty"`
+	HostSeed string               `json:"host_seed"` // base64url Ed25519 seed
+	HostName string               `json:"host_name,omitempty"`
+	RelayURL string               `json:"relay_url,omitempty"`
+	Devices  []StoredDevice       `json:"devices,omitempty"`
 }
 
 // Store is the host-side credential file (remote.json in the wuu home). It
@@ -219,4 +221,20 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	return os.Rename(tmp, s.path)
+}
+
+func (s *Store) Account() *account.Credentials {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.Account == nil {
+		return nil
+	}
+	c := *s.data.Account
+	return &c
+}
+func (s *Store) SetAccount(c *account.Credentials) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.Account = c
+	return s.saveLocked()
 }

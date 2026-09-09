@@ -418,7 +418,13 @@ func (h *Host) handleHandshake(from string, body []byte) {
 		return
 	}
 	hs1 := secure.HS1{DevicePub: e2e.DevicePub, Eph: e2e.Eph, Nonce: e2e.Nonce, Sig: e2e.Sig}
-	ch, hs2, err := secure.AcceptHandshake(h.store.Identity(), hs1, h.store.IsPaired)
+	authorize := h.store.IsPaired
+	if credentials := h.store.Account(); credentials != nil {
+		authorize = func(pub []byte) bool {
+			return credentials.Allows(h.baseCtx, secure.EncodeKey(h.store.Identity().Public()), secure.EncodeKey(pub))
+		}
+	}
+	ch, hs2, err := secure.AcceptHandshake(h.store.Identity(), hs1, authorize)
 	if err != nil {
 		h.logf("remote host: reject handshake from %s: %v", from, err)
 		return
