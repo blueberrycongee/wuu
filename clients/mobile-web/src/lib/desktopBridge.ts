@@ -295,12 +295,45 @@ export class RemoteDesktopBridge {
   }
 
   private readonly attachmentReads = new Map<string, Promise<string>>();
+  private readonly attachmentCache = new Map<string, string>();
+  private attachmentCacheSize = 0;
+  private readonly previewReads = new Map<string, Promise<string>>();
+  private previewActive = 0;
+  private readonly previewWaiters: Array<() => void> = [];
+
+  private readAttachmentPreview(ref: string): Promise<string> {
+    const cached = this.previewReads.get(ref);
+    if (cached) return cached;
+    const read = (async () => {
+      if (this.previewActive >= 2) await new Promise<void>(resolve => this.previewWaiters.push(resolve));
+      else this.previewActive++;
+      try {
+        const result = await this.call<{data: string; total: number; content_type: string}>("remote/attachment/preview", { ref, thread_id: this.attachmentThreadID(ref) });
+        if (result.content_type !== "image/jpeg" || result.total !== result.data.length || result.total > 128 * 1024) throw new Error("Invalid attachment preview");
+        return `data:image/jpeg;base64,${result.data}`;
+      } finally {
+        const next = this.previewWaiters.shift();
+        if (next) next(); else this.previewActive--;
+      }
+    })();
+    this.previewReads.set(ref, read);
+    void read.then(() => {
+      if (this.previewReads.size > 48) this.previewReads.delete(this.previewReads.keys().next().value!);
+    }, () => { if (this.previewReads.get(ref) === read) this.previewReads.delete(ref); });
+    return read;
+  }
 
   private readAttachment(ref: string): Promise<string> {
+    const method = ref.startsWith("content:") ? "remote/content/read" : "remote/attachment/read";
+    const retained = this.attachmentCache.get(ref);
+    if (retained) {
+      this.attachmentCache.delete(ref); this.attachmentCache.set(ref, retained);
+      return Promise.resolve(retained);
+    }
     const cached = this.attachmentReads.get(ref);
     if (cached) return cached;
     const read = (async () => {
-      const first = await this.call<{ data: string; total: number; offset: number }>("remote/attachment/read", { ref, offset: 0 });
+      const first = await this.call<{ data: string; total: number; offset: number }>(method, { ref, offset: 0, thread_id: this.attachmentThreadID(ref) });
       if (!Number.isSafeInteger(first.total) || first.total < 0 || first.total > 64 * 1024 * 1024 || first.offset !== 0 || !first.data.length) throw new Error("Invalid attachment response");
       const chunks = [first.data];
       // Small independently encrypted chunks let control RPCs and live text
@@ -309,7 +342,7 @@ export class RemoteDesktopBridge {
         const offsets: number[] = [];
         for (let n = 0; n < 4 && offset < first.total; n++, offset += first.data.length) offsets.push(offset);
         chunks.push(...await Promise.all(offsets.map(async position => {
-          const chunk = await this.call<typeof first>("remote/attachment/read", { ref, offset: position });
+          const chunk = await this.call<typeof first>(method, { ref, offset: position, thread_id: this.attachmentThreadID(ref) });
           if (chunk.total !== first.total || chunk.offset !== position || chunk.data.length !== Math.min(first.data.length, first.total - position)) throw new Error("Attachment changed during download");
           return chunk.data;
         })));
@@ -317,10 +350,23 @@ export class RemoteDesktopBridge {
       return chunks.join("");
     })();
     this.attachmentReads.set(ref, read);
-    // Bound retained image data; failures remain retryable after reconnect.
-    if (this.attachmentReads.size > 4) this.attachmentReads.delete(this.attachmentReads.keys().next().value!);
-    void read.catch(() => this.attachmentReads.delete(ref));
+    void read.then(data => {
+      this.attachmentReads.delete(ref);
+      if (data.length > 16 * 1024 * 1024) return;
+      this.attachmentCache.set(ref, data); this.attachmentCacheSize += data.length;
+      while (this.attachmentCacheSize > 16 * 1024 * 1024) {
+        const key = this.attachmentCache.keys().next().value!;
+        this.attachmentCacheSize -= this.attachmentCache.get(key)!.length;
+        this.attachmentCache.delete(key);
+      }
+    }, () => this.attachmentReads.delete(ref));
     return read;
+  }
+
+  private attachmentThreadID(ref: string): string | undefined {
+    if (!/^(thread|content):/.test(ref)) return undefined;
+    const decoded = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(ref.slice(ref.indexOf(":") + 1).replace(/-/g, "+").replace(/_/g, "/")), char => char.charCodeAt(0))));
+    return typeof decoded?.[0] === "string" ? decoded[0] : undefined;
   }
 
   private readonly projectID: string;
@@ -607,6 +653,11 @@ export class RemoteDesktopBridge {
         this.emitServerEvent({ workdir: this.requestWorkdir(params), kind: "notification", message: { method: "thread/historyLoaded", params: result } });
       },
       readRemoteAttachment: (ref: string) => this.readAttachment(ref),
+      readRemoteAttachmentPreview: (ref: string) => this.readAttachmentPreview(ref),
+      readRemoteItem: async (ref: string) => {
+        const data = await this.readAttachment(ref);
+        return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(data), char => char.charCodeAt(0))));
+      },
       resumeThread: async (sessionId?: string) => {
         const params = { session_id: sessionId ?? "", response_only: true };
         const result = await this.call<ThreadResumeResult>("thread/resume", params);

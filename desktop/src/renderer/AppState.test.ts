@@ -3851,3 +3851,13 @@ it("prepends remote history without overwriting live turns and ignores supersede
   expect(next.thread?.history_cursor).toBeUndefined();
   expect(reduceServerEvent(next,event).thread?.turns).toEqual([earlier,live]);
 });
+
+it("joins pages within a long turn while retaining newer live item content", () => {
+  const live = {id:"turn",status:"in_progress",items_view:"full",items:[{id:"answer",type:"agent_message",text:"newer"}]} as Turn;
+  const thread = {id:"remote",cwd:"/tmp",turns:[live],history_cursor:"item:boundary"} as Thread;
+  const tool = {id:"tool",type:"tool_call",result:"earlier"} as ThreadItem;
+  const next = reduceServerEvent({...initialState,thread,threads:[thread]}, {workdir:"/tmp",kind:"notification",message:{method:"thread/historyLoaded",params:{thread_id:"remote",cursor:"item:boundary",turns:[{...live,items:[tool,{...live.items[0],text:"older"}]}]}}});
+  expect(next.thread?.turns).toHaveLength(1);
+  expect(next.thread?.turns[0].items).toEqual([tool,...live.items]);
+  expect(next.thread?.turns[0].status).toBe("in_progress");
+});

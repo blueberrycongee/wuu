@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { RemoteHistory } from "./remoteHistory";
-import { RemoteAttachments } from "./remoteAttachments";
+import { projectRemoteHistory } from "./remoteHistory";
+import { RemoteAttachments, threadAttachmentParams, threadContentParams } from "./remoteAttachments";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AppServerResponse, ServerEvent } from "../shared/protocol";
 
@@ -17,7 +17,6 @@ export class RemoteAppServerBridge {
   private sockets = new Set<Socket>();
   private subscribers = new Set<Socket>();
   private readonly compactSubscribers = new Set<Socket>();
-  private readonly histories = new Map<Socket, RemoteHistory>();
   private readonly attachments = new RemoteAttachments();
   constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void) => Promise<unknown>) {}
 
@@ -54,7 +53,6 @@ export class RemoteAppServerBridge {
     for (const socket of this.sockets) socket.destroy();
     this.subscribers.clear();
     this.compactSubscribers.clear();
-    this.histories.clear();
     this.attachments.clear();
     this.server?.close();
     this.server = undefined;
@@ -63,15 +61,14 @@ export class RemoteAppServerBridge {
   private send(socket: Socket, message: unknown): void {
     if (socket.destroyed) return;
     if (socket.writableLength > MAX_LINE_BYTES) { socket.destroy(); return; }
-    const history = this.histories.get(socket);
-    const projected = history ? history.project(this.attachments.project(message)) : message;
+    const projected = this.compactSubscribers.has(socket) ? this.attachments.project(projectRemoteHistory(message)) : message;
     socket.write(JSON.stringify(projected) + "\n");
   }
 
   private accept(socket: Socket, token: string, defaultWorkdir: string): void {
     this.sockets.add(socket);
     socket.on("error", () => socket.destroy());
-    socket.once("close", () => { this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket); this.histories.delete(socket); });
+    socket.once("close", () => { this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket); });
     socket.setTimeout(5000, () => socket.destroy());
     socket.setEncoding("utf8");
     let buffer = "", authenticated = false;
@@ -104,7 +101,6 @@ export class RemoteAppServerBridge {
         const { id, method, params } = input;
         if (method === "workspace/list" && (params as { remote_delivery?: number } | undefined)?.remote_delivery === 1) {
           this.compactSubscribers.add(socket);
-          if (!this.histories.has(socket)) this.histories.set(socket, new RemoteHistory());
         }
         const cwd = typeof input.workdir === "string" && input.workdir ? input.workdir : defaultWorkdir;
         const key = JSON.stringify(id), signature = JSON.stringify([cwd, method, params]);
@@ -126,10 +122,32 @@ export class RemoteAppServerBridge {
           completed.push(key);
           if (completed.length > 256) requests.delete(completed.shift()!);
         };
-        void Promise.resolve().then(() => {
-          if (this.compactSubscribers.has(socket) && method === "remote/history/read") return this.histories.get(socket)!.read(params);
-          if (this.compactSubscribers.has(socket) && method === "remote/attachment/read") return this.attachments.read(params);
-          return this.request(cwd, method, this.compactSubscribers.has(socket) ? this.attachments.hydrate(params) : params, finish);
+        void Promise.resolve().then(async () => {
+          if (!this.compactSubscribers.has(socket)) return this.request(cwd, method, params, finish);
+          if (method === "remote/content/read") {
+            const input = params as { ref: string; offset?: number };
+            return this.request(cwd, "thread/content/read", { ...threadContentParams(input.ref), offset: input.offset ?? 0 }, finish);
+          }
+          if (method === "remote/history/read") return this.request(cwd, "thread/history/read", params, finish);
+          if (method === "remote/attachment/read" || method === "remote/attachment/preview") {
+            const input = params as { ref?: unknown; offset?: unknown };
+            const source = typeof input?.ref === "string" ? threadAttachmentParams(input.ref) : undefined;
+            if (source) return this.request(cwd, "thread/attachment/read", { ...source, offset: input.offset ?? 0, preview: method.endsWith("preview") }, finish);
+            if (method.endsWith("preview")) throw new Error("Preview is unavailable for this attachment");
+            return this.attachments.read(params);
+          }
+          const hydrated = await this.attachments.hydrateRemote(params, async ref => {
+            const source = threadAttachmentParams(ref)!;
+            const chunks: string[] = [];
+            let offset = 0, total = 1;
+            while (offset < total) {
+              const chunk = await this.request(cwd, "thread/attachment/read", { ...source, offset }, () => {}) as { data: string; total: number; offset: number };
+              if (!chunk.data || chunk.offset !== offset || chunk.total > 64 * 1024 * 1024) throw new Error("Invalid attachment response");
+              chunks.push(chunk.data); offset += chunk.data.length; total = chunk.total;
+            }
+            return chunks.join("");
+          });
+          return this.request(cwd, method, method === "thread/resume" ? { ...(hydrated as object), history_page: true } : hydrated, finish);
         }).then(
           result => finish({ result }),
           error => finish({ error: { code: "error", message: error instanceof Error ? error.message : String(error) } }),

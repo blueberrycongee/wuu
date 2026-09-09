@@ -41,14 +41,16 @@ type ArtifactPresentation struct {
 }
 
 type ContentPart struct {
-	Type     string                `json:"type"`
-	Text     string                `json:"text,omitempty"`
-	Data     string                `json:"data,omitempty"`
-	MIMEType string                `json:"mime_type,omitempty"`
-	URI      string                `json:"uri,omitempty"`
-	Name     string                `json:"name,omitempty"`
-	Resource json.RawMessage       `json:"resource,omitempty"`
-	Artifact *ArtifactPresentation `json:"artifact,omitempty"`
+	// RemoteRef is an output-only delivery reference for deferred media.
+	RemoteRef string                `json:"remote_ref,omitempty"`
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	Data      string                `json:"data,omitempty"`
+	MIMEType  string                `json:"mime_type,omitempty"`
+	URI       string                `json:"uri,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Resource  json.RawMessage       `json:"resource,omitempty"`
+	Artifact  *ArtifactPresentation `json:"artifact,omitempty"`
 }
 
 type ActivityRef struct {

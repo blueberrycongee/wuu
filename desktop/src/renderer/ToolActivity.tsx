@@ -7,6 +7,8 @@ import {
 } from "./ToolActivityHelpers";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ToolActivityMarker } from "./ToolActivityMarker";
+import { RemoteItemContent } from "./RemoteItemContent";
+import { collectTurnArtifacts, TurnInlineArtifactOutputs, TurnEndArtifactOutputs } from "./ArtifactOutputs";
 export type { JsonRecord } from "./ToolActivityHelpers";
 export {
   isRecord,
@@ -156,6 +158,18 @@ export function ToolActivityRow({
           ) : null}
         </span>
       </span>
+      {items.filter(item => item.remote_content_ref).map(item => <RemoteItemContent key={item.remote_content_ref} item={item}
+        render={(content, complete) => <RemoteToolResult item={content} complete={complete} />} />)}
     </article>
   );
+}
+
+function RemoteToolResult({ item, complete }: { item: ThreadItem; complete: boolean }): JSX.Element {
+  const artifacts = complete ? collectTurnArtifacts({id:item.id,items:[item],items_view:"full",status:"completed"}) : [];
+  const text = item.result || item.text || item.result_detail?.content?.filter(part => part.type === "text").map(part => part.text ?? "").join("\n") || item.arguments || "";
+  return <>
+    <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 480, overflowY: "auto" }}>{text}</pre>
+    <TurnInlineArtifactOutputs artifacts={artifacts} />
+    <TurnEndArtifactOutputs artifacts={artifacts} />
+  </>;
 }

@@ -1650,6 +1650,7 @@ export type ToolCallDisplay = {
 };
 
 export type ToolResultContentPart = {
+  remote_ref?: string;
   type: string;
   text?: string;
   data?: string;
@@ -2243,6 +2244,8 @@ export type TurnEventNotification = {
 };
 
 export type ThreadItem = {
+  /** Complete content is fetched separately when a history item exceeds the page budget. */
+  remote_content_ref?: string;
   id: string;
   // seq is the message's stable per-thread address (session_messages.seq).
   // Absent for synthetic or unpersisted items.
@@ -2841,6 +2844,9 @@ export type WuuDesktopApi = {
   startThread: (params?: ThreadStartParams) => Promise<{ thread: Thread }>;
   loadEarlierThreadHistory?: (threadID: string, cursor: string) => Promise<void>;
   readRemoteAttachment?: (ref: string) => Promise<string>;
+  /** A bounded thumbnail data URL, independently fetched from the original. */
+  readRemoteAttachmentPreview?: (ref: string) => Promise<string>;
+  readRemoteItem?: (ref: string) => Promise<ThreadItem>;
   resumeThread: (sessionId?: string) => Promise<ThreadResumeResult>;
   forkThread: (
     threadId: string,

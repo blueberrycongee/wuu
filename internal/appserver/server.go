@@ -1202,6 +1202,10 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadStart(req)
 	case MethodThreadResume:
 		return s.handleThreadResume(req)
+	case "thread/history/read":
+		return s.handleThreadHistoryRead(req)
+	case "thread/attachment/read", "thread/content/read":
+		return s.handleThreadAttachmentRead(req)
 	case MethodThreadFork:
 		return s.handleThreadFork(req)
 	case MethodThreadEditMessage:

@@ -39,6 +39,7 @@ import { StreamingMarkdown } from "./StreamingMarkdown";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { streamFieldValue } from "./ThreadItemText";
 import { ToolActivityRow } from "./ToolActivity";
+import { RemoteItemContent } from "./RemoteItemContent";
 import {
   ContextCompactionNotice,
   StreamReconnectNotice,
@@ -98,6 +99,9 @@ interface ThreadItemViewProps {
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
   const { item, onEditMessage, turnID, editing } = props;
   const { t } = useI18n();
+  if (item.remote_content_ref && item.type !== "tool_call") {
+    return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
+  }
   if (item.type === "user_message" && isInternalUserNotificationItem(item)) {
     return null;
   }

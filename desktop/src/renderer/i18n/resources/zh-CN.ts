@@ -1,4 +1,5 @@
 export const zhCN = {
+  "conversation.loadFullContent": "加载完整内容",
   "common.system": "跟随系统",
   "common.chinese": "简体中文",
   "common.english": "English",

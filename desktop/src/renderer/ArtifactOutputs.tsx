@@ -7,6 +7,7 @@ import { useI18n } from "./i18n";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
+import { AttachmentImage } from "./AttachmentImage";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -20,6 +21,7 @@ export type TurnArtifact = Readonly<{
   name: string;
   mimeType: string;
   data?: string;
+  remoteRef?: string;
   text?: string;
   uri?: string;
   resource?: unknown;
@@ -189,6 +191,13 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
   const source = artifactSource(artifact, cwd);
+  if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) {
+    return <figure className="turn-artifact-inline-image">
+      <AttachmentImage image={{media_type:artifact.mimeType,data:artifact.data ?? "",remote_ref:artifact.remoteRef}} label={artifact.name}
+        onOpen={src => openPreview({src,alt:artifact.name,title:artifact.name})} />
+      <figcaption>{artifact.name}</figcaption>
+    </figure>;
+  }
   if (!source || !artifact.mimeType.startsWith("image/")) {
     return <div className="turn-artifact-unavailable">{artifact.name}</div>;
   }
@@ -219,6 +228,7 @@ function ArtifactCard({
   onPreview?: (artifact: TurnArtifact) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) return <InlineArtifact artifact={artifact} cwd={cwd} />;
   const open = (): void => {
     if (canPreviewArtifact(artifact)) {
       onPreview?.(artifact);
@@ -398,6 +408,7 @@ function artifactFromContentPart(
     type: part.type,
     name,
     mimeType,
+    remoteRef: part.remote_ref,
     data,
     text,
     uri,

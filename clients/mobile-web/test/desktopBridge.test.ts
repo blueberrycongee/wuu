@@ -405,3 +405,21 @@ it("assembles explicitly requested image chunks and shares repeated reads", asyn
   expect(await host.readRemoteAttachment!("ref")).toBe(data);
   expect(remote.call).toHaveBeenCalledTimes(calls);
 });
+
+it("bounds thumbnail concurrency and routes cached previews to their source workspace", async () => {
+  const host = await api();
+  remote.call.mockClear();
+  const releases: Array<(value: unknown) => void> = [];
+  remote.call.mockImplementation(() => new Promise(resolve => releases.push(resolve)));
+  const refs = [0,1,2].map(index => "thread:" + btoa(JSON.stringify(["t","turn","item",index,"a".repeat(64)])));
+  const reads = refs.map(ref => host.readRemoteAttachmentPreview!(ref));
+  expect(remote.call).toHaveBeenCalledTimes(2);
+  const response = {data:"dGh1bWI=",total:8,content_type:"image/jpeg"};
+  releases[0](response);
+  expect(await reads[0]).toBe("data:image/jpeg;base64,dGh1bWI=");
+  expect(remote.call).toHaveBeenCalledTimes(3);
+  releases[1](response); releases[2](response);
+  await Promise.all(reads);
+  await host.readRemoteAttachmentPreview!(refs[0]);
+  expect(remote.call).toHaveBeenCalledTimes(3);
+});

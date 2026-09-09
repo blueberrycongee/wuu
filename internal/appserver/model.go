@@ -44,6 +44,10 @@ func newThreadState(id string, history []providers.ChatMessage, rtProvider, mode
 }
 
 func (th *threadState) snapshotLocked() Thread {
+	return th.snapshotTurnsLocked(th.Turns)
+}
+
+func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 	status := ThreadStatusIdle
 	if th.running {
 		status = ThreadStatusInProgress
@@ -80,7 +84,7 @@ func (th *threadState) snapshotLocked() Thread {
 		CreatedAt:             th.CreatedAt,
 		UpdatedAt:             th.UpdatedAt,
 		LatestCompletedTurnID: latestCompletedTurnID(th.Turns),
-		Turns:                 cloneTurns(th.Turns),
+		Turns:                 cloneTurns(turns),
 	}
 }
 

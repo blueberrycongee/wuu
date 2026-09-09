@@ -285,13 +285,13 @@ func (s *Server) handleThreadResume(req Request) error {
 	}
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
-		thread := th.snapshotLocked()
+		thread := th.resumeSnapshotLocked(params.HistoryPage)
 		th.mu.Unlock()
 		thread, err = s.threadWithChildAgents(thread)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		return s.writeThreadResumeResult(req, thread, params.ResponseOnly)
+		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage)
 	}
 	th, err := s.loadPersistedThreadState(id, time.Now().UTC())
 	if err != nil {
@@ -305,7 +305,10 @@ func (s *Server) handleThreadResume(req Request) error {
 		if !ok {
 			return s.writeResponse(req.ID, nil, session.ErrSessionNotFound)
 		}
-		return s.writeThreadResumeResult(req, thread, params.ResponseOnly)
+		if params.HistoryPage {
+			thread = pageThreadSnapshot(thread)
+		}
+		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage)
 	}
 	th = s.addLoadedThread(th)
 	if th == nil {
@@ -313,13 +316,13 @@ func (s *Server) handleThreadResume(req Request) error {
 	}
 
 	th.mu.Lock()
-	thread := th.snapshotLocked()
+	thread := th.resumeSnapshotLocked(params.HistoryPage)
 	th.mu.Unlock()
 	thread, err = s.threadWithChildAgents(thread)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeThreadResumeResult(req, thread, params.ResponseOnly)
+	return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage)
 }
 
 func (s *Server) writeThreadResumeResult(req Request, thread Thread, responseOnly bool) error {

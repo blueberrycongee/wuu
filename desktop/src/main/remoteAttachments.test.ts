@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { RemoteAttachments } from "./remoteAttachments";
+import { RemoteAttachments, threadAttachmentParams } from "./remoteAttachments";
 it("defers images, reads bounded chunks and hydrates edits without changing history", () => {
   const store = new RemoteAttachments();
   const image = { media_type: "image/png", data: "a".repeat(400_000) };
@@ -21,4 +21,22 @@ it("defers images, reads bounded chunks and hydrates edits without changing hist
   expect(() => store.read({ref:"unknown"})).toThrow("expired");
   store.clear();
   expect(() => store.hydrate(projected)).toThrow("expired");
+});
+
+it("keeps history attachment addresses independent of the transient image cache", async () => {
+  const store = new RemoteAttachments();
+  const source = { id:"thread", turns:[{id:"turn",items:[{id:"item",images:[{media_type:"image/png",data:"a".repeat(20_000)}]}]}] };
+  const projected = store.project(source) as typeof source & { turns: Array<{ items: Array<{ images: Array<{remote_ref: string}> }> }> };
+  const ref = projected.turns[0].items[0].images[0].remote_ref;
+  store.clear();
+  expect(threadAttachmentParams(ref)).toMatchObject({thread_id:"thread",turn_id:"turn",item_id:"item",index:0});
+  const read = async (value:string) => { expect(value).toBe(ref); return source.turns[0].items[0].images[0].data; };
+  expect(await store.hydrateRemote(projected, read)).toEqual(source);
+});
+it("addresses structured tool-result images by their original content position", () => {
+  const store = new RemoteAttachments();
+  const result = store.project({thread_id:"thread",turn_id:"turn",item:{id:"tool",type:"tool_call",result_detail:{content:[{type:"text",text:"caption"},{type:"image",mime_type:"image/png",data:"a".repeat(20_000)}]}}}) as {item:{result_detail:{content:Array<{data?:string;remote_ref?:string}>}}};
+  const image = result.item.result_detail.content[1];
+  expect(image.data).toBe("");
+  expect(threadAttachmentParams(image.remote_ref!)).toMatchObject({thread_id:"thread",turn_id:"turn",item_id:"tool",index:1,kind:"result"});
 });

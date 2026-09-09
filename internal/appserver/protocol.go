@@ -1323,6 +1323,8 @@ type ThreadResumeParams struct {
 	SessionID string `json:"session_id,omitempty"`
 	// The requester consumes the snapshot response without a duplicate broadcast.
 	ResponseOnly bool `json:"response_only,omitempty"`
+	// HistoryPage returns a bounded recent page; older turns use thread/history/read.
+	HistoryPage bool `json:"history_page,omitempty"`
 }
 
 type ThreadResumeResult struct {
@@ -2123,6 +2125,8 @@ type Thread struct {
 	UpdatedAt             time.Time     `json:"updated_at"`
 	LatestCompletedTurnID string        `json:"latest_completed_turn_id,omitempty"`
 	Turns                 []Turn        `json:"turns"`
+	HistoryCursor         string        `json:"history_cursor,omitempty"`
+	HistoryPaged          bool          `json:"history_paged,omitempty"`
 	ChildAgents           []Agent       `json:"child_agents,omitempty"`
 }
 
@@ -2209,7 +2213,8 @@ const (
 )
 
 type ThreadItem struct {
-	ID string `json:"id"`
+	RemoteContentRef string `json:"remote_content_ref,omitempty"`
+	ID               string `json:"id"`
 	// Seq is the message's stable per-thread address (session_messages.seq),
 	// present on persisted chat messages.
 	// 0/absent for synthetic or not-yet-persisted items.
@@ -2261,6 +2266,7 @@ type ThreadItem struct {
 }
 
 type ThreadItemImage struct {
+	RemoteRef string `json:"remote_ref,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
 }

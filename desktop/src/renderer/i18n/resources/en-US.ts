@@ -1,6 +1,7 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "conversation.loadFullContent": "Load full content",
   "common.system": "Use system language",
   "common.chinese": "简体中文",
   "common.english": "English",

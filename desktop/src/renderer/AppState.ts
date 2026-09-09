@@ -709,9 +709,16 @@ function reduceNotification(
       if (!threadID || typeof params?.cursor !== "string" || !Array.isArray(params.turns)) return state;
       return updateThreadByID(state, threadID, (thread) => {
         if (thread.history_cursor !== params.cursor) return thread;
+        const pages = params.turns as Turn[];
         const currentIDs = new Set(thread.turns.map(turn => turn.id));
-        const older = (params.turns as Turn[]).filter(turn => !currentIDs.has(turn.id));
-        return { ...thread, turns: [...older, ...thread.turns], history_cursor: typeof params.history_cursor === "string" ? params.history_cursor : undefined };
+        const older = pages.filter(turn => !currentIDs.has(turn.id));
+        const retained = thread.turns.map(turn => {
+          const earlier = pages.find(page => page.id === turn.id);
+          if (!earlier) return turn;
+          const ids = new Set(turn.items.map(item => item.id));
+          return { ...turn, items: [...earlier.items.filter(item => !ids.has(item.id)), ...turn.items] };
+        });
+        return { ...thread, turns: [...older, ...retained], history_cursor: typeof params.history_cursor === "string" ? params.history_cursor : undefined };
       });
     }
     case "thread/updated": {
