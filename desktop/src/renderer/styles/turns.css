@@ -321,6 +321,11 @@
 
 .user-message {
   align-self: flex-end;
+  --wuu-inline-code-background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 14%,
+    transparent
+  );
                                                          
                                                            
                                                              
@@ -2998,6 +3003,100 @@
 
 .user-message .rich-file-link:hover {
   color: var(--user-message-link-hover-color);
+}
+
+/*
+ * Prose chrome (inline code, fenced blocks, headings, quotes) is tuned for
+ * the light conversation column. On the black outgoing bubble those same
+ * light chips become a wall of white pills. Keep the chip shape, but paint
+ * it from the bubble's own white-on-black mix so code recedes instead of
+ * glaring.
+ */
+.user-message .rich-heading,
+.user-message .rich-blockquote {
+  color: inherit;
+}
+
+.user-message .rich-blockquote {
+  border-left-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 28%,
+    transparent
+  );
+}
+
+.user-message .rich-content :not(pre) > code {
+  background: var(--wuu-inline-code-background);
+  color: inherit;
+}
+
+.user-message .rich-code,
+.user-message .rich-code-block {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 10%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 16%,
+    transparent
+  );
+  box-shadow: none;
+  color: inherit;
+}
+
+.user-message .rich-code-header {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 8%,
+    transparent
+  );
+}
+
+.user-message .rich-code-language {
+  color: inherit;
+  opacity: 0.55;
+}
+
+.user-message .rich-table-wrap th,
+.user-message .rich-table-wrap td {
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 16%,
+    transparent
+  );
+}
+
+.user-message .rich-table-wrap thead th {
+  color: inherit;
+  opacity: 0.7;
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 28%,
+    transparent
+  );
+}
+
+.user-message .rich-rule {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 18%,
+    transparent
+  );
+}
+
+.user-message .rich-mermaid {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 8%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, #fff) 16%,
+    transparent
+  );
 }
 
 .rich-web-link,
