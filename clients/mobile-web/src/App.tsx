@@ -4,7 +4,7 @@ import { WorkbenchConnectionContext } from "../../../desktop/src/renderer/Workbe
 
 import { webCredStore } from "./lib/credStore";
 import { RemoteDesktopBridge } from "./lib/desktopBridge";
-import { pairingURI, pairingExpired } from "./lib/pairing";
+import { pairingURI, pairingExpired, pairingMatchesHost } from "./lib/pairing";
 
 const SharedWorkbench = lazy(() => import("./WebWorkspace"));
 
@@ -79,25 +79,31 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     let active = true;
+    const attempt = ++connectionAttemptRef.current;
     if (scannedPair) {
-      const attempt = ++connectionAttemptRef.current;
       // The fragment never reaches the HTTP server; remove it from browser
       // history before exchanging the single-use pairing offer.
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
       setPhase({ kind: "connecting" });
-      void RemoteDesktopBridge.pair(scannedPair, "手机浏览器").then(async credentials => {
-        if (!active || attempt !== connectionAttemptRef.current) return;
-        await webCredStore.save(credentials);
-        if (active && attempt === connectionAttemptRef.current) await connect(credentials);
-      }).catch(error => {
-        if (active && attempt === connectionAttemptRef.current) setPhase(pairingExpired(error) ? { kind: "expired" } : { kind: "pair", error: error instanceof Error ? error.message : "配对失败，请在电脑上重新生成二维码" });
-      });
-    } else void webCredStore.load().then((credentials) => {
-      if (!active) return;
-      if (credentials) void connect(credentials);
-      else setPhase({ kind: "pair" });
+    }
+    void webCredStore.load().then(async (credentials) => {
+      if (!active || attempt !== connectionAttemptRef.current) return;
+      // Reopening a single-use invitation must not replace an existing device
+      // identity. Keep its saved relay too; old links can contain stale addresses.
+      if (credentials && (!scannedPair || pairingMatchesHost(scannedPair, credentials.host_pub))) {
+        await connect(credentials);
+      } else if (scannedPair) {
+        try {
+          const paired = await RemoteDesktopBridge.pair(scannedPair, "手机浏览器");
+          if (!active || attempt !== connectionAttemptRef.current) return;
+          await webCredStore.save(paired);
+          if (active && attempt === connectionAttemptRef.current) await connect(paired);
+        } catch (error) {
+          if (active && attempt === connectionAttemptRef.current) setPhase(pairingExpired(error) ? { kind: "expired" } : { kind: "pair", error: error instanceof Error ? error.message : "配对失败，请在电脑上重新生成二维码" });
+        }
+      } else setPhase({ kind: "pair" });
     }).catch((error) => {
-      if (active) setPhase({ kind: "error", message: error instanceof Error ? error.message : "无法读取配对信息" });
+      if (active && attempt === connectionAttemptRef.current) setPhase({ kind: "error", message: error instanceof Error ? error.message : "无法读取配对信息" });
     });
     return () => {
       active = false;

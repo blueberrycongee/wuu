@@ -2,13 +2,15 @@
 import { act, createElement, useContext, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { b64encode, buildPairURI } from "@wuu/remote-core";
 import { WorkbenchConnectionContext } from "../../../desktop/src/renderer/WorkbenchConnectionContext";
 
-const remote = vi.hoisted(() => ({ pair: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), install: vi.fn(), wake: vi.fn() }));
+const remote = vi.hoisted(() => ({ pair: vi.fn(), construct: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), install: vi.fn(), wake: vi.fn() }));
 const credentials = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), clear: vi.fn() }));
 vi.mock("../src/lib/credStore", () => ({ webCredStore: credentials }));
 vi.mock("../src/lib/desktopBridge", () => ({
   RemoteDesktopBridge: class {
+    constructor(saved: unknown) { remote.construct(saved); }
     static pair = remote.pair;
     connect = remote.connect;
     disconnect = remote.disconnect;
@@ -55,6 +57,7 @@ async function startPair() {
 }
 beforeEach(async () => {
   vi.resetAllMocks();
+  window.history.replaceState(null, "", "/");
   connection = { phase: "connected", revision: 1 };
   connectionListeners.clear();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -160,18 +163,77 @@ describe("Web connection ownership", () => {
 
 it("pairs from a scanned Web link without pasting and removes the offer from history", async () => {
   await act(async () => root.unmount());
-  const uri = "wuu://pair?test=single-use";
+  const uri = buildPairURI("wss://relay.example/v1/connect", "single-use", new Uint8Array(32).fill(2), new Uint8Array(32).fill(3));
   window.history.replaceState(null, "", `/#${new URLSearchParams({ pair: uri })}`);
-  const paired = { hostPub: "new-host" };
+  const paired = { host_pub: b64encode(new Uint8Array(32).fill(3)) };
   remote.pair.mockResolvedValue(paired);
-  credentials.load.mockResolvedValue({ hostPub: "old-host" });
+  credentials.load.mockResolvedValue({ host_pub: b64encode(new Uint8Array(32).fill(4)) });
   root = createRoot(container);
   await act(async () => root.render(createElement(App)));
   expect(remote.pair).toHaveBeenCalledWith(uri, expect.any(String));
   expect(credentials.save).toHaveBeenCalledWith(paired);
+  expect(remote.construct).toHaveBeenCalledWith(paired);
   expect(remote.connect).toHaveBeenCalled();
   expect(window.location.hash).toBe("");
   expect(container.textContent).toContain("Connected workbench");
+});
+
+describe("saved identity with a single-use invitation", () => {
+  const host = new Uint8Array(32).fill(1);
+  const saved = { v: 1, host_pub: b64encode(host), device_seed: b64encode(new Uint8Array(32).fill(5)), relay_url: "wss://relay.example/v1/connect" };
+  // A copied invitation can outlive both its pairing window and its LAN address.
+  const uri = buildPairURI("ws://192.168.8.154:8787/v1/connect", "used-offer", new Uint8Array(32).fill(2), host);
+  async function openInvitation() {
+    await act(async () => root.unmount());
+    window.history.replaceState(null, "", `/#${new URLSearchParams({ pair: uri })}`);
+    root = createRoot(container);
+    await act(async () => root.render(createElement(App)));
+  }
+
+  it("reuses the saved identity and relay every time an old invitation is opened", async () => {
+    credentials.load.mockResolvedValue(saved);
+    remote.pair.mockRejectedValue(new Error("pairing rejected: no_such_pairing"));
+    await openInvitation();
+    await openInvitation();
+    expect(remote.construct).toHaveBeenCalledTimes(2);
+    expect(remote.construct).toHaveBeenNthCalledWith(1, saved);
+    expect(remote.construct).toHaveBeenNthCalledWith(2, saved);
+    expect(remote.install).toHaveBeenCalledTimes(2);
+    expect(remote.pair).not.toHaveBeenCalled();
+    expect(credentials.save).not.toHaveBeenCalled();
+    expect(credentials.clear).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("keeps the identity on connection failure and retries without pairing", async () => {
+    credentials.load.mockResolvedValue(saved);
+    remote.connect.mockRejectedValueOnce(new Error("offline"));
+    await openInvitation();
+    expect(remote.install).not.toHaveBeenCalled();
+    await click("重试连接");
+    expect(remote.install).toHaveBeenCalledTimes(1);
+    expect(remote.construct).toHaveBeenLastCalledWith(saved);
+    expect(remote.pair).not.toHaveBeenCalled();
+    expect(credentials.clear).not.toHaveBeenCalled();
+  });
+
+  it("still exchanges the invitation on a browser without saved credentials", async () => {
+    remote.pair.mockResolvedValue(saved);
+    await openInvitation();
+    expect(remote.pair).toHaveBeenCalledWith(uri, expect.any(String));
+    expect(credentials.save).toHaveBeenCalledWith(saved);
+    expect(remote.install).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not connect or pair after cancelling a pending credential lookup", async () => {
+    const pending = deferred<unknown>();
+    credentials.load.mockReturnValue(pending.promise);
+    await openInvitation();
+    await click("清除旧配对");
+    await act(async () => pending.resolve(saved));
+    expect(remote.construct).not.toHaveBeenCalled();
+    expect(remote.pair).not.toHaveBeenCalled();
+  });
 });
 
 it("ignores a scanned pairing response after cancellation", async () => {

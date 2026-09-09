@@ -1,3 +1,13 @@
+import { b64encode, parsePairURI } from "@wuu/remote-core";
+
+export function pairingMatchesHost(uri: string, hostPub: string): boolean {
+  try {
+    return b64encode(parsePairURI(uri).hostPub) === hostPub;
+  } catch {
+    return false;
+  }
+}
+
 /** Accept both the camera link and the underlying pairing URI. */
 export function pairingURI(input: string): string {
   const value = input.trim();
