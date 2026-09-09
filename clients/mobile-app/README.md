@@ -89,4 +89,39 @@ clients/mobile-app/android/gradlew -p clients/mobile-app/android \
 
 使用专用测试账号和空白工作区。测试会发起真实 Agent 任务，创建 `android-live-proof.txt`，并验证后台返回与 Activity 重建。报告位于 `android/app/build/reports/androidTests/connected/debug/`。测试凭据是操作者提供的临时测试值，不要使用正式账号，Gradle 参数可能出现在本机进程列表中。
 
+测试还会通过系统分享把电脑文件交给独立测试 APK，检查接收进程的包名、原文件名及完整内容。它不会向通讯录、邮件或云盘发送文件。图片选择可先准备公开测试素材，再增加 `-Pandroid.testInstrumentationRunnerArguments.image=wuu-validation.png`：
+
+```sh
+adb push desktop/build/icon.png /sdcard/Download/wuu-validation.png
+adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+  -d file:///sdcard/Download/wuu-validation.png
+```
+
+有多台电脑时增加 `-Pandroid.testInstrumentationRunnerArguments.computer=电脑显示名称`。测试截图位于 App 的外部私有 `files/validation` 目录；直接运行 instrumentation 后可用 `adb pull /sdcard/Android/data/com.blueberrycongee.wuu/files/validation` 获取。Gradle connected 测试可能在结束后卸载包，需保留截图时使用 `:app:assembleDebug :app:assembleDebugAndroidTest` 构建、`adb install -r` 安装两个 APK，再 `adb shell am instrument -w` 运行同一测试 runner。
+
+## iOS 原生界面测试
+
+在模拟器中登录专用测试账号并返回设备列表，然后运行长列表滑动测试。可使用自己模拟器的名称或 UUID：
+
+```sh
+xcodebuild -project clients/mobile-app/ios/App/App.xcodeproj -scheme AppUITests \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -derivedDataPath /tmp/wuu-ios-tests CODE_SIGN_IDENTITY=- \
+  -only-testing:AppUITests/AccountUITests/testDeviceListCanReachAccountActions test
+```
+
+真实 Agent 测试从设备列表开始，会退出当前测试账号、登录指定账号、在第一台在线电脑的当前工作区创建 `ios-container-proof.txt`，再检查后台和冷启动恢复。通过环境变量提供临时测试账号，不要使用正式账号；Xcode 测试日志可能包含测试输入。
+
+```sh
+export TEST_RUNNER_WUU_TEST_SERVER=http://127.0.0.1:8787
+export TEST_RUNNER_WUU_TEST_USERNAME=你的测试账号
+export TEST_RUNNER_WUU_TEST_PASSWORD=你的测试密码
+xcodebuild -project clients/mobile-app/ios/App/App.xcodeproj -scheme AppUITests \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -derivedDataPath /tmp/wuu-ios-tests CODE_SIGN_IDENTITY=- \
+  -only-testing:AppUITests/AccountUITests/testAccountServerAgentRoundTrip test
+```
+
+结果和截图保存在 derived data 的 `Logs/Test/*.xcresult`。未提供环境变量时真实 Agent 测试会明确跳过，不代表链路通过。
+
 扩展沿用电脑上的安装与信任状态：在手机的扩展目录中可启用、停用、配置和卸载，也可从电脑文件夹中安装扩展目录或 ZIP。已安装扩展的界面模块和图标通过加密连接读取并核对内容摘要，使用同一套公开 Extension API。扩展属于受信任代码，不提供手机端沙箱或额外审批。主应用资源仍随 App 打包。
