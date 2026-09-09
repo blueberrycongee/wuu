@@ -13,6 +13,7 @@ import {
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
 import { motionDurationMs } from "./motion";
+import { isTouchWebShell } from "./ComposerFocus";
 
 export const SIDEBAR_MOTION_MS = motionDurationMs(
   "--sidebar-motion-duration",
@@ -41,9 +42,8 @@ export const SIDEBAR_SCALE_REFERENCE_WINDOW_WIDTH = 1280;
 export const SIDEBAR_SCALED_MIN_WIDTH = SIDEBAR_MIN_WIDTH;
 export const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 900;
 // Below this width the renderer switches from multi-column/tab rails to
-// single-surface navigation. This is intentionally viewport-based rather than
-// host- or UA-based: a roomy browser keeps the desktop workbench while a
-// narrow desktop window gets the same usable compact presentation as a phone.
+// single-surface navigation. Touch phones retain it in landscape; tablets and
+// desktop windows use the available viewport width.
 export const COMPACT_NAVIGATION_WINDOW_WIDTH = 760;
 // Keep a small pull-past-minimum dead zone so resizing to the minimum width
 // does not collapse the sidebar by accident.
@@ -406,7 +406,9 @@ export function useAppLayoutState({
   }, []);
   const sidebarWidth = clampSidebarWidthForWindow(sidebarPreferredWidth, windowWidth);
   const effectiveSidebarWidth = sidebarCollapsed ? 0 : sidebarWidth;
-  const compactNavigation = windowWidth < COMPACT_NAVIGATION_WINDOW_WIDTH;
+  const screenShortSide = Math.min(window.screen.width, window.screen.height);
+  const phoneNavigation = isTouchWebShell() && screenShortSide > 0 && screenShortSide < COMPACT_NAVIGATION_WINDOW_WIDTH;
+  const compactNavigation = phoneNavigation || windowWidth < COMPACT_NAVIGATION_WINDOW_WIDTH;
   // Auto-globalize the open right panel only when the window is too narrow to
   // dock conversation + panel even with the sidebar fully collapsed — i.e. we
   // measure the space WITHOUT the sidebar's width. Opening the sidebar no
@@ -418,7 +420,7 @@ export function useAppLayoutState({
   // since conversation + panel cannot both fit there regardless of the sidebar.
   // (Previously this passed effectiveSidebarWidth, so opening the sidebar could
   // tip the layout over the threshold and auto-globalize the panel.)
-  const workspaceRightPanelAutoGlobalized = workspacePanelNeedsFocus(
+  const workspaceRightPanelAutoGlobalized = phoneNavigation || workspacePanelNeedsFocus(
     windowWidth,
     0,
   );

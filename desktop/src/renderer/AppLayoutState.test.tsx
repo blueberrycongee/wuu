@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as ComposerFocus from "./ComposerFocus";
 import {
   RIGHT_PANEL_MOTION_MS,
   SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH,
@@ -106,6 +107,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   setInnerWidth(originalInnerWidth);
   document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
   document.documentElement.classList.remove(LAYOUT_MOTION_CLASS);
@@ -115,6 +117,20 @@ afterEach(() => {
   root = null;
   container.remove();
   vi.useRealTimers();
+});
+
+it.each([
+  { touch: true, shortSide: 430, focused: true },
+  { touch: true, shortSide: 820, focused: false },
+  { touch: false, shortSide: 430, focused: false },
+])("keeps phone tools in one surface after rotation ($touch, $shortSide)", ({ touch, shortSide, focused }) => {
+  vi.spyOn(ComposerFocus, "isTouchWebShell").mockReturnValue(touch);
+  vi.spyOn(window.screen, "width", "get").mockReturnValue(932);
+  vi.spyOn(window.screen, "height", "get").mockReturnValue(shortSide);
+  setInnerWidth(932);
+  renderHookHarness();
+  expect(latest?.workspaceRightPanelAutoGlobalized).toBe(focused);
+  expect(latest?.workspaceRightPanelDockableWithoutSidebar).toBe(!focused);
 });
 
 describe("useAppLayoutState window-resizing class", () => {

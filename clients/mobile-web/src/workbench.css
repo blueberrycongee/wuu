@@ -5,6 +5,11 @@
   background: var(--paper);
 }
 
+.account-workbench-content {
+  padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+}
+
+
 .account-workbench .account-toolbar {
   min-height: 48px;
   gap: 8px;
