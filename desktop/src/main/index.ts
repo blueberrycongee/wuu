@@ -1,3 +1,4 @@
+import { readCatalogSkill } from "./remoteSkills";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { PhoneAccess, phonePairLink } from "./phoneAccess";
 import {
@@ -624,6 +625,7 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
   if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
+  if (method === "desktop/skill/content") return readCatalogSkill(await appServerClientPool.requestInContext<SkillListResult>(context,"skill/list"),params as SkillContentParams);
   if (method.startsWith("desktop/file/")) return requestRemoteFiles(context,method,params);
   if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
@@ -1725,21 +1727,7 @@ app.whenReady().then(async () => {
     appServerRequest(event, "skill/list"),
   );
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
-    const name = typeof params?.name === "string" ? params.name : "";
-    const source = typeof params?.source === "string" ? params.source : "";
-    if (!name || !source) {
-      throw new Error("invalid skill content request");
-    }
-    const catalog = await appServerRequest<SkillListResult>(event, "skill/list");
-    const skill = catalog.skills.find((candidate) => candidate.name === name && candidate.source === source);
-    if (!skill?.path) {
-      throw new Error("skill content unavailable");
-    }
-    const fileInfo = await stat(skill.path);
-    if (!fileInfo.isFile() || fileInfo.size > 512 * 1024) {
-      throw new Error("skill content unavailable");
-    }
-    return { content: await readFile(skill.path, "utf8") };
+    return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
   ipcMain.handle("wuu:channel-agent-list", (event) =>
     appServerRequest<ChannelAgentListResult>(event, "channel/agent/list"),

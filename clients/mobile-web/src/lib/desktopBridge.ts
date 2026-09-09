@@ -1,3 +1,4 @@
+import { PluginAssets } from "./pluginAssets";
 import { pickComputerFolder } from "./folderPicker";
 import { isNative, openNativeURL, saveNativeArtifact } from "./native";
 import {
@@ -12,7 +13,6 @@ import type {
   ChannelRoomPreferences,
   DesktopPlatform,
   DesktopProject,
-  ExtensionInventoryRecord,
   InitializeResult,
   LanguagePreference,
   MessageFlowFontSize,
@@ -118,52 +118,11 @@ export class UnavailableHostOperationError extends Error {
   }
 }
 
-// Keep host plugins manageable in the browser, without advertising desktop
-// modules or package-asset icons that this host cannot load. Apply this to
-// snapshots, updates and inventory notifications.
-function webHostPayload<T>(payload: T): T {
-  if (payload && typeof payload === "object" && "extension_inventory" in payload) {
-    const source = payload as { extension_inventory?: unknown };
-    return {
-      ...(payload as object),
-      extension_inventory: Array.isArray(source.extension_inventory)
-        ? source.extension_inventory.map(sanitizeWebExtensionRecord)
-        : [],
-    } as T;
-  }
-  return payload;
-}
-
-function sanitizeWebExtensionRecord(record: unknown): unknown {
-  if (!record || typeof record !== "object" || Array.isArray(record)) return record;
-  const { desktop: _desktop, icon, ...manageable } = record as ExtensionInventoryRecord;
-  const webIcon = sanitizeWebExtensionIcon(icon);
-  return webIcon === undefined ? manageable : { ...manageable, icon: webIcon };
-}
-
-function sanitizeWebExtensionIcon(
-  icon: unknown,
-): ExtensionInventoryRecord["icon"] {
-  // `name` icons map to host-owned public icons and render safely in a
-  // browser; `path`/`light`/`dark` icons are package assets served by the
-  // desktop host, so drop them instead of attempting an asset fetch.
-  if (!icon || typeof icon !== "object" || Array.isArray(icon)) return undefined;
-  const descriptor = icon as Record<string, unknown>;
-  if (typeof descriptor.name === "string" && descriptor.name) {
-    return { name: descriptor.name };
-  }
-  return undefined;
-}
-
 const unavailableWebMethods = [
   "cleanupProjectState",
   "getBuildInfo",
   "startSpeechRecognition",
   "stopSpeechRecognition",
-  "installPluginPackage",
-  "loadPluginDesktopModule",
-  "loadPluginIcon",
-  "readSkillContent",
   "getRemoteControlSnapshot",
   "setRemoteRelay",
   "setRemoteHostEnabled",
@@ -193,6 +152,7 @@ const unavailableWebActions = Object.fromEntries(
 /** Browser host adapter for the shared desktop renderer. */
 export class RemoteDesktopBridge {
   private readonly client: RemoteClient;
+  private readonly pluginAssets = new PluginAssets();
   private readonly terminalIDs = new Set<string>();
   private readonly terminalListeners = new Set<(event:TerminalSessionEvent)=>void>();
   private readonly serverListeners = new Set<ServerEventListener>();
@@ -370,7 +330,6 @@ export class RemoteDesktopBridge {
       // stream, including tools, activities, usage, and lifecycle events.
       onNotification: (method, params, workdir) => {
         if(method==="desktop/terminal/event"){const event=params as TerminalSessionEvent;if(event.type!=="data")this.terminalIDs.delete(event.id);for(const listener of this.terminalListeners)listener(params as TerminalSessionEvent);return;}
-        params = webHostPayload(params);
         this.recordThreadLocations(params);
         this.recordQuestionLocations(params, workdir || this.eventWorkdir(params));
         this.emitServerEvent({
@@ -434,6 +393,7 @@ export class RemoteDesktopBridge {
     this.setConnection("disconnected");
     this.clearPendingRequests();
     await this.client.stop();
+    this.pluginAssets.clear();
   }
 
   wake(): void {
@@ -465,7 +425,7 @@ export class RemoteDesktopBridge {
     }
     this.recordThreadLocations(result);
     this.recordQuestionLocations(result, workdir);
-    return webHostPayload(result);
+    return result;
   }
 
   private requestWorkdir(params: unknown): string {
@@ -784,6 +744,7 @@ export class RemoteDesktopBridge {
       refreshModelCatalog: () => this.call("config/model-catalog/refresh"),
       listMCPServers: () => this.call("mcp/list"),
       startXAILogin: () => this.call("auth/xai/login/start"),
+      readSkillContent: (params) => this.call("desktop/skill/content",params),
       listSkills: () => this.call("skill/list"),
       listInstructionFiles: () => this.call("instructions/list"),
       getNamedAgentInsights: () => this.call("channel/agent/insights"),
@@ -797,6 +758,8 @@ export class RemoteDesktopBridge {
       updateGeneralSettings: (params) => this.call("config/general/update", params),
       updateEngines: (params) => this.call("engine/update", params),
       updateExtensionPackage: (params) => this.call("extension/package/update", params),
+      loadPluginDesktopModule: async (params) => this.pluginAssets.module(await this.call("plugin/desktop-module/read",params)),
+      loadPluginIcon: async (params) => this.pluginAssets.icon(await this.call("plugin/icon/read",params)),
       getPluginSetting: (params) => this.call("plugin/setting/get", params),
       setPluginSetting: (params) => this.call("plugin/setting/set", params),
       getPluginDiagnostics: (params) => this.call("plugin/diagnostics/list", params),
@@ -821,6 +784,10 @@ export class RemoteDesktopBridge {
       readManagedProcess: (params) => this.call("process/read", params),
       holdUserQuestion: (request_id) => this.call("user-question/hold", { request_id }),
       loadCodexModels: (provider) => this.call("config/codex/models", { provider }),
+      installPluginPackage: async () => {
+        const path = await pickComputerFolder((method,params) => this.call(method,params),false,true);
+        return path ? this.call("plugin/package/install",{path}) : undefined;
+      },
       removePluginPackage: (id) => this.call("plugin/package/remove", { id }),
       connectMCPServer: (name) => this.call("mcp/connect", { name }),
       disconnectMCPServer: (name) => this.call("mcp/disconnect", { name }),

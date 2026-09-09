@@ -5,12 +5,14 @@ type Directory = {
   path: string;
   parent: string;
   folders: Array<{ name: string; path: string }>;
+  archives?: Array<{ name: string; path: string }>;
   truncated: boolean;
 };
 type Request = <T>(method: string, params?: unknown) => Promise<T>;
 export function pickComputerFolder(
   request: Request,
   create = false,
+  packageMode = false,
 ): Promise<string | null> {
   return new Promise((resolve) => {
     const container = document.createElement("div");
@@ -21,16 +23,18 @@ export function pickComputerFolder(
       container.remove();
       resolve(path);
     };
-    root.render(<Picker request={request} create={create} finish={finish} />);
+    root.render(<Picker request={request} create={create} packageMode={packageMode} finish={finish} />);
   });
 }
 function Picker({
   request,
   create,
+  packageMode,
   finish,
 }: {
   request: Request;
   create: boolean;
+  packageMode: boolean;
   finish: (path: string | null) => void;
 }) {
   const [directory, setDirectory] = useState<Directory>();
@@ -42,7 +46,7 @@ function Picker({
     setBusy(true);
     setError("");
     try {
-      const d = await request<Directory>("desktop/projects/folders", { path });
+      const d = await request<Directory>("desktop/projects/folders", { path, includeArchives: packageMode });
       setDirectory(d);
       setPath(d.path);
     } catch (e) {
@@ -67,11 +71,11 @@ function Picker({
       className="computer-folder-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="选择电脑文件夹"
+      aria-label={packageMode ? "选择电脑上的扩展包" : "选择电脑文件夹"}
     >
       <section className="computer-folder-picker">
-        <h2>选择电脑文件夹</h2>
-        <p>浏览当前电脑上的文件夹。</p>
+        <h2>{packageMode ? "选择电脑上的扩展包" : "选择电脑文件夹"}</h2>
+        <p>{packageMode ? "选择扩展目录或 ZIP 文件。安装后会在这台电脑上启用扩展。" : "浏览当前电脑上的文件夹。"}</p>
         {error && <p role="alert">{error}</p>}
         <form
           onSubmit={(e) => {
@@ -101,6 +105,7 @@ function Picker({
               {d.name} ›
             </button>
           ))}
+          {packageMode && directory?.archives?.map(file => <button key={file.path} disabled={busy} onClick={() => finish(file.path)}>{file.name}</button>)}
         </div>
         {directory?.truncated && <p>文件夹较多，可在上方输入完整路径。</p>}
         {create && (
@@ -134,7 +139,7 @@ function Picker({
             disabled={busy || !directory}
             onClick={() => finish(directory!.path)}
           >
-            使用此文件夹
+            {packageMode ? "安装此目录" : "使用此文件夹"}
           </button>
         </footer>
       </section>

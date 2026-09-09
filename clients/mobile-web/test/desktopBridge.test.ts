@@ -43,9 +43,9 @@ describe("browser host contract", () => {
     expect(host.reportBrowserBounds).toBeUndefined();
     expect(host.openSideThread).toBeUndefined();
     expect(host.onBrowserInvalidate).toBeUndefined();
-    expect(host.unsupportedMethods).toContain("installPluginPackage");
-    await expect(host.installPluginPackage()).rejects.toBeInstanceOf(UnavailableHostOperationError);
-    await expect(host.installPluginPackage()).rejects.toMatchObject({ code: "host_operation_unavailable" });
+    expect(host.unsupportedMethods).toContain("getRemoteControlSnapshot");
+    await expect(host.getRemoteControlSnapshot()).rejects.toBeInstanceOf(UnavailableHostOperationError);
+    await expect(host.getRemoteControlSnapshot()).rejects.toMatchObject({ code: "host_operation_unavailable" });
     await expect(host.updateVoiceInputSettings({ polish_enabled: true, language: "en-US" }))
       .rejects.toBeInstanceOf(UnavailableHostOperationError);
     await expect(host.selectProject("another-computer")).rejects.toThrow("Unknown remote workspace");
@@ -101,7 +101,7 @@ describe("browser host contract", () => {
     expect(remote.call).toHaveBeenLastCalledWith("workspace/git/diff", { path: "src/main.go", root: "/paired/worktree" }, 30_000, expect.any(String));
   });
 
-  it("preserves manageable plugins while excluding desktop modules and asset icons", async () => {
+  it("preserves installed extension modules and icons across snapshots and updates", async () => {
     const bridge = await connectBridge();
     const record = { id: "desktop-extension", kind: "plugin", name: "Example", fingerprint: "generation-1", enabled: true };
     const namedIconPlugin = {
@@ -117,7 +117,7 @@ describe("browser host contract", () => {
       namedIconPlugin,
     ];
     const payload = { extension_inventory: inventory, skills: [{ name: "host-skill" }], epoch: 2 };
-    const expected = { ...payload, extension_inventory: [record, namedIconPlugin] };
+    const expected = payload;
     remote.call.mockResolvedValueOnce(payload);
     expect(await bridge.api.initialize()).toMatchObject(expected);
     const received = vi.fn();
@@ -133,7 +133,7 @@ describe("browser host contract", () => {
       remote.call.mockResolvedValueOnce({ extension_inventory: [{ ...inventory[0], enabled }] });
       const update = { id: record.id, fingerprint: record.fingerprint, action };
       expect(await bridge.api.updateExtensionPackage(update)).toEqual({
-        extension_inventory: [{ ...record, enabled }],
+        extension_inventory: [{ ...inventory[0], enabled }],
       });
       expect(remote.call).toHaveBeenLastCalledWith("extension/package/update", update, 30_000, expect.any(String));
     }

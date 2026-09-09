@@ -71,3 +71,5 @@ clients/mobile-app/android/gradlew -p clients/mobile-app/android \
 ```
 
 使用专用测试账号和空白工作区。测试会发起真实 Agent 任务，创建 `android-live-proof.txt`，并验证后台返回与 Activity 重建。报告位于 `android/app/build/reports/androidTests/connected/debug/`。测试凭据是操作者提供的临时测试值，不要使用正式账号，Gradle 参数可能出现在本机进程列表中。
+
+扩展沿用电脑上的安装与信任状态：在手机的扩展目录中可启用、停用、配置和卸载，也可从电脑文件夹中安装扩展目录或 ZIP。已安装扩展的界面模块和图标通过加密连接读取并核对内容摘要，使用同一套公开 Extension API。扩展属于受信任代码，不提供手机端沙箱或额外审批。主应用资源仍随 App 打包。
