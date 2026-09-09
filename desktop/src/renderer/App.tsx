@@ -4921,6 +4921,16 @@ export function App(): JSX.Element {
     </UILayerPortal>
   ) : null;
 
+  useEffect(() => {
+    const back = (event: Event): void => {
+      if (settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
+      else if (sidebarDrawerVisible) { event.preventDefault(); closeSidebarDrawer(); }
+      else if (rightPanelOpen) { event.preventDefault(); setRightPanelOpenWithMotion(false); }
+    };
+    window.addEventListener("wuu:workbench-back", back);
+    return () => window.removeEventListener("wuu:workbench-back", back);
+  }, [settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
+
   if (settingsOpen) {
     return (
       <>

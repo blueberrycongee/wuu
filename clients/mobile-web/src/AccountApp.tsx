@@ -61,12 +61,13 @@ export default function AccountApp(): React.JSX.Element {
       if (!selected && !pair) return;
       event.preventDefault();
       // Give existing dialogs and drawers the first opportunity to close.
-      if (document.querySelector('[role="dialog"], .sidebar-drawer-backdrop')) {
+      if (document.querySelector('[role="dialog"], [role="menu"]')) {
         document.dispatchEvent(
           new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
         );
         return;
       }
+      if (!window.dispatchEvent(new Event("wuu:workbench-back", { cancelable: true }))) return;
       back();
     };
     window.addEventListener("wuu:native-back", handler);

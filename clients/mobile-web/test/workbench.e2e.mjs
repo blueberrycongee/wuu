@@ -270,8 +270,11 @@ try {
       assert(box && box.width >= 44 && box.height >= 44, `sidebar touch target at ${width}x${height}: ${await target.getAttribute('class')} ${JSON.stringify(box)}`);
       assert(box.x >= 0 && box.x + box.width <= width && box.y + box.height <= height, 'sidebar controls fit the phone');
     }
-    await closeDrawer.tap();
+    if (height === 360) {
+      assert.equal(await page.evaluate(() => window.dispatchEvent(new Event('wuu:native-back', {cancelable:true}))), false);
+    } else await closeDrawer.tap();
     await closeDrawer.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('.app-shell').count(), 1, 'back closes the drawer without disconnecting the computer');
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await until(async () => {
