@@ -45,7 +45,7 @@ describe("browser host contract", () => {
     expect(host.onBrowserInvalidate).toBeUndefined();
     expect(host.unsupportedMethods).toContain("startTerminalSession");
     await expect(host.startTerminalSession()).rejects.toBeInstanceOf(UnavailableHostOperationError);
-    await expect(host.checkoutGitBranch("main")).rejects.toMatchObject({ code: "host_operation_unavailable" });
+    await expect(host.startTerminalSession({} as never)).rejects.toMatchObject({ code: "host_operation_unavailable" });
     await expect(host.updateVoiceInputSettings({ polish_enabled: true, language: "en-US" }))
       .rejects.toBeInstanceOf(UnavailableHostOperationError);
     await expect(host.selectProject("another-computer")).rejects.toThrow("Unknown remote workspace");

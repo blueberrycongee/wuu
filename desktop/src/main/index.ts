@@ -198,6 +198,7 @@ import {
   type LanguagePreference,
 } from "./desktopSettings";
 import { GitService } from "./gitService";
+import { requestRemoteGit } from "./remoteGit";
 import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
@@ -501,11 +502,15 @@ function updateCodexPetSettings(update: CodexPetSettingsUpdate) {
 }
 
 function gitServiceForEvent(event: IpcMainInvokeEvent): GitService {
+  return gitServiceForContext(() => runtimeContextForEvent(event));
+}
+
+function gitServiceForContext(getContext: () => RuntimeContext): GitService {
   return new GitService(
-    () => runtimeContextForEvent(event),
+    getContext,
     () => appServerClientPool.runningThreadCwds(),
     () => {
-      const context = runtimeContextForEvent(event);
+      const context = getContext();
       return appServerClientPool.threadCwdsForWorkdir(context.cwd);
     },
     async (context, input) => {
@@ -612,6 +617,7 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
+  if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
 });
 

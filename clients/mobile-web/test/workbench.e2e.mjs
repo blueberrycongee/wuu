@@ -53,7 +53,10 @@ try {
   await fs.mkdir(workspace); await fs.mkdir(state);
   await fs.writeFile(path.join(workspace, '.gitignore'), '.wuu-state/\n');
   const git = (...args) => execFileSync('git', ['-C', workspace, ...args], { stdio: 'pipe' });
-  git('init', '-b', 'main'); git('add', '.gitignore');
+  git('init', '-b', 'main');
+  git('config', 'user.name', 'Web Test'); git('config', 'user.email', 'web@example.invalid');
+  git('config', 'commit.gpgSign', 'false'); git('config', 'core.hooksPath', '/dev/null');
+  git('add', '.gitignore');
   git('-c', 'user.name=Web Test', '-c', 'user.email=web@example.invalid', '-c', 'commit.gpgSign=false', 'commit', '-m', 'Initial');
   const binary = process.env.WUU_E2E_BINARY || path.join(temp, 'wuu');
   if (!process.env.WUU_E2E_BINARY) execFileSync('go', ['build', '-o', binary, './cmd/wuu'], { cwd: repoDir, stdio: 'inherit' });
@@ -277,6 +280,12 @@ try {
   }, 'web sidebar starts near the top without native window chrome');
   }
   if (process.env.WUU_E2E_REMOTE_HISTORY === '1') {
+    await page.evaluate(async () => {
+      await window.wuu.createCheckoutGitBranch('web-verified');
+      await window.wuu.commitGitChanges({message:'Verify remote workspace changes'});
+    });
+    assert(git('branch', '--show-current').toString().trim() === 'web-verified', 'Web switches the desktop Git branch');
+    assert(git('log', '-1', '--format=%s').toString().trim() === 'Verify remote workspace changes', 'Web commits through the shared desktop Git service');
     const fixture = await desktopCall('thread/start', {});
     const historyID = fixture.thread.id;
     const image = await page.evaluate(() => {
@@ -301,6 +310,8 @@ try {
     const fullImage = full.thread.turns.flatMap(turn => turn.items).flatMap(item => item.images ?? [])[0];
     const deferred = compact.thread.turns.flatMap(turn => turn.items).flatMap(item => item.images ?? [])[0];
     assert(fullImage.data.length > 16 * 1024 && deferred.data === '' && deferred.remote_ref, 'image bytes stay on desktop');
+    const thumbnail = await page.evaluate(ref => window.wuu.readRemoteAttachmentPreview(ref), deferred.remote_ref);
+    assert(thumbnail.startsWith('data:image/jpeg;base64,') && thumbnail.length < fullImage.data.length, 'encrypted thumbnail is smaller than the original');
     assert(await page.evaluate(async ({ref, expected}) => (await window.wuu.readRemoteAttachment(ref)) === expected, {ref:deferred.remote_ref, expected:fullImage.data}), 'encrypted image chunks reassemble exactly');
     const olderIDs = await page.evaluate(async ({id, cursor}) => {
       const ids = [];

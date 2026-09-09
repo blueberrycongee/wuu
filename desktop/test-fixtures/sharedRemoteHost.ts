@@ -2,6 +2,8 @@
 import { createInterface } from "node:readline";
 import { AppServerClientPool } from "../src/main/appServerClients";
 import { RemoteAppServerBridge } from "../src/main/remoteAppServerBridge";
+import { GitService } from "../src/main/gitService";
+import { requestRemoteGit } from "../src/main/remoteGit";
 
 const cwd = process.env.WUU_TEST_WORKSPACE!;
 const context = { kind: "no_project" as const, cwd };
@@ -13,6 +15,7 @@ const pool = new AppServerClientPool(() => context, () => cwd, event => {
 const bridge = new RemoteAppServerBridge((workdir, method, params, reply) => {
   if (workdir !== cwd) throw new Error("Unknown workspace");
   if (method === "shutdown") throw new Error("Cannot shut down shared service");
+  if (method.startsWith("desktop/git/")) return Promise.resolve(requestRemoteGit(new GitService(() => context, () => pool.runningThreadCwds(), () => pool.threadCwdsForWorkdir(cwd)), method, params));
   return pool.requestInContext(context, method, params, reply);
 });
 await pool.request("initialize", { client: { name: "desktop-test" } });
