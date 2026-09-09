@@ -30,6 +30,20 @@ func Origin(raw string) (string, error) {
 	}
 	return u.String(), nil
 }
+
+type RequestError struct {
+	Status  int
+	Message string
+}
+
+func (e *RequestError) Error() string {
+	return fmt.Sprintf("account server (%d): %s", e.Status, e.Message)
+}
+func Unauthorized(err error) bool {
+	var e *RequestError
+	return errors.As(err, &e) && e.Status == http.StatusUnauthorized
+}
+
 func Request(ctx context.Context, server, token, method, path string, in, out any) error {
 	origin, err := Origin(server)
 	if err != nil {
@@ -66,7 +80,7 @@ func Request(ctx context.Context, server, token, method, path string, in, out an
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(data, &msg)
-		return fmt.Errorf("account server (%d): %s", res.StatusCode, msg.Error)
+		return &RequestError{Status: res.StatusCode, Message: msg.Error}
 	}
 	if out != nil {
 		return json.Unmarshal(data, out)

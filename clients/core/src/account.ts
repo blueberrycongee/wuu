@@ -11,13 +11,16 @@ export function accountOrigin(raw: string): string {
    (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(u.hostname)))) throw new Error('请使用 HTTPS 服务端地址（本机开发可使用 localhost）');
  return u.origin;
 }
+export class AccountRequestError extends Error {
+ constructor(message: string, readonly status: number) { super(message); this.name = "AccountRequestError"; }
+}
 export async function accountRequest<T>(server: string, token: string, method: string, path: string, data?: unknown): Promise<T> {
  const response = await fetch(accountOrigin(server) + '/v1/account' + path, {
   method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
   body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(15_000), redirect: 'error', credentials: 'omit',
  });
  const result = await response.json() as { error?: string };
- if (!response.ok) throw new Error(result.error || `账号服务错误 (${response.status})`);
+ if (!response.ok) throw new AccountRequestError(result.error || `账号服务错误 (${response.status})`, response.status);
  return result as T;
 }
 export async function loginAccount(server: string, username: string, password: string, name: string, register = false): Promise<{ session: AccountSession; recovery?: string }> {

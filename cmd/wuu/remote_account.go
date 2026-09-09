@@ -37,7 +37,13 @@ func runRemoteAccount(args []string) error {
 		}
 		var result map[string]any
 		if err = account.Request(ctx, saved.Server, saved.Token, "GET", "/devices", nil, &result); err != nil {
-			return err
+			if !account.Unauthorized(err) {
+				return err
+			}
+			if err = store.SetAccount(nil); err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{"account": nil})
 		}
 		result["server"] = saved.Server
 		result["pub"] = secure.EncodeKey(store.Identity().Public())
@@ -88,7 +94,7 @@ func runRemoteAccount(args []string) error {
 	}
 	switch action {
 	case "logout":
-		if err = account.Request(ctx, saved.Server, saved.Token, "POST", "/logout", nil, nil); err != nil {
+		if err = account.Request(ctx, saved.Server, saved.Token, "POST", "/logout", nil, nil); err != nil && !account.Unauthorized(err) {
 			return err
 		}
 		if err = store.SetAccount(nil); err != nil {
