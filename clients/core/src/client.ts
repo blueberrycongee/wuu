@@ -314,6 +314,7 @@ export class RemoteClient {
   private state: HostState | null = null;
   private waiters: AttachWaiter[] = [];
   private stopped = true;
+  private suspended = false;
   private runPromise: Promise<void> | null = null;
   private wakeSleep: (() => void) | null = null;
   private ackTimer: ReturnType<typeof setInterval> | undefined;
@@ -343,6 +344,7 @@ export class RemoteClient {
   start(): void {
     if (!this.stopped) return;
     this.stopped = false;
+    this.suspended = false;
     this.runPromise = this.run();
   }
 
@@ -369,6 +371,7 @@ export class RemoteClient {
    *  the existing pong deadline instead. */
   wake(): void {
     if (this.stopped) return;
+    this.suspended = false;
     this.foregroundWake = true;
     if (this.channel && this.sock && !this.pongTimer) {
       this.sendSealed({ t: E2E_PING });
@@ -380,6 +383,11 @@ export class RemoteClient {
   private async run(): Promise<void> {
     let attempt = 0;
     while (!this.stopped) {
+      if (this.suspended) {
+        await new Promise<void>(resolve => { this.wakeSleep = () => { this.wakeSleep = null; resolve(); }; });
+        if (this.stopped) return;
+        if (this.suspended) continue;
+      }
       if (this.foregroundWake) attempt = 0;
       this.foregroundWake = false;
       let authed = false;
@@ -393,6 +401,7 @@ export class RemoteClient {
         }
       }
       if (this.stopped) return;
+      if (this.suspended) continue;
       if (authed) attempt = 0;
       // A wake can arrive while runOnce owns a half-open socket. Consume it
       // after that socket closes, before entering another reconnect delay.
@@ -405,6 +414,15 @@ export class RemoteClient {
       }
       await this.sleep(delay);
     }
+  }
+
+  /** Detach while the native app is in the background, retaining RPC identity
+   * and replay position. wake() resumes; unlike stop(), no protocol is reset. */
+  suspend(): void {
+    if (this.stopped) return;
+    this.suspended = true;
+    this.sock?.close();
+    this.wakeSleep?.();
   }
 
   private sleep(ms: number): Promise<void> {

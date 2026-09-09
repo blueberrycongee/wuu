@@ -30,11 +30,14 @@ export default function App({ onAccountBack }: { onAccountBack?: () => void } = 
     window.addEventListener("pageshow", wake);
     window.addEventListener("online", wake);
     window.addEventListener("focus", wake);
+    const suspend = () => bridgeRef.current?.suspend();
+    window.addEventListener('wuu:background', suspend);
     return () => {
       document.removeEventListener("visibilitychange", wake);
       window.removeEventListener("pageshow", wake);
       window.removeEventListener("online", wake);
       window.removeEventListener("focus", wake);
+      window.removeEventListener('wuu:background', suspend);
     };
   }, []);
 

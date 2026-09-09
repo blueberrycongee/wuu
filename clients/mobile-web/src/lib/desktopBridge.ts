@@ -397,6 +397,13 @@ export class RemoteDesktopBridge {
     this.pluginAssets.clear();
   }
 
+  suspend(): void {
+    if (this.stopped) return;
+    // Explicitly detach before the OS freezes JavaScript, so completion hints
+    // are not suppressed by a TCP connection that merely appears alive.
+    this.client.suspend();
+  }
+
   wake(): void {
     if (!this.stopped) this.client.wake();
   }

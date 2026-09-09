@@ -33,6 +33,7 @@ export async function startNativeLifecycle(): Promise<void> {
   const wake = () => window.dispatchEvent(new Event("online"));
   await App.addListener("appStateChange", ({ isActive }) => {
     if (isActive) wake();
+    else window.dispatchEvent(new Event('wuu:background'));
   });
   await Network.addListener("networkStatusChange", ({ connected }) => {
     if (connected) wake();

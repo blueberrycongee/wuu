@@ -558,6 +558,30 @@ describe("RemoteClient", () => {
 
 
 describe("RemoteClient foreground recovery", () => {
+  it("suspends native transport without resetting RPC identity or replay position", async () => {
+    vi.useFakeTimers();
+    const fake = new FakeHost();
+    const { client, notifications } = makeClient(fake, { reconnectMinMs: 100, pingIntervalMs: 60000 });
+    try {
+      client.start(); await vi.advanceTimersByTimeAsync(0);
+      const protocol = client.rpc();
+      const sockets = fake.sockets.length;
+      client.suspend(); await vi.advanceTimersByTimeAsync(0);
+      expect(client.isAttached()).toBe(false);
+      fake.sendLine({ method: 'background/completed', params: { done: true } });
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(fake.sockets).toHaveLength(sockets);
+      expect(protocol?.isClosed()).toBe(false);
+      client.wake(); await vi.advanceTimersByTimeAsync(0);
+      expect(client.isAttached()).toBe(true);
+      expect(client.rpc()).toBe(protocol);
+      expect(notifications.filter(event => event.method === 'background/completed')).toHaveLength(1);
+      client.suspend(); await vi.advanceTimersByTimeAsync(0);
+      await client.stop(); client.wake(); await vi.advanceTimersByTimeAsync(0);
+      expect(fake.sockets).toHaveLength(sockets + 1);
+    } finally { await client.stop(); vi.useRealTimers(); }
+  });
+
   it("wake interrupts reconnect backoff and reattaches immediately", async () => {
     vi.useFakeTimers();
     const fake = new FakeHost();
