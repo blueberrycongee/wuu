@@ -165,29 +165,6 @@ describe("TurnView", () => {
     expect(turn?.dataset.turnStatus).toBe("in_progress");
   });
 
-  it("keeps a newly submitted latest turn focused after a short answer completes", () => {
-    const userItem: ThreadItem = {
-      id: "user-1",
-      type: "user_message",
-      status: "completed",
-      text: "Move this query toward the top.",
-    };
-    const view = render(makeTurn("in_progress", [userItem]), true);
-
-    expect(
-      view.querySelector<HTMLElement>(".turn")?.dataset.submissionFocus,
-    ).toBe("true");
-
-    rerender(
-      makeTurn("completed", [userItem, makeFinalAnswer("Short answer.")]),
-      true,
-    );
-
-    expect(
-      view.querySelector<HTMLElement>(".turn")?.dataset.submissionFocus,
-    ).toBe("true");
-  });
-
   it("reveals actions when a fast answer first mounts already completed", () => {
     vi.useFakeTimers();
     const userItem: ThreadItem = {
@@ -252,24 +229,6 @@ describe("TurnView", () => {
     );
 
     expect(view.querySelector(".turn-stream-status-spacer")).toBeNull();
-  });
-
-  it("does not focus a historical completed turn on initial mount", () => {
-    const view = render(
-      makeTurn("completed", [
-        {
-          id: "user-1",
-          type: "user_message",
-          status: "completed",
-          text: "Historical query.",
-        },
-      ]),
-      true,
-    );
-
-    expect(
-      view.querySelector<HTMLElement>(".turn")?.dataset.submissionFocus,
-    ).toBeUndefined();
   });
 
   it("hides named and legacy process notifications from the direct turn renderer", () => {

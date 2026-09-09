@@ -108,11 +108,9 @@ function TurnContent({
   streamStatus,
   isLatestTurn,
 }: TurnViewProps): JSX.Element {
-  // A turn that starts as the latest live submission keeps its viewport-sized
-  // focus area through completion. Without this sticky marker, a short answer
-  // would collapse the space as soon as the terminal snapshot arrived and the
-  // query would jump back down toward the composer.
-  const submissionFocusedRef = useRef(
+  // Remember live submissions so completion actions can animate without
+  // replaying their entrance when a finished conversation is opened.
+  const startedAsLiveSubmissionRef = useRef(
     Boolean(
       isLatestTurn &&
         turn.status === "in_progress" &&
@@ -120,7 +118,7 @@ function TurnContent({
     ),
   );
   const animateCompletionActions = Boolean(
-    isLatestTurn && submissionFocusedRef.current,
+    isLatestTurn && startedAsLiveSubmissionRef.current,
   );
   const actionableAgentMessageID =
     turn.status === "completed" || turnIsAnswerReady(turn)
@@ -208,9 +206,6 @@ function TurnContent({
       id={turnAnchorID(turn.id)}
       data-turn-id={turn.id}
       data-turn-status={turn.status}
-      data-submission-focus={
-        isLatestTurn && submissionFocusedRef.current ? "true" : undefined
-      }
     >
       {userItems.map((item) => renderThreadItem(item, false))}
       {assistantDisplay ? (

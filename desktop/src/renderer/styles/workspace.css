@@ -5092,26 +5092,6 @@ html.resizing-workspace-terminal-split * {
   row-gap: 0;
 }
 
-/*
- * A newly submitted turn gets enough stable height to place its query near the
- * upper part of the message viewport instead of leaving it beside the docked
- * composer. Scrolling to the bottom now lands this turn at the inset below;
- * the minimum height is consumed by the answer as it grows, after which normal
- * bottom auto-follow resumes. TurnView keeps the marker through completion so
- * short answers do not collapse the space and jump back down.
- */
-.conversation-width .turn[data-submission-focus="true"] {
-  min-height: max(
-    0px,
-    calc(
-      var(--conversation-viewport-height, 0px) -
-        var(--conversation-flow-bottom-space) -
-        var(--conversation-turn-boundary-gap) -
-        clamp(56px, 10vh, 96px)
-    )
-  );
-}
-
 .conversation-width > *,
 /* Plugin wrap surfaces render through the host's display:contents
    `.plugin-contribution-root` boundary, which must never change layout.

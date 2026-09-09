@@ -251,7 +251,7 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
   });
 
   it("finishes one submit motion while the diff receipt shrinks and layout signals keep arriving", () => {
-    const node = mount({
+    mount({
       activeThreadID: "thread-a",
       scrollHeight: 1600,
       clientHeight: 600,
@@ -267,10 +267,6 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
         )
         ?.click();
     });
-
-    expect(node.style.getPropertyValue("--conversation-viewport-height")).toBe(
-      "600px",
-    );
 
     // An unchanged old-bottom frame must not finish before the new turn exists.
     frame(0);
