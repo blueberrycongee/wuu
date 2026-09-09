@@ -59,6 +59,17 @@ Debug APK 可直接安装到允许 USB 调试或侧载的设备。正式 APK/AAB
 
 ## Android 真实链路测试
 
+需要隔离验证数据时，先构建电脑端与 Go 核心，再用专用目录启动实际桌面入口：
+
+```sh
+go build -o /tmp/wuu-mobile-core ./cmd/wuu
+npm --prefix desktop run build
+WUU_HOME=/tmp/wuu-mobile-validation/state WUU_DESKTOP_CORE=/tmp/wuu-mobile-core \
+  desktop/node_modules/.bin/electron clients/mobile-app/test/desktop.cjs
+```
+
+在该窗口完成正常引导、配置自己的模型并添加专用测试项目，再登录测试账号。脚本只隔离 Wuu 数据目录，终端仍使用当前操作系统用户；不要选择含重要资料的测试工作区。它加载实际生产入口、预加载脚本和打包界面，不替换桌面服务或 Agent。
+
 先启动真实账号服务和已登录的电脑，配置一个能实际运行的模型，再运行：
 
 ```sh
