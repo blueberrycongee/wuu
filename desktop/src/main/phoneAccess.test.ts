@@ -54,6 +54,17 @@ describe("phone access lifecycle", () => {
     } finally { await service.stop(); }
     expect(appServer.stop).toHaveBeenCalled();
   });
+  it("restores an account computer using its saved server and shared execution pool", async () => {
+    const { service, host, appServer, settingsPath } = await fixture();
+    host.status.mockResolvedValue({ devices: [], account_server: 'https://account.example' } as never);
+    setPhoneAccessEnabled(true, settingsPath);
+    try {
+      await service.restore('/tmp');
+      expect(mocks.spawn).not.toHaveBeenCalled();
+      expect(appServer.start).toHaveBeenCalledWith('/tmp');
+      expect(host.startHost).toHaveBeenCalledWith('/tmp', {pair:false,relay:'wss://account.example/v1/connect'});
+    } finally { await service.stop(); }
+  });
   it("starts Web before pairing and closes the listener with access", async () => {
     const { service, host, child } = await fixture();
     try {
@@ -85,7 +96,7 @@ describe("phone access lifecycle", () => {
     try {
       await second.service.restore("/tmp");
       expect(second.host.startHost).toHaveBeenCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect" });
-      expect(second.host.status).not.toHaveBeenCalled();
+      expect(second.host.status).toHaveBeenCalledWith("/tmp");
       expect(second.service.url()).toBe(url);
       expect(second.appServer.start).toHaveBeenCalledWith("/tmp");
       expect(second.changed).toHaveBeenCalled();

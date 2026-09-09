@@ -21,6 +21,7 @@ export type RemoteDevice = {
 
 export type RemoteStatus = {
   fingerprint: string;
+  account_server?: string;
   host_name?: string;
   relay_url?: string;
   store: string;
@@ -40,6 +41,7 @@ export type RemoteChildStream = {
 };
 
 export type RemoteChild = {
+  stdin?: { end(data: string): void };
   stdout: RemoteChildStream;
   stderr: RemoteChildStream;
   on(event: "exit" | "close", listener: (code: number | null) => void): void;
@@ -73,6 +75,11 @@ export class RemoteHostManager {
   private resolveHostExit: (() => void) | null = null;
 
   constructor(private readonly opts: RemoteHostManagerOptions = {}) {}
+
+  async account(workdir: string, action: string, input: Record<string,string> = {}): Promise<Record<string,unknown>> {
+    if (!['status','login','register','logout','revoke','password','recover'].includes(action)) throw new Error('Unknown account operation');
+    return JSON.parse(await this.exec(workdir, ['remote','account',action], undefined, JSON.stringify(input)));
+  }
 
   /** Reads the host-side remote configuration (identity, relay, devices). */
   async status(workdir: string): Promise<RemoteStatus> {
@@ -291,13 +298,17 @@ export class RemoteHostManager {
   }
 
   /** One-shot CLI call; resolves with stdout, rejects with stderr on failure. */
-  private exec(workdir: string, args: string[], timeoutMs = this.opts.execTimeoutMs ?? 15_000): Promise<string> {
+  private exec(workdir: string, args: string[], timeoutMs = this.opts.execTimeoutMs ?? 15_000, input?: string): Promise<string> {
     const command = this.commandFor(workdir);
     return new Promise((resolve, reject) => {
       const child = this.spawnFn()(command.command, [...command.args, ...args], {
         cwd: command.cwd,
         env: this.env(),
       });
+      if (input !== undefined) {
+        if (!child.stdin) { child.kill(); reject(new Error("Account command stdin unavailable")); return; }
+        child.stdin.end(input);
+      }
       let stdout = "";
       let stderr = "";
       child.stdout.setEncoding("utf8");

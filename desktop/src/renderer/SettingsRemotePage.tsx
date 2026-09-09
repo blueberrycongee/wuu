@@ -8,6 +8,7 @@
  * primitives (section/card/row/switch) by class name.
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { AccountPanel } from "./AccountPanel";
 import QRCode from "qrcode";
 import { useI18n } from "./i18n";
 
@@ -55,6 +56,7 @@ export function SettingsRemotePage({
 
   return (
     <div className="settings-remote-page" data-testid="settings-remote-page">
+      {window.wuu?.remoteAccount && <AccountPanel driver={window.wuu.remoteAccount} />}
       {statusError ? <div className="settings-error">{statusError}</div> : null}
 
       <RemoteSection title={t("remote.access")} description={t("remote.lanDescription")}>

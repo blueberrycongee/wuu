@@ -95,7 +95,9 @@ export class PhoneAccess {
     this.assertOpen();
     this.restoreError = null;
     if (this.base && this.host.isRunning() && !pair) return;
-    const config = phoneAccessConfig();
+    const status = await this.host.status(workdir);
+    const config = status.account_server ? { base: status.account_server, relay: status.account_server.replace(/^http/, 'ws') + '/v1/connect', external: true, args: [] } : phoneAccessConfig();
+    if (status.account_server) pair = false;
     if (!this.relay && !config.external) {
       await access(join(this.webRoot, "index.html"));
       this.assertOpen();

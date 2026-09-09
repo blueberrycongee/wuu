@@ -389,6 +389,7 @@ const api: WuuDesktopApi = {
   getThreadContextComposition: (threadId: string) =>
     ipcRenderer.invoke("wuu:thread-context-composition", threadId),
   listInstructionFiles: () => ipcRenderer.invoke("wuu:instructions-list"),
+  remoteAccount: (action, input) => ipcRenderer.invoke("wuu:remote-account", action, input),
   getRemoteControlSnapshot: () => ipcRenderer.invoke("wuu:remote-snapshot"),
   setRemoteRelay: (relayUrl: string) =>
     ipcRenderer.invoke("wuu:remote-relay-set", relayUrl),

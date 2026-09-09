@@ -1939,6 +1939,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:instructions-list", (event) =>
     appServerRequest<InstructionsListResult>(event, "instructions/list"),
   );
+  ipcMain.handle("wuu:remote-account", (event, action: string, input: Record<string,string>) => {
+    const workdir = runtimeContextForEvent(event).cwd;
+    return phoneAccess.run(async () => {
+      if (['login','register','logout','password'].includes(action)) await phoneAccess.stop();
+      const result = await remoteHostManager.account(workdir, action, input);
+      if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
+      if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
+      return result;
+    });
+  });
   ipcMain.handle("wuu:remote-snapshot", (event) =>
     remoteControlSnapshot(runtimeContextForEvent(event).cwd),
   );

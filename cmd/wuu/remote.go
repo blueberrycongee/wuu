@@ -106,6 +106,7 @@ func runRelay(args []string) error {
 		}
 		mux := http.NewServeMux()
 		mux.Handle("/v1/", handler)
+		mux.Handle("/healthz", handler)
 		mux.Handle("/", remoteWebHandler(*webRoot))
 		handler = mux
 	}
@@ -180,6 +181,8 @@ func runRemote(args []string) error {
 		return errors.New("usage: wuu remote <init|host|status|devices|phone> ...")
 	}
 	switch args[0] {
+	case "account":
+		return runRemoteAccount(args[1:])
 	case "init":
 		return runRemoteInit(args[1:])
 	case "host":
@@ -382,12 +385,19 @@ func runRemoteStatus(args []string) error {
 	}
 	if *asJSON {
 		out := struct {
-			Fingerprint string             `json:"fingerprint"`
-			HostName    string             `json:"host_name,omitempty"`
-			RelayURL    string             `json:"relay_url,omitempty"`
-			Store       string             `json:"store"`
-			Devices     []remoteDeviceJSON `json:"devices"`
+			AccountServer string             `json:"account_server,omitempty"`
+			Fingerprint   string             `json:"fingerprint"`
+			HostName      string             `json:"host_name,omitempty"`
+			RelayURL      string             `json:"relay_url,omitempty"`
+			Store         string             `json:"store"`
+			Devices       []remoteDeviceJSON `json:"devices"`
 		}{
+			AccountServer: func() string {
+				if c := store.Account(); c != nil {
+					return c.Server
+				}
+				return ""
+			}(),
 			Fingerprint: secure.Fingerprint(store.Identity().Public()),
 			HostName:    store.HostName(),
 			RelayURL:    store.RelayURL(),

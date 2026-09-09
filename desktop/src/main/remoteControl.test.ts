@@ -25,6 +25,7 @@ class FakeStream implements RemoteChildStream {
 }
 
 class FakeChild implements RemoteChild {
+  stdin = { end: vi.fn() };
   stdout = new FakeStream();
   stderr = new FakeStream();
   signals: string[] = [];
@@ -332,4 +333,14 @@ it("does not start an independent runtime when the configured desktop service is
   const manager = new RemoteHostManager({ spawn, resolveCommand: cwd => ({ command: "wuu", args: [], cwd }), appServerEndpoint: () => undefined });
   expect(() => manager.startHost("/work")).toThrow("Shared desktop app-server is unavailable");
   expect(spawn).not.toHaveBeenCalled();
+});
+
+it('passes account secrets on stdin without exposing them in process arguments', async () => {
+ const { manager, children } = makeManager();
+ const pending = manager.account('/tmp','login',{server:'https://example.com',username:'alice',password:'private-password'});
+ const child = children[0];
+ expect(child.args).toEqual(['remote','account','login']);
+ expect(child.stdin.end).toHaveBeenCalledWith(JSON.stringify({server:'https://example.com',username:'alice',password:'private-password'}));
+ child.stdout.push('{"username":"alice"}'); child.exit(0);
+ await expect(pending).resolves.toEqual({username:'alice'});
 });
