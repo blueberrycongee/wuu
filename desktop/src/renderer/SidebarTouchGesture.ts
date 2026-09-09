@@ -101,8 +101,16 @@ export function useSidebarTouchGesture(
       const dy = Math.abs(touch.clientY - gesture.y);
       if (!gesture.horizontal) {
         if (Math.max(Math.abs(dx), dy) < 10) return;
-        // Never reclaim a gesture after the browser starts vertical scrolling.
-        if ((wasOpen ? -dx : dx) <= dy * 1.5) { gesture = null; return; }
+        const forward = wasOpen ? -dx : dx;
+        if (forward <= 0 || dy > forward * 1.5) { gesture = null; return; }
+        // Thumb arcs can start slightly more vertical than horizontal. Give
+        // that ambiguous start a short observation window before native
+        // scrolling takes ownership. Clearly vertical motion stays native.
+        if (forward < dy) {
+          if (Math.max(forward, dy) >= 20) gesture = null;
+          else event.preventDefault();
+          return;
+        }
         // Keep this direction until release, like a drawer drag: a short drag
         // can be abandoned without turning its tail into a page scroll.
         gesture.horizontal = true;

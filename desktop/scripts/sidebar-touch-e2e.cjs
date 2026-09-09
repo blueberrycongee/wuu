@@ -139,7 +139,13 @@ app.whenReady().then(async () => {
   await waitFor(() => document.querySelector(".app-shell").classList.contains("compact-navigation"));
   await waitFor(() => document.querySelector(".sidebar").getBoundingClientRect().right <= 1);
 
-  await swipe([[160, 300], [240, 300], [365, 300]]);
+  // A natural diagonal thumb swipe should open without a flat horizontal start.
+  await swipe([[160, 300], [184, 320], [240, 355], [365, 390]]);
+  await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "drawer");
+  await waitFor(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().left) < 1);
+  await evaluate(() => document.querySelector(".compact-session-switcher-backdrop").click());
+  await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "collapsed");
+  await swipe([[160, 300], [169, 288], [178, 285], [250, 260]]);
   await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "drawer");
   await waitFor(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().left) < 1);
   await evaluate(() => document.querySelector(".compact-session-switcher-backdrop").click());
