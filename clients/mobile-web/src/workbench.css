@@ -9,6 +9,11 @@
   padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
 }
 
+.workspace-file-with-export { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.workspace-file-export-preview { flex: 1; min-height: 0; overflow: hidden; }
+.workspace-file-export-actions { flex: none; padding: 4px 8px; overflow-wrap: anywhere; }
+.workspace-file-export-actions button { min-height: 44px; color: var(--ink); padding: 4px 12px; }
+.workspace-file-export-actions [role="alert"] { display: block; color: var(--danger); }
 
 .account-workbench .account-toolbar {
   min-height: 48px;

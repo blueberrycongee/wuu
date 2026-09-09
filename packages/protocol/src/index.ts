@@ -2866,6 +2866,8 @@ export type WuuDesktopApi = {
   // 走主进程 RemoteHostManager 而非 app-server 协议。
   /** Save a locally rendered artifact through the mobile system share sheet. */
   saveArtifactFile?: (name: string, source: string) => Promise<void>;
+  /** Export a complete workspace file to the phone, rejecting changed or oversized files. */
+  exportWorkspaceFile?: (path: string, root?: string) => Promise<void>;
   remoteAccount?: (action: 'status' | 'login' | 'register' | 'logout' | 'revoke' | 'password' | 'recover', input?: Record<string,string>) => Promise<{username?: string; server?: string; pub?: string; recovery?: string; devices?: Array<{pub:string;account:string;name:string;role:'host'|'phone';online:boolean;added_at:number}>}>;
   getRemoteControlSnapshot: () => Promise<RemoteControlSnapshot>;
   setRemoteRelay: (relayUrl: string) => Promise<RemoteControlSnapshot>;

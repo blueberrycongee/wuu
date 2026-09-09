@@ -1265,7 +1265,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 			return s.writeResponse(req.ID, nil, errServerClosed)
 		}
 		return nil
-	case MethodWorkspaceDirectoryList, MethodWorkspaceFileRead, MethodWorkspaceFileResolve:
+	case MethodWorkspaceDirectoryList, MethodWorkspaceFileRead, MethodWorkspaceFileResolve, MethodWorkspaceFileChunk:
 		return s.handleWorkspaceView(req)
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)

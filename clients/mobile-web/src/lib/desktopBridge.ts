@@ -1,4 +1,5 @@
 import { PluginAssets } from "./pluginAssets";
+import { downloadWorkspaceFile } from "./workspaceDownload";
 import { pickComputerFolder } from "./folderPicker";
 import { isNative, openNativeURL, saveNativeArtifact } from "./native";
 import {
@@ -561,7 +562,12 @@ export class RemoteDesktopBridge {
       chooseProjectFolder: () => this.chooseComputerFolder(false),
       relocateProject: (id) => this.chooseComputerFolder(false,id),
       removeProject: async (id) => this.applyProjectState(await this.call('desktop/projects/remove',{id})),
-      ...(isNative ? { saveArtifactFile: saveNativeArtifact } : {}),
+      ...(isNative ? { saveArtifactFile: saveNativeArtifact, exportWorkspaceFile: async (path: string, root?: string) => {
+        const blob = await downloadWorkspaceFile(this.call.bind(this), path, root || this.workdir());
+        const url = URL.createObjectURL(blob);
+        try { await saveNativeArtifact(path.split('/').pop() || 'file', url); }
+        finally { URL.revokeObjectURL(url); }
+      } } : {}),
       listWorkspaceFiles: (root) => this.call("desktop/file/list", {root:root || this.workdir()}),
       writeWorkspaceFile: (params,root) => this.call("desktop/file/write",{params,root:root || this.workdir()}),
       onRuntimeRestore: (listener) => {
@@ -588,7 +594,20 @@ export class RemoteDesktopBridge {
       listGitChanges: (root) => this.call("workspace/git/changes", { root: root || this.workdir() }),
       readGitFileDiff: (path, root) => this.call("workspace/git/diff", { path, root: root || this.workdir() }),
       listWorkspaceDirectory: (path, root) => this.call("workspace/directory/list", { path, root: root || this.workdir() }),
-      readWorkspaceFile: (path, root) => this.call("workspace/file/read", { path, root: root || this.workdir() }),
+      readWorkspaceFile: async (path, root) => {
+        const workspace = root || this.workdir();
+        const result = await this.call<import("@wuu/protocol").WorkspaceFileReadResult>("workspace/file/read", { path, root: workspace });
+        if (result.renderable_kind && !result.renderable_url) {
+          const blob = await downloadWorkspaceFile(this.call.bind(this), path, workspace);
+          result.renderable_url = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+        }
+        return result;
+      },
       resolveWorkspaceFileReference: (reference, root) => this.call("workspace/file/resolve", { reference, root: root || this.workdir() }),
       listProjects: async () => {
         this.updateWorkspaces(await this.call<WorkspaceSnapshot>("workspace/list"));

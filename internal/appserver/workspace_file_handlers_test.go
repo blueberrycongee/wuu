@@ -2,14 +2,67 @@ package appserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+func TestWorkspaceDownloadChunksAndRejectsChangedOrEscapingFiles(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	content := strings.Repeat("0123456789", 70000)
+	writeWorkspaceViewFile(t, rt.RootDir, "download.bin", content)
+	root, err := os.OpenRoot(rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	var downloaded []byte
+	version := ""
+	for offset := int64(0); offset < int64(len(content)); {
+		chunk, err := readWorkspaceChunk(root, workspaceViewParams{Path: "download.bin", Offset: offset, Version: version})
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := base64.StdEncoding.DecodeString(chunk.Data)
+		if err != nil || len(data) > 256*1024 || chunk.Offset != offset {
+			t.Fatal("invalid bounded chunk")
+		}
+		downloaded = append(downloaded, data...)
+		offset += int64(len(data))
+		version = chunk.Version
+	}
+	if string(downloaded) != content {
+		t.Fatal("download differs from actual file")
+	}
+	changed := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(rt.RootDir, "download.bin"), changed, changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readWorkspaceChunk(root, workspaceViewParams{Path: "download.bin", Offset: 256 * 1024, Version: version}); err == nil {
+		t.Fatal("accepted changed file")
+	}
+	outside := t.TempDir()
+	writeWorkspaceViewFile(t, outside, "secret", "outside")
+	if err := os.Symlink(filepath.Join(outside, "secret"), filepath.Join(rt.RootDir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []workspaceViewParams{{Path: "escape"}, {Path: "../secret"}, {Path: "download.bin", Offset: -1}, {Path: "download.bin", Offset: 1}} {
+		if _, err := readWorkspaceChunk(root, p); err == nil {
+			t.Fatalf("accepted invalid download: %+v", p)
+		}
+	}
+	out := &lockedBuffer{}
+	response := workspaceViewRequest(t, New(rt, out), out, MethodWorkspaceFileChunk, workspaceViewParams{Path: "download.bin"})
+	if response["error"] != nil || remarshal[workspaceChunkResult](t, response["result"]).Size != int64(len(content)) {
+		t.Fatal("chunk RPC unavailable")
+	}
+}
 
 func workspaceViewRequest(t *testing.T, srv *Server, out *lockedBuffer, method string, params workspaceViewParams) map[string]any {
 	t.Helper()

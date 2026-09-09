@@ -427,6 +427,19 @@ describe("WorkspaceFileTree", () => {
     expect(container.textContent).toContain("button code");
   });
 
+  it("exports the complete selected file and reports native save failures", async () => {
+    const exporter = vi.fn().mockRejectedValue(new Error("Share destination unavailable"));
+    window.wuu.exportWorkspaceFile = exporter;
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/components/Button.tsx" onOpenRightPanel={() => {}} />);
+    await settleDirectoryLoads();
+    const button = container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button");
+    expect(button?.disabled).toBe(false);
+    await act(async () => { button?.click(); });
+    expect(exporter).toHaveBeenCalledWith("src/components/Button.tsx", activeContext.cwd);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Share destination unavailable");
+    expect(button?.disabled).toBe(false);
+  });
+
   it("refreshes an open file without clearing the current preview", async () => {
     await render(
       <WorkspaceFilePreview

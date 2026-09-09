@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 const (
 	MethodWorkspaceDirectoryList = "workspace/directory/list"
 	MethodWorkspaceFileRead      = "workspace/file/read"
+	MethodWorkspaceFileChunk     = "workspace/file/chunk"
 	MethodWorkspaceFileResolve   = "workspace/file/resolve"
 	workspacePreviewBytes        = 512 * 1024
 	workspaceMediaBytes          = 2 * 1024 * 1024
@@ -33,6 +35,8 @@ type workspaceViewParams struct {
 	Root      string `json:"root,omitempty"`
 	Path      string `json:"path,omitempty"`
 	Reference string `json:"reference,omitempty"`
+	Offset    int64  `json:"offset,omitempty"`
+	Version   string `json:"version,omitempty"`
 }
 
 type workspaceFileEntry struct {
@@ -91,10 +95,77 @@ func (s *Server) handleWorkspaceView(req Request) error {
 		result, err = listWorkspaceDirectory(root, params.Path)
 	case MethodWorkspaceFileRead:
 		result, err = readWorkspacePreview(root, params.Path)
+	case MethodWorkspaceFileChunk:
+		result, err = readWorkspaceChunk(root, params)
 	case MethodWorkspaceFileResolve:
 		result, err = resolveWorkspaceReference(root, params.Reference)
 	}
 	return s.writeResponse(req.ID, result, err)
+}
+
+type workspaceChunkResult struct {
+	Data    string `json:"data"`
+	Offset  int64  `json:"offset"`
+	Size    int64  `json:"size"`
+	Version string `json:"version"`
+	MIME    string `json:"mime"`
+}
+
+// Bound each encrypted RPC independently; a large download cannot monopolize
+// a frame or silently concatenate revisions changed during the transfer.
+func readWorkspaceChunk(root *os.Root, params workspaceViewParams) (workspaceChunkResult, error) {
+	var result workspaceChunkResult
+	path, err := workspaceRelativePath(params.Path, false)
+	if err != nil {
+		return result, err
+	}
+	info, err := root.Stat(path)
+	if err != nil {
+		return result, err
+	}
+	if !info.Mode().IsRegular() {
+		return result, errors.New("selected path is not a regular file")
+	}
+	f, err := root.Open(path)
+	if err != nil {
+		return result, err
+	}
+	defer f.Close()
+	info, err = f.Stat()
+	if err != nil {
+		return result, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 64*1024*1024 {
+		return result, errors.New("file must be regular and at most 64 MB")
+	}
+	version := fmt.Sprintf("%d:%d", info.ModTime().UnixNano(), info.Size())
+	if params.Offset < 0 || params.Offset > info.Size() || (params.Offset > 0 && params.Version == "") {
+		return result, errors.New("invalid file offset or missing version")
+	}
+	if params.Version != "" && params.Version != version {
+		return result, errors.New("file changed; restart the download")
+	}
+	header := make([]byte, 512)
+	n, err := f.ReadAt(header, 0)
+	if err != nil && err != io.EOF {
+		return result, err
+	}
+	result.MIME = http.DetectContentType(header[:n])
+	data := make([]byte, min(int64(256*1024), info.Size()-params.Offset))
+	n, err = f.ReadAt(data, params.Offset)
+	if err != nil && err != io.EOF {
+		return result, err
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return result, err
+	}
+	if !after.ModTime().Equal(info.ModTime()) || after.Size() != info.Size() || n != len(data) {
+		return result, errors.New("file changed; restart the download")
+	}
+	result.Data = base64.StdEncoding.EncodeToString(data)
+	result.Offset, result.Size, result.Version = params.Offset, info.Size(), version
+	return result, nil
 }
 
 // A browser may navigate a registered workspace or a session's worktree. It
@@ -263,14 +334,14 @@ func readWorkspacePreview(root *os.Root, path string) (workspaceFileResult, erro
 		text := strings.ToValidUTF8(string(preview), "\ufffd")
 		result.Text = &text
 	}
+	mime := http.DetectContentType(data)
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		result.RenderableKind = "image"
+	case "application/pdf":
+		result.RenderableKind = "pdf"
+	}
 	if len(data) <= workspaceMediaBytes {
-		mime := http.DetectContentType(data)
-		switch mime {
-		case "image/png", "image/jpeg", "image/gif", "image/webp":
-			result.RenderableKind = "image"
-		case "application/pdf":
-			result.RenderableKind = "pdf"
-		}
 		if result.RenderableKind != "" {
 			result.RenderableURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 		}

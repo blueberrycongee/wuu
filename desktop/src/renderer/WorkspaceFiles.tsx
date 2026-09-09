@@ -617,6 +617,8 @@ export function WorkspaceFilePreview({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [presenterReloadKey, setPresenterReloadKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const editorViewStateRef = useRef<WorkspaceMonacoViewState | null>(null);
   const loadedFileKeyRef = useRef<string | undefined>(undefined);
   const markdownHostRef = useRef<HTMLDivElement>(null);
@@ -791,7 +793,7 @@ export function WorkspaceFilePreview({
         </div>
       </article>
     );
-  return (
+  const presentation = (
     <FilePreviewPresentation
       workspaceRoot={activeContext.cwd}
       workspaceRelativePath={selectedWorkspaceFilePath}
@@ -806,6 +808,20 @@ export function WorkspaceFilePreview({
       reload={() => setPresenterReloadKey((value) => value + 1)}
     />
   );
+  if (!window.wuu.exportWorkspaceFile) return presentation;
+  return <div className="workspace-file-with-export">
+    <div className="workspace-file-export-actions">
+      <button type="button" disabled={loading || exporting || !file} onClick={() => {
+        if (!file || exporting) return;
+        setExporting(true); setExportError("");
+        void window.wuu.exportWorkspaceFile!(file.path, activeContext.cwd)
+          .catch(error => setExportError(desktopApiErrorMessage(error, translateCurrent("workspace.files.openFailed"))))
+          .finally(() => setExporting(false));
+      }}>{t("artifacts.downloadNamed", { name: file?.path ?? selectedWorkspaceFilePath })}</button>
+      {exportError && <span role="alert">{exportError}</span>}
+    </div>
+    <div className="workspace-file-export-preview">{presentation}</div>
+  </div>;
 }
 
 function isMarkdownPath(path: string): boolean {
