@@ -47,6 +47,61 @@ npm run typecheck
 npm run build
 ```
 
+## 自托管与网络入口
+
+Wuu 不要求特定组网服务，也不提供必须依赖的公共 relay。用户选择局域网、私网组网、
+反向代理或独立 relay；所有模式保留同一套配对、设备撤销和加密协议。
+
+桌面启动进程支持以下环境变量，修改后重启桌面：
+
+| 变量 | 用途 |
+| --- | --- |
+| `WUU_WEB_LISTEN` | 本地网页与 relay 的监听地址，例如 `100.64.0.1:8787`、`[::1]:8787`；默认自动选择局域网 IPv4 |
+| `WUU_WEB_URL` | 二维码使用的浏览器访问 origin，例如 `https://wuu.example.com`；配置它后监听默认改为 `127.0.0.1:8787` |
+| `WUU_WEB_TLS_CERT` / `WUU_WEB_TLS_KEY` | 本地服务直接提供 TLS 时的 PEM 证书和私钥，必须一起设置 |
+| `WUU_WEB_RELAY_URL` | 独立 relay 的 `wss://.../v1/connect` 地址；必须同时设置网页 URL，此时桌面不启动本地网页监听器 |
+
+访问 URL 使用独立 origin，不支持子路径。监听 `0.0.0.0` 或 `[::]` 时必须提供可达的
+`WUU_WEB_URL`。稳定的 origin 可保留浏览器配对身份；更换域名或端口后需在新 origin 配对。
+环境变量必须传给实际桌面进程，单独启动 CLI remote host 不会接入桌面的服务池。
+
+**同机反向代理示例**：桌面使用 `WUU_WEB_URL=https://wuu.example.com`，代理把这个
+域名的 HTTP 与 WebSocket 请求都转发到 `127.0.0.1:8787`。例如 Caddy：
+
+```caddyfile
+wuu.example.com {
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+代理需要可用的域名、网络路由和可信证书。Caddy 的代理直接支持 WebSocket；参见
+[官方说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
+
+**独立 relay 示例**：在用户自己的服务器构建 Web 静态资源，然后运行：
+
+```bash
+wuu relay --addr 127.0.0.1:8787 --web-root /srv/wuu-web \
+  --public-url https://wuu.example.com
+```
+
+在该服务器前配置 HTTPS 代理。桌面使用 `WUU_WEB_URL=https://wuu.example.com` 和
+`WUU_WEB_RELAY_URL=wss://wuu.example.com/v1/connect`，再从桌面开启访问、显示配对码。
+网页也可以放在另一个可信 HTTPS origin；与桌面版本配套更新静态资源。
+`--public-url` 只控制 CLI 打印的连接地址，不会配置 DNS、证书或启动桌面 host。
+
+**直接 TLS 示例**：不使用反向代理时，CLI 支持：
+
+```bash
+wuu relay --addr 0.0.0.0:8787 --web-root /srv/wuu-web \
+  --tls-cert /etc/wuu/fullchain.pem --tls-key /etc/wuu/privkey.pem \
+  --public-url https://wuu.example.com:8787
+```
+
+证书更新后重启 relay 重新加载。桌面内置监听器对应设置上述 TLS 环境变量。
+HTTP 仅适合用户自行信任的网络环境；应用层加密不能阻止 HTTP 网页脚本被替换。
+远程部署应保护网页代码交付，并使用 WSS。网页托管方能够修改运行在浏览器里的代码，
+因此必须可信；单独转发密文的 relay 不需要取得会话明文或设备私钥。
+
 ## 当前边界
 
 Web bridge 使用完整的类型检查接口，并通过 `unsupportedMethods` 声明不可用操作。

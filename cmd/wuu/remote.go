@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -50,10 +52,22 @@ func runRelay(args []string) error {
 	fs.SetOutput(io.Discard)
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	webRoot := fs.String("web-root", "", "serve the built Wuu Web directory alongside the relay")
+	publicURL := fs.String("public-url", "", "browser-facing http(s) origin, including reverse proxy TLS termination")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate PEM file")
+	tlsKey := fs.String("tls-key", "", "TLS private key PEM file")
 	statePath := fs.String("state", "", "registry file (default <wuu home>/relay-state.json)")
 	pushWebhook := fs.String("push-webhook", "", "POST content-free push events to this URL")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	tlsConfig, err := remoteRelayTLS(*tlsCert, *tlsKey)
+	if err != nil {
+		return err
+	}
+	if *publicURL != "" {
+		if _, err := remoteRelayURL(*publicURL, "", tlsConfig != nil); err != nil {
+			return err
+		}
 	}
 
 	regPath := strings.TrimSpace(*statePath)
@@ -89,6 +103,13 @@ func runRelay(args []string) error {
 		return err
 	}
 	defer listener.Close()
+	connectURL, err := remoteRelayURL(*publicURL, listener.Addr().String(), tlsConfig != nil)
+	if err != nil {
+		return err
+	}
+	if tlsConfig != nil {
+		listener = tls.NewListener(listener, tlsConfig)
+	}
 	httpServer := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -100,12 +121,47 @@ func runRelay(args []string) error {
 	}()
 
 	fmt.Printf("wuu relay listening on %s (registry: %s)\n", listener.Addr().String(), regPath)
-	fmt.Printf("connect url: ws://%s/v1/connect\n", listener.Addr().String())
+	fmt.Printf("connect url: %s\n", connectURL)
 	err = httpServer.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err
+}
+
+func remoteRelayTLS(certFile, keyFile string) (*tls.Config, error) {
+	if certFile == "" && keyFile == "" {
+		return nil, nil
+	}
+	if certFile == "" || keyFile == "" {
+		return nil, errors.New("--tls-cert and --tls-key must be supplied together")
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil
+}
+
+func remoteRelayURL(publicURL, address string, encrypted bool) (string, error) {
+	if publicURL == "" {
+		scheme := "ws"
+		if encrypted {
+			scheme = "wss"
+		}
+		return scheme + "://" + address + "/v1/connect", nil
+	}
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", errors.New("--public-url must be an http(s) origin without credentials, path, query or fragment")
+	}
+	if u.Scheme == "https" {
+		u.Scheme = "wss"
+	} else {
+		u.Scheme = "ws"
+	}
+	u.Path = "/v1/connect"
+	return u.String(), nil
 }
 
 func runRemote(args []string) error {

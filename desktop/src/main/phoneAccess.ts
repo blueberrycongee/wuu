@@ -23,6 +23,28 @@ export function phonePairLink(base: string | null, uri: string | null): string |
   return url.href;
 }
 
+/** Deployment belongs to the operator; the same host supports LAN, private
+ * networks, a local reverse proxy, or a separately hosted blind relay. */
+export function phoneAccessConfig(env = process.env): { base: string; relay: string; args: string[]; external: boolean } {
+  const external = Boolean(env.WUU_WEB_RELAY_URL);
+  const configured = env.WUU_WEB_URL;
+  if (external && !configured) throw new Error("WUU_WEB_RELAY_URL requires WUU_WEB_URL");
+  const cert = env.WUU_WEB_TLS_CERT, key = env.WUU_WEB_TLS_KEY;
+  if (Boolean(cert) !== Boolean(key)) throw new Error("WUU_WEB_TLS_CERT and WUU_WEB_TLS_KEY must be supplied together");
+  const address = env.WUU_WEB_LISTEN || (!configured ? `${phoneAddress()}:8787` : "127.0.0.1:8787");
+  const base = new URL(configured || `${cert ? "https" : "http"}://${address}/`);
+  if (!/^https?:$/.test(base.protocol) || base.username || base.password || base.pathname !== "/" || base.search || base.hash) {
+    throw new Error("WUU_WEB_URL must be an http(s) origin without credentials, path, query or fragment");
+  }
+  if (["0.0.0.0", "[::]"].includes(base.hostname)) throw new Error("Set WUU_WEB_URL to a reachable address when listening on all interfaces");
+  const relay = new URL(env.WUU_WEB_RELAY_URL || "v1/connect", base);
+  if (!external) relay.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  if (!/^wss?:$/.test(relay.protocol) || relay.username || relay.password || relay.hash || (base.protocol === "https:" && relay.protocol !== "wss:")) {
+    throw new Error("WUU_WEB_RELAY_URL must be a ws(s) URL; HTTPS pages require wss");
+  }
+  return { base: base.href, relay: relay.href, external, args: ["--addr", address, "--public-url", base.href, ...(cert && key ? ["--tls-cert", cert, "--tls-key", key] : [])] };
+}
+
 /** Owns the LAN listener alongside the existing encrypted remote host. */
 export class PhoneAccess {
   private relay: ChildProcessWithoutNullStreams | null = null;
@@ -72,13 +94,13 @@ export class PhoneAccess {
   private async start(workdir: string, pair = false): Promise<void> {
     this.assertOpen();
     this.restoreError = null;
-    if (this.relay && this.host.isRunning() && !pair) return;
-    if (!this.relay) {
+    if (this.base && this.host.isRunning() && !pair) return;
+    const config = phoneAccessConfig();
+    if (!this.relay && !config.external) {
       await access(join(this.webRoot, "index.html"));
       this.assertOpen();
-      const address = phoneAddress();
       const command = resolveWuuCommand(process.env, workdir, process.env.WUU_SOURCE_ROOT, process.resourcesPath);
-      const relay = spawn(command.command, [...command.args, "relay", "--addr", `${address}:8787`, "--web-root", this.webRoot], { cwd: command.cwd, env: process.env });
+      const relay = spawn(command.command, [...command.args, "relay", ...config.args, "--web-root", this.webRoot], { cwd: command.cwd, env: process.env });
       this.relay = relay;
       this.exited = new Promise(resolve => relay.once("close", () => resolve()));
       relay.once("close", () => {
@@ -107,15 +129,16 @@ export class PhoneAccess {
         // Drain ongoing diagnostics without retaining pairing data or logs.
         relay.stdout.resume(); relay.stderr.resume();
         this.assertOpen();
-        this.base = `http://${address}:8787/`;
+        this.base = config.base;
       } catch (error) { await this.stop(); throw error; }
     }
+    this.base = config.base;
     try {
       await this.host.stopHost();
       this.assertOpen();
       await this.appServer?.start(workdir);
       this.assertOpen();
-      this.host.startHost(workdir, { pair, relay: this.base!.replace("http:", "ws:") + "v1/connect" });
+      this.host.startHost(workdir, { pair, relay: config.relay });
     } catch (error) { await this.stop(); throw error; }
   }
   shutdown(): Promise<void> {

@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PhoneAccess, phoneAddress, phonePairLink } from "./phoneAccess";
+import { PhoneAccess, phoneAddress, phonePairLink, phoneAccessConfig } from "./phoneAccess";
 import type { RemoteHostManager } from "./remoteControl";
 import { getPhoneAccessEnabled, setPhoneAccessEnabled, getThemePreference, setThemePreference } from "./desktopSettings";
 vi.mock("node:os", async importOriginal => ({ ...(await importOriginal<typeof import("node:os")>()), networkInterfaces: () => ({ en0: [{ address: "192.168.1.8", family: "IPv4", internal: false }] }) }));
@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("./wuuCommand", () => ({ resolveWuuCommand: () => ({ command: "wuu", args: [], cwd: "/tmp" }) }));
 const roots: string[] = [];
-afterEach(async () => { vi.clearAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.clearAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 it("uses a LAN address and keeps the pairing secret out of HTTP queries", () => {
   const entry = (address: string, internal = false) => ({ address, family: "IPv4", internal, netmask: "", cidr: null, mac: "" } as const);
@@ -41,6 +41,19 @@ describe("phone access lifecycle", () => {
     const changed = vi.fn();
     return { service: new PhoneAccess(host as unknown as RemoteHostManager, root, changed, appServer, settingsPath), host, child, settingsPath, appServer, changed };
   }
+  it("uses an external relay without spawning a LAN server and retains desktop execution", async () => {
+    vi.stubEnv("WUU_WEB_URL", "https://web.example");
+    vi.stubEnv("WUU_WEB_RELAY_URL", "wss://relay.example/v1/connect");
+    const { service, host, appServer } = await fixture();
+    try {
+      await service.setEnabled("/tmp", true);
+      expect(mocks.spawn).not.toHaveBeenCalled();
+      expect(appServer.start).toHaveBeenCalledWith("/tmp");
+      expect(host.startHost).toHaveBeenCalledWith("/tmp", { pair: true, relay: "wss://relay.example/v1/connect" });
+      expect(service.url()).toBe("https://web.example/");
+    } finally { await service.stop(); }
+    expect(appServer.stop).toHaveBeenCalled();
+  });
   it("starts Web before pairing and closes the listener with access", async () => {
     const { service, host, child } = await fixture();
     try {
@@ -172,3 +185,14 @@ describe("phone access lifecycle", () => {
     expect(getPhoneAccessEnabled(settingsPath)).toBe(true);
   });
 });
+
+ it("supports private network addresses and reverse proxies independently of LAN discovery", () => {
+  expect(phoneAccessConfig({ WUU_WEB_LISTEN: "100.64.0.1:9000" }).base).toBe("http://100.64.0.1:9000/");
+  const proxy = phoneAccessConfig({ WUU_WEB_URL: "https://wuu.example" });
+  expect(proxy.args).toContain("127.0.0.1:8787");
+  expect(proxy.relay).toBe("wss://wuu.example/v1/connect");
+  expect(phoneAccessConfig({ WUU_WEB_URL: "https://web.example", WUU_WEB_RELAY_URL: "wss://relay.example/v1/connect" }).external).toBe(true);
+  expect(() => phoneAccessConfig({ WUU_WEB_URL: "https://web.example", WUU_WEB_RELAY_URL: "ws://relay.example/v1/connect" })).toThrow();
+  expect(() => phoneAccessConfig({ WUU_WEB_LISTEN: "0.0.0.0:8787" })).toThrow("WUU_WEB_URL");
+  expect(() => phoneAccessConfig({ WUU_WEB_TLS_CERT: "cert.pem" })).toThrow();
+ });
