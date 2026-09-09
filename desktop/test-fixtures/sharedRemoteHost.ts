@@ -30,6 +30,6 @@ input.on("line", line => {
     error => send({ desktopResponse: { id: request.id, error: String(error) } }),
   );
 });
-const stop = () => { bridge.stop(); pool.shutdown(); input.close(); process.exit(0); };
+const stop = () => { bridge.stop(); pool.shutdown(); input.close(); process.stdin.destroy(); };
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
