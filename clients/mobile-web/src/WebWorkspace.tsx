@@ -16,6 +16,7 @@ import { ToastViewport } from "../../../desktop/src/renderer/Toast";
 import { WuuUIRoot } from "../../../desktop/src/renderer/ui/layers/UILayerHost";
 import { startWebViewportSync } from "./lib/viewport";
 import "../../../desktop/src/renderer/styles.css";
+import "./workbench.css";
 
 applyPlatformStamp();
 applyMeasuredScrollbarWidth();

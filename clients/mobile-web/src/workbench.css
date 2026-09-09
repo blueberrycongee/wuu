@@ -1,0 +1,56 @@
+/* The account shell owns the top safe area; nested renderer chrome must not
+   reserve it again. Keep these rules after the shared renderer styles. */
+.account-workbench {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.account-workbench .account-toolbar {
+  min-height: 48px;
+  gap: 8px;
+  padding-inline: max(8px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
+}
+
+.account-toolbar > button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.account-toolbar > button:active {
+  background: var(--surface-2);
+}
+
+.account-toolbar > button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.account-toolbar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.account-workbench-content .app-shell.compact-navigation .conversation-pane {
+  grid-template-rows: 48px minmax(0, 1fr);
+  /* The floating composer already reserves the bottom safe area. */
+  padding-bottom: 0;
+  --conversation-flow-top-gap: 12px;
+}
+
+.account-workbench-content .app-shell.compact-navigation .conversation-pane[data-composer-navigation="true"] {
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+
+.account-workbench-content .app-shell.compact-navigation .titlebar {
+  padding-top: 0;
+}
