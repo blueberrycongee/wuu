@@ -28,6 +28,7 @@ async function clearAccount(expected: AccountSession): Promise<void> {
     // Shared renderer preferences may contain workspace paths and provider choices.
     for (const name of Object.keys(localStorage))
       if (name.startsWith("wuu.")) localStorage.removeItem(name);
+    window.dispatchEvent(new Event('wuu:account-change'));
   });
 }
 
@@ -46,6 +47,7 @@ export const accountDriver: AccountDriver = async (action, input = {}) => {
       action === "register",
     );
     await persist(() => secretStorage.set(key, JSON.stringify(result.session)));
+    window.dispatchEvent(new Event('wuu:account-change'));
     return { recovery: result.recovery };
   }
   if (action === "recover")

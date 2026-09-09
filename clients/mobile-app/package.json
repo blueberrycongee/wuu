@@ -9,15 +9,16 @@
     "android": "cap open android"
   },
   "dependencies": {
-    "@capacitor/core": "^8.0.0",
-    "@capacitor/ios": "^8.0.0",
     "@capacitor/android": "^8.0.0",
     "@capacitor/app": "^8.0.0",
-    "@capacitor/keyboard": "^8.0.0",
-    "@capacitor/filesystem": "^8.0.0",
-    "@capacitor/share": "^8.0.0",
     "@capacitor/browser": "^8.0.0",
-    "@capacitor/network": "^8.0.0"
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/network": "^8.0.0",
+    "@capacitor/push-notifications": "^8.1.2",
+    "@capacitor/share": "^8.0.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.0.0",

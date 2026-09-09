@@ -5,3 +5,6 @@ node_modules/
 *.mobileprovision
 .env*
 artifacts/
+google-services.json
+*.p8
+service-account*.json

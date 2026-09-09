@@ -7,6 +7,8 @@ import {
 import { accountDriver, loadAccount } from "./lib/accountStore";
 import { webCredStore } from "./lib/credStore";
 import PairedApp from "./App";
+import { NotificationSettings } from './NotificationSettings';
+import { startPushLifecycle, consumeNotificationHost } from './lib/notifications';
 
 export default function AccountApp(): React.JSX.Element {
   const [selected, setSelected] = useState<Credentials | null>(null);
@@ -15,6 +17,20 @@ export default function AccountApp(): React.JSX.Element {
   );
   const [error, setError] = useState("");
   const [boot, setBoot] = useState(true);
+  useEffect(() => { void startPushLifecycle().catch(error => setError(String(error))); }, []);
+  useEffect(() => {
+    if (boot) return;
+    const open = () => {
+      const host = consumeNotificationHost(); if (!host) return;
+      void accountDriver('status').then(async account => {
+        const device = account.devices?.find(device => device.pub === host && device.role === 'host');
+        if (!device) throw new Error('通知对应的电脑已不在当前账号中');
+        await select(device);
+      }).catch(error => setError(String(error)));
+    };
+    window.addEventListener('wuu:notification-open', open); open();
+    return () => window.removeEventListener('wuu:notification-open', open);
+  }, [boot]);
   useEffect(() => {
     let active = true;
     void Promise.all([loadAccount(), webCredStore.load()])
@@ -79,7 +95,7 @@ export default function AccountApp(): React.JSX.Element {
       <div className="account-workbench">
         <header className="account-toolbar">
           <button onClick={back}>‹ 电脑</button>
-          <span>{selected?.host_name || "配对连接"}</span>
+          <span>{selected ? selected.host_name || "电脑" : "配对连接"}</span>
         </header>
         <div className="account-workbench-content">
           <PairedApp key={selected?.host_pub || "pair"} onAccountBack={selected ? back : undefined} />
@@ -89,6 +105,7 @@ export default function AccountApp(): React.JSX.Element {
   return (
     <main className="account-home">
       <AccountPanel driver={accountDriver} onComputer={(d) => void select(d)} />
+      <NotificationSettings />
       {error && <p role="alert">{error}</p>}
       <button className="account-pair-link" onClick={() => setPair(true)}>
         使用电脑上的配对链接
