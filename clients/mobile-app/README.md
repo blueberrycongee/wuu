@@ -2,13 +2,13 @@
 
 iOS 和 Android 使用打包在 App 内的共享 Wuu 界面，连接用户自己部署的账号服务。Agent、终端、文件和工作区都在所选电脑上运行。手机不代替电脑执行任务，也不会唤醒离线电脑。
 
-功能对应与手机交互见 [功能清单](FEATURES.md)。
+功能对应与手机交互见 [功能清单](FEATURES.md)，本次证据和真实限制见 [验收记录](VALIDATION.md)。
 
 ## 构建环境
 
 - Node.js 22 或更新版本、npm；Go 版本见根目录 `go.mod`。
 - iOS：macOS、Xcode 26.0 或更新版本、已安装的 iOS Simulator runtime。真机需要自己的 Apple 开发签名 Team。
-- Android：JDK 21、Android SDK Platform 36、Build Tools 36、已接受 SDK 许可证。设置 `ANDROID_HOME`、`JAVA_HOME`。模拟器使用 API 36；App 最低版本由 `android/variables.gradle` 定义。
+- Android：JDK 21、Android SDK Platform 36、Gradle 要求的 Build Tools（本次验证使用 35.0.0）、已接受 SDK 许可证。设置 `ANDROID_HOME`、`JAVA_HOME`。模拟器使用 API 36；App 最低版本由 `android/variables.gradle` 定义。
 
 从仓库根目录安装依赖并构建：
 
