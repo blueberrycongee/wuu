@@ -93,3 +93,22 @@
   .workspace-terminal-workspace.standalone-agent-run { grid-template-rows: minmax(0, 1fr); }
   .workspace-terminal-panel { grid-template-rows: minmax(0, 1fr) auto; }
 }
+
+/* A landscape IME can leave less than 150px. Preserve a readable input line
+   and touch controls; the computer switcher returns when editing ends. */
+@media (pointer: coarse) and (max-height: 300px) {
+  .account-workbench:has(.composer textarea:focus) > .account-toolbar { display: none; }
+  .account-workbench:has(.composer textarea:focus) .dock-composer-wrap { padding-block: 4px; }
+  .account-workbench:has(.composer textarea:focus) .composer {
+    --composer-collapsed-min-height: 88px;
+    --composer-expanded-min-height: 88px;
+  }
+  .account-workbench:has(.composer textarea:focus) .composer textarea {
+    height: 40px;
+    min-height: 40px;
+    max-height: max(40px, calc(var(--web-viewport-height) - 80px));
+    padding-block: 8px;
+  }
+  .account-workbench:has(.composer textarea:focus) .composer-bar { min-height: 48px; }
+  .account-workbench:has(.composer textarea:focus) .composer-bar button { min-height: 44px; min-width: 44px; }
+}
