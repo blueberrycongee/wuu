@@ -99,6 +99,8 @@ adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
 
 有多台电脑时增加 `-Pandroid.testInstrumentationRunnerArguments.computer=电脑显示名称`。测试截图位于 App 的外部私有 `files/validation` 目录；直接运行 instrumentation 后可用 `adb pull /sdcard/Android/data/com.blueberrycongee.wuu/files/validation` 获取。Gradle connected 测试可能在结束后卸载包，需保留截图时使用 `:app:assembleDebug :app:assembleDebugAndroidTest` 构建、`adb install -r` 安装两个 APK，再 `adb shell am instrument -w` 运行同一测试 runner。
 
+传入 instrumentation 参数 `outage=true` 可验证实际电脑停止和重启。测试输出 `wuu_phase=ready-for-host-stop` 后关闭专用验证桌面；输出 `ready-for-host-start` 后重新启动同一 WUU_HOME 的桌面；测试检查断线提示、重连和未发送草稿保留，最后输出 `host-restored`。不要停止日常使用的桌面进程。此模式需要操作者或自己的测试控制器响应这些阶段，否则会明确超时。
+
 ## iOS 原生界面测试
 
 在模拟器中登录专用测试账号并返回设备列表，然后运行长列表滑动测试。可使用自己模拟器的名称或 UUID：

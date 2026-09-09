@@ -6,6 +6,8 @@ public class ShareReceiverActivity extends android.app.Activity {
         super.onCreate(state);
         android.widget.TextView result = new android.widget.TextView(this);
         result.setTextSize(20);
+        result.setTextColor(android.graphics.Color.BLACK);
+        result.setBackgroundColor(android.graphics.Color.WHITE);
         result.setPadding(24, 80, 24, 24);
         setContentView(result);
         try {

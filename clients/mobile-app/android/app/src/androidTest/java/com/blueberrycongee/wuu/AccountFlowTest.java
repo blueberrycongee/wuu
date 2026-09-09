@@ -102,6 +102,10 @@ public class AccountFlowTest {
             event.recycle();
         }
     }
+    private void phase(String value) {
+        Bundle status = new Bundle(); status.putString("wuu_phase", value);
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, status);
+    }
     private void waitFor(Runnable assertion) {
         long deadline = SystemClock.elapsedRealtime() + 120000;
         Throwable last = null;
@@ -175,7 +179,13 @@ public class AccountFlowTest {
                 androidx.test.espresso.web.model.Atoms.castOrDie(Boolean.class)), equalTo(true))));
             waitFor(() -> onWebView().withElement(findElement(Locator.CSS_SELECTOR, ".workspace-file-export-actions button")).perform(webClick()));
             waitFor(() -> nativeClick("Wuu Share Validation"));
-            waitFor(() -> assertTrue(nativeText("ANDROID_VERIFIED").getText().toString().contains("android-live-proof.txt")));
+            waitFor(() -> {
+                android.view.accessibility.AccessibilityNodeInfo received = nativeText("ANDROID_VERIFIED");
+                assertEquals("com.blueberrycongee.wuu.test", String.valueOf(received.getPackageName()));
+                assertEquals("android-live-proof.txt\nANDROID_VERIFIED", received.getText().toString().trim());
+            });
+            try { InstrumentationRegistry.getInstrumentation().getUiAutomation().waitForIdle(500, 5000); }
+            catch (java.util.concurrent.TimeoutException error) { throw new AssertionError(error); }
             android.graphics.Bitmap shared = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
             try (FileOutputStream output = new FileOutputStream(new File(InstrumentationRegistry.getInstrumentation().getTargetContext().getExternalFilesDir("validation"), "system-share-received.png"))) {
                 assertTrue(shared.compress(Bitmap.CompressFormat.PNG, 100, output));
@@ -196,6 +206,21 @@ public class AccountFlowTest {
                     androidx.test.espresso.web.model.Atoms.castOrDie(Boolean.class)), equalTo(true))));
                 screenshot("system-image-imported");
                 onWebView().withElement(findElement(Locator.CSS_SELECTOR, ".composer-attachment-remove")).perform(webClick());
+            }
+            if ("true".equals(args.getString("outage"))) {
+                fill("textarea", "Preserve this unsent draft across computer loss");
+                phase("ready-for-host-stop");
+                waitFor(() -> onWebView().withElement(findElement(Locator.CSS_SELECTOR, ".web-connection-status")).check(webMatches(androidx.test.espresso.web.model.Atoms.script(
+                    "function(el) { return el.getBoundingClientRect().height > 0; }", androidx.test.espresso.web.model.Atoms.castOrDie(Boolean.class)), equalTo(true))));
+                screenshot("computer-disconnected");
+                phase("ready-for-host-start");
+                waitFor(() -> onWebView().check(webMatches(androidx.test.espresso.web.model.Atoms.script(
+                    "function() { return !document.querySelector('.web-connection-status'); }",
+                    androidx.test.espresso.web.model.Atoms.castOrDie(Boolean.class)), equalTo(true))));
+                onWebView().withElement(findElement(Locator.CSS_SELECTOR, "textarea")).check(webMatches(androidx.test.espresso.web.model.Atoms.script(
+                    "function(el) { return el.value; }", androidx.test.espresso.web.model.Atoms.castOrDie(String.class)), equalTo("Preserve this unsent draft across computer loss")));
+                screenshot("computer-reconnected");
+                phase("host-restored");
             }
             androidx.test.espresso.Espresso.pressBackUnconditionally();
             waitFor(()->onWebView().withElement(findElement(Locator.CSS_SELECTOR,".account-devices")).check(webMatches(getText(),containsString("在线"))));
