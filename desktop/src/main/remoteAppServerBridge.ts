@@ -15,10 +15,14 @@ export class RemoteAppServerBridge {
   private endpoint?: RemoteAppServerEndpoint;
   private defaultWorkdir = "";
   private sockets = new Set<Socket>();
+  private peerSockets = new Map<number,Socket>();
+  private nextPeerID = 1;
   private subscribers = new Set<Socket>();
   private readonly compactSubscribers = new Set<Socket>();
   private readonly attachments = new RemoteAttachments();
-  constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void) => Promise<unknown>) {}
+  constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void, peerID: number) => Promise<unknown>, private readonly onPeerClose?: (peerID:number)=>void) {}
+
+  notifyPeer(peerID:number,method:string,params:unknown):void {const socket=this.peerSockets.get(peerID);if(socket)this.send(socket,{method,params});}
 
   currentEndpoint(): RemoteAppServerEndpoint | undefined { return this.endpoint; }
 
@@ -66,9 +70,12 @@ export class RemoteAppServerBridge {
   }
 
   private accept(socket: Socket, token: string, defaultWorkdir: string): void {
+    const peerID=this.nextPeerID++;
+    this.peerSockets.set(peerID,socket);
+    const request=(cwd:string,method:string,params:unknown,reply:(response:Pick<AppServerResponse,"result"|"error">)=>void)=>this.request(cwd,method,params,reply,peerID);
     this.sockets.add(socket);
     socket.on("error", () => socket.destroy());
-    socket.once("close", () => { this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket); });
+    socket.once("close", () => { this.peerSockets.delete(peerID);this.onPeerClose?.(peerID);this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket); });
     socket.setTimeout(5000, () => socket.destroy());
     socket.setEncoding("utf8");
     let buffer = "", authenticated = false;
@@ -123,16 +130,17 @@ export class RemoteAppServerBridge {
           if (completed.length > 256) requests.delete(completed.shift()!);
         };
         void Promise.resolve().then(async () => {
-          if (!this.compactSubscribers.has(socket)) return this.request(cwd, method, params, finish);
+          if(socket.destroyed)throw new Error("Remote connection closed");
+          if (!this.compactSubscribers.has(socket)) return request(cwd, method, params, finish);
           if (method === "remote/content/read") {
             const input = params as { ref: string; offset?: number };
-            return this.request(cwd, "thread/content/read", { ...threadContentParams(input.ref), offset: input.offset ?? 0 }, finish);
+            return request(cwd, "thread/content/read", { ...threadContentParams(input.ref), offset: input.offset ?? 0 }, finish);
           }
-          if (method === "remote/history/read") return this.request(cwd, "thread/history/read", params, finish);
+          if (method === "remote/history/read") return request(cwd, "thread/history/read", params, finish);
           if (method === "remote/attachment/read" || method === "remote/attachment/preview") {
             const input = params as { ref?: unknown; offset?: unknown };
             const source = typeof input?.ref === "string" ? threadAttachmentParams(input.ref) : undefined;
-            if (source) return this.request(cwd, "thread/attachment/read", { ...source, offset: input.offset ?? 0, preview: method.endsWith("preview") }, finish);
+            if (source) return request(cwd, "thread/attachment/read", { ...source, offset: input.offset ?? 0, preview: method.endsWith("preview") }, finish);
             if (method.endsWith("preview")) throw new Error("Preview is unavailable for this attachment");
             return this.attachments.read(params);
           }
@@ -141,13 +149,13 @@ export class RemoteAppServerBridge {
             const chunks: string[] = [];
             let offset = 0, total = 1;
             while (offset < total) {
-              const chunk = await this.request(cwd, "thread/attachment/read", { ...source, offset }, () => {}) as { data: string; total: number; offset: number };
+              const chunk = await request(cwd, "thread/attachment/read", { ...source, offset }, () => {}) as { data: string; total: number; offset: number };
               if (!chunk.data || chunk.offset !== offset || chunk.total > 64 * 1024 * 1024) throw new Error("Invalid attachment response");
               chunks.push(chunk.data); offset += chunk.data.length; total = chunk.total;
             }
             return chunks.join("");
           });
-          return this.request(cwd, method, method === "thread/resume" ? { ...(hydrated as object), history_page: true } : hydrated, finish);
+          return request(cwd, method, method === "thread/resume" ? { ...(hydrated as object), history_page: true } : hydrated, finish);
         }).then(
           result => finish({ result }),
           error => finish({ error: { code: "error", message: error instanceof Error ? error.message : String(error) } }),

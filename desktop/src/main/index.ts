@@ -198,6 +198,9 @@ import {
   type LanguagePreference,
 } from "./desktopSettings";
 import { GitService } from "./gitService";
+import { requestRemoteProjects } from "./remoteProjects";
+import { requestRemoteTerminal } from "./remoteTerminal";
+import { requestRemoteFiles } from "./remoteFiles";
 import { requestRemoteGit } from "./remoteGit";
 import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
@@ -600,7 +603,8 @@ function unregisterWindow(windowID: number): void {
 // independent of the per-workdir app-server pool. Events (pairing URI,
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
-const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply) => {
+const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
+const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = {
@@ -609,17 +613,21 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
     capabilities: { reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] } },
   };
   if (method === "shutdown") throw new Error("Remote clients cannot shut down the shared execution service");
+  if (method.startsWith("desktop/projects/")) return requestRemoteProjects(projectManager,method,params);
   const cwd = resolve(workdir);
   const state = projectManager.list();
   const project = state.projects.find(project => resolve(project.path) === cwd && !project.missing);
   let context: RuntimeContext;
   if (project) context = { kind: "project", project_id: project.id, cwd: project.path };
+  else if (state.projects.some(project=>appServerClientPool.threadCwdsForWorkdir(project.path).some(path=>resolve(path)===cwd))) context={kind:"no_project",cwd};
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
+  if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
+  if (method.startsWith("desktop/file/")) return requestRemoteFiles(context,method,params);
   if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
-});
+}, peerID=>remoteTerminals.stopForOwner(peerID));
 
 const remoteHostManager = new RemoteHostManager({
   appServerEndpoint: () => remoteAppServerBridge.currentEndpoint(),

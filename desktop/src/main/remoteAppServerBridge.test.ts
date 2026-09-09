@@ -85,3 +85,24 @@ it("negotiates lazy images per connection and resolves edited attachments before
   compact.send({id:3, method:"remote/attachment/read", params:{ref:projected.images[0].remote_ref}});
   expect((await compact.next()).result.data.length).toBe(128 * 1024);
 });
+
+it("routes terminal events only to their attachment and releases its sessions on close", async () => {
+  let closed!: (id: number) => void;
+  const disconnected = new Promise<number>(resolve => { closed = resolve; });
+  const bridge = new RemoteAppServerBridge(async (_cwd, _method, _params, _reply, owner) => ({ owner }), closed);
+  bridges.push(bridge);
+  const endpoint = await bridge.start('/workspace');
+  const a = await peer(endpoint), b = await peer(endpoint);
+  await a.next(); await b.next();
+  a.send({id:1,method:'desktop/terminal/start'}); b.send({id:1,method:'desktop/terminal/start'});
+  const ownerA = (await a.next()).result.owner, ownerB = (await b.next()).result.owner;
+  expect(ownerA).not.toBe(ownerB);
+  bridge.notifyPeer(ownerA,'desktop/terminal/event',{data:'private output'});
+  bridge.notifyPeer(ownerB,'desktop/terminal/event',{data:'other output'});
+  expect((await a.next()).params.data).toBe('private output');
+  expect((await b.next()).params.data).toBe('other output');
+  a.socket.destroy(); expect(await disconnected).toBe(ownerA);
+  bridge.notifyPeer(ownerA,'desktop/terminal/event',{data:'after close'});
+  bridge.notifyPeer(ownerB,'desktop/terminal/event',{data:'still connected'});
+  expect((await b.next()).params.data).toBe('still connected');
+});
