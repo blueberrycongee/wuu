@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 	"time"
@@ -100,5 +101,28 @@ func TestStoreDevicePushMissing(t *testing.T) {
 	_, _, ok := store.DevicePush(pub)
 	if ok {
 		t.Errorf("DevicePush: want ok=false on fresh device, got true")
+	}
+}
+
+func TestStatusCreatedIdentityGetsItsComputerNameAtLogin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "remote.json")
+	initial, err := LoadOrCreateStore(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := initial.Identity().Public()
+	named, err := LoadOrCreateStore(path, "Laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named.HostName() != "Laptop" || !bytes.Equal(original, named.Identity().Public()) {
+		t.Fatal("naming changed the identity or kept it anonymous")
+	}
+	reopened, err := LoadOrCreateStore(path, "Renamed OS host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.HostName() != "Laptop" {
+		t.Fatal("existing display name was overwritten")
 	}
 }

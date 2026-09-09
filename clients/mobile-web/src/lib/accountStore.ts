@@ -42,7 +42,7 @@ export const accountDriver: AccountDriver = async (action, input = {}) => {
       input.server,
       input.username,
       input.password,
-      "Wuu 手机",
+      input.name?.trim() || "Wuu 手机",
       action === "register",
     );
     await persist(() => secretStorage.set(key, JSON.stringify(result.session)));

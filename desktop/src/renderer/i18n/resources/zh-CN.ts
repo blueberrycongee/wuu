@@ -508,6 +508,7 @@ export const zhCN = {
   "remote.relayFormat": "ws[s]://主机:端口/v1/connect",
   "remote.saveRelay": "保存中继",
   "remote.lanDescription": "在手机浏览器中使用 Wuu，任务继续在电脑上运行。",
+  "remote.accountDescription": "在手机 App 登录相同账号即可访问这台电脑。保持 Wuu 和电脑网络连接。",
   "remote.webAddress": "访问地址",
   "remote.copyLink": "复制配对链接",
   "remote.refreshPairQr": "重新生成二维码",

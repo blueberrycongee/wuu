@@ -166,3 +166,13 @@ it("allows replacing a displayed pairing code", () => {
   act(() => buttons[buttons.length - 1].click());
   expect(opened).toBe(1);
 });
+
+it("keeps account access usable without advertising unsupported QR pairing", () => {
+  let paired = false;
+  mount(baseProps({ status: { ...baseStatus, account_server: "https://accounts.example" }, hostRunning:true, webUrl:"https://accounts.example", onOpenPairing:()=>{paired=true;} }));
+  expect(container!.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('true');
+  expect(container!.querySelector('[data-testid="remote-pair-panel"]')).toBeNull();
+  expect(container!.querySelectorAll('button')).toHaveLength(1);
+  expect(container!.querySelector('code')).toBeNull();
+  expect(paired).toBe(false);
+});

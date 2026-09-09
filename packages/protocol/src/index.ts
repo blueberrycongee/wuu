@@ -2629,6 +2629,7 @@ export type RemoteControlDevice = {
 
 export type RemoteControlStatus = {
   fingerprint: string;
+  account_server?: string;
   host_name?: string;
   relay_url?: string;
   store: string;

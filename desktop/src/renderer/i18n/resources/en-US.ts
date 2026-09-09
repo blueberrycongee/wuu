@@ -510,6 +510,7 @@ export const enUS = {
   "remote.relayFormat": "ws[s]://host:port/v1/connect",
   "remote.saveRelay": "Save relay",
   "remote.lanDescription": "Use Wuu in your phone browser while tasks run on your computer.",
+  "remote.accountDescription": "Sign in to the same account in the mobile app to access this computer. Keep Wuu running and the computer online.",
   "remote.webAddress": "Web address",
   "remote.copyLink": "Copy pairing link",
   "remote.refreshPairQr": "Generate a new code",

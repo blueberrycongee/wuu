@@ -63,6 +63,12 @@ func LoadOrCreateStore(path, hostName string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
+		if s.data.HostName == "" && hostName != "" {
+			s.data.HostName = hostName
+			if err := s.save(); err != nil {
+				return nil, err
+			}
+		}
 		return s, nil
 	case os.IsNotExist(err):
 		id, err := secure.NewIdentity()

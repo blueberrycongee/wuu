@@ -13,6 +13,7 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
  const [mode, setMode] = useState<'login' | 'register' | 'recover' | 'password'>('login');
  const [server, setServer] = useState(''); const [username, setUsername] = useState('');
  const [password, setPassword] = useState(''); const [secret, setSecret] = useState('');
+ const [deviceName, setDeviceName] = useState('');
  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [recovery, setRecovery] = useState('');
  useEffect(() => {
   let active = true; let running = false;
@@ -45,11 +46,12 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
    {!(account.devices ?? []).some(d => d.role === 'host') && <p>在电脑的 Wuu「设置 → 手机访问」登录这个账号，电脑会出现在这里。</p>}
    <p>离线电脑需要在电脑上启动 Wuu 并连接网络。</p>
    <div className="account-actions"><button type="button" disabled={busy} onClick={() => setMode('password')}>修改密码</button><button type="button" disabled={busy} onClick={() => void perform('logout')}>退出账号</button></div>
-  </> : <form onSubmit={e => {e.preventDefault();void perform(mode,{server,username:account.username || username,password,secret});}}>
+  </> : <form onSubmit={e => {e.preventDefault();void perform(mode,{server,username:account.username || username,password,secret,name:deviceName});}}>
    {!account.username && <>
     <label>自部署服务端<input type="url" autoCapitalize="none" autoCorrect="off" placeholder="https://wuu.example.com" value={server} required onChange={e => setServer(e.target.value)}/></label>
     <label>用户名<input autoComplete="username" autoCapitalize="none" autoCorrect="off" value={username} required minLength={3} onChange={e => setUsername(e.target.value)}/></label>
    </>}
+   {onComputer && (mode === 'login' || mode === 'register') && <label>此设备名称<input value={deviceName} maxLength={64} placeholder="例如：我的 iPhone" onChange={e => setDeviceName(e.target.value)}/></label>}
    {(mode === 'recover' || mode === 'password') && <label>{mode === 'recover' ? '恢复码' : '当前密码'}<input type="password" autoComplete={mode === 'password' ? 'current-password' : 'off'} value={secret} required onChange={e => setSecret(e.target.value)}/></label>}
    <label>{mode === 'login' ? '密码' : '新密码（至少 12 个字符）'}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} required minLength={12} onChange={e => setPassword(e.target.value)}/></label>
    {mode === 'register' && <p>账号保存在你指定的服务端；服务端管理者负责身份与设备信任。注册后请保存恢复码。</p>}

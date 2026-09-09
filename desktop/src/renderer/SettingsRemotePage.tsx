@@ -21,6 +21,7 @@ export type RemoteDeviceView = {
 
 export type RemoteStatusView = {
   fingerprint: string;
+  account_server?: string;
   host_name?: string;
   relay_url?: string;
   store: string;
@@ -59,7 +60,7 @@ export function SettingsRemotePage({
       {window.wuu?.remoteAccount && <AccountPanel driver={window.wuu.remoteAccount} />}
       {statusError ? <div className="settings-error">{statusError}</div> : null}
 
-      <RemoteSection title={t("remote.access")} description={t("remote.lanDescription")}>
+      <RemoteSection title={t("remote.access")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
         <div className="settings-group">
           <RemoteRow title={hostRunning ? t("remote.hostRunning") : t("remote.hostStopped")}>
             <button className="settings-switch" type="button" role="switch" aria-checked={hostEnabled}
@@ -68,13 +69,13 @@ export function SettingsRemotePage({
               <span className="sr-only">{hostEnabled ? t("remote.disableAccess") : t("remote.enableAccess")}</span>
             </button>
           </RemoteRow>
-          {hostRunning && webUrl ? <RemoteRow title={t("remote.webAddress")}>
+          {hostRunning && webUrl && !status?.account_server ? <RemoteRow title={t("remote.webAddress")}>
             <code>{webUrl}</code>
           </RemoteRow> : null}
         </div>
       </RemoteSection>
 
-      <RemoteSection title={t("remote.pairSection")} description={t("remote.pairSectionDescription")}>
+      {!status?.account_server && <><RemoteSection title={t("remote.pairSection")} description={t("remote.pairSectionDescription")}>
         <div className="settings-group">
           {pairUri ? (
             <div className="settings-remote-pairing" data-testid="remote-pair-panel">
@@ -125,6 +126,7 @@ export function SettingsRemotePage({
           )}
         </div>
       </RemoteSection>
+      </>}
     </div>
   );
 }
