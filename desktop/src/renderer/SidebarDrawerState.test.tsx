@@ -259,3 +259,23 @@ describe("useSidebarDrawerState", () => {
     expect(hook.get().sidebarDrawerPhase).toBe("closed");
   });
 });
+
+it("keeps a touch drawer open through compatibility mouse leave events", async () => {
+  document.documentElement.dataset.hostKind = "web";
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
+  try {
+    const hook = await renderSidebarDrawerState();
+    await act(async () => { hook.get().openSidebarDrawerNow(); });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseout", { relatedTarget: null }));
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 999, clientY: 999 }));
+      vi.advanceTimersByTime(1000);
+    });
+    expect(hook.get().sidebarDrawerPhase).toBe("open");
+    await act(async () => { hook.get().closeSidebarDrawer(); });
+    expect(hook.get().sidebarDrawerPhase).toBe("closing");
+  } finally {
+    delete document.documentElement.dataset.hostKind;
+    vi.unstubAllGlobals();
+  }
+});

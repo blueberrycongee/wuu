@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import {
   useCallback,
   useEffect,
@@ -233,6 +234,9 @@ export function useSidebarDrawerState({
   ]);
 
   const scheduleSidebarDrawerCloseFromPointerLeave = useCallback((event?: Event): void => {
+    // Touch browsers also synthesize mouseout after taps and layout changes.
+    // Mobile drawers close through navigation, gestures or their backdrop.
+    if (isTouchWebShell()) return;
     // Touch release/cancel produces pointerleave even when a drawer drag is
     // returning to its open position. It is not a mouse leaving the rail.
     if (event && "pointerType" in event && event.pointerType === "touch") return;
@@ -284,6 +288,7 @@ export function useSidebarDrawerState({
   ]);
 
   const syncSidebarDrawerHover = useCallback((): void => {
+    if (isTouchWebShell()) return;
     if (!sidebarCollapsed || sidebarDrawerPhase !== "open") {
       return;
     }
