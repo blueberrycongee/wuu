@@ -119,9 +119,25 @@ func forkOriginAtTarget(projection historyProjection, turns []Turn, targetTurnID
 	var origin historyItemOrigin
 	var ok bool
 	if targetItemID != "" {
+		if target.Type == "" {
+			if turn, found := turnByID(turns, targetTurnID); found {
+				for _, item := range turn.Items {
+					if item.ID == targetItemID {
+						target = item
+						break
+					}
+				}
+			}
+		}
 		origin, ok = projectionOriginForIdentity(projection, target)
-		if !ok {
+		// Positional ids can be reused after checkpointing or display pruning.
+		// A missing durable identity must not resolve to an unrelated item that
+		// happens to occupy the same position in another projection.
+		if !ok && target.Seq <= 0 && strings.TrimSpace(target.SourceID) == "" {
 			origin, ok = projectionOriginForTarget(projection, turns, targetTurnID, targetItemID)
+			if ok && target.Type != "" && origin.Item.Type != target.Type {
+				ok = false
+			}
 		}
 		if ok && !origin.Complete {
 			return historyItemOrigin{}, errForkToolResultsNotFound

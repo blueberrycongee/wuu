@@ -529,17 +529,38 @@ func (s *Server) handleThreadFork(req Request) error {
 		target.Type = params.Target.Type
 		target.SourceID = strings.TrimSpace(params.Target.SourceID)
 	}
-	history, err := forkHistoryAtTargetWithIdentity(source.history, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
-	if errors.Is(err, errForkTargetNotFound) {
-		if liveTurn, ok := turnByID(source.thread.Turns, strings.TrimSpace(params.TurnID)); ok {
-			history, err = forkLiveAnswerHistory(source.history, liveTurn, params.ItemID)
-		}
-	}
-	if errors.Is(err, errForkTargetNotFound) && len(source.rawHistory) > 0 {
+	// The provider checkpoint is only the active model context. Fork from the
+	// durable transcript first so earlier conversation is not silently lost.
+	var history []providers.ChatMessage
+	err = errForkTargetNotFound
+	if len(source.rawHistory) > 0 {
 		history, err = forkPersistedHistoryAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
 	}
 	if errors.Is(err, errForkTargetNotFound) && len(source.displayHistory) > 0 {
 		history, err = forkHistoryAtTargetWithIdentity(source.displayHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
+	}
+	if errors.Is(err, errForkTargetNotFound) {
+		history, err = forkHistoryAtTargetWithIdentity(source.history, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
+	}
+	if errors.Is(err, errForkTargetNotFound) {
+		if liveTurn, ok := turnByID(source.thread.Turns, strings.TrimSpace(params.TurnID)); ok {
+			base := source.history
+			if len(source.rawHistory) > 0 {
+				// Streaming tools may already have been archived. Materialize
+				// the live turn only after its admitted prompt, not after those
+				// tools, otherwise their call/result pairs would be duplicated.
+				for _, item := range liveTurn.Items {
+					if item.Type != ThreadItemUserMessage {
+						continue
+					}
+					if prefix, prefixErr := forkPersistedHistoryAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, liveTurn.ID, item.ID, item); prefixErr == nil {
+						base = prefix
+					}
+					break
+				}
+			}
+			history, err = forkLiveAnswerHistory(base, liveTurn, params.ItemID)
+		}
 	}
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)

@@ -59,6 +59,24 @@ func TestForkHistoryAtToolCallTargetKeepsWholeToolBatch(t *testing.T) {
 	}
 }
 
+func TestForkDoesNotUseRecycledPositionWhenIdentityIsMissing(t *testing.T) {
+	threadID := "thread-recycled-position"
+	full := []providers.ChatMessage{
+		{Seq: 1, Role: "user", Content: "older prompt"},
+		{Seq: 2, Role: "assistant", Content: "selected answer", Phase: providers.MessagePhaseFinalAnswer, ProviderItemID: "selected"},
+		{Seq: 3, Role: "user", Content: "later prompt"},
+		{Seq: 4, Role: "assistant", Content: "later answer", Phase: providers.MessagePhaseFinalAnswer, ProviderItemID: "later"},
+	}
+	turns := turnsFromHistory(threadID, full, time.Unix(0, 0).UTC())
+	turn, item := finalAnswerItemForForkTest(t, turns, "selected answer")
+	for _, target := range []ThreadItem{item, {Type: item.Type, SourceID: item.SourceID}, {Type: item.Type, Seq: item.Seq}} {
+		_, err := forkHistoryAtTargetWithIdentity(full[2:], threadID, turns, turn.ID, item.ID, target)
+		if !errors.Is(err, errForkTargetNotFound) {
+			t.Fatalf("missing identity %+v resolved to a recycled position: %v", target, err)
+		}
+	}
+}
+
 func TestForkHistoryAtFinalAnswerAfterCompaction(t *testing.T) {
 	threadID := "thread-compaction"
 	history := []providers.ChatMessage{
