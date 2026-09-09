@@ -68,6 +68,7 @@ export function ComposerAttachmentStrip({
             {removable ? (
               <button
                 type="button"
+                className="composer-attachment-remove"
                 aria-label={t("composer.removeImage", { number: index + 1 })}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -85,7 +86,7 @@ export function ComposerAttachmentStrip({
           <FileText className="icon" aria-hidden="true" />
           <span>{file.filename?.trim() || t("composer.pdfNumber", { number: index + 1 })}</span>
           {removable ? (
-            <button type="button" aria-label={t("composer.removeFile", { number: index + 1 })} onClick={() => onRemoveFile?.(file.id)}>
+            <button type="button" className="composer-attachment-remove" aria-label={t("composer.removeFile", { number: index + 1 })} onClick={() => onRemoveFile?.(file.id)}>
               <X className="icon-xs" />
             </button>
           ) : null}

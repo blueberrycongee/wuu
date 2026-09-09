@@ -537,7 +537,16 @@
   object-fit: cover;
 }
 
-.composer-image-attachment button {
+.composer-attachment-remove {
+  padding: 0;
+  line-height: 0;
+}
+
+.composer-attachment-remove svg {
+  display: block;
+}
+
+.composer-image-attachment .composer-attachment-remove {
   position: absolute;
   top: -7px;
   right: -7px;
@@ -552,7 +561,7 @@
   box-shadow: var(--composer-image-attachment-button-shadow);
 }
 
-.composer-image-attachment button:hover {
+.composer-image-attachment .composer-attachment-remove:hover {
   background: var(--surface-2);
   color: var(--ink);
 }
@@ -581,7 +590,7 @@
   font-weight: 600;
 }
 
-.composer-file-attachment button {
+.composer-file-attachment .composer-attachment-remove {
   position: absolute;
   top: 7px;
   right: 7px;
@@ -595,7 +604,7 @@
   color: var(--ink-tertiary);
 }
 
-.composer-file-attachment button:hover {
+.composer-file-attachment .composer-attachment-remove:hover {
   background: var(--composer-file-attachment-button-hover-bg);
   color: var(--ink);
 }

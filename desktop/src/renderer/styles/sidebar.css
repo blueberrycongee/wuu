@@ -2106,7 +2106,10 @@
 
 .project-row-new-thread {
   position: absolute;
-  top: 4px;
+  /* Center against the actual row height, including larger touch rows. */
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
   right: var(--sidebar-row-pad-x, 8px);
   opacity: 0;
   pointer-events: none;
