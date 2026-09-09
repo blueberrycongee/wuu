@@ -4163,6 +4163,45 @@ pre {
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
+.view-switch-loading:not(.view-switch-loading-compact) {
+  place-self: stretch;
+  align-content: center;
+  margin-top: 0;
+  padding-bottom: 56px;
+  background: var(--paper);
+  pointer-events: auto;
+}
+
+/* Keep cached messages readable while the selected session resumes. */
+.view-switch-loading-compact {
+  place-self: start end;
+  margin: 12px 16px;
+  padding: 8px 12px;
+  gap: 6px;
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.view-switch-loading-compact .view-switch-mark {
+  font-size: 20px;
+}
+
+.view-switch-loading-compact .view-switch-mark::after {
+  width: 4px;
+  height: 16px;
+  margin-left: 3px;
+  transform: translateY(2px);
+}
+
+.view-switch-loading-compact .view-switch-rail {
+  width: 64px;
+  height: 2px;
+}
+
+.view-switch-loading-compact .view-switch-rail::after {
+  width: 22px;
+}
+
 .view-switch-mark {
   gap: 3px;
   color: var(--ink);

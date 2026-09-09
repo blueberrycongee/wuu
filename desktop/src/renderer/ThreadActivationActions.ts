@@ -92,8 +92,7 @@ export function createThreadActivationActions(
       const pendingViewSwitch = deps.getPendingViewSwitch();
       if (
         pendingViewSwitch?.kind === "thread" &&
-        pendingViewSwitch.targetID === threadID &&
-        !pendingViewSwitch.visible
+        pendingViewSwitch.targetID === threadID
       ) {
         return;
       }

@@ -56,10 +56,6 @@ export function useViewSwitchState({
       const requestID = viewSwitchRequestRef.current + 1;
       viewSwitchRequestRef.current = requestID;
       clearViewSwitchDelay();
-      if (kind === "thread" || kind === "project") {
-        setPendingViewSwitch({ kind, targetID, visible: true });
-        return requestID;
-      }
       setPendingViewSwitch({ kind, targetID, visible: false });
       viewSwitchDelayTimerRef.current = window.setTimeout(() => {
         viewSwitchDelayTimerRef.current = undefined;
@@ -77,17 +73,10 @@ export function useViewSwitchState({
     [clearViewSwitchDelay, loadingDelayMs],
   );
 
-  const beginInstantThreadSwitch = useCallback((targetID = ""): number => {
-    const requestID = viewSwitchRequestRef.current + 1;
-    viewSwitchRequestRef.current = requestID;
-    clearViewSwitchDelay();
-    // Cached thread switches may paint immediately, but cross-runtime switches
-    // still have to finish runtime selection and resume before a send is safe.
-    // Keep that request in the non-visible pending state so send handlers can
-    // reject the transition window without restoring the loading overlay.
-    setPendingViewSwitch({ kind: "thread", targetID, visible: false });
-    return requestID;
-  }, [clearViewSwitchDelay]);
+  const beginInstantThreadSwitch = useCallback(
+    (targetID = ""): number => beginViewSwitch("thread", targetID),
+    [beginViewSwitch],
+  );
 
   const finishViewSwitch = useCallback(
     (requestID: number): boolean => {
@@ -113,16 +102,17 @@ export function useViewSwitchState({
   );
 
   const visiblePendingThreadID =
-    pendingViewSwitch?.visible && pendingViewSwitch.kind === "thread"
+    pendingViewSwitch?.kind === "thread"
       ? pendingViewSwitch.targetID
       : undefined;
   const visiblePendingProjectID =
-    pendingViewSwitch?.visible && pendingViewSwitch.kind === "project"
+    pendingViewSwitch?.kind === "project"
       ? pendingViewSwitch.targetID
       : undefined;
   const viewSwitchPending = pendingViewSwitch !== undefined;
   const viewContextSwitchPending =
-    pendingViewSwitch?.visible === true && pendingViewSwitch.kind !== "thread";
+    pendingViewSwitch?.kind === "project" ||
+    (pendingViewSwitch?.kind === "runtime" && pendingViewSwitch.visible);
 
   return {
     pendingViewSwitch,

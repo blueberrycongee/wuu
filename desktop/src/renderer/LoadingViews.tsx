@@ -88,10 +88,10 @@ export function RuntimeLoading({
   );
 }
 
-export function ViewSwitchLoading(): JSX.Element {
+export function ViewSwitchLoading({ compact = false }: { compact?: boolean }): JSX.Element {
   const { t } = useI18n();
   return (
-    <div className="view-switch-loading" role="status" aria-label={t("loading.switching")}>
+    <div className={`view-switch-loading${compact ? " view-switch-loading-compact" : ""}`} role="status" aria-label={t("loading.switching")}>
       <div className="wuu-launch-mark view-switch-mark" aria-hidden="true">
         <span>w</span>
         <span>u</span>

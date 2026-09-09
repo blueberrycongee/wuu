@@ -5435,7 +5435,12 @@ export function App(): JSX.Element {
           onOpenPullRequest={() => openEnvironmentDialog("pull-request")}
           rightPanelFilePath={rightPanelFilePath}
           onCloseFilePreview={handleCloseFilePreview}
-          viewContextSwitchPending={viewContextSwitchPending}
+          switchLoadingVisible={pendingViewSwitch?.visible === true}
+          switchLoadingCompact={
+            pendingViewSwitch?.kind === "thread" &&
+            pendingViewSwitch.targetID === activeThread?.id &&
+            (activeThread?.turns.length ?? 0) > 0
+          }
         />
 
         {sideThreadPanelVisible && activeThreadID && sideThread.entry ? (

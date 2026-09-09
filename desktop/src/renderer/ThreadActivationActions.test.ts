@@ -274,6 +274,28 @@ describe("createThreadActivationActions", () => {
     expect(harness.beginViewSwitch).not.toHaveBeenCalled();
   });
 
+  it("keeps a cached resume pending when its selected tab is clicked after loading appears", async () => {
+    const cached = {
+      ...thread(),
+      turns: [{ id: "turn-1", status: "completed", items_view: "full", items: [] }],
+    } as Thread;
+    const api = installWuuApi(cached);
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        thread: cached,
+        threads: [cached],
+        status: "ready",
+      },
+      activeThreadID: cached.id,
+      pendingViewSwitch: { kind: "thread", targetID: cached.id, visible: true },
+    });
+    await harness.actions.selectThread(cached.id);
+    expect(harness.cancelViewSwitch).not.toHaveBeenCalled();
+    expect(api.resumeThread).not.toHaveBeenCalled();
+  });
+
   it("selects a child agent through the same resume path", async () => {
     const context = projectContext();
     const agent = { id: "agent-1", status: "idle" } as Agent;

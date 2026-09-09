@@ -1,6 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ViewSwitchLoading } from "./LoadingViews";
 import {
   useViewSwitchState,
   type ViewSwitchStateController,
@@ -23,9 +24,9 @@ async function renderViewSwitchState(): Promise<{
 }> {
   let latest: ViewSwitchStateController | undefined;
 
-  function Probe(): null {
+  function Probe(): JSX.Element | null {
     latest = useViewSwitchState({ loadingDelayMs: 50 });
-    return null;
+    return latest.pendingViewSwitch?.visible ? createElement(ViewSwitchLoading) : null;
   }
 
   const container = document.createElement("div");
@@ -48,7 +49,7 @@ async function renderViewSwitchState(): Promise<{
 }
 
 describe("useViewSwitchState", () => {
-  it("marks thread switches visible immediately", async () => {
+  it("marks the selected thread immediately but delays the animation", async () => {
     const hook = await renderViewSwitchState();
 
     act(() => {
@@ -58,13 +59,13 @@ describe("useViewSwitchState", () => {
     expect(hook.get().pendingViewSwitch).toEqual({
       kind: "thread",
       targetID: "thread-1",
-      visible: true,
+      visible: false,
     });
     expect(hook.get().visiblePendingThreadID).toBe("thread-1");
     expect(hook.get().viewContextSwitchPending).toBe(false);
   });
 
-  it("marks project switches visible immediately", async () => {
+  it("marks the selected project immediately but delays the animation", async () => {
     vi.useFakeTimers();
     const hook = await renderViewSwitchState();
 
@@ -74,7 +75,7 @@ describe("useViewSwitchState", () => {
     expect(hook.get().pendingViewSwitch).toEqual({
       kind: "project",
       targetID: "project-1",
-      visible: true,
+      visible: false,
     });
     expect(hook.get().visiblePendingProjectID).toBe("project-1");
     expect(hook.get().viewContextSwitchPending).toBe(true);
@@ -115,12 +116,63 @@ describe("useViewSwitchState", () => {
     });
     expect(hook.get().viewSwitchPending).toBe(true);
     expect(hook.get().viewContextSwitchPending).toBe(false);
-    expect(hook.get().visiblePendingThreadID).toBeUndefined();
+    expect(hook.get().visiblePendingThreadID).toBe("thread-cached");
 
     act(() => {
       expect(hook.get().finishViewSwitch(requestID)).toBe(true);
     });
     expect(hook.get().pendingViewSwitch).toBeUndefined();
+  });
+
+  it.each(["thread", "project", "runtime", "cached"] as const)(
+    "shows the shared animation only while a slow %s switch is pending",
+    async (kind) => {
+      vi.useFakeTimers();
+      const hook = await renderViewSwitchState();
+      let requestID = 0;
+      act(() => {
+        requestID = kind === "cached"
+          ? hook.get().beginInstantThreadSwitch("target")
+          : hook.get().beginViewSwitch(kind, "target");
+      });
+      expect(document.querySelector('[role="status"]')).toBeNull();
+      act(() => { vi.advanceTimersByTime(50); });
+      expect(document.querySelector('[role="status"]')).not.toBeNull();
+      act(() => { hook.get().finishViewSwitch(requestID); });
+      expect(document.querySelector('[role="status"]')).toBeNull();
+    },
+  );
+
+  it("does not show a completed or cancelled switch after the delay", async () => {
+    vi.useFakeTimers();
+    const hook = await renderViewSwitchState();
+    act(() => {
+      const requestID = hook.get().beginInstantThreadSwitch("fast");
+      hook.get().finishViewSwitch(requestID);
+    });
+    act(() => { vi.advanceTimersByTime(100); });
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    act(() => {
+      hook.get().beginViewSwitch("thread", "cancelled");
+      hook.get().cancelViewSwitch();
+    });
+    act(() => { vi.advanceTimersByTime(100); });
+    expect(document.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("gives a replacement switch its own delay and ignores late completion", async () => {
+    vi.useFakeTimers();
+    const hook = await renderViewSwitchState();
+    let oldRequest = 0;
+    act(() => { oldRequest = hook.get().beginViewSwitch("thread", "old"); });
+    act(() => { vi.advanceTimersByTime(40); });
+    act(() => { hook.get().beginViewSwitch("thread", "new"); });
+    act(() => { vi.advanceTimersByTime(10); });
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(hook.get().finishViewSwitch(oldRequest)).toBe(false);
+    act(() => { vi.advanceTimersByTime(40); });
+    expect(document.querySelector('[role="status"]')).not.toBeNull();
+    expect(hook.get().pendingViewSwitch?.targetID).toBe("new");
   });
 
   it("cancel invalidates in-flight request IDs", async () => {
