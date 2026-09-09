@@ -2003,7 +2003,7 @@ export const zhCN = {
   "onboarding.externalEngineConnection": "外部 engine 使用自己的登录。这里配置的是 Wuu 的模型连接，可以稍后设置。",
   "onboarding.otherConnection": "或者，连接其他模型服务",
   "onboarding.runtimeFailed": "无法保存运行方式",
-  "onboarding.providerTitle": "给小球接上思考能力",
+  "onboarding.providerTitle": "让 Wuu 拥有思考能力",
   "onboarding.providerReadyTitle": "模型已经准备好了",
   "onboarding.configureLater": "稍后配置",
   "onboarding.savingProvider": "正在连接…",
