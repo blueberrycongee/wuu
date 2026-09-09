@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ImagePreviewProvider,
   useImagePreview,
@@ -159,4 +159,18 @@ describe("useImagePreview", () => {
       });
     }).toThrow(/ImagePreviewProvider/);
   });
+});
+
+it("shares the original image through the native host and reports a failed save", async () => {
+  const previous = window.wuu;
+  const saveArtifactFile = vi.fn().mockRejectedValue(new Error("Storage full"));
+  window.wuu = { ...previous, saveArtifactFile };
+  try {
+    const probe = renderWithProbe();
+    act(() => probe.getAPI()!.openPreview({src:"data:image/png;base64,aGVsbG8=",title:"test.png"}));
+    const button = container.querySelector<HTMLButtonElement>('.image-preview-toolbar-button')!;
+    await act(async () => { button.click(); });
+    expect(saveArtifactFile).toHaveBeenCalledWith("test.png","data:image/png;base64,aGVsbG8=");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Storage full");
+  } finally { window.wuu = previous; }
 });

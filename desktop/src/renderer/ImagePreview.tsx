@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { Minus, RotateCcw, X, ZoomIn } from "lucide-react";
+import { Download, Minus, RotateCcw, X, ZoomIn } from "lucide-react";
 import { useI18n } from "./i18n";
 
 export type ImagePreviewItem =
@@ -84,6 +84,14 @@ function ImagePreviewOverlay({
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const [saveError, setSaveError] = useState("");
+  const saveImage = (): void => {
+    const source = item.svg == null ? item.src : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
+    if (!source || !window.wuu?.saveArtifactFile) return;
+    setSaveError("");
+    void window.wuu.saveArtifactFile(item.title || (item.svg == null ? "image.png" : "image.svg"), source)
+      .catch(error => setSaveError(String(error)));
+  };
   const dragState = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
 
@@ -210,6 +218,7 @@ function ImagePreviewOverlay({
     >
       <div className="image-preview-toolbar" onClick={(event) => event.stopPropagation()}>
         <div className="image-preview-toolbar-actions">
+          {window.wuu?.saveArtifactFile && <button type="button" className="image-preview-toolbar-button" onClick={saveImage} aria-label={t("artifacts.downloadNamed", {name:item.title || "image"})}><Download className="icon" aria-hidden="true" /></button>}
           <button
             type="button"
             className="image-preview-toolbar-button"
@@ -257,6 +266,7 @@ function ImagePreviewOverlay({
           </button>
         </div>
       </div>
+      {saveError && <p className="image-preview-status error" role="alert">{saveError}</p>}
       <div
         className="image-preview-stage"
         style={{ cursor }}
