@@ -54,3 +54,32 @@
 .account-workbench-content .app-shell.compact-navigation .titlebar {
   padding-top: 0;
 }
+
+@media (pointer: coarse), (max-width: 700px) {
+  .workspace-terminal-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .workspace-terminal-navigation {
+    grid-column: 1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+  .workspace-terminal-new { position: static; width: 44px; height: 44px; }
+  .workspace-terminal-run-list { display: flex; min-width: 0; overflow-x: auto; }
+  .workspace-terminal-resource-item { flex: 0 0 auto; }
+  .workspace-terminal-resource { min-height: 44px; white-space: nowrap; }
+  .workspace-terminal-resource-item .workspace-terminal-resource,
+  .workspace-terminal-resource-item.first .workspace-terminal-resource { padding-right: 44px; }
+  .workspace-terminal-resource-close,
+  .workspace-terminal-resource-item.first .workspace-terminal-resource-close {
+    right: 0; width: 44px; height: 44px; opacity: 1; pointer-events: auto;
+  }
+  .workspace-terminal-resizer { display: none; }
+  .workspace-terminal-content { grid-column: 1; }
+  .workspace-terminal-workspace.standalone-agent-run { grid-template-rows: minmax(0, 1fr); }
+  .workspace-terminal-panel { grid-template-rows: minmax(0, 1fr) auto; }
+}

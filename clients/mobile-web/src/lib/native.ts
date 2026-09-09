@@ -42,6 +42,7 @@ export async function startNativeLifecycle(): Promise<void> {
     if (window.dispatchEvent(event)) void App.minimizeApp();
   });
   document.addEventListener("click", (event) => {
+    if (event.defaultPrevented) return;
     const link = (event.target as Element | null)?.closest(
       "a[href]",
     ) as HTMLAnchorElement | null;
