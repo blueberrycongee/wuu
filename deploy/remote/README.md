@@ -67,4 +67,27 @@ docker compose -f deploy/remote/compose.yaml start accounts
 
 账号数据库不包含电脑会话。分别备份每台电脑的 `WUU_HOME` 和工作目录，恢复文件权限；不要将同一个 `remote.json` 同时复制到两台运行中的电脑，它们会共享设备身份并互相顶下线。
 
+恢复 Compose 备份时可以使用以下命令。`remote-backup` 必须是前面备份得到的整个数据目录；账号模式没有旧 QR 配对时，`relay.json` 可能尚不存在。
+
+```sh
+docker compose -f deploy/remote/compose.yaml stop accounts
+docker compose -f deploy/remote/compose.yaml cp ./remote-backup/. accounts:/data
+docker compose -f deploy/remote/compose.yaml run --rm --no-deps --user 0 \
+  --entrypoint chown accounts -R 10001:10001 /data
+docker compose -f deploy/remote/compose.yaml start accounts
+```
+
 升级前备份，记录正在运行的 Git 提交，构建新的二进制/镜像，停止旧进程后替换并启动。数据库当前 schema 为 1；未知版本拒绝打开。若未来版本迁移了 schema，回滚应用时同时恢复迁移前备份。手机资源随本地 App 构建更新，不依赖服务端分发可执行代码。
+
+## 验证自己的部署
+
+在可丢弃的验证服务端开启注册后运行（Node.js 22+）：
+
+```sh
+node deploy/remote/verify.mjs create https://wuu.example.com /tmp/wuu-test-state.json
+node deploy/remote/verify.mjs verify https://wuu.example.com /tmp/wuu-test-state.json
+# 重启容器、备份并恢复后，再执行 verify，检查持久化。
+node deploy/remote/verify.mjs revoke https://wuu.example.com /tmp/wuu-test-state.json
+```
+
+脚本创建两个随机测试账号，检查设备目录隔离、跨账号删除被拒绝、设备撤销和恢复码只能使用一次。测试状态文件包含测试令牌和恢复码，以 0600 保存且不覆盖已有文件；验证结束删除该文件。`revoke` 会改变测试账号状态；恢复之前的备份后可以再次 `verify`。本地自签 CA 通过 `NODE_EXTRA_CA_CERTS=/path/to/root.crt` 指定，不能禁用 TLS 校验。此脚本验证账号服务，手机与真实 Agent 的验证见手机 App 文档。
