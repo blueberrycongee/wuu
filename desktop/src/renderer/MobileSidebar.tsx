@@ -40,15 +40,12 @@ export function MobileSidebar(props: Props): JSX.Element {
   const threads = props.projectThreadsByProjectID[selectedID] ?? [];
   const actionThread = threads.find(thread => thread.id === actionsID);
   const loading = props.loadingProjectThreadIDs?.has(selectedID);
+  const byRecency = (left: typeof threads[number], right: typeof threads[number]) =>
+    threadTime(right) - threadTime(left);
   const groups = [
-    { label: t("sidebar.pinned"), threads: [] as typeof threads },
-    { label: t("sidebar.attentionConversations"), threads: [] as typeof threads },
-    { label: t("sidebar.recentConversations"), threads: [] as typeof threads },
+    { label: t("sidebar.pinned"), heading: true, threads: threads.filter(thread => thread.pinned).sort(byRecency) },
+    { label: t("sidebar.conversations"), heading: false, threads: threads.filter(thread => !thread.pinned).sort(byRecency) },
   ];
-  for (const thread of [...threads].sort((left, right) => threadTime(right) - threadTime(left))) {
-    const attention = isThreadExecuting(thread) || isThreadUnread(thread, props.state.lastViewedTurnByThreadID[thread.id]);
-    groups[thread.pinned ? 0 : attention ? 1 : 2].threads.push(thread);
-  }
 
   function closeActions() {
     setActionsID(undefined);
@@ -122,7 +119,7 @@ export function MobileSidebar(props: Props): JSX.Element {
           {project?.missing ? <p className="mobile-sidebar-empty" role="status">{t("threadSidebar.missingWorkspace")}</p> : null}
           {groups.filter(group => group.threads.length > 0).map(group => <section
             key={group.label} className="mobile-sidebar-group" aria-label={group.label}>
-            <h3>{group.label}</h3>
+            {group.heading ? <h3>{group.label}</h3> : null}
             {group.threads.map(thread => {
               const running = isThreadExecuting(thread);
               return <MobileSessionRow key={thread.id}
