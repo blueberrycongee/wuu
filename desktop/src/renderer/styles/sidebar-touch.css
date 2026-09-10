@@ -2,6 +2,8 @@
    moves the panel without stretching or fading its contents. */
 @media (pointer: coarse) {
   :root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-collapsed {
+    /* Phone navigation should not inherit a narrow desktop sidebar preference. */
+    --compact-session-switcher-width: min(300px, 78vw);
     --sidebar-touch-offset: -100%;
     --sidebar-touch-progress: 0;
   }

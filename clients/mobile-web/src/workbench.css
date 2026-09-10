@@ -76,7 +76,7 @@
 }
 
 :root[data-host-kind="web"] .account-workbench-content .app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-close {
-  top: 0;
+  top: 12px;
 }
 
 @media (pointer: coarse), (max-width: 700px) {

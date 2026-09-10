@@ -175,3 +175,26 @@ it("dismisses the drawer when opening an extension view from More", () => {
   expect(closeDrawer).toHaveBeenCalledOnce();
   expect(openView).toHaveBeenCalledOnce();
 });
+
+it("shows each conversation once in priority groups and moves read replies back to recent", () => {
+  const pinned = { ...thread("pinned"), pinned: true, latest_completed_turn_id: "reply" };
+  const running: ThreadSummary = { ...thread("running"), status: "in_progress" };
+  const unread = { ...thread("unread"), latest_completed_turn_id: "reply" };
+  const newer = { ...thread("newer"), updated_at: "2026-02-01T00:00:00Z" };
+  props.projectThreadsByProjectID.one = [thread("older"), unread, running, pinned, newer];
+  render();
+  const rows = () => [...container.querySelectorAll('section button[aria-label]')].map(row => row.getAttribute("aria-label"));
+  const groupRows = (key: Parameters<typeof translateCurrent>[0]) =>
+    [...container.querySelectorAll(`section[aria-label="${translateCurrent(key)}"] button`)].map(row => row.getAttribute("aria-label"));
+  expect(rows()).toEqual(["pinned", "unread", "running", "newer", "older"]);
+  expect(groupRows("sidebar.attentionConversations")).toEqual(["unread", "running"]);
+  click("unread");
+  expect(props.onSelectProjectThread).toHaveBeenCalledWith("one", "unread");
+  props.state = { ...props.state, lastViewedTurnByThreadID: { unread: "reply", pinned: "reply" } };
+  props.projectThreadsByProjectID.one = [thread("older"), unread, { ...running, status: "idle" }, pinned, newer];
+  render();
+  expect(groupRows("sidebar.pinned")).toEqual(["pinned"]);
+  expect(container.querySelector(`section[aria-label="${translateCurrent("sidebar.attentionConversations")}"]`)).toBeNull();
+  expect(groupRows("sidebar.recentConversations")).toEqual(["newer", "older", "unread", "running"]);
+  expect(new Set(rows()).size).toBe(5);
+});

@@ -429,6 +429,7 @@ export const zhCN = {
   "sidebar.attentionEmpty": "没有需要关注的会话",
   "sidebar.clearUnreadHint": "长按铃铛，可一次清除全部未读",
   "sidebar.collaborationEmpty": "还没有频道",
+  "sidebar.recentConversations": "最近对话",
   "sidebar.conversations": "对话",
   "sidebar.settings": "设置",
   "sidebar.expandSection": "展开{section}",

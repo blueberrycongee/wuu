@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { ArrowLeft, ChevronDown, Check, Plus, Search, Settings2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2 } from "lucide-react";
 import type { AppSidebar } from "./AppSidebar";
-import { SCRATCH_PSEUDO_PROJECT_ID, isThreadExecuting, isThreadRunning, isThreadUnread } from "./AppState";
+import { SCRATCH_PSEUDO_PROJECT_ID, isThreadExecuting, isThreadRunning, isThreadUnread, threadTime } from "./AppState";
 import { baseThreadTitle } from "./ThreadTitles";
 import { Modal } from "./Modal";
 import { MobileSessionRow } from "./MobileSessionRow";
@@ -26,7 +26,6 @@ export function MobileSidebar(props: Props): JSX.Element {
   )?.id ?? props.state.activeProjectId ?? SCRATCH_PSEUDO_PROJECT_ID;
   const [projectID, setProjectID] = useState(activeProject);
   const [page, setPage] = useState<"threads" | "projects" | "more">("threads");
-  const [filter, setFilter] = useState<"all" | "pinned" | "attention">("all");
   const [actionsID, setActionsID] = useState<string>();
   const [actionPage, setActionPage] = useState<"menu" | "rename" | "delete">("menu");
   const [renameTitle, setRenameTitle] = useState("");
@@ -39,9 +38,15 @@ export function MobileSidebar(props: Props): JSX.Element {
   const threads = props.projectThreadsByProjectID[selectedID] ?? [];
   const actionThread = threads.find(thread => thread.id === actionsID);
   const loading = props.loadingProjectThreadIDs?.has(selectedID);
-  const visibleThreads = threads.filter(thread => filter === "pinned" ? thread.pinned
-    : filter === "attention" ? isThreadExecuting(thread) || isThreadUnread(thread, props.state.lastViewedTurnByThreadID[thread.id])
-    : true);
+  const groups = [
+    { label: t("sidebar.pinned"), threads: [] as typeof threads },
+    { label: t("sidebar.attentionConversations"), threads: [] as typeof threads },
+    { label: t("sidebar.recentConversations"), threads: [] as typeof threads },
+  ];
+  for (const thread of [...threads].sort((left, right) => threadTime(right) - threadTime(left))) {
+    const attention = isThreadExecuting(thread) || isThreadUnread(thread, props.state.lastViewedTurnByThreadID[thread.id]);
+    groups[thread.pinned ? 0 : attention ? 1 : 2].threads.push(thread);
+  }
 
   function closeActions() {
     setActionsID(undefined);
@@ -49,9 +54,10 @@ export function MobileSidebar(props: Props): JSX.Element {
     actionTrigger.current?.focus({ preventScroll: true });
   }
   function openPage(next: typeof page) {
+    const keyboardFocus = document.activeElement?.matches(":focus-visible");
     closeActions();
     setPage(next);
-    heading.current?.focus({ preventScroll: true });
+    if (keyboardFocus) heading.current?.focus({ preventScroll: true });
   }
   function activateCommand(node: NavigationSourceNode | undefined) {
     if (!node?.onActivate || node.disabled) return;
@@ -63,7 +69,6 @@ export function MobileSidebar(props: Props): JSX.Element {
     if (props.visible && !wasVisible.current) {
       setProjectID(activeProject);
       setPage("threads");
-      setFilter("all");
     }
     if (!props.visible) setActionsID(undefined);
     wasVisible.current = props.visible;
@@ -90,7 +95,6 @@ export function MobileSidebar(props: Props): JSX.Element {
     return () => window.removeEventListener("wuu:workbench-back", back, true);
   }, [props.visible, page, actionsID, actionPage]);
 
-  const search = props.commands.find(node => node.id === "command:search-conversations");
   return <aside className="sidebar mobile-sidebar" data-wuu-component="sidebar">
     <div className="sidebar-content">
       <header className="mobile-sidebar-header">
@@ -109,53 +113,49 @@ export function MobileSidebar(props: Props): JSX.Element {
         <div className="mobile-sidebar-toolbar">
           <button type="button" className="mobile-sidebar-new" disabled={!props.state.activeContext || project?.missing}
             onClick={() => props.onStartNewThreadForProject(selectedID)}>
-            <Plus />{t("sidebar.newConversation")}
+            <SquarePen />{t("sidebar.newConversation")}
           </button>
-          <button type="button" aria-label={t("sidebar.searchConversations")} disabled={!search || search.disabled}
-            onClick={() => activateCommand(search)}><Search /></button>
-        </div>
-        <div className="mobile-sidebar-filters" aria-label={t("sidebar.conversations")}>
-          {(["all", "pinned", "attention"] as const).map(value =>
-            <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>
-              {t(value === "all" ? "sidebar.conversations" : value === "pinned" ? "sidebar.pinned" : "sidebar.attentionConversations")}
-            </button>)}
         </div>
         <div className="mobile-sidebar-scroll" aria-label={t("sidebar.conversations")} aria-busy={loading}>
           {project?.missing ? <p className="mobile-sidebar-empty" role="status">{t("threadSidebar.missingWorkspace")}</p> : null}
-          {visibleThreads.map(thread => {
-            const running = isThreadExecuting(thread);
-            return <MobileSessionRow key={thread.id}
-              enabled={props.visible}
-              title={baseThreadTitle(thread)}
-              active={thread.id === props.activeThreadID}
-              pending={thread.id === props.pendingThreadID}
-              running={running}
-              unread={isThreadUnread(thread, props.state.lastViewedTurnByThreadID[thread.id])}
-              statusLabel={t(running ? "sidebar.runningConversations" : "sidebar.unreadConversations")}
-              onSelect={() => props.onSelectProjectThread(selectedID, thread.id)}
-              onActions={button => {
-                actionTrigger.current = button;
-                setActionsID(thread.id);
-                setActionPage("menu");
-                setRenameTitle(baseThreadTitle(thread));
-              }}
-            />;
-          })}
-          {!visibleThreads.length ? <p className="mobile-sidebar-empty" role="status">
-            {t(loading ? "common.loadingEllipsis" : filter === "pinned" ? "sidebar.noPinnedConversations"
-              : filter === "attention" ? "sidebar.attentionEmpty" : "sidebar.noConversations")}
+          {groups.filter(group => group.threads.length > 0).map(group => <section
+            key={group.label} className="mobile-sidebar-group" aria-label={group.label}>
+            <h3>{group.label}</h3>
+            {group.threads.map(thread => {
+              const running = isThreadExecuting(thread);
+              return <MobileSessionRow key={thread.id}
+                enabled={props.visible}
+                title={baseThreadTitle(thread)}
+                active={thread.id === props.activeThreadID}
+                pending={thread.id === props.pendingThreadID}
+                running={running}
+                unread={isThreadUnread(thread, props.state.lastViewedTurnByThreadID[thread.id])}
+                statusLabel={t(running ? "sidebar.runningConversations" : "sidebar.unreadConversations")}
+                onSelect={() => props.onSelectProjectThread(selectedID, thread.id)}
+                onActions={button => {
+                  actionTrigger.current = button;
+                  setActionsID(thread.id);
+                  setActionPage("menu");
+                  setRenameTitle(baseThreadTitle(thread));
+                }}
+              />;
+            })}
+          </section>)}
+          {!threads.length ? <p className="mobile-sidebar-empty" role="status">
+            {t(loading ? "common.loadingEllipsis" : "sidebar.noConversations")}
           </p> : null}
         </div>
       </> : page === "projects" ? <div className="mobile-sidebar-scroll" aria-label={t("sidebar.switchProject")}>
-        {props.sidebarProjects.map(item => <button key={item.id} type="button" className="mobile-sidebar-choice"
+        {props.sidebarProjects.map(item => <button key={item.id} type="button" className="mobile-sidebar-choice mobile-sidebar-project-choice"
           aria-current={item.id === selectedID ? "true" : undefined}
-          onClick={() => { setProjectID(item.id); setFilter("all"); openPage("threads"); }}>
-          <span><strong>{item.name}</strong>{item.path ? <small>{item.path}</small> : null}</span>
+          onClick={() => { setProjectID(item.id); openPage("threads"); }}>
+          {item.id === SCRATCH_PSEUDO_PROJECT_ID ? <MessageCircle /> : <Folder />}
+          <span><strong>{item.name}</strong>{item.path ? <small title={item.path}>{item.path}</small> : null}</span>
           {item.id === selectedID ? <Check /> : null}
         </button>)}
         <div className="mobile-sidebar-secondary">
-          <button type="button" className="mobile-sidebar-choice" onClick={props.onCreateProject}>{t("sidebar.newBlankProject")}</button>
-          <button type="button" className="mobile-sidebar-choice" onClick={props.onOpenProjectFolder}>{t("sidebar.useExistingFolder")}</button>
+          <button type="button" className="mobile-sidebar-choice" onClick={props.onCreateProject}><FolderPlus />{t("sidebar.newBlankProject")}</button>
+          <button type="button" className="mobile-sidebar-choice" onClick={props.onOpenProjectFolder}><FolderOpen />{t("sidebar.useExistingFolder")}</button>
         </div>
       </div> : <nav className="mobile-sidebar-scroll" aria-label={t("sidebar.mainNavigation")}>
         {props.commands.filter(node => node.kind === "command" && node.id !== "command:new-conversation"
