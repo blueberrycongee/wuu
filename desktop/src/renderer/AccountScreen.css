@@ -1,0 +1,30 @@
+.account-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.account-screen-titlebar {
+  flex-shrink: 0;
+  padding: 52px 24px 12px;
+  -webkit-app-region: drag;
+}
+
+.account-screen-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  -webkit-app-region: no-drag;
+}
+
+.account-screen-back:hover { background: var(--surface-1); color: var(--ink); }
+.account-screen-content { flex: 1; min-height: 0; overflow-y: auto; padding: clamp(24px, 7vh, 80px) 24px 48px; }
+.account-screen-brand { width: min(100%, 440px); margin: 0 auto 32px; font-size: var(--font-display); font-weight: var(--weight-semibold); }
+.account-screen .account-panel { width: 100%; max-width: 440px; }

@@ -373,6 +373,7 @@ export function AppSidebar({
   onPointerEnter,
   onPointerLeave,
   onOpenSettings,
+  onOpenAccount,
   onSwitchToCollaboration,
   onMarkThreadsViewed,
   pluginHost = desktopPluginHost,
@@ -447,7 +448,8 @@ export function AppSidebar({
   onReorderSections?: (nextOrder: string[]) => void;
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
-  onOpenSettings: (page?: "providers" | "remote" | "usage") => void;
+  onOpenSettings: (page?: "providers" | "usage") => void;
+  onOpenAccount?: () => void;
   onSwitchToCollaboration?: () => void;
   onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
   pluginHost?: PluginHost;
@@ -1949,6 +1951,7 @@ export function AppSidebar({
           />
           <SidebarAccountMenu
             disabled={!state.initialized}
+            onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
             onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
           />
         </div>

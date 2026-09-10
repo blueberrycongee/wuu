@@ -9,7 +9,7 @@ export type AccountView = { username?: string; server?: string; pub?: string; de
 export type AccountDriver = (action: AccountAction, input?: Record<string, string>) => Promise<AccountView>;
 
 /** Shared account forms; each host owns credential storage and transport. */
-export function AccountPanel({ driver, onComputer, onPair, managementContent }: { driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode }): React.JSX.Element {
+export function AccountPanel({ driver, onComputer, onPair, managementContent, onSignedIn }: { driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void }): React.JSX.Element {
  const { t } = useI18n();
  const epoch = useRef(0);
  const heading = useRef<HTMLHeadingElement>(null);
@@ -53,7 +53,8 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
    const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
    setLocalLogoutOnly(result.localLogoutOnly === true);
    if (action === 'login' || action === 'register' || action === 'logout') setPage('computers');
-   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); setAccount(await driver('status')); window.dispatchEvent(new Event('wuu:account-changed'));
+   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); const next = await driver('status'); setAccount(next); window.dispatchEvent(new Event('wuu:account-changed'));
+   if (action === 'login' && next.username) onSignedIn?.();
   } catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  };
  const devices = account.devices ?? [];
@@ -72,7 +73,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
   </header>
   {error && <p role="alert" className="settings-error">{error}</p>}
   {localLogoutOnly && <p role="status">{t('account.localLogout')}</p>}
-  {recovery && <div role="status"><p>{t('account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => setRecovery('')}>{t('account.savedRecovery')}</button></p></div>}
+  {recovery && <div role="status"><p>{t('account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => { setRecovery(''); if (account.username) onSignedIn?.(); }}>{t('account.savedRecovery')}</button></p></div>}
   {choosing ? <div className="account-computers">
    {computers.length === 0 ? <div className="account-empty"><Monitor size={32} aria-hidden="true" /><p>{t('account.noComputers')}</p>{pairAction}</div> : ([true, false] as const).map(online => {
     const group = computers.filter(d => d.online === online);

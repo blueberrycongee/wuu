@@ -9,12 +9,12 @@ let root: Root;
 let container: HTMLDivElement;
 const original = window.wuu;
 afterEach(() => { act(() => root?.unmount()); container?.remove(); window.wuu = original; });
-async function mount(driver?: AccountDriver) {
+async function mount(driver?: AccountDriver, onOpenAccount = vi.fn()) {
   window.wuu = { remoteAccount: driver } as typeof window.wuu;
   container = document.createElement("div"); document.body.append(container);
   root = createRoot(container);
   const navigate = vi.fn();
-  await act(async () => root.render(<SidebarAccountMenu disabled={false} onOpenSettings={navigate} />));
+  await act(async () => root.render(<SidebarAccountMenu disabled={false} onOpenSettings={navigate} onOpenAccount={onOpenAccount} />));
   return navigate;
 }
 const trigger = () => container.querySelector("button")!;
@@ -39,12 +39,13 @@ describe("SidebarAccountMenu", () => {
   it("refreshes identity after account changes and links to account management", async () => {
     let username: string | undefined;
     const driver = vi.fn(async () => ({ username, server: "https://account.example" }));
-    const navigate = await mount(driver); await open();
-    await act(async () => item("account.connect").click()); expect(navigate).toHaveBeenCalledWith("remote");
+    const onOpenAccount = vi.fn();
+    const navigate = await mount(driver, onOpenAccount); await open();
+    await act(async () => item("account.connect").click()); expect(onOpenAccount).toHaveBeenCalledTimes(1); expect(navigate).not.toHaveBeenCalled();
     username = "andywu";
     await act(async () => window.dispatchEvent(new Event("wuu:account-changed")));
     expect(trigger().textContent).toContain("andywu"); await open();
-    await act(async () => item("account.manage").click()); expect(navigate).toHaveBeenLastCalledWith("remote");
+    await act(async () => item("account.manage").click()); expect(onOpenAccount).toHaveBeenCalledTimes(2); expect(navigate).not.toHaveBeenCalled();
   });
   it("keeps logout failures visible and reports a local-only logout", async () => {
     let signedIn = true; let fail = true;

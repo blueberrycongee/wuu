@@ -1,3 +1,4 @@
+import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
@@ -611,9 +612,10 @@ export function App(): JSX.Element {
   });
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   useSidebarTouchGesture(
     appShellRef,
-    Boolean(state.initialized) && compactNavigation && !poppedOutMode && !settingsOpen,
+    Boolean(state.initialized) && compactNavigation && !poppedOutMode && !settingsOpen && !accountOpen,
     sidebarDrawerPhase,
     openSidebarDrawerNow,
     closeSidebarDrawer,
@@ -1635,7 +1637,7 @@ export function App(): JSX.Element {
   // ad-hoc modals/portals (e.g. participant panels) are not yet
   // enumerated here; extend this predicate as more full-window overlays land.
   const browserOverlaySuppressed =
-    settingsOpen ||
+    settingsOpen || accountOpen ||
     environmentDialog !== null ||
     Boolean(pendingFork) ||
     conversationSearch.open;
@@ -4911,13 +4913,18 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const back = (event: Event): void => {
-      if (settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
+      if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
+      else if (settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
       else if (sidebarDrawerVisible) { event.preventDefault(); closeSidebarDrawer(); }
       else if (rightPanelOpen) { event.preventDefault(); setRightPanelOpenWithMotion(false); }
     };
     window.addEventListener("wuu:workbench-back", back);
     return () => window.removeEventListener("wuu:workbench-back", back);
-  }, [settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
+  }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
+
+  if (accountOpen && window.wuu?.remoteAccount) {
+    return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
+  }
 
   if (settingsOpen) {
     return (
@@ -5086,6 +5093,7 @@ export function App(): JSX.Element {
               }}
               onPointerEnter={openSidebarDrawer}
               onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
+              onOpenAccount={() => setAccountOpen(true)}
               onOpenSettings={(page = "providers") => {
                 setSettingsInitialPage(page);
                 setSettingsOpen(true);
@@ -5192,6 +5200,7 @@ export function App(): JSX.Element {
             onPointerLeave={(event) =>
               scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
             }
+            onOpenAccount={() => setAccountOpen(true)}
             onOpenSettings={(page = "providers") => {
               setProjectMenuOpen(false);
               setRuntimeMenuOpen(false);

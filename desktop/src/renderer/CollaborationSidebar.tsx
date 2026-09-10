@@ -93,6 +93,7 @@ export function CollaborationSidebar({
   onCreateRoom,
   onSwitchToHarness,
   onOpenSettings,
+  onOpenAccount,
   onPointerEnter,
   onPointerLeave,
 }: {
@@ -106,7 +107,8 @@ export function CollaborationSidebar({
   onManageAgents: () => void;
   onCreateRoom: () => void;
   onSwitchToHarness: () => void;
-  onOpenSettings: (page?: "providers" | "remote" | "usage") => void;
+  onOpenSettings: (page?: "providers" | "usage") => void;
+  onOpenAccount?: () => void;
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
 }): JSX.Element {
@@ -318,7 +320,7 @@ export function CollaborationSidebar({
         </DndContext>
 
         <div className="sidebar-settings">
-          <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} />
+          <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
         </div>
       </div>
     </aside>

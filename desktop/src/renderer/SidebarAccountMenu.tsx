@@ -6,9 +6,10 @@ import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import "./SidebarAccountMenu.css";
 
-export function SidebarAccountMenu({ disabled, onOpenSettings }: {
+export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: {
   disabled: boolean;
-  onOpenSettings: (page: "providers" | "remote" | "usage") => void;
+  onOpenAccount?: () => void;
+  onOpenSettings: (page: "providers" | "usage") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const id = useId();
@@ -56,7 +57,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings }: {
   }, [open]);
 
   const close = () => { setOpen(false); anchor.current?.focus(); };
-  const navigate = (page: "providers" | "remote" | "usage") => { close(); onOpenSettings(page); };
+  const navigate = (page: "providers" | "usage") => { close(); onOpenSettings(page); };
   const logout = async () => {
     if (!driver || busy) return;
     generation.current++;
@@ -96,7 +97,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings }: {
         <div className="sidebar-account-profile">{avatar}<div><strong>{account.username || "Wuu"}</strong><span>{account.username ? account.server : t(driver ? "account.signedOut" : "account.local")}</span></div></div>
         <div className="sidebar-account-divider" role="separator" />
         <button role="menuitem" className="select-menu-item" onClick={() => navigate("usage")}><BarChart3 size={18} aria-hidden="true" /><span>{t("settings.usage")}</span></button>
-        {driver && <button role="menuitem" className="select-menu-item" onClick={() => navigate("remote")}><UserRound size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.connect")}</span></button>}
+        {driver && onOpenAccount && <button role="menuitem" className="select-menu-item" onClick={() => { close(); onOpenAccount(); }}><UserRound size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.connect")}</span></button>}
         <button role="menuitem" data-settings-page="providers" className="select-menu-item" onClick={() => navigate("providers")}><Settings size={18} aria-hidden="true" /><span>{t("sidebar.settings")}</span></button>
         {account.username && <button role="menuitem" className="select-menu-item" disabled={busy} onClick={() => void logout()}><LogOut size={18} aria-hidden="true" /><span>{t(busy ? "account.busy" : "account.logout")}</span></button>}
         {error && <p className="sidebar-account-message settings-error" role="alert">{error}</p>}
