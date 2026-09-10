@@ -1265,10 +1265,10 @@ function SettingsSection({
       data-wuu-component="settings-section"
       {...(testID ? { "data-testid": testID } : {})}
     >
-      {title || description ? (
+      {title || (description && !isTouchWebShell()) ? (
         <header className="settings-section-header">
           {title ? <h2 className="settings-section-title">{title}</h2> : null}
-          {description ? <p className="settings-section-description">{description}</p> : null}
+          {description && !isTouchWebShell() ? <p className="settings-section-description">{description}</p> : null}
         </header>
       ) : null}
       {children}
@@ -1583,7 +1583,7 @@ function SettingsProvidersPage({
           )}
         </SettingsRow>
         {xaiType ? (
-          <SettingsRow title={t("provider.xaiLogin")} description={t("provider.xaiLoginHint")} block>
+          <SettingsRow title={t("provider.xaiLogin")} hint={t("provider.xaiLoginHint")} block>
             <div className="settings-xai-login">
               <button
                 className="settings-button settings-button-primary"
@@ -1601,7 +1601,7 @@ function SettingsProvidersPage({
             </div>
           </SettingsRow>
         ) : grokBuildType ? (
-          addingProvider || !selectedProvider?.api_key_configured ? (
+          (addingProvider || !selectedProvider?.api_key_configured) && !isTouchWebShell() ? (
             <p className="settings-hint">{t("provider.grokBuildLoginHint")}</p>
           ) : null
         ) : connectionLocked ? null : (
@@ -1710,7 +1710,7 @@ function SettingsCollaborationPage({
       <SettingsCard>
         <SettingsRow
           title={t("settings.coordinationModel")}
-          description={isTouchWebShell() ? undefined : t("settings.coordinationModelDescription")}
+          hint={t("settings.coordinationModelDescription")}
         >
           <SelectMenu
             triggerClassName="settings-select-trigger"
@@ -1723,7 +1723,7 @@ function SettingsCollaborationPage({
         </SettingsRow>
         <SettingsRow
           title={t("settings.verificationModel")}
-          description={isTouchWebShell() ? undefined : t("settings.verificationModelDescription")}
+          hint={t("settings.verificationModelDescription")}
         >
           <SelectMenu
             triggerClassName="settings-select-trigger"
@@ -1799,7 +1799,7 @@ function SettingsAdvancedPage({
       <div className="settings-group">
         <SettingsRow
           title={t("settings.autoCompact")}
-          description={isTouchWebShell() ? undefined : t("settings.autoCompactDescription")}
+          hint={t("settings.autoCompactDescription")}
         >
           <button
             className="settings-switch"
@@ -1815,7 +1815,7 @@ function SettingsAdvancedPage({
         </SettingsRow>
         <SettingsRow
           title={t("settings.compactThreshold")}
-          description={t("settings.compactThresholdDescription")}
+          hint={t("settings.compactThresholdDescription")}
         >
           <input
             className="settings-input settings-input-num"
@@ -1830,7 +1830,7 @@ function SettingsAdvancedPage({
         </SettingsRow>
         <SettingsRow
           title={t("settings.keepRecentContext")}
-          description={t("settings.keepRecentContextDescription")}
+          hint={t("settings.keepRecentContextDescription")}
         >
           <input
             className="settings-input settings-input-num"
@@ -1862,7 +1862,7 @@ function SettingsAdvancedPage({
         </SettingsRow>
         <SettingsRow
           title={t("settings.unknownModelLimit")}
-          description={t("settings.unknownModelLimitDescription")}
+          hint={t("settings.unknownModelLimitDescription")}
         >
           <input
             className="settings-input settings-input-num"
@@ -1877,7 +1877,7 @@ function SettingsAdvancedPage({
         </SettingsRow>
         <SettingsRow
           title={t("settings.maxSteps")}
-          description={t("settings.unlimitedAtZero")}
+          hint={t("settings.unlimitedAtZero")}
         >
           <input
             className="settings-input settings-input-num"
@@ -1889,7 +1889,7 @@ function SettingsAdvancedPage({
             disabled={running || !initialized}
           />
         </SettingsRow>
-        <SettingsRow title={t("settings.temperature")} description={t("settings.temperatureRange")}>
+        <SettingsRow title={t("settings.temperature")} hint={t("settings.temperatureRange")}>
           <input
             className="settings-input settings-input-num"
             value={temperature}
@@ -2165,7 +2165,7 @@ function SettingsGeneralPage({
         <SettingsCard>
           <SettingsRow
             title={t("settings.gitAttribution")}
-            description={isTouchWebShell() ? undefined : t("settings.gitAttributionDescription")}
+            hint={t("settings.gitAttributionDescription")}
           >
             <button
               className="settings-switch"
@@ -2448,7 +2448,7 @@ function SettingsArchivePage({
           <p className="settings-archive-empty-title">
             {noMatches ? t("settings.noArchiveMatches") : t("settings.noArchivedItems")}
           </p>
-          {noMatches ? null : (
+          {noMatches || isTouchWebShell() ? null : (
             <p className="settings-archive-empty-hint">
               {t("settings.archiveHint")}
             </p>

@@ -381,7 +381,7 @@ export function WorkspaceTerminalPanel({
   }
 
   if (!activeContext?.cwd) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} description={t("workspace.terminal.noProjectDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.terminal.noProjectDescription")} icon={<Terminal size={24} />} />;
   }
 
   return (
@@ -502,7 +502,7 @@ export function WorkspaceTerminalPanel({
         {userTerminals.length === 0 && !selectedRun ? (
           <WorkspacePanelEmpty
             title={t("workspace.terminal.noRuns")}
-            description={t("workspace.terminal.noRunsDescription")}
+            hint={t("workspace.terminal.noRunsDescription")}
             icon={<Terminal size={24} />}
           />
         ) : null}
@@ -1074,7 +1074,7 @@ function UserTerminalPane({
   }, [onShellChange, resourceID, restartKey, workspaceRoot]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} description={t("workspace.terminal.noProjectDescription")} icon={<Terminal size={24} />} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.terminal.noProjectDescription")} icon={<Terminal size={24} />} />;
   }
 
   return (

@@ -792,7 +792,7 @@ export function WorkspaceRightPanel({
                   {activeTab?.kind === "files" ? (
                     <WorkspacePanelEmpty
                       title={t("workspace.selectFile")}
-                      description={t("workspace.selectFileDescription")}
+                      hint={t("workspace.selectFileDescription")}
                       icon={<FileText size={24} />}
                     />
                   ) : null}

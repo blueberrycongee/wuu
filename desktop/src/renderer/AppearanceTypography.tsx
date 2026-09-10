@@ -44,7 +44,7 @@ export function AppearanceTypography({ section = "sizes" }: { section?: "sizes" 
   ] as const;
   return <>
     {section === "sizes" && <>
-    <SettingsRow title={t("settings.uiSize")} description={t("settings.uiSizeHint")}>
+    <SettingsRow title={t("settings.uiSize")} hint={t("settings.uiSizeHint")}>
       <input className="settings-input settings-input-num settings-input-num-center" aria-label={t("settings.uiSize")} type="number" min={12} max={16} step={1} value={sizeDraft}
         onChange={(event) => {
           setSizeDraft(event.target.value);
@@ -54,21 +54,21 @@ export function AppearanceTypography({ section = "sizes" }: { section?: "sizes" 
         onBlur={(event) => commitSize(event.currentTarget.value)}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </SettingsRow>
-    <SettingsRow title={t("settings.contentSize")} description={t("settings.contentSizeHint")}><MessageFlowFontSizeControl /></SettingsRow></>}
+    <SettingsRow title={t("settings.contentSize")} hint={t("settings.contentSizeHint")}><MessageFlowFontSizeControl /></SettingsRow></>}
     {section === "fonts" && <>{fonts.map(({ key, label }) => {
       const names = key === "codeFont" ? monoFonts : localFonts;
       const current = preferences[key];
       const options = [{ value: "", label: t("settings.systemFont") }, ...names.map((name) => ({ value: name, label: name }))];
       if (current && !names.includes(current)) options.push({ value: current, label: current });
-      return <SettingsRow key={key} title={t(label)} description={t(key === "uiFont" ? "settings.uiFontHint" : "settings.codeFontHint")}>
+      return <SettingsRow key={key} title={t(label)} hint={t(key === "uiFont" ? "settings.uiFontHint" : "settings.codeFontHint")}>
         <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
           <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable triggerClassName="settings-select-trigger" />
         </div>
       </SettingsRow>;
     })}
     {(fontStatus === "loading" || fontStatus === "error") && <p className="settings-row-label-description" role="status">{t(fontStatus === "error" ? "settings.fontLoadFailed" : "settings.fontLoading")}</p>}
-    <SettingsRow title={t("settings.resetFonts")} description={t("settings.resetFontsHint")}><button type="button" className="settings-button" onClick={() => update({ uiFont: appearanceDefaults.uiFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button></SettingsRow></>}
-    {section === "motion" && <SettingsRow title={t("settings.reducedMotion")} description={t("settings.motionHint")}>
+    <SettingsRow title={t("settings.resetFonts")} hint={t("settings.resetFontsHint")}><button type="button" className="settings-button" onClick={() => update({ uiFont: appearanceDefaults.uiFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button></SettingsRow></>}
+    {section === "motion" && <SettingsRow title={t("settings.reducedMotion")} hint={t("settings.motionHint")}>
       <SelectMenu ariaLabel={t("settings.reducedMotion")} value={preferences.motion} onChange={(value) => update({ motion: value as AppearancePreferences["motion"] })} options={[{ value: "system", label: t("settings.followSystem") }, { value: "reduce", label: t("settings.motionReduce") }]} triggerClassName="settings-select-trigger" />
     </SettingsRow>}
     {error && <p role="alert">{t("settings.saveFailed")}</p>}

@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
@@ -126,11 +127,11 @@ export function WorkspaceFileTree({
   }, [open, workspaceRoot, locale]);
 
   if (!workspaceRoot) {
-    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} description={t("workspace.files.noProjectDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.noProject")} hint={t("workspace.files.noProjectDescription")} />;
   }
 
   if (loading && !directories[""]) {
-    return <WorkspacePanelEmpty title={t("workspace.files.reading")} description={t("workspace.files.readingDescription")} />;
+    return <WorkspacePanelEmpty title={t("workspace.files.reading")} hint={t("workspace.files.readingDescription")} />;
   }
 
   if (error) {
@@ -561,11 +562,13 @@ function parentDirectoryPathsForFile(path: string): string[] {
 export function WorkspacePanelEmpty({
   title,
   description,
+  hint,
   icon,
   className
 }: {
   title: string;
-  description: string;
+  description?: string;
+  hint?: string;
   icon?: JSX.Element;
   className?: string;
 }): JSX.Element {
@@ -578,7 +581,8 @@ export function WorkspacePanelEmpty({
         {icon ?? <FolderOpen size={24} />}
       </div>
       <strong>{title}</strong>
-      <span>{description}</span>
+      {description && <span>{description}</span>}
+      {hint && !isTouchWebShell() && <span>{hint}</span>}
     </div>
   );
 }
@@ -707,7 +711,7 @@ export function WorkspaceFilePreview({
       <div className="workspace-main-empty">
         <FolderX size={36} />
         <strong>{t("workspace.files.noProject")}</strong>
-        <span>{t("workspace.files.previewNoProjectDescription")}</span>
+        {!isTouchWebShell() && <span>{t("workspace.files.previewNoProjectDescription")}</span>}
       </div>
     );
   }
@@ -717,7 +721,7 @@ export function WorkspaceFilePreview({
       <div className="workspace-main-empty">
         <FolderOpen size={38} />
         <strong>{t("workspace.files.openFile")}</strong>
-        <span>{t("workspace.files.openFileDescription")}</span>
+        {!isTouchWebShell() && <span>{t("workspace.files.openFileDescription")}</span>}
         <button type="button" onClick={onOpenRightPanel}>
           {t("workspace.files.showTree")}
         </button>

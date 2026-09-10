@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -79,9 +80,9 @@ export function VoiceInputSettingsSection({
         <h2 className="settings-section-title">
           {t("settings.voice.title")}
         </h2>
-        <p className="settings-section-description">
+        {!isTouchWebShell() && <p className="settings-section-description">
           {t("settings.voice.description")}
-        </p>
+        </p>}
       </header>
       <div className="settings-group">
         {!supported ? (
@@ -232,7 +233,7 @@ function VoiceSettingsRow({
     <div className={`settings-row${block ? " settings-row-block" : ""}`}>
       <div className="settings-row-label">
         <span className="settings-row-label-title">{title}</span>
-        {description ? (
+        {description && !isTouchWebShell() ? (
           <span className="settings-row-label-description">{description}</span>
         ) : null}
       </div>

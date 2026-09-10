@@ -176,7 +176,7 @@ export default function App({ onAccountBack }: { onAccountBack?: () => void } = 
 
   if (phase.kind === "expired") {
     return (
-      <StatusCard title="配对码已失效" detail="请在电脑的「设置 → 手机访问」重新生成二维码，再用手机相机扫描。旧链接在重启服务、重新生成或配对成功后会失效。">
+      <StatusCard title="配对码已失效">
         <button type="button" onClick={() => setPhase({ kind: "pair" })}>粘贴新的配对链接</button>
       </StatusCard>
     );
@@ -184,7 +184,7 @@ export default function App({ onAccountBack }: { onAccountBack?: () => void } = 
 
   if (phase.kind === "connecting") {
     return (
-      <StatusCard title="正在连接电脑…" detail="请保持电脑上的 Wuu 运行。">
+      <StatusCard title="正在连接电脑…">
         <button type="button" onClick={() => void resetPairing()}>
           {onAccountBack ? "返回电脑列表" : "清除旧配对"}
         </button>
@@ -214,7 +214,6 @@ function PairCard({
           <h1>配对电脑</h1>
         </header>
         <div className="web-pair-symbol" aria-hidden="true"><Link2 size={28} /></div>
-        <p className="web-gate-detail">在电脑端 Wuu 的「手机访问」中复制配对链接，粘贴到这里。</p>
         <label>
           <span>配对链接</span>
           <textarea

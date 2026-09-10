@@ -1,8 +1,8 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
-  "account.directoryUnavailable": "Cannot refresh computers. You are still signed in; the list will retry automatically.",
-  "account.githubWaiting": "Finish GitHub authorization in your browser. Wuu will continue automatically.",
+  "account.directoryUnavailable": "Computer list unavailable. You are still signed in.",
+  "account.githubWaiting": "Waiting for GitHub authorization…",
   "account.githubOpen": "Continue to GitHub",
   "account.githubContinue": "Continue with GitHub",
   "account.legacyLogin": "Use an existing username and password",
@@ -24,7 +24,7 @@ export const enUS = {
   "mobile.pushConnecting": "Connecting…",
   "mobile.pushDisable": "Disable notifications",
   "mobile.pushEnable": "Enable notifications",
-  "account.localLogout": "Signed out on this device. The server could not confirm token revocation. Remove this device from another signed-in device if needed.",
+  "account.localLogout": "Signed out locally. Server revocation is unconfirmed.",
   "account.label": "Self-hosted account",
   "account.title": "{username}'s devices",
   "account.connect": "Sign in to Wuu",
@@ -46,6 +46,7 @@ export const enUS = {
   "account.open": "Connect",
   "account.remove": "Remove device",
   "account.noComputers": "No computers",
+  "account.passwordAndSignOut": "Change password and sign out all devices",
   "account.password": "Change password",
   "account.logout": "Sign out",
   "account.server": "Self-hosted server",

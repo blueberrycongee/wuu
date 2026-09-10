@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import { GitBranch, Laptop } from "lucide-react";
 import { useState } from "react";
 import { Modal } from "./Modal";
@@ -106,7 +107,7 @@ export function ConversationForkDialog({
               </span>
               <span className="fork-dialog-option-text">
                 <strong>{title}</strong>
-                <span>{disabledReason ?? description}</span>
+                {disabledReason || !isTouchWebShell() ? <span>{disabledReason ?? description}</span> : null}
               </span>
               {isBusy ? (
                 <span className="fork-dialog-option-spinner" aria-hidden="true" />

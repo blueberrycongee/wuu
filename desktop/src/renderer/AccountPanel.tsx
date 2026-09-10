@@ -126,7 +126,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
   {error && <p role="alert" className="settings-error">{error}</p>}
   {account.unavailable && <p role="status">{t('account.directoryUnavailable')}</p>}
   {localLogoutOnly && <p role="status">{t('account.localLogout')}</p>}
-  {recovery && <div role="status"><p>{t('account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => { setRecovery(''); if (account.username) onSignedIn?.(); }}>{t('account.savedRecovery')}</button></p></div>}
+  {recovery && <div role="status"><p>{t(presentation === 'mobile' ? 'account.recoveryCode' : 'account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => { setRecovery(''); if (account.username) onSignedIn?.(); }}>{t('account.savedRecovery')}</button></p></div>}
   {oauthURL ? <div className="account-oauth-pending"><p role="status">{t('account.githubWaiting')}</p><a href={oauthURL} target="_blank" rel="noreferrer" onClick={e => { if (reserveAuthorization) { e.preventDefault(); try { void reserveAuthorization().open(oauthURL).catch(e => setError(String(e))); } catch (e) { setError(String(e)); } } }}>{t('account.githubOpen')}</a><button type="button" onClick={() => void cancelGithub().catch(e => setError(String(e)))}>{t('common.cancel')}</button></div> : choosing ? <div className="account-computers">
    {computers.length === 0 ? <div className="account-empty"><Monitor size={32} aria-hidden="true" /><p>{t('account.noComputers')}</p>{pairAction}</div> : ([true, false] as const).map(online => {
     const group = computers.filter(d => d.online === online);
@@ -172,9 +172,9 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
    </>}
    {(mode === 'recover' || mode === 'password') && <label>{t(mode === 'recover' ? 'account.recoveryCode' : 'account.currentPassword')}<input type="password" autoComplete={mode === 'password' ? 'current-password' : 'off'} value={secret} required onChange={e => setSecret(e.target.value)}/></label>}
    <label>{t(mode === 'login' ? 'account.loginPassword' : 'account.newPassword')}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} required minLength={12} onChange={e => setPassword(e.target.value)}/></label>
-   {mode === 'password' && <p>{t('account.passwordHint')}</p>}
+   {mode === 'password' && presentation !== 'mobile' && <p>{t('account.passwordHint')}</p>}
    {!account.username && <button className="account-connection-link" type="button" disabled={busy} onClick={openConnection}><span>{t('account.connectionSettings')}</span><span className="account-connection-value">{server || t('account.notConfigured')}</span><ChevronRight size={16} aria-hidden="true" /></button>}
-   <button className="account-primary" disabled={busy} type="submit">{t(busy ? 'account.busy' : `account.${mode}`)}</button>
+   <button className="account-primary" disabled={busy} type="submit">{t(busy ? 'account.busy' : presentation === 'mobile' && mode === 'password' ? 'account.passwordAndSignOut' : `account.${mode}`)}</button>
   </form>{!account.username && mode === 'login' && <button className="account-auth-more" type="button" disabled={busy} onClick={() => setAuthPage('options')}>{t('account.moreOptions')}<ChevronRight size={16} aria-hidden="true" /></button>}</>}
  </section>;
 }

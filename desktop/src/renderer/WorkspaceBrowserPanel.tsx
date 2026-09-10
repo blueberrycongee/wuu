@@ -421,7 +421,7 @@ export function WorkspaceBrowserPanel({
           <WorkspacePanelEmpty
             className="workspace-browser-home"
             title={t("workspace.browser.newTab")}
-            description={
+            hint={
               activeContext?.cwd
                 ? t("workspace.browser.homeWorkspaceDescription")
                 : t("workspace.browser.homeDescription")

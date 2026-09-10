@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import {
   AlertCircle,
@@ -312,7 +313,7 @@ export function SkillsCatalog({
       <header className="catalog-page-header">
         <div className="catalog-page-title">
           <strong>{t("skills.title")}</strong>
-          <span>{t("skills.subtitle")}</span>
+          {!isTouchWebShell() && <span>{t("skills.subtitle")}</span>}
         </div>
         <div className="catalog-page-controls">
           <CatalogSearchField

@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import type {
   ExtensionInventoryRecord,
@@ -230,7 +231,8 @@ function PluginSettingControl({
 
   const descriptionId = `${controlId}-description`;
   const statusId = `${controlId}-status`;
-  const describedBy = `${descriptionId} ${statusId}`;
+  const showDescription = Boolean(setting.description) && !isTouchWebShell();
+  const describedBy = showDescription ? `${descriptionId} ${statusId}` : statusId;
 
   return (
     <div
@@ -244,7 +246,7 @@ function PluginSettingControl({
           {t(setting.scope === "workspace" ? "skills.pluginSettingWorkspace" : "skills.pluginSettingUser")}
         </span>
       </div>
-      {setting.description ? <p id={descriptionId}>{setting.description}</p> : <span id={descriptionId} />}
+      {showDescription && <p id={descriptionId}>{setting.description}</p>}
       <div className="plugin-setting-control settings-row-control-block">
         {setting.type === "boolean" ? (
           <input
