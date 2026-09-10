@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import * as monaco from "monaco-editor";
 import { codeEditorTypography, observeAppearance } from "./AppearancePreferences";
 import { useEffect, useMemo, useRef } from "react";
@@ -68,6 +69,8 @@ export function WorkspaceMonacoDiffEditor({
       renderSideBySide: true,
       scrollBeyondLastLine: false,
       scrollbar: {
+        vertical: isTouchWebShell() ? "hidden" : "auto",
+        horizontal: isTouchWebShell() ? "hidden" : "auto",
         alwaysConsumeMouseWheel: false,
         horizontalScrollbarSize: scrollbarSize,
         horizontalSliderSize: Math.max(4, scrollbarSize - 2),

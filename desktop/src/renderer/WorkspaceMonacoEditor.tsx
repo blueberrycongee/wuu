@@ -1,3 +1,4 @@
+import { isTouchWebShell } from "./ComposerFocus";
 import * as monaco from "monaco-editor";
 import { codeEditorTypography, observeAppearance } from "./AppearancePreferences";
 import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
@@ -107,6 +108,8 @@ export function WorkspaceMonacoEditor({
       scrollBeyondLastLine: false,
       showFoldingControls: "never",
       scrollbar: {
+        vertical: isTouchWebShell() ? "hidden" : "auto",
+        horizontal: isTouchWebShell() ? "hidden" : "auto",
         alwaysConsumeMouseWheel: false,
         horizontalScrollbarSize: scrollbarSize,
         horizontalSliderSize: Math.max(4, scrollbarSize - 2),

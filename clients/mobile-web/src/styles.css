@@ -172,7 +172,7 @@ input, textarea {
   justify-content: flex-start;
   align-items: center;
   min-height: 260px;
-  height: calc(clamp(260px, 38dvh, 340px) + env(safe-area-inset-top));
+  height: calc(clamp(260px, 82vw, 340px) + env(safe-area-inset-top));
   margin: 0;
   padding: calc(24px + env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 24px max(24px, env(safe-area-inset-left));
   overflow: hidden;
@@ -208,7 +208,7 @@ input, textarea {
   border-radius: 32px 32px 0 0;
   background: var(--paper);
 }
-@media (max-height: 540px) {
+@media (min-width: 700px) {
   .account-home .account-welcome .account-page-header { height: calc(156px + env(safe-area-inset-top)); min-height: 156px; }
   .account-home .account-welcome .account-page-header h2 { max-width: none; font-size: 28px; }
   .account-brand-art { width: 220px; height: 220px; top: -32px; right: -40px; }
@@ -224,4 +224,17 @@ input, textarea {
   height: calc(env(safe-area-inset-top) + 32px);
   background: linear-gradient(to bottom, #271a29 0, #271a29 env(safe-area-inset-top), transparent);
   pointer-events: none;
+}
+
+/* Phone surfaces scroll by touch without desktop scrollbar tracks or gutters. */
+:root[data-host-kind="web"], :root[data-host-kind="web"] * {
+  scrollbar-width: none !important;
+  scrollbar-gutter: auto !important;
+}
+:root[data-host-kind="web"]::-webkit-scrollbar,
+:root[data-host-kind="web"] *::-webkit-scrollbar,
+:root[data-host-kind="web"] .xterm-scrollable-element > .scrollbar {
+  display: none !important;
+  width: 0;
+  height: 0;
 }

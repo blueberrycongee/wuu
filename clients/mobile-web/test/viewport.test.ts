@@ -99,3 +99,16 @@ describe("workbench viewport", () => {
     expect(height()).toBe("");
   });
 });
+
+it("keeps a focused phone form field visible after native keyboard resize", () => {
+  const form = document.createElement('main'); form.className = 'account-home';
+  const input = document.createElement('input'); form.append(input); document.body.append(form);
+  const scroll = vi.fn(); input.scrollIntoView = scroll; input.focus();
+  stop = startWebViewportSync();
+  viewport.height = 420; viewport.dispatchEvent(new Event('resize')); vi.advanceTimersToNextFrame();
+  expect(scroll).toHaveBeenCalledOnce();
+  expect(document.activeElement).toBe(input);
+  viewport.height = 800; viewport.dispatchEvent(new Event('resize')); vi.advanceTimersToNextFrame();
+  expect(scroll).toHaveBeenCalledOnce();
+  form.remove();
+});

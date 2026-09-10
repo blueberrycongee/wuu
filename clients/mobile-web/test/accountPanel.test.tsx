@@ -198,3 +198,21 @@ it('returns from recovery to authentication options before returning to login', 
   expect(ui.container.querySelector('input[autocomplete="username"]')).not.toBeNull();
  } finally { await ui.dispose(); }
 });
+
+it('announces the login surface only after the asynchronous account screen is rendered', async () => {
+ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+ localStorage.setItem('wuu.account.server', 'https://example.test');
+ let resolveStatus!: (value: {}) => void;
+ const status = new Promise<{}>(resolve => { resolveStatus = resolve; });
+ const driver: AccountDriver = action => action === 'status' ? status : Promise.resolve({ github: false });
+ const container = document.createElement('div'); document.body.append(container);
+ const root = createRoot(container);
+ try {
+  await act(async () => root.render(<I18nProvider preferenceStore={languagePreferenceStore}><AccountPanel presentation="mobile" driver={driver} /></I18nProvider>));
+  expect(container.querySelector('h2')).toBeNull();
+  expect(document.documentElement.dataset.phoneSurface).toBe('default');
+  await act(async () => resolveStatus({}));
+  expect(container.querySelector('h2')).not.toBeNull();
+  expect(document.documentElement.dataset.phoneSurface).toBe('login');
+ } finally { await act(async () => root.unmount()); container.remove(); localStorage.clear(); }
+});

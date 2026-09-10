@@ -14,6 +14,12 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "WuuAppearance")
 public class WuuAppearancePlugin extends Plugin {
+    @Override public void load() {
+        super.load();
+        getBridge().getWebView().setVerticalScrollBarEnabled(false);
+        getBridge().getWebView().setHorizontalScrollBarEnabled(false);
+    }
+
     @PluginMethod
     public void setSurface(PluginCall call) {
         final int color;
