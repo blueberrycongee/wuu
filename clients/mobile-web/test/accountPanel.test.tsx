@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
-import { AccountPanel, type AccountDeviceView, type AccountAction } from '../../../desktop/src/renderer/AccountPanel';
+import { AccountPanel, type AccountDeviceView, type AccountAction, type AccountDriver } from '../../../desktop/src/renderer/AccountPanel';
 import { I18nProvider, translate } from '../../../desktop/src/renderer/i18n';
 import { languagePreferenceStore } from '../src/lib/language';
 
@@ -54,4 +54,75 @@ it('keeps same-named devices distinct, connects only online computers, and follo
   } finally {
     await act(async () => root.unmount()); container.remove(); localStorage.clear();
   }
+});
+
+async function renderLogin(driver: AccountDriver) {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  await languagePreferenceStore.set('en-US');
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const pair = vi.fn();
+  await act(async () => root.render(<I18nProvider preferenceStore={languagePreferenceStore}><AccountPanel driver={driver} onComputer={() => {}} onPair={pair} /></I18nProvider>));
+  return {
+    container, pair,
+    async click(key: Parameters<typeof translate>[1]) {
+      const label = translate('en-US', key);
+      const button = [...container.querySelectorAll('button')].find(b => b.textContent?.startsWith(label) || b.getAttribute('aria-label') === label);
+      expect(button).toBeDefined();
+      await act(async () => button!.click());
+    },
+    async fill(selector: string, value: string) {
+      const input = container.querySelector<HTMLInputElement>(selector)!;
+      expect(input).not.toBeNull();
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    },
+    async dispose() { await act(async () => root.unmount()); container.remove(); localStorage.clear(); },
+  };
+}
+
+it('asks for connection settings before login, preserves credentials, and only applies saved settings', async () => {
+  const driver = vi.fn<AccountDriver>(async () => ({}));
+  const ui = await renderLogin(driver);
+  try {
+    expect(ui.container.querySelector('input[type="url"]')).toBeNull();
+    await ui.fill('input[autocomplete="username"]', 'test-user');
+    await ui.fill('input[autocomplete="current-password"]', 'long-test-password');
+    await ui.click('account.login');
+    expect(driver.mock.calls.some(([action]) => action === 'login')).toBe(false);
+    expect(ui.container.querySelector('input[type="url"]')).not.toBeNull();
+    await ui.fill('input[type="url"]', 'https://wuu.example.com');
+    await ui.fill('input[maxlength="64"]', 'My phone');
+    await ui.click('common.save');
+    await ui.click('account.connectionSettings');
+    await ui.fill('input[type="url"]', 'https://other.example.com');
+    const back = new Event('wuu:native-back', { cancelable: true });
+    await act(async () => { window.dispatchEvent(back); });
+    expect(back.defaultPrevented).toBe(true);
+    await ui.click('account.login');
+    expect(driver).toHaveBeenCalledWith('login', expect.objectContaining({
+      server: 'https://wuu.example.com', username: 'test-user', password: 'long-test-password', name: 'My phone',
+    }));
+  } finally { await ui.dispose(); }
+});
+
+it('keeps registration, recovery and pairing reachable through secondary navigation', async () => {
+  const ui = await renderLogin(async () => ({}));
+  try {
+    await ui.fill('input[autocomplete="current-password"]', 'do-not-reuse-password');
+    await ui.click('account.moreOptions');
+    await ui.click('account.register');
+    expect(ui.container.querySelector<HTMLInputElement>('input[autocomplete="new-password"]')?.value).toBe('');
+    await ui.click('common.back');
+    await ui.click('account.moreOptions');
+    await ui.click('account.forgotPassword');
+    expect(ui.container.querySelector('input[autocomplete="off"]')).not.toBeNull();
+    await ui.click('common.back');
+    await ui.click('account.moreOptions');
+    await ui.click('account.pairLink');
+    expect(ui.pair).toHaveBeenCalledOnce();
+  } finally { await ui.dispose(); }
 });

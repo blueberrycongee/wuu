@@ -15,11 +15,13 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
  const heading = useRef<HTMLHeadingElement>(null);
  const [account, setAccount] = useState<AccountView>({});
  const [page, setPage] = useState<'computers' | 'manage'>('computers');
+ const [authPage, setAuthPage] = useState<'form' | 'connection' | 'options'>('form');
  const [loading, setLoading] = useState(true);
  const [mode, setMode] = useState<'login' | 'register' | 'recover' | 'password'>('login');
  const [server, setServer] = useState(''); const [username, setUsername] = useState('');
  const [password, setPassword] = useState(''); const [secret, setSecret] = useState('');
  const [deviceName, setDeviceName] = useState('');
+ const [connectionDraft, setConnectionDraft] = useState({ server: '', name: '' });
  const [localLogoutOnly, setLocalLogoutOnly] = useState(false);
  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [recovery, setRecovery] = useState('');
  useEffect(() => {
@@ -31,25 +33,27 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
   document.addEventListener('visibilitychange', refresh); window.addEventListener('online', refresh);
   return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
  }, [driver]);
- useEffect(() => { heading.current?.focus(); }, [page, mode]);
+ useEffect(() => { heading.current?.focus(); }, [page, mode, authPage]);
  const back = () => {
-  if (mode === 'password') { setMode('login'); setPassword(''); setSecret(''); }
+  if (!account.username && authPage !== 'form') setAuthPage('form');
+  else if (mode !== 'login') { setMode('login'); setPassword(''); setSecret(''); }
   else setPage('computers');
   setError('');
  };
  useEffect(() => {
-  if (!onComputer || !account.username || (page === 'computers' && mode !== 'password')) return;
+  const nested = account.username ? page !== 'computers' || mode === 'password' : authPage !== 'form' || mode !== 'login';
+  if (!onComputer || !nested) return;
   const handler = (event: Event) => { event.preventDefault(); if (!busy) back(); };
   window.addEventListener('wuu:native-back', handler);
   return () => window.removeEventListener('wuu:native-back', handler);
- }, [onComputer, account.username, page, mode, busy]);
+ }, [onComputer, account.username, page, mode, authPage, busy]);
  const perform = async (action: AccountAction, input?: Record<string,string>) => {
   if (busy) return; epoch.current++; setBusy(true); setError(''); setLocalLogoutOnly(false);
   try {
    const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
    setLocalLogoutOnly(result.localLogoutOnly === true);
    if (action === 'login' || action === 'register' || action === 'logout') setPage('computers');
-   setPassword(''); setSecret(''); setMode('login'); setAccount(await driver('status'));
+   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); setAccount(await driver('status'));
   } catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  };
  const devices = account.devices ?? [];
@@ -57,11 +61,13 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
  const choosing = !!account.username && !!onComputer && page === 'computers' && mode !== 'password';
  const managing = !!account.username && !choosing && mode !== 'password';
  const pairAction = onPair && <button className="account-text-action" type="button" onClick={onPair}>{t('account.pairLink')}<ChevronRight size={18} aria-hidden="true" /></button>;
+ const openConnection = () => { setConnectionDraft({ server, name: deviceName }); setAuthPage('connection'); };
  if (loading) return <section className="account-panel" aria-busy="true"><p role="status">{t('account.restoring')}</p></section>;
- return <section className="account-panel" aria-label={t(choosing ? 'account.computers' : 'account.label')}>
+ return <section className={`account-panel${!account.username ? ' account-auth' : ''}`} aria-label={t(choosing ? 'account.computers' : 'account.label')}>
   <header className="account-page-header">
    {account.username && !choosing && (onComputer || mode === 'password') && <button className="account-back" type="button" aria-label={t(mode === 'password' ? 'account.manage' : 'account.computers')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
-   <h2 ref={heading} tabIndex={-1}>{t(choosing ? 'account.computers' : mode === 'password' ? 'account.password' : managing ? 'account.manage' : 'account.connect')}</h2>
+   {!account.username && (authPage !== 'form' || mode !== 'login') && <button className="account-back" type="button" aria-label={t('common.back')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
+   <h2 ref={heading} tabIndex={-1}>{t(choosing ? 'account.computers' : mode === 'password' ? 'account.password' : managing ? 'account.manage' : authPage === 'connection' ? 'account.connectionSettings' : authPage === 'options' ? 'account.moreOptions' : mode === 'register' ? 'account.register' : mode === 'recover' ? 'account.forgotPassword' : 'account.connect')}</h2>
    {choosing && <button className="account-manage-link" type="button" aria-label={t('account.manage')} onClick={() => setPage('manage')}><Settings2 size={20} aria-hidden="true" /></button>}
   </header>
   {error && <p role="alert" className="settings-error">{error}</p>}
@@ -94,17 +100,22 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
    </section>)}
    <div className="account-management-actions">{pairAction}{managementContent}<button type="button" disabled={busy} onClick={() => setMode('password')}>{t('account.password')}<ChevronRight size={18} aria-hidden="true" /></button></div>
    <button className="account-signout" type="button" disabled={busy} onClick={() => void perform('logout')}>{t('account.logout')}</button>
-  </> : <><form onSubmit={e => {e.preventDefault();void perform(mode,{server,username:account.username || username,password,secret,name:deviceName});}}>
+  </> : !account.username && authPage === 'connection' ? <form onSubmit={e => { e.preventDefault(); setServer(connectionDraft.server.trim()); setDeviceName(connectionDraft.name); setAuthPage('form'); }}>
+   <label>{t('account.server')}<input type="url" autoCapitalize="none" autoCorrect="off" placeholder="https://wuu.example.com" value={connectionDraft.server} required onChange={e => setConnectionDraft(current => ({ ...current, server: e.target.value }))}/></label>
+   {onComputer && <label>{t('account.deviceName')}<input value={connectionDraft.name} maxLength={64} placeholder={t('account.deviceNameExample')} onChange={e => setConnectionDraft(current => ({ ...current, name: e.target.value }))}/></label>}
+   <button className="account-primary" type="submit">{t('common.save')}</button>
+  </form> : !account.username && authPage === 'options' ? <div className="account-auth-options">
+   {(['register', 'recover'] as const).map(next => <button type="button" key={next} onClick={() => { setMode(next); setAuthPage('form'); setPassword(''); setSecret(''); setError(''); }}>{t(next === 'recover' ? 'account.forgotPassword' : 'account.register')}<ChevronRight size={18} aria-hidden="true" /></button>)}
+   {pairAction}
+  </div> : <><form onSubmit={e => {e.preventDefault(); if (!account.username && !server.trim()) { openConnection(); return; } void perform(mode,{server,username:account.username || username,password,secret,name:deviceName});}}>
    {!account.username && <>
-    <label>{t('account.server')}<input type="url" autoCapitalize="none" autoCorrect="off" placeholder="https://wuu.example.com" value={server} required onChange={e => setServer(e.target.value)}/></label>
     <label>{t('account.username')}<input autoComplete="username" autoCapitalize="none" autoCorrect="off" value={username} required minLength={3} onChange={e => setUsername(e.target.value)}/></label>
    </>}
-   {onComputer && (mode === 'login' || mode === 'register') && <label>{t('account.deviceName')}<input value={deviceName} maxLength={64} placeholder={t('account.deviceNameExample')} onChange={e => setDeviceName(e.target.value)}/></label>}
    {(mode === 'recover' || mode === 'password') && <label>{t(mode === 'recover' ? 'account.recoveryCode' : 'account.currentPassword')}<input type="password" autoComplete={mode === 'password' ? 'current-password' : 'off'} value={secret} required onChange={e => setSecret(e.target.value)}/></label>}
    <label>{t(mode === 'login' ? 'account.loginPassword' : 'account.newPassword')}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} required minLength={12} onChange={e => setPassword(e.target.value)}/></label>
    {mode === 'password' && <p>{t('account.passwordHint')}</p>}
+   {!account.username && <button className="account-connection-link" type="button" disabled={busy} onClick={openConnection}><span>{t('account.connectionSettings')}</span><span className="account-connection-value">{server || t('account.notConfigured')}</span><ChevronRight size={16} aria-hidden="true" /></button>}
    <button className="account-primary" disabled={busy} type="submit">{t(busy ? 'account.busy' : `account.${mode}`)}</button>
-   {!account.username && <div className="account-actions">{(['login','register','recover'] as const).filter(m => m !== mode).map(m => <button type="button" key={m} disabled={busy} onClick={() => {setMode(m);setError('');}}>{t(m === 'login' ? 'account.backToLogin' : m === 'recover' ? 'account.forgotPassword' : 'account.register')}</button>)}</div>}
-  </form>{!account.username && pairAction}</>}
+  </form>{!account.username && mode === 'login' && <button className="account-auth-more" type="button" disabled={busy} onClick={() => setAuthPage('options')}>{t('account.moreOptions')}<ChevronRight size={16} aria-hidden="true" /></button>}</>}
  </section>;
 }

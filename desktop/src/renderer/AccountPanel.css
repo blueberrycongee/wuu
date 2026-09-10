@@ -58,3 +58,16 @@
 .account-switch[aria-checked="true"] > span::after { left:21px; }
 .account-panel .account-signout { width:100%; margin-top:28px; border:0; color:var(--danger); background:transparent; }
 .account-panel > .account-text-action { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; margin-top:20px; border:0; color:var(--ink-soft); }
+
+.account-auth { max-width:400px; padding-top:24px; }
+.account-auth .account-page-header { margin-bottom:32px; }
+.account-auth label { font-size:13px; font-weight:500; color:var(--ink-soft); }
+.account-auth input { border-color:var(--hairline-soft); border-radius:12px; background:var(--surface-1); color:var(--ink); }
+.account-auth .account-primary { min-height:52px; border-radius:12px; font-size:15px; font-weight:600; }
+.account-panel .account-connection-link { display:flex; align-items:center; gap:8px; padding:4px 0; border:0; text-align:left; font-size:12px; color:var(--ink-soft); }
+.account-connection-value { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
+.account-connection-link > svg { flex:none; }
+.account-panel .account-auth-more { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; margin-top:16px; border:0; color:var(--ink-soft); }
+.account-auth-options { overflow:hidden; border-radius:12px; background:var(--surface-1); }
+.account-panel .account-auth-options > button { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:56px; border:0; border-bottom:1px solid var(--hairline-soft); border-radius:0; text-align:left; }
+.account-panel .account-auth-options > button:last-child { border-bottom:0; }
