@@ -50,7 +50,6 @@ export const zhCN = {
   "account.forgotPassword": "忘记密码",
   "account.restoring": "正在恢复连接…",
   "account.backToDevices": "返回设备",
-  "account.pairing": "配对连接",
   "account.pairLink": "配对电脑",
   "conversation.loadFullContent": "加载完整内容",
   "common.system": "跟随系统",

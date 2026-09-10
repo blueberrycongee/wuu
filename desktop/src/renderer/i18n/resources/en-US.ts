@@ -52,7 +52,6 @@ export const enUS = {
   "account.forgotPassword": "Forgot password",
   "account.restoring": "Restoring connection…",
   "account.backToDevices": "Back to devices",
-  "account.pairing": "Pairing",
   "account.pairLink": "Pair a computer",
   "conversation.loadFullContent": "Load full content",
   "common.system": "Use system language",

@@ -99,7 +99,7 @@ export default function AccountApp(): React.JSX.Element {
       <div className="account-workbench">
         <header className="account-toolbar">
           <button onClick={back}>‹ {t('account.backToDevices')}</button>
-          <span>{selected ? selected.host_name || t('account.computer') : t('account.pairing')}</span>
+          {selected && <span>{selected.host_name || t('account.computer')}</span>}
         </header>
         <div className="account-workbench-content">
           <PairedApp key={selected?.host_pub || "pair"} onAccountBack={selected ? back : undefined} />
