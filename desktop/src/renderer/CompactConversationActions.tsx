@@ -51,6 +51,8 @@ export function CompactConversationActions({
   };
   return (
     <div className="title-actions compact-conversation-actions">
+      {navigation && <button type="button" className="icon-button" aria-label={t("mobile.conversations")} title={t("mobile.conversations")} onClick={navigation.onOpenSidebar}><Menu size={18} aria-hidden="true" /></button>}
+      {navigation && <button type="button" className="icon-button" aria-label={t("mobile.tools")} title={t("mobile.tools")} aria-expanded={rightPanelOpen} onClick={onToggleRightPanel}><SidePanelToggleIcon side="right" open={rightPanelOpen} /></button>}
       {!navigation && <button type="button" className="icon-button" aria-label={t("tabs.newConversation")} title={t("tabs.newConversation")}
         disabled={!canStartNewThread} onClick={onStartNewThread}>
         <SquarePen size={18} aria-hidden="true" />
@@ -65,7 +67,7 @@ export function CompactConversationActions({
             setOpen(true);
           }
         }}>
-        {navigation ? <Menu size={18} aria-hidden="true" /> : <Ellipsis size={18} aria-hidden="true" />}
+        <Ellipsis size={18} aria-hidden="true" />
       </button>
       {open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement={navigation ? "above" : "below"} align={navigation ? "left" : "right"} width={224}>
         <div ref={menuRef} id={menuID} role="menu" aria-label={t("shell.moreActions")} className="conversation-actions-menu"
@@ -89,7 +91,7 @@ export function CompactConversationActions({
           {navigation && <>
             <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); navigation.onOpenSidebar(); }}>
               <SidePanelToggleIcon side="left" open={false} />
-              {t("app.expandLeftSidebar")}
+              {t("mobile.conversations")}
             </button>
             <button type="button" role="menuitem" tabIndex={-1} disabled={!canStartNewThread} onClick={() => { close(); onStartNewThread(); }}>
               <SquarePen size={18} aria-hidden="true" />
@@ -102,7 +104,7 @@ export function CompactConversationActions({
           </button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); onToggleRightPanel(); }}>
             <SidePanelToggleIcon side="right" open={rightPanelOpen} />
-            {t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+            {t(navigation ? "mobile.tools" : rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
           </button>
         </div>
       </FloatingMenuPortal>}

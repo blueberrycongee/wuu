@@ -155,17 +155,24 @@ function defaultContextValue(): I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-export function I18nProvider({ children }: { children: ReactNode }): JSX.Element {
+export interface LanguagePreferenceStore {
+  get(): LanguagePreference;
+  set(preference: LanguagePreference): Promise<unknown>;
+  subscribe(listener: (preference: LanguagePreference) => void): () => void;
+}
+
+export function I18nProvider({ children, preferenceStore }: { children: ReactNode; preferenceStore?: LanguagePreferenceStore }): JSX.Element {
   const [preference, setPreferenceState] = useState<LanguagePreference>(
-    () => window.wuu?.initialLanguagePreference ?? "system",
+    () => preferenceStore?.get() ?? window.wuu?.initialLanguagePreference ?? "system",
   );
   const locale = resolveLocale(preference, window.wuu?.initialSystemLocale);
   const setPreference = useCallback((next: LanguagePreference) => {
     setPreferenceState(next);
     document.documentElement.lang = resolveLocale(next, window.wuu?.initialSystemLocale);
-    void window.wuu?.setLanguagePreference(next).catch(() => undefined);
-  }, []);
+    void (preferenceStore ? preferenceStore.set(next) : window.wuu?.setLanguagePreference(next))?.catch(() => undefined);
+  }, [preferenceStore]);
   useEffect(() => {
+    if (preferenceStore) return preferenceStore.subscribe(setPreferenceState);
     return window.wuu?.onLanguagePreferenceChange?.((next) => {
       setPreferenceState(next);
       document.documentElement.lang = resolveLocale(
@@ -173,7 +180,7 @@ export function I18nProvider({ children }: { children: ReactNode }): JSX.Element
         window.wuu?.initialSystemLocale,
       );
     });
-  }, []);
+  }, [preferenceStore]);
   const value = useMemo<I18nContextValue>(() => ({
     locale,
     preference,

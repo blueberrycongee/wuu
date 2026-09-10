@@ -23,8 +23,9 @@ export async function accountRequest<T>(server: string, token: string, method: s
  if (!response.ok) throw new AccountRequestError(result.error || `账号服务错误 (${response.status})`, response.status);
  return result as T;
 }
-export async function loginAccount(server: string, username: string, password: string, name: string, register = false): Promise<{ session: AccountSession; recovery?: string }> {
- const id = Identity.generate(); username = username.trim().toLowerCase(); server = accountOrigin(server);
+/** Pass a persisted identity to keep the same device across account logins. */
+export async function loginAccount(server: string, username: string, password: string, name: string, register = false, id = Identity.generate()): Promise<{ session: AccountSession; recovery?: string }> {
+ username = username.trim().toLowerCase(); server = accountOrigin(server);
  const result = await accountRequest<{ token: string; username: string; pub: string; recovery?: string }>(server, '', 'POST', register ? '/register' : '/login', {
   username, password, name, role: 'phone', pub: encodeKey(id.public_()),
   proof: b64encode(id.signRelayAuth(utf8Encode('wuu/account/enroll/v1:' + username), 'phone')),

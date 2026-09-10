@@ -1,4 +1,5 @@
 import { PluginAssets } from "./pluginAssets";
+import { languagePreferenceStore } from './language';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { pickComputerFolder } from "./folderPicker";
 import { isNative, openNativeURL, saveNativeArtifact } from "./native";
@@ -48,7 +49,6 @@ type RunningListener = (snapshot: RunningThreadSnapshot[]) => void;
 type PreferenceListener<T> = (value: T) => void;
 
 const THEME_KEY = "wuu.web.theme";
-const LANGUAGE_KEY = "wuu.web.language";
 const MESSAGE_SIZE_KEY = "wuu.web.message-size";
 const CHANNEL_ROOM_PREFERENCES_KEY = "wuu.channels.roomPreferences";
 const PLUGIN_CONFLICT_PREFERENCES_KEY = "wuu.web.plugin-conflict-preferences";
@@ -76,8 +76,7 @@ function storedTheme(): ThemePreference {
 }
 
 function storedLanguage(): LanguagePreference {
-  const value = localStorage.getItem(LANGUAGE_KEY);
-  return value === "zh-CN" || value === "en-US" || value === "system" ? value : "system";
+  return languagePreferenceStore.get();
 }
 
 function storedMessageSize(): MessageFlowFontSize {
@@ -159,7 +158,6 @@ export class RemoteDesktopBridge {
   private readonly serverListeners = new Set<ServerEventListener>();
   private readonly runningListeners = new Set<RunningListener>();
   private readonly themeListeners = new Set<PreferenceListener<ThemePreference>>();
-  private readonly languageListeners = new Set<PreferenceListener<LanguagePreference>>();
   private readonly voiceListeners = new Set<PreferenceListener<VoiceInputSettings>>();
   private readonly pendingServerRequests = new Map<
     string,
@@ -883,13 +881,11 @@ export class RemoteDesktopBridge {
       },
       getLanguagePreference: async () => storedLanguage(),
       setLanguagePreference: async (language: LanguagePreference) => {
-        localStorage.setItem(LANGUAGE_KEY, language);
-        for (const listener of this.languageListeners) listener(language);
+        await languagePreferenceStore.set(language);
         return { ok: true, language };
       },
       onLanguagePreferenceChange: (listener: PreferenceListener<LanguagePreference>) => {
-        this.languageListeners.add(listener);
-        return () => this.languageListeners.delete(listener);
+        return languagePreferenceStore.subscribe(listener);
       },
       getVoiceInputSettings: async () => ({
         settings: initialVoiceInputSettings,

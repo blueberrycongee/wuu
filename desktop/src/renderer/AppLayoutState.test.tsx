@@ -19,6 +19,7 @@ import {
 } from "./WindowResizeState";
 
 interface Harness {
+  effectiveSidebarWidth: ReturnType<typeof useAppLayoutState>["effectiveSidebarWidth"];
   sidebarWidth: ReturnType<typeof useAppLayoutState>["sidebarWidth"];
   sidebarCollapsed: ReturnType<typeof useAppLayoutState>["sidebarCollapsed"];
   workspaceRightPanelWidth: ReturnType<
@@ -65,6 +66,7 @@ function renderHookHarness(): void {
       workspaceRightPanelDockableWithoutSidebar?: boolean;
     };
     latest = {
+      effectiveSidebarWidth: hook.effectiveSidebarWidth,
       sidebarWidth: hook.sidebarWidth,
       sidebarCollapsed: hook.sidebarCollapsed,
       workspaceRightPanelWidth: hook.workspaceRightPanelWidth,
@@ -117,6 +119,20 @@ afterEach(() => {
   root = null;
   container.remove();
   vi.useRealTimers();
+});
+
+it("keeps the full content width when opening navigation on a phone", () => {
+  vi.spyOn(ComposerFocus, "isTouchWebShell").mockReturnValue(true);
+  vi.spyOn(window.screen, "width", "get").mockReturnValue(430);
+  vi.spyOn(window.screen, "height", "get").mockReturnValue(932);
+  setInnerWidth(430);
+  renderHookHarness();
+  expect(latest!.effectiveSidebarWidth).toBe(0);
+  act(() => latest!.toggleSidebar());
+  expect(latest!.sidebarCollapsed).toBe(false);
+  expect(latest!.effectiveSidebarWidth).toBe(0);
+  act(() => latest!.toggleSidebar());
+  expect(latest!.effectiveSidebarWidth).toBe(0);
 });
 
 it.each([

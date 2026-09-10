@@ -405,10 +405,12 @@ export function useAppLayoutState({
     setSidebarCollapsedState(collapsed);
   }, []);
   const sidebarWidth = clampSidebarWidthForWindow(sidebarPreferredWidth, windowWidth);
-  const effectiveSidebarWidth = sidebarCollapsed ? 0 : sidebarWidth;
   const screenShortSide = Math.min(window.screen.width, window.screen.height);
   const phoneNavigation = isTouchWebShell() && screenShortSide > 0 && screenShortSide < COMPACT_NAVIGATION_WINDOW_WIDTH;
   const compactNavigation = phoneNavigation || windowWidth < COMPACT_NAVIGATION_WINDOW_WIDTH;
+  // Compact sidebars overlay the conversation even when Settings changes the
+  // desktop docking preference. Never reserve a hidden desktop column.
+  const effectiveSidebarWidth = compactNavigation || sidebarCollapsed ? 0 : sidebarWidth;
   // Auto-globalize the open right panel only when the window is too narrow to
   // dock conversation + panel even with the sidebar fully collapsed — i.e. we
   // measure the space WITHOUT the sidebar's width. Opening the sidebar no

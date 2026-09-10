@@ -9,8 +9,10 @@ import { webCredStore } from "./lib/credStore";
 import PairedApp from "./App";
 import { NotificationSettings } from './NotificationSettings';
 import { startPushLifecycle, consumeNotificationHost } from './lib/notifications';
+import { useI18n } from '../../../desktop/src/renderer/i18n';
 
 export default function AccountApp(): React.JSX.Element {
+  const { t } = useI18n();
   const [selected, setSelected] = useState<Credentials | null>(null);
   const [pair, setPair] = useState(() =>
     window.location.hash.includes("pair="),
@@ -77,8 +79,10 @@ export default function AccountApp(): React.JSX.Element {
       if (!selected && !pair) return;
       event.preventDefault();
       // Give existing dialogs and drawers the first opportunity to close.
-      if (document.querySelector('[role="dialog"], [role="menu"]')) {
-        document.dispatchEvent(
+      const overlays = document.querySelectorAll('[role="dialog"], [role="menu"]');
+      const overlay = overlays.item(overlays.length - 1);
+      if (overlay) {
+        overlay.dispatchEvent(
           new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
         );
         return;
@@ -89,13 +93,13 @@ export default function AccountApp(): React.JSX.Element {
     window.addEventListener("wuu:native-back", handler);
     return () => window.removeEventListener("wuu:native-back", handler);
   }, [selected, pair]);
-  if (boot) return <main className="account-home">正在恢复连接…</main>;
+  if (boot) return <main className="account-home">{t('account.restoring')}</main>;
   if (selected || pair)
     return (
       <div className="account-workbench">
         <header className="account-toolbar">
-          <button onClick={back}>‹ 电脑</button>
-          <span>{selected ? selected.host_name || "电脑" : "配对连接"}</span>
+          <button onClick={back}>‹ {t('account.backToDevices')}</button>
+          <span>{selected ? selected.host_name || t('account.computer') : t('account.pairing')}</span>
         </header>
         <div className="account-workbench-content">
           <PairedApp key={selected?.host_pub || "pair"} onAccountBack={selected ? back : undefined} />
@@ -108,7 +112,7 @@ export default function AccountApp(): React.JSX.Element {
       <NotificationSettings />
       {error && <p role="alert">{error}</p>}
       <button className="account-pair-link" onClick={() => setPair(true)}>
-        使用电脑上的配对链接
+        {t('account.pairLink')}
       </button>
     </main>
   );
