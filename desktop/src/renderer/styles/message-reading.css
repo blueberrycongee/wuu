@@ -1,0 +1,137 @@
+/* Message-only editorial rhythm. The document preview, search snippets and
+ * plugin surfaces keep their own layout. Both ordinary Markdown and memoized
+ * streaming blocks use the same adjacency rules, including across wrappers. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  line-height: inherit;
+  /* System CJK fonts need their natural spacing. Do not copy the reference
+   * site's negative Latin tracking onto Chinese or user-selected fonts. */
+  letter-spacing: normal;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * {
+  margin-block: 0;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :not(.stream-cursor-block-tail) {
+  margin-block-start: var(--conversation-prose-block-gap, 1.15em);
+}
+
+/* A heading may be the first/last child of a stable block or a direct child
+ * of the live tail. Treat those wrappers as transparent for spacing without
+ * changing their DOM, memoization or streaming cursor geometry. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :is(
+    .rich-heading,
+    .streaming-markdown-block:has(> .rich-heading:first-child)
+  ) {
+  margin-block-start: var(--conversation-prose-heading-before, 2em);
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > :is(
+    .rich-paragraph,
+    .streaming-markdown-block:has(> .rich-paragraph:last-child)
+  ) + :is(ul, ol, .streaming-markdown-block:has(> :is(ul, ol):first-child)) {
+  margin-block-start: var(--conversation-prose-heading-after, 0.5em);
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > :is(
+    .rich-heading,
+    .streaming-markdown-block:has(> .rich-heading:last-child)
+  ) + :not(.stream-cursor-block-tail) {
+  margin-block-start: var(--conversation-prose-heading-after, 0.5em);
+}
+
+/* Prose shares the message/composer boundary; typography must not introduce
+ * a second, narrower column within the conversation. */
+:is(.agent-block, .reasoning-block)
+  :is(.rich-content, .streaming-markdown-block) > :is(.rich-paragraph, .rich-heading, ul, ol, .rich-blockquote) {
+  max-inline-size: var(--conversation-prose-max-width, 100%);
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-paragraph {
+  line-height: inherit;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading {
+  font-size: 1em;
+  line-height: 1.5;
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.agent-block .rich-heading--h1 { font-size: 1.25em; }
+.agent-block .rich-heading--h2 { font-size: 1.125em; }
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content :is(ul, ol) {
+  display: block;
+  margin-block: 0;
+  padding-inline-start: var(--conversation-prose-indent, 1.4em);
+  padding-inline-end: 0;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li {
+  position: relative;
+  padding-inline-start: 0.1em;
+  line-height: inherit;
+  word-break: normal;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li + li {
+  margin-block-start: var(--conversation-prose-list-gap, 0.5em);
+}
+
+/* A loose CommonMark list contains real paragraphs. Making them inline
+ * merges distinct paragraphs; keep them block-level and group them locally. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li > .rich-paragraph {
+  display: block;
+  margin: 0;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li > * + .rich-paragraph,
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li > :is(ul, ol) {
+  margin-block-start: var(--conversation-prose-list-gap, 0.5em);
+}
+
+/* Task checkboxes occupy the marker gutter, including loose-list markup
+ * where remark-gfm nests the checkbox in the item's first paragraph. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  .rich-content li:has(> input[type="checkbox"], > p > input[type="checkbox"]) {
+  list-style-type: none;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content input[type="checkbox"] {
+  position: absolute;
+  inset-inline-start: -1.25em;
+  inset-block-start: 0.375em;
+  inline-size: 1em;
+  block-size: 1em;
+  margin: 0;
+  font-size: inherit;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-blockquote {
+  padding-block: 0;
+  padding-inline-start: calc(1.5em - 2px);
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-blockquote > * + * {
+  margin-block-start: var(--conversation-prose-block-gap, 1.15em);
+}
+
+/* Avoid excessive drift in very deep model-generated lists without dropping
+ * their semantics. The first two levels retain the full hanging indent. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  .rich-content :is(ul, ol) :is(ul, ol) :is(ul, ol) {
+  padding-inline-start: 1.1em;
+}

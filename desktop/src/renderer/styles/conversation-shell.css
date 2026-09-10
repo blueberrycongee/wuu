@@ -100,28 +100,26 @@
      moved to :root above so user setting on <html> can override them
      (and so the settings-page preview outside .conversation-pane can
      read the same values). */
-  /*
-   * Reading rhythm: 1.75 keeps mixed CJK/Latin prose comfortable at
-   * 14px (24.5px baseline pitch) now that answer prose is capped at
-   * the message max-width (800px, see .agent-block). Paragraph gap is
-   * 24px against ~10.5px in-paragraph leading, keeping the block/line
-   * contrast near 2.3x so paragraphs read as distinct blocks. Earlier
-   * 14px was judged nearly identical to in-paragraph leading and long
-   * answers dissolved into an even gray wall; 18px was still judged
-   * too dense for the 14px body once stream weight moved to normal.
-   */
+  /* Reading rhythm follows the user's text size. Keep related blocks
+   * closer than sections, with headings attached to the text below.
+   * Prose, previews and composer share the same column measure. */
   --conversation-reading-line-height: 1.75;
   /* Commentary is short process narration, not long-form answer prose. A
      tighter pitch avoids the excess optical whitespace that Latin glyphs
      leave inside the mixed-script reading line box. */
   --conversation-commentary-line-height: 1.6;
-  --conversation-prose-block-gap: 24px;
+  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.15);
+  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 2);
+  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.5);
+  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.5);
+  --conversation-prose-indent: 1.4em;
+  --conversation-prose-max-width: 100%;
   --conversation-message-element-gap: 18px;
   /* Process rows share the message size and weight; color and spacing,
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
   --conversation-process-font-weight: var(--conversation-message-font-weight);
-  --conversation-process-line-height: 20px;
+  --conversation-process-line-height: 1.6;
   --conversation-meta-line-height: 1.6;
   --conversation-control-line-height: 1.7;
   --conversation-process-control-color: var(--shell-process-control-color);

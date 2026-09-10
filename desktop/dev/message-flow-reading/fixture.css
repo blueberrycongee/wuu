@@ -1,0 +1,12 @@
+/* Test harness chrome only. Message typography comes from production CSS. */
+html, body, #root { height: auto; min-height: 100%; overflow: visible; }
+body { margin: 0; background: var(--paper); color: var(--ink); }
+.fixture-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid var(--hairline); font: 13px/1.5 system-ui; }
+.fixture-toolbar label { display: inline-flex; align-items: center; gap: 6px; }
+.fixture-toolbar select, .fixture-toolbar button { font: inherit; padding: 4px 6px; background: var(--surface-1); color: var(--ink); border: 1px solid var(--hairline); border-radius: 4px; }
+.fixture-pane.conversation-pane { display: block; height: auto; overflow: visible; padding: 36px 24px; }
+.fixture-column { width: min(100%, var(--session-composer-width)); margin-inline: auto; }
+.fixture-column .user-message { margin-left: auto; margin-bottom: 16px; }
+.fixture-process { margin: 8px 0 16px; }
+.fixture-column .turn { content-visibility: visible; }
+@media (max-width: 480px) { .fixture-pane.conversation-pane { padding: 24px 16px; } .fixture-toolbar { padding: 12px 16px; gap: 8px 16px; } }

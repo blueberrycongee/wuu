@@ -1,0 +1,204 @@
+<div id="wuu-reading-specimen" lang="zh-CN" aria-label="Wuu 消息流排版样稿">
+  <style>
+    #wuu-reading-specimen {
+      --wr-paper: light-dark(#ffffff, #202020);
+      --wr-sidebar: light-dark(#f5f5f5, #191919);
+      --wr-ink: light-dark(#242424, #e8e8e8);
+      --wr-secondary: light-dark(#626262, #b3b3b3);
+      --wr-rule: light-dark(#e6e6e6, #3b3b3b);
+      --wr-soft: light-dark(#f1f1f1, #303030);
+      --wr-user-bg: light-dark(#111111, #e8e8e8);
+      --wr-user-ink: light-dark(#ffffff, #202020);
+      --wr-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --wr-serif: "Iowan Old Style", Georgia, "Songti SC", "Noto Serif CJK SC", serif;
+      --wr-body: 16px;
+      --wr-leading: 1.75;
+      --wr-measure: 100%;
+      --wr-paragraph: 16px;
+      --wr-section: 32px;
+      --wr-heading-gap: 8px;
+      --wr-indent: 1.5em;
+      --wr-h1: 20px;
+      --wr-h2: 18px;
+      --wr-process: 14px;
+      --wr-process-leading: 1.57;
+      --wr-process-gap: 24px;
+      color: var(--wr-ink);
+      font: 400 13px/1.5 var(--wr-sans);
+      width: 100%;
+      text-align: left;
+    }
+    #wuu-reading-specimen * { box-sizing: border-box; }
+    #wuu-reading-specimen .wr-window { display: grid; grid-template-columns: 164px minmax(0, 1fr); background: var(--wr-paper); border: 1px solid var(--wr-rule); border-radius: 12px; }
+    #wuu-reading-specimen .wr-sidebar { padding: 22px 12px; background: var(--wr-sidebar); border-right: 1px solid var(--wr-rule); border-radius: 12px 0 0 12px; }
+    #wuu-reading-specimen .wr-brand { font: 600 34px/1 var(--wr-serif); letter-spacing: -1px; margin: 4px 8px 26px; }
+    #wuu-reading-specimen .wr-nav-item { padding: 8px; display: flex; align-items: center; gap: 8px; color: var(--wr-secondary); }
+    #wuu-reading-specimen .wr-nav-item svg { flex: 0 0 auto; width: 15px; height: 15px; }
+    #wuu-reading-specimen .wr-folder { margin-top: 28px; }
+    #wuu-reading-specimen .wr-selected { background: var(--wr-rule); border-radius: 7px; color: var(--wr-ink); font-weight: 500; }
+    #wuu-reading-specimen .wr-history { margin-left: 8px; padding: 9px 8px; overflow-wrap: anywhere; }
+    #wuu-reading-specimen .wr-main { min-width: 0; }
+    #wuu-reading-specimen .wr-chrome { padding: 12px 18px; border-bottom: 1px solid var(--wr-rule); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
+    #wuu-reading-specimen .wr-mode { color: var(--wr-secondary); font-size: 12px; }
+    #wuu-reading-specimen .wr-content { padding: 32px 28px 24px; max-width: 856px; margin-inline: auto; }
+    #wuu-reading-specimen .wr-turn { margin: 0 0 48px; }
+    #wuu-reading-specimen .wr-question { width: fit-content; max-width: min(90%, 640px); margin: 0 0 32px auto; padding: 10px 16px; border-radius: 16px 16px 4px 16px; font: 400 var(--wr-body)/var(--wr-leading) var(--wr-sans); background: var(--wr-user-bg); color: var(--wr-user-ink); overflow-wrap: anywhere; }
+    #wuu-reading-specimen .wr-process { font: 400 var(--wr-process)/var(--wr-process-leading) var(--wr-sans); color: var(--wr-secondary); max-width: var(--wr-measure); margin-bottom: var(--wr-process-gap); }
+    #wuu-reading-specimen summary { cursor: pointer; width: fit-content; padding-block: 2px; }
+    #wuu-reading-specimen .wr-process ol { margin: 12px 0 0; padding-left: 24px; }
+    #wuu-reading-specimen .wr-process li + li { margin-top: 8px; }
+    #wuu-reading-specimen .wr-answer { font: 400 var(--wr-body)/var(--wr-leading) var(--wr-sans); overflow-wrap: anywhere; }
+    #wuu-reading-specimen .wr-answer > * { max-width: var(--wr-measure); margin: 0; }
+    #wuu-reading-specimen .wr-answer > * + * { margin-top: var(--wr-paragraph); }
+    #wuu-reading-specimen .wr-answer h2 { font: 600 var(--wr-h1)/1.5 var(--wr-heading-font, var(--wr-sans)); margin-top: var(--wr-section); color: var(--wr-ink); }
+    #wuu-reading-specimen .wr-answer h3 { font: 600 var(--wr-h2)/1.5556 var(--wr-heading-font, var(--wr-sans)); margin-top: var(--wr-section); color: var(--wr-ink); }
+    #wuu-reading-specimen .wr-answer > :first-child { margin-top: 0; }
+    #wuu-reading-specimen .wr-answer h2 + *, #wuu-reading-specimen .wr-answer h3 + * { margin-top: var(--wr-heading-gap); }
+    #wuu-reading-specimen .wr-answer strong { font-weight: 600; }
+    #wuu-reading-specimen .wr-answer ul { padding-left: var(--wr-indent); }
+    #wuu-reading-specimen .wr-answer li + li { margin-top: 8px; }
+    #wuu-reading-specimen .wr-answer li > ul { margin: 8px 0 0; }
+    #wuu-reading-specimen .wr-answer p + ul { margin-top: var(--wr-heading-gap); }
+    #wuu-reading-specimen .wr-answer code { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: .875em; background: var(--wr-soft); border-radius: 3px; padding: 2px 4px; overflow-wrap: anywhere; }
+    #wuu-reading-specimen .wr-answer blockquote { padding: 0 0 0 calc(var(--wr-indent) - 2px); border-left: 2px solid var(--wr-rule); color: var(--wr-secondary); }
+    #wuu-reading-specimen .wr-code { max-width: 100%; background: var(--wr-soft); border: 1px solid var(--wr-rule); border-radius: 8px; }
+    #wuu-reading-specimen .wr-code-label { border-bottom: 1px solid var(--wr-rule); padding: 7px 16px; color: var(--wr-secondary); font: 400 12px/1.5 var(--wr-sans); }
+    #wuu-reading-specimen .wr-code pre { margin: 0; padding: 12px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 14px/1.57 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+    #wuu-reading-specimen .wr-code pre code { font: inherit; padding: 0; background: transparent; }
+    #wuu-reading-specimen .wr-footnote { margin-top: 16px; max-width: var(--wr-measure); color: var(--wr-secondary); font: 400 12px/1.5 var(--wr-sans); }
+    #wuu-reading-specimen .wr-composer { padding: 14px 16px 12px; background: var(--wr-paper); border: 1px solid var(--wr-rule); border-radius: 18px; }
+    #wuu-reading-specimen .wr-composer textarea { display: block; width: 100%; min-height: 52px; resize: vertical; border: 0; padding: 0; background: transparent; color: var(--wr-ink); font: 400 16px/1.6 var(--wr-sans); }
+    #wuu-reading-specimen .wr-composer textarea::placeholder { color: var(--wr-secondary); }
+    #wuu-reading-specimen .wr-composer-footer { color: var(--wr-secondary); font: 400 12px/1.5 var(--wr-sans); display: flex; justify-content: space-between; gap: 12px; }
+    #wuu-reading-specimen .wr-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--wr-rule); border-radius: 8px; background: var(--wr-paper); }
+    #wuu-reading-specimen .wr-controls label { display: flex; align-items: center; gap: 6px; }
+    #wuu-reading-specimen .wr-controls select { font: inherit; color: inherit; background: var(--wr-paper); border: 1px solid var(--wr-rule); border-radius: 4px; padding: 4px; }
+    @media (max-width: 760px) {
+      #wuu-reading-specimen .wr-window { grid-template-columns: minmax(0, 1fr); }
+      #wuu-reading-specimen .wr-sidebar { display: none; }
+    }
+    @media (max-width: 440px) {
+      #wuu-reading-specimen .wr-content { padding: 24px 16px 16px; }
+      #wuu-reading-specimen .wr-question { max-width: 96%; padding: 10px 12px; }
+      #wuu-reading-specimen .wr-answer ul { padding-left: 1.25em; }
+      #wuu-reading-specimen .wr-chrome { padding-inline: 16px; }
+    }
+    @media (pointer: coarse) {
+      #wuu-reading-specimen summary { min-height: 44px; padding-block: 10px; }
+    }
+  </style>
+  <div class="wr-window">
+    <aside class="wr-sidebar" aria-label="Wuu 侧边栏示意">
+      <div class="wr-brand">wuu</div>
+      <div class="wr-nav-item"><i data-lucide="square-pen" aria-hidden="true"></i>新对话</div>
+      <div class="wr-nav-item"><i data-lucide="search" aria-hidden="true"></i>搜索会话</div>
+      <div class="wr-nav-item"><i data-lucide="puzzle" aria-hidden="true"></i>插件</div>
+      <div class="wr-nav-item wr-folder"><i data-lucide="folder" aria-hidden="true"></i>wuu</div>
+      <div class="wr-history wr-selected">消息流的阅读排版</div>
+      <div class="wr-history">桌面与 Agent 的通信</div>
+      <div class="wr-history">检查项目结构</div>
+    </aside>
+    <section class="wr-main" aria-label="消息流阅读区">
+      <div class="wr-chrome"><span>消息流的阅读排版</span><span class="wr-mode" aria-live="polite">推荐排版 · 示例内容</span></div>
+      <div class="wr-content">
+        <div class="wr-turn">
+          <div class="wr-question">希望长回答读起来更舒服，也能一眼看清重点。整体应该怎么调整？</div>
+          <details class="wr-process">
+            <summary>已完成 3 项操作 · 查看过程</summary>
+            <ol><li>检查正文、标题与列表的样式。</li><li>比较字号、行宽和段落之间的关系。</li><li>整理可用于真实消息的排版样稿。</li></ol>
+          </details>
+          <article class="wr-answer" aria-label="包含段落、标题、嵌套列表、引用和代码的回答样稿">
+            <h2>让内容形成清楚的阅读节奏</h2>
+            <p>可以先建立一条稳定的阅读主线：用户提出问题，过程摘要交代进展，回答承载结论与解释。阅读时，目光能顺着同一条左侧边界往下走。</p>
+            <p>长回答需要兼顾<strong>连续阅读和快速定位</strong>。正文保持均匀的行距，段落之间留出适度空白；进入新的章节时，再通过标题和更大的间距提醒读者。</p>
+            <h3>字号、间距与缩进一起调整</h3>
+            <p>每种距离都应表达清楚的内容关系：</p>
+            <ul>
+              <li><strong>正文段落</strong>承担连续叙述，同一主题的内容自然衔接。</li>
+              <li><strong>列表条目</strong>方便比较；文字换行后，继续对齐条目的第一行。
+                <ul><li>补充说明只进入下一层，保持可预测的缩进。</li></ul>
+              </li>
+              <li><strong>代码与表格</strong>使用独立容器，外边缘仍落在正文主线上。</li>
+            </ul>
+            <blockquote>标题靠近它解释的下文，章节之间保留明显的停顿。</blockquote>
+            <h3>把阅读规则集中管理</h3>
+            <p>在 <code>conversation-shell.css</code> 中定义语义变量，让各类消息使用同一套基础尺度。</p>
+            <div class="wr-code"><div class="wr-code-label">CSS · 规则示意</div><pre><code>.answer {
+  font-size: var(--reading-size);
+  line-height: var(--reading-leading);
+}</code></pre></div>
+          </article>
+          <div class="wr-footnote">阅读样稿 · 用于比较视觉层级</div>
+        </div>
+        <div class="wr-turn">
+          <div class="wr-question">短回答也需要加标题吗？</div>
+          <article class="wr-answer" aria-label="短回答样稿"><p>短回答直接开始正文就可以。标题只在内容需要分节时出现，让每一层视觉强调都有明确的用途。</p></article>
+        </div>
+        <div class="wr-composer">
+          <textarea aria-label="样稿中的追问输入框" rows="2" placeholder="继续追问…"></textarea>
+          <div class="wr-composer-footer"><span>＋</span><span>Wuu · 排版预览</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('wuu-reading-specimen');
+      const state = { preset: 'recommended', scale: 100, serif: false, softBubble: false };
+      const presets = {
+        current: { label: '现有规则近似', body: 14, line: 1.75, width: 800, paragraph: 24, section: 36, headingGap: 24, h1: 14, h2: 14, process: 14, processLine: 20 / 14, processGap: 16 },
+        recommended: { label: '推荐排版', body: 16, line: 1.75, width: 640, paragraph: 16, section: 32, headingGap: 8, h1: 20, h2: 18, process: 14, processLine: 22 / 14, processGap: 24 },
+        reading: { label: '大字阅读', body: 18, line: 1.8, width: 640, paragraph: 20, section: 36, headingGap: 8, h1: 22, h2: 20, process: 16, processLine: 1.57, processGap: 24 }
+      };
+      function render() {
+        const p = presets[state.preset];
+        const scale = state.scale / 100;
+        const set = (key, val) => root.style.setProperty('--wr-' + key, val);
+        set('body', p.body * scale + 'px');
+        set('leading', p.line);
+        // All presets keep prose and the composer on the same column boundary.
+        set('measure', '100%');
+        set('paragraph', p.paragraph * scale + 'px');
+        set('section', p.section * scale + 'px');
+        set('heading-gap', p.headingGap * scale + 'px');
+        set('h1', p.h1 * scale + 'px');
+        set('h2', p.h2 * scale + 'px');
+        set('process', p.process * scale + 'px');
+        set('process-leading', p.processLine);
+        set('process-gap', p.processGap * scale + 'px');
+        set('heading-font', state.serif ? 'var(--wr-serif)' : 'var(--wr-sans)');
+        set('user-bg', state.softBubble ? 'var(--wr-soft)' : 'light-dark(#111111, #e8e8e8)');
+        set('user-ink', state.softBubble ? 'var(--wr-ink)' : 'light-dark(#ffffff, #202020)');
+        root.querySelector('.wr-mode').textContent = p.label + ' · 示例内容';
+      }
+      render();
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({ container: root, onChange: render });
+        tweak.addSelect(state, 'preset', { label: '排版方案', options: [{ label: '推荐：16px / 同宽布局', value: 'recommended' }, { label: '现有规则近似：14px / 同宽布局', value: 'current' }, { label: '大字阅读：18px / 同宽布局', value: 'reading' }] });
+        tweak.addSlider(state, 'scale', { label: '文字缩放', min: 100, max: 150, step: 10, unit: '%' });
+        tweak.addToggle(state, 'serif', { label: '衬线 / 宋体标题' });
+        tweak.addToggle(state, 'softBubble', { label: '柔和的用户消息底色' });
+      } else {
+        // Standalone viewers (including wuu) do not inject Codex's Tweak API.
+        const controls = document.createElement('div');
+        controls.className = 'wr-controls';
+        controls.setAttribute('role', 'group');
+        controls.setAttribute('aria-label', '样稿排版设置');
+        controls.innerHTML = `
+          <label>排版方案 <select data-setting="preset"><option value="recommended">推荐排版</option><option value="current">现有规则近似</option><option value="reading">大字阅读</option></select></label>
+          <label>文字缩放 <input data-setting="scale" type="range" min="100" max="150" step="10" value="100"><output>100%</output></label>
+          <label><input data-setting="serif" type="checkbox">衬线 / 宋体标题</label>
+          <label><input data-setting="softBubble" type="checkbox">柔和的用户消息底色</label>`;
+        controls.addEventListener('input', (event) => {
+          const input = event.target;
+          const key = input.dataset.setting;
+          if (!key) return;
+          state[key] = input.type === 'checkbox' ? input.checked : key === 'scale' ? Number(input.value) : input.value;
+          controls.querySelector('output').textContent = state.scale + '%';
+          render();
+        });
+        root.prepend(controls);
+      }
+    })();
+  </script>
+</div>

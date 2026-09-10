@@ -219,7 +219,7 @@ describe("StreamingMarkdown", () => {
     const key = streamTextKey("turn", "s9", "text");
     // Paragraph directly followed by a list (single newline) parses as
     // two block siblings but lands in ONE stable block wrapper — the
-    // wrapper's own column gap (see turns.css) is what spaces them.
+    // wrapper's adjacency rules must space them just like separate blocks.
     streamTextStore.seed(key, "分类如下：\n- 只读：a\n- 可编辑：b\n\n后续段落。\n\n");
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
 
@@ -248,9 +248,31 @@ describe("StreamingMarkdown", () => {
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
     const heading = surface.querySelector(".rich-heading");
     expect(heading?.textContent).toBe("方案");
-    // Same tier for every level: headings are same-size semibold
-    // paragraphs, never h1-h6 elements with size jumps.
+    // Keep the existing heading DOM contract; message and file surfaces
+    // apply their own visual hierarchy through the level modifier classes.
     expect(surface.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+  });
+
+  it("keeps a loose list's paragraphs and numbering together across streamed blank lines", async () => {
+    const key = streamTextKey("turn", "s13", "text");
+    const prefix = "9. 第一项\n\n";
+    const continuation = "   同一项的第二段。\n\n10. 第二项\n\n## 下一节\n\n正文";
+    streamTextStore.seed(key, prefix);
+    mount({ streamKey: key, initialText: prefix, isLive: true, phase: "final_answer" });
+    await act(async () => {
+      streamTextStore.append(key, continuation);
+      await new Promise(resolve => setTimeout(resolve, STREAM_TEXT_NOTIFY_INTERVAL_MS + 30));
+    });
+    const list = container!.querySelector("ol")!;
+    expect(container!.querySelectorAll("ol")).toHaveLength(1);
+    expect(list.getAttribute("start")).toBe("9");
+    expect(list.children).toHaveLength(2);
+    expect(list.children[0].querySelectorAll("p")).toHaveLength(2);
+    expect(list.children[0].textContent).toContain("同一项的第二段。");
+    const paragraphs = Array.from(list.children[0].querySelectorAll("p"));
+    rerender({ streamKey: key, initialText: prefix + continuation, isLive: false, phase: "final_answer" });
+    expect(container!.querySelector("ol")).toBe(list);
+    expect(Array.from(list.children[0].querySelectorAll("p"))).toEqual(paragraphs);
   });
 
   it("shows a 1px cursor span during streaming", async () => {
@@ -492,6 +514,35 @@ describe("containsMermaidFence", () => {
 });
 
 describe("splitIntoStableBlocks", () => {
+  it.each(["\n", "\r\n"])("defers list boundaries through indented paragraphs and nested lists (%j)", newline => {
+    const list = ["- first", "", "  second paragraph", "", "  - nested", "", "    nested continuation", "- next", "", ""].join(newline);
+    const text = `intro${newline}${newline}${list}## after${newline}tail`;
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual([`intro${newline}${newline}`, list]);
+    expect(result.tail).toBe(`## after${newline}tail`);
+    expect(result.blocks.join("") + result.tail).toBe(text);
+  });
+
+  it("does not freeze a list when a continuation may still arrive", () => {
+    const text = "- first\n\n  \n";
+    expect(splitIntoStableBlocks(text)).toEqual({ blocks: [], tail: text });
+  });
+
+  it("preserves loose numbered items separated by blank lines", () => {
+    const list = "9. first\n\n   continuation\n\n10. next\n\n";
+    expect(splitIntoStableBlocks(list + "after\n")).toEqual({ blocks: [list], tail: "after\n" });
+  });
+
+  it("uses tab stops when checking list continuation indentation", () => {
+    const list = "-\tfirst\n\n\tcontinuation\n\n";
+    expect(splitIntoStableBlocks(list + "after\n")).toEqual({ blocks: [list], tail: "after\n" });
+  });
+
+  it("keeps a fenced code block inside its list item", () => {
+    const list = "- example\n\n  ```ts\n  const a = 1;\n\n  const b = 2;\n  ```\n\n- next\n\n";
+    expect(splitIntoStableBlocks(list + "after\n")).toEqual({ blocks: [list], tail: "after\n" });
+  });
+
   it("returns the whole text as tail when there are no blank lines", () => {
     const result = splitIntoStableBlocks("a single paragraph still typing");
     expect(result.blocks).toEqual([]);

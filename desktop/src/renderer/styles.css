@@ -15,6 +15,7 @@
 @import "./styles/environment.css";
 @import "./styles/workspace.css";
 @import "./styles/turns.css";
+@import "./styles/message-reading.css";
 @import "./styles/composer.css";
 @import "./styles/composer-token-gauge.css";
 @import "./styles/composer-context-meter.css";

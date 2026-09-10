@@ -501,6 +501,9 @@ type StableBlockScanState = StableBlockSplit & {
   scanOffset: number;
   blockStart: number;
   inFence: boolean;
+  /** A list stays open across blank lines until a dedented block arrives. */
+  listContentIndent: number | undefined;
+  pendingListBoundary: number | undefined;
   /** Info string of the currently open fenced code block, if any. */
   openFenceLanguage: string | undefined;
 };
@@ -547,6 +550,16 @@ function scanStableBlocks(
   let openFenceLanguage = previous?.openFenceLanguage;
   let blockStart = previous?.blockStart ?? 0;
   let scanOffset = previous?.scanOffset ?? 0;
+  let listContentIndent = previous?.listContentIndent;
+  let pendingListBoundary = previous?.pendingListBoundary;
+  const commitBlock = (end: number): void => {
+    if (!blocksCopied && blocks === previousBlocks && previous) {
+      blocks = [...blocks];
+      blocksCopied = true;
+    }
+    blocks.push(text.slice(blockStart, end));
+    blockStart = end;
+  };
 
   // Only complete lines are scanned. The final partial line may still grow
   // into a fence opener/closer, so deferring it avoids rescanning or rolling
@@ -557,6 +570,23 @@ function scanStableBlocks(
       break;
     }
     const lineStart = scanOffset;
+    const line = text.slice(lineStart, lineEnd);
+    const blank = line.trim().length === 0;
+    const listMarker = !inFence && line.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
+    if (!inFence && !blank) {
+      if (pendingListBoundary !== undefined) {
+        const indentation = markdownColumnWidth(line.match(/^[ \t]*/)?.[0] ?? "");
+        if (!listMarker && indentation < (listContentIndent ?? 0)) {
+          commitBlock(pendingListBoundary);
+          listContentIndent = undefined;
+        }
+        pendingListBoundary = undefined;
+      }
+      if (listMarker) {
+        const indent = markdownColumnWidth(listMarker[0]);
+        listContentIndent = Math.min(listContentIndent ?? indent, indent);
+      }
+    }
     let fenceStart = lineStart;
     // CommonMark allows fenced code blocks to be indented by up to three
     // spaces. The Markdown parser accepts that form, so this lightweight
@@ -595,13 +625,14 @@ function scanStableBlocks(
     }
 
     scanOffset = lineEnd + 1;
-    if (!inFence && lineEnd === lineStart) {
-      if (!blocksCopied && blocks === previousBlocks && previous) {
-        blocks = [...blocks];
-        blocksCopied = true;
+    if (!inFence && blank) {
+      if (listContentIndent !== undefined) {
+        // A later indented paragraph or another item can still belong to the
+        // same list. Wait for a complete, dedented line before freezing it.
+        pendingListBoundary = scanOffset;
+      } else {
+        commitBlock(scanOffset);
       }
-      blocks.push(text.slice(blockStart, scanOffset));
-      blockStart = scanOffset;
     }
   }
 
@@ -612,17 +643,27 @@ function scanStableBlocks(
     scanOffset,
     blockStart,
     inFence,
+    listContentIndent,
+    pendingListBoundary,
     openFenceLanguage,
     blocks,
     tail: text.slice(blockStart),
   };
 }
 
+function markdownColumnWidth(text: string): number {
+  let column = 0;
+  for (const character of text) {
+    column += character === "\t" ? 4 - column % 4 : 1;
+  }
+  return column;
+}
+
 /**
  * Split `text` into a sequence of "stable" markdown blocks plus an
  * open tail. A block is everything between two blank-line boundaries
- * (`\n\n`). Blocks inside an unclosed fenced code section are deferred
- * to the tail — they aren't yet stable.
+ * (`\n\n`). Open fences and lists with a possible indented continuation
+ * remain in the tail until their boundary is known.
  *
  * Each stable block has self-contained markdown semantics: prepending
  * or appending more text to the overall document cannot change how the

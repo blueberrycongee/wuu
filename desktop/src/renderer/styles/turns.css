@@ -2162,12 +2162,12 @@
 }
 
 .turn-process-entry .rich-content {
-  gap: 8px;
+  --conversation-prose-block-gap: 0.65em;
   line-height: inherit;
 }
 
 .turn-process-entry.turn-process-entry-commentary .rich-content {
-  gap: var(--conversation-prose-block-gap, 10px);
+  --conversation-prose-block-gap: 1.15em;
 }
 
 .turn-process-entry .rich-content .rich-paragraph,
@@ -2887,26 +2887,11 @@
   white-space: normal;
 }
 
-/*
- * Chat messages don't surface Markdown headings as h1-h6 sizes — chat
- * is a linear stream, not a document. A `# foo` reads as a semibold
- * paragraph that picks up the surrounding message rhythm, so the eye
- * stays on the conversation column instead of bouncing between 14px
- * body text and an 18px heading. An earlier iteration flattened
- * headings all the way down to plain paragraphs; that removed every
- * anchor from long answers and they dissolved into an even gray wall.
- * Weight + extra top space is the whisper-level hierarchy: enough to
- * scan by, too quiet to shout.
- */
+/* Compact Markdown fallback. Conversation reading surfaces refine the
+ * hierarchy and block adjacency in message-reading.css; document previews
+ * retain their own heading scale in workspace.css. */
 .rich-heading {
-  /*
-   * Space before > space after: a heading belongs to the content below
-   * it, so it gets extra breathing room above (flex gap + 12px ≈ 28px,
-   * the "section" step of the spacing ladder) while staying tight
-   * against its own section. Uniform flex gaps alone gave the heading
-   * equal distance to both neighbours, which destroyed the grouping
-   * the semibold weight is trying to signal.
-   */
+  /* Give compact preview headings a small section break. */
   margin: 12px 0 0;
   color: var(--ink);
   font-weight: var(--weight-semibold);
