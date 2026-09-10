@@ -178,6 +178,12 @@ export class RemoteDesktopBridge {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private needsRestore = false;
   private stopped = false;
+  // synchronize() already applies the workspace snapshot before restore
+  // listeners and initial mount. This one-shot flag lets the immediately
+  // following listProjects() return that state without a second workspace/list
+  // round trip, while explicit refreshes still refetch and failed or
+  // disconnected connections clear the flag.
+  private workspaceSnapshotFresh = false;
 
   getConnectionSnapshot = (): WebConnectionSnapshot => this.connection;
   subscribeConnection = (listener: () => void): (() => void) => {
@@ -203,21 +209,25 @@ export class RemoteDesktopBridge {
     // connection. Keep the workbench in place unless a previous fresh
     // connection still needs initialize + thread snapshots.
     if (!first && resumed && !this.needsRestore) {
+      this.workspaceSnapshotFresh = false;
       this.setConnection("connected");
       return;
     }
     const revision = this.setConnection(first ? "connecting" : "restoring");
+    this.workspaceSnapshotFresh = false;
     try {
       const workspace = await this.client.call<WorkspaceSnapshot>("workspace/list", { remote_delivery: 1 }, 30_000);
       if (this.connection.revision !== revision || this.stopped) return;
       if (!workspace.current) throw new Error("Remote host did not provide a workspace");
       this.updateWorkspaces(workspace);
+      this.workspaceSnapshotFresh = true;
       if (!first) await Promise.all([...this.restoreListeners].map((restore) => restore()));
       if (this.connection.revision !== revision || this.stopped) return;
       this.needsRestore = false;
       this.setConnection("connected");
     } catch (error) {
       if (this.connection.revision !== revision || this.stopped) return;
+      this.workspaceSnapshotFresh = false;
       this.setConnection("error", error instanceof Error ? error.message : String(error));
       throw error;
     }
@@ -359,6 +369,7 @@ export class RemoteDesktopBridge {
       },
       onDetach: () => {
         if (this.stopped) return;
+        this.workspaceSnapshotFresh = false;
         // Keep a live workbench up through a brief drop so returning from
         // background does not flash the reconnect strip. In-flight RPCs still
         // fail because the revision moves. A drop that starts from any other
@@ -389,6 +400,7 @@ export class RemoteDesktopBridge {
   async disconnect(): Promise<void> {
     this.stopped = true;
     this.cancelReconnecting();
+    this.workspaceSnapshotFresh = false;
     this.setConnection("disconnected");
     this.clearPendingRequests();
     await this.client.stop();
@@ -615,6 +627,11 @@ export class RemoteDesktopBridge {
       },
       resolveWorkspaceFileReference: (reference, root) => this.call("workspace/file/resolve", { reference, root: root || this.workdir() }),
       listProjects: async () => {
+        if (this.workspaceSnapshotFresh) {
+          this.assertAvailable(true);
+          this.workspaceSnapshotFresh = false;
+          return this.projectState();
+        }
         this.updateWorkspaces(await this.call<WorkspaceSnapshot>("workspace/list"));
         return this.projectState();
       },

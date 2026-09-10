@@ -271,6 +271,18 @@ export interface RemoteClientOptions {
    *  normal mobile network blip, short enough that a dead socket is replaced
    *  instead of left to hang. */
   pongTimeoutMs?: number;
+  /** Narrower deadline (default 5s, clamped to pongTimeoutMs) for the
+   *  immediate sealed liveness probe wake() sends when the app returns to the
+   *  foreground. A socket left half-open by a suspended background must be
+   *  replaced quickly instead of waiting out the full pongTimeoutMs; a healthy
+   *  socket answers and keeps its connection.
+   *
+   *  This is a one-shot foreground verdict only. On very slow links a sealed
+   *  pong can queue behind large low-bandwidth frames and miss this bound even
+   *  though the socket is healthy, costing one extra reconnect; steady-state
+   *  pongTimeoutMs remains the long window for normal operation. Set equal to
+   *  pongTimeoutMs to disable the aggressive foreground bound. */
+  foregroundPongTimeoutMs?: number;
   clientProfile?: string;
   onNotification?: (method: string, params: unknown, workdir?: string) => void;
   onServerRequest?: ServerRequestHandler;
@@ -302,6 +314,7 @@ export class RemoteClient {
   private readonly ackIntervalMs: number;
   private readonly pingIntervalMs: number;
   private readonly pongTimeoutMs: number;
+  private readonly foregroundPongTimeoutMs: number;
 
   private sock: RelaySocket | null = null;
   private channel: Channel | null = null;
@@ -320,6 +333,7 @@ export class RemoteClient {
   private ackTimer: ReturnType<typeof setInterval> | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private pongTimer: ReturnType<typeof setTimeout> | undefined;
+  private pongDeadlineAt = 0;
   private foregroundWake = false;
 
   constructor(
@@ -338,6 +352,7 @@ export class RemoteClient {
     this.ackIntervalMs = opts.ackIntervalMs ?? 500;
     this.pingIntervalMs = opts.pingIntervalMs ?? 20_000;
     this.pongTimeoutMs = opts.pongTimeoutMs ?? 30_000;
+    this.foregroundPongTimeoutMs = Math.min(opts.foregroundPongTimeoutMs ?? 5_000, this.pongTimeoutMs);
   }
 
   /** Starts the connect-and-reconnect loop. Idempotent. */
@@ -368,14 +383,21 @@ export class RemoteClient {
    *  backoff to its floor, and sends an immediate bounded liveness probe on an
    *  established channel. The probe avoids judging a healthy socket stale from
    *  wall-clock time after a long background; a half-open socket is closed by
-   *  the existing pong deadline instead. */
+   *  the foreground pong deadline instead of the full steady-state deadline. */
   wake(): void {
     if (this.stopped) return;
     this.suspended = false;
     this.foregroundWake = true;
-    if (this.channel && this.sock && !this.pongTimer) {
-      this.sendSealed({ t: E2E_PING });
-      this.armPongTimeout();
+    if (this.channel && this.sock) {
+      if (this.pongTimer) {
+        // A steady-state heartbeat is already in flight. Do not send a
+        // duplicate probe, but make sure its deadline honors the narrower
+        // foreground bound instead of waiting out the full steady-state one.
+        this.boundPendingPongTimeout(this.foregroundPongTimeoutMs);
+      } else {
+        this.sendSealed({ t: E2E_PING });
+        this.armPongTimeout(this.foregroundPongTimeoutMs);
+      }
     }
     this.wakeSleep?.();
   }
@@ -687,13 +709,15 @@ export class RemoteClient {
     this.clearPongTimeout();
   }
 
-  private armPongTimeout(): void {
+  private armPongTimeout(timeoutMs: number = this.pongTimeoutMs): void {
     if (!this.channel) return;
     this.clearPongTimeout();
+    this.pongDeadlineAt = Date.now() + timeoutMs;
     this.pongTimer = setTimeout(() => {
       this.pongTimer = undefined;
+      this.pongDeadlineAt = 0;
       this.onPongTimeout();
-    }, this.pongTimeoutMs);
+    }, timeoutMs);
   }
 
   private clearPongTimeout(): void {
@@ -701,6 +725,19 @@ export class RemoteClient {
       clearTimeout(this.pongTimer);
       this.pongTimer = undefined;
     }
+    this.pongDeadlineAt = 0;
+  }
+
+  /** Shortens a pending pong deadline to at most limitMs from now, without
+   *  extending a deadline that would already fire sooner. Used when wake()
+   *  finds a steady-state heartbeat already in flight: the foreground bound
+   *  must still apply, but the probe itself is not duplicated. */
+  private boundPendingPongTimeout(limitMs: number): void {
+    if (!this.pongTimer || this.pongDeadlineAt === 0) return;
+    const remaining = Math.max(0, this.pongDeadlineAt - Date.now());
+    const bounded = Math.min(remaining, limitMs);
+    if (bounded >= remaining) return;
+    this.armPongTimeout(bounded);
   }
 
   private onPongTimeout(): void {

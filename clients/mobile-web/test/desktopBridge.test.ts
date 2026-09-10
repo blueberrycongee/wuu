@@ -216,6 +216,62 @@ describe("connection recovery", () => {
     await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
   });
 
+  it("reuses the initial workspace snapshot for the first project list", async () => {
+    const bridge = await connectBridge();
+    remote.call.mockClear();
+    expect((await bridge.api.listProjects()).active_context?.cwd).toBe("/paired/workspace");
+    expect(remote.call).not.toHaveBeenCalled();
+  });
+
+  it("reuses the fresh restore snapshot for the immediately following project list", async () => {
+    const bridge = await connectBridge();
+    remote.call.mockClear();
+    remote.options.onDetach?.();
+    remote.options.onAttach?.({ session: "next", resumed: false });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    expect(remote.call).toHaveBeenCalledTimes(1);
+    remote.call.mockClear();
+    expect((await bridge.api.listProjects()).active_context?.cwd).toBe("/paired/workspace");
+    expect(remote.call).not.toHaveBeenCalled();
+  });
+
+  it("refetches on an explicit later project list after the one-shot reuse", async () => {
+    const bridge = await connectBridge();
+    await bridge.api.listProjects();
+    remote.call.mockClear();
+    remote.call.mockResolvedValueOnce({
+      current: "/paired/workspace",
+      current_id: "paired",
+      workspaces: [{ id: "paired", name: "Paired", path: "/paired/workspace" }],
+    });
+    const refreshed = await bridge.api.listProjects();
+    expect(refreshed.projects.map((project) => project.id)).toContain("paired");
+    expect(refreshed.active_context?.cwd).toBe("/paired/workspace");
+    expect(remote.call).toHaveBeenCalledTimes(1);
+    expect(remote.call).toHaveBeenCalledWith("workspace/list", undefined, 30_000, expect.any(String));
+  });
+
+  it("does not serve a stale workspace snapshot after disconnecting", async () => {
+    const bridge = await connectBridge();
+    remote.attached = false;
+    remote.options.onDetach?.();
+    await expect(bridge.api.listProjects()).rejects.toThrow("disconnected");
+  });
+
+  it("does not reuse a snapshot after its restore fails", async () => {
+    const bridge = await connectBridge();
+    const restore = vi.fn().mockRejectedValueOnce(new Error("snapshot failed"));
+    bridge.api.onRuntimeRestore!(restore);
+    remote.call.mockClear();
+    remote.call.mockResolvedValueOnce({ current: "/stale" });
+    remote.options.onAttach?.({ session: "next", resumed: false });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("error"));
+    remote.call.mockClear();
+    remote.call.mockResolvedValueOnce({ current: "/fresh" });
+    expect((await bridge.api.listProjects()).active_context?.cwd).toBe("/fresh");
+    expect(remote.call).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a resumed connection in place without restoring the workbench", async () => {
     const bridge = await connectBridge();
     const handler = vi.fn(async () => {});

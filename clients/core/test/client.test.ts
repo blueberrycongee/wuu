@@ -615,7 +615,7 @@ describe("RemoteClient foreground recovery", () => {
     const fake = new FakeHost();
     const { client } = makeClient(fake, {
       pingIntervalMs: 60_000,
-      pongTimeoutMs: 250,
+      foregroundPongTimeoutMs: 250,
       reconnectMinMs: 10_000,
     });
     try {
@@ -667,7 +667,7 @@ describe("RemoteClient foreground recovery", () => {
     const fake = new FakeHost();
     const { client } = makeClient(fake, {
       pingIntervalMs: 60_000,
-      pongTimeoutMs: 250,
+      foregroundPongTimeoutMs: 250,
       reconnectMinMs: 10_000,
     });
     try {
@@ -678,6 +678,45 @@ describe("RemoteClient foreground recovery", () => {
       client.wake();
       client.wake();
       await vi.advanceTimersByTimeAsync(249);
+      expect(fake.pingCount).toBe(1);
+      expect(oldSocket.closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(oldSocket.closed).toBe(true);
+      expect(fake.sockets.length).toBe(2);
+      expect(client.isAttached()).toBe(true);
+    } finally {
+      await client.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds an in-flight steady-state heartbeat when foregrounding", async () => {
+    vi.useFakeTimers();
+    const fake = new FakeHost();
+    const { client } = makeClient(fake, {
+      pingIntervalMs: 100,
+      pongTimeoutMs: 10_000,
+      foregroundPongTimeoutMs: 250,
+      reconnectMinMs: 10_000,
+    });
+    try {
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await client.waitAttached(3000);
+      fake.suppressPong = true;
+
+      // The steady-state heartbeat arms its long deadline.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fake.pingCount).toBe(1);
+
+      // Foregrounding while that deadline is pending must shorten it to the
+      // foreground bound without sending a duplicate probe; repeated wake
+      // calls must not extend the already-shortened deadline.
+      const oldSocket = fake.current();
+      client.wake();
+      await vi.advanceTimersByTimeAsync(100);
+      client.wake();
+      await vi.advanceTimersByTimeAsync(149);
       expect(fake.pingCount).toBe(1);
       expect(oldSocket.closed).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
