@@ -377,7 +377,7 @@ export function AppSidebar({
   onMarkThreadsViewed,
   pluginHost = desktopPluginHost,
   workbenchController = desktopWorkbenchController,
-  compactNavigation = false,
+  mobileNavigation = false,
   drawerVisible = false,
   onNavigateAway,
 }: {
@@ -452,7 +452,7 @@ export function AppSidebar({
   onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
-  compactNavigation?: boolean;
+  mobileNavigation?: boolean;
   drawerVisible?: boolean;
   onNavigateAway?: () => void;
 }): JSX.Element {
@@ -2015,7 +2015,7 @@ export function AppSidebar({
   );
   const organizedSidebar = (
     <SessionOrganizationProvider value={organizationActions}>
-      {compactNavigation ? <MobileSidebar
+      {mobileNavigation ? <MobileSidebar
         onNavigateAway={onNavigateAway}
         visible={drawerVisible}
         state={state}

@@ -338,6 +338,7 @@ describe("collapsed sidebar hover drawer", () => {
     }));
     await renderCollapsedApp();
     expect(Boolean(container.querySelector('[data-wuu-component="conversation-titlebar"]'))).toBe(!inComposer);
+    expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchProject")}"]`))).toBe(host === "web" && coarse && width < 700);
     const navigation = container.querySelector<HTMLButtonElement>('.composer-bar .compact-conversation-actions [aria-haspopup="menu"]');
     expect(Boolean(navigation)).toBe(inComposer);
     if (!navigation) return;

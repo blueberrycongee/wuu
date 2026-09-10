@@ -36,10 +36,11 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 function render() { act(() => root.render(<MobileSidebar {...props} />)); }
 function click(label: string) {
-  const button = [...container.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === label || item.textContent === label);
+  const button = [...document.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === label || item.textContent === label);
   expect(button, label).toBeDefined();
   act(() => button!.click());
 }
@@ -101,16 +102,65 @@ it("keeps empty loading and missing projects distinct and prevents creating in a
   expect(container.textContent).toContain(translateCurrent("threadSidebar.missingWorkspace"));
 });
 
-it("exposes touch actions without selecting a conversation and confirms permanent deletion", () => {
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+it("opens actions on long press, suppresses selection, and confirms permanent deletion", () => {
+  vi.useFakeTimers();
   render();
-  click(translateCurrent("sidebar.conversationActions", { title: "first" }));
+  const row = container.querySelector<HTMLButtonElement>('button[aria-label="first"]')!;
+  pointer(row, "pointerdown");
+  act(() => vi.advanceTimersByTime(500));
+  pointer(row, "pointerup");
+  act(() => row.click());
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   click(translateCurrent("threadSidebar.delete"));
   expect(props.onDeleteThread).not.toHaveBeenCalled();
   expect(props.onSelectProjectThread).not.toHaveBeenCalled();
-  confirm.mockReturnValue(true);
+  click(translateCurrent("common.cancel"));
+  expect(props.onDeleteThread).not.toHaveBeenCalled();
+  click(translateCurrent("threadSidebar.delete"));
   click(translateCurrent("threadSidebar.delete"));
   expect(props.onDeleteThread).toHaveBeenCalledWith(expect.objectContaining({ id: "first" }));
+});
+
+function pointer(target: HTMLElement, type: string, x = 10, y = 10) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, { pointerType: "touch", pointerId: 1, button: 0, isPrimary: true, clientX: x, clientY: y });
+  act(() => { target.dispatchEvent(event); });
+}
+
+it.each(["move", "scroll", "cancel", "unmount", "hide"])("cancels long press on %s without opening actions", reason => {
+  vi.useFakeTimers();
+  render();
+  const row = container.querySelector<HTMLButtonElement>('button[aria-label="first"]')!;
+  pointer(row, "pointerdown");
+  if (reason === "move") pointer(row, "pointermove", 10, 40);
+  else if (reason === "cancel") pointer(row, "pointercancel");
+  else if (reason === "scroll") act(() => { row.parentElement!.dispatchEvent(new Event("scroll")); });
+  else if (reason === "hide") { props = { ...props, visible: false }; render(); }
+  else act(() => root.render(null));
+  act(() => vi.advanceTimersByTime(1000));
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(props.onSelectProjectThread).not.toHaveBeenCalled();
+  if (reason === "hide") {
+    props = { ...props, visible: true };
+    render();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  }
+});
+
+it("selects a short tap and keeps the complete long title available to assistive technology", () => {
+  vi.useFakeTimers();
+  const title = "A long conversation title about investigating a mobile connection failure";
+  props.projectThreadsByProjectID.one[0].title = title;
+  render();
+  const row = container.querySelector<HTMLButtonElement>(`button[aria-label="${title}"]`)!;
+  expect(row).not.toBeNull();
+  pointer(row, "pointerdown");
+  act(() => vi.advanceTimersByTime(100));
+  pointer(row, "pointerup");
+  act(() => row.click());
+  act(() => vi.advanceTimersByTime(600));
+  expect(props.onSelectProjectThread).toHaveBeenCalledWith("one", "first");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
 it("dismisses the drawer when opening an extension view from More", () => {

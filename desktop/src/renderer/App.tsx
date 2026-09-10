@@ -5105,7 +5105,7 @@ export function App(): JSX.Element {
             />
           ) : (
           <AppSidebar
-            compactNavigation={compactNavigation}
+            mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
             onNavigateAway={closeCompactSessionSwitcher}
             state={state}
