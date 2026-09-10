@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -53,6 +54,7 @@ func runRelay(args []string) error {
 	fs.SetOutput(io.Discard)
 	accountDB := fs.String("accounts", "", "enable account authentication with this SQLite database")
 	registration := fs.Bool("registration", false, "allow account registration")
+	trustedProxyFlag := fs.String("trusted-proxies", "", "comma-separated proxy IP prefixes trusted for X-Forwarded-For")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	webRoot := fs.String("web-root", "", "serve the built Wuu Web directory alongside the relay")
 	publicURL := fs.String("public-url", "", "browser-facing http(s) origin, including reverse proxy TLS termination")
@@ -63,6 +65,16 @@ func runRelay(args []string) error {
 	pushConfig := fs.String("push-config", "", "JSON file configuring operator-owned APNs/FCM credentials")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	var trustedProxies []netip.Prefix
+	if strings.TrimSpace(*trustedProxyFlag) != "" {
+		for _, raw := range strings.Split(*trustedProxyFlag, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+			if err != nil {
+				return fmt.Errorf("trusted-proxies: %w", err)
+			}
+			trustedProxies = append(trustedProxies, prefix)
+		}
 	}
 	tlsConfig, err := remoteRelayTLS(*tlsCert, *tlsKey)
 	if err != nil {
@@ -110,7 +122,7 @@ func runRelay(args []string) error {
 		pusher = native
 		pushPlatforms = native.Platforms()
 	}
-	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, AllowRegistration: *registration, PushPlatforms: pushPlatforms})
+	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, AllowRegistration: *registration, PushPlatforms: pushPlatforms, TrustedProxies: trustedProxies})
 
 	handler := srv.Handler()
 	if *webRoot != "" {

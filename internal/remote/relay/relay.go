@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ type Options struct {
 	Registry          *Registry
 	Accounts          *account.Store
 	AllowRegistration bool
+	TrustedProxies    []netip.Prefix
 	PushPlatforms     []string
 	Pusher            Pusher
 	Logf              func(format string, args ...any)
@@ -94,6 +96,7 @@ func New(opts Options) *Server {
 	if opts.Accounts != nil {
 		s.accounts = opts.Accounts
 		s.accountHTTP = account.NewHTTP(opts.Accounts, opts.AllowRegistration)
+		s.accountHTTP.TrustedProxies = opts.TrustedProxies
 		s.accountHTTP.PushPlatforms = opts.PushPlatforms
 		s.accountHTTP.Online = func(pub string) bool { s.mu.Lock(); defer s.mu.Unlock(); return s.conns[pub] != nil }
 		s.accountHTTP.Changed = s.accountChanged

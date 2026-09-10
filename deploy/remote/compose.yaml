@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/remote/Dockerfile
-    command: ["--registration"]
+    command: ["--registration", "--trusted-proxies", "172.30.87.2/32"]
     restart: unless-stopped
     volumes:
       - accounts:/data
@@ -18,7 +18,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - certificates:/data
       - proxy_config:/config
-    networks: [remote]
+    networks:
+      remote:
+        ipv4_address: 172.30.87.2
     depends_on: [accounts]
 volumes:
   accounts:
@@ -26,3 +28,6 @@ volumes:
   proxy_config:
 networks:
   remote:
+    ipam:
+      config:
+        - subnet: 172.30.87.0/24

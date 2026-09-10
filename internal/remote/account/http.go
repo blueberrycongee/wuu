@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +18,11 @@ type HTTP struct {
 	PushPlatforms     []string
 	Online            func(string) bool
 	Changed           func(string)
-	mu                sync.Mutex
-	attempts          map[string]attempt
-	work              chan struct{}
+	// TrustedProxies may supply X-Forwarded-For. Empty means direct peers only.
+	TrustedProxies []netip.Prefix
+	mu             sync.Mutex
+	attempts       map[string]attempt
+	work           chan struct{}
 }
 type attempt struct {
 	count int
@@ -77,7 +80,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "POST" && (path == "/login" || path == "/register" || path == "/recover" || path == "/password") {
-		if !h.admit(r.RemoteAddr) {
+		if !h.admit(h.clientAddress(r)) {
 			writeJSON(w, 429, map[string]string{"error": "too many attempts; try again in one minute"})
 			return
 		}
@@ -198,6 +201,42 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 404, map[string]string{"error": "unknown account endpoint"})
 }
+func (h *HTTP) clientAddress(r *http.Request) string {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	trusted := func(raw string) bool {
+		ip, err := netip.ParseAddr(raw)
+		if err != nil {
+			return false
+		}
+		for _, prefix := range h.TrustedProxies {
+			if prefix.Contains(ip.Unmap()) {
+				return true
+			}
+		}
+		return false
+	}
+	if !trusted(peer) {
+		return peer
+	}
+	// Walk from the immediate peer toward the client, stopping at the first
+	// untrusted hop. Client-supplied prefixes cannot bypass the limiter.
+	chain := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(chain) - 1; i >= 0; i-- {
+		ip, err := netip.ParseAddr(strings.TrimSpace(chain[i]))
+		if err != nil {
+			return peer
+		}
+		candidate := ip.Unmap().String()
+		if !trusted(candidate) || i == 0 {
+			return candidate
+		}
+	}
+	return peer
+}
+
 func (h *HTTP) admit(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

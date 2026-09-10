@@ -31,7 +31,9 @@ curl https://wuu.example.com/healthz
 
 Compose 中的 Caddy 自动管理证书并代理 WebSocket。`accounts` 不直接发布端口。账号数据库位于持久卷 `accounts`，TLS 资料位于 `certificates`。Compose 项目名决定卷名前缀，升级时使用相同项目名。不要执行 `down -v`，它会删除持久数据。
 
-注册默认由显式 `--registration` 开启。需要关闭公开注册时，将 Compose 的 `command` 改成 `[]` 并重建容器；已有账号继续登录。不要把密码、令牌、恢复码写进代理访问日志。后端不信任 `X-Forwarded-For`，认证限速按直连地址计算；多用户代理部署应在代理层增加来源 IP 限速并保留后端保护。
+注册默认由显式 `--registration` 开启。需要关闭公开注册时，从 Compose 的 `command` 中删除该参数并重建容器；保留可信代理参数，已有账号继续登录。不要把密码、令牌、恢复码写进代理访问日志。
+
+后端默认按直连地址执行认证限速。Compose 为 Caddy 固定内部地址，并通过 `--trusted-proxies` 仅信任该地址的 `X-Forwarded-For`，让不同用户分别计数。自定义代理部署时，此参数接受逗号分隔的 CIDR；仅填写受控代理地址，代理必须覆盖或安全追加来源头，且后端应仅供代理访问。不要信任所有地址。若修改 Compose 子网，需同时调整 Caddy 地址和可信代理参数。
 
 也可以在自己的 systemd、容器编排或其他反向代理后运行同一二进制。将进程绑定到内部地址，代理 `/v1/account/*`、`/v1/connect` 和 `/healthz`；WebSocket 必须支持长连接。无需 Redis、Postgres、对象存储或任何开发者基础设施。
 
