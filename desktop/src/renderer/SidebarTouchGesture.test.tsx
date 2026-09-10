@@ -12,7 +12,7 @@ let close: ReturnType<typeof vi.fn>;
 function Harness({ opened }: { opened: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useSidebarTouchGesture(ref, true, opened ? "open" : "closed", open, close);
-  return <div ref={ref}><div className="sidebar" /><div className="scroll-region" /></div>;
+  return <div ref={ref}><div className="sidebar" /><div className="scroll-region" /><button className="compact-session-switcher-backdrop" /></div>;
 }
 
 function render(opened = false) {
@@ -94,6 +94,59 @@ describe("sidebar thumb gestures", () => {
     }
     expect(touch("touchmove", 90, 30).defaultPrevented).toBe(false);
     finish(90, 30);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("catches and reverses a settling drawer when opened=%s", (opened) => {
+    render(opened);
+    const direction = opened ? -1 : 1;
+    touch("touchstart", 0, 0);
+    touch("touchmove", direction * 180, 0);
+    touch("touchend", direction * 180, 0);
+    expect(opened ? close : open).not.toHaveBeenCalled();
+
+    const sidebar = host.querySelector<HTMLElement>(".sidebar")!;
+    // The compositor is halfway through the release animation.
+    vi.mocked(sidebar.getBoundingClientRect).mockReturnValue(new DOMRect(-140, 0, 280, 800));
+    target = host.querySelector<HTMLElement>(".compact-session-switcher-backdrop")!;
+    touch("touchstart", 0, 0);
+    expect(sidebar.style.transform).toBe("translate3d(-140px, 0, 0)");
+    touch("touchmove", -direction * 120, 0);
+    act(() => vi.advanceTimersToNextFrame());
+    expect(sidebar.style.transform).toBe(`translate3d(${opened ? -20 : -260}px, 0, 0)`);
+    finish(-direction * 120, 0);
+    expect(open).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(sidebar.style.transform).toBe("");
+  });
+
+  it.each(["touchend", "touchcancel", "vertical"])("resumes a caught animation after %s without a horizontal drag", (ending) => {
+    render();
+    touch("touchstart", 0, 0);
+    touch("touchmove", 180, 0);
+    touch("touchend", 180, 0);
+    const sidebar = host.querySelector<HTMLElement>(".sidebar")!;
+    vi.mocked(sidebar.getBoundingClientRect).mockReturnValue(new DOMRect(-100, 0, 280, 800));
+    touch("touchstart", 0, 0);
+    if (ending === "vertical") expect(touch("touchmove", 0, 30).defaultPrevented).toBe(false);
+    else touch(ending, 0, 0);
+    act(() => vi.runAllTimers());
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  it("tracks the latest finger position and discards queued frames on resize", () => {
+    render();
+    const sidebar = host.querySelector<HTMLElement>(".sidebar")!;
+    touch("touchstart", 0, 0);
+    touch("touchmove", 30, 0);
+    touch("touchmove", 90, 0);
+    act(() => vi.advanceTimersToNextFrame());
+    expect(sidebar.style.transform).toBe("translate3d(-190px, 0, 0)");
+    touch("touchmove", 120, 0);
+    act(() => window.dispatchEvent(new Event("resize")));
+    act(() => vi.runAllTimers());
+    expect(sidebar.style.transform).toBe("");
+    expect(host.querySelector<HTMLElement>(".compact-session-switcher-backdrop")!.style.opacity).toBe("");
     expect(open).not.toHaveBeenCalled();
   });
 });

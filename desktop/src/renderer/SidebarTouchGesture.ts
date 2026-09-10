@@ -31,34 +31,58 @@ export function useSidebarTouchGesture(
 
     const sidebar = shell.querySelector<HTMLElement>(".sidebar");
     if (!sidebar) return;
+    const backdrop = shell.querySelector<HTMLElement>(".compact-session-switcher-backdrop");
+    const closeButton = shell.querySelector<HTMLElement>(".compact-session-switcher-close");
+    const surfaces = [sidebar, backdrop, closeButton].filter((node): node is HTMLElement => !!node);
     const wasOpen = phase === "open";
     let gesture: {
       id: number; x: number; y: number; horizontal: boolean;
+      interrupted: boolean; originOpen: boolean; startPosition: number;
       width: number; openDistance: number; position: number; lastX: number; lastTime: number; velocity: number;
     } | null = null;
     let settleTimer: number | undefined;
+    let settleTarget = wasOpen;
+    let frame: number | undefined;
     let suppressClickUntil = 0;
+    const cancelFrame = (): void => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
+    };
     const clearVisual = (): void => {
+      cancelFrame();
       window.clearTimeout(settleTimer);
       settleTimer = undefined;
       delete shell.dataset.sidebarTouch;
-      shell.style.removeProperty("--sidebar-touch-offset");
-      shell.style.removeProperty("--sidebar-touch-progress");
+      for (const surface of surfaces) {
+        surface.style.removeProperty("transform");
+        surface.style.removeProperty("opacity");
+        surface.style.removeProperty("transition-duration");
+      }
     };
     const paint = (position: number, width: number): void => {
-      shell.style.setProperty("--sidebar-touch-offset", `${position - width}px`);
-      shell.style.setProperty("--sidebar-touch-progress", String(position / width));
+      // Only compositor properties on the moving surfaces change per frame.
+      // Inherited variables on the shell invalidate the entire conversation.
+      sidebar.style.transform = `translate3d(${position - width}px, 0, 0)`;
+      if (closeButton) closeButton.style.transform = sidebar.style.transform;
+      if (backdrop) backdrop.style.opacity = String(position / width);
     };
-    const settle = (toOpen: boolean): void => {
-      if (!gesture?.horizontal) { gesture = null; return; }
-      const width = gesture.width;
+    const settle = (toOpen: boolean, velocity = 0): void => {
+      if (!gesture || (!gesture.horizontal && !gesture.interrupted)) { gesture = null; return; }
+      const { width, position } = gesture;
+      cancelFrame();
+      paint(position, width);
       gesture = null;
       suppressClickUntil = performance.now() + 500;
       // Commit the dragged position before enabling the release transition.
       sidebar.getBoundingClientRect();
+      const remaining = Math.abs((toOpen ? width : 0) - position);
+      const duration = matchMedia("(prefers-reduced-motion: reduce)").matches || remaining < 1
+        ? 0
+        : Math.round(Math.max(80, Math.min(240, remaining / Math.max(0.8, Math.abs(velocity)))));
       shell.dataset.sidebarTouch = "settling";
+      for (const surface of surfaces) surface.style.transitionDuration = `${duration}ms`;
       paint(toOpen ? width : 0, width);
-      const duration = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180;
+      settleTarget = toOpen;
       settleTimer = window.setTimeout(() => {
         settleTimer = undefined;
         if (toOpen !== wasOpen) {
@@ -67,27 +91,44 @@ export function useSidebarTouchGesture(
         } else clearVisual();
       }, duration);
     };
-    const cancel = (): void => settle(wasOpen);
+    const cancel = (): void => settle(gesture?.originOpen ?? wasOpen);
     const reset = (): void => { gesture = null; clearVisual(); };
     const start = (event: TouchEvent): void => {
       if (gesture) cancel();
-      if (settleTimer !== undefined || (phase !== "closed" && phase !== "open")) return;
+      if (phase !== "closed" && phase !== "open") return;
       suppressClickUntil = 0;
       if (event.defaultPrevented || event.touches.length !== 1 || !isTouchWebShell()) return;
       const touch = event.touches[0];
-      const region = wasOpen
+      const interrupted = settleTimer !== undefined;
+      const originOpen = interrupted ? settleTarget : wasOpen;
+      const region = interrupted
+        ? ".sidebar, .compact-session-switcher-backdrop, .scroll-region, .conversation-split-body, .side-thread-panel__body"
+        : wasOpen
         ? ".sidebar, .compact-session-switcher-backdrop"
         : ".scroll-region, .conversation-split-body, .side-thread-panel__body";
       if (!(event.target instanceof Element) ||
-        !event.target.closest(region) || ownsGesture(event.target, shell, wasOpen)) return;
-      const width = sidebar.getBoundingClientRect().width;
+        !event.target.closest(region) || ownsGesture(event.target, shell,
+          !!event.target.closest(".sidebar, .compact-session-switcher-backdrop"))) return;
+      const rect = sidebar.getBoundingClientRect();
+      const width = rect.width;
       if (!width) return;
+      const position = interrupted
+        ? Math.max(0, Math.min(width, rect.right - shell.getBoundingClientRect().left))
+        : wasOpen ? width : 0;
+      if (interrupted) {
+        window.clearTimeout(settleTimer);
+        settleTimer = undefined;
+        shell.dataset.sidebarTouch = "dragging";
+        for (const surface of surfaces) surface.style.removeProperty("transition-duration");
+        paint(position, width);
+      }
       gesture = {
         id: touch.identifier, x: touch.clientX, y: touch.clientY, horizontal: false,
+        interrupted, originOpen, startPosition: position,
         // A right-hand thumb has little travel left near the screen edge.
         // Keep opening reachable there without treating tiny movements as swipes.
         openDistance: Math.max(32, Math.min(64, (window.innerWidth - touch.clientX) / 2)),
-        width, position: wasOpen ? width : 0, lastX: touch.clientX, lastTime: event.timeStamp, velocity: 0,
+        width, position, lastX: touch.clientX, lastTime: event.timeStamp, velocity: 0,
       };
     };
     const move = (event: TouchEvent): void => {
@@ -101,13 +142,13 @@ export function useSidebarTouchGesture(
       const dy = Math.abs(touch.clientY - gesture.y);
       if (!gesture.horizontal) {
         if (Math.max(Math.abs(dx), dy) < 10) return;
-        const forward = wasOpen ? -dx : dx;
-        if (forward <= 0 || dy > forward * 1.5) { gesture = null; return; }
+        const forward = gesture.interrupted ? Math.abs(dx) : wasOpen ? -dx : dx;
+        if (forward <= 0 || dy > forward * 1.5) { cancel(); return; }
         // Thumb arcs can start slightly more vertical than horizontal. Give
         // that ambiguous start a short observation window before native
         // scrolling takes ownership. Clearly vertical motion stays native.
         if (forward < dy) {
-          if (Math.max(forward, dy) >= 20) gesture = null;
+          if (Math.max(forward, dy) >= 20) cancel();
           else event.preventDefault();
           return;
         }
@@ -123,19 +164,22 @@ export function useSidebarTouchGesture(
         gesture.lastX = touch.clientX;
         gesture.lastTime = event.timeStamp;
       }
-      gesture.position = Math.max(0, Math.min(gesture.width, (wasOpen ? gesture.width : 0) + dx));
-      paint(gesture.position, gesture.width);
+      gesture.position = Math.max(0, Math.min(gesture.width, gesture.startPosition + dx));
+      if (frame === undefined) frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (gesture) paint(gesture.position, gesture.width);
+      });
     };
     const end = (event: TouchEvent): void => {
-      if (!gesture?.horizontal) { gesture = null; return; }
+      if (!gesture?.horizontal) { cancel(); return; }
       if (event.defaultPrevented || event.touches.length) { cancel(); return; }
       const touch = Array.from(event.changedTouches).find((item) => item.identifier === gesture!.id);
       if (!touch) { cancel(); return; }
       if (event.cancelable) event.preventDefault();
       const velocity = event.timeStamp - gesture.lastTime <= 100 ? gesture.velocity : 0;
       const distance = Math.abs(touch.clientX - gesture.x);
-      const threshold = wasOpen ? gesture.width / 2 : gesture.openDistance;
-      settle(Math.abs(velocity) >= 0.5 && distance >= 32 ? velocity > 0 : gesture.position >= threshold);
+      const threshold = gesture.interrupted || wasOpen ? gesture.width / 2 : gesture.openDistance;
+      settle(Math.abs(velocity) >= 0.5 && distance >= 32 ? velocity > 0 : gesture.position >= threshold, velocity);
     };
     const click = (event: MouseEvent): void => {
       if (performance.now() < suppressClickUntil) {

@@ -53,7 +53,8 @@ app.whenReady().then(async () => {
   const point = (type, x, y = 300) => send("Input.dispatchTouchEvent", {
     type, touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ x, y }],
   });
-  const geometry = () => evaluate(() => {
+  const geometry = () => evaluate(async () => {
+    await new Promise(requestAnimationFrame);
     const rect = document.querySelector(".sidebar").getBoundingClientRect();
     const backdrop = document.querySelector(".compact-session-switcher-backdrop");
     const style = backdrop && getComputedStyle(backdrop);
@@ -119,12 +120,42 @@ app.whenReady().then(async () => {
   await waitFor(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().left) < 1);
   assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.wuuSidebarMode), "drawer");
 
+  await point("touchStart", 220);
+  await point("touchMove", 140);
+  await point("touchEnd");
+  await point("touchStart", 320);
+  assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.sidebarTouch), "dragging");
+  const caughtClosing = await geometry();
+  assert.ok(caughtClosing.right > 0 && caughtClosing.left < -40, "catch the drawer while it closes");
+  await point("touchMove", 360);
+  const reopened = await geometry();
+  assert.ok(Math.abs(reopened.right - caughtClosing.right - 40) < 3, "closing animation can reverse from the backdrop");
+  await point("touchEnd");
+  await waitFor(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().left) < 1);
+
   await swipe([[220, 300], [140, 300], [15, 300]]);
   await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "collapsed");
   await ready();
   await point("touchStart", 160);
   await point("touchMove", 250);
   await point("touchCancel");
+  await waitFor(() => document.querySelector(".sidebar").getBoundingClientRect().right <= 1);
+  assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.wuuSidebarMode), "collapsed");
+
+  // Catch an opening animation from the backdrop and pull it closed again.
+  await ready();
+  await point("touchStart", 160);
+  await point("touchMove", 250);
+  await point("touchEnd");
+  await point("touchStart", 360);
+  assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.sidebarTouch), "dragging");
+  const caught = await geometry();
+  assert.ok(caught.right > 0 && caught.left < 0, "catch the drawer before it finishes opening");
+  await point("touchMove", 320);
+  const pulledBack = await geometry();
+  assert.ok(Math.abs(pulledBack.right - caught.right + 40) < 3, "caught drawer follows the new finger without jumping");
+  await point("touchMove", 80);
+  await point("touchEnd");
   await waitFor(() => document.querySelector(".sidebar").getBoundingClientRect().right <= 1);
   assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.wuuSidebarMode), "collapsed");
 
@@ -152,7 +183,7 @@ app.whenReady().then(async () => {
   await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "collapsed");
   await swipe([[160, 300], [162, 320], [164, 360]]);
   assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.wuuSidebarMode), "collapsed");
-  console.log("PASS: real Chromium touch tracks drawer and backdrop before release, reverses, cancels, opens/closes, and preserves vertical scrolling");
+  console.log("PASS: real Chromium touch tracks drawer and backdrop before release, catches and reverses settling, cancels, opens/closes, and preserves vertical scrolling");
   clearTimeout(timeout);
   win.destroy();
   app.quit();

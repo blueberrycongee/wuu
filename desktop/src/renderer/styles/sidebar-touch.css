@@ -26,7 +26,8 @@
     box-shadow: none;
     opacity: 1;
     transform: translate3d(var(--sidebar-touch-offset), 0, 0);
-    transition: transform 180ms ease-out;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-collapsed .sidebar-content {
@@ -52,14 +53,15 @@
     opacity: var(--sidebar-touch-progress);
     pointer-events: none;
     visibility: hidden;
-    transition: opacity 180ms ease-out;
+    transition: opacity 240ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation:is(.sidebar-drawer-open, .sidebar-drawer-closing, [data-sidebar-touch]) .compact-session-switcher-backdrop {
     visibility: visible;
+    will-change: opacity;
   }
 
-  :root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-backdrop {
+  :root[data-host-kind="web"] .app-shell.compact-navigation:is(.sidebar-drawer-open, [data-sidebar-touch]) .compact-session-switcher-backdrop {
     pointer-events: auto;
   }
 
@@ -69,7 +71,7 @@
 
   :root[data-host-kind="web"] .app-shell.compact-navigation[data-sidebar-touch] .compact-session-switcher-close {
     transform: translate3d(var(--sidebar-touch-offset), 0, 0);
-    transition: transform 180ms ease-out;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation[data-sidebar-touch="dragging"] .compact-session-switcher-close {
