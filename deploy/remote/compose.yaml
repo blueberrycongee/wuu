@@ -1,8 +1,28 @@
 services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wuu
+      POSTGRES_USER: wuu
+      POSTGRES_PASSWORD: ${WUU_POSTGRES_PASSWORD:?Set WUU_POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql
+    networks: [remote]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wuu -d wuu"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
   accounts:
     build:
       context: ../..
       dockerfile: deploy/remote/Dockerfile
+    environment:
+      WUU_DATABASE_URL: postgres://wuu:${WUU_POSTGRES_PASSWORD:?Set WUU_POSTGRES_PASSWORD}@postgres:5432/wuu?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     command: ["--registration", "--trusted-proxies", "172.30.87.2/32"]
     restart: unless-stopped
     volumes:
@@ -23,6 +43,7 @@ services:
         ipv4_address: 172.30.87.2
     depends_on: [accounts]
 volumes:
+  postgres:
   accounts:
   certificates:
   proxy_config:

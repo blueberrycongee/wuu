@@ -9,19 +9,17 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/argon2"
-	_ "modernc.org/sqlite"
 )
 
 var ErrUnauthorized = errors.New("invalid credentials or revoked device")
+var ErrUnavailable = errors.New("account database unavailable")
 var ErrConflict = errors.New("account or device already registered")
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{2,63}$`)
 var enc = base64.RawURLEncoding
@@ -50,44 +48,6 @@ type Session struct {
 	Recovery string `json:"recovery,omitempty"`
 }
 
-func Open(path string) (*Store, error) {
-	if path != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return nil, err
-		}
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-		if err != nil {
-			return nil, err
-		}
-		_ = f.Close()
-		if err = os.Chmod(path, 0600); err != nil {
-			return nil, err
-		}
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);
- INSERT INTO schema_version SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM schema_version);
- CREATE TABLE IF NOT EXISTS accounts(username TEXT PRIMARY KEY,salt BLOB NOT NULL,password BLOB NOT NULL,recovery BLOB NOT NULL);
- CREATE TABLE IF NOT EXISTS devices(pub TEXT PRIMARY KEY,account TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE,name TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('host','phone')),added_at INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS sessions(hash BLOB PRIMARY KEY,pub TEXT NOT NULL REFERENCES devices(pub) ON DELETE CASCADE,expires INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS push_devices(pub TEXT PRIMARY KEY REFERENCES devices(pub) ON DELETE CASCADE,platform TEXT NOT NULL,token TEXT NOT NULL);
- CREATE INDEX IF NOT EXISTS devices_account ON devices(account);`)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	var version int
-	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != 1 {
-		db.Close()
-		return nil, fmt.Errorf("unsupported account database version %d", version)
-	}
-	return &Store{db: db}, nil
-}
 func (s *Store) Close() error { return s.db.Close() }
 
 type PushRegistration struct {
@@ -101,19 +61,19 @@ func (s *Store) SetPush(pub string, registration PushRegistration) error {
 		return ErrUnauthorized
 	}
 	if registration.Token == "" {
-		_, err := s.db.Exec(`DELETE FROM push_devices WHERE pub=?`, pub)
+		_, err := s.db.Exec(`DELETE FROM push_devices WHERE pub=$1`, pub)
 		return err
 	}
 	if len(registration.Token) > 4096 || (registration.Platform != "ios" && registration.Platform != "android") {
 		return errors.New("invalid push registration")
 	}
-	_, err := s.db.Exec(`INSERT INTO push_devices(pub,platform,token) VALUES(?,?,?) ON CONFLICT(pub) DO UPDATE SET platform=excluded.platform,token=excluded.token`, pub, registration.Platform, registration.Token)
+	_, err := s.db.Exec(`INSERT INTO push_devices(pub,platform,token) VALUES($1,$2,$3) ON CONFLICT(pub) DO UPDATE SET platform=excluded.platform,token=excluded.token`, pub, registration.Platform, registration.Token)
 	return err
 }
 
 func (s *Store) Push(account, pub string) (PushRegistration, bool) {
 	var result PushRegistration
-	err := s.db.QueryRow(`SELECT p.platform,p.token FROM push_devices p JOIN devices d ON d.pub=p.pub WHERE d.pub=? AND d.account=? AND d.role='phone'`, pub, account).Scan(&result.Platform, &result.Token)
+	err := s.db.QueryRow(`SELECT p.platform,p.token FROM push_devices p JOIN devices d ON d.pub=p.pub WHERE d.pub=$1 AND d.account=$2 AND d.role='phone'`, pub, account).Scan(&result.Platform, &result.Token)
 	return result, err == nil
 }
 func randomToken() string {
@@ -155,7 +115,10 @@ func (s *Store) Login(in Login, register bool) (Session, error) {
 		hash = passwordHash(in.Password, salt)
 		recovery = randomToken()
 	} else {
-		err := s.db.QueryRow(`SELECT salt,password FROM accounts WHERE username=?`, in.Username).Scan(&salt, &hash)
+		err := s.db.QueryRow(`SELECT salt,password FROM accounts WHERE username=$1`, in.Username).Scan(&salt, &hash)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrUnavailable
+		}
 		if err != nil {
 			salt = make([]byte, 16)
 			hash = make([]byte, 32)
@@ -171,33 +134,42 @@ func (s *Store) Login(in Login, register bool) (Session, error) {
 	}
 	defer tx.Rollback()
 	if register {
-		if _, err = tx.Exec(`INSERT INTO accounts VALUES(?,?,?,?)`, in.Username, salt, hash, digest(recovery)); err != nil {
-			return Session{}, ErrConflict
+		if _, err = tx.Exec(`INSERT INTO accounts VALUES($1,$2,$3,$4)`, in.Username, salt, hash, digest(recovery)); err != nil {
+			return Session{}, conflictError(err)
 		}
 	} else {
 		// Recheck after password work so a concurrent recovery cannot resurrect a session.
 		var current []byte
-		if err = tx.QueryRow(`SELECT password FROM accounts WHERE username=?`, in.Username).Scan(&current); err != nil || subtle.ConstantTimeCompare(current, hash) != 1 {
+		err = tx.QueryRow(`SELECT password FROM accounts WHERE username=$1 FOR UPDATE`, in.Username).Scan(&current)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrUnavailable
+		}
+		if err != nil || subtle.ConstantTimeCompare(current, hash) != 1 {
 			return Session{}, ErrUnauthorized
 		}
 	}
 	var owner, role string
-	err = tx.QueryRow(`SELECT account,role FROM devices WHERE pub=?`, in.Pub).Scan(&owner, &role)
+	err = tx.QueryRow(`SELECT account,role FROM devices WHERE pub=$1`, in.Pub).Scan(&owner, &role)
 	if err != nil && err != sql.ErrNoRows {
 		return Session{}, err
 	}
 	if err == nil && (owner != in.Username || role != in.Role) {
 		return Session{}, ErrConflict
 	}
-	if _, err = tx.Exec(`INSERT INTO devices VALUES(?,?,?,?,?) ON CONFLICT(pub) DO UPDATE SET name=excluded.name`, in.Pub, in.Username, in.Name, in.Role, time.Now().Unix()); err != nil {
-		return Session{}, err
+	// The ownership predicate also protects concurrent enrollments from different accounts.
+	var enrolled string
+	if err = tx.QueryRow(`INSERT INTO devices VALUES($1,$2,$3,$4,$5) ON CONFLICT(pub) DO UPDATE SET name=excluded.name WHERE devices.account=excluded.account AND devices.role=excluded.role RETURNING pub`, in.Pub, in.Username, in.Name, in.Role, time.Now().Unix()).Scan(&enrolled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Session{}, ErrConflict
+		}
+		return Session{}, conflictError(err)
 	}
 	token := randomToken()
 	// One HTTP session per device limits stale credentials and storage growth.
-	if _, err = tx.Exec(`DELETE FROM sessions WHERE pub=? OR expires<?`, in.Pub, time.Now().Unix()); err != nil {
+	if _, err = tx.Exec(`DELETE FROM sessions WHERE pub=$1 OR expires<$2`, in.Pub, time.Now().Unix()); err != nil {
 		return Session{}, err
 	}
-	if _, err = tx.Exec(`INSERT INTO sessions VALUES(?,?,?)`, digest(token), in.Pub, time.Now().Add(90*24*time.Hour).Unix()); err != nil {
+	if _, err = tx.Exec(`INSERT INTO sessions VALUES($1,$2,$3)`, digest(token), in.Pub, time.Now().Add(90*24*time.Hour).Unix()); err != nil {
 		return Session{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -210,19 +182,22 @@ func (s *Store) Authenticate(token string) (Device, error) {
 		return Device{}, ErrUnauthorized
 	}
 	var d Device
-	err := s.db.QueryRow(`SELECT d.pub,d.account,d.name,d.role,d.added_at FROM sessions s JOIN devices d ON d.pub=s.pub WHERE s.hash=? AND s.expires>?`, digest(token), time.Now().Unix()).Scan(&d.Pub, &d.Account, &d.Name, &d.Role, &d.AddedAt)
+	err := s.db.QueryRow(`SELECT d.pub,d.account,d.name,d.role,d.added_at FROM sessions s JOIN devices d ON d.pub=s.pub WHERE s.hash=$1 AND s.expires>$2`, digest(token), time.Now().Unix()).Scan(&d.Pub, &d.Account, &d.Name, &d.Role, &d.AddedAt)
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Device{}, ErrUnavailable
+		}
 		return Device{}, ErrUnauthorized
 	}
 	return d, nil
 }
 func (s *Store) Device(pub string) (Device, bool) {
 	var d Device
-	err := s.db.QueryRow(`SELECT pub,account,name,role,added_at FROM devices WHERE pub=?`, pub).Scan(&d.Pub, &d.Account, &d.Name, &d.Role, &d.AddedAt)
+	err := s.db.QueryRow(`SELECT pub,account,name,role,added_at FROM devices WHERE pub=$1`, pub).Scan(&d.Pub, &d.Account, &d.Name, &d.Role, &d.AddedAt)
 	return d, err == nil
 }
 func (s *Store) Devices(account string) ([]Device, error) {
-	rows, err := s.db.Query(`SELECT pub,account,name,role,added_at FROM devices WHERE account=? ORDER BY added_at,pub`, account)
+	rows, err := s.db.Query(`SELECT pub,account,name,role,added_at FROM devices WHERE account=$1 ORDER BY added_at,pub`, account)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +213,20 @@ func (s *Store) Devices(account string) ([]Device, error) {
 	return out, rows.Err()
 }
 func (s *Store) Revoke(account, pub string) error {
-	result, err := s.db.Exec(`DELETE FROM devices WHERE account=? AND pub=?`, account, pub)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Match Login/Reset lock order so revocation is atomic with device enrollment.
+	var owner string
+	if err := tx.QueryRow(`SELECT username FROM accounts WHERE username=$1 FOR UPDATE`, account).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUnauthorized
+		}
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM devices WHERE account=$1 AND pub=$2`, account, pub)
 	if err != nil {
 		return err
 	}
@@ -246,7 +234,7 @@ func (s *Store) Revoke(account, pub string) error {
 	if n != 1 {
 		return ErrUnauthorized
 	}
-	return nil
+	return tx.Commit()
 }
 
 // Reset changes the password, rotates the single-use recovery secret and removes
@@ -257,7 +245,10 @@ func (s *Store) Reset(username, secret, password string, recovering bool) (strin
 		return "", errors.New("password must be 12-1024 bytes")
 	}
 	var salt, hash, recoveryHash []byte
-	if err := s.db.QueryRow(`SELECT salt,password,recovery FROM accounts WHERE username=?`, username).Scan(&salt, &hash, &recoveryHash); err != nil {
+	if err := s.db.QueryRow(`SELECT salt,password,recovery FROM accounts WHERE username=$1`, username).Scan(&salt, &hash, &recoveryHash); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", ErrUnavailable
+		}
 		return "", ErrUnauthorized
 	}
 	if recovering {
@@ -278,7 +269,7 @@ func (s *Store) Reset(username, secret, password string, recovering bool) (strin
 		return "", err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`UPDATE accounts SET salt=?,password=?,recovery=? WHERE username=? AND password=? AND recovery=?`, newSalt, newHash, digest(next), username, hash, recoveryHash)
+	result, err := tx.Exec(`UPDATE accounts SET salt=$1,password=$2,recovery=$3 WHERE username=$4 AND password=$5 AND recovery=$6`, newSalt, newHash, digest(next), username, hash, recoveryHash)
 	if err != nil {
 		return "", err
 	}
@@ -286,8 +277,16 @@ func (s *Store) Reset(username, secret, password string, recovering bool) (strin
 	if n != 1 {
 		return "", ErrUnauthorized
 	}
-	if _, err = tx.Exec(`DELETE FROM devices WHERE account=?`, username); err != nil {
+	if _, err = tx.Exec(`DELETE FROM devices WHERE account=$1`, username); err != nil {
 		return "", err
 	}
 	return next, tx.Commit()
+}
+
+func conflictError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrConflict
+	}
+	return err
 }

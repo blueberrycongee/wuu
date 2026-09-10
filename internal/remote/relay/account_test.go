@@ -7,13 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/remote/pgtest"
+
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
 )
 
 func TestAccountRelayIsolationAndRevocation(t *testing.T) {
-	store, err := account.Open(":memory:")
+	store, err := account.Open(pgtest.URL(t))
 	if err != nil {
 		t.Fatal(err)
 	}

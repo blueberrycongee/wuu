@@ -23,9 +23,18 @@ import (
 // Run serves the account API and encrypted relay until ctx is canceled.
 // It also accepts the legacy relay flags used by the desktop CLI.
 func Run(ctx context.Context, args []string, output io.Writer) error {
+	return run(ctx, args, output, false)
+}
+
+// RunStandalone requires a PostgreSQL database for the standalone account service.
+func RunStandalone(ctx context.Context, args []string, output io.Writer) error {
+	return run(ctx, args, output, true)
+}
+
+func run(ctx context.Context, args []string, output io.Writer, requireAccounts bool) error {
 	fs := flag.NewFlagSet("relay", flag.ContinueOnError)
 	fs.SetOutput(output)
-	accountDB := fs.String("accounts", "", "enable account authentication with this SQLite database")
+	accountDB := fs.String("database-url", "", "PostgreSQL URL (defaults to WUU_DATABASE_URL)")
 	registration := fs.Bool("registration", false, "allow account registration")
 	trustedProxyFlag := fs.String("trusted-proxies", "", "comma-separated proxy IP prefixes trusted for X-Forwarded-For")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
@@ -41,6 +50,12 @@ func Run(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *accountDB == "" {
+		*accountDB = os.Getenv("WUU_DATABASE_URL")
+	}
+	if (requireAccounts || *registration) && *accountDB == "" {
+		return errors.New("account service requires WUU_DATABASE_URL or --database-url")
 	}
 	var trustedProxies []netip.Prefix
 	if strings.TrimSpace(*trustedProxyFlag) != "" {

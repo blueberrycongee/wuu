@@ -1,8 +1,9 @@
 package account
 
 import (
-	"path/filepath"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/remote/pgtest"
 
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 )
@@ -16,7 +17,7 @@ func loginInput(t *testing.T, user, role string) Login {
 	return Login{Username: user, Password: "correct horse battery", Pub: secure.EncodeKey(id.Public()), Role: role, Name: role, Proof: enc.EncodeToString(id.SignRelayAuth([]byte("wuu/account/enroll/v1:"+user), role))}
 }
 func TestAccountIsolationRevocationAndRecovery(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.db")
+	path := pgtest.URL(t)
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +88,7 @@ func TestAccountIsolationRevocationAndRecovery(t *testing.T) {
 	}
 }
 func TestEnrollmentRequiresKeyPossessionAndUniqueOwnership(t *testing.T) {
-	s, err := Open(":memory:")
+	s, err := Open(pgtest.URL(t))
 	if err != nil {
 		t.Fatal(err)
 	}

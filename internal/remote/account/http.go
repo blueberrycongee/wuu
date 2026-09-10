@@ -51,6 +51,9 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	fail := func(err error) {
 		status := 400
+		if errors.Is(err, ErrUnavailable) {
+			status = 503
+		}
 		if errors.Is(err, ErrUnauthorized) {
 			status = 401
 		}
@@ -118,7 +121,11 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if path == "/password" {
 			d, err := h.Store.Authenticate(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-			if err != nil || d.Account != in.Username {
+			if err != nil {
+				fail(err)
+				return
+			}
+			if d.Account != in.Username {
 				fail(ErrUnauthorized)
 				return
 			}

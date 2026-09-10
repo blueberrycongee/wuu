@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/remote/pgtest"
 )
 
 func TestPushRegistrationIsDeviceOwnedAndRevokedWithIdentity(t *testing.T) {
-	s, err := Open(":memory:")
+	s, err := Open(pgtest.URL(t))
 	if err != nil {
 		t.Fatal(err)
 	}

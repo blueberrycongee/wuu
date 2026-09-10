@@ -8,7 +8,7 @@
 | --- | --- |
 | 独立可执行程序 | `cmd/wuu-server/main.go` |
 | 参数、TLS、服务生命周期、可选 Web 资源 | `internal/remote/server` |
-| 注册、登录、密码恢复、SQLite 数据库和设备归属 | `internal/remote/account` |
+| 注册、登录、密码恢复、PostgreSQL 数据库和设备归属 | `internal/remote/account` |
 | WebSocket 身份挑战、账号路由、在线状态与撤销 | `internal/remote/relay` |
 | APNs / FCM | `internal/remote/relay/native_push.go` |
 | 握手与帧加密 | `internal/remote/secure` |
@@ -52,7 +52,7 @@
 
 公钥是原始 32 字节 Ed25519 公钥；`pub` 和签名使用无填充 base64url。签名内容为 `wuu/relay/auth/v1\0`，后接三个字段，每个字段前加 4 字节大端长度：UTF-8 `wuu/account/enroll/v1:<规范化用户名>`、原始公钥、UTF-8 设备角色。用户名按 trim、小写规范化。设备私钥仅保存在客户端。
 
-错误体为 `{"error":"说明"}`。无效输入返回 400，凭据无效或越权返回 401，注册或推送未启用返回 403，未知接口返回 404，账号或设备冲突返回 409，认证限速或繁忙返回 429。客户端仅对明确的身份失效清除登录，不把网络故障解释为设备撤销。
+错误体为 `{"error":"说明"}`。无效输入返回 400，凭据无效或越权返回 401，注册或推送未启用返回 403，未知接口返回 404，账号或设备冲突返回 409，认证限速或繁忙返回 429，身份查询时数据库不可用返回 503。客户端仅对明确的身份失效清除登录，不把网络故障解释为设备撤销。
 
 ## 设备连接
 
@@ -67,7 +67,10 @@
 按 [部署说明](README.md) 构建和启动，在隔离数据库上运行 `verify.mjs create`、`verify`、`revoke`。这会真实注册两个账号、登记电脑和手机、验证归属拒绝、撤销与一次性恢复码。停止再启动同一数据库后再次执行 `verify` 可验证持久化。
 
 ```sh
+export WUU_TEST_DATABASE_URL='postgres://wuu:TEST_PASSWORD@127.0.0.1:5432/wuu_test?sslmode=disable'
 go test -race ./internal/remote/account ./internal/remote/relay ./internal/remote/server ./internal/remote/secure
 ```
+
+测试为每个用例创建独立 schema 并在结束时删除，测试账号需要 CREATE SCHEMA 权限；仅使用专门的测试数据库。未设置 `WUU_TEST_DATABASE_URL` 时数据库集成用例明确跳过；CI 的 Go 检查提供 PostgreSQL 并执行这些用例。
 
 中继测试包括跨账号帧拒绝、设备撤销后的重连拒绝，以及服务停止时关闭已登录和未完成握手的连接。系统推送配置和真实平台验收要求见 [PUSH.md](PUSH.md)。

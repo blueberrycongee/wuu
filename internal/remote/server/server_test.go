@@ -3,11 +3,14 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/remote/pgtest"
 )
 
 type startupWriter struct{ address chan string }
@@ -24,10 +27,12 @@ func TestRunStartsAccountServiceAndStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dir := t.TempDir()
+	databaseURL := pgtest.URL(t)
+	t.Setenv("WUU_DATABASE_URL", databaseURL)
 	ready := startupWriter{address: make(chan string, 1)}
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, []string{"--addr", "127.0.0.1:0", "--accounts", filepath.Join(dir, "accounts.db"), "--state", filepath.Join(dir, "relay.json")}, ready)
+		done <- RunStandalone(ctx, []string{"--addr", "127.0.0.1:0", "--state", filepath.Join(dir, "relay.json")}, ready)
 	}()
 	var address string
 	select {
@@ -58,5 +63,12 @@ func TestRunStartsAccountServiceAndStopsOnCancellation(t *testing.T) {
 	if response, err := client.Get("http://" + address + "/healthz"); err == nil {
 		response.Body.Close()
 		t.Fatal("listener survived service shutdown")
+	}
+}
+
+func TestStandaloneRequiresDatabase(t *testing.T) {
+	t.Setenv("WUU_DATABASE_URL", "")
+	if err := RunStandalone(context.Background(), nil, io.Discard); err == nil {
+		t.Fatal("standalone service started without accounts")
 	}
 }

@@ -14,4 +14,4 @@ COPY --from=build /wuu-server /usr/local/bin/wuu-server
 USER wuu
 VOLUME /data
 EXPOSE 8787
-ENTRYPOINT ["wuu-server", "--addr", "0.0.0.0:8787", "--state", "/data/relay.json", "--accounts", "/data/accounts.db"]
+ENTRYPOINT ["wuu-server", "--addr", "0.0.0.0:8787", "--state", "/data/relay.json"]
