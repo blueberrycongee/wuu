@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"crypto/x509"

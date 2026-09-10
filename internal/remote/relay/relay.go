@@ -59,6 +59,9 @@ type Server struct {
 	logf            func(format string, args ...any)
 	pushMinInterval time.Duration
 
+	closing     bool
+	handlers    sync.WaitGroup
+	sockets     map[*conn]struct{}
 	mu          sync.Mutex
 	conns       map[string]*conn // authenticated devices by public key
 	pairings    map[string]*conn // open pairing windows by pairing id -> host conn
@@ -89,6 +92,7 @@ func New(opts Options) *Server {
 		logf:            logf,
 		pushMinInterval: interval,
 		conns:           map[string]*conn{},
+		sockets:         map[*conn]struct{}{},
 		pairings:        map[string]*conn{},
 		pairWaiters:     map[string]*conn{},
 		pushLast:        map[string]time.Time{},
@@ -119,6 +123,22 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// Close stops accepting devices and waits until existing WebSocket handlers exit.
+// HTTP shutdown alone does not close upgraded connections.
+func (s *Server) Close() {
+	s.mu.Lock()
+	s.closing = true
+	sockets := make([]*conn, 0, len(s.sockets))
+	for c := range s.sockets {
+		sockets = append(sockets, c)
+	}
+	s.mu.Unlock()
+	for _, c := range sockets {
+		_ = c.ws.CloseNow()
+	}
+	s.handlers.Wait()
+}
+
 type conn struct {
 	ws      *websocket.Conn
 	writeMu sync.Mutex
@@ -142,6 +162,15 @@ func (c *conn) send(msg wire.RelayMsg) error {
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		http.Error(w, "server is stopping", http.StatusServiceUnavailable)
+		return
+	}
+	s.handlers.Add(1)
+	s.mu.Unlock()
+	defer s.handlers.Done()
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Non-browser clients today; a future web client terminates TLS at
 		// the relay operator's proxy and shares its origin policy.
@@ -152,7 +181,20 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.SetReadLimit(maxFrameBytes)
 	c := &conn{ws: ws}
-	defer s.dropConn(c)
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		_ = ws.CloseNow()
+		return
+	}
+	s.sockets[c] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		s.dropConn(c)
+		s.mu.Lock()
+		delete(s.sockets, c)
+		s.mu.Unlock()
+	}()
 
 	ctx := r.Context()
 	first, err := s.read(ctx, c)
