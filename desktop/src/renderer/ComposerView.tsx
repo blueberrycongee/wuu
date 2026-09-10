@@ -1396,7 +1396,6 @@ export function Composer({
                     />
                     {initialized ? (
                       <RuntimePicker
-                        variant={variant}
                         initialized={initialized}
                         state={codexModels}
                         openMenu={codexRuntimeMenu}

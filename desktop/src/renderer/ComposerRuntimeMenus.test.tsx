@@ -26,6 +26,7 @@ describe("RuntimePicker", () => {
       .querySelectorAll('[data-floating-menu-owner="codex-runtime"]')
       .forEach((element) => element.remove());
     container.remove();
+    vi.unstubAllGlobals();
   });
 
   function renderPicker(
@@ -52,7 +53,6 @@ describe("RuntimePicker", () => {
       root ??= createRoot(container);
       root.render(
         <RuntimePicker
-          variant="dock"
           initialized={initialized}
           state={{ loading: false, error: "", models: [] }}
           openMenu={openMenu}
@@ -463,6 +463,47 @@ describe("RuntimePicker", () => {
     expect(layer?.style.getPropertyValue("--floating-menu-available-height")).toBe(
       `${window.innerHeight - 86}px`
     );
+  });
+
+  it("keeps the dock model card above the trigger after a software keyboard lifts the composer", () => {
+    const initialized = runtimeWithEffort();
+    const anchorRef = createRef<HTMLDivElement>();
+    const viewport = Object.assign(new EventTarget(), {
+      offsetLeft: 0,
+      offsetTop: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
+    vi.stubGlobal("visualViewport", viewport);
+    renderPicker(null, initialized, vi.fn(), vi.fn(), vi.fn(), anchorRef);
+    vi.spyOn(anchorRef.current as HTMLDivElement, "getBoundingClientRect").mockReturnValue({
+      x: 180,
+      y: 620,
+      top: 620,
+      left: 180,
+      right: 360,
+      bottom: 652,
+      width: 180,
+      height: 32,
+      toJSON: () => ({}),
+    });
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), anchorRef);
+
+    const layer = document.querySelector<HTMLElement>(
+      '[data-floating-menu-owner="codex-runtime"]'
+    );
+    expect(layer?.classList.contains("floating-menu-above")).toBe(true);
+    expect(layer?.style.bottom).toBe(`${window.innerHeight - 612}px`);
+    expect(layer?.style.top).toBe("");
+
+    viewport.height = 420;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(layer?.classList.contains("floating-menu-above")).toBe(true);
+    expect(layer?.style.bottom).toBe(`${window.innerHeight - 420 + 8}px`);
+    expect(layer?.style.getPropertyValue("--floating-menu-available-height")).toBe("604px");
   });
 
   it("uses the target model default instead of carrying effort across models, with optimistic highlighting", () => {

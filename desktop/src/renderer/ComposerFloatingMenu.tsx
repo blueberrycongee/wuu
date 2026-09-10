@@ -22,6 +22,24 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+// Software keyboards change VisualViewport without resizing the layout
+// viewport. Composer menus are position:fixed against that layout box, so
+// placement and available height have to follow the visible rectangle or a
+// card opened above the dock input can sit over the greeting while the
+// keyboard is up, then stay there after the keyboard dismisses.
+function visibleViewport(): { left: number; top: number; width: number; height: number } {
+  const viewport = window.visualViewport;
+  if (viewport && viewport.width > 0 && viewport.height > 0) {
+    return {
+      left: viewport.offsetLeft,
+      top: viewport.offsetTop,
+      width: viewport.width,
+      height: viewport.height,
+    };
+  }
+  return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+}
+
 // Initial flip-threshold estimate used before the panel has been measured.
 // Matches the panel's CSS max-height fallback so the first flip decision is
 // a conservative "assume the worst case" guess; a follow-up measurement in
@@ -83,11 +101,13 @@ export function FloatingMenuPortal({
         return;
       }
       const viewportMargin = 8;
+      const visible = visibleViewport();
       const rect = anchor.getBoundingClientRect();
       const menuWidth = matchAnchorWidth && rect.width > 0 ? rect.width : width;
       const baseLeft = align === "right" ? rect.right - menuWidth : rect.left;
-      const maxLeft = Math.max(viewportMargin, window.innerWidth - menuWidth - viewportMargin);
-      const left = clamp(baseLeft + crossAxisOffset, viewportMargin, maxLeft);
+      const minLeft = visible.left + viewportMargin;
+      const maxLeft = Math.max(minLeft, visible.left + visible.width - menuWidth - viewportMargin);
+      const left = clamp(baseLeft + crossAxisOffset, minLeft, maxLeft);
 
       // Auto-flip: if the requested side has less than the panel's actual
       // height free AND the opposite side has more room, prefer the
@@ -96,8 +116,8 @@ export function FloatingMenuPortal({
       const flipThreshold = measuredPanelHeight ?? PANEL_HEIGHT_ESTIMATE;
       let actualPlacement: FloatingMenuPlacement = placement;
       if (flip && (placement === "above" || placement === "below")) {
-        const spaceBelow = window.innerHeight - rect.bottom - offset;
-        const spaceAbove = rect.top - offset;
+        const spaceBelow = visible.top + visible.height - rect.bottom - offset;
+        const spaceAbove = rect.top - visible.top - offset;
         if (
           placement === "below" &&
           spaceBelow < flipThreshold &&
@@ -139,28 +159,29 @@ export function FloatingMenuPortal({
       // The select-menu-specific variable remains for compatibility with
       // older consumers while shared composer menus use the generic one.
       let availableHeight: number;
+      const visibleBottom = visible.top + visible.height;
       if (actualPlacement === "above") {
         nextStyle.bottom = Math.max(
-          viewportMargin,
+          window.innerHeight - visibleBottom + viewportMargin,
           window.innerHeight - rect.top + offset
         );
-        availableHeight = Math.max(0, rect.top - offset - viewportMargin);
+        availableHeight = Math.max(0, rect.top - visible.top - offset - viewportMargin);
       } else if (actualPlacement === "below") {
-        nextStyle.top = Math.max(viewportMargin, rect.bottom + offset);
+        nextStyle.top = Math.max(visible.top + viewportMargin, rect.bottom + offset);
         availableHeight = Math.max(
           0,
-          window.innerHeight - rect.bottom - offset - viewportMargin
+          visibleBottom - rect.bottom - offset - viewportMargin
         );
       } else {
         nextStyle.top = clamp(
           rect.top + rect.height / 2,
-          viewportMargin,
-          window.innerHeight - viewportMargin
+          visible.top + viewportMargin,
+          visibleBottom - viewportMargin
         );
         nextStyle.transform = "translateY(-50%)";
         availableHeight = Math.max(
           0,
-          Math.min(window.innerHeight - 2 * viewportMargin, 420)
+          Math.min(visible.height - 2 * viewportMargin, 420)
         );
       }
       // CSS custom property — React's CSSProperties type doesn't allow
@@ -202,11 +223,16 @@ export function FloatingMenuPortal({
       void raf;
     }
 
+    const viewport = window.visualViewport;
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
+    viewport?.addEventListener("resize", updatePosition);
+    viewport?.addEventListener("scroll", updatePosition);
     return () => {
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
+      viewport?.removeEventListener("resize", updatePosition);
+      viewport?.removeEventListener("scroll", updatePosition);
     };
   }, [
     align,

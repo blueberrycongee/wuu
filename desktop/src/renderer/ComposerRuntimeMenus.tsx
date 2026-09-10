@@ -355,7 +355,6 @@ export type HandoffRuntimePicker = {
 };
 
 export function RuntimePicker({
-  variant,
   initialized,
   state,
   openMenu,
@@ -375,7 +374,6 @@ export function RuntimePicker({
   onSelectEffort,
   handoff
 }: {
-  variant: ComposerVariant;
   initialized: InitializeResult;
   state: CodexModelLoadState;
   openMenu: CodexRuntimeMenu;
@@ -410,7 +408,10 @@ export function RuntimePicker({
   // whichever column holds the level instead of letting "" shadow a real
   // effort.
   const currentVariant = targetVariant;
-  const placement: FloatingMenuPlacement = variant === "hero" ? "below" : "above";
+  // Empty sessions still dock the composer at the bottom of the pane. Opening
+  // the model card below that trigger leaves it in the greeting once a phone
+  // keyboard has lifted the input, so keep it attached above the selector.
+  const placement: FloatingMenuPlacement = "above";
   const externalEngine = handoff ? "" : activeEngine && activeEngine !== "wuu" ? activeEngine : "";
   const engineOptions = handoff
     ? [{ id: "wuu", label: engineLabel("wuu") }]
