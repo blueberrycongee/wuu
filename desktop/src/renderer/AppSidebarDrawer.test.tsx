@@ -10,6 +10,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { translateCurrent } from "./i18n";
 import type {
   InitializeResult,
   ServerEvent,
@@ -207,7 +208,7 @@ async function clickSidebarSession(
   options: { pointerTarget?: Element | null } = {},
 ): Promise<HTMLButtonElement> {
   const sessionButton = container.querySelector<HTMLButtonElement>(
-    `.thread-row-main[aria-label^="${label}"]`,
+    `aside button[aria-label^="${label}"]`,
   );
   expect(sessionButton).not.toBeNull();
   if (!sessionButton) {
@@ -344,7 +345,7 @@ describe("collapsed sidebar hover drawer", () => {
     const menu = document.getElementById(navigation.getAttribute("aria-controls")!)!;
     expect(menu).not.toBeNull();
     const openSidebar = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
-      .find(button => button.textContent === "展开左侧栏");
+      .find(button => button.textContent === translateCurrent("mobile.conversations"));
     expect(openSidebar).toBeTruthy();
     await act(async () => { openSidebar!.click(); });
     expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");

@@ -5105,6 +5105,9 @@ export function App(): JSX.Element {
             />
           ) : (
           <AppSidebar
+            compactNavigation={compactNavigation}
+            drawerVisible={sidebarDrawerVisible}
+            onNavigateAway={closeCompactSessionSwitcher}
             state={state}
             sidebarProjects={sidebarProjects}
             activeProjectID={

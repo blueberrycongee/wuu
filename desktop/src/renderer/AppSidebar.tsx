@@ -1,4 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
+import { MobileSidebar } from "./MobileSidebar";
 import {
   Archive,
   Bell,
@@ -376,6 +377,9 @@ export function AppSidebar({
   onMarkThreadsViewed,
   pluginHost = desktopPluginHost,
   workbenchController = desktopWorkbenchController,
+  compactNavigation = false,
+  drawerVisible = false,
+  onNavigateAway,
 }: {
   state: AppState;
   // The sidebar renders scratch conversations through the same ProjectList
@@ -448,6 +452,9 @@ export function AppSidebar({
   onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
+  compactNavigation?: boolean;
+  drawerVisible?: boolean;
+  onNavigateAway?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
@@ -2008,7 +2015,32 @@ export function AppSidebar({
   );
   const organizedSidebar = (
     <SessionOrganizationProvider value={organizationActions}>
-      {nativeSidebar}
+      {compactNavigation ? <MobileSidebar
+        onNavigateAway={onNavigateAway}
+        visible={drawerVisible}
+        state={state}
+        sidebarProjects={sidebarProjects}
+        activeThreadID={activeThreadID}
+        pendingThreadID={pendingThreadID}
+        projectThreadsByProjectID={projectThreadsByProjectID}
+        loadingProjectThreadIDs={loadingProjectThreadIDs}
+        expandedSidebarSectionIDs={expandedSidebarSectionIDs}
+        onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
+        onStartNewThreadForProject={onStartNewThreadForProject}
+        onSelectProjectThread={onSelectProjectThread}
+        onTogglePinned={toggleThreadPinned}
+        onArchiveThread={onArchiveThread}
+        onRenameThread={onRenameThread}
+        onDeleteThread={onDeleteThread}
+        onRemoveProject={onRemoveProject}
+        onRelocateProject={onRelocateProject}
+        onSelectProjectWorkspace={onSelectProjectWorkspace}
+        onCreateProject={onCreateProject}
+        onOpenProjectFolder={onOpenProjectFolder}
+        groupChatEnabled={groupChatEnabled}
+        onSwitchToCollaboration={onSwitchToCollaboration}
+        commands={navigationNodes}
+      /> : nativeSidebar}
     </SessionOrganizationProvider>
   );
   return (
