@@ -7,13 +7,17 @@
 安装仓库要求的 Go 1.26.5，运行：
 
 ```sh
-go build -trimpath -o ./bin/wuu ./cmd/wuu
+go build -trimpath -o ./bin/wuu-server ./cmd/wuu-server
 mkdir -p ./private-remote-data
 chmod 700 ./private-remote-data
-./bin/wuu relay --addr 127.0.0.1:8787 \
+./bin/wuu-server --addr 127.0.0.1:8787 \
   --state ./private-remote-data/relay.json \
   --accounts ./private-remote-data/accounts.db --registration
 ```
+
+`wuu-server` 是独立 Go 程序，只链接账号、加密连接及服务端代码，不包含 Agent 执行引擎。默认监听 `127.0.0.1:8787`，账号库为当前目录的 `data/accounts.db`，旧配对注册表为 `data/relay.json`；注册默认关闭，首次创建账号需显式传 `--registration`。`--help` 列出 TLS、可信代理、推送和 Web 资源参数。原有 `wuu relay --accounts ...` 继续调用同一实现。
+
+完整 API 和代码入口见 [服务端接口](API.md)。
 
 `GET /healthz` 返回 `ok`。从电脑和手机的账号页选择此服务端、创建账号，然后在另一端登录同一账号。用户名为 3–64 个小写字母、数字、点、连字符或下划线；密码至少 12 字节。请保存注册时显示的恢复码。
 
@@ -41,7 +45,7 @@ Compose 中的 Caddy 自动管理证书并代理 WebSocket。`accounts` 不直�
 
 需要后台系统提醒时，按 [自部署推送说明](PUSH.md) 配置自己的 APNs/FCM 凭据。账号和连接服务不依赖这些凭据。
 
-在桌面 Wuu「设置 → 手机访问」填写服务端并登录。登录会启动已有桌面远程宿主，复用当前桌面 Go 服务池。退出账号会停用本机远程访问。仅电脑开机、Wuu 运行且连接服务端时显示在线。
+在桌面 Wuu 侧栏账户菜单的「登录 Wuu」或账号管理入口填写服务端并登录。登录会启动已有桌面远程宿主，复用当前桌面 Go 服务池。退出账号会停用本机远程访问。仅电脑开机、Wuu 运行且连接服务端时显示在线。
 
 自动化或无界面电脑可以使用 `wuu remote account login` / `register`，JSON 从标准输入传入，字段为 `server`、`username`、`password`。密码不得出现在命令参数。再运行 `wuu remote host --workdir <工作目录>`；独立 CLI 宿主提供核心会话 RPC，桌面文件夹管理和终端等桌面能力需要桌面 App。
 
@@ -68,6 +72,8 @@ docker compose -f deploy/remote/compose.yaml start accounts
 ```
 
 备份包含身份资料，使用自己的加密备份工具保存。恢复时停止服务，把整份 `/data` 恢复到相同位置、确保容器 UID 10001 有读写权限，再启动。恢复旧备份会恢复备份时仍有效的令牌和设备撤销状态；恢复后应重新检查丢失设备，必要时改密码撤销全部设备。
+
+使用 SIGTERM 或 Ctrl-C 停止服务，会停止接收 HTTP 请求并关闭所有 WebSocket，再关闭账号数据库；客户端按已有恢复流程重连。
 
 账号数据库不包含电脑会话。分别备份每台电脑的 `WUU_HOME` 和工作目录，恢复文件权限；不要将同一个 `remote.json` 同时复制到两台运行中的电脑，它们会共享设备身份并互相顶下线。
 
