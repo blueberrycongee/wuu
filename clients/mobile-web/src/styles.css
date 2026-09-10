@@ -45,15 +45,7 @@ input, textarea {
   box-shadow: 12px 12px 0 rgba(32, 34, 31, 0.1);
 }
 
-.web-gate-kicker {
-  margin: 0;
-  color: #697067;
-  font: 700 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.16em;
-}
-
 .web-gate h1 { margin: 0; font-size: clamp(30px, 8vw, 48px); line-height: 0.98; letter-spacing: -0.045em; }
-.web-gate-copy { margin: 0; color: #61665f; line-height: 1.65; }
 .web-gate label { display: grid; gap: 8px; }
 .web-gate label span { font-size: 13px; font-weight: 700; }
 .web-gate input, .web-gate textarea {

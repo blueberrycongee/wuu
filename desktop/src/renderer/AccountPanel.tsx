@@ -37,7 +37,6 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
  };
  return <section className="account-panel" aria-label={t('account.label')}>
   <h2>{account.username ? t('account.title', {username: account.username}) : t('account.connect')}</h2>
-  <p>{t('account.description')}</p>
   {error && <p role="alert" className="settings-error">{error}</p>}
   {localLogoutOnly && <p role="status">{t('account.localLogout')}</p>}
   {recovery && <div role="status"><p>{t('account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => setRecovery('')}>{t('account.savedRecovery')}</button></p></div>}
@@ -52,7 +51,7 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
       {d.pub !== account.pub && <button className="account-remove" type="button" disabled={busy} onClick={() => void perform('revoke',{pub:d.pub})}>{t('account.remove')}</button>}
      </div>
     </div>)}</div>
-    {role === 'host' && <p>{t((account.devices ?? []).some(d => d.role === 'host') ? 'account.offlineHint' : 'account.noComputers')}</p>}
+    {role === 'host' && !(account.devices ?? []).some(d => d.role === 'host') && <p>{t('account.noComputers')}</p>}
    </section>)}
    <div className="account-actions"><button type="button" disabled={busy} onClick={() => setMode('password')}>{t('account.password')}</button><button type="button" disabled={busy} onClick={() => void perform('logout')}>{t('account.logout')}</button></div>
   </> : <form onSubmit={e => {e.preventDefault();void perform(mode,{server,username:account.username || username,password,secret,name:deviceName});}}>
@@ -63,7 +62,6 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
    {onComputer && (mode === 'login' || mode === 'register') && <label>{t('account.deviceName')}<input value={deviceName} maxLength={64} placeholder={t('account.deviceNameExample')} onChange={e => setDeviceName(e.target.value)}/></label>}
    {(mode === 'recover' || mode === 'password') && <label>{t(mode === 'recover' ? 'account.recoveryCode' : 'account.currentPassword')}<input type="password" autoComplete={mode === 'password' ? 'current-password' : 'off'} value={secret} required onChange={e => setSecret(e.target.value)}/></label>}
    <label>{t(mode === 'login' ? 'account.loginPassword' : 'account.newPassword')}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} required minLength={12} onChange={e => setPassword(e.target.value)}/></label>
-   {mode === 'register' && <p>{t('account.registerHint')}</p>}
    {mode === 'password' && <p>{t('account.passwordHint')}</p>}
    <button className="account-primary" disabled={busy} type="submit">{t(busy ? 'account.busy' : `account.${mode}`)}</button>
    <div className="account-actions">{(['login','register','recover'] as const).filter(m => m !== mode).map(m => <button type="button" key={m} disabled={busy} onClick={() => {setMode(m);setError('');}}>{t(m === 'login' ? 'account.backToLogin' : m === 'recover' ? 'account.forgotPassword' : 'account.register')}</button>)}</div>

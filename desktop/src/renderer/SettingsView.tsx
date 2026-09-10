@@ -1,4 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
+import { isTouchWebShell } from "./ComposerFocus";
 import {
   ArrowLeft,
   Archive,
@@ -1709,7 +1710,7 @@ function SettingsCollaborationPage({
       <SettingsCard>
         <SettingsRow
           title={t("settings.coordinationModel")}
-          description={t("settings.coordinationModelDescription")}
+          description={isTouchWebShell() ? undefined : t("settings.coordinationModelDescription")}
         >
           <SelectMenu
             triggerClassName="settings-select-trigger"
@@ -1722,7 +1723,7 @@ function SettingsCollaborationPage({
         </SettingsRow>
         <SettingsRow
           title={t("settings.verificationModel")}
-          description={t("settings.verificationModelDescription")}
+          description={isTouchWebShell() ? undefined : t("settings.verificationModelDescription")}
         >
           <SelectMenu
             triggerClassName="settings-select-trigger"
@@ -1798,7 +1799,7 @@ function SettingsAdvancedPage({
       <div className="settings-group">
         <SettingsRow
           title={t("settings.autoCompact")}
-          description={t("settings.autoCompactDescription")}
+          description={isTouchWebShell() ? undefined : t("settings.autoCompactDescription")}
         >
           <button
             className="settings-switch"
@@ -2087,7 +2088,7 @@ function SettingsGeneralPage({
           {hostSupports("listCodexPets") ? <>
           <SettingsRow
             title={t("settings.codexPet")}
-            description={t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
+            description={isTouchWebShell() ? undefined : t("settings.petSource", { path: codexPets?.home ?? "~/.wuu/pets" })}
           >
             {codexPetOptions.length > 0 ? (
               <SelectMenu
@@ -2164,7 +2165,7 @@ function SettingsGeneralPage({
         <SettingsCard>
           <SettingsRow
             title={t("settings.gitAttribution")}
-            description={t("settings.gitAttributionDescription")}
+            description={isTouchWebShell() ? undefined : t("settings.gitAttributionDescription")}
           >
             <button
               className="settings-switch"

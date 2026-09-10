@@ -75,7 +75,6 @@ function Picker({
     >
       <section className="computer-folder-picker">
         <h2>{packageMode ? "选择电脑上的扩展包" : "选择电脑文件夹"}</h2>
-        <p>{packageMode ? "选择扩展目录或 ZIP 文件。安装后会在这台电脑上启用扩展。" : "浏览当前电脑上的文件夹。"}</p>
         {error && <p role="alert">{error}</p>}
         <form
           onSubmit={(e) => {
@@ -107,7 +106,7 @@ function Picker({
           ))}
           {packageMode && directory?.archives?.map(file => <button key={file.path} disabled={busy} onClick={() => finish(file.path)}>{file.name}</button>)}
         </div>
-        {directory?.truncated && <p>文件夹较多，可在上方输入完整路径。</p>}
+        {directory?.truncated && <p>仅显示部分文件夹</p>}
         {create && (
           <form
             onSubmit={(e) => {

@@ -203,9 +203,7 @@ function PairCard({
   return (
     <main className="web-gate">
       <section className="web-gate-card">
-        <p className="web-gate-kicker">WUU / WEB</p>
         <h1>连接你的工作台</h1>
-        <p className="web-gate-copy">在电脑的 Wuu 设置中打开「手机访问」，用手机相机扫描二维码即可连接。</p>
         <label>
           <span>设备名称</span>
           <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -244,7 +242,6 @@ function StatusCard({
   return (
     <main className="web-gate">
       <section className="web-gate-card web-gate-status">
-        <p className="web-gate-kicker">WUU / WEB</p>
         <h1>{title}</h1>
         {detail ? <p className="web-gate-error">{detail}</p> : null}
         {children}
