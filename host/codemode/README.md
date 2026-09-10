@@ -57,11 +57,13 @@ The binary is written to `target/release/wuu-code-mode-host`.
 
 ## Desktop integration
 
-`npm run dev` and the desktop packaging commands both use
-`desktop/scripts/build-codemode-host.cjs`. On macOS/Linux it runs the locked,
-incremental Cargo build and copies the result next to `wuu-core` in
-`desktop/build/bin`. Existing staged binaries do not bypass the build. Windows
-requires a separately built Windows host staged in that directory.
+Desktop packaging commands always use `desktop/scripts/build-codemode-host.cjs`.
+For day-to-day development, `npm run dev` skips this expensive build; use
+`npm run dev:codemode` when working on or testing code mode. On macOS/Linux it
+runs the locked, incremental Cargo build and copies the result next to
+`wuu-core` in `desktop/build/bin`. Existing staged binaries do not bypass the
+build. Windows requires a separately built Windows host staged in that
+directory.
 
 Wuu defaults to `code_mode.mode: "direct"`: models invoke ordinary tools
 directly, with the code-mode runtime disabled. Set `code_mode.mode` to

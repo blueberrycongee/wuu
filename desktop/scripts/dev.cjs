@@ -53,7 +53,12 @@ if (coreBuild.status !== 0) {
   process.exit(coreBuild.status ?? 1);
 }
 
-buildCodeModeHost();
+// Code mode is opt-in at runtime through `code_mode.mode`. Its V8 host is
+// expensive to build, so development launches skip it unless a developer
+// explicitly requests it for code-mode work or tests.
+if (process.env.WUU_BUILD_CODE_MODE_HOST === "1") {
+  buildCodeModeHost();
+}
 
 const env = { ...process.env };
 env.WUU_DESKTOP_CORE = join(

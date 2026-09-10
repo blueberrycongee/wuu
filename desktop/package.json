@@ -11,6 +11,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.cjs",
+    "dev:codemode": "node scripts/env-run.cjs WUU_BUILD_CODE_MODE_HOST=1 node scripts/dev.cjs",
     "dev:onboarding": "electron-vite --config dev/onboarding/electron.vite.config.ts --entry out-dev/onboarding/main/index.js --ignoreConfigWarning",
     "dev:remote": "node scripts/env-run.cjs VITE_ENABLE_REMOTE_CONTROL=true npm run dev",
     "dev:direct": "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
