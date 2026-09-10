@@ -7,16 +7,29 @@ import {
   b64decode,
   b64encode,
   type AccountSession,
+  startGitHubLogin, pollGitHubLogin, completeGitHubLogin, type GitHubPending,
 } from "@wuu/remote-core";
 import type {
   AccountDriver,
   AccountView,
 } from "../../../../desktop/src/renderer/AccountPanel";
 import { webCredStore } from "./credStore";
-import { secretStorage, clearNativeShareCache } from "./native";
+import { secretStorage, clearNativeShareCache, isNative } from "./native";
 
 const key = "wuu.account.v1";
 const identitiesKey = "wuu.account-identities.v1";
+const pendingKey = 'wuu.github.pending';
+const directoryKey = 'wuu.account.directory';
+async function loadPending(): Promise<GitHubPending | null> {
+  const raw = await secretStorage.get(pendingKey);
+  if (!raw) return null;
+  try {
+    const pending = JSON.parse(raw) as GitHubPending;
+    if (Number.isFinite(pending.expires) && Date.now() < pending.expires && typeof pending.verifier === 'string' && pending.verifier.length === 43 && typeof pending.request_id === 'string' && typeof pending.server === 'string') return pending;
+  } catch { /* Discard an interrupted or malformed pending login. */ }
+  await secretStorage.remove(pendingKey);
+  return null;
+}
 let persistence: Promise<unknown> = Promise.resolve();
 function persist<T>(change: () => Promise<T>): Promise<T> {
   const next = persistence.then(change, change);
@@ -30,11 +43,12 @@ async function clearAccount(expected: AccountSession): Promise<void> {
     if (current?.token !== expected.token || current.server !== expected.server)
       return;
     await secretStorage.remove(key);
+    await secretStorage.remove(pendingKey);
     await webCredStore.clear();
     await clearNativeShareCache();
     // Shared renderer preferences may contain workspace paths and provider choices.
     for (const name of Object.keys(localStorage))
-      if (name.startsWith("wuu.") && name !== identitiesKey && name !== "wuu.web.language") localStorage.removeItem(name);
+      if (name.startsWith("wuu.") && name !== identitiesKey && name !== "wuu.web.language" && name !== "wuu.account.server" && name !== "wuu.web.paired") localStorage.removeItem(name);
     window.dispatchEvent(new Event('wuu:account-change'));
   });
 }
@@ -60,6 +74,37 @@ async function accountIdentity(server: string, username: string, current: Accoun
 }
 export const accountDriver: AccountDriver = async (action, input = {}) => {
   const current = await loadAccount();
+  if (action === 'config') return accountRequest(input.server, '', 'GET', '/config');
+  if (action === 'github-start') {
+    const pending = await startGitHubLogin(input.server, isNative);
+    pending.name = input.name?.trim() || 'Wuu 手机';
+    await persist(() => secretStorage.set(pendingKey, JSON.stringify(pending)));
+    return { oauth_url: pending.oauth_url };
+  }
+  if (action === 'github-cancel') {
+    const pending = await loadPending();
+    await persist(() => secretStorage.remove(pendingKey));
+    if (pending) await accountRequest(pending.server, '', 'POST', '/github/cancel', { request_id: pending.request_id, verifier: pending.verifier }).catch(() => {});
+    return {};
+  }
+  if (action === 'github-poll') {
+    const pending = await loadPending();
+    if (!pending) throw new Error('GitHub 登录已过期，请重新开始');
+    const status = await pollGitHubLogin(pending);
+    if (status.status !== 'authorized' || !status.username) return { oauth_url: pending.oauth_url };
+    const identity = await accountIdentity(pending.server, status.username, current);
+    const session = await completeGitHubLogin(pending, status.username, pending.name || 'Wuu 手机', identity);
+    // Cancellation may have happened while the network request was in flight.
+    const saved = await persist(async () => {
+      if ((await loadPending())?.request_id !== pending.request_id) return false;
+      await secretStorage.set(key, JSON.stringify(session));
+      await secretStorage.remove(pendingKey);
+      return true;
+    });
+    if (!saved) return {};
+    window.dispatchEvent(new Event('wuu:account-change'));
+    return { username: session.username, server: session.server, auth_method: 'github' };
+  }
   if (action === "login" || action === "register") {
     const result = await loginAccount(
       input.server,
@@ -80,6 +125,8 @@ export const accountDriver: AccountDriver = async (action, input = {}) => {
       password: input.password,
     });
   if (action === "status") {
+    const pending = await loadPending();
+    if (pending) return { oauth_url: pending.oauth_url };
     if (!current) return {};
     try {
       const result = await accountRequest<AccountView>(
@@ -88,10 +135,17 @@ export const accountDriver: AccountDriver = async (action, input = {}) => {
         "GET",
         "/devices",
       );
-      return { ...result, server: current.server, pub: current.pub };
+      const view = { ...result, server: current.server, pub: current.pub };
+      localStorage.setItem(directoryKey, JSON.stringify(view));
+      return view;
     } catch (error) {
       if (!(error instanceof AccountRequestError) || error.status !== 401)
-        throw error;
+        {
+          let cached: AccountView = {};
+          try { cached = JSON.parse(localStorage.getItem(directoryKey) || '{}'); } catch { /* no cached directory */ }
+          if (cached.server !== current.server || cached.username !== current.username || cached.pub !== current.pub) cached = {};
+          return { ...cached, username: current.username, server: current.server, pub: current.pub, unavailable: true };
+        }
       await clearAccount(current);
       return {};
     }

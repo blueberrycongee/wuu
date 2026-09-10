@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -148,6 +149,13 @@ func (s *Store) Login(in Login, register bool) (Session, error) {
 			return Session{}, ErrUnauthorized
 		}
 	}
+	return s.enroll(tx, in, recovery)
+}
+
+// enroll is shared by password and OAuth authentication; both retain the same
+// device ownership checks and locally generated signing keys.
+func (s *Store) enroll(tx *sql.Tx, in Login, recovery string) (Session, error) {
+	var err error
 	var owner, role string
 	err = tx.QueryRow(`SELECT account,role FROM devices WHERE pub=$1`, in.Pub).Scan(&owner, &role)
 	if err != nil && err != sql.ErrNoRows {
@@ -176,6 +184,68 @@ func (s *Store) Login(in Login, register bool) (Session, error) {
 		return Session{}, err
 	}
 	return Session{Token: token, Username: in.Username, Pub: in.Pub, Recovery: recovery}, nil
+}
+
+func (s *Store) githubAccount(subject string, register bool, displayName ...string) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", ErrUnavailable
+	}
+	defer tx.Rollback()
+	// Serialize first logins for the immutable provider subject, not its mutable handle.
+	if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "github:"+subject); err != nil {
+		return "", ErrUnavailable
+	}
+	var username string
+	err = tx.QueryRow(`SELECT account FROM account_identities WHERE provider='github' AND subject=$1`, subject).Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
+		if !register {
+			return "", errors.New("registration is disabled by this server")
+		}
+		username = fmt.Sprintf("gh-%x", digest(randomToken())[:12])
+		// OAuth-only accounts have no password or recovery credential.
+		if _, err = tx.Exec(`INSERT INTO accounts VALUES($1,''::bytea,''::bytea,''::bytea)`, username); err != nil {
+			return "", ErrUnavailable
+		}
+		if _, err = tx.Exec(`INSERT INTO account_identities(provider,subject,account) VALUES('github',$1,$2)`, subject, username); err != nil {
+			return "", ErrUnavailable
+		}
+	} else if err != nil {
+		return "", ErrUnavailable
+	}
+	if len(displayName) > 0 && len(displayName[0]) <= 100 {
+		if _, err = tx.Exec(`UPDATE account_identities SET display_name=$1 WHERE provider='github' AND subject=$2`, displayName[0], subject); err != nil {
+			return "", ErrUnavailable
+		}
+	}
+	return username, tx.Commit()
+}
+
+func (s *Store) githubLogin(in Login) (Session, error) {
+	// Reuse canonical key, role and enrollment-signature validation without
+	// introducing a usable password on the OAuth account.
+	in.Password = "oauth-validation-only"
+	if err := validateLogin(&in); err != nil {
+		return Session{}, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Session{}, ErrUnavailable
+	}
+	defer tx.Rollback()
+	var username string
+	if err = tx.QueryRow(`SELECT a.username FROM accounts a JOIN account_identities i ON a.username=i.account WHERE a.username=$1 AND i.provider='github' FOR UPDATE OF a`, in.Username).Scan(&username); err != nil {
+		return Session{}, ErrUnauthorized
+	}
+	return s.enroll(tx, in, "")
+}
+
+func (s *Store) AuthMethod(username string) string {
+	var provider string
+	if s.db.QueryRow(`SELECT provider FROM account_identities WHERE account=$1`, username).Scan(&provider) == nil {
+		return provider
+	}
+	return "password"
 }
 func (s *Store) Authenticate(token string) (Device, error) {
 	if len(token) != 43 {
@@ -289,4 +359,12 @@ func conflictError(err error) error {
 		return ErrConflict
 	}
 	return err
+}
+
+func (s *Store) DisplayName(username string) string {
+	var name string
+	if s.db.QueryRow(`SELECT display_name FROM account_identities WHERE account=$1`, username).Scan(&name) == nil && name != "" {
+		return name
+	}
+	return username
 }

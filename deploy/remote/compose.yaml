@@ -19,6 +19,9 @@ services:
       context: ../..
       dockerfile: deploy/remote/Dockerfile
     environment:
+      WUU_ACCOUNT_PUBLIC_URL: https://${WUU_DOMAIN:?Set WUU_DOMAIN to your server domain}
+      WUU_GITHUB_CLIENT_ID: ${WUU_GITHUB_CLIENT_ID:-}
+      WUU_GITHUB_CLIENT_SECRET: ${WUU_GITHUB_CLIENT_SECRET:-}
       WUU_DATABASE_URL: postgres://wuu:${WUU_POSTGRES_PASSWORD:?Set WUU_POSTGRES_PASSWORD}@postgres:5432/wuu?sslmode=disable
     depends_on:
       postgres:

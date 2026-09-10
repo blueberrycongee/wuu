@@ -13,6 +13,7 @@ const desktopPackage = JSON.parse(
   readFileSync(resolve(__dirname, "package.json"), "utf8"),
 ) as { version: string };
 const desktopDefine = {
+  __WUU_ACCOUNT_SERVER__: JSON.stringify(process.env.WUU_ACCOUNT_SERVER || ''),
   __DESKTOP_VERSION__: JSON.stringify(desktopPackage.version),
   __DESKTOP_BUILD_DATE__: JSON.stringify(new Date().toISOString()),
 };

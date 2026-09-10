@@ -4,6 +4,7 @@ import { AccountRequestError, Identity, b64encode, encodeKey } from "@wuu/remote
 import { accountDriver, loadAccount } from "../src/lib/accountStore";
 import { webCredStore } from "../src/lib/credStore";
 vi.mock("../src/lib/native", () => ({
+  isNative: false,
   clearNativeShareCache: vi.fn(async () => {}),
   secretStorage: {
     get: async (key: string) => localStorage.getItem(key),
@@ -58,9 +59,7 @@ it("preserves the account on failed refresh but allows local logout", async () =
         new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }),
     ),
   );
-  await expect(accountDriver("status")).rejects.toBeInstanceOf(
-    AccountRequestError,
-  );
+  await expect(accountDriver("status")).resolves.toMatchObject({ username: "test", unavailable: true });
   expect(await loadAccount()).not.toBeNull();
   await expect(accountDriver("logout")).resolves.toEqual({ localLogoutOnly: true });
   expect(await loadAccount()).toBeNull();
@@ -111,4 +110,46 @@ it("migrates an existing session identity before clearing an expired login", asy
   }));
   await accountDriver('login', { server: 'https://account.example', username: 'test', password: 'password' });
   expect((await loadAccount())?.device_seed).toBe(previous?.device_seed);
+});
+
+it('finishes a persisted GitHub login with a signed local identity and reuses it after logout', async () => {
+ const pending = { server: 'https://account.example', request_id: 'request', verifier: 'v'.repeat(43), oauth_url: 'https://account.example/v1/account/github/authorize?state=request', expires: Date.now() + 600000 };
+ const pubs: string[] = [];
+ vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
+  if (url.endsWith('/github/poll')) return new Response(JSON.stringify({ status: 'authorized', username: 'gh-identity' }));
+  if (url.endsWith('/github/complete')) {
+   const body = JSON.parse(String(options.body)); expect(body.proof).toBeTruthy(); expect(body.verifier).toBe(pending.verifier); pubs.push(body.pub);
+   return new Response(JSON.stringify({ token: 'wuu-session', username: 'gh-identity', pub: body.pub }));
+  }
+  return new Response('{}');
+ }));
+ for (let i = 0; i < 2; i++) {
+  localStorage.setItem('wuu.github.pending', JSON.stringify(pending));
+  expect(await accountDriver('status')).toEqual({ oauth_url: pending.oauth_url });
+  expect(await accountDriver('github-poll')).toMatchObject({ username: 'gh-identity', auth_method: 'github' });
+  expect(localStorage.getItem('wuu.github.pending')).toBeNull();
+  expect((await loadAccount())?.token).toBe('wuu-session');
+  await accountDriver('logout');
+ }
+ expect(pubs[0]).toBe(pubs[1]);
+});
+
+it('does not persist an OAuth completion that arrives after cancellation', async () => {
+ const pending = { server: 'https://account.example', request_id: 'request', verifier: 'v'.repeat(43), oauth_url: 'https://account.example/v1/account/github/authorize?state=request', expires: Date.now() + 600000 };
+ localStorage.setItem('wuu.github.pending', JSON.stringify(pending));
+ let release!: () => void;
+ let completing!: () => void;
+ const started = new Promise<void>(yes => { completing = yes; });
+ vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
+  if (url.endsWith('/github/poll')) return new Response(JSON.stringify({ status: 'authorized', username: 'gh-identity' }));
+  if (url.endsWith('/github/complete')) {
+   const body = JSON.parse(String(options.body)); completing();
+   await new Promise<void>(yes => { release = yes; });
+   return new Response(JSON.stringify({ token: 'late-session', username: 'gh-identity', pub: body.pub }));
+  }
+  return new Response('{}');
+ }));
+ const poll = accountDriver('github-poll'); await started;
+ await accountDriver('github-cancel'); release(); await poll;
+ expect(await loadAccount()).toBeNull();
 });

@@ -1940,6 +1940,12 @@ app.whenReady().then(async () => {
     return phoneAccess.run(async () => {
       if (['login','register','logout','password'].includes(action)) await phoneAccess.stop();
       const result = await remoteHostManager.account(workdir, action, input);
+      if (action === 'github-poll' && result.username) {
+        await phoneAccess.stop();
+        await phoneAccess.setEnabled(workdir, true);
+        const window = BrowserWindow.fromWebContents(event.sender);
+        window?.show(); window?.focus();
+      }
       if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
       if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
       return result;

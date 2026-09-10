@@ -7,14 +7,14 @@ import { CompactConversationActions } from '../../../desktop/src/renderer/Compac
 import { I18nProvider } from '../../../desktop/src/renderer/i18n';
 
 vi.mock('../src/lib/accountStore', () => ({ loadAccount: async () => null, accountDriver: async () => ({}) }));
-vi.mock('../src/lib/credStore', () => ({ webCredStore: { load: async () => null, clear: async () => {} } }));
+vi.mock('../src/lib/credStore', () => ({ webCredStore: { load: async () => null, loadPair: async () => null, clear: async () => {} } }));
 vi.mock('../src/lib/notifications', () => ({ startPushLifecycle: async () => {}, consumeNotificationHost: () => null }));
 vi.mock('../src/NotificationSettings', () => ({ NotificationSettings: () => null }));
 vi.mock('../src/App', () => ({ default: function Workspace() {
   const ref = useRef<HTMLButtonElement>(null);
   return <CompactConversationActions environmentToggleRef={ref} canStartNewThread
     onStartNewThread={() => {}} environmentPanelVisible={false} onToggleEnvironmentPanel={() => {}}
-    rightPanelOpen={false} onToggleRightPanel={() => {}} navigation={{ onOpenSidebar: () => {} }} />;
+    rightPanelOpen={false} onToggleRightPanel={() => {}} />;
 } }));
 
 it('native back closes the portaled conversation menu before leaving the workspace', async () => {

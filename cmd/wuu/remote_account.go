@@ -17,7 +17,7 @@ import (
 // Secrets arrive through stdin, never command arguments, process listings or logs.
 func runRemoteAccount(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: wuu remote account <login|register|status|logout|revoke|password|recover> (JSON on stdin)")
+		return errors.New("usage: wuu remote account <login|register|status|logout|revoke|password|recover|config|github-start|github-poll|github-cancel> (JSON on stdin)")
 	}
 	path, err := remoteStorePath()
 	if err != nil {
@@ -29,16 +29,22 @@ func runRemoteAccount(args []string) error {
 		return err
 	}
 	action := args[0]
+	if action == "logout" {
+		_ = os.Remove(path + ".github-login")
+	}
 	ctx := context.Background()
 	saved := store.Account()
 	if action == "status" {
+		if pending := readGithubPending(path); pending != nil {
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{"oauth_url": pending.URL})
+		}
 		if saved == nil {
 			return json.NewEncoder(os.Stdout).Encode(map[string]any{"account": nil})
 		}
 		var result map[string]any
 		if err = account.Request(ctx, saved.Server, saved.Token, "GET", "/devices", nil, &result); err != nil {
 			if !account.Unauthorized(err) {
-				return err
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{"username": saved.Username, "server": saved.Server, "unavailable": true})
 			}
 			if err = store.SetAccount(nil); err != nil {
 				return err
@@ -60,6 +66,9 @@ func runRemoteAccount(args []string) error {
 		if err = json.NewDecoder(io.LimitReader(os.Stdin, 8192)).Decode(&in); err != nil {
 			return err
 		}
+	}
+	if action == "config" || strings.HasPrefix(action, "github-") {
+		return runGithubAccount(ctx, path, action, in.Server, store)
 	}
 	if action == "login" || action == "register" {
 		server, err := account.Origin(in.Server)

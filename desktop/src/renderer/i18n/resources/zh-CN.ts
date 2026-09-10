@@ -1,4 +1,16 @@
 export const zhCN = {
+  "account.directoryUnavailable": "暂时无法刷新电脑列表，登录仍保留。网络恢复后会自动重试。",
+  "account.githubWaiting": "请在浏览器完成 GitHub 授权，完成后会自动继续。",
+  "account.githubOpen": "继续前往 GitHub",
+  "account.githubContinue": "使用 GitHub 继续",
+  "account.legacyLogin": "使用已有用户名和密码",
+  "account.checkingServer": "正在检查服务器…",
+  "account.retryServer": "重试连接服务器",
+  "account.changeServer": "使用自部署服务器 / 更换服务器",
+  "account.officialServer": "使用 Wuu 官方服务",
+  "account.resumeConnection": "返回已连接的电脑",
+  "account.forgetConnection": "忘记此配对",
+
   "account.menu": "账户菜单",
   "account.local": "本地使用",
   "account.signedOut": "尚未登录",

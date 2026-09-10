@@ -34,6 +34,32 @@ export async function loginAccount(server: string, username: string, password: s
 }
 export function accountCredentials(session: AccountSession, host: AccountDevice): Credentials {
  if (host.role !== 'host' || host.account !== session.username) throw new Error('该电脑不属于当前账号');
- return { v: 1, device_seed: session.device_seed, device_name: 'Wuu 手机', host_pub: host.pub, host_name: host.name,
+ return { v: 1, account_username: session.username, device_seed: session.device_seed, device_name: 'Wuu 手机', host_pub: host.pub, host_name: host.name,
   relay_url: session.server.replace(/^http/, 'ws') + '/v1/connect' };
+}
+
+export interface GitHubPending { server: string; request_id: string; verifier: string; oauth_url: string; expires: number; name?: string }
+export async function startGitHubLogin(server: string, native = false): Promise<GitHubPending> {
+ server = accountOrigin(server);
+ if (!globalThis.crypto?.subtle) throw new Error('GitHub 登录需要 HTTPS 网页或 Wuu App');
+ const bytes = crypto.getRandomValues(new Uint8Array(32));
+ const verifier = b64encode(bytes);
+ const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+ const result = await accountRequest<{ request_id: string; authorize_url: string; expires_in: number }>(server, '', 'POST', '/github/start', { challenge: b64encode(hash), native });
+ const url = new URL(result.authorize_url);
+ if (url.origin !== server || url.username || url.password || url.pathname !== '/v1/account/github/authorize' || typeof result.request_id !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.request_id) || url.searchParams.get('state') !== result.request_id) throw new Error('Invalid authorization URL');
+ return { server, request_id: result.request_id, verifier, oauth_url: result.authorize_url, expires: Date.now() + 600_000 };
+}
+export async function pollGitHubLogin(pending: GitHubPending): Promise<{ status: 'pending' | 'authorized'; username?: string }> {
+ if (Date.now() >= pending.expires) throw new Error('GitHub login expired; start again');
+ return accountRequest(pending.server, '', 'POST', '/github/poll', { request_id: pending.request_id, verifier: pending.verifier });
+}
+export async function completeGitHubLogin(pending: GitHubPending, username: string, name: string, id: Identity): Promise<AccountSession> {
+ const pub = encodeKey(id.public_());
+ const result = await accountRequest<{ token: string; username: string; pub: string }>(pending.server, '', 'POST', '/github/complete', {
+  request_id: pending.request_id, verifier: pending.verifier, pub, role: 'phone', name,
+  proof: b64encode(id.signRelayAuth(utf8Encode('wuu/account/enroll/v1:' + username), 'phone')),
+ });
+ if (result.username !== username || result.pub !== pub) throw new Error('Invalid enrollment response');
+ return { ...result, server: pending.server, device_seed: b64encode(id.seed()) };
 }

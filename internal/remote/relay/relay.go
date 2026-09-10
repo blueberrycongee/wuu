@@ -40,6 +40,7 @@ const (
 type Options struct {
 	Registry          *Registry
 	Accounts          *account.Store
+	GitHub            *account.GitHubAuth
 	AllowRegistration bool
 	TrustedProxies    []netip.Prefix
 	PushPlatforms     []string
@@ -100,6 +101,7 @@ func New(opts Options) *Server {
 	if opts.Accounts != nil {
 		s.accounts = opts.Accounts
 		s.accountHTTP = account.NewHTTP(opts.Accounts, opts.AllowRegistration)
+		s.accountHTTP.GitHub = opts.GitHub
 		s.accountHTTP.TrustedProxies = opts.TrustedProxies
 		s.accountHTTP.PushPlatforms = opts.PushPlatforms
 		s.accountHTTP.Online = func(pub string) bool { s.mu.Lock(); defer s.mu.Unlock(); return s.conns[pub] != nil }

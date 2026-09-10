@@ -79,6 +79,7 @@ function defaultWsFactory(url: string): WebSocketLike {
  *  Go credentials file so stores are interchangeable. Persist via secure
  *  storage (Keychain/Keystore) on mobile. */
 export interface Credentials {
+  account_username?: string;
   v: number;
   device_seed: string; // base64url Ed25519 seed
   device_name?: string;

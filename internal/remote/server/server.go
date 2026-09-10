@@ -113,7 +113,14 @@ func run(ctx context.Context, args []string, output io.Writer, requireAccounts b
 		pusher = native
 		pushPlatforms = native.Platforms()
 	}
-	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, AllowRegistration: *registration, PushPlatforms: pushPlatforms, TrustedProxies: trustedProxies})
+	github, err := account.NewGitHubAuth(account.GitHubConfig{ClientID: os.Getenv("WUU_GITHUB_CLIENT_ID"), ClientSecret: os.Getenv("WUU_GITHUB_CLIENT_SECRET"), PublicURL: os.Getenv("WUU_ACCOUNT_PUBLIC_URL")})
+	if err != nil {
+		return err
+	}
+	if github != nil && accounts == nil {
+		return errors.New("GitHub login requires an account database")
+	}
+	srv := relay.New(relay.Options{Registry: reg, Pusher: pusher, Accounts: accounts, GitHub: github, AllowRegistration: *registration, PushPlatforms: pushPlatforms, TrustedProxies: trustedProxies})
 
 	defer srv.Close()
 	handler := srv.Handler()

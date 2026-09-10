@@ -2,6 +2,10 @@
 
 服务端、手机客户端和桌面接入代码都在本仓库。无需 Wuu 官方账号、云服务、开发者密钥或邮件服务。电脑仍是 Agent 的执行与会话持久化来源；电脑离线时，服务端不会代执行或唤醒电脑。
 
+## GitHub 登录与官方托管
+
+同一套服务端支持可选的 GitHub 登录。部署者配置自己的 OAuth App；官方构建可设置默认服务地址，用户也可选择自部署实例。完整配置、回调与验证步骤见 [GitHub 登录](GITHUB.md)。未配置 GitHub 时，既有账号密码与扫码流程保持可用。
+
 ## 本地启动
 
 安装仓库要求的 Go 1.26.5 和 PostgreSQL 18，创建专用数据库与拥有该库建表权限的账号，再运行：
@@ -101,7 +105,7 @@ docker compose -f deploy/remote/compose.yaml run --rm --no-deps --user 0 \
 docker compose -f deploy/remote/compose.yaml start accounts
 ```
 
-启动时在事务及 PostgreSQL advisory lock 内初始化/迁移 schema，当前版本为 1；未知版本拒绝启动。升级前备份，停止旧进程后替换并启动。若未来版本迁移了 schema，回滚应用时同时恢复迁移前备份。PostgreSQL 大版本升级需要 `pg_upgrade` 或逻辑备份恢复，不能只改镜像大版本并复用旧卷。手机资源随本地 App 构建更新，不依赖服务端分发可执行代码。
+启动时在事务及 PostgreSQL advisory lock 内初始化/迁移 schema，当前版本为 2；未知版本拒绝启动。升级前备份，停止旧进程后替换并启动。若未来版本迁移了 schema，回滚应用时同时恢复迁移前备份。PostgreSQL 大版本升级需要 `pg_upgrade` 或逻辑备份恢复，不能只改镜像大版本并复用旧卷。手机资源随本地 App 构建更新，不依赖服务端分发可执行代码。
 
 ## 验证自己的部署
 

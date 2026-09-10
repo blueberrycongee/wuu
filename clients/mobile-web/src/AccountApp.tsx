@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { accountCredentials, type Credentials } from "@wuu/remote-core";
 import {
   AccountPanel,
@@ -7,6 +7,7 @@ import {
 import { accountDriver, loadAccount } from "./lib/accountStore";
 import { webCredStore } from "./lib/credStore";
 import PairedApp from "./App";
+import { reserveAuthorization } from "./lib/native";
 import { NotificationSettings } from './NotificationSettings';
 import { startPushLifecycle, consumeNotificationHost } from './lib/notifications';
 import { useI18n } from '../../../desktop/src/renderer/i18n';
@@ -17,8 +18,16 @@ export default function AccountApp(): React.JSX.Element {
   const [pair, setPair] = useState(() =>
     window.location.hash.includes("pair="),
   );
+  const [lastAccount, setLastAccount] = useState<Credentials | null>(null);
+  const [remembered, setRemembered] = useState<Credentials | null>(null);
+  const navigating = useRef(0);
   const [error, setError] = useState("");
   const [boot, setBoot] = useState(true);
+  useEffect(() => {
+    const changed = () => { void loadAccount().then(account => { if (!account) setLastAccount(null); }); };
+    window.addEventListener('wuu:account-change', changed);
+    return () => window.removeEventListener('wuu:account-change', changed);
+  }, []);
   useEffect(() => { void startPushLifecycle().catch(error => setError(String(error))); }, []);
   useEffect(() => {
     if (boot) return;
@@ -35,8 +44,9 @@ export default function AccountApp(): React.JSX.Element {
   }, [boot]);
   useEffect(() => {
     let active = true;
-    void Promise.all([loadAccount(), webCredStore.load()])
-      .then(([account, credentials]) => {
+    void Promise.all([loadAccount(), webCredStore.load(), webCredStore.loadPair()])
+      .then(([account, credentials, paired]) => {
+        if (active) setRemembered(paired || (!account ? credentials : null));
         if (!active || window.location.hash.includes("pair=")) return;
         if (
           credentials &&
@@ -45,8 +55,15 @@ export default function AccountApp(): React.JSX.Element {
           credentials.relay_url ===
             account.server.replace(/^http/, "ws") + "/v1/connect"
         )
-          setSelected(credentials);
-        else if (credentials && !account) setPair(true);
+          {
+            const saved = { ...credentials, account_username: account.username };
+            setSelected(saved); setLastAccount(saved);
+            void webCredStore.save(saved);
+          }
+        else if (credentials && !account && !credentials.account_username) {
+          void webCredStore.save(credentials);
+          setPair(true);
+        }
       })
       .catch((e) => {
         if (active) setError(String(e));
@@ -59,12 +76,13 @@ export default function AccountApp(): React.JSX.Element {
     };
   }, []);
   const select = async (device: AccountDeviceView) => {
+    const generation = ++navigating.current;
     try {
       const session = await loadAccount();
       if (!session) throw new Error("请重新登录");
       const credentials = accountCredentials(session, device);
       await webCredStore.save(credentials);
-      setSelected(credentials);
+      if (generation === navigating.current) { setSelected(credentials); setLastAccount(credentials); }
     } catch (e) {
       setError(String(e));
     }
@@ -72,7 +90,8 @@ export default function AccountApp(): React.JSX.Element {
   const back = () => {
     setSelected(null);
     setPair(false);
-    void webCredStore.clear();
+    navigating.current++;
+    void webCredStore.loadPair().then(setRemembered).catch(e => setError(String(e)));
   };
   useEffect(() => {
     const handler = (event: Event) => {
@@ -102,13 +121,24 @@ export default function AccountApp(): React.JSX.Element {
           {selected && <span>{selected.host_name || t('account.computer')}</span>}
         </header>
         <div className="account-workbench-content">
-          <PairedApp key={selected?.host_pub || "pair"} onAccountBack={selected ? back : undefined} />
+          <PairedApp key={selected?.host_pub || "pair"} onAccountBack={back} />
         </div>
       </div>
     );
   return (
     <main className="account-home">
-      <AccountPanel driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => setPair(true)} managementContent={<NotificationSettings />} />
+      {lastAccount && <section className="account-panel account-resume">
+        <button className="account-primary" onClick={() => void (async () => {
+          const session = await loadAccount();
+          if (!session || session.username !== lastAccount.account_username || session.device_seed !== lastAccount.device_seed || lastAccount.relay_url !== session.server.replace(/^http/, 'ws') + '/v1/connect') { setLastAccount(null); throw new Error('请重新登录'); }
+          await webCredStore.save(lastAccount); setSelected(lastAccount);
+        })().catch(e => setError(String(e)))}>{t('account.resumeConnection')}{lastAccount.host_name ? ` · ${lastAccount.host_name}` : ''}</button>
+      </section>}
+      {remembered && <section className="account-panel account-resume">
+        <button className="account-primary" onClick={() => void webCredStore.save(remembered).then(() => setPair(true)).catch(e => setError(String(e)))}>{t('account.resumeConnection')}{remembered.host_name ? ` · ${remembered.host_name}` : ''}</button>
+        <button onClick={() => void webCredStore.forgetPair().then(async () => { const active = await webCredStore.load(); if (active?.host_pub === remembered.host_pub && !active.account_username) await webCredStore.clear(); setRemembered(null); }).catch(e => setError(String(e)))}>{t('account.forgetConnection')}</button>
+      </section>}
+      <AccountPanel reserveAuthorization={reserveAuthorization} driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => void webCredStore.clear().then(() => setPair(true)).catch(e => setError(String(e)))} managementContent={<NotificationSettings />} />
       {error && <p role="alert">{error}</p>}
     </main>
   );

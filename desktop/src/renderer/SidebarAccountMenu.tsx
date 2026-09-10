@@ -71,7 +71,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { setBusy(false); }
   };
-  const avatar = <span className="sidebar-account-avatar" aria-hidden="true">{account.username ? account.username.slice(0, 2).toUpperCase() : <UserRound size={18} />}</span>;
+  const avatar = <span className="sidebar-account-avatar" aria-hidden="true">{account.username ? (account.display_name || account.username).slice(0, 2).toUpperCase() : <UserRound size={18} />}</span>;
 
   return <>
     <button ref={anchor} className="sidebar-account-trigger" type="button" disabled={disabled}
@@ -79,7 +79,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
       onClick={() => setOpen(!open)} onKeyDown={event => {
         if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); setOpen(true); }
       }}>
-      {avatar}<span className="sidebar-account-name">{account.username || (driver ? t("account.connect") : "Wuu")}</span><ChevronsUpDown size={14} aria-hidden="true" />
+      {avatar}<span className="sidebar-account-name">{account.display_name || account.username || (driver ? t("account.connect") : "Wuu")}</span><ChevronsUpDown size={14} aria-hidden="true" />
     </button>
     {open && <FloatingMenuPortal anchorRef={anchor} owner="sidebar-account" placement="above" align="left" width={280}>
       <div ref={panel} id={id} role="menu" aria-label={t("account.menu")} className="select-menu-panel sidebar-account-menu"
@@ -94,7 +94,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
             items[next]?.focus();
           }
         }}>
-        <div className="sidebar-account-profile">{avatar}<div><strong>{account.username || "Wuu"}</strong><span>{account.username ? account.server : t(driver ? "account.signedOut" : "account.local")}</span></div></div>
+        <div className="sidebar-account-profile">{avatar}<div><strong>{account.display_name || account.username || "Wuu"}</strong><span>{account.username ? account.server : t(driver ? "account.signedOut" : "account.local")}</span></div></div>
         <div className="sidebar-account-divider" role="separator" />
         <button role="menuitem" className="select-menu-item" onClick={() => navigate("usage")}><BarChart3 size={18} aria-hidden="true" /><span>{t("settings.usage")}</span></button>
         {driver && onOpenAccount && <button role="menuitem" className="select-menu-item" onClick={() => { close(); onOpenAccount(); }}><UserRound size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.connect")}</span></button>}

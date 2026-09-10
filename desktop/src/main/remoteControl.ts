@@ -77,7 +77,7 @@ export class RemoteHostManager {
   constructor(private readonly opts: RemoteHostManagerOptions = {}) {}
 
   async account(workdir: string, action: string, input: Record<string,string> = {}): Promise<Record<string,unknown>> {
-    if (!['status','login','register','logout','revoke','password','recover'].includes(action)) throw new Error('Unknown account operation');
+    if (!['status','login','register','logout','revoke','password','recover','config','github-start','github-poll','github-cancel'].includes(action)) throw new Error('Unknown account operation');
     return JSON.parse(await this.exec(workdir, ['remote','account',action], undefined, JSON.stringify(input)));
   }
 

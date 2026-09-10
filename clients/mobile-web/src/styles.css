@@ -122,3 +122,4 @@ input, textarea {
 .account-toolbar { min-height:44px; }
 .account-toolbar button { min-height:44px; padding:8px 12px; background:transparent; color:inherit; border:0; font:inherit; }
 :root[data-host-kind="web"] .image-preview-toolbar-button { min-width:44px; min-height:44px; }
+.account-resume { display:grid; gap:12px; margin-bottom:32px; }

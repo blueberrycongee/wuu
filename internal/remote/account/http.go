@@ -14,6 +14,7 @@ import (
 
 type HTTP struct {
 	Store             *Store
+	GitHub            *GitHubAuth
 	AllowRegistration bool
 	PushPlatforms     []string
 	Online            func(string) bool
@@ -79,7 +80,11 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1/account")
 	if r.Method == "GET" && path == "/config" {
-		writeJSON(w, 200, map[string]any{"registration": h.AllowRegistration, "version": 1, "push_platforms": h.PushPlatforms})
+		writeJSON(w, 200, map[string]any{"registration": h.AllowRegistration, "version": 1, "push_platforms": h.PushPlatforms, "github": h.GitHub != nil})
+		return
+	}
+	if strings.HasPrefix(path, "/github/") {
+		h.githubHTTP(w, r, path)
 		return
 	}
 	if r.Method == "POST" && (path == "/login" || path == "/register" || path == "/recover" || path == "/password") {
@@ -157,7 +162,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				devices[i].Online = h.Online(devices[i].Pub)
 			}
 		}
-		writeJSON(w, 200, map[string]any{"devices": devices, "username": d.Account})
+		writeJSON(w, 200, map[string]any{"devices": devices, "username": d.Account, "auth_method": h.Store.AuthMethod(d.Account), "display_name": h.Store.DisplayName(d.Account)})
 		return
 	}
 	if path == "/push" {

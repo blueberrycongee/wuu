@@ -15,3 +15,22 @@ describe('account connection boundary',()=>{
   expect(()=>accountCredentials(session,{...host,role:'phone'})).toThrow();
  });
 });
+
+it('starts GitHub with a private verifier and rejects authorization redirects to another origin', async () => {
+ const { startGitHubLogin } = await import('../src/account');
+ const { vi } = await import('vitest');
+ const original = globalThis.fetch;
+ const requests: any[] = [];
+ const requestID = 'a'.repeat(43);
+ try {
+  globalThis.fetch = vi.fn(async (_url, init) => {
+   const body = JSON.parse(String(init?.body)); requests.push(body);
+   return new Response(JSON.stringify({ request_id: requestID, authorize_url: 'https://example.com/v1/account/github/authorize?state=' + requestID, expires_in: 600 }));
+  });
+  const pending = await startGitHubLogin('https://example.com', true);
+  expect(pending.verifier).toHaveLength(43); expect(requests[0].challenge).toHaveLength(43);
+  expect(requests[0]).not.toHaveProperty('verifier'); expect(requests[0].native).toBe(true);
+  globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ request_id: 'request', authorize_url: 'https://other.example/v1/account/github/authorize?state=request' })));
+  await expect(startGitHubLogin('https://example.com')).rejects.toThrow('Invalid authorization URL');
+ } finally { globalThis.fetch = original; }
+});

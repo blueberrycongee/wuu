@@ -31,6 +31,11 @@ export async function startNativeLifecycle(): Promise<void> {
   if (!isNative) return;
   await pruneSharedFiles();
   document.documentElement.dataset.native = Capacitor.getPlatform();
+  await App.addListener('appUrlOpen', ({ url }) => {
+    if (url !== 'wuu://account/github') return;
+    void Browser.close().catch(() => {});
+    window.dispatchEvent(new Event('online'));
+  });
   const wake = () => window.dispatchEvent(new Event("online"));
   await App.addListener("appStateChange", ({ isActive }) => {
     if (isActive) wake();
@@ -106,4 +111,18 @@ export async function saveNativeArtifact(
     reader.readAsDataURL(blob);
   });
   await shareNativeFile(name, data);
+}
+
+// Reserve a web tab during the user gesture, before the asynchronous OAuth start.
+export function reserveAuthorization(): { open: (url: string) => Promise<void>; close: () => void } {
+  const popup = isNative ? null : window.open('about:blank', '_blank');
+  if (popup) popup.opener = null;
+  return {
+    async open(url) {
+      if (isNative) await Browser.open({ url });
+      else if (popup && !popup.closed) popup.location.href = url;
+      else throw new Error('请允许弹出窗口，然后点击继续前往 GitHub');
+    },
+    close() { popup?.close(); },
+  };
 }

@@ -71,3 +71,6 @@
 .account-auth-options { overflow:hidden; border-radius:12px; background:var(--surface-1); }
 .account-panel .account-auth-options > button { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:56px; border:0; border-bottom:1px solid var(--hairline-soft); border-radius:0; text-align:left; }
 .account-panel .account-auth-options > button:last-child { border-bottom:0; }
+.account-login-methods, .account-oauth-pending { display:grid; gap:16px; }
+.account-login-methods .account-primary { display:flex; justify-content:center; align-items:center; gap:10px; }
+.account-oauth-pending a { overflow-wrap:anywhere; min-height:44px; display:flex; align-items:center; }

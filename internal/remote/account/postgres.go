@@ -61,7 +61,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && version != 1 {
+	if err == nil && version != 1 && version != 2 {
 		return fmt.Errorf("unsupported account database version %d", version)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -74,6 +74,14 @@ CREATE INDEX devices_account ON devices(account);
 CREATE INDEX sessions_pub ON sessions(pub);
 CREATE INDEX sessions_expires ON sessions(expires);
 INSERT INTO schema_version VALUES(1,1);
+`); err != nil {
+			return err
+		}
+	}
+	if version < 2 {
+		if _, err = tx.ExecContext(ctx, `
+CREATE TABLE account_identities(provider TEXT NOT NULL,subject TEXT NOT NULL,account TEXT NOT NULL UNIQUE REFERENCES accounts(username) ON DELETE CASCADE,display_name TEXT NOT NULL DEFAULT '',PRIMARY KEY(provider,subject));
+UPDATE schema_version SET version=2 WHERE id=1;
 `); err != nil {
 			return err
 		}

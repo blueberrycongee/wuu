@@ -147,6 +147,20 @@ try {
   await page.goto(`http://${webHost}:${webPort}/#${new URLSearchParams({ pair: uri })}`);
   await page.locator('.app-shell').waitFor();
   assert.equal(new URL(page.url()).hash, '');
+  // Back is navigation, not revocation: reuse the actual encrypted pairing
+  // after returning to the account screen and after a full browser reload.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const pairedIdentity = await page.evaluate(() => localStorage.getItem('wuu.web.paired'));
+  assert(pairedIdentity, 'QR identity is saved independently of account login');
+  await page.locator('.account-toolbar button').click();
+  await page.getByRole('button', { name: /返回已连接的电脑/ }).click();
+  await page.locator('.app-shell').waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem('wuu.web.paired')), pairedIdentity);
+  await page.reload();
+  await page.locator('.app-shell').waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem('wuu.web.paired')), pairedIdentity);
+  console.log('PASS: back, resume and cold reload retain the same encrypted pairing');
+  if (process.env.WUU_E2E_ACCOUNT_NAVIGATION !== '1') {
   const documentID = await page.evaluate(() => window.testDocumentID);
   const input = page.locator('textarea:visible').first();
   await input.fill('Create src/browser-task.ts with the requested test export.');
@@ -331,8 +345,9 @@ try {
     assert.deepEqual([...olderIDs,...compact.thread.turns.map(turn => turn.id)], full.thread.turns.map(turn => turn.id));
     console.log('PASS: paged history and encrypted on-demand image round trip', {fullBytes:JSON.stringify(full).length, firstPageBytes:JSON.stringify(compact).length});
   }
+  }
   assert.deepEqual(pageErrors, []);
-  console.log(downloadBps
+  if (process.env.WUU_E2E_ACCOUNT_NAVIGATION !== '1') console.log(downloadBps
     ? 'PASS: slow TCP link, pairing, shared execution, large tool history, offline completion, snapshot/draft restoration, host restart, desktop interruption and Git RPCs'
     : 'PASS: shared desktop/phone execution, bidirectional live messages, pairing, host tool execution, offline completion, snapshot and draft restoration, host restart, Git review, file navigation and phone viewports',
     { downloadBps, generatedFileBytes: Buffer.byteLength(fileText) });

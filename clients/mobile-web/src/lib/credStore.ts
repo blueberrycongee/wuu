@@ -11,6 +11,8 @@ export interface WebCredentialStore {
   load(): Promise<Credentials | null>;
   save(creds: Credentials): Promise<void>;
   clear(): Promise<void>;
+  loadPair(): Promise<Credentials | null>;
+  forgetPair(): Promise<void>;
   loadLastViewed(): Promise<Record<string, string> | null>;
   saveLastViewed(lastViewed: Record<string, string>): Promise<void>;
 }
@@ -19,6 +21,12 @@ const CREDS_KEY = "wuu.web.credentials";
 const LAST_VIEWED_KEY = "wuu.web.lastViewed";
 
 export const webCredStore: WebCredentialStore = {
+  async loadPair() {
+    const raw = await secretStorage.get('wuu.web.paired');
+    if (!raw) return null;
+    try { return JSON.parse(raw) as Credentials; } catch { return null; }
+  },
+  async forgetPair() { await secretStorage.remove('wuu.web.paired'); },
   async load(): Promise<Credentials | null> {
     const raw = await secretStorage.get(CREDS_KEY);
     if (!raw) return null;
@@ -31,6 +39,7 @@ export const webCredStore: WebCredentialStore = {
   },
   async save(creds: Credentials): Promise<void> {
     await secretStorage.set(CREDS_KEY, JSON.stringify(creds));
+    if (!creds.account_username) await secretStorage.set('wuu.web.paired', JSON.stringify(creds));
   },
   async clear(): Promise<void> {
     await secretStorage.remove(CREDS_KEY);

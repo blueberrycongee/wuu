@@ -2868,7 +2868,7 @@ export type WuuDesktopApi = {
   saveArtifactFile?: (name: string, source: string) => Promise<void>;
   /** Export a complete workspace file to the phone, rejecting changed or oversized files. */
   exportWorkspaceFile?: (path: string, root?: string) => Promise<void>;
-  remoteAccount?: (action: 'status' | 'login' | 'register' | 'logout' | 'revoke' | 'password' | 'recover', input?: Record<string,string>) => Promise<{username?: string; server?: string; pub?: string; recovery?: string; devices?: Array<{pub:string;account:string;name:string;role:'host'|'phone';online:boolean;added_at:number}>}>;
+  remoteAccount?: (action: 'status' | 'login' | 'register' | 'logout' | 'revoke' | 'password' | 'recover' | 'config' | 'github-start' | 'github-poll' | 'github-cancel', input?: Record<string,string>) => Promise<{username?: string; server?: string; pub?: string; recovery?: string; oauth_url?: string; github?: boolean; registration?: boolean; auth_method?: string; display_name?: string; unavailable?: boolean; devices?: Array<{pub:string;account:string;name:string;role:'host'|'phone';online:boolean;added_at:number}>}>;
   getRemoteControlSnapshot: () => Promise<RemoteControlSnapshot>;
   setRemoteRelay: (relayUrl: string) => Promise<RemoteControlSnapshot>;
   setRemoteHostEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>;

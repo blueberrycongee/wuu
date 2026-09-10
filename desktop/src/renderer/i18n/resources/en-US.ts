@@ -1,6 +1,18 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "account.directoryUnavailable": "Cannot refresh computers. You are still signed in; the list will retry automatically.",
+  "account.githubWaiting": "Finish GitHub authorization in your browser. Wuu will continue automatically.",
+  "account.githubOpen": "Continue to GitHub",
+  "account.githubContinue": "Continue with GitHub",
+  "account.legacyLogin": "Use an existing username and password",
+  "account.checkingServer": "Checking server…",
+  "account.retryServer": "Retry server",
+  "account.changeServer": "Use a self-hosted server / Change server",
+  "account.officialServer": "Use Wuu hosted service",
+  "account.resumeConnection": "Resume connected computer",
+  "account.forgetConnection": "Forget this pairing",
+
   "account.menu": "Account menu",
   "account.local": "Local use",
   "account.signedOut": "Not signed in",

@@ -74,3 +74,21 @@ go test -race ./internal/remote/account ./internal/remote/relay ./internal/remot
 测试为每个用例创建独立 schema 并在结束时删除，测试账号需要 CREATE SCHEMA 权限；仅使用专门的测试数据库。未设置 `WUU_TEST_DATABASE_URL` 时数据库集成用例明确跳过；CI 的 Go 检查提供 PostgreSQL 并执行这些用例。
 
 中继测试包括跨账号帧拒绝、设备撤销后的重连拒绝，以及服务停止时关闭已登录和未完成握手的连接。系统推送配置和真实平台验收要求见 [PUSH.md](PUSH.md)。
+
+
+## GitHub 登录
+
+`GET /v1/account/config` 增加 `github: boolean`，表示是否启用 GitHub；`registration` 同时控制首次 GitHub 注册。`GET /devices` 增加 `auth_method`（`github` 或 `password`）和用于界面展示的 `display_name`；授权、设备归属仍使用稳定的 Wuu `username`。
+
+所有领取请求使用 POST JSON，返回 `Cache-Control: no-store`。Client Secret 不参与客户端接口。
+
+| 路径（前缀 `/v1/account`） | 方法 | 请求 / 响应 |
+| --- | --- | --- |
+| `/github/start` | POST | 输入 `challenge`（客户端随机 32 字节 verifier 的 SHA-256，均使用无填充 base64url）和可选 `native`；返回 `request_id`、`authorize_url`、`expires_in` |
+| `/github/authorize` | GET | 浏览器打开 `authorize_url`，建立回调 cookie 并跳转 GitHub（S256 PKCE） |
+| `/github/callback` | GET | GitHub 回调；验证 state、浏览器 cookie、PKCE，并读取 GitHub 数字用户 ID；仅返回完成页面，不携带 Wuu 令牌 |
+| `/github/poll` | POST | 输入 `request_id`、`verifier`；返回 `status: pending`，或 `status: authorized` 和 Wuu `username` |
+| `/github/complete` | POST | 输入 `request_id`、`verifier`、`pub`、`role`、`name`、`proof`；proof 与原账号登记一样签署 `wuu/account/enroll/v1:<username>`；返回 `token`、`username`、`pub` |
+| `/github/cancel` | POST | 输入 `request_id`、`verifier`，取消尚未领取的登录 |
+
+请求 10 分钟后失效；过期或领取凭据不匹配返回 401。拒绝授权返回明确错误；网络故障可继续轮询，用户也可取消并重新开始。同一请求仅登记一台设备，完成重试返回原会话。数据库 schema 2 增加 `account_identities`，不改变原账号和设备主键。

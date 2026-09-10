@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 // server so linked sources outside this package resolve without fs errors.
 export default defineConfig({
   plugins: [react()],
+  define: { __WUU_ACCOUNT_SERVER__: JSON.stringify(process.env.WUU_ACCOUNT_SERVER || '') },
   resolve: {
     // Renderer modules live under desktop/ and would otherwise resolve a
     // second React installation from desktop/node_modules.

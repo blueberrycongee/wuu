@@ -7,7 +7,7 @@ import { translateCurrent as t } from "./i18n";
 
 let root: Root;
 let container: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); localStorage.clear(); });
 async function mount(driver: AccountDriver) {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   const back = vi.fn();
@@ -27,6 +27,7 @@ async function fill(selector: string, value: string) {
   });
 }
 async function credentials() {
+  if (container.querySelector('input[type="url"]')) { await fill('input[type="url"]', "https://account.example"); await click("common.save"); }
   await fill('[autocomplete="username"]', "andywu");
   await fill('input[type="password"]', "long-test-password");
   await click("account.connectionSettings");
@@ -54,6 +55,7 @@ describe("AccountScreen", () => {
       if (action === "register") { signedIn = true; return { username: "andywu", recovery: "test-recovery-code" }; }
       return signedIn ? { username: "andywu" } : {};
     });
+    await fill('input[type="url"]', "https://account.example"); await click("common.save");
     await click("account.moreOptions"); await click("account.register");
     await credentials(); await click("account.register");
     expect(container.querySelector("code")?.textContent).toBe("test-recovery-code");
