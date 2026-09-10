@@ -7,7 +7,8 @@ export const zhCN = {
   "account.checkingServer": "正在检查服务器…",
   "account.retryServer": "重试连接服务器",
   "account.changeServer": "使用自部署服务器 / 更换服务器",
-  "account.officialServer": "使用 Wuu 官方服务",
+  "account.computersAndAccount": "电脑与账号",
+  "account.officialServer": "使用默认服务器",
   "account.resumeConnection": "返回已连接的电脑",
   "account.forgetConnection": "忘记此配对",
 

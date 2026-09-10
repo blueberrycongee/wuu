@@ -1,3 +1,4 @@
+import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
@@ -9,6 +10,7 @@ import {
   type CSSProperties,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -394,6 +396,7 @@ function formatUserQuestionSteerPrompt(
 }
 
 export function App(): JSX.Element {
+  const phoneNavigation = useContext(PhoneNavigationContext);
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
@@ -2212,9 +2215,8 @@ export function App(): JSX.Element {
     !showingManagementCatalog &&
     !rightPanelGlobalized;
 
-  // Phone conversations use swipe navigation without titlebar or composer actions.
-  // Split views, management pages and wide layouts retain their titlebar.
-  const composerNavigation = compactNavigation && isTouchWebShell() &&
+  // The account-based phone app keeps visible session navigation alongside swipes.
+  const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
     mainConversationDockVisible && appMode === "harness" && !poppedOutMode;
 
   useEffect(() => {

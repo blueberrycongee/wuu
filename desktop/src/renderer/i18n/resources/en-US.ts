@@ -9,7 +9,8 @@ export const enUS = {
   "account.checkingServer": "Checking server…",
   "account.retryServer": "Retry server",
   "account.changeServer": "Use a self-hosted server / Change server",
-  "account.officialServer": "Use Wuu hosted service",
+  "account.computersAndAccount": "Computers & account",
+  "account.officialServer": "Use default server",
   "account.resumeConnection": "Resume connected computer",
   "account.forgetConnection": "Forget this pairing",
 

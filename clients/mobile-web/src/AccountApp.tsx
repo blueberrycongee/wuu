@@ -11,6 +11,8 @@ import { reserveAuthorization } from "./lib/native";
 import { NotificationSettings } from './NotificationSettings';
 import { startPushLifecycle, consumeNotificationHost } from './lib/notifications';
 import { useI18n } from '../../../desktop/src/renderer/i18n';
+import { PhoneNavigationContext } from '../../../desktop/src/renderer/PhoneNavigationContext';
+import { ViewSwitchLoading } from '../../../desktop/src/renderer/LoadingViews';
 
 export default function AccountApp(): React.JSX.Element {
   const { t } = useI18n();
@@ -112,18 +114,16 @@ export default function AccountApp(): React.JSX.Element {
     window.addEventListener("wuu:native-back", handler);
     return () => window.removeEventListener("wuu:native-back", handler);
   }, [selected, pair]);
-  if (boot) return <main className="account-home">{t('account.restoring')}</main>;
+  if (boot) return <main className="account-home account-boot"><ViewSwitchLoading /></main>;
   if (selected || pair)
     return (
+      <PhoneNavigationContext.Provider value={{ computer: selected?.host_name || remembered?.host_name, openDevices: back }}>
       <div className="account-workbench">
-        <header className="account-toolbar">
-          <button onClick={back}>‹ {t('account.backToDevices')}</button>
-          {selected && <span>{selected.host_name || t('account.computer')}</span>}
-        </header>
         <div className="account-workbench-content">
           <PairedApp key={selected?.host_pub || "pair"} onAccountBack={back} />
         </div>
       </div>
+      </PhoneNavigationContext.Provider>
     );
   return (
     <main className="account-home">
@@ -138,7 +138,7 @@ export default function AccountApp(): React.JSX.Element {
         <button className="account-primary" onClick={() => void webCredStore.save(remembered).then(() => setPair(true)).catch(e => setError(String(e)))}>{t('account.resumeConnection')}{remembered.host_name ? ` · ${remembered.host_name}` : ''}</button>
         <button onClick={() => void webCredStore.forgetPair().then(async () => { const active = await webCredStore.load(); if (active?.host_pub === remembered.host_pub && !active.account_username) await webCredStore.clear(); setRemembered(null); }).catch(e => setError(String(e)))}>{t('account.forgetConnection')}</button>
       </section>}
-      <AccountPanel reserveAuthorization={reserveAuthorization} driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => void webCredStore.clear().then(() => setPair(true)).catch(e => setError(String(e)))} managementContent={<NotificationSettings />} />
+      <AccountPanel presentation="mobile" reserveAuthorization={reserveAuthorization} driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => void webCredStore.clear().then(() => setPair(true)).catch(e => setError(String(e)))} managementContent={<NotificationSettings />} />
       {error && <p role="alert">{error}</p>}
     </main>
   );

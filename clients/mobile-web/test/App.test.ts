@@ -53,7 +53,7 @@ async function startPair() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "wuu://pair?test");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await click("配对并进入");
+  await click("连接电脑");
 }
 beforeEach(async () => {
   vi.resetAllMocks();
@@ -125,7 +125,7 @@ describe("Web connection ownership", () => {
     await act(async () => pending.resolve({ host_pub: "cancelled-computer" }));
     expect(credentials.save).not.toHaveBeenCalled();
     expect(remote.connect).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("配对并进入");
+    expect(container.textContent).toContain("连接电脑");
   });
 
   it("ignores a late failure from a cancelled pairing while another pairing runs", async () => {
@@ -143,7 +143,7 @@ describe("Web connection ownership", () => {
     remote.connect.mockReturnValue(connecting.promise);
     remote.disconnect.mockReturnValue(closing.promise);
     await startPair(); await click("清除旧配对");
-    expect(container.textContent).toContain("配对并进入");
+    expect(container.textContent).toContain("连接电脑");
     await act(async () => connecting.resolve());
     expect(remote.install).not.toHaveBeenCalled();
     await act(async () => closing.resolve());

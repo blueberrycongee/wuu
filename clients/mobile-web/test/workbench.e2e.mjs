@@ -152,7 +152,8 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   const pairedIdentity = await page.evaluate(() => localStorage.getItem('wuu.web.paired'));
   assert(pairedIdentity, 'QR identity is saved independently of account login');
-  await page.locator('.account-toolbar button').click();
+  await page.getByRole('button', { name: '展开左侧栏', exact: true }).filter({visible:true}).click();
+  await page.getByRole('button', { name: /电脑与账号/ }).click();
   await page.getByRole('button', { name: /返回已连接的电脑/ }).click();
   await page.locator('.app-shell').waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem('wuu.web.paired')), pairedIdentity);
@@ -274,8 +275,7 @@ try {
       return rect && rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= width && rect.y + rect.height <= height;
     }, `composer reachable at ${width}x${height}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
-    await page.locator('.compact-conversation-actions [aria-haspopup="menu"]').tap();
-    await page.getByRole('menuitem', { name: '展开左侧栏', exact: true }).tap();
+    await page.getByRole('button', { name: '展开左侧栏', exact: true }).filter({visible:true}).tap();
     const closeDrawer = page.locator('.compact-session-switcher-close');
     await closeDrawer.waitFor({ state: 'visible' });
     for (const target of await page.locator('.sidebar :is(button.sidebar-mode-option, .sidebar-notifications-button)').all()) {
@@ -346,6 +346,7 @@ try {
     console.log('PASS: paged history and encrypted on-demand image round trip', {fullBytes:JSON.stringify(full).length, firstPageBytes:JSON.stringify(compact).length});
   }
   }
+  if (process.env.WUU_E2E_SCREENSHOT) { await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({path: process.env.WUU_E2E_SCREENSHOT}); }
   assert.deepEqual(pageErrors, []);
   if (process.env.WUU_E2E_ACCOUNT_NAVIGATION !== '1') console.log(downloadBps
     ? 'PASS: slow TCP link, pairing, shared execution, large tool history, offline completion, snapshot/draft restoration, host restart, desktop interruption and Git RPCs'

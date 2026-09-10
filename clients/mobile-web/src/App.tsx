@@ -5,6 +5,9 @@ import { WorkbenchConnectionContext } from "../../../desktop/src/renderer/Workbe
 import { webCredStore } from "./lib/credStore";
 import { RemoteDesktopBridge } from "./lib/desktopBridge";
 import { pairingURI, pairingExpired, pairingMatchesHost } from "./lib/pairing";
+import { ArrowLeft, Link2 } from 'lucide-react';
+import { ViewSwitchLoading } from '../../../desktop/src/renderer/LoadingViews';
+import { isNative } from './lib/native';
 
 const SharedWorkbench = lazy(() => import("./WebWorkspace"));
 
@@ -129,6 +132,7 @@ export default function App({ onAccountBack }: { onAccountBack?: () => void } = 
   if (phase.kind === "pair") {
     return (
       <PairCard
+        onBack={onAccountBack}
         error={phase.error}
         onPair={async (uri, name) => {
           const attempt = ++connectionAttemptRef.current;
@@ -194,38 +198,47 @@ export default function App({ onAccountBack }: { onAccountBack?: () => void } = 
 function PairCard({
   error,
   onPair,
+  onBack,
 }: {
   error?: string;
   onPair: (uri: string, name: string) => Promise<void>;
+  onBack?: () => void;
 }): React.JSX.Element {
   const [uri, setURI] = useState("");
-  const [name, setName] = useState("Web Browser");
+  const [name, setName] = useState(isNative ? "Wuu 手机" : "手机浏览器");
   return (
     <main className="web-gate">
-      <section className="web-gate-card">
-        <h1>连接你的工作台</h1>
-        <label>
-          <span>设备名称</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
+      <form className="web-gate-card" onSubmit={event => { event.preventDefault(); if (uri.trim() && name.trim()) void onPair(uri.trim(), name.trim()); }}>
+        <header className="web-gate-header">
+          {onBack && <button className="web-gate-back" type="button" aria-label="返回" onClick={onBack}><ArrowLeft size={22} /></button>}
+          <h1>配对电脑</h1>
+        </header>
+        <div className="web-pair-symbol" aria-hidden="true"><Link2 size={28} /></div>
+        <p className="web-gate-detail">在电脑端 Wuu 的「手机访问」中复制配对链接，粘贴到这里。</p>
         <label>
           <span>配对链接</span>
           <textarea
             value={uri}
             onChange={(event) => setURI(event.target.value)}
             placeholder="粘贴电脑上复制的完整链接"
-            rows={4}
+            rows={3}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
           />
         </label>
+        <details className="web-pair-options"><summary>设备名称</summary><label>
+          <span>这台手机的名称</span>
+          <input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} />
+        </label></details>
         {error ? <p className="web-gate-error">{error}</p> : null}
         <button
-          type="button"
+          type="submit"
           disabled={!uri.trim() || !name.trim()}
-          onClick={() => void onPair(uri.trim(), name.trim())}
         >
-          配对并进入
+          连接电脑
         </button>
-      </section>
+      </form>
     </main>
   );
 }
@@ -242,8 +255,9 @@ function StatusCard({
   return (
     <main className="web-gate">
       <section className="web-gate-card web-gate-status">
-        <h1>{title}</h1>
-        {detail ? <p className="web-gate-error">{detail}</p> : null}
+        {title.startsWith('正在') && <ViewSwitchLoading compact />}
+        <h1 role="status">{title}</h1>
+        {detail ? <p className="web-gate-detail">{detail}</p> : null}
         {children}
       </section>
     </main>

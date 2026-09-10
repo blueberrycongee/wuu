@@ -92,3 +92,8 @@
 .mobile-session-sheet > button:disabled { opacity: .45; }
 .mobile-session-sheet label { display: grid; gap: 8px; }
 .mobile-session-sheet input { box-sizing: border-box; width: 100%; min-height: 48px; font-size: 16px; }
+
+.mobile-sidebar-footer .mobile-sidebar-device { padding-block: 10px; margin-bottom: 6px; color: var(--ink); }
+.mobile-sidebar-device span { min-width: 0; display: grid; gap: 4px; }
+.mobile-sidebar-device strong { font-size: 14px; font-weight: 500; }
+.mobile-sidebar-device small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink-soft); }

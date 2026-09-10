@@ -1,6 +1,7 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { MobileSidebar } from "./MobileSidebar";
 import { initialState, SCRATCH_PSEUDO_PROJECT_ID, type ThreadSummary } from "./AppState";
 import { translateCurrent } from "./i18n";
@@ -197,4 +198,14 @@ it("shows each conversation once in priority groups and moves read replies back 
   expect(container.querySelector(`section[aria-label="${translateCurrent("sidebar.attentionConversations")}"]`)).toBeNull();
   expect(groupRows("sidebar.recentConversations")).toEqual(["newer", "older", "unread", "running"]);
   expect(new Set(rows()).size).toBe(5);
+});
+
+it("opens the phone device directory from the sidebar without changing the selected session", () => {
+  const openDevices = vi.fn();
+  act(() => root.render(<PhoneNavigationContext.Provider value={{ computer: 'Home Mac', openDevices }}><MobileSidebar {...props} /></PhoneNavigationContext.Provider>));
+  const button = [...container.querySelectorAll('button')].find(item => item.textContent?.includes('Home Mac'))!;
+  expect(button).toBeDefined();
+  act(() => button.click());
+  expect(openDevices).toHaveBeenCalledOnce();
+  expect(props.onSelectProjectThread).not.toHaveBeenCalled();
 });

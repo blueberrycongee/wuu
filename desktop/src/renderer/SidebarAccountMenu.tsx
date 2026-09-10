@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
+import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { BarChart3, ChevronsUpDown, LogOut, Settings, UserRound } from "lucide-react";
 import type { AccountView } from "./AccountPanel";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -12,6 +13,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
   onOpenSettings: (page: "providers" | "usage") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const phoneNavigation = useContext(PhoneNavigationContext);
   const id = useId();
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -96,6 +98,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
         }}>
         <div className="sidebar-account-profile">{avatar}<div><strong>{account.display_name || account.username || "Wuu"}</strong><span>{account.username ? account.server : t(driver ? "account.signedOut" : "account.local")}</span></div></div>
         <div className="sidebar-account-divider" role="separator" />
+        {phoneNavigation && <button role="menuitem" className="select-menu-item" onClick={() => { close(); phoneNavigation.openDevices(); }}><UserRound size={18} aria-hidden="true" /><span>{t('account.computersAndAccount')}</span></button>}
         <button role="menuitem" className="select-menu-item" onClick={() => navigate("usage")}><BarChart3 size={18} aria-hidden="true" /><span>{t("settings.usage")}</span></button>
         {driver && onOpenAccount && <button role="menuitem" className="select-menu-item" onClick={() => { close(); onOpenAccount(); }}><UserRound size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.connect")}</span></button>}
         <button role="menuitem" data-settings-page="providers" className="select-menu-item" onClick={() => navigate("providers")}><Settings size={18} aria-hidden="true" /><span>{t("sidebar.settings")}</span></button>

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2 } from "lucide-react";
+import { useContext, useEffect, useRef, useState, type ComponentProps } from "react";
+import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2, Monitor } from "lucide-react";
+import { PhoneNavigationContext } from './PhoneNavigationContext';
 import type { AppSidebar } from "./AppSidebar";
 import { SCRATCH_PSEUDO_PROJECT_ID, isThreadExecuting, isThreadRunning, isThreadUnread, threadTime } from "./AppState";
 import { baseThreadTitle } from "./ThreadTitles";
@@ -21,6 +22,7 @@ type Props = Pick<ComponentProps<typeof AppSidebar>,
 
 export function MobileSidebar(props: Props): JSX.Element {
   const { t } = useI18n();
+  const phoneNavigation = useContext(PhoneNavigationContext);
   const activeProject = props.sidebarProjects.find(project =>
     props.projectThreadsByProjectID[project.id]?.some(thread => thread.id === props.activeThreadID),
   )?.id ?? props.state.activeProjectId ?? SCRATCH_PSEUDO_PROJECT_ID;
@@ -173,6 +175,9 @@ export function MobileSidebar(props: Props): JSX.Element {
       </nav>}
 
       <footer className="mobile-sidebar-footer">
+        {phoneNavigation && <button type="button" className="mobile-sidebar-device" onClick={phoneNavigation.openDevices}>
+          <Monitor aria-hidden="true" /><span><strong>{t('account.computersAndAccount')}</strong><small>{phoneNavigation.computer || t('account.computer')}</small></span>
+        </button>}
         <button type="button" onClick={() => openPage(page === "more" ? "threads" : "more")} aria-expanded={page === "more"}>
           <Settings2 />{t("sidebar.more")}
         </button>

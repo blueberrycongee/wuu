@@ -13,7 +13,6 @@ import {
 } from "../../../desktop/src/renderer/Theme";
 import { ToastViewport } from "../../../desktop/src/renderer/Toast";
 import { WuuUIRoot } from "../../../desktop/src/renderer/ui/layers/UILayerHost";
-import { startWebViewportSync } from "./lib/viewport";
 
 applyPlatformStamp();
 applyMeasuredScrollbarWidth();
@@ -25,11 +24,9 @@ export default function WebWorkspace(): React.JSX.Element {
     applyMessageFlowFontSize(window.wuu.initialMessageFlowFontSize ?? 16);
     const stopTheme = startThemePreferenceSync();
     const stopVisibility = startRendererVisibilitySync();
-    const stopViewport = startWebViewportSync();
     return () => {
       stopTheme();
       stopVisibility();
-      stopViewport();
     };
   }, []);
   return (

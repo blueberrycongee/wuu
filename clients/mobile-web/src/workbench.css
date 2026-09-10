@@ -15,41 +15,6 @@
 .workspace-file-export-actions button { min-height: 44px; color: var(--ink); padding: 4px 12px; }
 .workspace-file-export-actions [role="alert"] { display: block; color: var(--danger); }
 
-.account-workbench .account-toolbar {
-  min-height: 48px;
-  gap: 8px;
-  padding-inline: max(8px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
-}
-
-.account-toolbar > button {
-  flex: none;
-  min-height: 44px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--ink);
-  background: transparent;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.account-toolbar > button:active {
-  background: var(--surface-2);
-}
-
-.account-toolbar > button:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-.account-toolbar > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-}
-
 .account-workbench-content .app-shell.compact-navigation .conversation-pane {
   grid-template-rows: 48px minmax(0, 1fr);
   /* The floating composer already reserves the bottom safe area. */
@@ -65,8 +30,7 @@
   padding-top: 0;
 }
 
-/* The account toolbar already sits below the system status area. The drawer
-   starts below that toolbar and needs neither another inset nor a drag strip. */
+/* The phone shell owns the top safe area, including the session drawer. */
 :root[data-host-kind="web"] .account-workbench-content .app-shell.compact-navigation.sidebar-collapsed .sidebar {
   padding-top: 0;
 }
@@ -109,9 +73,8 @@
 }
 
 /* A landscape IME can leave less than 150px. Preserve a readable input line
-   and touch controls; the computer switcher returns when editing ends. */
+   and touch controls while editing. */
 @media (pointer: coarse) and (max-height: 300px) {
-  .account-workbench:has(.composer textarea:focus) > .account-toolbar { display: none; }
   .account-workbench:has(.composer textarea:focus) .dock-composer-wrap { padding-block: 4px; }
   .account-workbench:has(.composer textarea:focus) .composer {
     --composer-collapsed-min-height: 88px;
@@ -126,3 +89,6 @@
   .account-workbench:has(.composer textarea:focus) .composer-bar { min-height: 48px; }
   .account-workbench:has(.composer textarea:focus) .composer-bar button { min-height: 44px; min-width: 44px; }
 }
+
+.account-workbench .empty-home h2 { font-family: inherit; font-size: 26px; font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
+.account-workbench .app-shell.compact-navigation .title-block h1 { font-size: 15px; color: var(--ink); }

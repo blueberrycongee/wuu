@@ -1,7 +1,7 @@
 :root {
   color: var(--ink);
   background: var(--paper);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
 }
 
@@ -24,56 +24,41 @@ input, textarea {
 }
 
 .web-gate {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: 32px 20px;
-  background:
-    linear-gradient(rgba(32, 34, 31, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(32, 34, 31, 0.05) 1px, transparent 1px),
-    #f2f1ec;
-  background-size: 32px 32px;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px max(24px, env(safe-area-inset-bottom));
+  color: var(--ink);
+  background: var(--paper);
 }
-
-.web-gate-card {
-  width: min(100%, 520px);
-  display: grid;
-  gap: 18px;
-  padding: clamp(24px, 6vw, 44px);
-  border: 1px solid rgba(32, 34, 31, 0.2);
-  background: rgba(250, 249, 244, 0.94);
-  box-shadow: 12px 12px 0 rgba(32, 34, 31, 0.1);
-}
-
-.web-gate h1 { margin: 0; font-size: clamp(30px, 8vw, 48px); line-height: 0.98; letter-spacing: -0.045em; }
-.web-gate label { display: grid; gap: 8px; }
-.web-gate label span { font-size: 13px; font-weight: 700; }
+.web-gate-card { width: min(100%, 420px); margin: 0 auto; display: grid; gap: 24px; }
+.web-gate-header { display: flex; align-items: center; gap: 8px; min-height: 48px; margin-bottom: 20px; }
+.web-gate h1 { margin: 0; font-size: 24px; line-height: 1.35; letter-spacing: -.025em; font-weight: 600; }
+.web-gate label { display: grid; gap: 10px; font-size: 14px; color: var(--ink-soft); }
 .web-gate input, .web-gate textarea {
-  width: 100%;
-  border: 1px solid #aaada6;
-  border-radius: 0;
-  padding: 12px 13px;
-  color: #20221f;
-  background: #fff;
-  outline: none;
+  width: 100%; min-height: 52px; padding: 16px; border: 1px solid var(--hairline-soft);
+  border-radius: 16px; color: var(--ink); background: var(--surface-1); font-size: 16px;
 }
-.web-gate input:focus, .web-gate textarea:focus { border-color: #20221f; box-shadow: 0 0 0 1px #20221f; }
-.web-gate textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-@media (pointer: coarse) {
-  .web-gate input, .web-gate textarea { font-size: 16px; }
-}
+.web-gate textarea { resize: vertical; line-height: 1.6; }
 .web-gate button {
-  min-height: 46px;
-  border: 1px solid #20221f;
-  padding: 0 18px;
-  color: #f8f7f2;
-  background: #20221f;
-  font-weight: 750;
-  cursor: pointer;
+  min-height: 52px; padding: 12px 20px; border: 0; border-radius: 16px;
+  color: var(--paper); background: var(--ink); font-weight: 600; cursor: pointer;
 }
-.web-gate button:disabled { opacity: 0.35; cursor: not-allowed; }
-.web-gate-error { margin: 0; color: #a63228; line-height: 1.5; overflow-wrap: anywhere; }
-.web-gate-status { text-align: center; }
+.web-gate button:disabled { opacity: .4; cursor: default; }
+.web-gate :is(input, textarea, button):focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.web-gate button.web-gate-back { display: grid; place-items: center; min-height: 44px; width: 44px; padding: 0; margin-left: -12px; background: transparent; color: var(--ink); }
+.web-pair-symbol { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 20px; background: var(--surface-1); }
+.web-pair-options summary { display: flex; align-items: center; min-height: 44px; color: var(--ink-soft); cursor: pointer; }
+.web-pair-options summary::after { content: '+'; margin-left: auto; font-size: 20px; }
+.web-pair-options[open] summary::after { content: '−'; }
+.web-gate-error { margin: 0; color: var(--danger); line-height: 1.6; overflow-wrap: anywhere; }
+.web-gate-detail { margin: 0; color: var(--ink-soft); line-height: 1.7; font-size: 15px; overflow-wrap: anywhere; }
+.web-gate:has(.web-gate-status) { display: grid; align-items: center; }
+.web-gate-status { text-align: center; padding-block: 32px; gap: 20px; }
+.web-gate-status h1 { font-size: 22px; }
+.web-gate-status .view-switch-loading { grid-area: auto; place-self: center; min-height: 72px; margin: 0 0 16px; padding: 0; }
+.account-boot > .view-switch-loading { grid-area: auto; }
+.web-gate-status button + button { background: var(--surface-1); color: var(--ink); }
 
 
 .web-workbench { height: 100%; min-width: 0; }
@@ -101,12 +86,11 @@ input, textarea {
   min-height: 0;
 }
 
-.account-home { height:100%; overflow:auto; padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); box-sizing:border-box; }
-.account-workbench { height:100%; display:flex; flex-direction:column; padding-top:env(safe-area-inset-top); box-sizing:border-box; }
-.account-toolbar { flex:none; display:flex; gap:12px; align-items:center; padding-left:env(safe-area-inset-left); }
-.account-workbench-content { flex:1; min-height:0; position:relative; overflow:hidden; }
-.account-workbench-content .app-shell { height:100%; }
-.account-pair-link { display:block; margin:24px auto; }
+.account-home { height: 100%; overflow: auto; padding: calc(16px + env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); background: var(--paper); }
+.account-workbench { height: 100%; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); box-sizing: border-box; }
+.account-workbench-content { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.account-workbench-content .app-shell { height: 100%; }
+.account-boot { display: grid; place-items: center; }
 .computer-folder-overlay { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; background:Canvas; color:CanvasText; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
 .computer-folder-picker { width:min(100%,560px); max-height:100%; display:flex; flex-direction:column; gap:12px; padding:16px; box-sizing:border-box; }
 .computer-folder-picker form, .computer-folder-picker footer { display:flex; gap:8px; }
@@ -119,7 +103,40 @@ input, textarea {
 .workspace-terminal-touch-keys button { min-width:44px; min-height:44px; font:inherit; background:transparent; color:inherit; border:1px solid currentColor; border-radius:6px; touch-action:manipulation; }
 
 .account-workbench-content .web-connection-status { position:absolute; top:8px; }
-.account-toolbar { min-height:44px; }
-.account-toolbar button { min-height:44px; padding:8px 12px; background:transparent; color:inherit; border:0; font:inherit; }
 :root[data-host-kind="web"] .image-preview-toolbar-button { min-width:44px; min-height:44px; }
 .account-resume { display:grid; gap:12px; margin-bottom:32px; }
+
+/* Account, pairing and the workbench share the same phone surface. */
+.account-home .account-panel { max-width: 440px; }
+.account-home .account-auth { padding-top: 12px; }
+.account-home .account-welcome { padding-top: clamp(24px, 7dvh, 72px); }
+.account-home .account-page-header { margin-bottom: 24px; min-height: 52px; }
+.account-home .account-page-header h2 { font-size: 25px; font-weight: 650; }
+.account-home .account-welcome .account-page-header { margin-bottom: 40px; gap: 16px; }
+.account-title-mascot { width: 44px; height: 44px; flex: none; }
+.account-home .account-welcome .account-page-header h2 { font-size: 30px; }
+.account-home .account-panel label { font-size: 14px; gap: 10px; }
+.account-home .account-panel input { min-height: 56px; padding: 16px; border-radius: 16px; background: var(--surface-1); border-color: transparent; }
+.account-home .account-panel input:focus { border-color: var(--hairline); }
+.account-home .account-panel form { gap: 22px; }
+.account-home .account-panel .account-primary { min-height: 54px; border-radius: 16px; font-size: 16px; font-weight: 600; }
+.account-home .account-connection-link { order: 2; justify-content: center; gap: 6px; min-height: 44px; }
+.account-home .account-connection-value { display: none; }
+.account-home .account-auth-more { margin-top: 0; }
+.account-home .account-panel .account-computer-card { min-height: 96px; border: 0; border-radius: 20px; padding: 20px; }
+.account-home .account-computer-icon { width: 48px; height: 48px; border-radius: 16px; }
+.account-home .account-computer-name { font-size: 16px; }
+.account-home .account-empty { padding: 48px 16px; text-align: center; gap: 12px; }
+.account-home .account-empty p { margin: 0; max-width: 280px; }
+.account-home .account-empty > p:first-of-type { color: var(--ink); font-size: 18px; font-weight: 600; }
+.account-home .account-auth-options, .account-home .account-management-actions { border-radius: 18px; }
+.account-home .account-device-group { margin-block: 28px; }
+.account-home .account-profile { padding: 20px; border: 0; border-radius: 20px; background: var(--surface-1); }
+.account-home .account-device { padding-block: 18px; }
+.account-home .account-panel .account-signout { min-height: 52px; background: var(--surface-1); border-radius: 16px; }
+.account-home .account-resume { margin-bottom: 24px; }
+.account-home .account-resume .account-primary { background: var(--surface-1); border: 0; color: var(--ink); font-size: 14px; }
+.account-home .account-resume > button:not(.account-primary) { border: 0; }
+@media (max-height: 540px) {
+  .account-home .account-welcome { padding-top: 0; }
+}

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ChevronRight, Github, Monitor, Settings2 } from 'lucide-react';
 import { useI18n } from './i18n';
 import { defaultAccountServer } from './accountServer';
+import { WuuMascot } from './WuuMascot';
 
 export type AccountAction = 'status' | 'login' | 'register' | 'recover' | 'logout' | 'revoke' | 'password' | 'config' | 'github-start' | 'github-poll' | 'github-cancel';
 export type AccountDeviceView = { pub: string; account: string; name: string; role: 'host' | 'phone'; online: boolean; added_at: number };
@@ -10,7 +11,7 @@ export type AccountView = { username?: string; server?: string; pub?: string; de
 export type AccountDriver = (action: AccountAction, input?: Record<string, string>) => Promise<AccountView>;
 
 /** Shared account forms; each host owns credential storage and transport. */
-export function AccountPanel({ driver, onComputer, onPair, managementContent, onSignedIn, reserveAuthorization }: { driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void; reserveAuthorization?: () => { open: (url: string) => Promise<void>; close: () => void } }): React.JSX.Element {
+export function AccountPanel({ driver, onComputer, onPair, managementContent, onSignedIn, reserveAuthorization, presentation }: { presentation?: 'mobile'; driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void; reserveAuthorization?: () => { open: (url: string) => Promise<void>; close: () => void } }): React.JSX.Element {
  const { t } = useI18n();
  const epoch = useRef(0);
  const heading = useRef<HTMLHeadingElement>(null);
@@ -110,14 +111,16 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
  const computers = devices.filter(d => d.role === 'host').sort((a, b) => Number(b.online) - Number(a.online) || a.added_at - b.added_at);
  const choosing = !!account.username && !!onComputer && page === 'computers' && mode !== 'password';
  const managing = !!account.username && !choosing && mode !== 'password';
+ const welcome = presentation === 'mobile' && !account.username && authPage === 'form' && mode === 'login';
  const pairAction = onPair && <button className="account-text-action" type="button" onClick={onPair}>{t('account.pairLink')}<ChevronRight size={18} aria-hidden="true" /></button>;
  const openConnection = () => { setConnectionDraft({ server, name: deviceName }); setAuthPage('connection'); };
  if (loading) return <section className="account-panel" aria-busy="true"><p role="status">{t('account.restoring')}</p></section>;
- return <section className={`account-panel${!account.username ? ' account-auth' : ''}`} aria-label={t(choosing ? 'account.computers' : 'account.label')}>
+ return <section className={`account-panel${!account.username ? ' account-auth' : ''}${welcome ? ' account-welcome' : ''}`} aria-label={t(choosing ? 'account.computers' : 'account.label')}>
   <header className="account-page-header">
    {account.username && !choosing && (onComputer || mode === 'password') && <button className="account-back" type="button" aria-label={t(mode === 'password' ? 'account.manage' : 'account.computers')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
    {!account.username && (authPage !== 'form' || mode !== 'login') && !!server && <button className="account-back" type="button" aria-label={t('common.back')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
    <h2 ref={heading} tabIndex={-1}>{t(choosing ? 'account.computers' : mode === 'password' ? 'account.password' : managing ? 'account.manage' : authPage === 'connection' ? 'account.connectionSettings' : authPage === 'options' ? 'account.moreOptions' : mode === 'register' ? 'account.register' : mode === 'recover' ? 'account.forgotPassword' : 'account.connect')}</h2>
+   {welcome && <WuuMascot className="account-title-mascot" accessory="none" aria-hidden="true" />}
    {choosing && <button className="account-manage-link" type="button" aria-label={t('account.manage')} onClick={() => setPage('manage')}><Settings2 size={20} aria-hidden="true" /></button>}
   </header>
   {error && <p role="alert" className="settings-error">{error}</p>}
@@ -156,7 +159,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
    {onComputer && <label>{t('account.deviceName')}<input value={connectionDraft.name} maxLength={64} placeholder={t('account.deviceNameExample')} onChange={e => setConnectionDraft(current => ({ ...current, name: e.target.value }))}/></label>}
    <button className="account-primary" type="submit">{t('common.save')}</button>{defaultAccountServer && <button type="button" onClick={() => { setServer(defaultAccountServer); localStorage.setItem('wuu.account.server', defaultAccountServer); setAuthPage('form'); setLegacy(false); }}>{t('account.officialServer')}</button>}{pairAction}
   </form> : !account.username && authPage === 'options' ? <div className="account-auth-options">
-   {(['register', 'recover'] as const).map(next => <button type="button" key={next} onClick={() => { setMode(next); setAuthPage('form'); setPassword(''); setSecret(''); setError(''); }}>{t(next === 'recover' ? 'account.forgotPassword' : 'account.register')}<ChevronRight size={18} aria-hidden="true" /></button>)}
+   {(['register', 'recover'] as const).filter(next => next !== 'register' || config?.registration !== false).map(next => <button type="button" key={next} onClick={() => { setMode(next); setAuthPage('form'); setPassword(''); setSecret(''); setError(''); }}>{t(next === 'recover' ? 'account.forgotPassword' : 'account.register')}<ChevronRight size={18} aria-hidden="true" /></button>)}
    {config?.github && <button type="button" onClick={() => { setLegacy(true); setAuthPage('form'); }}>{t('account.legacyLogin')}</button>}{pairAction}
   </div> : !account.username && mode === 'login' && !legacy && (config?.github || !config || !!configError) ? <div className="account-login-methods">
    <p className="account-server">{server}</p>
