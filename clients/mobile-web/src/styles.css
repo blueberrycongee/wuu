@@ -118,15 +118,10 @@ input, textarea {
 .account-home .account-page-body { min-width: 0; padding-block: 28px; }
 .account-home .account-auth .account-page-body { margin-block: auto; width: 100%; }
 .account-home .account-auth { padding-top: 0; }
-.account-home > .account-welcome { justify-content: center; padding-block: 32px; }
-.account-home .account-welcome .account-page-body { margin-block: 0; padding-block: 0; }
 .account-home .account-page-header { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 0; margin: 0; min-height: 48px; flex: none; }
 .account-home .account-page-header h2 { grid-column: 2; grid-row: 1; margin: 0; text-align: center; font-size: 20px; line-height: 1.4; font-weight: 600; outline: none; }
 .account-home .account-page-header .account-back { grid-column: 1; grid-row: 1; width: 48px; min-height: 48px; }
 .account-home .account-page-header .account-manage-link { grid-column: 3; grid-row: 1; width: 48px; min-height: 48px; border-radius: 16px; }
-.account-home .account-welcome .account-page-header { display: flex; justify-content: center; margin-bottom: 36px; gap: 12px; }
-.account-title-mascot { width: 44px; height: 44px; flex: none; }
-.account-home .account-welcome .account-page-header h2 { flex: none; font-size: 30px; }
 .account-home .account-panel label { font-size: 14px; gap: 10px; }
 .account-home .account-panel input { min-height: 56px; padding: 16px; border-radius: 16px; background: var(--surface-1); border-color: transparent; }
 .account-home .account-panel form { gap: 24px; }
@@ -162,13 +157,60 @@ input, textarea {
 @media (pointer: coarse) {
   :is(.account-home, .web-gate) :is(button, summary):focus-visible { outline: none; }
 }
-@media (max-height: 540px) {
-  .account-home > .account-welcome { padding-block: 12px; }
-  .account-home .account-welcome .account-page-header { margin-bottom: 24px; }
-}
 
 .account-home .account-secondary-actions { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 24px; }
 .account-home .account-secondary-actions > button { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 48px; padding: 8px 0; border: 0; color: var(--ink-soft); }
 .account-home .account-panel .account-primary { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
+/* The login hero uses the same artwork as the installed app icon. */
 .account-home[hidden] { display: none; }
+.account-home:has(> .account-welcome) { padding-inline: 16px; }
+.account-home > .account-welcome { max-width: 480px; justify-content: flex-start; padding-block: 0; }
+.account-home .account-welcome .account-page-header {
+  position: relative;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 260px;
+  height: clamp(260px, 38dvh, 340px);
+  margin: 0;
+  padding: 24px;
+  overflow: hidden;
+  border-radius: 28px 28px 0 0;
+  background: #271a29;
+}
+.account-home .account-welcome .account-page-header h2 {
+  position: relative;
+  z-index: 1;
+  max-width: 130px;
+  margin-top: -24px;
+  text-align: left;
+  font-size: 40px;
+  line-height: 1.16;
+  color: #fff;
+}
+.account-brand-art {
+  position: absolute;
+  top: -12px;
+  right: -64px;
+  width: 340px;
+  height: 340px;
+  max-width: none;
+  object-fit: cover;
+  mask-image: linear-gradient(to right, transparent, black 24%);
+  pointer-events: none;
+}
+.account-home .account-welcome .account-page-body {
+  position: relative;
+  flex: 1;
+  margin-top: -32px;
+  padding: 32px 8px 24px;
+  border-radius: 32px 32px 0 0;
+  background: var(--paper);
+}
+@media (max-height: 540px) {
+  .account-home .account-welcome .account-page-header { height: 156px; min-height: 156px; border-radius: 20px 20px 0 0; }
+  .account-home .account-welcome .account-page-header h2 { max-width: none; font-size: 28px; }
+  .account-brand-art { width: 220px; height: 220px; top: -32px; right: -40px; }
+  .account-home .account-welcome .account-page-body { padding-top: 24px; margin-top: -24px; }
+}

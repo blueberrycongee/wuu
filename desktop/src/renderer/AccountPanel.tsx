@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ChevronRight, Github, Monitor, Settings2 } from 'lucide-react';
 import { useI18n } from './i18n';
 import { defaultAccountServer } from './accountServer';
-import { WuuMascot } from './WuuMascot';
+import phoneBrandArtwork from '../../../assets/app-icon-source.png';
 
 export type AccountAction = 'status' | 'login' | 'register' | 'recover' | 'logout' | 'revoke' | 'password' | 'config' | 'github-start' | 'github-poll' | 'github-cancel';
 export type AccountDeviceView = { pub: string; account: string; name: string; role: 'host' | 'phone'; online: boolean; added_at: number };
@@ -121,7 +121,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
    {account.username && !choosing && (onComputer || mode === 'password') && <button className="account-back" type="button" aria-label={t(mode === 'password' ? 'account.manage' : 'account.computers')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
    {!account.username && (authPage !== 'form' || mode !== 'login') && !!server && <button className="account-back" type="button" aria-label={t('common.back')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
    <h2 ref={heading} tabIndex={-1}>{t(choosing ? 'account.computers' : mode === 'password' ? 'account.password' : managing ? 'account.manage' : authPage === 'connection' ? 'account.connectionSettings' : authPage === 'options' ? 'account.moreOptions' : mode === 'register' ? 'account.register' : mode === 'recover' ? 'account.forgotPassword' : 'account.connect')}</h2>
-   {welcome && <WuuMascot className="account-title-mascot" accessory="none" aria-hidden="true" />}
+   {welcome && <img className="account-brand-art" src={phoneBrandArtwork} alt="" aria-hidden="true" />}
    {choosing && <button className="account-manage-link" type="button" aria-label={t('account.manage')} onClick={() => setPage('manage')}><Settings2 size={20} aria-hidden="true" /></button>}
   </header>
   <div className="account-page-body">
