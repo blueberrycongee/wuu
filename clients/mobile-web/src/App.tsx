@@ -5,7 +5,7 @@ import { WorkbenchConnectionContext } from "../../../desktop/src/renderer/Workbe
 import { webCredStore } from "./lib/credStore";
 import { RemoteDesktopBridge } from "./lib/desktopBridge";
 import { pairingURI, pairingExpired, pairingMatchesHost } from "./lib/pairing";
-import { ArrowLeft, Link2 } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { ViewSwitchLoading } from '../../../desktop/src/renderer/LoadingViews';
 import { isNative } from './lib/native';
 
@@ -208,12 +208,12 @@ function PairCard({
   const [name, setName] = useState(isNative ? "Wuu 手机" : "手机浏览器");
   return (
     <main className="web-gate">
-      <form className="web-gate-card" onSubmit={event => { event.preventDefault(); if (uri.trim() && name.trim()) void onPair(uri.trim(), name.trim()); }}>
+      <form className="web-gate-card web-pair-card" onSubmit={event => { event.preventDefault(); if (uri.trim() && name.trim()) void onPair(uri.trim(), name.trim()); }}>
         <header className="web-gate-header">
           {onBack && <button className="web-gate-back" type="button" aria-label="返回" onClick={onBack}><ArrowLeft size={22} /></button>}
           <h1>配对电脑</h1>
         </header>
-        <div className="web-pair-symbol" aria-hidden="true"><Link2 size={28} /></div>
+        <div className="web-pair-body">
         <label>
           <span>配对链接</span>
           <textarea
@@ -226,10 +226,9 @@ function PairCard({
             spellCheck={false}
           />
         </label>
-        <details className="web-pair-options"><summary>设备名称</summary><label>
-          <span>这台手机的名称</span>
-          <input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} />
-        </label></details>
+        <details className="web-pair-options"><summary>设备名称</summary>
+          <input aria-label="设备名称" value={name} maxLength={64} onChange={(event) => setName(event.target.value)} />
+        </details>
         {error ? <p className="web-gate-error">{error}</p> : null}
         <button
           type="submit"
@@ -237,6 +236,7 @@ function PairCard({
         >
           连接电脑
         </button>
+        </div>
       </form>
     </main>
   );

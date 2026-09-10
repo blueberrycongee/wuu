@@ -115,7 +115,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
  const pairAction = onPair && <button className="account-text-action" type="button" onClick={onPair}>{t('account.pairLink')}<ChevronRight size={18} aria-hidden="true" /></button>;
  const openConnection = () => { setConnectionDraft({ server, name: deviceName }); setAuthPage('connection'); };
  if (loading) return <section className="account-panel" aria-busy="true"><p role="status">{t('account.restoring')}</p></section>;
- return <section className={`account-panel${!account.username ? ' account-auth' : ''}${welcome ? ' account-welcome' : ''}`} aria-label={t(choosing ? 'account.computers' : 'account.label')}>
+ return <section className={`account-panel${presentation === 'mobile' ? ' account-mobile' : ''}${!account.username || mode === 'password' ? ' account-auth' : ''}${welcome ? ' account-welcome' : ''}`} aria-label={t(choosing ? 'account.computers' : 'account.label')}>
   <header className="account-page-header">
    {account.username && !choosing && (onComputer || mode === 'password') && <button className="account-back" type="button" aria-label={t(mode === 'password' ? 'account.manage' : 'account.computers')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
    {!account.username && (authPage !== 'form' || mode !== 'login') && !!server && <button className="account-back" type="button" aria-label={t('common.back')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
@@ -123,6 +123,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
    {welcome && <WuuMascot className="account-title-mascot" accessory="none" aria-hidden="true" />}
    {choosing && <button className="account-manage-link" type="button" aria-label={t('account.manage')} onClick={() => setPage('manage')}><Settings2 size={20} aria-hidden="true" /></button>}
   </header>
+  <div className="account-page-body">
   {error && <p role="alert" className="settings-error">{error}</p>}
   {account.unavailable && <p role="status">{t('account.directoryUnavailable')}</p>}
   {localLogoutOnly && <p role="status">{t('account.localLogout')}</p>}
@@ -156,8 +157,8 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
    <button className="account-signout" type="button" disabled={busy} onClick={() => void perform('logout')}>{t('account.logout')}</button>
   </> : !account.username && authPage === 'connection' ? <form onSubmit={e => { e.preventDefault(); setServer(connectionDraft.server.trim()); localStorage.setItem('wuu.account.server', connectionDraft.server.trim()); setLegacy(false); setDeviceName(connectionDraft.name); setAuthPage('form'); }}>
    <label>{t('account.server')}<input type="url" autoCapitalize="none" autoCorrect="off" placeholder="https://wuu.example.com" value={connectionDraft.server} required onChange={e => setConnectionDraft(current => ({ ...current, server: e.target.value }))}/></label>
-   {onComputer && <label>{t('account.deviceName')}<input value={connectionDraft.name} maxLength={64} placeholder={t('account.deviceNameExample')} onChange={e => setConnectionDraft(current => ({ ...current, name: e.target.value }))}/></label>}
-   <button className="account-primary" type="submit">{t('common.save')}</button>{defaultAccountServer && <button type="button" onClick={() => { setServer(defaultAccountServer); localStorage.setItem('wuu.account.server', defaultAccountServer); setAuthPage('form'); setLegacy(false); }}>{t('account.officialServer')}</button>}{pairAction}
+   {onComputer && <label>{t('account.deviceName')}<input value={connectionDraft.name} maxLength={64} placeholder={t(presentation === 'mobile' ? 'account.phone' : 'account.deviceNameExample')} onChange={e => setConnectionDraft(current => ({ ...current, name: e.target.value }))}/></label>}
+   <button className="account-primary" type="submit">{t('common.save')}</button><div className="account-secondary-actions">{defaultAccountServer && <button type="button" onClick={() => { setServer(defaultAccountServer); localStorage.setItem('wuu.account.server', defaultAccountServer); setAuthPage('form'); setLegacy(false); }}>{t('account.officialServer')}</button>}{pairAction}</div>
   </form> : !account.username && authPage === 'options' ? <div className="account-auth-options">
    {(['register', 'recover'] as const).filter(next => next !== 'register' || config?.registration !== false).map(next => <button type="button" key={next} onClick={() => { setMode(next); setAuthPage('form'); setPassword(''); setSecret(''); setError(''); }}>{t(next === 'recover' ? 'account.forgotPassword' : 'account.register')}<ChevronRight size={18} aria-hidden="true" /></button>)}
    {config?.github && <button type="button" onClick={() => { setLegacy(true); setAuthPage('form'); }}>{t('account.legacyLogin')}</button>}{pairAction}
@@ -173,8 +174,9 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
    {(mode === 'recover' || mode === 'password') && <label>{t(mode === 'recover' ? 'account.recoveryCode' : 'account.currentPassword')}<input type="password" autoComplete={mode === 'password' ? 'current-password' : 'off'} value={secret} required onChange={e => setSecret(e.target.value)}/></label>}
    <label>{t(mode === 'login' ? 'account.loginPassword' : 'account.newPassword')}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} required minLength={12} onChange={e => setPassword(e.target.value)}/></label>
    {mode === 'password' && presentation !== 'mobile' && <p>{t('account.passwordHint')}</p>}
-   {!account.username && <button className="account-connection-link" type="button" disabled={busy} onClick={openConnection}><span>{t('account.connectionSettings')}</span><span className="account-connection-value">{server || t('account.notConfigured')}</span><ChevronRight size={16} aria-hidden="true" /></button>}
+
    <button className="account-primary" disabled={busy} type="submit">{t(busy ? 'account.busy' : presentation === 'mobile' && mode === 'password' ? 'account.passwordAndSignOut' : `account.${mode}`)}</button>
-  </form>{!account.username && mode === 'login' && <button className="account-auth-more" type="button" disabled={busy} onClick={() => setAuthPage('options')}>{t('account.moreOptions')}<ChevronRight size={16} aria-hidden="true" /></button>}</>}
+  </form>{!account.username && <div className="account-auth-footer"><button className="account-connection-link" type="button" disabled={busy} onClick={openConnection}><span>{t('account.connectionSettings')}</span><span className="account-connection-value">{server || t('account.notConfigured')}</span><ChevronRight size={16} aria-hidden="true" /></button>{mode === 'login' && <button className="account-auth-more" type="button" disabled={busy} onClick={() => setAuthPage('options')}>{t('account.moreOptions')}<ChevronRight size={16} aria-hidden="true" /></button>}</div>}</>}
+ </div>
  </section>;
 }

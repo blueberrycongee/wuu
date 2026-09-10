@@ -92,3 +92,36 @@
 
 .account-workbench .empty-home h2 { font-family: inherit; font-size: 26px; font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
 .account-workbench .app-shell.compact-navigation .title-block h1 { font-size: 15px; color: var(--ink); }
+
+/* Phone settings keep compact labels beside simple controls, with room for a thumb. */
+@media (pointer: coarse), (max-width: 700px) {
+  .account-workbench .settings-row { padding-block: 12px; gap: 12px; }
+  .account-workbench .settings-row:has(.settings-switch, .settings-input-num) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .account-workbench :is(.settings-input, .settings-select, .settings-select-trigger, .settings-button) {
+    min-height: 48px;
+    height: auto;
+    font-size: 16px;
+  }
+  .account-workbench :is(.settings-input, .settings-select, .settings-select-trigger) {
+    border-color: transparent;
+    border-radius: 12px;
+    background: var(--surface-1);
+  }
+  .account-workbench .settings-row-label-title { font-size: 15px; }
+  .account-workbench .settings-row .settings-select-trigger { min-width: 0; max-width: 100%; border-color: transparent; }
+  .account-workbench :is(.settings-nav-item, .settings-back-button) { min-height: 48px; }
+  .account-workbench .settings-switch { width: 48px; height: 48px; background: transparent; box-shadow: none; }
+  .account-workbench .settings-switch::before {
+    content: '';
+    position: absolute;
+    inset: 10px 0;
+    border-radius: 14px;
+    background: var(--ink-muted);
+  }
+  .account-workbench .settings-switch[aria-checked="true"]::before { background: var(--ink); }
+  .account-workbench .settings-switch-thumb { width: 20px; height: 20px; top: 14px; left: 4px; }
+  .account-workbench .settings-switch[aria-checked="true"] .settings-switch-thumb { transform: translateX(20px); }
+}
