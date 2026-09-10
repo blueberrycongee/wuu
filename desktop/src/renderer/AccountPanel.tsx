@@ -113,6 +113,11 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
  const choosing = !!account.username && !!onComputer && page === 'computers' && mode !== 'password';
  const managing = !!account.username && !choosing && mode !== 'password';
  const welcome = presentation === 'mobile' && !account.username && authPage === 'form' && mode === 'login';
+ useEffect(() => {
+  if (presentation !== 'mobile') return;
+  document.documentElement.dataset.phoneSurface = welcome && panelActive ? 'login' : 'default';
+  return () => { delete document.documentElement.dataset.phoneSurface; };
+ }, [welcome, panelActive, presentation]);
  const pairAction = onPair && <button className="account-text-action" type="button" onClick={onPair}>{t('account.pairLink')}<ChevronRight size={18} aria-hidden="true" /></button>;
  const openConnection = () => { setConnectionDraft({ server, name: deviceName }); setAuthPage('connection'); };
  if (loading) return <section className="account-panel" aria-busy="true"><p role="status">{t('account.restoring')}</p></section>;
