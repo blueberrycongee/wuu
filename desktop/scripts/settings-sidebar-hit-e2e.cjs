@@ -40,10 +40,16 @@ async function run() {
   await loadFile(win, rendererHtml);
   await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 5000);
   await evaluate(win, () => {
-    const button = document.querySelector(".sidebar-settings-button");
+    const button = document.querySelector(".sidebar-account-trigger");
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error("Settings button not found.");
     }
+    button.click();
+  });
+  await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-menu")), 3000);
+  await evaluate(win, () => {
+    const button = document.querySelector('[data-settings-page="providers"]');
+    if (!(button instanceof HTMLButtonElement)) throw new Error("Settings menu item not found.");
     button.click();
   });
   await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);

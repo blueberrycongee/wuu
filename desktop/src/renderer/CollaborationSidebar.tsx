@@ -1,3 +1,4 @@
+import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import {
   MessageSquare,
   MessagesSquare,
@@ -105,7 +106,7 @@ export function CollaborationSidebar({
   onManageAgents: () => void;
   onCreateRoom: () => void;
   onSwitchToHarness: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (page?: "providers" | "remote" | "usage") => void;
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
 }): JSX.Element {
@@ -317,10 +318,7 @@ export function CollaborationSidebar({
         </DndContext>
 
         <div className="sidebar-settings">
-          <button className="sidebar-settings-button" type="button" disabled={!initialized} onClick={onOpenSettings}>
-            <Settings className="icon-lg" aria-hidden="true" />
-            <span>{t("sidebar.settings")}</span>
-          </button>
+          <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} />
         </div>
       </div>
     </aside>

@@ -1,4 +1,7 @@
 export const zhCN = {
+  "account.menu": "账户菜单",
+  "account.local": "本地使用",
+  "account.signedOut": "尚未登录",
   "mobile.conversations": "会话",
   "mobile.tools": "文件与工具",
   "mobile.notifications": "系统通知",

@@ -53,7 +53,7 @@ async function run() {
   await waitFor(
     win,
     () => {
-      const button = document.querySelector(".sidebar-settings-button");
+      const button = document.querySelector(".sidebar-account-trigger");
       if (!(button instanceof HTMLButtonElement) || button.disabled) {
         return null;
       }
@@ -62,6 +62,12 @@ async function run() {
     },
     3000
   );
+  await waitFor(win, () => Boolean(document.querySelector(".sidebar-account-menu")), 3000);
+  await evaluate(win, () => {
+    const button = document.querySelector('[data-settings-page="providers"]');
+    if (!(button instanceof HTMLButtonElement)) throw new Error("Settings menu item not found.");
+    button.click();
+  });
   await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
   const debugSettingVisible = await evaluate(win, () => Boolean(document.querySelector(".settings-switch")));
   assert.equal(debugSettingVisible, false, "Production desktop builds must not expose the debug controls setting.");

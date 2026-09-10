@@ -1,4 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
+import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { MobileSidebar } from "./MobileSidebar";
 import {
   Archive,
@@ -13,7 +14,6 @@ import {
   MessagesSquare,
   Plus,
   Search,
-  Settings,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -447,7 +447,7 @@ export function AppSidebar({
   onReorderSections?: (nextOrder: string[]) => void;
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (page?: "providers" | "remote" | "usage") => void;
   onSwitchToCollaboration?: () => void;
   onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
   pluginHost?: PluginHost;
@@ -1947,15 +1947,10 @@ export function AppSidebar({
             id="sidebar.footer"
             context={Object.freeze({ initialized: Boolean(state.initialized) })}
           />
-          <button
-            className="sidebar-settings-button"
-            type="button"
+          <SidebarAccountMenu
             disabled={!state.initialized}
-            onClick={() => activateNative(onOpenSettings)}
-          >
-            <Settings className="icon-lg" />
-            <span>{t("sidebar.settings")}</span>
-          </button>
+            onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
+          />
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu

@@ -1,0 +1,53 @@
+.sidebar-account-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 7px var(--sidebar-row-pad-x);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.sidebar-account-trigger:hover,
+.sidebar-account-trigger[aria-expanded="true"] {
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
+}
+
+.sidebar-account-avatar {
+  display: inline-flex;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--ink-overlay-6);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.sidebar-account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+.sidebar-account-trigger > svg { flex-shrink: 0; color: var(--ink-muted); }
+.sidebar-account-menu { width: 280px; overflow-y: auto; }
+.sidebar-account-menu .select-menu-item { justify-content: flex-start; min-height: 38px; flex-shrink: 0; }
+.sidebar-account-menu .select-menu-item > svg { flex-shrink: 0; color: var(--ink-soft); }
+.sidebar-account-profile { display: flex; align-items: center; gap: 10px; padding: 10px 9px; }
+.sidebar-account-profile > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sidebar-account-profile strong { color: var(--ink); font-weight: var(--weight-semibold); }
+.sidebar-account-profile span:not(.sidebar-account-avatar) { color: var(--ink-muted); font-size: var(--font-sm); }
+.sidebar-account-profile strong,
+.sidebar-account-profile span:not(.sidebar-account-avatar) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-account-divider { height: 1px; flex-shrink: 0; margin: 4px 9px; background: var(--menu-border); }
+.sidebar-account-message { margin: 8px 9px; font-size: var(--font-sm); overflow-wrap: anywhere; }

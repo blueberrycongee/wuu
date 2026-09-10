@@ -5086,8 +5086,8 @@ export function App(): JSX.Element {
               }}
               onPointerEnter={openSidebarDrawer}
               onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
-              onOpenSettings={() => {
-                setSettingsInitialPage("providers");
+              onOpenSettings={(page = "providers") => {
+                setSettingsInitialPage(page);
                 setSettingsOpen(true);
               }}
             />
@@ -5192,11 +5192,11 @@ export function App(): JSX.Element {
             onPointerLeave={(event) =>
               scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
             }
-            onOpenSettings={() => {
+            onOpenSettings={(page = "providers") => {
               setProjectMenuOpen(false);
               setRuntimeMenuOpen(false);
               setCodexRuntimeMenu(null);
-              setSettingsInitialPage("providers");
+              setSettingsInitialPage(page);
               setSettingsOpen(true);
             }}
           />

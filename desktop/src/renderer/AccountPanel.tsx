@@ -53,7 +53,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent }: 
    const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
    setLocalLogoutOnly(result.localLogoutOnly === true);
    if (action === 'login' || action === 'register' || action === 'logout') setPage('computers');
-   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); setAccount(await driver('status'));
+   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); setAccount(await driver('status')); window.dispatchEvent(new Event('wuu:account-changed'));
   } catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  };
  const devices = account.devices ?? [];

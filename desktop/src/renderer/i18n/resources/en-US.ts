@@ -1,6 +1,9 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "account.menu": "Account menu",
+  "account.local": "Local use",
+  "account.signedOut": "Not signed in",
   "mobile.conversations": "Conversations",
   "mobile.tools": "Files and tools",
   "mobile.notifications": "Notifications",
