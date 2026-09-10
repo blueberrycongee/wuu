@@ -2,21 +2,28 @@ import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
+import { PullToNewSession } from "./PullToNewSession";
 
 let root: Root;
 let host: HTMLDivElement;
 let target: HTMLElement;
 let open: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
+let newSession: ReturnType<typeof vi.fn>;
 
-function Harness({ opened }: { opened: boolean }) {
+function Harness({ opened, withPull = false }: { opened: boolean; withPull?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   useSidebarTouchGesture(ref, true, opened ? "open" : "closed", open, close);
-  return <div ref={ref}><div className="sidebar" /><div className="scroll-region" /><button className="compact-session-switcher-backdrop" /></div>;
+  return <div ref={ref}><div className="sidebar" /><div ref={viewport} className="scroll-region"><div ref={content} /></div>
+    <button className="compact-session-switcher-backdrop" />
+    {withPull && <PullToNewSession containerRef={viewport} contentRef={content} bottomAnchor={null} onNewSession={newSession} />}
+  </div>;
 }
 
-function render(opened = false) {
-  act(() => root.render(<Harness opened={opened} />));
+function render(opened = false, withPull = false) {
+  act(() => root.render(<Harness opened={opened} withPull={withPull} />));
   const sidebar = host.querySelector<HTMLElement>(".sidebar")!;
   vi.spyOn(sidebar, "getBoundingClientRect").mockReturnValue({ width: 280 } as DOMRect);
   target = opened ? sidebar : host.querySelector<HTMLElement>(".scroll-region")!;
@@ -47,6 +54,7 @@ beforeEach(() => {
   root = createRoot(host);
   open = vi.fn();
   close = vi.fn();
+  newSession = vi.fn();
 });
 
 afterEach(() => {
@@ -59,6 +67,36 @@ afterEach(() => {
 });
 
 describe("sidebar thumb gestures", () => {
+  it.each([false, true])("opens from an upward thumb arc at the bottom with sparse events=%s", (sparse) => {
+    render(false, true);
+    Object.defineProperties(target, {
+      scrollHeight: { value: 800 }, clientHeight: { value: 600 }, scrollTop: { value: 200 },
+    });
+    touch("touchstart", 0, 0);
+    if (!sparse) {
+      expect(touch("touchmove", 3, -4).defaultPrevented).toBe(false);
+      expect(touch("touchmove", 9, -12).defaultPrevented).toBe(true);
+    }
+    expect(touch("touchmove", 24, -32).defaultPrevented).toBe(true);
+    touch("touchmove", 72, -90);
+    finish(72, -90);
+    expect(open).toHaveBeenCalledOnce();
+    expect(newSession).not.toHaveBeenCalled();
+  });
+
+  it("leaves a vertical pull at the bottom to new-session navigation", () => {
+    render(false, true);
+    Object.defineProperties(target, {
+      scrollHeight: { value: 800 }, clientHeight: { value: 600 }, scrollTop: { value: 200 },
+    });
+    touch("touchstart", 0, 0);
+    touch("touchmove", 2, -20);
+    touch("touchmove", 5, -100);
+    finish(5, -100);
+    expect(open).not.toHaveBeenCalled();
+    expect(newSession).toHaveBeenCalledOnce();
+  });
+
   it.each([false, true])("accepts diagonal drags when opened=%s", (opened) => {
     render(opened);
     const direction = opened ? -1 : 1;
@@ -79,15 +117,11 @@ describe("sidebar thumb gestures", () => {
     expect(open).toHaveBeenCalledOnce();
   });
 
-  it.each(["vertical", "ambiguous", "native", "opposite"])("never reclaims a %s gesture", (kind) => {
+  it.each(["vertical", "native", "opposite"])("never reclaims a %s gesture", (kind) => {
     render();
     touch("touchstart", 0, 0);
     if (kind === "vertical") touch("touchmove", 4, 14);
     if (kind === "opposite") touch("touchmove", -14, 2);
-    if (kind === "ambiguous") {
-      touch("touchmove", 9, 12);
-      expect(touch("touchmove", 18, 24).defaultPrevented).toBe(false);
-    }
     if (kind === "native") {
       touch("touchmove", 9, 12);
       touch("touchmove", 18, 15, false);
@@ -95,6 +129,15 @@ describe("sidebar thumb gestures", () => {
     expect(touch("touchmove", 90, 30).defaultPrevented).toBe(false);
     finish(90, 30);
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each([-1, 1])("accepts a sparse diagonal first move with vertical direction %s", (direction) => {
+    render();
+    touch("touchstart", 0, 0);
+    expect(touch("touchmove", 24, direction * 32).defaultPrevented).toBe(true);
+    touch("touchmove", 36, direction * 45);
+    finish(36, direction * 45);
+    expect(open).toHaveBeenCalledOnce();
   });
 
   it.each([false, true])("catches and reverses a settling drawer when opened=%s", (opened) => {

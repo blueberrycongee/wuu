@@ -181,9 +181,18 @@ app.whenReady().then(async () => {
   await waitFor(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().left) < 1);
   await evaluate(() => document.querySelector(".compact-session-switcher-backdrop").click());
   await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "collapsed");
+
+  for (const [x, dx, dy] of [[250, 34, 42], [280, 34, -42], [350, 26, 32]]) {
+    // Sparse events model a light diagonal thumb swipe from the right half.
+    await swipe([[x, 300], [x + dx, 300 + dy]]);
+    await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "drawer");
+    await waitFor(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().left) < 1);
+    await evaluate(() => document.querySelector(".compact-session-switcher-backdrop").click());
+    await waitFor(() => document.querySelector(".app-shell")?.dataset.wuuSidebarMode === "collapsed");
+  }
   await swipe([[160, 300], [162, 320], [164, 360]]);
   assert.equal(await evaluate(() => document.querySelector(".app-shell").dataset.wuuSidebarMode), "collapsed");
-  console.log("PASS: real Chromium touch tracks drawer and backdrop before release, catches and reverses settling, cancels, opens/closes, and preserves vertical scrolling");
+  console.log("PASS: real Chromium touch tracks and interrupts the drawer, opens with light right-side diagonal swipes, cancels, and preserves vertical scrolling");
   clearTimeout(timeout);
   win.destroy();
   app.quit();

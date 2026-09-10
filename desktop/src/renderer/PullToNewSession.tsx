@@ -126,7 +126,10 @@ export function PullToNewSession({
     };
     const move = (event: TouchEvent) => {
       if (!gesture) return;
-      if (event.touches.length !== 1 || !event.cancelable) { reset(); return; }
+      if (event.defaultPrevented || event.touches.length !== 1 || !event.cancelable) { reset(); return; }
+      // Leave touch slop undecided so a thumb arc can become a drawer swipe.
+      if (!current && Math.max(Math.abs(event.touches[0].clientX - gesture.x),
+        Math.abs(event.touches[0].clientY - gesture.y)) < 8) return;
       // Cancel native bounce only after upward intent at the bottom. Ordinary
       // history scrolling and nested scroll areas retain their native behavior.
       if (update(event.touches[0])) event.preventDefault();

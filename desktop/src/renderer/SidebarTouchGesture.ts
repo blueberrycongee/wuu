@@ -127,7 +127,7 @@ export function useSidebarTouchGesture(
         interrupted, originOpen, startPosition: position,
         // A right-hand thumb has little travel left near the screen edge.
         // Keep opening reachable there without treating tiny movements as swipes.
-        openDistance: Math.max(32, Math.min(64, (window.innerWidth - touch.clientX) / 2)),
+        openDistance: Math.max(24, Math.min(32, (window.innerWidth - touch.clientX) / 3)),
         width, position, lastX: touch.clientX, lastTime: event.timeStamp, velocity: 0,
       };
     };
@@ -141,17 +141,11 @@ export function useSidebarTouchGesture(
       const dx = touch.clientX - gesture.x;
       const dy = Math.abs(touch.clientY - gesture.y);
       if (!gesture.horizontal) {
-        if (Math.max(Math.abs(dx), dy) < 10) return;
+        if (Math.max(Math.abs(dx), dy) < 8) return;
         const forward = gesture.interrupted ? Math.abs(dx) : wasOpen ? -dx : dx;
         if (forward <= 0 || dy > forward * 1.5) { cancel(); return; }
-        // Thumb arcs can start slightly more vertical than horizontal. Give
-        // that ambiguous start a short observation window before native
-        // scrolling takes ownership. Clearly vertical motion stays native.
-        if (forward < dy) {
-          if (Math.max(forward, dy) >= 20) cancel();
-          else event.preventDefault();
-          return;
-        }
+        // Accept diagonal thumb arcs immediately, including a sparse first
+        // touchmove. Only clearly vertical motion belongs to native scrolling.
         // Keep this direction until release, like a drawer drag: a short drag
         // can be abandoned without turning its tail into a page scroll.
         gesture.horizontal = true;
@@ -179,7 +173,9 @@ export function useSidebarTouchGesture(
       const velocity = event.timeStamp - gesture.lastTime <= 100 ? gesture.velocity : 0;
       const distance = Math.abs(touch.clientX - gesture.x);
       const threshold = gesture.interrupted || wasOpen ? gesture.width / 2 : gesture.openDistance;
-      settle(Math.abs(velocity) >= 0.5 && distance >= 32 ? velocity > 0 : gesture.position >= threshold, velocity);
+      // A deliberate short fling can complete independently of drag distance.
+      // The smaller distance floor still filters tap jitter; a hold expires speed.
+      settle(Math.abs(velocity) >= 0.3 && distance >= 12 ? velocity > 0 : gesture.position >= threshold, velocity);
     };
     const click = (event: MouseEvent): void => {
       if (performance.now() < suppressClickUntil) {
@@ -189,8 +185,9 @@ export function useSidebarTouchGesture(
     };
 
     shell.addEventListener("touchstart", start, { passive: true });
-    // Cancel scrolling only after a horizontal drawer gesture is established.
-    shell.addEventListener("touchmove", move, { passive: false });
+    // Resolve drawer intent before nested vertical gestures (pull-to-new-session).
+    // Unclaimed movements and controls retain their native/default handling.
+    shell.addEventListener("touchmove", move, { passive: false, capture: true });
     shell.addEventListener("touchend", end, { passive: false });
     shell.addEventListener("touchcancel", cancel);
     shell.addEventListener("click", click, true);
@@ -198,7 +195,7 @@ export function useSidebarTouchGesture(
     return () => {
       reset();
       shell.removeEventListener("touchstart", start);
-      shell.removeEventListener("touchmove", move);
+      shell.removeEventListener("touchmove", move, true);
       shell.removeEventListener("touchend", end);
       shell.removeEventListener("touchcancel", cancel);
       shell.removeEventListener("click", click, true);

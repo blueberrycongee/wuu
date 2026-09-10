@@ -441,11 +441,16 @@ describe("collapsed sidebar hover drawer", () => {
     ["slow left-side swipe", 16, 80, 400, 650, true],
     ["slow middle swipe", 150, 80, 400, 650, true],
     ["slow right-side swipe", 280, 70, 400, 650, true],
+    ["light middle-right swipe", 250, 34, 400, 650, true],
+    ["light right-side swipe", 300, 32, 400, 650, true],
+    ["light near-edge swipe", 350, 26, 400, 650, true],
     ["slow near-edge swipe", 340, 38, 400, 650, true],
     ["near-edge accidental movement", 340, 20, 400, 650, false],
     ["slow drag past halfway", 100, 180, 400, 450, true],
     ["short flick", 100, 40, 150, 160, true],
-    ["short flick followed by a hold", 100, 40, 150, 500, false],
+    ["light flick", 280, 20, 150, 160, true],
+    ["short flick followed by a hold", 100, 20, 150, 500, false],
+    ["tap jitter", 280, 6, 110, 120, false],
     ["deliberate swipe followed by a hold", 100, 80, 150, 500, true],
     ["right-side swipe pulled back before release", 280, 15, 700, 950, false, 70],
   ] as [string, number, number, number, number, boolean, number?][])("settles a %s using distance and recent speed", async (_name, x, distance, moveTime, endTime, opens, peak = distance) => {
@@ -534,9 +539,9 @@ describe("collapsed sidebar hover drawer", () => {
         if (kind === "left") touch(target, "touchmove", 130, 100);
         if (kind === "cancel") touch(target, "touchcancel", 150, 100);
         if (kind === "multitouch") touch(target, "touchstart", 150, 100, 2);
-        const move = touch(target, "touchmove", kind === "short" ? 175 : 240, 105);
+        const move = touch(target, "touchmove", kind === "short" ? 156 : 240, 105);
         if (kind !== "short") expect(move.defaultPrevented).toBe(false);
-        touch(target, "touchend", kind === "short" ? 175 : 240, 105);
+        touch(target, "touchend", kind === "short" ? 156 : 240, 105);
       });
       await act(async () => { vi.advanceTimersByTime(400); });
       expect(shell.dataset.wuuSidebarMode).toBe("collapsed");
