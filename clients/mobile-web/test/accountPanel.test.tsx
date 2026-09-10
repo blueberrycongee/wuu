@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
-import { AccountPanel, type AccountDeviceView } from '../../../desktop/src/renderer/AccountPanel';
+import { AccountPanel, type AccountDeviceView, type AccountAction } from '../../../desktop/src/renderer/AccountPanel';
 import { I18nProvider, translate } from '../../../desktop/src/renderer/i18n';
 import { languagePreferenceStore } from '../src/lib/language';
 
@@ -15,22 +15,42 @@ it('keeps same-named devices distinct, connects only online computers, and follo
     { pub: 'current', name: 'Phone', role: 'phone', online: false, account: 'test', added_at: 3 },
     { pub: 'other', name: 'Phone', role: 'phone', online: false, account: 'test', added_at: 4 },
   ];
-  const driver = vi.fn(async () => ({ username: 'test', pub: 'current', devices }));
+  const driver = vi.fn(async (action: AccountAction, input?: Record<string, string>) => {
+    if (action === 'revoke') devices.splice(devices.findIndex(d => d.pub === input?.pub), 1);
+    return { username: 'test', pub: 'current', devices };
+  });
   const connect = vi.fn();
   const container = document.createElement('div'); document.body.append(container);
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<I18nProvider preferenceStore={languagePreferenceStore}><AccountPanel driver={driver} onComputer={connect} /></I18nProvider>));
+    await act(async () => root.render(<I18nProvider preferenceStore={languagePreferenceStore}><AccountPanel driver={driver} onComputer={connect} managementContent={<div data-testid="management-only" />} /></I18nProvider>));
     const buttons = () => [...container.querySelectorAll('button')];
-    const open = buttons().filter(b => b.textContent === translate('en-US', 'account.open'));
+    const open = buttons().filter(b => b.getAttribute('aria-label') === translate('en-US', 'account.connectTo', { name: 'Computer' }));
     expect(open).toHaveLength(2);
     expect(open.map(b => b.disabled)).toEqual([false, true]);
     await act(async () => open[0].click());
     expect(connect).toHaveBeenCalledWith(devices[1]);
+    expect(buttons().filter(b => b.textContent === translate('en-US', 'account.remove'))).toHaveLength(0);
+    expect(container.querySelector('[data-testid="management-only"]')).toBeNull();
+    const management = buttons().find(b => b.getAttribute('aria-label') === translate('en-US', 'account.manage'))!;
+    await act(async () => management.click());
+    expect(container.querySelector('[data-testid="management-only"]')).not.toBeNull();
     expect(buttons().filter(b => b.textContent === translate('en-US', 'account.remove'))).toHaveLength(3);
+    const phones = container.querySelector(`section[aria-label="${translate('en-US', 'account.phones')}"]`)!;
+    await act(async () => phones.querySelector<HTMLButtonElement>('button')!.click());
+    expect(driver).toHaveBeenCalledWith('revoke', { pub: 'other' });
+    expect(phones.querySelector('button')).toBeNull();
+    await act(async () => buttons().find(b => b.textContent === translate('en-US', 'account.password'))!.click());
+    expect(container.querySelector('input[autocomplete="current-password"]')).not.toBeNull();
+    await act(async () => { window.dispatchEvent(new Event('wuu:native-back', { cancelable: true })); });
+    expect(container.querySelector('[data-testid="management-only"]')).not.toBeNull();
+    const back = new Event('wuu:native-back', { cancelable: true });
+    await act(async () => { window.dispatchEvent(back); });
+    expect(back.defaultPrevented).toBe(true);
+    expect(container.querySelector('[data-testid="management-only"]')).toBeNull();
     await act(async () => { await languagePreferenceStore.set('zh-CN'); });
     expect(document.documentElement.lang).toBe('zh-CN');
-    expect(buttons().filter(b => b.textContent === translate('zh-CN', 'account.open'))).toHaveLength(2);
+    expect(buttons().filter(b => b.getAttribute('aria-label') === translate('zh-CN', 'account.connectTo', { name: 'Computer' }))).toHaveLength(2);
   } finally {
     await act(async () => root.unmount()); container.remove(); localStorage.clear();
   }

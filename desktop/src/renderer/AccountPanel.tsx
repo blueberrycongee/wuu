@@ -1,5 +1,6 @@
 import './AccountPanel.css';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ArrowLeft, ChevronRight, Monitor, Settings2 } from 'lucide-react';
 import { useI18n } from './i18n';
 
 export type AccountAction = 'status' | 'login' | 'register' | 'recover' | 'logout' | 'revoke' | 'password';
@@ -8,10 +9,13 @@ export type AccountView = { username?: string; server?: string; pub?: string; de
 export type AccountDriver = (action: AccountAction, input?: Record<string, string>) => Promise<AccountView>;
 
 /** Shared account forms; each host owns credential storage and transport. */
-export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void }): React.JSX.Element {
+export function AccountPanel({ driver, onComputer, onPair, managementContent }: { driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode }): React.JSX.Element {
  const { t } = useI18n();
  const epoch = useRef(0);
+ const heading = useRef<HTMLHeadingElement>(null);
  const [account, setAccount] = useState<AccountView>({});
+ const [page, setPage] = useState<'computers' | 'manage'>('computers');
+ const [loading, setLoading] = useState(true);
  const [mode, setMode] = useState<'login' | 'register' | 'recover' | 'password'>('login');
  const [server, setServer] = useState(''); const [username, setUsername] = useState('');
  const [password, setPassword] = useState(''); const [secret, setSecret] = useState('');
@@ -21,40 +25,76 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
  useEffect(() => {
   let active = true; let running = false;
   const refresh = async () => { if (running || document.visibilityState === 'hidden') return; running = true; const generation = epoch.current;
-   try { const next = await driver('status'); if (active && generation === epoch.current) setAccount(next); } catch (e) { if (active && generation === epoch.current) setError(String(e instanceof Error ? e.message : e)); } finally { running = false; }
+   try { const next = await driver('status'); if (active && generation === epoch.current) setAccount(next); } catch (e) { if (active && generation === epoch.current) setError(String(e instanceof Error ? e.message : e)); } finally { running = false; if (active) setLoading(false); }
   };
   void refresh(); const timer = setInterval(() => void refresh(), 5000);
   document.addEventListener('visibilitychange', refresh); window.addEventListener('online', refresh);
   return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
  }, [driver]);
+ useEffect(() => { heading.current?.focus(); }, [page, mode]);
+ const back = () => {
+  if (mode === 'password') { setMode('login'); setPassword(''); setSecret(''); }
+  else setPage('computers');
+  setError('');
+ };
+ useEffect(() => {
+  if (!onComputer || !account.username || (page === 'computers' && mode !== 'password')) return;
+  const handler = (event: Event) => { event.preventDefault(); if (!busy) back(); };
+  window.addEventListener('wuu:native-back', handler);
+  return () => window.removeEventListener('wuu:native-back', handler);
+ }, [onComputer, account.username, page, mode, busy]);
  const perform = async (action: AccountAction, input?: Record<string,string>) => {
   if (busy) return; epoch.current++; setBusy(true); setError(''); setLocalLogoutOnly(false);
   try {
    const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
    setLocalLogoutOnly(result.localLogoutOnly === true);
+   if (action === 'login' || action === 'register' || action === 'logout') setPage('computers');
    setPassword(''); setSecret(''); setMode('login'); setAccount(await driver('status'));
   } catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
  };
- return <section className="account-panel" aria-label={t('account.label')}>
-  <h2>{account.username ? t('account.title', {username: account.username}) : t('account.connect')}</h2>
+ const devices = account.devices ?? [];
+ const computers = devices.filter(d => d.role === 'host').sort((a, b) => Number(b.online) - Number(a.online) || a.added_at - b.added_at);
+ const choosing = !!account.username && !!onComputer && page === 'computers' && mode !== 'password';
+ const managing = !!account.username && !choosing && mode !== 'password';
+ const pairAction = onPair && <button className="account-text-action" type="button" onClick={onPair}>{t('account.pairLink')}<ChevronRight size={18} aria-hidden="true" /></button>;
+ if (loading) return <section className="account-panel" aria-busy="true"><p role="status">{t('account.restoring')}</p></section>;
+ return <section className="account-panel" aria-label={t(choosing ? 'account.computers' : 'account.label')}>
+  <header className="account-page-header">
+   {account.username && !choosing && (onComputer || mode === 'password') && <button className="account-back" type="button" aria-label={t(mode === 'password' ? 'account.manage' : 'account.computers')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
+   <h2 ref={heading} tabIndex={-1}>{t(choosing ? 'account.computers' : mode === 'password' ? 'account.password' : managing ? 'account.manage' : 'account.connect')}</h2>
+   {choosing && <button className="account-manage-link" type="button" aria-label={t('account.manage')} onClick={() => setPage('manage')}><Settings2 size={20} aria-hidden="true" /></button>}
+  </header>
   {error && <p role="alert" className="settings-error">{error}</p>}
   {localLogoutOnly && <p role="status">{t('account.localLogout')}</p>}
   {recovery && <div role="status"><p>{t('account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => setRecovery('')}>{t('account.savedRecovery')}</button></p></div>}
-  {account.username && mode !== 'password' ? <>
-   <p className="account-server">{account.server}</p>
+  {choosing ? <div className="account-computers">
+   {computers.length === 0 ? <div className="account-empty"><Monitor size={32} aria-hidden="true" /><p>{t('account.noComputers')}</p>{pairAction}</div> : ([true, false] as const).map(online => {
+    const group = computers.filter(d => d.online === online);
+    if (!group.length) return null;
+    return <section className="account-computer-group" key={String(online)} aria-label={t(online ? 'account.available' : 'account.offline')}>
+     <h3>{t(online ? 'account.available' : 'account.offline')}<span>{group.length}</span></h3>
+     <div className="account-computer-list">{group.map(d => <button className="account-computer-card" type="button" key={d.pub} disabled={!online || busy} aria-label={t('account.connectTo', { name: d.name || t('account.computer') })} onClick={() => onComputer?.(d)}>
+      <span className="account-computer-icon"><Monitor size={24} aria-hidden="true" /></span>
+      <span className="account-computer-name">{d.name || t('account.computer')}</span>
+      {online && <ChevronRight size={20} aria-hidden="true" />}
+     </button>)}</div>
+    </section>;
+   })}
+  </div> : managing ? <>
+   <div className="account-profile"><strong>{account.username}</strong><p className="account-server">{account.server}</p></div>
    {(['host', 'phone'] as const).map(role => <section className="account-device-group" key={role} aria-label={t(role === 'host' ? 'account.computers' : 'account.phones')}>
     <h3>{t(role === 'host' ? 'account.computers' : 'account.phones')}</h3>
     <div className="account-devices">{(account.devices ?? []).filter(d => d.role === role).sort((a,b) => Number(b.pub === account.pub) - Number(a.pub === account.pub) || Number(b.online) - Number(a.online) || a.added_at - b.added_at).map(d => <div className="account-device" key={d.pub}>
      <div className="account-device-info"><strong>{d.name || t(role === 'host' ? 'account.computer' : 'account.phone')}</strong><p><span className="account-device-status" data-online={d.online}>{t(d.online ? 'account.online' : 'account.offline')}</span>{d.pub === account.pub && <span className="account-current">{t('account.current')}</span>}</p></div>
      <div className="account-device-actions">
-      {onComputer && role === 'host' && <button className="account-primary" type="button" disabled={!d.online || busy} onClick={() => onComputer(d)}>{t('account.open')}</button>}
       {d.pub !== account.pub && <button className="account-remove" type="button" disabled={busy} onClick={() => void perform('revoke',{pub:d.pub})}>{t('account.remove')}</button>}
      </div>
     </div>)}</div>
     {role === 'host' && !(account.devices ?? []).some(d => d.role === 'host') && <p>{t('account.noComputers')}</p>}
    </section>)}
-   <div className="account-actions"><button type="button" disabled={busy} onClick={() => setMode('password')}>{t('account.password')}</button><button type="button" disabled={busy} onClick={() => void perform('logout')}>{t('account.logout')}</button></div>
-  </> : <form onSubmit={e => {e.preventDefault();void perform(mode,{server,username:account.username || username,password,secret,name:deviceName});}}>
+   <div className="account-management-actions">{pairAction}{managementContent}<button type="button" disabled={busy} onClick={() => setMode('password')}>{t('account.password')}<ChevronRight size={18} aria-hidden="true" /></button></div>
+   <button className="account-signout" type="button" disabled={busy} onClick={() => void perform('logout')}>{t('account.logout')}</button>
+  </> : <><form onSubmit={e => {e.preventDefault();void perform(mode,{server,username:account.username || username,password,secret,name:deviceName});}}>
    {!account.username && <>
     <label>{t('account.server')}<input type="url" autoCapitalize="none" autoCorrect="off" placeholder="https://wuu.example.com" value={server} required onChange={e => setServer(e.target.value)}/></label>
     <label>{t('account.username')}<input autoComplete="username" autoCapitalize="none" autoCorrect="off" value={username} required minLength={3} onChange={e => setUsername(e.target.value)}/></label>
@@ -64,7 +104,7 @@ export function AccountPanel({ driver, onComputer }: { driver: AccountDriver; on
    <label>{t(mode === 'login' ? 'account.loginPassword' : 'account.newPassword')}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} required minLength={12} onChange={e => setPassword(e.target.value)}/></label>
    {mode === 'password' && <p>{t('account.passwordHint')}</p>}
    <button className="account-primary" disabled={busy} type="submit">{t(busy ? 'account.busy' : `account.${mode}`)}</button>
-   <div className="account-actions">{(['login','register','recover'] as const).filter(m => m !== mode).map(m => <button type="button" key={m} disabled={busy} onClick={() => {setMode(m);setError('');}}>{t(m === 'login' ? 'account.backToLogin' : m === 'recover' ? 'account.forgotPassword' : 'account.register')}</button>)}</div>
-  </form>}
+   {!account.username && <div className="account-actions">{(['login','register','recover'] as const).filter(m => m !== mode).map(m => <button type="button" key={m} disabled={busy} onClick={() => {setMode(m);setError('');}}>{t(m === 'login' ? 'account.backToLogin' : m === 'recover' ? 'account.forgotPassword' : 'account.register')}</button>)}</div>}
+  </form>{!account.username && pairAction}</>}
  </section>;
 }

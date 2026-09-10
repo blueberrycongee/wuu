@@ -108,12 +108,8 @@ export default function AccountApp(): React.JSX.Element {
     );
   return (
     <main className="account-home">
-      <AccountPanel driver={accountDriver} onComputer={(d) => void select(d)} />
-      <NotificationSettings />
+      <AccountPanel driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => setPair(true)} managementContent={<NotificationSettings />} />
       {error && <p role="alert">{error}</p>}
-      <button className="account-pair-link" onClick={() => setPair(true)}>
-        {t('account.pairLink')}
-      </button>
     </main>
   );
 }

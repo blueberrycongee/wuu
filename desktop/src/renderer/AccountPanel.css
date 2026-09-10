@@ -9,8 +9,8 @@
 .account-server { font-size:12px; overflow-wrap:anywhere; }
 .account-device-group { margin:24px 0; }
 .account-device-group > p { font-size:13px; }
-.account-devices { display:grid; gap:8px; }
-.account-device { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:14px; border:1px solid var(--hairline); border-radius:var(--radius-sm); }
+.account-devices { display:grid; }
+.account-device { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:14px 0; border-bottom:1px solid var(--hairline-soft); }
 .account-device-info { flex:1; min-width:140px; overflow-wrap:anywhere; }
 .account-device-info strong { font-size:14px; }
 .account-device-info p { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 0; font-size:12px; }
@@ -24,3 +24,37 @@
 .account-panel button.account-remove { border-color:transparent; color:var(--ink-soft); font-size:12px; }
 .account-panel button:focus-visible, .account-panel input:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
 .account-panel button:disabled { opacity:.45; cursor:default; }
+
+.account-page-header { display:flex; align-items:center; gap:12px; margin-bottom:28px; min-height:44px; }
+.account-page-header h2 { flex:1; margin:0; min-width:0; font-size:26px; font-weight:600; letter-spacing:-.025em; }
+.account-panel .account-back, .account-panel .account-manage-link { display:grid; place-items:center; width:44px; padding:0; flex:none; border:0; background:var(--surface-1); }
+.account-panel .account-back { margin-left:-8px; background:transparent; }
+.account-computers { display:grid; gap:28px; }
+.account-computer-group h3 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:13px; font-weight:500; color:var(--ink-soft); }
+.account-computer-group h3 span { font-size:12px; color:var(--ink-muted); }
+.account-computer-list { display:grid; gap:10px; }
+.account-panel .account-computer-card { width:100%; min-height:88px; display:flex; align-items:center; gap:16px; padding:20px 16px; text-align:left; border:1px solid var(--hairline-soft); border-radius:16px; background:var(--surface-1); }
+.account-computer-icon { display:grid; place-items:center; flex:none; width:44px; height:44px; border-radius:12px; background:var(--paper); color:var(--ink); }
+.account-computer-name { flex:1; min-width:0; overflow-wrap:anywhere; font-size:16px; line-height:1.4; font-weight:600; }
+.account-computer-card > svg { flex:none; color:var(--ink-muted); }
+.account-panel .account-computer-card:enabled:active { background:var(--surface-2); }
+.account-panel .account-computer-card:disabled { opacity:1; background:transparent; color:var(--ink-muted); }
+.account-computer-card:disabled .account-computer-icon { background:var(--surface-1); color:var(--ink-muted); }
+.account-empty { display:flex; flex-direction:column; align-items:center; padding:56px 16px; color:var(--ink-muted); }
+.account-profile { padding:0 0 20px; border-bottom:1px solid var(--hairline-soft); }
+.account-profile > strong { font-size:17px; font-weight:600; }
+.account-profile .account-server { margin:6px 0 0; }
+.account-panel .account-management-actions { margin-top:28px; overflow:hidden; border-radius:12px; background:var(--surface-1); }
+.account-management-actions > button, .account-notifications { width:100%; padding:4px 16px; }
+.account-panel .account-management-actions > button { display:flex; align-items:center; justify-content:space-between; gap:16px; text-align:left; min-height:56px; padding:12px 16px; border:0; border-radius:0; border-bottom:1px solid var(--hairline-soft); }
+.account-management-actions > :last-child { border-bottom:0; }
+.account-notifications { box-sizing:border-box; border-bottom:1px solid var(--hairline-soft); }
+.account-notification-row { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:48px; font-size:14px; }
+.account-setting-value { color:var(--ink-muted); font-size:12px; text-align:right; }
+.account-panel .account-switch { display:flex; align-items:center; padding:0; width:44px; border:0; flex:none; }
+.account-switch > span { position:relative; width:44px; height:26px; border-radius:13px; background:var(--ink-muted); }
+.account-switch > span::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--paper); }
+.account-switch[aria-checked="true"] > span { background:var(--ink); }
+.account-switch[aria-checked="true"] > span::after { left:21px; }
+.account-panel .account-signout { width:100%; margin-top:28px; border:0; color:var(--danger); background:transparent; }
+.account-panel > .account-text-action { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; margin-top:20px; border:0; color:var(--ink-soft); }
