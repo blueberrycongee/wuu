@@ -65,3 +65,19 @@ it('can resume the last account computer even when the directory is unavailable 
  expect(container.querySelector('[data-testid="connected"]')).not.toBeNull();
  expect(state.connect).toHaveBeenCalledTimes(2);
 });
+
+it('returns from pairing to its original account page for both the header and Android back', async () => {
+ await webCredStore.forgetPair(); await webCredStore.clear();
+ localStorage.setItem('wuu.account.server', 'https://example.test');
+ await render(); await click('更多方式'); await click('配对电脑');
+ expect(container.querySelector('.web-pair-card')).not.toBeNull();
+ await act(async () => container.querySelector<HTMLButtonElement>('.web-gate-back')!.click());
+ expect(container.querySelector('.web-pair-card')).toBeNull();
+ expect(container.querySelector('h2')?.textContent).toBe('更多方式');
+ await click('配对电脑');
+ const back = new Event('wuu:native-back', { cancelable: true });
+ await act(async () => { window.dispatchEvent(back); });
+ expect(back.defaultPrevented).toBe(true);
+ expect(container.querySelector('.web-pair-card')).toBeNull();
+ expect(container.querySelector('h2')?.textContent).toBe('更多方式');
+});

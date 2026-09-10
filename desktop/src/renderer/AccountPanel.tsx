@@ -11,7 +11,7 @@ export type AccountView = { username?: string; server?: string; pub?: string; de
 export type AccountDriver = (action: AccountAction, input?: Record<string, string>) => Promise<AccountView>;
 
 /** Shared account forms; each host owns credential storage and transport. */
-export function AccountPanel({ driver, onComputer, onPair, managementContent, onSignedIn, reserveAuthorization, presentation }: { presentation?: 'mobile'; driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void; reserveAuthorization?: () => { open: (url: string) => Promise<void>; close: () => void } }): React.JSX.Element {
+export function AccountPanel({ driver, onComputer, onPair, managementContent, onSignedIn, reserveAuthorization, presentation, active: panelActive = true }: { active?: boolean; presentation?: 'mobile'; driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void; reserveAuthorization?: () => { open: (url: string) => Promise<void>; close: () => void } }): React.JSX.Element {
  const { t } = useI18n();
  const epoch = useRef(0);
  const heading = useRef<HTMLHeadingElement>(null);
@@ -34,6 +34,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
  const [localLogoutOnly, setLocalLogoutOnly] = useState(false);
  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [recovery, setRecovery] = useState('');
  useEffect(() => {
+  if (!panelActive) return;
   let active = true; let running = false;
   const refresh = async () => { if (running || document.visibilityState === 'hidden') return; running = true; const generation = epoch.current;
    try { const next = await driver('status'); if (active && generation === epoch.current) { setAccount(next); if (next.oauth_url) setOAuthURL(next.oauth_url); } } catch (e) { if (active && generation === epoch.current) setError(String(e instanceof Error ? e.message : e)); } finally { running = false; if (active) setLoading(false); }
@@ -41,15 +42,15 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
   void refresh(); const timer = setInterval(() => void refresh(), 5000);
   document.addEventListener('visibilitychange', refresh); window.addEventListener('online', refresh);
   return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
- }, [driver]);
+ }, [driver, panelActive]);
  useEffect(() => {
-  if (!server) return;
+  if (!panelActive || !server) return;
   let active = true; setConfig(null); setConfigError('');
   void driver('config', { server }).then(next => { if (active) setConfig(next); }).catch(e => { if (active) setConfigError(String(e instanceof Error ? e.message : e)); });
   return () => { active = false; };
- }, [driver, server, configRevision]);
+ }, [driver, server, configRevision, panelActive]);
  useEffect(() => {
-  if (!oauthURL) return;
+  if (!panelActive || !oauthURL) return;
   let active = true; let running = false; const generation = oauthEpoch.current;
   const poll = async () => {
    if (running || document.visibilityState === 'hidden') return;
@@ -68,7 +69,7 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
   void poll(); const timer = setInterval(() => void poll(), 2000);
   window.addEventListener('online', poll); document.addEventListener('visibilitychange', poll);
   return () => { active = false; clearInterval(timer); window.removeEventListener('online', poll); document.removeEventListener('visibilitychange', poll); };
- }, [driver, oauthURL]);
+ }, [driver, oauthURL, panelActive]);
  const cancelGithub = async () => { epoch.current++; oauthEpoch.current++; setOAuthURL(''); setError(''); await driver('github-cancel'); };
  const startGithub = async () => {
   let browser: ReturnType<NonNullable<typeof reserveAuthorization>> | undefined; setBusy(true); setError(''); epoch.current++; const generation = ++oauthEpoch.current;
@@ -82,21 +83,21 @@ export function AccountPanel({ driver, onComputer, onPair, managementContent, on
   } catch(e) { browser?.close(); setError(e instanceof Error ? e.message : String(e)); }
   finally { setBusy(false); }
  };
- useEffect(() => { heading.current?.focus(); }, [page, mode, authPage]);
+ useEffect(() => { if (panelActive) heading.current?.focus(); }, [page, mode, authPage, panelActive]);
  const back = () => {
   if (oauthURL) { void cancelGithub().catch(e => setError(String(e))); return; }
   if (!account.username && authPage !== 'form') setAuthPage('form');
-  else if (mode !== 'login') { setMode('login'); setPassword(''); setSecret(''); }
+  else if (mode !== 'login') { setMode('login'); setAuthPage(account.username ? 'form' : 'options'); setPassword(''); setSecret(''); }
   else setPage('computers');
   setError('');
  };
  useEffect(() => {
   const nested = !!oauthURL || (account.username ? page !== 'computers' || mode === 'password' : (!!server && authPage !== 'form') || mode !== 'login');
-  if (!onComputer || !nested) return;
+  if (!panelActive || !onComputer || !nested) return;
   const handler = (event: Event) => { event.preventDefault(); if (!busy) back(); };
   window.addEventListener('wuu:native-back', handler);
   return () => window.removeEventListener('wuu:native-back', handler);
- }, [onComputer, account.username, page, mode, authPage, busy, oauthURL]);
+ }, [onComputer, account.username, page, mode, authPage, busy, oauthURL, panelActive]);
  const perform = async (action: AccountAction, input?: Record<string,string>) => {
   if (busy) return; epoch.current++; setBusy(true); setError(''); setLocalLogoutOnly(false);
   try {

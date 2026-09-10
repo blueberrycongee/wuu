@@ -122,11 +122,9 @@ it('keeps registration, recovery and pairing reachable through secondary navigat
     await ui.click('account.register');
     expect(ui.container.querySelector<HTMLInputElement>('input[autocomplete="new-password"]')?.value).toBe('');
     await ui.click('common.back');
-    await ui.click('account.moreOptions');
     await ui.click('account.forgotPassword');
     expect(ui.container.querySelector('input[autocomplete="off"]')).not.toBeNull();
     await ui.click('common.back');
-    await ui.click('account.moreOptions');
     await ui.click('account.pairLink');
     expect(ui.pair).toHaveBeenCalledOnce();
   } finally { await ui.dispose(); }
@@ -185,4 +183,18 @@ it('shows server retry instead of an unusable login form when capability discove
     expect(ui.container.textContent).toContain(translate('en-US', 'account.retryServer'));
     expect(ui.container.querySelector('input[autocomplete="username"]')).toBeNull();
   } finally { await ui.dispose(); }
+});
+
+it('returns from recovery to authentication options before returning to login', async () => {
+ localStorage.setItem('wuu.account.server', 'https://wuu.example.com');
+ const ui = await renderLogin(async () => ({ github: false }));
+ try {
+  await ui.click('account.moreOptions'); await ui.click('account.forgotPassword');
+  await ui.click('common.back');
+  expect(ui.container.querySelector('h2')?.textContent).toBe(translate('en-US', 'account.moreOptions'));
+  const back = new Event('wuu:native-back', { cancelable: true });
+  await act(async () => { window.dispatchEvent(back); });
+  expect(back.defaultPrevented).toBe(true);
+  expect(ui.container.querySelector('input[autocomplete="username"]')).not.toBeNull();
+ } finally { await ui.dispose(); }
 });

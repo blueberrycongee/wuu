@@ -125,3 +125,16 @@
   .account-workbench .settings-switch-thumb { width: 20px; height: 20px; top: 14px; left: 4px; }
   .account-workbench .settings-switch[aria-checked="true"] .settings-switch-thumb { transform: translateX(20px); }
 }
+
+.account-workbench .settings-phone-back {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  -webkit-app-region: no-drag;
+}

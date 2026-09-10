@@ -115,8 +115,9 @@ export default function AccountApp(): React.JSX.Element {
     return () => window.removeEventListener("wuu:native-back", handler);
   }, [selected, pair]);
   if (boot) return <main className="account-home account-boot"><ViewSwitchLoading /></main>;
-  if (selected || pair)
-    return (
+  const inWorkbench = Boolean(selected || pair);
+  return (<>
+    {inWorkbench && (
       <PhoneNavigationContext.Provider value={{ computer: selected?.host_name || remembered?.host_name, openDevices: back }}>
       <div className="account-workbench">
         <div className="account-workbench-content">
@@ -124,9 +125,8 @@ export default function AccountApp(): React.JSX.Element {
         </div>
       </div>
       </PhoneNavigationContext.Provider>
-    );
-  return (
-    <main className="account-home">
+    )}
+    <main className="account-home" hidden={inWorkbench}>
       {lastAccount && <section className="account-panel account-resume">
         <button className="account-primary" onClick={() => void (async () => {
           const session = await loadAccount();
@@ -138,8 +138,8 @@ export default function AccountApp(): React.JSX.Element {
         <button className="account-primary" onClick={() => void webCredStore.save(remembered).then(() => setPair(true)).catch(e => setError(String(e)))}>{t('account.resumeConnection')}{remembered.host_name ? ` · ${remembered.host_name}` : ''}</button>
         <button onClick={() => void webCredStore.forgetPair().then(async () => { const active = await webCredStore.load(); if (active?.host_pub === remembered.host_pub && !active.account_username) await webCredStore.clear(); setRemembered(null); }).catch(e => setError(String(e)))}>{t('account.forgetConnection')}</button>
       </section>}
-      <AccountPanel presentation="mobile" reserveAuthorization={reserveAuthorization} driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => void webCredStore.clear().then(() => setPair(true)).catch(e => setError(String(e)))} managementContent={<NotificationSettings />} />
+      <AccountPanel active={!inWorkbench} presentation="mobile" reserveAuthorization={reserveAuthorization} driver={accountDriver} onComputer={(d) => void select(d)} onPair={() => void webCredStore.clear().then(() => setPair(true)).catch(e => setError(String(e)))} managementContent={<NotificationSettings />} />
       {error && <p role="alert">{error}</p>}
     </main>
-  );
+  </>);
 }

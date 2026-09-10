@@ -1027,6 +1027,7 @@ export function SettingsView({
       )}
       <main className="settings-main" data-wuu-component="settings-content">
         <div className="settings-titlebar">
+          {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
           {/* The toggle must stay a descendant of the titlebar drag strip:
            * a no-drag element only gets carved out of a drag region when it
            * belongs to it — as a shell-level sibling positioned over the
