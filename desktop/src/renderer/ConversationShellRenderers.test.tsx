@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../shared/protocol";
 import type { HeaderSnapshotV1 } from "../shared/workbench";
-import { CompactConversationActions } from "./CompactConversationActions";
 import {
   createThreadSessionTab,
   emptyComposerDraft,
@@ -274,32 +273,6 @@ describe("compact conversation actions", () => {
     act(() => menuItems()[1].click());
     expect(props.onToggleRightPanel).toHaveBeenCalledOnce();
     expect(document.querySelector('[role="menu"]')).toBeNull();
-  });
-
-  it("keeps navigation and creation accessible in the composer menu and skips disabled actions", () => {
-    const props = setup();
-    const navigation = { onOpenSidebar: vi.fn() };
-    const render = (canStartNewThread: boolean) => act(() => root?.render(
-      <CompactConversationActions {...props} navigation={navigation} canStartNewThread={canStartNewThread} />,
-    ));
-    render(true);
-    const trigger = props.environmentToggleRef.current!;
-    key(trigger, "ArrowUp");
-    expect(document.activeElement).toBe(menuItems().at(-1));
-    key(document.activeElement!, "Home");
-    act(() => (document.activeElement as HTMLButtonElement).click());
-    expect(navigation.onOpenSidebar).toHaveBeenCalledOnce();
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    key(trigger, "ArrowDown");
-    key(document.activeElement!, "ArrowDown");
-    act(() => (document.activeElement as HTMLButtonElement).click());
-    expect(props.onStartNewThread).toHaveBeenCalledOnce();
-    render(false);
-    key(trigger, "ArrowDown");
-    key(document.activeElement!, "ArrowDown");
-    act(() => (document.activeElement as HTMLButtonElement).click());
-    expect(props.onToggleEnvironmentPanel).toHaveBeenCalledOnce();
-    expect(props.onStartNewThread).toHaveBeenCalledOnce();
   });
 
   it("dismisses on outside interaction and removes the menu when the layout widens", () => {

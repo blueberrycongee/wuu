@@ -328,7 +328,7 @@ describe("collapsed sidebar hover drawer", () => {
     ["web", true, 820, false],
     ["web", false, 390, false],
     ["desktop", true, 390, false],
-  ] as const)("places navigation by available space and host: %s touch=%s width=%s", async (host, coarse, width, inComposer) => {
+  ] as const)("uses swipe-only phone navigation and restores the titlebar on wider layouts: %s touch=%s width=%s", async (host, coarse, width, inComposer) => {
     document.documentElement.dataset.hostKind = host;
     window.innerWidth = width;
     vi.mocked(window.matchMedia).mockImplementation((query) => ({
@@ -339,22 +339,7 @@ describe("collapsed sidebar hover drawer", () => {
     await renderCollapsedApp();
     expect(Boolean(container.querySelector('[data-wuu-component="conversation-titlebar"]'))).toBe(!inComposer);
     expect(Boolean(container.querySelector(`aside button[aria-label="${translateCurrent("sidebar.switchProject")}"]`))).toBe(host === "web" && coarse && width < 700);
-    const navigation = container.querySelector<HTMLButtonElement>('.composer-bar .compact-conversation-actions [aria-haspopup="menu"]');
-    expect(Boolean(navigation)).toBe(inComposer);
-    if (!navigation) return;
-    await act(async () => { navigation.click(); });
-    const menu = document.getElementById(navigation.getAttribute("aria-controls")!)!;
-    expect(menu).not.toBeNull();
-    const openSidebar = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
-      .find(button => button.textContent === translateCurrent("mobile.conversations"));
-    expect(openSidebar).toBeTruthy();
-    await act(async () => { openSidebar!.click(); });
-    expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
-    expect(menu.isConnected).toBe(false);
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>(".compact-session-switcher-backdrop")!.click();
-      vi.advanceTimersByTime(400);
-    });
+    expect(container.querySelector('.composer-bar .compact-conversation-actions')).toBeNull();
     await act(async () => {
       window.innerWidth = 820;
       window.dispatchEvent(new Event("resize"));

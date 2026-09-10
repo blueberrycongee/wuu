@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Ellipsis, Info, Menu, SquarePen } from "lucide-react";
+import { Ellipsis, Info, SquarePen } from "lucide-react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
@@ -7,7 +7,6 @@ import { useI18n } from "./i18n";
 export function CompactConversationActions({
   canStartNewThread, onStartNewThread, environmentToggleRef,
   environmentPanelVisible, onToggleEnvironmentPanel, rightPanelOpen, onToggleRightPanel,
-  navigation,
 }: {
   canStartNewThread: boolean;
   onStartNewThread: () => void;
@@ -16,7 +15,6 @@ export function CompactConversationActions({
   onToggleEnvironmentPanel: () => void;
   rightPanelOpen: boolean;
   onToggleRightPanel: () => void;
-  navigation?: { onOpenSidebar: () => void };
 }): JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -51,12 +49,10 @@ export function CompactConversationActions({
   };
   return (
     <div className="title-actions compact-conversation-actions">
-      {navigation && <button type="button" className="icon-button" aria-label={t("mobile.conversations")} title={t("mobile.conversations")} onClick={navigation.onOpenSidebar}><Menu size={18} aria-hidden="true" /></button>}
-      {navigation && <button type="button" className="icon-button" aria-label={t("mobile.tools")} title={t("mobile.tools")} aria-expanded={rightPanelOpen} onClick={onToggleRightPanel}><SidePanelToggleIcon side="right" open={rightPanelOpen} /></button>}
-      {!navigation && <button type="button" className="icon-button" aria-label={t("tabs.newConversation")} title={t("tabs.newConversation")}
+      <button type="button" className="icon-button" aria-label={t("tabs.newConversation")} title={t("tabs.newConversation")}
         disabled={!canStartNewThread} onClick={onStartNewThread}>
         <SquarePen size={18} aria-hidden="true" />
-      </button>}
+      </button>
       <button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
         title={t("shell.moreActions")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuID : undefined}
         onClick={() => { initialFocus.current = 0; setOpen(!open); }}
@@ -69,7 +65,7 @@ export function CompactConversationActions({
         }}>
         <Ellipsis size={18} aria-hidden="true" />
       </button>
-      {open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement={navigation ? "above" : "below"} align={navigation ? "left" : "right"} width={224}>
+      {open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
         <div ref={menuRef} id={menuID} role="menu" aria-label={t("shell.moreActions")} className="conversation-actions-menu"
           onKeyDown={(event) => {
             const buttons = items();
@@ -88,23 +84,13 @@ export function CompactConversationActions({
               close();
             }
           }}>
-          {navigation && <>
-            <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); navigation.onOpenSidebar(); }}>
-              <SidePanelToggleIcon side="left" open={false} />
-              {t("mobile.conversations")}
-            </button>
-            <button type="button" role="menuitem" tabIndex={-1} disabled={!canStartNewThread} onClick={() => { close(); onStartNewThread(); }}>
-              <SquarePen size={18} aria-hidden="true" />
-              {t("tabs.newConversation")}
-            </button>
-          </>}
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); onToggleEnvironmentPanel(); }}>
             <Info size={18} aria-hidden="true" />
             {t(environmentPanelVisible ? "shell.hideEnvironmentInfo" : "shell.showEnvironmentInfo")}
           </button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); onToggleRightPanel(); }}>
             <SidePanelToggleIcon side="right" open={rightPanelOpen} />
-            {t(navigation ? "mobile.tools" : rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+            {t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
           </button>
         </div>
       </FloatingMenuPortal>}

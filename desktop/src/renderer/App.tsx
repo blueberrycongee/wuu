@@ -1,7 +1,6 @@
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
-import { CompactConversationActions } from "./CompactConversationActions";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 /// <reference path="../shared/jsx-compat.d.ts" />
 
@@ -2211,7 +2210,7 @@ export function App(): JSX.Element {
     !showingManagementCatalog &&
     !rightPanelGlobalized;
 
-  // Relocate the shared actions only when the main composer can host them.
+  // Phone conversations use swipe navigation without titlebar or composer actions.
   // Split views, management pages and wide layouts retain their titlebar.
   const composerNavigation = compactNavigation && isTouchWebShell() &&
     mainConversationDockVisible && appMode === "harness" && !poppedOutMode;
@@ -2945,19 +2944,8 @@ export function App(): JSX.Element {
     return (
       <>
       <Composer
-        canSelectProject={!activeThread && !activePendingNewThreadTurn}
-        leadingActions={composerNavigation && variant === "dock" ? (
-          <CompactConversationActions
-            navigation={{ onOpenSidebar: openSidebarDrawerNow }}
-            canStartNewThread={Boolean(state.activeContext)}
-            onStartNewThread={startNewThreadWithComposerFocus}
-            environmentToggleRef={environmentToggleRef}
-            environmentPanelVisible={environmentPanelVisible}
-            onToggleEnvironmentPanel={toggleEnvironmentPanel}
-            rightPanelOpen={rightPanelOpen}
-            onToggleRightPanel={toggleRightPanel}
-          />
-        ) : undefined}
+        canSelectProject={!composerNavigation && !activeThread && !activePendingNewThreadTurn}
+        hideExpandButton={composerNavigation}
         topAccessory={pendingUserQuestionOffer ? (
           <UserQuestionCard
             request={pendingUserQuestionOffer}
