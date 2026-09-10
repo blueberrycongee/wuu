@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Ellipsis, Info, SquarePen } from "lucide-react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { isTouchWebShell } from "./ComposerFocus";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
 
@@ -17,6 +18,7 @@ export function CompactConversationActions({
   onToggleRightPanel: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const showPanelActions = !isTouchWebShell();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const initialFocus = useRef(0);
@@ -53,7 +55,7 @@ export function CompactConversationActions({
         disabled={!canStartNewThread} onClick={onStartNewThread}>
         <SquarePen size={18} aria-hidden="true" />
       </button>
-      <button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
+      {showPanelActions && <button ref={environmentToggleRef} type="button" className="icon-button" aria-label={t("shell.moreActions")}
         title={t("shell.moreActions")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuID : undefined}
         onClick={() => { initialFocus.current = 0; setOpen(!open); }}
         onKeyDown={(event) => {
@@ -64,8 +66,8 @@ export function CompactConversationActions({
           }
         }}>
         <Ellipsis size={18} aria-hidden="true" />
-      </button>
-      {open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
+      </button>}
+      {showPanelActions && open && <FloatingMenuPortal anchorRef={environmentToggleRef} owner="conversation-actions" placement="below" align="right" width={224}>
         <div ref={menuRef} id={menuID} role="menu" aria-label={t("shell.moreActions")} className="conversation-actions-menu"
           onKeyDown={(event) => {
             const buttons = items();
