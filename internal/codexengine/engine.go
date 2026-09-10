@@ -581,14 +581,15 @@ func (sub *turnSubscription) close() {
 	}
 }
 
-// run consumes notifications until turn/completed or errorNotification, then
+// run consumes notifications until turn/completed or a terminal error, then
 // reports the outcome. Events from other turns on the shared app-server are
 // filtered by turn id.
 func (sub *turnSubscription) run() {
 	var (
-		text      strings.Builder
-		reasoning strings.Builder
-		usage     providers.TokenUsage
+		text         strings.Builder
+		reasoning    strings.Builder
+		usage        providers.TokenUsage
+		reconnecting bool
 	)
 	for notification := range sub.events {
 		if sub.turnID == "" {
@@ -604,8 +605,9 @@ func (sub *turnSubscription) run() {
 				ID     string `json:"id"`
 				Status string `json:"status"`
 			} `json:"turn"`
-			Message string `json:"message"`
-			Error   *struct {
+			Message   string `json:"message"`
+			WillRetry bool   `json:"willRetry"`
+			Error     *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 			TokenUsage *struct {
@@ -625,6 +627,13 @@ func (sub *turnSubscription) run() {
 		}
 		if turnID != sub.turnID {
 			continue
+		}
+		if reconnecting {
+			switch notification.method {
+			case NotifyAgentMessageDelta, NotifyReasoningTextDelta, NotifyReasoningSummaryDelta, NotifyItemStarted, NotifyItemCompleted:
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseConnected}})
+				reconnecting = false
+			}
 		}
 		switch notification.method {
 		case NotifyAgentMessageDelta:
@@ -675,7 +684,19 @@ func (sub *turnSubscription) run() {
 			if envelope.Error != nil && strings.TrimSpace(envelope.Error.Message) != "" {
 				lastErr = errors.New(strings.TrimSpace(envelope.Error.Message))
 			}
+			if envelope.WillRetry {
+				// Codex owns recovery and may keep executing this turn. Ending
+				// our subscription here would lose its eventual output.
+				reconnecting = true
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{
+					Phase: providers.StreamPhaseReconnecting, Reason: lastErr.Error(),
+				}})
+				continue
+			}
 			sub.emit(providers.StreamEvent{Type: providers.EventError, Error: lastErr})
+			if reconnecting {
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseFailed, Reason: lastErr.Error()}})
+			}
 			sub.finish(agent.LoopResult{}, lastErr)
 			return
 		case NotifyTurnCompleted:
@@ -683,6 +704,13 @@ func (sub *turnSubscription) run() {
 			finishReason := providers.FinishReasonStop
 			if status != "" && status != "completed" {
 				finishReason = providers.FinishReasonError
+			}
+			if reconnecting {
+				phase := providers.StreamPhaseConnected
+				if finishReason == providers.FinishReasonError {
+					phase = providers.StreamPhaseFailed
+				}
+				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: phase}})
 			}
 			sub.emit(providers.StreamEvent{
 				Type:         providers.EventDone,
