@@ -23,6 +23,7 @@ desktop/out-e2e/
 desktop/build/mobile-web/
 desktop/build/bin/
 desktop/build/dev-host/
+desktop/build/.icon-work/
 desktop/release/
 desktop/native/cua-mac/.build/
 # inspect-cua-pip.cjs writes diagnostic JSON and window screenshots here.

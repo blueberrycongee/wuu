@@ -15,6 +15,7 @@ const sourceApp = join(desktopRoot, "node_modules", "electron", "dist", "Electro
 const hostRoot = join(desktopRoot, "build", "dev-host");
 const devApp = join(hostRoot, "Wuu Dev.app");
 const markerPath = join(hostRoot, "identity.json");
+const appIcon = join(desktopRoot, "build", "icon.icns");
 const electronPackagePath = join(desktopRoot, "node_modules", "electron", "package.json");
 const builtHelper = join(desktopRoot, "build", "bin", "wuu-cua-mac");
 const builtPiPHelper = join(desktopRoot, "build", "bin", "wuu-cua-mac-pip");
@@ -52,6 +53,8 @@ function prepareDevElectronApp(signing = { identity: "-", fingerprint: "adhoc", 
   run("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleIdentifier com.blueberrycongee.wuu.dev", info]);
   run("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleName Wuu Dev", info]);
   run("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleDisplayName Wuu Dev", info]);
+  setPlistString(info, "CFBundleIconFile", "wuu.icns");
+  copyFileSync(appIcon, join(devApp, "Contents", "Resources", "wuu.icns"));
   setPlistString(
     info,
     "NSScreenCaptureUsageDescription",
@@ -96,6 +99,7 @@ function prepareDevElectronApp(signing = { identity: "-", fingerprint: "adhoc", 
     embeddedPiPHelperHash,
     embeddedSpeechHelperHash: hashFile(packagedSpeechHelper),
     signingFingerprint: signing.fingerprint,
+    iconHash: hashFile(appIcon),
     identityVersion,
   })}\n`);
   if (signing.identity === "-") {
@@ -128,6 +132,8 @@ function devHostIsCurrent(
       || marker.embeddedSpeechHelperHash !== hashFile(speechHelperPathForApp(devApp))
       || marker.signingFingerprint !== signingFingerprint
       || marker.identityVersion !== identityVersion
+      || marker.iconHash !== hashFile(appIcon)
+      || marker.iconHash !== hashFile(join(devApp, "Contents", "Resources", "wuu.icns"))
     ) {
       return false;
     }

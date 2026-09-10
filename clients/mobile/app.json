@@ -21,8 +21,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff",
-        "foregroundImage": "./assets/icon.png"
+        "backgroundColor": "#261d2b",
+        "foregroundImage": "./assets/adaptive-icon.png"
       },
       "package": "com.blueberrycongee.wuu",
       "permissions": [
