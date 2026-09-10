@@ -125,22 +125,24 @@ func Run(ctx context.Context, args []string, output io.Writer) error {
 		listener = tls.NewListener(listener, tlsConfig)
 	}
 	httpServer := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	shutdownCtx, stopShutdown := context.WithCancel(ctx)
+	defer stopShutdown()
 	shutdownDone := make(chan struct{})
-	defer close(shutdownDone)
 	go func() {
-		select {
-		case <-shutdownDone:
-			return
-		case <-ctx.Done():
-		}
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer close(shutdownDone)
+		<-shutdownCtx.Done()
+		drainCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		if err := httpServer.Shutdown(drainCtx); err != nil {
+			_ = httpServer.Close()
+		}
 	}()
 
 	fmt.Fprintf(output, "wuu relay listening on %s (registry: %s)\n", listener.Addr().String(), regPath)
 	fmt.Fprintf(output, "connect url: %s\n", connectURL)
 	err = httpServer.Serve(listener)
+	stopShutdown()
+	<-shutdownDone
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
