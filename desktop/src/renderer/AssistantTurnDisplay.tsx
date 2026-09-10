@@ -246,7 +246,19 @@ function shouldSuppressProcessErrorItem(turn: Turn, item: ThreadItem): boolean {
   if (item.type !== "error") {
     return false;
   }
-  if (turn.status === "failed") {
+  const interruptionError = turn.error?.message.trim();
+  const hasTurnLevelInterruptionError =
+    turn.status === "interrupted" &&
+    interruptionError != null &&
+    interruptionError.length > 0 &&
+    !isCancellationMessage(interruptionError.toLowerCase());
+  if (
+    turn.status === "failed" ||
+    hasTurnLevelInterruptionError
+  ) {
+    // A structured turn error is the authoritative notice. Interrupted turns
+    // can carry one too (for example when an internal failure stops a request),
+    // so keeping their matching item would render the same failure twice.
     return true;
   }
   // A stream error item only lands while a retryable attempt has just failed

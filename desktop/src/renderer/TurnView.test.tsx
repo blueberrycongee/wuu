@@ -501,6 +501,21 @@ describe("TurnView", () => {
     expect(view.querySelectorAll(".turn-notice button, .turn-notice a")).toHaveLength(0);
   });
 
+  it("renders one failure notice when an interrupted turn also records its internal error as an item", () => {
+    const error = "wuu internal error: request did not complete";
+    const view = render(
+      makeTurn(
+        "interrupted",
+        [makeCommentary("partial progress"), makeError(error)],
+        error,
+      ),
+    );
+
+    expect(view.textContent).toContain("partial progress");
+    expect(view.querySelectorAll(".turn-notice")).toHaveLength(1);
+    expect(view.textContent).toContain("内部错误");
+  });
+
   it("hides a transient stream error item while the turn is still retrying", () => {
     // A retryable attempt that failed terminally lands an error item, but
     // the turn keeps running (reconnect chip carries the cause). Rendering
