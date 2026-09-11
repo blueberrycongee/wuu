@@ -315,6 +315,55 @@ describe("ConversationTurnList", () => {
   });
 });
 
+it("retries failed remote history on a later scroll without overlapping requests", async () => {
+  const prior = window.wuu;
+  let calls = 0;
+  let rejectPage!: (error: Error) => void;
+  const pendingPage = new Promise<void>((_resolve, reject) => { rejectPage = reject; });
+  const turns = [makeTurn(40)];
+  const view = (historyCursor?: string) => (
+    <ConversationTurnList
+      threadID="remote"
+      historyCursor={historyCursor}
+      turns={turns}
+      renderTurn={turn => <div data-turn-id={turn.id}>{turn.id}</div>}
+    />
+  );
+  window.wuu = {
+    ...prior,
+    loadEarlierThreadHistory: async () => {
+      calls++;
+      if (calls === 1) return pendingPage;
+      turns.unshift(makeTurn(39));
+      root!.render(view());
+    },
+  };
+  container.className = "scroll-region";
+  try {
+    render(view("cursor"));
+    expect(calls).toBe(0);
+    act(() => {
+      container.dispatchEvent(new Event("scroll"));
+      container.dispatchEvent(new Event("scroll"));
+    });
+    expect(calls).toBe(1);
+    act(() => container.dispatchEvent(new Event("scroll")));
+    expect(calls).toBe(1);
+
+    await act(async () => rejectPage(new Error("offline")));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(calls).toBe(1);
+
+    await act(async () => container.dispatchEvent(new Event("scroll")));
+    expect(calls).toBe(2);
+    expect(container.querySelector('[data-turn-id="turn-39"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('.conversation-turn-history-loader')).toBeNull();
+  } finally {
+    window.wuu = prior;
+  }
+});
+
 it("requests older remote history on demand and keeps a failed page retryable", async () => {
   const prior = window.wuu;
   let calls = 0;

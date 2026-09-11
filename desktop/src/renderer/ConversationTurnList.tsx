@@ -259,7 +259,9 @@ export function ConversationTurnList({
   }, [threadID, turnWindow.coldWindowed, turns, visibleStartIndex]);
 
   useEffect(() => {
-    if (!autoLoadEarlier || !hasEarlierTurns || remoteBusy || remoteError) {
+    // A failed page remains retryable on the next scroll; keep the error visible
+    // until that attempt, without starting an automatic retry loop.
+    if (!autoLoadEarlier || !hasEarlierTurns || remoteBusy) {
       return;
     }
     const loader = historyLoaderRef.current;
@@ -274,7 +276,7 @@ export function ConversationTurnList({
     };
     node.addEventListener("scroll", loadIfNearTop, { passive: true });
     return () => node.removeEventListener("scroll", loadIfNearTop);
-  }, [autoLoadEarlier, hasEarlierTurns, loadEarlierTurns, remoteBusy, remoteError]);
+  }, [autoLoadEarlier, hasEarlierTurns, loadEarlierTurns, remoteBusy]);
 
   return (
     <>
