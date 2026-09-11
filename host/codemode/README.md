@@ -14,7 +14,9 @@ sandbox archives do not exist for the pinned version, so the build must use
 `V8_FROM_SOURCE=1`:
 
 ```sh
-V8_FROM_SOURCE=1 cargo build --release -p codex-code-mode-host
+cargo fetch --locked
+sh scripts/seed-icu-data.sh
+V8_FROM_SOURCE=1 cargo build --locked --release -p codex-code-mode-host
 ```
 
 `.cargo/config.toml` pins the GN args this build needs. The crates.io v8
@@ -28,12 +30,8 @@ next to the binary, so the build fails at `run_mksnapshot_default` unless
 `icudtl.dat` exists in `target/{debug,release}/gn_out` before ninja reaches
 that step. `scripts/seed-icu-data.sh` copies the exact file the runtime loads
 at startup (the `deno_core_icudata-0.77.0` crate ships the same bytes via
-`include_bytes!`) into both gn_out dirs; run it before the first build, or use
-the Makefile target which does this for you:
-
-```sh
-make codemode-host
-```
+`include_bytes!`) into both gn_out dirs; run it before the first build as
+shown above.
 
 A from-source V8 build takes 30-60 minutes the first time; the static archive
 lands in `target/debug/gn_out/obj/librusty_v8.a` (or `target/release/gn_out`).
@@ -57,13 +55,9 @@ The binary is written to `target/release/wuu-code-mode-host`.
 
 ## Desktop integration
 
-Desktop packaging commands always use `desktop/scripts/build-codemode-host.cjs`.
-For day-to-day development, `npm run dev` skips this expensive build; use
-`npm run dev:codemode` when working on or testing code mode. On macOS/Linux it
-runs the locked, incremental Cargo build and copies the result next to
-`wuu-core` in `desktop/build/bin`. Existing staged binaries do not bypass the
-build. Windows requires a separately built Windows host staged in that
-directory.
+This runtime is retained for manual experimentation. Desktop development,
+packaging, and CI do not build, bundle, or test the V8 host. There is no Rust
+or V8 prerequisite for the normal desktop build.
 
 Wuu defaults to `code_mode.mode: "direct"`: models invoke ordinary tools
 directly, with the code-mode runtime disabled. Set `code_mode.mode` to
@@ -77,9 +71,9 @@ the first `exec` call and shared by conversations in the workspace session. Plai
 do not start a host process.
 
 The core resolves the host from `code_mode.host`, then `WUU_CODE_MODE_HOST`,
-then the binary next to its own executable. Both dev and packaged desktop
-layouts supply that sibling binary. A standalone core without a host uses
-direct tools.
+then the binary next to its own executable. Desktop packages do not supply
+that sibling binary. To experiment with code mode, build the host manually
+and configure its explicit path. Default desktop sessions use direct tools.
 
 ## Run
 
@@ -97,5 +91,5 @@ The Wuu Go client contract test can be pointed at the built binary:
 
 ```sh
 WUU_CODE_MODE_HOST=$(pwd)/target/release/wuu-code-mode-host \
-  go test ./internal/codemode -run TestHostIntegration -v
+  go test -tags codemode_integration ./internal/codemode -run TestHostIntegration -v
 ```

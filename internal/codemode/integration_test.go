@@ -1,3 +1,5 @@
+//go:build codemode_integration
+
 package codemode
 
 import (

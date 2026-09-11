@@ -34,6 +34,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  vi.useFakeTimers();
   markdownRender.count = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -46,6 +47,8 @@ afterEach(() => {
   root = null;
   container.remove();
   streamTextStore.clearItem("turn", "memo");
+  vi.clearAllTimers();
+  vi.useRealTimers();
 });
 
 function render(element: JSX.Element): void {
@@ -95,7 +98,7 @@ describe("Markdown memoization", () => {
     render(<Harness draft="" />);
 
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 240));
+      await vi.advanceTimersByTimeAsync(240);
     });
 
     const countAfterCursorSettles = markdownRender.count;

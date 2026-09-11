@@ -141,8 +141,6 @@ assert.doesNotMatch(packageJSON.scripts["dist:mac"], /speech-mac/);
 assert.deepEqual(packageJSON.build.extraResources[0].filter, [
   "wuu-core",
   "wuu-core.exe",
-  "wuu-code-mode-host",
-  "wuu-code-mode-host.exe",
   "wuu-*-plugin",
   "wuu-*-plugin.exe",
 ]);

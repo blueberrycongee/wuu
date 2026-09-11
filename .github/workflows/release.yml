@@ -28,7 +28,10 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
 
       - name: Verify tag source
         run: |
@@ -47,6 +50,7 @@ jobs:
       - name: Install
         run: |
           npm ci
+          npm ci --prefix ../clients/core
           npm ci --prefix ../clients/mobile-web
           node node_modules/electron/install.js
           node -e 'require("electron")'

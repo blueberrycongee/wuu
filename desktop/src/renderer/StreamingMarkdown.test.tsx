@@ -5,7 +5,7 @@
  * the end during streaming, and fade the cursor out after settle
  * without removing or remounting the Markdown tail.
  */
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
@@ -64,11 +64,21 @@ function unmount(): void {
   }
 }
 
-afterEach(() => {
+beforeEach(() => {
+  // Keep performance.now monotonic across tests: the shared stream store
+  // retains its last notification timestamp between mounts.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame"],
+  });
+});
+
+afterEach(async () => {
   unmount();
-  for (const itemID of ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13"]) {
+  for (const itemID of ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s-words"]) {
     streamTextStore.clearItem("turn", itemID);
   }
+  await vi.runOnlyPendingTimersAsync();
+  vi.useRealTimers();
 });
 
 describe("StreamingMarkdown", () => {
@@ -149,7 +159,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await vi.advanceTimersByTimeAsync(300);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
@@ -205,8 +215,8 @@ describe("StreamingMarkdown", () => {
 
     await act(async () => {
       streamTextStore.append(key, "**hi**");
-      // Wait for full reveal: ~3 frames at 2 chars/frame in jsdom.
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Flush the stream store notification without waiting on wall time.
+      await vi.advanceTimersByTimeAsync(300);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
@@ -224,7 +234,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await vi.advanceTimersByTimeAsync(500);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
@@ -242,7 +252,7 @@ describe("StreamingMarkdown", () => {
 
     await act(async () => {
       streamTextStore.append(key, "## 方案\n\n正文段落");
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await vi.advanceTimersByTimeAsync(500);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
@@ -261,7 +271,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: prefix, isLive: true, phase: "final_answer" });
     await act(async () => {
       streamTextStore.append(key, continuation);
-      await new Promise(resolve => setTimeout(resolve, STREAM_TEXT_NOTIFY_INTERVAL_MS + 30));
+      await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS + 30);
     });
     const list = container!.querySelector("ol")!;
     expect(container!.querySelectorAll("ol")).toHaveLength(1);
@@ -275,36 +285,26 @@ describe("StreamingMarkdown", () => {
     expect(Array.from(list.children[0].querySelectorAll("p"))).toEqual(paragraphs);
   });
 
-  it("shows a 1px cursor span during streaming", async () => {
-    const key = streamTextKey("turn", "s2", "text");
-    streamTextStore.seed(key, "Hello world");
-    mount({ streamKey: key, initialText: "Hello", isLive: true, phase: "final_answer" });
+  it.each(["final_answer", "commentary"] as const)(
+    "renders legible live text and an inline cursor for %s",
+    async (phase) => {
+      const key = streamTextKey("turn", "s2", "text");
+      streamTextStore.seed(key, "Hello world");
+      mount({ streamKey: key, initialText: "Hello", isLive: true, phase });
 
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS);
+      });
 
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
-    expect(cursor).toBeTruthy();
-    expect(cursor?.tagName).toBe("SPAN");
-    expect(cursor?.closest(".rich-paragraph")).toBeTruthy();
-  });
-
-  it("keeps streamed body text fully legible beside the cursor", async () => {
-    const key = streamTextKey("turn", "s2", "text");
-    streamTextStore.seed(key, "Hello world");
-    mount({ streamKey: key, initialText: "Hello", isLive: true, phase: "final_answer" });
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    expect(surface.textContent).toContain("Hello world");
-    expect(surface.querySelector(".stream-feather-enter")).toBeNull();
-    expect(surface.querySelector(".stream-cursor")).not.toBeNull();
-  });
+      const surface = container!.querySelector(".streaming-markdown")!;
+      const cursor = surface.querySelector(".stream-cursor");
+      expect(surface.textContent).toContain("Hello world");
+      expect(cursor?.tagName).toBe("SPAN");
+      expect(cursor?.closest(".rich-paragraph")).toBeTruthy();
+      expect(surface.querySelector(".stream-feather-enter, .streaming-cover")).toBeNull();
+      expect(surface.classList.contains("streaming-commentary-live")).toBe(false);
+    },
+  );
 
   it("keeps existing text stable when an inline Markdown delimiter closes", async () => {
     const key = streamTextKey("turn", "s2", "text");
@@ -312,41 +312,12 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await vi.advanceTimersByTimeAsync(40);
       streamTextStore.append(key, "**");
-      await new Promise((resolve) =>
-        setTimeout(resolve, STREAM_TEXT_NOTIFY_INTERVAL_MS + 20),
-      );
+      await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS + 20);
     });
 
     expect(document.querySelector("strong")).not.toBeNull();
-  });
-
-  it("uses the same live cursor treatment for commentary text", async () => {
-    const key = streamTextKey("turn", "s8", "text");
-    streamTextStore.seed(key, "Working through it");
-    mount({ streamKey: key, initialText: "Working", isLive: true, phase: "commentary" });
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    expect(surface.classList.contains("streaming-commentary-live")).toBe(false);
-    expect(surface.querySelector(".stream-cursor")).toBeTruthy();
-  });
-
-  it("does not use a clip-path mask (no .streaming-cover)", async () => {
-    const key = streamTextKey("turn", "s3", "text");
-    streamTextStore.seed(key, "Hello world");
-    mount({ streamKey: key, initialText: "Hello", isLive: true, phase: "final_answer" });
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    });
-
-    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    expect(surface.querySelector(".streaming-cover")).toBeNull();
   });
 
   it("renders the full text immediately when not live", () => {
@@ -373,7 +344,7 @@ describe("StreamingMarkdown", () => {
     });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     expect(frameCount).toBeGreaterThan(0);
@@ -385,7 +356,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: "Hello world", isLive: false, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await vi.advanceTimersByTimeAsync(50);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
@@ -414,7 +385,7 @@ describe("StreamingMarkdown", () => {
     // isLive=false immediately calls syncImmediate + trySettle, so the
     // settled callback fires synchronously in the mount's commit pass.
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await vi.advanceTimersByTimeAsync(50);
     });
 
     expect(settledCount).toBe(1);
@@ -433,7 +404,7 @@ describe("StreamingMarkdown", () => {
     rerender({ streamKey: key, initialText: "Complete", isLive: false, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
@@ -447,7 +418,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await vi.advanceTimersByTimeAsync(300);
     });
     expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
       "stale partial answer",
@@ -456,7 +427,7 @@ describe("StreamingMarkdown", () => {
     await act(async () => {
       streamTextStore.replace(key, "");
       streamTextStore.append(key, "fresh");
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await vi.advanceTimersByTimeAsync(300);
     });
 
     expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
@@ -473,7 +444,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await vi.advanceTimersByTimeAsync(300);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
@@ -489,7 +460,7 @@ describe("StreamingMarkdown", () => {
 
     await act(async () => {
       streamTextStore.append(key, "你好 world");
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await vi.advanceTimersByTimeAsync(300);
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;

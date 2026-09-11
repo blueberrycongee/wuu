@@ -76,10 +76,16 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
 
       - name: Install
-        run: npm ci --prefix desktop
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix clients/core
+          npm ci --prefix clients/mobile-web
 
       - name: Typecheck
         run: make check-desktop
@@ -151,7 +157,10 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
 
       - name: Install
         working-directory: desktop
@@ -164,7 +173,9 @@ jobs:
         run: make test-native
 
       - name: Install phone Web dependencies
-        run: npm ci --prefix clients/mobile-web
+        run: |
+          npm ci --prefix clients/core
+          npm ci --prefix clients/mobile-web
 
       - name: Package macOS app
         run: make build-macos
@@ -184,7 +195,10 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
 
       # The full Go suite includes Unix permission, shell, and file-lifecycle
       # contracts. Keep this job focused on the Windows-native boundaries it can
@@ -202,7 +216,9 @@ jobs:
         run: npm --prefix desktop run typecheck
 
       - name: Install phone Web dependencies
-        run: npm ci --prefix clients/mobile-web
+        run: |
+          npm ci --prefix clients/core
+          npm ci --prefix clients/mobile-web
 
       - name: Package unpacked Windows app
         run: npm --prefix desktop run pack:win
