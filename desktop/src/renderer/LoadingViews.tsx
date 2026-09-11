@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { WuuIconMascot } from "./WuuIconMascot";
 import { useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
@@ -86,10 +87,10 @@ export function RuntimeLoading({
   );
 }
 
-export function ViewSwitchLoading({ compact = false }: { compact?: boolean }): JSX.Element {
+export function ViewSwitchLoading({ inline = false }: { inline?: boolean }): JSX.Element {
   const { t } = useI18n();
-  return (
-    <div className={`view-switch-loading${compact ? " view-switch-loading-compact" : ""}`} role="status" aria-label={t("loading.switching")}>
+  const indicator = (
+    <div className={inline ? "view-switch-loading-inline" : "view-switch-loading"} role="status" aria-label={t("loading.switching")}>
       <div className="wuu-launch-mark view-switch-mark" aria-hidden="true">
         <span>w</span>
         <span>u</span>
@@ -98,6 +99,9 @@ export function ViewSwitchLoading({ compact = false }: { compact?: boolean }): J
       <div className="wuu-launch-rail view-switch-rail" aria-hidden="true" />
     </div>
   );
+  // Connection cards embed the mark beside recovery controls. View switches
+  // escape pane clipping and stacking contexts to cover the whole app.
+  return inline ? indicator : createPortal(indicator, document.body);
 }
 
 export function EmptyConversationHome({

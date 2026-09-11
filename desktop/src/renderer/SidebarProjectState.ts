@@ -237,12 +237,14 @@ export function useSidebarProjectState({
   threads,
   activeContext,
   activeProjectID,
+  backgroundLoadingEnabled = true,
   setStatus,
 }: {
   projects: DesktopProject[];
   threads: Thread[];
   activeContext?: RuntimeContext;
   activeProjectID?: string;
+  backgroundLoadingEnabled?: boolean;
   setStatus: (status: string) => void;
 }): SidebarProjectStateController {
   const [collapsedSidebarSectionIDs, setCollapsedSidebarSectionIDs] =
@@ -445,7 +447,7 @@ export function useSidebarProjectState({
   }, [activeContext?.kind, projects, threads]);
 
   useEffect(() => {
-    if (!window.wuu?.listAllThreads) return;
+    if (!backgroundLoadingEnabled || !window.wuu?.listAllThreads) return;
     let cancelled = false;
     void window.wuu.listAllThreads().then((listed) => {
       if (!cancelled) cacheSidebarThreads(listed.threads);
@@ -455,9 +457,10 @@ export function useSidebarProjectState({
       }
     });
     return () => { cancelled = true; };
-  }, [projects]);
+  }, [projects, backgroundLoadingEnabled]);
 
   useEffect(() => {
+    if (!backgroundLoadingEnabled) return;
     for (const project of projects) {
       if (!sessionTreeSectionExpanded(project.id, expandedSidebarSectionIDs)) {
         continue;
@@ -471,6 +474,7 @@ export function useSidebarProjectState({
       void loadProjectThreads(project);
     }
   }, [
+    backgroundLoadingEnabled,
     activeProjectID,
     expandedSidebarSectionIDs,
     projectThreadsByProjectID,

@@ -42,6 +42,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
 import { SIDEBAR_MOTION_MS } from "./AppLayoutState";
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { PhoneNavigationContext } from "./PhoneNavigationContext";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -193,11 +194,13 @@ function touch(target: Element, type: string, x: number, y: number, count = 1, t
   return event;
 }
 
-async function renderCollapsedApp(): Promise<void> {
+async function renderCollapsedApp(withPhoneNavigation = false): Promise<void> {
   window.localStorage.setItem("wuu.desktop.sidebarCollapsed", "true");
   await act(async () => {
     root = createRoot(container);
-    root.render(<App />);
+    root.render(withPhoneNavigation
+      ? <PhoneNavigationContext.Provider value={{ openDevices: () => {} }}><App /></PhoneNavigationContext.Provider>
+      : <App />);
   });
   await flushAsync();
   expect(appShell()?.classList.contains("sidebar-collapsed")).toBe(true);
@@ -346,6 +349,29 @@ describe("collapsed sidebar hover drawer", () => {
     });
     expect(container.querySelector('[data-wuu-component="conversation-titlebar"]')).not.toBeNull();
     expect(container.querySelector('.composer-bar .compact-conversation-actions')).toBeNull();
+  });
+
+  it.each(["web", "desktop"])("%s keeps the sidebar toggle appropriate while the drawer is open", async (host) => {
+    document.documentElement.dataset.hostKind = host;
+    window.innerWidth = 390;
+    vi.mocked(window.matchMedia).mockImplementation((query) => ({
+      matches: query === "(pointer: coarse)", media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    }));
+    await renderCollapsedApp(true);
+    const toggle = () => container.querySelector<HTMLButtonElement>('[data-wuu-component="sidebar-toggle"]');
+    expect(toggle()).not.toBeNull();
+    await act(async () => { toggle()!.click(); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
+    expect(Boolean(toggle())).toBe(host === "desktop");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".compact-session-switcher-backdrop")!.click();
+    });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
+    expect(toggle()).not.toBeNull();
   });
 
   it("stops measuring turn positions when compact navigation hides the turn rail", async () => {

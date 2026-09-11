@@ -903,7 +903,7 @@ describe("WorkspaceRightPanel", () => {
     expect(onSelectTab).toHaveBeenCalledWith(diffA.id);
   });
 
-  it("restores keyboard focus to the next active workspace tab after close", () => {
+  it("restores keyboard focus to the next active workspace tab after close", async () => {
     const filesTab = workspaceToolViewTab("files");
     const terminalTab = workspaceToolViewTab("terminal");
     const renderPanel = (tabs: WorkspaceViewTab[], activeTabID: string): void => {
@@ -931,6 +931,7 @@ describe("WorkspaceRightPanel", () => {
       />,
     );
 
+    await act(async () => {});
     const activeClose = container?.querySelector<HTMLButtonElement>(
       ".workspace-tool-tab.active .workspace-tool-tab-close",
     );
@@ -996,7 +997,7 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     expect(panel?.textContent).toContain("没有项目");
   });
 
-  it("roots the terminal on workspaceContext, not activeContext", () => {
+  it("roots the terminal on workspaceContext, not activeContext", async () => {
     const terminalTab = workspaceToolViewTab("terminal");
     const worktreeContext: RuntimeContext = {
       kind: "project",
@@ -1014,6 +1015,7 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
       />,
     );
 
+    await act(async () => {});
     expect(container?.querySelector(".workspace-right-panel.detail.terminal")).not.toBeNull();
     const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
     expect(terminalPanel?.getAttribute("data-cwd")).toBe(worktreeContext.cwd);

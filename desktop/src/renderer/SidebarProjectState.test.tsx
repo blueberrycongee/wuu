@@ -132,7 +132,9 @@ async function renderSidebarProjectState({
   threads = [],
   activeContext,
   activeProjectID,
+  backgroundLoadingEnabled = true,
 }: {
+  backgroundLoadingEnabled?: boolean;
   projects?: DesktopProject[];
   threads?: Thread[];
   activeContext?: RuntimeContext;
@@ -140,6 +142,7 @@ async function renderSidebarProjectState({
 } = {}): Promise<{
   get: () => SidebarProjectStateController;
   rerender: (next: {
+    backgroundLoadingEnabled?: boolean;
     projects?: DesktopProject[];
     threads?: Thread[];
     activeContext?: RuntimeContext;
@@ -147,10 +150,11 @@ async function renderSidebarProjectState({
   }) => Promise<void>;
 }> {
   let latest: SidebarProjectStateController | undefined;
-  let props = { projects, threads, activeContext, activeProjectID };
+  let props = { projects, threads, activeContext, activeProjectID, backgroundLoadingEnabled };
 
   function Probe(nextProps: typeof props) {
     latest = useSidebarProjectState({
+      backgroundLoadingEnabled: nextProps.backgroundLoadingEnabled,
       projects: nextProps.projects,
       threads: nextProps.threads,
       activeContext: nextProps.activeContext,
@@ -187,6 +191,22 @@ async function renderSidebarProjectState({
 }
 
 describe("useSidebarProjectState", () => {
+  it("waits for bootstrap before fetching background catalogs, then populates the sidebar", async () => {
+    const listed = thread("background-thread", "/tmp/other");
+    const listAllThreads = vi.fn().mockResolvedValue({ threads: [listed] });
+    const listThreads = vi.fn().mockResolvedValue({ threads: [listed] });
+    Object.defineProperty(window, "wuu", { configurable: true, value: { listAllThreads, listThreads } });
+    window.localStorage.setItem("wuu.desktop.expandedSidebarSectionIDs", JSON.stringify(["other"]));
+    const hook = await renderSidebarProjectState({
+      projects: [project("other")], backgroundLoadingEnabled: false,
+    });
+    expect(listAllThreads).not.toHaveBeenCalled();
+    expect(listThreads).not.toHaveBeenCalled();
+    await hook.rerender({ backgroundLoadingEnabled: true });
+    expect(listAllThreads).toHaveBeenCalledOnce();
+    expect(hook.get().projectThreadsByProjectID.other.map(item => item.id)).toEqual([listed.id]);
+  });
+
   it("prunes missing project IDs while preserving pseudo section collapse IDs", async () => {
     window.localStorage.setItem(
       "wuu.desktop.collapsedProjectIDs",

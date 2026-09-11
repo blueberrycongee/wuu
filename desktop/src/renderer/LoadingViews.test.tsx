@@ -37,12 +37,22 @@ describe("RuntimeLoading", () => {
     expect(view.querySelector(".wuu-launch-rail")).toBeNull();
   });
 
-  it("keeps the compact legacy loader for view switches", () => {
+  it("shows view switching outside the calling pane and removes it on unmount", () => {
     const view = render(<ViewSwitchLoading />);
+    const status = document.querySelector('[role="status"]');
 
-    expect(view.querySelector(".wuu-launch-mark")).not.toBeNull();
-    expect(view.querySelector(".wuu-launch-rail")).not.toBeNull();
-    expect(view.querySelector(".wuu-launch-glass")).toBeNull();
+    expect(status).not.toBeNull();
+    expect(status?.parentElement).toBe(document.body);
+    expect(view.contains(status)).toBe(false);
+    act(() => root?.unmount());
+    root = undefined;
+    expect(document.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("can embed connection progress beside recovery controls", () => {
+    const view = render(<section><ViewSwitchLoading inline /><button>Reconnect</button></section>);
+    expect(view.querySelector('[role="status"]')?.parentElement).toBe(view.querySelector("section"));
+    expect(view.querySelector("button")).not.toBeNull();
   });
 });
 

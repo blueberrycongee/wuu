@@ -4134,56 +4134,20 @@ pre {
   animation: wuu-rail-scan 1200ms cubic-bezier(0.2, 0, 0, 1) infinite;
 }
 
-.view-switch-loading {
-  z-index: 28;
+.view-switch-loading,
+.view-switch-loading-inline {
   display: grid;
-  grid-column: 1;
-  grid-row: 2;
-  place-self: center;
+  align-content: center;
   justify-items: center;
   gap: 18px;
-  margin-top: -56px;
-  pointer-events: none;
-  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
-.view-switch-loading:not(.view-switch-loading-compact) {
-  place-self: stretch;
-  align-content: center;
-  margin-top: 0;
-  padding-bottom: 56px;
+.view-switch-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
   background: var(--paper);
   pointer-events: auto;
-}
-
-/* Keep cached messages readable while the selected session resumes. */
-.view-switch-loading-compact {
-  place-self: start end;
-  margin: 12px 16px;
-  padding: 8px 12px;
-  gap: 6px;
-  border-radius: var(--radius-md);
-  background: var(--paper);
-}
-
-.view-switch-loading-compact .view-switch-mark {
-  font-size: 20px;
-}
-
-.view-switch-loading-compact .view-switch-mark::after {
-  width: 4px;
-  height: 16px;
-  margin-left: 3px;
-  transform: translateY(2px);
-}
-
-.view-switch-loading-compact .view-switch-rail {
-  width: 64px;
-  height: 2px;
-}
-
-.view-switch-loading-compact .view-switch-rail::after {
-  width: 22px;
 }
 
 .view-switch-mark {

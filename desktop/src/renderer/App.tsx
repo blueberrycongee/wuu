@@ -593,6 +593,9 @@ export function App(): JSX.Element {
     syncSidebarServerEvent,
     toggleSidebarSectionCollapsed,
   } = useSidebarProjectState({
+    // Let the visible workspace finish booting before background catalogs
+    // compete for the same remote connection.
+    backgroundLoadingEnabled: Boolean(state.initialized) || state.status !== "connecting",
     projects: state.projects,
     threads: state.threads,
     activeContext: state.activeContext,
@@ -2738,6 +2741,7 @@ export function App(): JSX.Element {
     state.initialized && !poppedOutMode && !compactNavigation,
   );
   const sidebarVisible = !poppedOutMode;
+  const sidebarToggleVisible = sidebarVisible && !(compactNavigation && isTouchWebShell() && sidebarDrawerVisible);
 
   useEffect(() => {
     if (sideThread.entry?.open && environmentPanelOpen) {
@@ -5044,7 +5048,7 @@ export function App(): JSX.Element {
             onPointerEnter={scheduleSidebarDrawerOpen}
             onPointerLeave={cancelSidebarDrawerOpen}
           />
-          {rightPanelGlobalized && sidebarDrawerMode ? (
+          {rightPanelGlobalized && sidebarDrawerMode && sidebarToggleVisible ? (
             <div className="globalized-sidebar-toggle-region">
               <button
                 className="icon-button side-panel-toggle-button sidebar-toggle-button globalized-sidebar-toggle"
@@ -5295,7 +5299,7 @@ export function App(): JSX.Element {
           <>
             <header className="titlebar" data-wuu-component="conversation-titlebar">
               <div className="title-block channel-title-block">
-                {sidebarVisible ? (
+                {sidebarToggleVisible ? (
                   <button
                     className="icon-button side-panel-toggle-button sidebar-toggle-button"
                     data-wuu-component="sidebar-toggle"
@@ -5352,7 +5356,7 @@ export function App(): JSX.Element {
         {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
-            {sidebarVisible ? (
+            {sidebarToggleVisible ? (
               <button
                 className="icon-button side-panel-toggle-button sidebar-toggle-button"
                 data-wuu-component="sidebar-toggle"
@@ -5455,11 +5459,6 @@ export function App(): JSX.Element {
           rightPanelFilePath={rightPanelFilePath}
           onCloseFilePreview={handleCloseFilePreview}
           switchLoadingVisible={pendingViewSwitch?.visible === true}
-          switchLoadingCompact={
-            pendingViewSwitch?.kind === "thread" &&
-            pendingViewSwitch.targetID === activeThread?.id &&
-            (activeThread?.turns.length ?? 0) > 0
-          }
         />
 
         {sideThreadPanelVisible && activeThreadID && sideThread.entry ? (

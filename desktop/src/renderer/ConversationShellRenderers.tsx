@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useSyncExternalStore,
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -46,7 +48,6 @@ import type { PendingComposerMessagesByThread } from "./ComposerPendingMessages"
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
 import { SessionTabStrip } from "./SessionTabs";
-import { SettingsView } from "./SettingsView";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -56,6 +57,10 @@ import { desktopPluginHost, desktopWorkbenchController } from "./plugins/Desktop
 import type { PluginHost } from "./plugins/PluginHost";
 import { PluginSlot } from "./plugins/PluginSlot";
 import type { WorkbenchController } from "./plugins/Workbench";
+
+const SettingsView = lazy(() => import("./SettingsView").then((module) => ({
+  default: module.SettingsView,
+})));
 
 type EnvironmentSideStackProps = ComponentProps<typeof EnvironmentSideStack>;
 type SettingsViewProps = ComponentProps<typeof SettingsView>;
@@ -486,7 +491,6 @@ export type ConversationSidePanelsProps = {
   rightPanelFilePath?: string;
   onCloseFilePreview: () => void;
   switchLoadingVisible: boolean;
-  switchLoadingCompact: boolean;
 };
 
 export function ConversationSidePanels({
@@ -510,7 +514,6 @@ export function ConversationSidePanels({
   rightPanelFilePath,
   onCloseFilePreview,
   switchLoadingVisible,
-  switchLoadingCompact,
 }: ConversationSidePanelsProps): JSX.Element {
   return (
     <>
@@ -536,7 +539,7 @@ export function ConversationSidePanels({
         onCloseFilePreview={onCloseFilePreview}
       />
 
-      {switchLoadingVisible ? <ViewSwitchLoading compact={switchLoadingCompact} /> : null}
+      {switchLoadingVisible ? <ViewSwitchLoading /> : null}
     </>
   );
 }
@@ -550,10 +553,12 @@ export function SettingsShellRenderer(
   props: SettingsShellRendererProps,
 ): JSX.Element {
   return (
-    <SettingsView
-      {...props}
-      sidebarMinWidth={SIDEBAR_MIN_WIDTH}
-      sidebarMaxWidth={SIDEBAR_MAX_WIDTH}
-    />
+    <Suspense fallback={<ViewSwitchLoading />}>
+      <SettingsView
+        {...props}
+        sidebarMinWidth={SIDEBAR_MIN_WIDTH}
+        sidebarMaxWidth={SIDEBAR_MAX_WIDTH}
+      />
+    </Suspense>
   );
 }

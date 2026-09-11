@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -56,7 +58,7 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
-import { WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel";
+import { ViewSwitchLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
@@ -71,6 +73,10 @@ import { PluginSlot } from "./plugins/PluginSlot";
 import type { WorkbenchController } from "./plugins/Workbench";
 import { PluginViewContent } from "./plugins/Workbench";
 import { ENABLE_EMBEDDED_BROWSER } from "./FeatureFlags";
+
+const WorkspaceTerminalPanel = lazy(() => import("./WorkspaceTerminalPanel").then((module) => ({
+  default: module.WorkspaceTerminalPanel,
+})));
 
 export type WorkspacePanelView = "files" | "review" | "terminal" | "browser";
 
@@ -901,10 +907,12 @@ export function WorkspaceRightPanel({
                     workspaceRoot={workspaceContext?.cwd}
                   />
                 ) : activeTab.kind === "terminal" ? (
-                  <WorkspaceTerminalPanel
-                    activeContext={workspaceContext}
-                    thread={terminalThread}
-                  />
+                  <Suspense fallback={<ViewSwitchLoading />}>
+                    <WorkspaceTerminalPanel
+                      activeContext={workspaceContext}
+                      thread={terminalThread}
+                    />
+                  </Suspense>
                 ) : activeTab.kind === "browser" ? (
                   <WorkspaceBrowserPanel
                     open={open}
