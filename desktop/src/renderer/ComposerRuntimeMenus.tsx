@@ -73,6 +73,7 @@ import {
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { ComposerMobileAttachmentChoices } from "./ComposerCamera";
+import { isTouchWebShell } from "./ComposerFocus";
 
 type ChipTone = "neutral" | "danger";
 
@@ -442,6 +443,7 @@ export function RuntimePicker({
           disabled={running}
           aria-haspopup="menu"
           aria-expanded={openMenu === "model"}
+          onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
           onClick={() => onToggleMenu("model")}
         >
           <span>{triggerLabel}</span>
@@ -457,6 +459,7 @@ export function RuntimePicker({
           align="right"
           width={224}
           flip
+          mobileSheet={{ label: t("runtime.selectModel"), onClose: () => onToggleMenu("model") }}
         >
           {externalEngine ? (
             <EngineRuntimeMenu
@@ -1251,19 +1254,21 @@ export function ComposerPlusButton({
         aria-label={t("composer.plusMenu")}
         title={t("composer.plusMenu")}
         disabled={disabled}
+        onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
         onClick={() => setOpen((current) => !current)}
       >
         <Plus aria-hidden="true" />
       </button>
       {open ? (
         <FloatingMenuPortal
-          anchorRef={menuAnchorRef}
+          anchorRef={isTouchWebShell() ? triggerRef : menuAnchorRef}
           owner="composer-plus"
           placement="above"
           align="left"
           offset={variant === "hero" ? 10 : 8}
           width={320}
           matchAnchorWidth
+          mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
         >
           <div className="composer-context-menu composer-plus-menu" role="menu" aria-label={t("composer.plusMenu")}>
             <div className="composer-plus-menu-section" role="presentation">{t("composer.plusSectionAdd")}</div>

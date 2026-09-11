@@ -4,6 +4,27 @@ export function startWebViewportSync(): () => void {
   const viewport = window.visualViewport;
   let frame: number | undefined;
   let height: number | undefined;
+  let revealTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const revealField = (): void => {
+    const field = document.activeElement;
+    if (!(field instanceof HTMLElement) || !field.matches('input, textarea')) return;
+    const form = field.closest<HTMLElement>('.account-home, .web-gate');
+    if (!form || (viewport && viewport.scale !== 1)) return;
+    const bounds = form.getBoundingClientRect();
+    const rect = field.getBoundingClientRect();
+    const top = Math.max(bounds.top, viewport?.offsetTop ?? 0) + 12;
+    const bottom = Math.min(bounds.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)) - 12;
+    if (bottom <= top) return;
+    // Correct only residual occlusion after the browser/IME's focus scroll.
+    // Scrolling this container cannot pan the WebView or move an outer shell.
+    if (rect.bottom > bottom) form.scrollTop += Math.min(rect.bottom - bottom, rect.top - top);
+    else if (rect.top < top) form.scrollTop -= top - rect.top;
+  };
+  const scheduleReveal = (): void => {
+    clearTimeout(revealTimer);
+    revealTimer = setTimeout(revealField, 120);
+  };
 
   const update = (): void => {
     frame = undefined;
@@ -12,15 +33,9 @@ export function startWebViewportSync(): () => void {
     if (viewport && viewport.scale !== 1) return;
     const nextHeight = viewport?.height ?? window.innerHeight;
     if (!Number.isFinite(nextHeight) || nextHeight <= 0 || height === nextHeight) return;
-    const shrinking = height !== undefined && nextHeight < height;
     height = nextHeight;
     root.style.setProperty("--web-viewport-height", `${nextHeight}px`);
-    const focused = document.activeElement;
-    if (shrinking && focused instanceof HTMLElement && focused.matches('input, textarea') && focused.closest('.account-home, .web-gate')) {
-      // Native IME resizing happens after the browser's first focus scroll.
-      // Reconcile once the form has its final visible height, without resizing fields.
-      focused.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
-    }
+    scheduleReveal();
   };
   const schedule = (): void => {
     // Keyboard and browser chrome can emit both resize events before a paint.
@@ -31,12 +46,17 @@ export function startWebViewportSync(): () => void {
 
   update();
   viewport?.addEventListener("resize", schedule);
+  viewport?.addEventListener("scroll", scheduleReveal);
   window.addEventListener("resize", schedule);
   window.addEventListener("pageshow", schedule);
+  document.addEventListener("focusin", scheduleReveal);
   return () => {
     viewport?.removeEventListener("resize", schedule);
+    viewport?.removeEventListener("scroll", scheduleReveal);
     window.removeEventListener("resize", schedule);
     window.removeEventListener("pageshow", schedule);
+    document.removeEventListener("focusin", scheduleReveal);
+    clearTimeout(revealTimer);
     if (frame !== undefined) window.cancelAnimationFrame(frame);
     root.style.removeProperty("--web-viewport-height");
   };

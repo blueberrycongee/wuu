@@ -10,7 +10,8 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "node test/workbench.e2e.mjs"
+    "test:e2e": "node test/workbench.e2e.mjs",
+    "test:phone": "node test/phone-interactions.e2e.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.1",

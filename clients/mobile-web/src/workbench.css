@@ -75,20 +75,81 @@
 /* A landscape IME can leave less than 150px. Preserve a readable input line
    and touch controls while editing. */
 @media (pointer: coarse) and (max-height: 300px) {
-  .account-workbench:has(.composer textarea:focus) .dock-composer-wrap { padding-block: 4px; }
-  .account-workbench:has(.composer textarea:focus) .composer {
+  .account-workbench .dock-composer-wrap { padding-block: 4px; }
+  .account-workbench .composer {
     --composer-collapsed-min-height: 88px;
     --composer-expanded-min-height: 88px;
   }
-  .account-workbench:has(.composer textarea:focus) .composer textarea {
+  .account-workbench .composer textarea {
     height: 40px;
     min-height: 40px;
     max-height: max(40px, calc(var(--web-viewport-height) - 80px));
     padding-block: 8px;
   }
-  .account-workbench:has(.composer textarea:focus) .composer-bar { min-height: 48px; }
-  .account-workbench:has(.composer textarea:focus) .composer-bar button { min-height: 44px; min-width: 44px; }
+  .account-workbench .composer-bar { min-height: 48px; }
+  .account-workbench .composer-bar button { min-height: 44px; min-width: 44px; }
 }
+
+/* Native dialog owns modality and focus; the sheet follows the visible viewport,
+   never the moving composer anchor. No second height animation races the IME. */
+.composer-mobile-sheet {
+  position: fixed;
+  inset: 0 auto auto 0;
+  width: 100%;
+  max-width: none;
+  height: var(--web-viewport-height, 100dvh);
+  max-height: none;
+  margin: 0;
+  padding: max(8px, env(safe-area-inset-top)) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  overflow: hidden;
+}
+.composer-mobile-sheet[open] { display: flex; align-items: flex-end; justify-content: center; }
+.composer-mobile-sheet::backdrop { background: var(--modal-backdrop-bg); }
+.composer-mobile-sheet-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 560px);
+  max-height: 100%;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 24px 24px 0 0;
+  background: var(--paper);
+  overflow: hidden;
+}
+.composer-mobile-sheet[data-ready="false"] .composer-mobile-sheet-panel { visibility: hidden; }
+.composer-mobile-sheet-panel > header { display: flex; flex: none; align-items: center; gap: 12px; padding: 4px 12px 4px 20px; min-height: 56px; }
+.composer-mobile-sheet-panel > header > span { flex: 1; min-width: 0; font-weight: 600; }
+.composer-mobile-sheet-panel > header > button { display: grid; place-items: center; width: 48px; height: 48px; border: 0; background: transparent; color: inherit; }
+.composer-mobile-sheet-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.composer-mobile-sheet-content > :is(.codex-runtime-menu, .composer-project-menu, .composer-context-menu) {
+  position: static;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  animation: none;
+  transition: none;
+}
+.composer-mobile-sheet .codex-model-menu.runtime-panel { height: auto; max-height: none; }
+.composer-mobile-sheet .runtime-panel-page { position: static; overflow: visible; animation: none; will-change: auto; }
+.composer-mobile-sheet .runtime-panel-summary { height: auto; }
+.composer-mobile-sheet :is(.runtime-panel-context, .runtime-panel-header) { height: auto; min-height: 48px; }
+.composer-mobile-sheet :is(.runtime-panel-list, .codex-model-groups, .project-picker-list) { overflow: visible; max-height: none; flex: none; }
+.composer-mobile-sheet :is(.runtime-engine-options, .runtime-provider-options) { grid-auto-rows: minmax(48px, auto); }
+.composer-mobile-sheet :is(.codex-runtime-menu, .composer-project-menu, .composer-context-menu) button {
+  min-height: 48px;
+  height: auto;
+  font-size: 16px;
+  touch-action: manipulation;
+}
+.composer-mobile-sheet input:not([type="range"]) { min-height: 48px; font-size: 16px; }
+.composer-mobile-sheet .runtime-panel-back { position: static; }
 
 .account-workbench .empty-home h2 { font-family: inherit; font-size: 26px; font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
 .account-workbench .app-shell.compact-navigation .title-block h1 { font-size: 15px; color: var(--ink); }

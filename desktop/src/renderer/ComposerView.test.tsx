@@ -230,9 +230,15 @@ function renderComposer(props: {
 describe("mobile composer attachments", () => {
   let hostKind: string | undefined;
   let mediaDescriptor: PropertyDescriptor | undefined;
+  let dialogDescriptors: (PropertyDescriptor | undefined)[];
 
   beforeEach(() => {
     hostKind = document.documentElement.dataset.hostKind;
+    dialogDescriptors = ['showModal', 'close'].map(key => Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, key));
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: { configurable: true, value(this: HTMLDialogElement) { this.open = true; } },
+      close: { configurable: true, value(this: HTMLDialogElement) { this.open = false; } },
+    });
     document.documentElement.dataset.hostKind = "web";
     const originalMatchMedia = window.matchMedia.bind(window);
     vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
@@ -243,6 +249,11 @@ describe("mobile composer attachments", () => {
   });
 
   afterEach(() => {
+    ['showModal', 'close'].forEach((key, index) => {
+      const descriptor = dialogDescriptors[index];
+      if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, key, descriptor);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, key);
+    });
     if (hostKind === undefined) delete document.documentElement.dataset.hostKind;
     else document.documentElement.dataset.hostKind = hostKind;
     vi.restoreAllMocks();

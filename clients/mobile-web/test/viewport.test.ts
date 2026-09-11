@@ -100,15 +100,45 @@ describe("workbench viewport", () => {
   });
 });
 
-it("keeps a focused phone form field visible after native keyboard resize", () => {
+it("waits for keyboard resizing to settle and scrolls only the form's remaining occlusion", () => {
   const form = document.createElement('main'); form.className = 'account-home';
   const input = document.createElement('input'); form.append(input); document.body.append(form);
-  const scroll = vi.fn(); input.scrollIntoView = scroll; input.focus();
+  input.focus();
+  let fieldTop = 520;
+  vi.spyOn(form, 'getBoundingClientRect').mockImplementation(() => ({ top: 0, bottom: viewport.height } as DOMRect));
+  vi.spyOn(input, 'getBoundingClientRect').mockImplementation(() => ({ top: fieldTop, bottom: fieldTop + 56 } as DOMRect));
   stop = startWebViewportSync();
+  viewport.height = 500; viewport.dispatchEvent(new Event('resize')); vi.advanceTimersToNextFrame();
+  vi.advanceTimersByTime(60);
   viewport.height = 420; viewport.dispatchEvent(new Event('resize')); vi.advanceTimersToNextFrame();
-  expect(scroll).toHaveBeenCalledOnce();
+  expect(form.scrollTop).toBe(0);
+  // The browser has already scrolled most of the way during the IME animation.
+  fieldTop = 380;
+  vi.advanceTimersByTime(120);
+  expect(form.scrollTop).toBe(28);
+  expect(document.documentElement.scrollTop).toBe(0);
   expect(document.activeElement).toBe(input);
+  fieldTop = 300;
   viewport.height = 800; viewport.dispatchEvent(new Event('resize')); vi.advanceTimersToNextFrame();
-  expect(scroll).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(120);
+  expect(form.scrollTop).toBe(28);
+  form.remove();
+});
+
+it("reveals a newly focused field with the keyboard already open and cancels pending work on stop", () => {
+  const form = document.createElement('main'); form.className = 'account-home';
+  const input = document.createElement('input'); form.append(input); document.body.append(form);
+  vi.spyOn(form, 'getBoundingClientRect').mockReturnValue({ top: 0, bottom: 420 } as DOMRect);
+  vi.spyOn(input, 'getBoundingClientRect').mockReturnValue({ top: -20, bottom: 36 } as DOMRect);
+  form.scrollTop = 80;
+  viewport.height = 420;
+  stop = startWebViewportSync();
+  input.focus();
+  vi.advanceTimersByTime(120);
+  expect(form.scrollTop).toBe(48);
+  input.blur(); input.focus();
+  stop(); stop = undefined;
+  vi.advanceTimersByTime(120);
+  expect(form.scrollTop).toBe(48);
   form.remove();
 });

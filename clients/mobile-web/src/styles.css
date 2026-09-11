@@ -125,6 +125,7 @@ input, textarea {
 .account-home .account-panel label { font-size: 14px; gap: 10px; }
 .account-home .account-panel input { min-height: 56px; padding: 16px; border-radius: 16px; background: var(--surface-1); border-color: transparent; }
 .account-home .account-panel form { gap: 24px; }
+.account-home .account-panel form > * { flex-shrink: 0; }
 .account-home .account-panel .account-primary { min-height: 56px; border-radius: 16px; font-size: 16px; font-weight: 600; }
 .account-home .account-auth-footer { display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 16px; }
 .account-home .account-connection-link { justify-content: center; gap: 6px; min-height: 48px; font-size: 14px; }

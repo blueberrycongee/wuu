@@ -12,6 +12,8 @@ import type {
   FloatingMenuPlacement
 } from "./ComposerTypes";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
+import { isTouchWebShell } from "./ComposerFocus";
+import { ComposerMobileSheet } from "./ComposerMobileSheet";
 
 export function isInsideFloatingMenu(target: Node, owner: FloatingMenuOwner): boolean {
   const element = target instanceof Element ? target : target.parentElement;
@@ -66,6 +68,7 @@ export function FloatingMenuPortal({
   // chrome. Defaults to false so existing callers keep their
   // explicit placement.
   flip = false,
+  mobileSheet,
   children
 }: {
   anchorRef: RefObject<HTMLElement | null>;
@@ -77,6 +80,7 @@ export function FloatingMenuPortal({
   width: number;
   matchAnchorWidth?: boolean;
   flip?: boolean;
+  mobileSheet?: { label: string; onClose: () => void };
   children: ReactNode;
 }): JSX.Element | null {
   const [resolvedPlacement, setResolvedPlacement] =
@@ -93,8 +97,10 @@ export function FloatingMenuPortal({
     number | null
   >(null);
   const layerRef = useRef<HTMLDivElement>(null);
+  const useSheet = Boolean(mobileSheet && isTouchWebShell());
 
   useLayoutEffect(() => {
+    if (useSheet) return;
     function updatePosition(): void {
       const anchor = anchorRef.current;
       if (!anchor) {
@@ -165,12 +171,12 @@ export function FloatingMenuPortal({
           window.innerHeight - visibleBottom + viewportMargin,
           window.innerHeight - rect.top + offset
         );
-        availableHeight = Math.max(0, rect.top - visible.top - offset - viewportMargin);
+        availableHeight = Math.max(0, window.innerHeight - Number(nextStyle.bottom) - visible.top - viewportMargin);
       } else if (actualPlacement === "below") {
-        nextStyle.top = Math.max(visible.top + viewportMargin, rect.bottom + offset);
+        nextStyle.top = clamp(rect.bottom + offset, visible.top + viewportMargin, visibleBottom - viewportMargin);
         availableHeight = Math.max(
           0,
-          visibleBottom - rect.bottom - offset - viewportMargin
+          visibleBottom - Number(nextStyle.top) - viewportMargin
         );
       } else {
         nextStyle.top = clamp(
@@ -190,7 +196,9 @@ export function FloatingMenuPortal({
       styleVariables["--floating-menu-available-height"] = `${availableHeight}px`;
       styleVariables["--select-menu-max-height"] = `${availableHeight}px`;
 
-      setStyle(nextStyle);
+      setStyle((current) => Object.keys(nextStyle).length === Object.keys(current).length &&
+        Object.entries(nextStyle).every(([key, value]) => current[key as keyof CSSProperties] === value)
+        ? current : nextStyle);
     }
 
     function measurePanel(): void {
@@ -215,24 +223,29 @@ export function FloatingMenuPortal({
     // React re-run useLayoutEffect so the flip decision can be refined
     // against the actual box (not the 320px estimate). The rAF guarantees
     // the panel has been laid out at least once.
-    if (measuredPanelHeight === null) {
-      const raf = requestAnimationFrame(measurePanel);
-      // Defensive cleanup in case the effect tears down before rAF fires.
-      // (No listener needs to be removed; the rAF callback is a no-op once
-      // measuredPanelHeight is no longer null, so a stale fire is harmless.)
-      void raf;
-    }
+    const measurement = measuredPanelHeight === null ? requestAnimationFrame(measurePanel) : undefined;
 
     const viewport = window.visualViewport;
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    viewport?.addEventListener("resize", updatePosition);
-    viewport?.addEventListener("scroll", updatePosition);
+    let frame: number | undefined;
+    const schedule = () => {
+      frame ??= requestAnimationFrame(() => { frame = undefined; updatePosition(); });
+    };
+    // The web shell applies viewport height in rAF. Measure after that write,
+    // and observe the containing layout so position changes need no new resize.
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedule);
+    for (let node = anchorRef.current; node; node = node.parentElement) observer?.observe(node);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    viewport?.addEventListener("resize", schedule);
+    viewport?.addEventListener("scroll", schedule);
     return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-      viewport?.removeEventListener("resize", updatePosition);
-      viewport?.removeEventListener("scroll", updatePosition);
+      observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      if (measurement !== undefined) cancelAnimationFrame(measurement);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+      viewport?.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("scroll", schedule);
     };
   }, [
     align,
@@ -244,8 +257,11 @@ export function FloatingMenuPortal({
     offset,
     placement,
     resolvedPlacement,
-    width
+    width,
+    useSheet
   ]);
+
+  if (useSheet && mobileSheet) return <ComposerMobileSheet anchorRef={anchorRef} owner={owner} {...mobileSheet}>{children}</ComposerMobileSheet>;
 
   return (
     <UILayerPortal layer="menu">

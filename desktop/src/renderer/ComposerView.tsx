@@ -1296,6 +1296,7 @@ export function Composer({
                         aria-haspopup="menu"
                         aria-expanded={menuOpen}
                         aria-label={t("composer.switchProject", { project: projectPillLabel })}
+                        onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                         onClick={onToggleMenu}
                       >
                         <span className="hero-project-pill-icon" aria-hidden="true">
@@ -1312,6 +1313,7 @@ export function Composer({
                         placement="above"
                         align="left"
                         width={300}
+                        mobileSheet={{ label: t("composer.switchProject", { project: projectPillLabel }), onClose: onToggleMenu }}
                       >
                         <ProjectPickerMenu
                           projects={projects}
@@ -1355,6 +1357,7 @@ export function Composer({
                       aria-expanded={accessMenuOpen}
                       aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
                       disabled={!initialized || readOnly || running}
+                      onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
                     >
                       <permissionOption.icon aria-hidden="true" />
@@ -1369,6 +1372,7 @@ export function Composer({
                         align="left"
                         offset={6}
                         width={176}
+                        mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
                       >
                         <AccessMenu
                           permissions={initialized?.permissions}

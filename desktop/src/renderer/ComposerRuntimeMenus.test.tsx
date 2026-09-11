@@ -465,7 +465,7 @@ describe("RuntimePicker", () => {
     );
   });
 
-  it("keeps the dock model card above the trigger after a software keyboard lifts the composer", () => {
+  it("keeps the dock model card above the trigger after a software keyboard lifts the composer", async () => {
     const initialized = runtimeWithEffort();
     const anchorRef = createRef<HTMLDivElement>();
     const viewport = Object.assign(new EventTarget(), {
@@ -498,12 +498,13 @@ describe("RuntimePicker", () => {
     expect(layer?.style.top).toBe("");
 
     viewport.height = 420;
-    act(() => {
+    await act(async () => {
       viewport.dispatchEvent(new Event("resize"));
+      await new Promise(requestAnimationFrame);
     });
     expect(layer?.classList.contains("floating-menu-above")).toBe(true);
     expect(layer?.style.bottom).toBe(`${window.innerHeight - 420 + 8}px`);
-    expect(layer?.style.getPropertyValue("--floating-menu-available-height")).toBe("604px");
+    expect(layer?.style.getPropertyValue("--floating-menu-available-height")).toBe("404px");
   });
 
   it("uses the target model default instead of carrying effort across models, with optimistic highlighting", () => {
