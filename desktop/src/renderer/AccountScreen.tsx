@@ -17,7 +17,7 @@ export function AccountScreen({ driver, onBack }: {
     </header>
     <main className="account-screen-content">
       <div className="account-screen-brand" aria-hidden="true">Wuu</div>
-      <AccountPanel driver={driver} onSignedIn={onBack} />
+      <AccountPanel desktopConnectionFlow driver={driver} />
     </main>
   </div>;
 }

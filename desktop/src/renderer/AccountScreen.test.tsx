@@ -27,27 +27,56 @@ async function fill(selector: string, value: string) {
   });
 }
 async function credentials() {
-  if (container.querySelector('input[type="url"]')) { await fill('input[type="url"]', "https://account.example"); await click("common.save"); }
+  if (container.querySelector('input[type="url"]')) { await fill('input[type="url"]', "https://account.example"); await click("account.linkContinue"); }
   await fill('[autocomplete="username"]', "andywu");
   await fill('input[type="password"]', "long-test-password");
   await click("account.connectionSettings");
   await fill('input[type="url"]', "https://account.example");
-  await click("common.save");
+  await click("account.linkContinue");
 }
 
 describe("AccountScreen", () => {
-  it("returns to the workbench only after a successful login", async () => {
+  it("starts with optional device linking, not server or login fields", async () => {
+    const driver = vi.fn(async () => ({}));
+    const back = await mount(driver);
+    expect(container.textContent).toContain(t("account.linkIntro"));
+    expect(container.querySelector("input")).toBeNull();
+    expect(driver).toHaveBeenCalledWith("status");
+    expect(driver).not.toHaveBeenCalledWith("config", expect.anything());
+    expect(container.querySelector("details a")?.getAttribute("href")).toContain("deploy/remote/README.md");
+    await click("settings.backToApp");
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+  it("keeps an unreachable service editable without saving it or showing login", async () => {
+    let fail = true;
+    await mount(async action => {
+      if (action === "config" && fail) throw new Error("Service unavailable");
+      return {};
+    });
+    await click("account.linkReady");
+    await fill('input[type="url"]', "https://account.example");
+    await click("account.linkContinue");
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Service unavailable");
+    expect(localStorage.getItem("wuu.account.server")).toBeNull();
+    expect(container.querySelector('[autocomplete="username"]')).toBeNull();
+    fail = false;
+    await click("account.linkContinue");
+    expect(localStorage.getItem("wuu.account.server")).toBe("https://account.example");
+    expect(container.querySelector('[autocomplete="username"]')).not.toBeNull();
+  });
+  it("shows phone connection guidance after a successful login", async () => {
     let signedIn = false; let fail = true;
     const driver: AccountDriver = vi.fn(async action => {
       if (action === "login") { if (fail) throw new Error("Invalid credentials"); signedIn = true; }
       return signedIn ? { username: "andywu" } : {};
     });
-    const back = await mount(driver); await credentials(); await click("account.login");
+    const back = await mount(driver); await click("account.linkReady"); await credentials(); await click("account.login");
     expect(back).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("Invalid credentials");
     fail = false; await click("account.login");
     expect(driver).toHaveBeenCalledWith("login", expect.objectContaining({ username: "andywu", server: "https://account.example" }));
-    expect(back).toHaveBeenCalledTimes(1);
+    expect(back).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(t("account.linkComplete"));
   });
   it("keeps a registered account's recovery code visible until it is saved", async () => {
     let signedIn = false;
@@ -55,12 +84,14 @@ describe("AccountScreen", () => {
       if (action === "register") { signedIn = true; return { username: "andywu", recovery: "test-recovery-code" }; }
       return signedIn ? { username: "andywu" } : {};
     });
-    await fill('input[type="url"]', "https://account.example"); await click("common.save");
+    await click("account.linkReady");
+    await fill('input[type="url"]', "https://account.example"); await click("account.linkContinue");
     await click("account.moreOptions"); await click("account.register");
     await credentials(); await click("account.register");
     expect(container.querySelector("code")?.textContent).toBe("test-recovery-code");
     expect(back).not.toHaveBeenCalled(); await click("account.savedRecovery");
-    expect(back).toHaveBeenCalledTimes(1);
+    expect(back).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(t("account.linkComplete"));
   });
   it("lets signed-in users manage devices without redirecting, and lets them return", async () => {
     const back = await mount(async () => ({ username: "andywu", devices: [] }));

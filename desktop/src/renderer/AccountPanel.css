@@ -74,3 +74,13 @@
 .account-login-methods, .account-oauth-pending { display:grid; gap:16px; }
 .account-login-methods .account-primary { display:flex; justify-content:center; align-items:center; gap:10px; }
 .account-oauth-pending a { overflow-wrap:anywhere; min-height:44px; display:flex; align-items:center; }
+
+.account-flow-caption { color: var(--ink-soft); line-height: 1.7; margin: 0 0 24px; }
+.account-link-steps { padding: 20px 20px 20px 40px; margin: 0 0 24px; border: 1px solid var(--hairline-soft); border-radius: 16px; }
+.account-link-steps li { padding-left: 4px; }
+.account-link-steps li + li { margin-top: 20px; }
+.account-link-steps strong { font-weight: var(--weight-medium); }
+.account-link-steps p { color: var(--ink-muted); line-height: 1.6; margin: 6px 0 0; }
+.account-deploy-guide { margin-top: 24px; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.7; }
+.account-deploy-guide summary { cursor: pointer; }
+.account-deploy-guide a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }

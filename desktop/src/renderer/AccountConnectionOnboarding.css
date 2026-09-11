@@ -1,0 +1,46 @@
+.account-onboarding { animation: account-onboarding-enter 240ms ease-out both; }
+.account-onboarding-heading { margin-bottom: 24px; }
+.account-onboarding-heading h2:focus { outline: none; }
+.account-onboarding-heading p { margin: 12px 0 0; line-height: 1.7; }
+.account-device-animation {
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  margin-bottom: 24px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 20px;
+  background: var(--surface-1);
+}
+.account-device-animation svg { display: block; width: 100%; height: auto; }
+.account-device-outline { stroke: var(--ink-soft); stroke-width: 2.5; stroke-linecap: round; fill: var(--paper); }
+.account-device-screen { stroke: var(--ink-muted); stroke-width: 2; stroke-linecap: round; }
+.account-device-screen rect { fill: var(--surface-1); stroke: none; }
+.account-transfer-track { stroke: var(--ink-muted); opacity: .22; }
+.account-transfer-packet rect { fill: var(--paper); stroke: var(--hairline); }
+.account-transfer-packet path { stroke: var(--ink-soft); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.account-transfer-out { animation: account-packet-out 4.8s ease-in-out infinite; }
+.account-transfer-in { animation: account-packet-in 4.8s ease-in-out infinite; }
+.account-device-signal { fill: var(--ink-soft); stroke: var(--surface-1); stroke-width: 3; }
+.account-device-signal-phone { animation: account-phone-receive 4.8s ease-in-out infinite; }
+.account-device-signal-computer { animation: account-computer-receive 4.8s ease-in-out infinite; }
+.account-onboarding-continue { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+@keyframes account-packet-out {
+  0%, 8% { transform: translateX(0); opacity: 0; }
+  16% { opacity: 1; }
+  42% { transform: translateX(142px); opacity: 1; }
+  49%, 100% { transform: translateX(142px); opacity: 0; }
+}
+@keyframes account-packet-in {
+  0%, 50% { transform: translateX(0); opacity: 0; }
+  58% { opacity: 1; }
+  84% { transform: translateX(-142px); opacity: 1; }
+  92%, 100% { transform: translateX(-142px); opacity: 0; }
+}
+@keyframes account-phone-receive { 0%, 35%, 60%, 100% { opacity: .35; } 44% { opacity: 1; } }
+@keyframes account-computer-receive { 0%, 77%, 100% { opacity: .35; } 86% { opacity: 1; } }
+@keyframes account-onboarding-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .account-onboarding, .account-device-animation * { animation: none; }
+  .account-transfer-out { transform: translateX(48px); }
+  .account-transfer-in { transform: translateX(-48px); }
+}

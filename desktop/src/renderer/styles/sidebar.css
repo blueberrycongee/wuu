@@ -230,6 +230,14 @@
   -webkit-app-region: no-drag;
 }
 
+/* The panel already starts after the docked navigation sidebar when that
+ * sidebar is visible. The hit-hole is only needed when the globalized panel
+ * reaches the window's left edge and has to avoid the traffic lights. */
+.app-shell.right-panel-globalized:not(.sidebar-collapsed)
+  .workspace-panel-sidebar-hit-hole {
+  display: none;
+}
+
 .app-shell.sidebar-collapsed.right-panel-open:not(.right-panel-globalized) .workspace-panel-tabbar {
   /* Expand only when the right panel's left edge enters the traffic-light zone. */
   padding-left: clamp(
@@ -1366,6 +1374,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Give sidebar labels the primary text contrast while keeping icons and
+ * secondary headings quieter. Semantic ink also follows the dark theme. */
+.sidebar-content :is(
+  .nav-item > span,
+  .project-row-name,
+  .thread-row-title,
+  .sidebar-settings-button > span
+) {
+  color: var(--ink);
+}
+
+.sidebar-content :is(
+  .sidebar-functional-heading-label,
+  .thread-list-more,
+  .thread-list-collapse-btn
+) {
+  color: var(--ink-soft);
 }
 
 /* 协作 section rows reuse the full session-row anatomy

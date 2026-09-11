@@ -41,7 +41,7 @@ describe("SidebarAccountMenu", () => {
     const driver = vi.fn(async () => ({ username, server: "https://account.example" }));
     const onOpenAccount = vi.fn();
     const navigate = await mount(driver, onOpenAccount); await open();
-    await act(async () => item("account.connect").click()); expect(onOpenAccount).toHaveBeenCalledTimes(1); expect(navigate).not.toHaveBeenCalled();
+    await act(async () => item("account.linkDevices").click()); expect(onOpenAccount).toHaveBeenCalledTimes(1); expect(navigate).not.toHaveBeenCalled();
     username = "andywu";
     await act(async () => window.dispatchEvent(new Event("wuu:account-changed")));
     expect(trigger().textContent).toContain("andywu"); await open();
