@@ -389,6 +389,9 @@ const api: WuuDesktopApi = {
   getThreadContextComposition: (threadId: string) =>
     ipcRenderer.invoke("wuu:thread-context-composition", threadId),
   listInstructionFiles: () => ipcRenderer.invoke("wuu:instructions-list"),
+  isAccountWindow: process.argv.includes("--wuu-account-window"),
+  openAccountWindow: () => ipcRenderer.invoke("wuu:account-window-open"),
+  closeAccountWindow: () => ipcRenderer.invoke("wuu:account-window-close"),
   remoteAccount: (action, input) => ipcRenderer.invoke("wuu:remote-account", action, input),
   getRemoteControlSnapshot: () => ipcRenderer.invoke("wuu:remote-snapshot"),
   setRemoteRelay: (relayUrl: string) =>
@@ -648,3 +651,8 @@ browserApi.onBrowserInvalidate = (handler) => {
 };
 
 contextBridge.exposeInMainWorld("wuu", api);
+
+// Account changes are shared by the setup window and every workbench.
+ipcRenderer.on("wuu:account-changed", () => {
+  window.dispatchEvent(new Event("wuu:account-changed"));
+});

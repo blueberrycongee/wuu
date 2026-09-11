@@ -10,7 +10,7 @@ import type { RuntimeContext } from "../shared/protocol";
  *  - "popped-out"  — a thread or draft in its own window.
  *  - "activity"    — a window dedicated to one background activity.
  */
-export type WindowRole = "main" | "popped-out" | "activity";
+export type WindowRole = "main" | "popped-out" | "activity" | "account";
 
 /**
  * Single source of truth for the live windows the main process created.

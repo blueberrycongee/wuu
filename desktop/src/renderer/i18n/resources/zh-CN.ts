@@ -15,6 +15,7 @@ export const zhCN = {
   "account.menu": "账户菜单",
   "account.linkComplete": "电脑已连接。接下来，在手机上登录同一服务。",
   "account.localMode": "本机使用",
+  "account.linkFinish": "完成并关闭",
   "account.linkDevices": "连接手机与电脑",
   "account.linkIntro": "Wuu 无需登录即可在本机使用。想在手机上访问这台电脑时，再连接你自己的服务。",
   "account.linkServer": "连接你自己的服务",

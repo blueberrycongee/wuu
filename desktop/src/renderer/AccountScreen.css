@@ -26,7 +26,12 @@
 
 .account-screen-back:hover { background: var(--surface-1); color: var(--ink); }
 .account-screen-content { flex: 1; min-height: 0; overflow-y: auto; padding: clamp(20px, 4vh, 48px) 24px 48px; }
-.account-screen-brand { width: min(100%, 480px); margin: 0 auto 24px; font-size: var(--font-display); font-weight: var(--weight-semibold); }
 .account-screen .account-panel { width: 100%; max-width: 480px; }
 
 .account-connected { display: flex; align-items: center; gap: 10px; max-width: 480px; margin: 0 auto 24px; padding: 16px; box-sizing: border-box; border: 1px solid var(--hairline-soft); border-radius: 12px; background: var(--surface-1); line-height: 1.6; }
+
+.account-screen-window .account-screen-titlebar { padding: 40px 20px 0; }
+.account-screen-window .account-screen-content { padding: 12px 32px 32px; }
+.account-window-done { display: block; width: 100%; max-width: 480px; margin: 20px auto 0; }
+
+.account-window-done button { width: 100%; }

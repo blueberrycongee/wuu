@@ -5095,7 +5095,10 @@ export function App(): JSX.Element {
               }}
               onPointerEnter={openSidebarDrawer}
               onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
-              onOpenAccount={() => setAccountOpen(true)}
+              onOpenAccount={() => {
+                if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
+                else setAccountOpen(true);
+              }}
               onOpenSettings={(page = "providers") => {
                 setSettingsInitialPage(page);
                 setSettingsOpen(true);
@@ -5203,7 +5206,10 @@ export function App(): JSX.Element {
             onPointerLeave={(event) =>
               scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
             }
-            onOpenAccount={() => setAccountOpen(true)}
+            onOpenAccount={() => {
+                if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
+                else setAccountOpen(true);
+              }}
             onOpenSettings={(page = "providers") => {
               setProjectMenuOpen(false);
               setRuntimeMenuOpen(false);

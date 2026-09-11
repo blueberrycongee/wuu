@@ -17,6 +17,7 @@ export const enUS = {
   "account.menu": "Account menu",
   "account.linkComplete": "Computer connected. Next, sign in to the same service on your phone.",
   "account.localMode": "On this computer",
+  "account.linkFinish": "Finish and close",
   "account.linkDevices": "Connect phone and computer",
   "account.linkIntro": "Use Wuu on this computer without an account. Connect your own service when you want to access this computer from your phone.",
   "account.linkServer": "Connect your own service",

@@ -8,10 +8,10 @@ import { translateCurrent as t } from "./i18n";
 let root: Root;
 let container: HTMLDivElement;
 afterEach(() => { act(() => root?.unmount()); container?.remove(); localStorage.clear(); });
-async function mount(driver: AccountDriver) {
+async function mount(driver: AccountDriver, standalone = false) {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   const back = vi.fn();
-  await act(async () => root.render(<AccountScreen driver={driver} onBack={back} />));
+  await act(async () => root.render(<AccountScreen driver={driver} onBack={back} standalone={standalone} />));
   return back;
 }
 async function click(key: Parameters<typeof t>[0]) {
@@ -36,6 +36,32 @@ async function credentials() {
 }
 
 describe("AccountScreen", () => {
+  it("leaves closing to native controls without a redundant back button", async () => {
+    await mount(async () => ({}), true);
+    expect(container.querySelector(".account-screen-window")).not.toBeNull();
+    expect(container.textContent).not.toContain(t("settings.backToApp"));
+    expect(container.querySelector(".account-screen-titlebar button")).toBeNull();
+  });
+  it("waits for recovery confirmation before offering to finish the window", async () => {
+    let signedIn = false;
+    const close = await mount(async action => {
+      if (action === "register") { signedIn = true; return { username: "andywu", recovery: "keep-this-code" }; }
+      return signedIn ? { username: "andywu" } : {};
+    }, true);
+    await click("account.linkReady");
+    await fill('input[type="url"]', "https://account.example");
+    await click("account.linkContinue");
+    await click("account.register");
+    await fill('[autocomplete="username"]', "andywu");
+    await fill('input[type="password"]', "long-test-password");
+    await click("account.register");
+    expect(container.querySelector("code")?.textContent).toBe("keep-this-code");
+    expect(container.querySelector(".account-window-done")).toBeNull();
+    await click("account.savedRecovery");
+    expect(close).not.toHaveBeenCalled();
+    await click("account.linkFinish");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
   it("starts with optional device linking, not server or login fields", async () => {
     const driver = vi.fn(async () => ({}));
     const back = await mount(driver);

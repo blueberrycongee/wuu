@@ -970,6 +970,40 @@ function createPopOutWindow(params: PopOutWindowParams): BrowserWindow {
   return win;
 }
 
+function createAccountWindow(context: RuntimeContext): void {
+  const existing = windowRegistry.allWindows().find(win =>
+    !win.isDestroyed() && windowRegistry.roleForWindow(win.webContents.id) === "account");
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show(); existing.focus();
+    return;
+  }
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const win = new BrowserWindow({
+    width: Math.min(640, workArea.width),
+    height: Math.min(780, workArea.height),
+    minWidth: Math.min(440, workArea.width),
+    minHeight: Math.min(560, workArea.height),
+    show: false,
+    ...windowFrameOptions(),
+    backgroundColor: windowBackgroundColor(),
+    title: "Wuu",
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      additionalArguments: ["--wuu-account-window"],
+      ...appShellWebPreferences(app.isPackaged),
+    },
+  });
+  const id = win.webContents.id;
+  windowRegistry.registerWindow(win, "account", { runtimeContext: context, workdir: context.cwd });
+  registerThemedChromeWindow(win);
+  win.once("ready-to-show", () => { win.show(); win.focus(); });
+  win.on("closed", () => unregisterWindow(id));
+  loadRenderer(win);
+}
+
 function createWindow(): void {
   const primaryDisplay = screen.getPrimaryDisplay();
   const onboardingComplete = isOnboardingComplete();
@@ -1935,6 +1969,14 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:instructions-list", (event) =>
     appServerRequest<InstructionsListResult>(event, "instructions/list"),
   );
+  ipcMain.handle("wuu:account-window-open", event => {
+    createAccountWindow(runtimeContextForEvent(event));
+  });
+  ipcMain.handle("wuu:account-window-close", event => {
+    if (windowRegistry.roleForWindow(event.sender.id) !== "account") return;
+    BrowserWindow.fromWebContents(event.sender)?.close();
+    mainWindow?.show(); mainWindow?.focus();
+  });
   ipcMain.handle("wuu:remote-account", (event, action: string, input: Record<string,string>) => {
     const workdir = runtimeContextForEvent(event).cwd;
     return phoneAccess.run(async () => {
@@ -1948,6 +1990,11 @@ app.whenReady().then(async () => {
       }
       if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
       if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
+      if (['login', 'register', 'logout', 'password', 'revoke'].includes(action) || (action === 'github-poll' && result.username)) {
+        for (const win of windowRegistry.allWindows()) {
+          if (!win.isDestroyed()) win.webContents.send("wuu:account-changed");
+        }
+      }
       return result;
     });
   });

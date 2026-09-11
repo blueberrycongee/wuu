@@ -42,8 +42,8 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
    try { const next = await driver('status'); if (active && generation === epoch.current) { setAccount(next); if (next.oauth_url) setOAuthURL(next.oauth_url); } } catch (e) { if (active && generation === epoch.current) setError(String(e instanceof Error ? e.message : e)); } finally { running = false; if (active) setLoading(false); }
   };
   void refresh(); const timer = setInterval(() => void refresh(), 5000);
-  document.addEventListener('visibilitychange', refresh); window.addEventListener('online', refresh);
-  return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); };
+  document.addEventListener('visibilitychange', refresh); window.addEventListener('online', refresh); window.addEventListener('wuu:account-changed', refresh);
+  return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('online', refresh); window.removeEventListener('wuu:account-changed', refresh); };
  }, [driver, panelActive]);
  useEffect(() => {
   if (!panelActive || !server || authPage === 'intro') return;

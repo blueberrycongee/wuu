@@ -1,23 +1,29 @@
+import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AccountPanel, type AccountDriver } from "./AccountPanel";
 import { useI18n } from "./i18n";
 import "./AccountScreen.css";
 
-/** Account entry replaces the workbench without entering the settings shell. */
-export function AccountScreen({ driver, onBack }: {
+/** Shared content for the native device-linking window and web fallback. */
+export function AccountScreen({ driver, onBack, standalone = false }: {
+  standalone?: boolean;
   driver: AccountDriver;
   onBack: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
-  return <div className="account-screen">
+  const [connected, setConnected] = useState(false);
+  useEffect(() => {
+    if (standalone) document.title = `Wuu · ${t("account.linkDevices")}`;
+  }, [standalone, t]);
+  return <div className={`account-screen${standalone ? " account-screen-window" : ""}`}>
     <header className="account-screen-titlebar">
-      <button type="button" className="account-screen-back" onClick={onBack}>
+      {!standalone && <button type="button" className="account-screen-back" onClick={onBack}>
         <ArrowLeft size={18} aria-hidden="true" />{t("settings.backToApp")}
-      </button>
+      </button>}
     </header>
     <main className="account-screen-content">
-      <div className="account-screen-brand" aria-hidden="true">Wuu</div>
-      <AccountPanel desktopConnectionFlow driver={driver} />
+      <AccountPanel desktopConnectionFlow driver={driver} onSignedIn={() => setConnected(true)} />
+      {standalone && connected && <div className="account-panel account-window-done"><button className="account-primary" type="button" onClick={onBack}>{t("account.linkFinish")}</button></div>}
     </main>
   </div>;
 }
