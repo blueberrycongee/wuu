@@ -67,6 +67,10 @@ input, textarea {
 
 .web-workbench { height: 100%; min-width: 0; }
 
+:root[data-host-kind="web"] .app-shell.compact-navigation {
+  --sidebar-touch-header-height: calc(56px + var(--phone-navigation-safe-top, env(safe-area-inset-top)));
+}
+
 :root[data-host-kind="web"] .app-shell.compact-navigation .conversation-pane:not([data-composer-navigation="true"]) {
   grid-template-rows: calc(56px + var(--phone-navigation-safe-top, env(safe-area-inset-top))) minmax(0, 1fr);
 }
@@ -107,16 +111,26 @@ input, textarea {
   height: 44px;
   flex: 0 0 44px;
   padding: 0;
-  border-radius: 50%;
-  background: var(--surface-1);
+  border-radius: 12px;
+  border: 0;
+  box-shadow: none;
+  color: var(--ink);
+  background: transparent;
   background-clip: border-box;
   pointer-events: auto;
 }
 
 :root[data-host-kind="web"] .app-shell.compact-navigation .titlebar :is(
   .sidebar-toggle-button, .compact-conversation-actions > .icon-button
-):is(:hover, :active, [aria-pressed="true"]):not(:disabled) {
-  background: var(--surface-2);
+):active:not(:disabled) {
+  background: var(--surface-1);
+}
+
+:root[data-host-kind="web"] .app-shell.compact-navigation .titlebar :is(
+  .sidebar-toggle-button, .compact-conversation-actions > .icon-button
+):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -4px;
 }
 
 .web-connection-status {

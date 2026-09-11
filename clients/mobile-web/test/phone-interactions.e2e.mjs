@@ -35,10 +35,45 @@ try {
     });
     assert(Math.abs((await pane.boundingBox()).width - before.width) < 1, 'opening keeps the page width');
     await page.getByRole('button', { name: 'Choose session' }).tap({ trial: true });
+    const toggle = page.getByRole('button', { name: 'Open', exact: true });
+    const toggleBounds = await toggle.boundingBox();
+    assert(toggleBounds.x >= 0 && toggleBounds.x + toggleBounds.width <= width, 'open drawer keeps the full close target on screen');
+    await toggle.tap();
+    await page.waitForFunction(() => Math.abs(document.querySelector('.conversation-pane').getBoundingClientRect().left) < 1);
+    await toggle.tap();
+    await page.waitForFunction(() => {
+      const pane = document.querySelector('.conversation-pane').getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+      return Math.abs(pane.left - sidebar.right) < 1;
+    });
     await page.getByRole('button', { name: 'Close navigation' }).tap({ position: { x: 16, y: 100 } });
     await page.waitForFunction(() => Math.abs(document.querySelector('.conversation-pane').getBoundingClientRect().left) < 1);
     assert.equal(await page.getByRole('textbox', { name: 'Navigation draft' }).inputValue(), 'Unsent draft');
   }
+  // Exercise native browser touch dispatch as well as button-driven opening.
+  // The App test covers the real toggle's lifetime; this fixture checks hit
+  // testing through the moving backdrop, which a DOM-only test cannot see.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const touchSession = await page.context().newCDPSession(page);
+  const message = await page.getByText('First message', { exact: true }).boundingBox();
+  const y = message.y + message.height / 2;
+  await touchSession.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 80, y }] });
+  for (const x of [110, 150, 190, 230, 270]) {
+    await touchSession.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+  }
+  await page.waitForFunction(() => document.querySelector('.conversation-pane').getBoundingClientRect().left > 100);
+  await touchSession.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForFunction(() => document.querySelector('.sidebar-toggle-button').getAttribute('aria-pressed') === 'true');
+  await page.getByRole('button', { name: 'Open', exact: true }).tap();
+  await page.waitForFunction(() => Math.abs(document.querySelector('.conversation-pane').getBoundingClientRect().left) < 1);
+  assert.equal(await page.getByRole('textbox', { name: 'Navigation draft' }).inputValue(), 'Unsent draft');
+  await touchSession.detach();
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByRole('button', { name: 'Open', exact: true }).tap();
+  await page.getByRole('button', { name: 'Choose session' }).tap({ trial: true });
+  await page.getByRole('button', { name: 'Open', exact: true }).tap();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto(url);
   const draft = page.getByRole('textbox', { name: 'Draft' });
   await draft.fill('Keep my draft');

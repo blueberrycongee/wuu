@@ -16,16 +16,16 @@
 
   :root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-collapsed > .conversation-pane {
     position: relative;
+    overflow: hidden;
     transform: translate3d(var(--sidebar-page-offset), 0, 0);
     transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    /* Keep the message surface composited before the first drag. Changing its
+       clipping and shadow at gesture start repaints a potentially long thread. */
+    will-change: transform;
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing, [data-sidebar-touch]) > .conversation-pane {
     z-index: 139;
-    border-radius: 24px 0 0 24px;
-    overflow: hidden;
-    box-shadow: var(--shadow-drawer-left);
-    will-change: transform;
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-collapsed .sidebar {
@@ -61,12 +61,13 @@
     display: block;
     position: absolute;
     inset: 0;
+    /* Leave the moving titlebar toggle available to close the drawer. */
+    top: var(--sidebar-touch-header-height, calc(48px + env(safe-area-inset-top, 0px)));
     z-index: 140;
     border: 0;
     padding: 0;
     background: var(--ink-overlay-8);
     transform: translate3d(var(--sidebar-page-offset), 0, 0);
-    border-radius: 24px 0 0 24px;
     opacity: var(--sidebar-touch-progress);
     pointer-events: none;
     visibility: hidden;
@@ -75,7 +76,7 @@
 
   :root[data-host-kind="web"] .app-shell.compact-navigation:is(.sidebar-drawer-open, .sidebar-drawer-closing, [data-sidebar-touch]) .compact-session-switcher-backdrop {
     visibility: visible;
-    will-change: opacity;
+    will-change: transform, opacity;
   }
 
   :root[data-host-kind="web"] .app-shell.compact-navigation:is(.sidebar-drawer-open, [data-sidebar-touch]) .compact-session-switcher-backdrop {

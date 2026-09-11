@@ -2741,7 +2741,7 @@ export function App(): JSX.Element {
     state.initialized && !poppedOutMode && !compactNavigation,
   );
   const sidebarVisible = !poppedOutMode;
-  const sidebarToggleVisible = sidebarVisible && !(compactNavigation && isTouchWebShell() && sidebarDrawerVisible);
+  const sidebarToggleVisible = sidebarVisible;
 
   useEffect(() => {
     if (sideThread.entry?.open && environmentPanelOpen) {

@@ -365,9 +365,10 @@ describe("collapsed sidebar hover drawer", () => {
     await act(async () => { toggle()!.click(); });
     await act(async () => { vi.advanceTimersByTime(400); });
     expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
-    expect(Boolean(toggle())).toBe(host === "desktop");
+    expect(toggle()).not.toBeNull();
+    expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
     await act(async () => {
-      container.querySelector<HTMLButtonElement>(".compact-session-switcher-backdrop")!.click();
+      toggle()!.click();
     });
     await act(async () => { vi.advanceTimersByTime(400); });
     expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
