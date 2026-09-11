@@ -5,9 +5,10 @@
 }
 
 .sidebar-account-trigger {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: var(--sidebar-nav-column-gap, 8px);
   width: 100%;
   min-height: 46px;
   padding: 7px var(--sidebar-row-pad-x);
@@ -34,6 +35,22 @@
   color: var(--ink-soft);
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
+}
+
+.sidebar-account-trigger .sidebar-account-avatar {
+  justify-self: center;
+  width: var(--sidebar-primary-icon-size, 16px);
+  height: var(--sidebar-primary-icon-size, 16px);
+  font-size: 9px;
+}
+
+.sidebar-account-trigger .sidebar-account-avatar:has(svg) {
+  background: transparent;
+}
+
+.sidebar-account-trigger .sidebar-account-avatar > svg {
+  width: 100%;
+  height: 100%;
 }
 
 .sidebar-account-name {
