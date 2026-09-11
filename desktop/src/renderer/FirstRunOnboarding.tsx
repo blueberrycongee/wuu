@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, LoaderCircle } from "lucide-react";
+import { Check, LoaderCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   EngineInfo,
@@ -439,7 +439,7 @@ export function FirstRunOnboarding({
             <OnboardingError message={error} />
             <div className="onboarding-actions">
               <button className="onboarding-back" type="button" disabled={applyingPlugins} onClick={() => setStep("welcome")}>
-                <ChevronLeft />{t("onboarding.back")}
+                {t("onboarding.back")}
               </button>
               <button
                 className="onboarding-primary"
@@ -491,7 +491,7 @@ export function FirstRunOnboarding({
             <OnboardingError message={error} />
             <div className="onboarding-actions">
               <button className="onboarding-back" type="button" disabled={savingRuntime} onClick={() => setStep("plugins")}>
-                <ChevronLeft />{t("onboarding.back")}
+                {t("onboarding.back")}
               </button>
               <button
                 className="onboarding-primary"
@@ -580,7 +580,7 @@ export function FirstRunOnboarding({
             <OnboardingError message={error} />
             <div className="onboarding-actions">
               <button className="onboarding-back" type="button" disabled={savingProvider} onClick={() => setStep("runtime")}>
-                <ChevronLeft />{t("onboarding.back")}
+                {t("onboarding.back")}
               </button>
               <div className="onboarding-action-group">
                 {!providerReady ? (

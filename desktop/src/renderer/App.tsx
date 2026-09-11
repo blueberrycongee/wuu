@@ -5597,9 +5597,7 @@ export function App(): JSX.Element {
                 ) : emptyConversation ? (
               <EmptyConversationHome
                 title={emptyThreadTitle}
-                // A non-empty draft (text or attachments) lifts the mascot's
-                // head from the composer to face the user; clearing it settles
-                // the gaze back down.
+                // A draft adds a small eye movement to the icon’s upper-left gaze.
                 activity={
                   prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0
                     ? "compose"

@@ -278,17 +278,19 @@
 }
 
 .onboarding-plugin-mascot-stage {
-  /* Illustration palette: body colours carry identity, not status semantics. */
-  --companion-coral: #e8a18e;
-  --companion-blue: #abc4ce;
-  --companion-sage: #b9c8b2;
-  --equipment-ink: #303937;
-  --equipment-fabric: #727f72;
-  --equipment-edge: #556456;
-  --equipment-shell: #f4eee1;
-  --equipment-paper: #fffbf2;
-  --equipment-binding: #b68c69;
-  --equipment-accent: #e9c789;
+  /* Outfit: navy headband, indigo canvas, caramel leather, ivory hardware.
+     Dark clothing separates from the cyan body; amber is a small accent. */
+  --companion-blue: #c4ddff;
+  --companion-sage: #c4eee4;
+  --equipment-ink: #23344f;
+  --equipment-headband: #293f68;
+  --equipment-stitch: #b9c6df;
+  --equipment-fabric: #3f5689;
+  --equipment-edge: #233653;
+  --equipment-shell: #f4ead7;
+  --equipment-paper: #fffaf0;
+  --equipment-binding: #b87540;
+  --equipment-accent: #f4b34f;
   position: relative;
   display: grid;
   width: 280px;
@@ -410,6 +412,7 @@
 }
 
 .equipment-edge { fill: var(--equipment-edge); }
+.equipment-headband { fill: var(--equipment-headband); }
 .equipment-fabric { fill: var(--equipment-fabric); }
 .equipment-shell { fill: var(--equipment-shell); }
 .equipment-paper { fill: var(--equipment-paper); }
@@ -421,15 +424,18 @@
 }
 
 .equipment-seam,
-.equipment-detail,
-.equipment-listen {
+.equipment-detail {
   fill: none;
   stroke: var(--equipment-ink);
   stroke-width: 1.3;
 }
 
-.equipment-seam { opacity: 0.3; stroke-width: 0.65; }
-.equipment-listen { opacity: 0; }
+.equipment-seam { opacity: 0.65; stroke-width: 0.85; }
+.equipment-seam.equipment-stitch {
+  stroke: var(--equipment-stitch);
+  opacity: 0.8;
+}
+.equipment-mic-boom { stroke-width: 2.2; }
 
 .equipment-progress-done,
 .equipment-progress-current,
@@ -690,21 +696,40 @@
   justify-content: flex-end;
 }
 
-.onboarding-back {
+/* Equal footprints keep navigation balanced; fill establishes priority. */
+.onboarding-actions .onboarding-primary,
+.onboarding-actions .onboarding-back {
+  box-sizing: border-box;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
-  border: 0;
-  padding: 9px 0;
+  justify-content: center;
+  width: 120px;
+  height: 42px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+.onboarding-back {
+  border: 1px solid var(--onboarding-border-focus);
   background: transparent;
   color: var(--onboarding-copy-back);
   cursor: pointer;
   font-size: 13px;
+  font-weight: 560;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
 }
 
-.onboarding-back svg {
-  width: 15px;
-  height: 15px;
+.onboarding-back:hover:not(:disabled) {
+  border-color: var(--onboarding-copy-back);
+  background: var(--onboarding-surface-soft);
+  color: var(--onboarding-ink);
+}
+
+.onboarding-back:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .onboarding-action-group {
@@ -813,6 +838,7 @@
   .onboarding-panel,
   .onboarding-progress-dot,
   .onboarding-primary,
+  .onboarding-back,
   .onboarding-plugin,
   .onboarding-plugin-mascot-stage *,
   .onboarding-plugin-mascot-stage *::before,

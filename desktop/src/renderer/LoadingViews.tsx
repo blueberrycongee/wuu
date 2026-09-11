@@ -1,65 +1,6 @@
-import { useEffect, useState } from "react";
+import { WuuIconMascot } from "./WuuIconMascot";
 import { useI18n } from "./i18n";
-import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
-
-type EmptyHomeMascotActivity = Extract<WuuMascotActivity, "idle" | "compose">;
-
-function randomDuration([minimum, maximum]: readonly [number, number]): number {
-  return minimum + Math.random() * (maximum - minimum);
-}
-
-function emptyHomeMascotDwellTime(
-  primary: EmptyHomeMascotActivity,
-  current: EmptyHomeMascotActivity,
-): number {
-  if (current === primary) {
-    return randomDuration(primary === "idle" ? [3_200, 6_800] : [4_200, 7_600]);
-  }
-  return randomDuration(primary === "idle" ? [800, 1_800] : [500, 1_100]);
-}
-
-function useAutonomousMascotActivity(primary: WuuMascotActivity): WuuMascotActivity {
-  const [state, setState] = useState<{ source: WuuMascotActivity; current: WuuMascotActivity }>(
-    { source: primary, current: primary },
-  );
-
-  useEffect(() => {
-    setState({ source: primary, current: primary });
-    if (primary !== "idle" && primary !== "compose") return;
-
-    const reducedMotion = typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
-    let current: EmptyHomeMascotActivity = primary;
-    let timer: number | undefined;
-
-    const schedule = () => {
-      if (reducedMotion?.matches) return;
-      timer = window.setTimeout(() => {
-        current = current === "idle" ? "compose" : "idle";
-        setState({ source: primary, current });
-        schedule();
-      }, emptyHomeMascotDwellTime(primary, current));
-    };
-    const handleMotionPreference = () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      current = primary;
-      setState({ source: primary, current: primary });
-      schedule();
-    };
-
-    schedule();
-    reducedMotion?.addEventListener("change", handleMotionPreference);
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      reducedMotion?.removeEventListener("change", handleMotionPreference);
-    };
-  }, [primary]);
-
-  // A changed interaction state wins immediately, before the effect above has
-  // restarted its autonomous cycle for the new primary pose.
-  return state.source === primary ? state.current : primary;
-}
+import { type WuuMascotActivity } from "./WuuMascot";
 
 export function RuntimeLoading({
   status
@@ -73,10 +14,7 @@ export function RuntimeLoading({
       {isStarting ? (
         <div className="wuu-launch" role="status" aria-label={t("loading.starting")}>
           <div className="wuu-launch-glass" aria-hidden="true">
-            <WuuMascot
-              className="wuu-launch-mascot"
-              accessory="none"
-            />
+            <WuuIconMascot className="wuu-launch-mascot" />
           </div>
         </div>
       ) : (
@@ -105,9 +43,6 @@ export function ViewSwitchLoading({ compact = false }: { compact?: boolean }): J
 export function EmptyConversationHome({
   title,
   belowTitle,
-  // The caller passes "compose" once a draft exists. The empty-home mascot
-  // maps that interaction signal to a lowered primary gaze because the draft
-  // and composer sit below it; without a draft it primarily faces the user.
   activity = "idle",
   children
 }: {
@@ -119,32 +54,13 @@ export function EmptyConversationHome({
   activity?: WuuMascotActivity;
   children?: JSX.Element | null;
 }): JSX.Element {
-  const primaryMascotActivity = activity === "idle"
-    ? "compose"
-    : activity === "compose"
-      ? "idle"
-      : activity;
-  const mascotActivity = useAutonomousMascotActivity(primaryMascotActivity);
-
   return (
     <section className="empty-home" data-wuu-component="empty-session">
       <div className="empty-home-inner session-flow">
         <div className="empty-home-header">
-          {/* The wuu blobatar greeting faces the user while the composer is
-              empty, lowers its primary gaze once a draft appears below it,
-              occasionally visits the other pose on an irregular rhythm, and
-              keeps pointer gaze layered over both. Hue
-              is pinned the same way default avatars are, so the mark matches
-              the pairing hero on the phone companion. Shape is pinned to
-              "round" (the first silhouette, shape < 0.28) with the aspect
-              ratio locked to 1, and the plate is off (none), so the mascot is
-              a pure round ball floating on the paper. */}
-          <WuuMascot
+          <WuuIconMascot
             className="empty-home-mascot"
-            activity={mascotActivity}
-            followPointer
-            animate="hover"
-            aria-hidden="true"
+            composing={activity === "compose"}
           />
           <h2>{title}</h2>
           {belowTitle ?? null}

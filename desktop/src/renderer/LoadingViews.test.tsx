@@ -1,3 +1,4 @@
+import icon from "../../../assets/app-icon-source.json";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 
 describe("RuntimeLoading", () => {
-  it("centers the wuu blobatar mascot inside one glass app-icon surface", () => {
+  it("uses the animated approved icon on the loading surface", () => {
     const view = render(<RuntimeLoading status="connecting" />);
 
     const glass = view.querySelector(".wuu-launch-glass");
@@ -30,7 +31,8 @@ describe("RuntimeLoading", () => {
 
     expect(glass).not.toBeNull();
     expect(mascot).not.toBeNull();
-    expect(mascot?.querySelector("g.mo-root.mo-always")).not.toBeNull();
+    expect(mascot?.querySelector(".wuu-icon-gaze")).not.toBeNull();
+    expect(mascot?.querySelectorAll(".wuu-icon-blink")).toHaveLength(2);
     expect(view.querySelector(".wuu-launch-mark")).toBeNull();
     expect(view.querySelector(".wuu-launch-rail")).toBeNull();
   });
@@ -45,7 +47,7 @@ describe("RuntimeLoading", () => {
 });
 
 describe("EmptyConversationHome", () => {
-  it("keeps the idle round blobatar inline without always-on motion", () => {
+  it("shows the approved icon composition with separate animated eyes", () => {
     const view = render(
       <EmptyConversationHome title="Hello">
         <div className="hero-composer" />
@@ -53,11 +55,16 @@ describe("EmptyConversationHome", () => {
     );
 
     const mascot = view.querySelector<SVGSVGElement>("svg.empty-home-mascot");
-    const motionRoot = mascot?.querySelector<SVGGElement>("g.mo-root");
+    const eyes = mascot?.querySelector(".wuu-icon-gaze");
     expect(mascot).not.toBeNull();
     expect(mascot?.getAttribute("aria-hidden")).toBe("true");
-    expect(motionRoot).not.toBeNull();
-    expect(motionRoot?.classList.contains("mo-always")).toBe(false);
-    expect(motionRoot?.getAttribute("style")).toContain("--mo-phase");
+    expect(mascot?.getAttribute("viewBox")).toBe("0 0 1024 1024");
+    expect(eyes?.parentElement?.getAttribute("transform")).toBe(
+      `translate(${icon.bodyX + icon.radius * icon.faceX} ${icon.bodyY + icon.radius * icon.faceY}) rotate(${icon.tilt})`,
+    );
+    expect(eyes?.parentElement?.getAttribute("fill")).toBe(icon.eyeColor);
+    expect(eyes?.querySelectorAll(".wuu-icon-blink rect")).toHaveLength(2);
+    expect(mascot?.querySelector('stop[offset="0.52"]')?.getAttribute("stop-color")).toBe(icon.bodyColor);
+    expect(mascot?.querySelectorAll(`g[fill="${icon.markColor}"] rect`)).toHaveLength(3);
   });
 });

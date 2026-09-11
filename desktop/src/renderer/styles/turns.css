@@ -4070,8 +4070,8 @@ pre {
   position: relative;
   z-index: 1;
   display: block;
-  width: 76%;
-  height: 76%;
+  width: 100%;
+  height: 100%;
   user-select: none;
   -webkit-user-drag: none;
 }

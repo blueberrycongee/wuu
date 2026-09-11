@@ -26,6 +26,7 @@ import "./styles/wuu-mascot.css";
 
 import {
   WUU_MASCOT_ACTIVITY_LOOK,
+  WUU_MASCOT_BRAND_COLORS,
   WUU_MASCOT_DEFAULT_HUE,
   WUU_MASCOT_IDENTITY_PERSPECTIVE,
   WUU_MASCOT_NAME,
@@ -248,6 +249,8 @@ type WuuMascotProps = Omit<
   accessory?: WuuMascotAccessory;
   activity?: WuuMascotActivity;
   followPointer?: boolean;
+  /** Pin hero appearances to the app icon, independent of provider identity. */
+  brand?: boolean;
   identityName?: string;
   identityHue?: number;
   identityTraits?: Readonly<Record<string, number>>;
@@ -263,6 +266,7 @@ export function WuuMascot({
   accessory,
   activity = "idle",
   followPointer = false,
+  brand = false,
   identityName = WUU_MASCOT_NAME,
   identityHue,
   identityTraits = WUU_MASCOT_TRAITS,
@@ -274,7 +278,9 @@ export function WuuMascot({
   const effectiveProvider = provider ?? runtime.provider;
   const effectiveModel = model ?? runtime.model;
   const hue = identityHue ?? providerMascotHue(effectiveProvider, runtime.providers);
-  const colors = palette(hue);
+  const colors = brand || (identityHue === undefined && !normalizedProviderIdentity(effectiveProvider))
+    ? WUU_MASCOT_BRAND_COLORS
+    : palette(hue);
   const selectedAccessory = accessory ?? modelMascotAccessory(effectiveModel);
   const identityTraitsSignature = Object.entries(identityTraits)
     .sort(([left], [right]) => left.localeCompare(right))

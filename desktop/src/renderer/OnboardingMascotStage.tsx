@@ -8,7 +8,7 @@ import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
 
 export type OnboardingPluginID = (typeof ONBOARDING_PLUGIN_ORDER)[number];
 
-const COMPANIONS = ["coral", "blue", "sage"] as const;
+const COMPANIONS = ["wuu", "blue", "sage"] as const;
 const { body } = _layout(WUU_MASCOT_NAME, { traits: WUU_MASCOT_TRAITS });
 // Equipment is authored around a radius-40 body, then fitted to Wuu's actual
 // identity geometry. The face and equipment share one moving parent.
@@ -46,11 +46,12 @@ export function OnboardingMascotStage({
                 <WuuMascot
                   className="onboarding-mascot"
                   size={200}
+                  brand
                   activity="compose"
                   accessory="none"
                   animate="hover"
                   followPointer
-                  style={{ "--mo-head": `var(--companion-${color})`, "--mo-eye": "var(--equipment-ink)" } as CSSProperties}
+                  style={index === 0 ? undefined : { "--mo-head": `var(--companion-${color})`, "--mo-eye": "var(--equipment-ink)" } as CSSProperties}
                 />
                 {index === 0 ? <CompanionEquipment worn={worn} engineMark={engineMark} engineID={engineID} /> : null}
               </div>
@@ -96,15 +97,19 @@ function CompanionEquipment({
           <g className="onboarding-equipment-belt">
             <path className="equipment-edge" d="M14 65 Q49 84 86 64 L83 74 Q51 94 18 76 Z" />
             <path className="equipment-fabric" d="M14 63 Q49 82 86 62 L84 71 Q51 91 17 73 Z" />
-            <path className="equipment-seam" d="M20 72 Q48 85 78 73" />
+            <path className="equipment-seam equipment-stitch" d="M20 72 Q48 85 78 73" />
           </g>
         ) : null}
-        {capability("ask-user", <>
-          <path className="equipment-edge" d="M13 40 Q9 49 13 58 L17 57 Q14 48 18 41 Z" />
-          <rect className="equipment-shell" x="9" y="43" width="9" height="14" rx="4.5" transform="rotate(8 13 50)" />
-          <path className="equipment-detail" d="M13 47 V52" />
-          <path className="equipment-listen" d="M5 44 Q2 49 5 54" />
-        </>)}
+        {capability("ask-user", <g className="equipment-headset">
+          {/* The ear hook hugs the silhouette; the boom stays above the watch. */}
+          <path className="equipment-edge" d="M11 47 Q7 36 18 32 L20 36 Q13 38 15 47 Z" />
+          <rect className="equipment-edge" x="7" y="42" width="12" height="17" rx="6" transform="rotate(8 13 50)" />
+          <rect className="equipment-shell" x="8.5" y="43.5" width="8" height="13" rx="4" transform="rotate(8 13 50)" />
+          <path className="equipment-detail equipment-mic-boom" d="M14 55 Q19 62 29 58" />
+          <rect className="equipment-edge" x="26" y="55" width="9" height="5" rx="2.5" transform="rotate(-12 30 57.5)" />
+          <circle className="equipment-bookmark" cx="12.5" cy="47.5" r="1.5" />
+          <path className="equipment-detail" d="M11.5 51 L11.5 53" />
+        </g>)}
         {capability("todo", <>
           <path className="equipment-edge" d="M28 72 Q40 76 51 76 L51 84 Q38 83 26 79 Z" />
           <path className="equipment-progress-done" d="M31 76 L34 77" />
@@ -112,11 +117,11 @@ function CompanionEquipment({
           <path className="equipment-progress-next" d="M47 79 L49 79" />
         </>)}
         {capability("goal", <>
-          <path className="equipment-shell" d="M80 25 Q89 20 96 24 L93 28 L98 31 Q87 32 79 30 Z" />
-          <path className="equipment-shell" d="M81 28 Q91 32 94 42 L88 39 L85 42 Q86 33 78 31 Z" />
-          <path className="equipment-seam" d="M84 26 L92 26 M83 31 Q88 34 90 38" />
-          <path className="equipment-shell" d="M18 24 Q49 14 81 23 L86 33 Q50 24 14 35 Z" />
-          <path className="equipment-seam" d="M19 32 Q50 22 83 30" />
+          <path className="equipment-headband" d="M80 25 Q89 20 96 24 L93 28 L98 31 Q87 32 79 30 Z" />
+          <path className="equipment-headband" d="M81 28 Q91 32 94 42 L88 39 L85 42 Q86 33 78 31 Z" />
+          <path className="equipment-seam equipment-stitch" d="M84 26 L92 26 M83 31 Q88 34 90 38" />
+          <path className="equipment-headband" d="M18 24 Q49 14 81 23 L86 33 Q50 24 14 35 Z" />
+          <path className="equipment-seam equipment-stitch" d="M19 32 Q50 22 83 30" />
           <path className="equipment-bookmark" d="M46 20 L52 20 L51 28 L45 28 Z" />
           <path className="equipment-paper" d="M78 23 Q82 21 85 25 L85 30 Q82 33 78 30 Z" />
           <path className="equipment-seam" d="M81 25 L82 29" />
@@ -136,22 +141,28 @@ function CompanionEquipment({
         </g>)}
         {hasPocket ? <>
           <path className="equipment-fabric" d="M63 66 Q75 70 86 64 L84 78 Q82 83 70 82 Q64 82 64 77 Z" />
-          <path className="equipment-seam" d="M68 77 Q75 80 81 77" />
+          <path className="equipment-seam equipment-stitch" d="M68 77 Q75 80 81 77" />
         </> : null}
         {capability("dream", <>
           <g className="equipment-sort-sheet equipment-sort-sheet-back"><rect className="equipment-paper" x="77" y="58" width="7" height="10" rx="1.5" /></g>
           <g className="equipment-sort-sheet"><rect className="equipment-shell" x="77" y="59" width="7" height="10" rx="1.5" /></g>
           <path className="equipment-detail" d="M80 62 V68 Q80 71 82 70 L83 69" />
         </>)}
-        {capability("note-compaction", <>
-          <path className="equipment-edge" d="M42 85 L61 84 L62 92 L42 93 Z" />
+        {capability("note-compaction", <g className="equipment-note-press">
+          {/* A belt-mounted paper press: stacked sheets held by one clasp. */}
+          <path className="equipment-binding" d="M46 77 L51 77 L51 83 L46 83 Z M56 77 L61 76 L61 82 L56 83 Z" />
+          <rect className="equipment-edge" x="41" y="80" width="23" height="13" rx="3" />
+          <rect className="equipment-binding" x="42.5" y="81.5" width="20" height="10" rx="2" />
           <g className="equipment-folded-note">
-            <path className="equipment-paper" d="M43 85 L60 84 L61 90 L44 91 Z" />
-            <path className="equipment-seam" d="M46 87 L58 86 M46 89 L54 88.5" />
+            <rect className="equipment-shell" x="44" y="79.5" width="16" height="9" rx="1.5" />
+            <rect className="equipment-paper" x="45" y="78" width="14" height="8" rx="1.5" />
+            <path className="equipment-seam" d="M46 86.5 H59 M46 89 H59" />
+            <path className="equipment-detail" d="M47 81 H51 M47 83 H50" />
           </g>
-          <path className="equipment-fabric" d="M48 84 L52 84 L53 92 L49 92 Z" />
-          <path className="equipment-bookmark" d="M56 89 L59 89 L59 95 L57.5 94 L56 95 Z" />
-        </>)}
+          <rect className="equipment-edge" x="53" y="79" width="6" height="13" rx="1.5" />
+          <rect className="equipment-bookmark" x="53.5" y="82.5" width="5" height="6" rx="1" />
+          <path className="equipment-detail" d="M55 85.5 H57" />
+        </g>)}
       </g>
     </svg>
   );

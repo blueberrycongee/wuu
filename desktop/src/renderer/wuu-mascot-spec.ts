@@ -1,4 +1,11 @@
 import { _layout } from "blobatar";
+import approvedIcon from "../../../assets/app-icon-source.json";
+
+// Hero surfaces share the approved app icon’s exact palette.
+export const WUU_MASCOT_BRAND_COLORS = {
+  head: approvedIcon.bodyColor,
+  eye: approvedIcon.eyeColor,
+} as const;
 
 /**
  * The mascot's blobatar identity, shared between the component and its test so
