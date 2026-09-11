@@ -782,7 +782,8 @@
   max-height: 40px;
   margin: 0 auto -8px;
   overflow: hidden;
-  border: 1px solid var(--conversation-floating-surface-border);
+  /* The drawer continues the composer card, so both share its quiet outline. */
+  border: 1px solid var(--hairline-soft);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: var(--conversation-floating-surface-bg);
@@ -946,7 +947,6 @@
 .document-composer-wrap .composer-accessory-drawer:focus-within {
   z-index: 3;
   translate: 0 -2px;
-  border-color: var(--conversation-floating-surface-hover-border);
   background: var(--conversation-floating-surface-hover-bg);
   box-shadow: var(--shadow-tray);
 }
@@ -954,7 +954,6 @@
 .document-composer-wrap .composer-accessory-drawer.expanded {
   z-index: 4;
   translate: 0 -6px;
-  border-color: var(--conversation-floating-surface-hover-border);
   box-shadow: var(--shadow-tray);
 }
 

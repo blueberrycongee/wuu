@@ -1127,7 +1127,8 @@ html.resizing-workspace-file-split * {
   overflow: hidden;
   color: var(--text-primary);
   background: var(--conversation-floating-surface-bg);
-  border: 1px solid var(--hairline);
+  /* Match the composer and its pending-message drawer in every open state. */
+  border: 1px solid var(--hairline-soft);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   box-shadow: var(--shadow-tray);
@@ -1146,7 +1147,6 @@ html.resizing-workspace-file-split * {
   z-index: 4;
   translate: 0 -6px;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  border-color: var(--hairline-strong);
   box-shadow: var(--shadow-tray);
 }
 
@@ -1154,7 +1154,6 @@ html.resizing-workspace-file-split * {
 .workspace-document-turn-drawer:not(.expanded):focus-within {
   z-index: 3;
   translate: 0 -2px;
-  border-color: var(--hairline-strong);
   box-shadow: var(--shadow-tray);
 }
 
