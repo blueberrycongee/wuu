@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PhoneAccess, phoneAddress, phonePairLink, phoneAccessConfig } from "./phoneAccess";
 import type { RemoteHostManager } from "./remoteControl";
 import { getPhoneAccessEnabled, setPhoneAccessEnabled, getThemePreference, setThemePreference } from "./desktopSettings";
@@ -13,6 +13,14 @@ vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("./wuuCommand", () => ({ resolveWuuCommand: () => ({ command: "wuu", args: [], cwd: "/tmp" }) }));
 const roots: string[] = [];
 afterEach(async () => { vi.clearAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+
+// The desktop dev session exports WUU_WEB_* for its own phone listener; these
+// tests must not inherit the ambient deployment configuration.
+beforeEach(() => {
+  for (const name of ["WUU_WEB_URL", "WUU_WEB_RELAY_URL", "WUU_WEB_LISTEN", "WUU_WEB_TLS_CERT", "WUU_WEB_TLS_KEY"]) {
+    delete process.env[name];
+  }
+});
 
 it("uses a LAN address and keeps the pairing secret out of HTTP queries", () => {
   const entry = (address: string, internal = false) => ({ address, family: "IPv4", internal, netmask: "", cidr: null, mac: "" } as const);
