@@ -43,7 +43,7 @@ describe("options", () => {
     );
   });
 
-  test("sphere projection shifts the eye pair toward the turn, unchanged", () => {
+  test("sphere projection changes both the position and contour of the eyes", () => {
     const traits = { shape: 0.2, "body.ratio": 0.5 };
     const flat = _layout("wuu", { traits });
     const turnedLeft = _layout("wuu", {
@@ -52,11 +52,8 @@ describe("options", () => {
     });
 
     expect(turnedLeft.eyes[0]!.cx).toBeLessThan(flat.eyes[0]!.cx);
-    // The capsules ride the turn exactly as authored: at these sizes a shrunk
-    // capsule reads as a smaller eye, not as a turned surface, so nothing
-    // scales, rotates, or warps them — only the pair's position moves.
-    expect(turnedLeft.eyes.map((e) => [e.rx, e.ry, e.rot])).toEqual(
-      flat.eyes.map((e) => [e.rx, e.ry, e.rot]),
+    expect(turnedLeft.eyes.map((e) => [e.rx, e.ry])).not.toEqual(
+      flat.eyes.map((e) => [e.rx, e.ry]),
     );
     expect(
       blobatar("wuu", { traits, perspective: { yaw: -20, pitch: 8, strength: 1 } }),

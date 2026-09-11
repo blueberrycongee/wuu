@@ -15,7 +15,7 @@ export interface BlobatarOptions {
   hue?: number;
   /** Locks the tone as a 0–1 position in the swatch set. */
   tone?: number;
-  /** Projects the eye pair onto a turned sphere. Angles are in degrees. */
+  /** Attaches eye contours to a turned ellipsoidal face. Angles are in degrees. */
   perspective?: FacePerspective;
   /**
    * Pins individual traits, so the name drives only what you leave out.
@@ -97,7 +97,7 @@ export interface FacePerspective {
   yaw?: number;
   /** Vertical face turn, clamped to −45…45°. */
   pitch?: number;
-  /** Blends between the flat layout and full projection, clamped to 0…1. */
+  /** Scales the face rotation from zero to the supplied angles, clamped to 0…1. Defaults to 0. */
   strength?: number;
 }
 
@@ -117,8 +117,8 @@ export interface Style<L> {
  * Applies a static pose, if an expression was asked for.
  *
  * The animated path deliberately does not come through here: there, the pose is
- * eight custom properties and the CSS composes it, so baking it into geometry as
- * well would apply it twice.
+ * numeric custom properties. Flat avatars compose them in CSS; surface avatars
+ * project their interpolated values in the React adapter.
  */
 function posed<L>(l: L, opts: BlobatarOptions, animate?: unknown) {
   const e = opts.expression;

@@ -2,6 +2,7 @@ import { motionVars, rootClass, type Animate } from "./animate";
 import type { Palette } from "./color";
 import type { Expression } from "./expression";
 import { makeBlobatar, makeParts, resolve, type BlobatarOptions, type FacePerspective } from "./render";
+import { faceAngles, surfaceEye } from "./surface";
 import type { Traits } from "./traits";
 import * as blob from "./styles/blob";
 
@@ -66,11 +67,17 @@ const motion = (mode: Animate, e?: Expression) => (t: Traits, p: Palette) => {
  * animating. Underscored because the shape of this object is not public API.
  */
 export function _parts(name: string, opts: BlobatarOptions = {}) {
-  return makeParts(blob)(
+  const parts = makeParts(blob)(
     name,
     opts,
     opts.animate && motion(opts.animate, opts.expression),
   );
+  if (opts.animate && opts.perspective) {
+    const { yaw, pitch } = faceAngles(opts.perspective);
+    parts.cls += " mo-surface";
+    parts.vars = { ...parts.vars, "--mo-yaw": String(yaw), "--mo-pitch": String(pitch) };
+  }
+  return parts;
 }
 
 /**
@@ -96,5 +103,6 @@ export function _layout(name: string, opts: BlobatarOptions = {}) {
     // static renderer paints rather than the ramp they came from.
     palette: (e?.tint ? e.tint(palette as Palette, e.p) : palette) as Palette,
     ...posed,
+    eyes: opts.perspective ? posed.eyes.map((eye) => surfaceEye(eye, l.body, opts.perspective)) : posed.eyes,
   };
 }

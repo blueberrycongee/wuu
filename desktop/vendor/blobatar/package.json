@@ -20,6 +20,7 @@
   "scripts": {
     "test": "bun test",
     "probe": "bun scripts/probe-compose.ts",
+    "probe:surface": "bun scripts/probe-surface.ts",
     "check": "bun test"
   },
   "author": "Alain",

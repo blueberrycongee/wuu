@@ -1,11 +1,9 @@
-import { VERSION as BLOBATAR_VERSION, _layout } from "blobatar";
+import { _layout } from "blobatar";
 import { describe, expect, it } from "vitest";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { providerMascotHue, WUU_MASCOT_ACTIVITY_PROP_LAYOUT } from "./WuuMascot";
 import {
-  WUU_MASCOT_ACTIVITY_LOOK,
   WUU_MASCOT_ACTIVITY_PERSPECTIVES,
-  WUU_MASCOT_IDENTITY_PERSPECTIVE,
   WUU_MASCOT_NAME,
   WUU_MASCOT_TRAITS,
   type WuuMascotActivity,
@@ -22,7 +20,6 @@ describe("vendored mascot geometry", () => {
   it("authors matching long eyes, then foreshortens them across the sphere", () => {
     const read = forActivity("read");
 
-    expect(BLOBATAR_VERSION).toBe("0.2.0-wuu.8");
     expect(flat.eyes[1]!.rx).toBeCloseTo(flat.eyes[0]!.rx, 10);
     expect(flat.eyes[1]!.ry).toBeCloseTo(flat.eyes[0]!.ry, 10);
     expect(flat.eyes[1]!.rot).toBeCloseTo(flat.eyes[0]!.rot, 10);
@@ -60,29 +57,7 @@ describe("vendored mascot geometry", () => {
     expect(WUU_MASCOT_ACTIVITY_PERSPECTIVES.idle.pitch).toBeLessThan(0);
   });
 
-  it("keeps idle as the baked identity pose and looks with CSS offsets", () => {
-    expect(WUU_MASCOT_IDENTITY_PERSPECTIVE).toEqual(WUU_MASCOT_ACTIVITY_PERSPECTIVES.idle);
-    expect(WUU_MASCOT_ACTIVITY_LOOK.idle).toEqual({ x: 0, y: 0 });
-
-    const idle = forActivity("idle");
-    const idlePair = {
-      x: (idle.eyes[0]!.cx + idle.eyes[1]!.cx) / 2,
-      y: (idle.eyes[0]!.cy + idle.eyes[1]!.cy) / 2,
-    };
-    for (const activity of Object.keys(WUU_MASCOT_ACTIVITY_LOOK) as WuuMascotActivity[]) {
-      const layout = forActivity(activity);
-      const pair = {
-        x: (layout.eyes[0]!.cx + layout.eyes[1]!.cx) / 2,
-        y: (layout.eyes[0]!.cy + layout.eyes[1]!.cy) / 2,
-      };
-      const look = WUU_MASCOT_ACTIVITY_LOOK[activity];
-      expect(look.x, activity).toBeCloseTo(pair.x - idlePair.x, 10);
-      expect(look.y, activity).toBeCloseTo(pair.y - idlePair.y, 10);
-    }
-  });
-
   it("keeps status props off the live eyes on the process-row canvas", () => {
-    const idle = forActivity("idle");
     const authoredRadius: Record<keyof typeof WUU_MASCOT_ACTIVITY_PROP_LAYOUT, number> = {
       thinking: 14,
       search: 10,
@@ -94,11 +69,11 @@ describe("vendored mascot geometry", () => {
 
     for (const activity of Object.keys(WUU_MASCOT_ACTIVITY_PROP_LAYOUT) as (keyof typeof WUU_MASCOT_ACTIVITY_PROP_LAYOUT)[]) {
       const layout = WUU_MASCOT_ACTIVITY_PROP_LAYOUT[activity];
-      const look = WUU_MASCOT_ACTIVITY_LOOK[activity];
+      const projected = forActivity(activity);
       const propRadius = authoredRadius[activity] * layout.s;
-      for (const [index, eye] of idle.eyes.entries()) {
-        const liveX = eye.cx + look.x;
-        const liveY = eye.cy + look.y;
+      for (const [index, eye] of projected.eyes.entries()) {
+        const liveX = eye.cx;
+        const liveY = eye.cy;
         const dist = Math.hypot(layout.x - liveX, layout.y - liveY);
         const eyeRadius = Math.max(eye.rx, eye.ry);
         expect(dist, `${activity} eye ${index}`).toBeGreaterThan(propRadius + eyeRadius * 0.55);

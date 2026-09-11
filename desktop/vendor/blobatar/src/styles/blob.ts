@@ -1,6 +1,7 @@
 import type { Palette } from "../color";
 import type { FacePerspective } from "../render";
 import { blobPath, blobSegs, segsBounds, superellipse, superellipseSegs } from "../shape";
+import { surfaceEye, surfaceLight } from "../surface";
 import type { Traits } from "../traits";
 
 /**
@@ -50,98 +51,12 @@ function shapeOf(v: number): Shape {
  */
 const SPAN = 78;
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, value));
-const radians = (degrees: number) => (degrees * Math.PI) / 180;
-
-/** Projects eye positions and their local tangent axes onto a turned sphere. */
-function projectEyes<
-  E extends {
-    cx: number;
-    cy: number;
-    rx: number;
-    ry: number;
-    n?: number;
-    rot: number;
-  },
-  B extends { cx: number; cy: number; rx: number; ry: number },
->(eyes: E[], body: B, perspective?: FacePerspective): E[] {
-  const strength = clamp(perspective?.strength ?? 0, 0, 1);
-  if (strength === 0) return eyes;
-
-  const yaw = radians(clamp(perspective?.yaw ?? 0, -55, 55));
-  const pitch = radians(clamp(perspective?.pitch ?? 0, -45, 45));
-  const cy = Math.cos(yaw);
-  const sy = Math.sin(yaw);
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-  const rotate = ([x, y, z]: [number, number, number]) => {
-    const x1 = x * cy + z * sy;
-    const z1 = -x * sy + z * cy;
-    return [x1, y * cp - z1 * sp, y * sp + z1 * cp] as const;
-  };
-  const mix = (from: number, to: number) => from + (to - from) * strength;
-  const CAMERA_DISTANCE = 4;
-
-  return eyes.map((eye) => {
-    // Lift the eye's home and its local drawing axes onto the unit sphere. The
-    // clamp is the limb: a gaze aimed past the silhouette settles onto it.
-    const x = clamp((eye.cx - body.cx) / body.rx, -0.82, 0.82);
-    const y = clamp((eye.cy - body.cy) / body.ry, -0.82, 0.82);
-    const z = Math.sqrt(Math.max(0.08, 1 - x * x - y * y));
-    const point = rotate([x, y, z]);
-
-    // `right` and `down` are unit tangent vectors at the authored eye centre.
-    // Rotate them with the surface, then measure their screen projection so a
-    // capsule near the limb foreshortens instead of remaining a flat sticker.
-    const radial = Math.hypot(x, z);
-    const right = [z / radial, 0, -x / radial] as const;
-    const down = [-x * y / radial, radial, -y * z / radial] as const;
-    const angle = radians(eye.rot);
-    const ca = Math.cos(angle);
-    const sa = Math.sin(angle);
-    const horizontal = rotate([
-      right[0] * ca + down[0] * sa,
-      right[1] * ca + down[1] * sa,
-      right[2] * ca + down[2] * sa,
-    ]);
-    const vertical = rotate([
-      -right[0] * sa + down[0] * ca,
-      -right[1] * sa + down[1] * ca,
-      -right[2] * sa + down[2] * ca,
-    ]);
-
-    // A gentle perspective term makes the eye turning toward the limb recede
-    // slightly. The sphere's front plane remains scale 1, so a straight-on pair
-    // keeps exactly the authored dimensions.
-    const depthScale = (CAMERA_DISTANCE - 1) / (CAMERA_DISTANCE - point[2]);
-    // Keep a compact avatar's mark above a one-device-pixel floor even at the
-    // strongest supported turn; it still foreshortens clearly without vanishing.
-    const horizontalScale = Math.max(
-      0.62,
-      Math.hypot(horizontal[0], horizontal[1]) * depthScale,
-    );
-    const verticalScale = Math.max(
-      0.62,
-      Math.hypot(vertical[0], vertical[1]) * depthScale,
-    );
-    const projectedRotation = Math.atan2(horizontal[1], horizontal[0]) * 180 / Math.PI;
-
-    return {
-      ...eye,
-      cx: mix(eye.cx, body.cx + point[0] * body.rx * depthScale),
-      cy: mix(eye.cy, body.cy + point[1] * body.ry * depthScale),
-      rx: mix(eye.rx, eye.rx * horizontalScale),
-      ry: mix(eye.ry, eye.ry * verticalScale),
-      rot: mix(eye.rot, projectedRotation),
-    };
-  });
-}
-
 export function layout(t: Traits, perspective?: FacePerspective) {
   const shape = shapeOf(t("shape"));
   const ratio = t.num("body.ratio", 0.92, 1.08);
-  const n = shape === "boxy" ? t.num("body.n", 3.4, 6) : t.num("body.n", 1.9, 2.5);
+  const n = shape === "round" && (perspective?.strength ?? 0) > 0
+    ? 2
+    : shape === "boxy" ? t.num("body.n", 3.4, 6) : t.num("body.n", 1.9, 2.5);
   const rot = shape === "boxy" ? t.num("body.rot", -20, 20) : 0;
   // Lopsided by ±16%, which is enough to read as hand-drawn and not so much
   // that the eyes can end up on a bulge instead of the face.
@@ -293,7 +208,7 @@ export function layout(t: Traits, perspective?: FacePerspective) {
     r: r * d.pr,
   }));
 
-  const eyes = projectEyes([
+  const eyes = [
     {
       cx: body.cx + gx - gap,
       cy: body.cy + gy,
@@ -310,21 +225,22 @@ export function layout(t: Traits, perspective?: FacePerspective) {
       n: t.num("eye.n", 3.5, 6),
       rot: lean2,
     },
-  ], body, perspective);
+  ];
 
   return {
     shape,
     body,
     petals,
     eyes,
+    perspective,
   };
 }
 
 export type Layout = ReturnType<typeof layout>;
 
 /**
- * `mo` is set when animating, and absent otherwise — so the static path emits
- * byte-identical markup to what it always has.
+ * `mo` keeps the authored chart in stable nodes. Surface animation writes
+ * projected contours into those nodes; static rendering projects here.
  *
  * The nesting is not decoration. An element has one `transform` property, so
  * hover-lift, breathe and bob have to live on separate elements or they
@@ -389,9 +305,9 @@ export function render(l: Layout, p: Palette, mo?: boolean): string {
   // declarations and the shape underneath keeps the loops. ~8 B per eye; see
   // `.mo-eye` in `motion.css` for the measurement.
   const eye = (e: Layout["eyes"][number], i: number) => {
-    // Eyes are always plain capsules here: the sphere projection moves them
-    // in `layout`, and the path needs no wrapper of its own.
-    const path = `<path d="${superellipse(e)}"/>`;
+    // Animated surface paths start in their authored chart. The React adapter
+    // updates their geometry in place after expression and camera interpolation.
+    const path = `<path d="${l.perspective ? surfaceEye(e, b, mo ? undefined : l.perspective).path : superellipse(e)}"/>`;
     if (!mo) return path;
     return `<g class="mo-eye" style="--mo-wrap:${i ? 1 : -1};--mo-lean:${r2(e.rot)};transform-origin:${r2(e.cx)}px ${r2(e.cy)}px">${path}</g>`;
   };
@@ -405,6 +321,7 @@ export function render(l: Layout, p: Palette, mo?: boolean): string {
       .map((d) => `<circle cx="${r2(d.cx)}" cy="${r2(d.cy)}" r="${r2(d.r)}"/>`)
       .join("") +
     `<path d="${core}"/>` +
+    (l.shape === "round" && (l.perspective?.strength ?? 0) > 0 ? surfaceLight(b) : "") +
     `</g>` +
     // The eye group already existed to share a fill, and it is exactly the
     // element the saccade layer needs: both eyes must move as one, because

@@ -1,6 +1,9 @@
-import { useMemo, type CSSProperties, type ImgHTMLAttributes, type SVGProps } from "react";
+import { useMemo, useLayoutEffect, useRef, type CSSProperties, type ImgHTMLAttributes, type SVGProps } from "react";
 import type { Animate } from "./animate";
 import { _parts, type BlobatarOptions } from "./blobatar";
+import { resolve } from "./render";
+import { layout } from "./styles/blob";
+import { animateSurface } from "./surface-motion";
 import { blobatarUri } from "./uri";
 
 /**
@@ -97,6 +100,20 @@ export function Blobatar({
    */
   const html = useMemo(() => ({ __html: parts?.inner ?? "" }), [parts?.inner]);
 
+  const surfaceRoot = useRef<SVGGElement>(null);
+  const surfaceMotion = useRef<ReturnType<typeof animateSurface> | null>(null);
+  useLayoutEffect(() => {
+    if (!animate || !perspective || !surfaceRoot.current) return;
+    const { t } = resolve(seed, opts);
+    const controller = animateSurface(surfaceRoot.current, layout(t));
+    surfaceMotion.current = controller;
+    return () => { controller.dispose(); surfaceMotion.current = null; };
+    // Camera and expression changes update numeric properties on the existing
+    // tree. Only an identity/markup change needs to bind new path nodes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, !!animate, !!perspective]);
+  useLayoutEffect(() => { surfaceMotion.current?.flush(); }, [dep]);
+
   if (parts) {
     const { style, ...svgRest } = rest as SVGProps<SVGSVGElement>;
     // Keep pose variables on the transition target itself. They used to live on
@@ -145,7 +162,7 @@ export function Blobatar({
         */}
         {title ? <title>{title}</title> : null}
         {parts.bg ? <path d={parts.bg.d} fill={parts.bg.fill} /> : null}
-        <g className={parts.cls} style={rootStyle} dangerouslySetInnerHTML={html} />
+        <g ref={surfaceRoot} className={parts.cls} style={rootStyle} dangerouslySetInnerHTML={html} />
       </svg>
     );
   }

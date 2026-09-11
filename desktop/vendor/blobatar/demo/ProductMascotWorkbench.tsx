@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SurfaceWorkbench } from "./SurfaceWorkbench";
 import {
   WUU_MASCOT_ACTIVITY_EXPRESSIONS,
   WUU_MASCOT_EYES,
@@ -64,7 +65,7 @@ const ACCESSORIES: readonly WuuMascotAccessory[] = [
 ];
 
 const PRODUCT_SIZES = [24, 28, 32, 48, 64, 96] as const;
-type ProductView = "activities" | "accessories" | "sizes";
+type ProductView = "activities" | "accessories" | "sizes" | "surface";
 
 export function ProductMascotWorkbench({
   onOpenTuning,
@@ -92,14 +93,14 @@ export function ProductMascotWorkbench({
         </div>
 
         <nav className="product-view-tabs" aria-label="工作台视图">
-          {(["activities", "accessories", "sizes"] as const).map((item) => (
+          {(["activities", "accessories", "sizes", "surface"] as const).map((item) => (
             <button
               key={item}
               type="button"
               className={view === item ? "is-active" : ""}
               onClick={() => setView(item)}
             >
-              {item === "activities" ? "活动状态" : item === "accessories" ? "配饰" : "真实尺寸"}
+              {item === "activities" ? "活动状态" : item === "accessories" ? "配饰" : item === "surface" ? "曲面造型" : "真实尺寸"}
             </button>
           ))}
         </nav>
@@ -175,12 +176,12 @@ export function ProductMascotWorkbench({
       <main className="product-mascot-stage">
         <header>
           <div>
-            <h1>{view === "activities" ? "9 种产品活动状态" : view === "accessories" ? `${ACCESSORIES.length} 种配饰` : "产品实际显示尺寸"}</h1>
+            <h1>{view === "activities" ? "9 种产品活动状态" : view === "accessories" ? `${ACCESSORIES.length} 种配饰` : view === "surface" ? "曲面与透视" : "产品实际显示尺寸"}</h1>
             <p>这里使用桌面端同一个组件与配置，不是近似复刻。</p>
           </div>
         </header>
 
-        {view === "activities" ? (
+        {view === "surface" ? <SurfaceWorkbench /> : view === "activities" ? (
           <section className="mascot-state-grid" style={{ "--mascot-preview-size": `${size}px` } as React.CSSProperties}>
             {ACTIVITIES.map((item) => {
               const itemPerspective = WUU_MASCOT_ACTIVITY_PERSPECTIVES[item];

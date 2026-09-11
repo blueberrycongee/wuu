@@ -25,10 +25,9 @@ import { AVATAR_HUES } from "./DefaultAvatar";
 import "./styles/wuu-mascot.css";
 
 import {
-  WUU_MASCOT_ACTIVITY_LOOK,
+  WUU_MASCOT_ACTIVITY_PERSPECTIVES,
   WUU_MASCOT_BRAND_COLORS,
   WUU_MASCOT_DEFAULT_HUE,
-  WUU_MASCOT_IDENTITY_PERSPECTIVE,
   WUU_MASCOT_NAME,
   WUU_MASCOT_TRAITS,
 } from "./wuu-mascot-spec";
@@ -317,10 +316,8 @@ export function WuuMascot({
       rear.remove();
       front.remove();
     };
-  // Blobatar replaces its inner SVG markup when identity traits or the
-  // identity perspective change. Activity is a CSS pose on that stable tree
-  // (expression vars, look offsets, a remounted status prop), so it must not
-  // rebuild these portal targets or the face flashes on every stage change.
+  // Only identity changes replace the tree. Camera and expression changes
+  // update its paths in place, preserving these accessory portal targets.
   }, [identityName, identityTraitsSignature, svg]);
 
   useEffect(() => {
@@ -336,8 +333,8 @@ export function WuuMascot({
       animationFrame = null;
       const rect = svg.getBoundingClientRect();
       if (!pointer || reducedMotion?.matches || rect.width === 0 || rect.height === 0) {
-        svg.style.setProperty("--wuu-mascot-gaze-x", "0px");
-        svg.style.setProperty("--wuu-mascot-gaze-y", "0px");
+        svg.style.setProperty("--mo-pointer-yaw", "0");
+        svg.style.setProperty("--mo-pointer-pitch", "0");
         return;
       }
 
@@ -349,15 +346,15 @@ export function WuuMascot({
       const directionX = distance > 0 ? dx / distance : 0;
       const directionY = distance > 0 ? dy / distance : 0;
 
-      // Keep the extra gaze small: the activity perspective remains the base
-      // pose, and the pointer only nudges the eye pair within the face.
+      // Pointer attention rotates the same surface as the activity camera.
+      // Angles are size-independent, so small and large instances look alike.
       svg.style.setProperty(
-        "--wuu-mascot-gaze-x",
-        `${(directionX * strength * rect.width * 0.04).toFixed(2)}px`,
+        "--mo-pointer-yaw",
+        `${(directionX * strength * 7).toFixed(2)}`,
       );
       svg.style.setProperty(
-        "--wuu-mascot-gaze-y",
-        `${(directionY * strength * rect.height * 0.032).toFixed(2)}px`,
+        "--mo-pointer-pitch",
+        `${(-directionY * strength * 5).toFixed(2)}`,
       );
     };
 
@@ -386,23 +383,18 @@ export function WuuMascot({
       document.documentElement.removeEventListener("mouseleave", resetGaze);
       reducedMotion?.removeEventListener("change", resetGaze);
       if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      svg.style.removeProperty("--wuu-mascot-gaze-x");
-      svg.style.removeProperty("--wuu-mascot-gaze-y");
+      svg.style.removeProperty("--mo-pointer-yaw");
+      svg.style.removeProperty("--mo-pointer-pitch");
     };
   }, [followPointer, svg]);
 
   // Keep Blobatar's own hue fixed so provider changes only update inherited
   // colour variables. The SVG subtree and its seeded animation phases survive;
   // the existing fill transitions carry the mascot into the new palette.
-  // Activity glance is the same idea: a pair of interpolating look offsets
-  // instead of a new path, so thinking → edit morphs the face instead of
-  // replacing the ball.
-  const look = WUU_MASCOT_ACTIVITY_LOOK[activity];
   const mascotStyle = {
     "--mo-head": colors.head ?? WUU_MASCOT_LAYOUT.palette.head,
     "--mo-eye": colors.eye ?? WUU_MASCOT_LAYOUT.palette.eye,
-    "--wuu-mascot-look-x": `${look.x}px`,
-    "--wuu-mascot-look-y": `${look.y}px`,
+    ...(followPointer ? { "--mo-look-x": 0, "--mo-look-y": 0 } : {}),
     ...style,
   } as CSSProperties;
 
@@ -415,7 +407,7 @@ export function WuuMascot({
         hue={identityHue ?? WUU_MASCOT_DEFAULT_HUE}
         background={false}
         traits={identityTraits}
-        perspective={WUU_MASCOT_IDENTITY_PERSPECTIVE}
+        perspective={WUU_MASCOT_ACTIVITY_PERSPECTIVES[activity]}
         animate={animate}
         expression={WUU_MASCOT_ACTIVITY_EXPRESSIONS[activity]}
         focusable={false}
@@ -468,7 +460,7 @@ export function WuuMascot({
 export const WUU_MASCOT_ACTIVITY_PROP_LAYOUT = {
   thinking: { ox: 79, oy: 24, x: 87, y: 13, s: 0.78 },
   search: { ox: 78, oy: 53, x: 86, y: 57, s: 0.88 },
-  edit: { ox: 80, oy: 64, x: 85, y: 69, s: 0.88 },
+  edit: { ox: 80, oy: 64, x: 89, y: 71, s: 0.8 },
   command: { ox: 81, oy: 62.5, x: 86, y: 66, s: 0.8 },
   read: { ox: 83.5, oy: 70, x: 87, y: 74, s: 0.88 },
   tool: { ox: 82, oy: 61, x: 88, y: 63.5, s: 0.84 },

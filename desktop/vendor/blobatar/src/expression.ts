@@ -40,8 +40,8 @@ import {
  * The channels a pose may touch, and nothing else.
  *
  * Petals are excluded on purpose: a sun's nine petals are silhouette, and moving
- * them independently reads as wind or as the creature coming apart. Path data is
- * excluded because interpolating it puts geometry on the main thread every frame.
+ * them independently reads as wind or as the creature coming apart. Expressions
+ * describe the authored eye chart; the surface renderer projects it afterward.
  *
  * **The body deforms for nothing, so it no longer deforms.** `bsx`, `bsy` and
  * `skew` used to scale and lean the whole creature and have been removed. Three

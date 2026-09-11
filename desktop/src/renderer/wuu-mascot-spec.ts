@@ -1,4 +1,3 @@
-import { _layout } from "blobatar";
 import approvedIcon from "../../../assets/app-icon-source.json";
 
 // Hero surfaces share the approved app icon’s exact palette.
@@ -20,6 +19,7 @@ export const WUU_MASCOT_DEFAULT_HUE = 14;
 export const WUU_MASCOT_TRAITS = {
   shape: 0.2,
   "body.ratio": 0.5,
+  "body.n": 1 / 6,
   "eye.ratio": 1,
   // These normalized trait positions resolve both second-eye multipliers to 1.
   "eye.scale": 0.4782608695652174,
@@ -41,11 +41,9 @@ export type WuuMascotActivity =
 
 /**
  * Where the mascot looks in each activity, layered on top of the expression.
- * Yaw looks left/right, pitch up/down. These angles still describe the intended
- * 3D glance, but the live mascot does not rebake them into path data: doing that
- * replaces the SVG subtree and the 28px process-row ball flashes on every
- * thinking → edit (and similar) switch. The identity pose is idle; every other
- * activity applies the pair-center delta as a CSS look so the face morphs.
+ * Yaw looks left/right, pitch up/down. Both static and live rendering project
+ * the complete eye contours through this camera after applying the expression.
+ * Live changes interpolate angles and update paths without replacing nodes.
  *
  * - idle greets with its gaze lowered toward the composer (or the status text
  *   under the launch view): an invitation, not a stare.
@@ -70,40 +68,3 @@ export const WUU_MASCOT_ACTIVITY_PERSPECTIVES: Readonly<
 
 export const WUU_MASCOT_IDENTITY_PERSPECTIVE =
   WUU_MASCOT_ACTIVITY_PERSPECTIVES.idle;
-
-function mascotPairCenter(
-  perspective: (typeof WUU_MASCOT_ACTIVITY_PERSPECTIVES)[WuuMascotActivity],
-): { x: number; y: number } {
-  const layout = _layout(WUU_MASCOT_NAME, {
-    traits: WUU_MASCOT_TRAITS,
-    perspective,
-  });
-  return {
-    x: (layout.eyes[0]!.cx + layout.eyes[1]!.cx) / 2,
-    y: (layout.eyes[0]!.cy + layout.eyes[1]!.cy) / 2,
-  };
-}
-
-const identityPair = mascotPairCenter(WUU_MASCOT_IDENTITY_PERSPECTIVE);
-
-function lookFrom(
-  perspective: (typeof WUU_MASCOT_ACTIVITY_PERSPECTIVES)[WuuMascotActivity],
-): { x: number; y: number } {
-  const pair = mascotPairCenter(perspective);
-  return { x: pair.x - identityPair.x, y: pair.y - identityPair.y };
-}
-
-/** Pair-center delta from the idle identity pose, in viewBox units. */
-export const WUU_MASCOT_ACTIVITY_LOOK: Readonly<
-  Record<WuuMascotActivity, { x: number; y: number }>
-> = {
-  idle: { x: 0, y: 0 },
-  compose: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.compose),
-  thinking: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.thinking),
-  compact: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.compact),
-  search: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.search),
-  edit: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.edit),
-  command: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.command),
-  read: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.read),
-  tool: lookFrom(WUU_MASCOT_ACTIVITY_PERSPECTIVES.tool),
-};

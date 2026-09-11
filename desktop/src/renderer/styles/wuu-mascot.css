@@ -52,44 +52,11 @@
     stroke var(--mo-morph, 400ms) var(--mo-morph-ease, ease-in-out);
 }
 
-@property --wuu-mascot-look-x {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-
-@property --wuu-mascot-look-y {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-
-/* Activity glance rides interpolating custom properties so the face turns
- * instead of the SVG subtree being replaced. Status props (pencil, question
- * mark) stay a discrete remount. Blobatar reserves `.mo-eyes` `transform` for
- * this gaze layer; saccades use `translate`. */
-[data-wuu-mascot-activity] {
+/* Pointer attention is an angular input to the shared face surface. */
+[data-wuu-mascot-follows-pointer] {
   transition:
-    --wuu-mascot-look-x var(--mo-morph, 420ms) var(--mo-morph-ease, cubic-bezier(0.22, 0.75, 0.25, 1)),
-    --wuu-mascot-look-y var(--mo-morph, 420ms) var(--mo-morph-ease, cubic-bezier(0.22, 0.75, 0.25, 1));
-}
-
-[data-wuu-mascot-activity] .mo-eyes {
-  transform: translate(
-    calc(var(--wuu-mascot-look-x, 0px) + var(--wuu-mascot-gaze-x, 0px)),
-    calc(var(--wuu-mascot-look-y, 0px) + var(--wuu-mascot-gaze-y, 0px))
-  );
-}
-
-/* The empty-session mascot keeps its activity look as the home pose, then
- * adds this small cursor-directed offset on the same transform channel.
- * Disable idle saccades while tracking so the two kinds of attention do not
- * pull the eyes in different directions. */
-[data-wuu-mascot-follows-pointer] .mo-eyes {
-  animation: none;
-  transition:
-    fill var(--mo-morph, 400ms) var(--mo-morph-ease, ease-in-out),
-    transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+    --mo-pointer-yaw 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    --mo-pointer-pitch 120ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Activity changes tune the shared Blobatar clock rather than starting a
@@ -344,8 +311,7 @@
     transition: none;
   }
 
-  [data-wuu-mascot-follows-pointer] .mo-eyes {
-    transform: translate(var(--wuu-mascot-look-x, 0px), var(--wuu-mascot-look-y, 0px));
+  [data-wuu-mascot-follows-pointer] {
     transition: none;
   }
 

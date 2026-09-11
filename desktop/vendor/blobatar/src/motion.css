@@ -246,14 +246,14 @@
    * two groups below rather than composed here.
    */
   --mo-tp: --mo-esx, --mo-esy, --mo-tilt, --mo-edy, --mo-edx, --mo-esx2,
-    --mo-esy2, --mo-tilt2, --mo-lock, --mo-shake, --mo-bdy;
+    --mo-esy2, --mo-tilt2, --mo-lock, --mo-shake, --mo-bdy, --mo-yaw, --mo-pitch;
   --mo-md: var(--mo-morph), var(--mo-morph), var(--mo-morph), var(--mo-morph),
     var(--mo-morph), var(--mo-morph), var(--mo-morph), var(--mo-morph),
-    var(--mo-morph), var(--mo-morph), var(--mo-morph);
+    var(--mo-morph), var(--mo-morph), var(--mo-morph), var(--mo-morph), var(--mo-morph);
   --mo-me: var(--mo-morph-ease), var(--mo-morph-ease), var(--mo-morph-ease),
     var(--mo-morph-ease), var(--mo-morph-ease), var(--mo-morph-ease),
     var(--mo-morph-ease), var(--mo-morph-ease), var(--mo-morph-ease),
-    var(--mo-morph-ease), var(--mo-morph-ease);
+    var(--mo-morph-ease), var(--mo-morph-ease), var(--mo-morph-ease), var(--mo-morph-ease);
 
   transition-property: --mo-amp, transform, var(--mo-tp);
   transition-duration:
@@ -987,6 +987,49 @@
   --mo-rate: 5;
 }
 
+/* Surface motion animates coordinates before projection. The legacy flat
+ * avatar path retains CSS transforms when no perspective is requested. */
+@property --mo-yaw { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --mo-pitch { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --mo-pointer-yaw { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --mo-pointer-pitch { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --mo-lid { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --mo-scan-x { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --mo-scan-y { syntax: "<number>"; inherits: true; initial-value: 0; }
+
+.mo-surface .mo-eye,
+.mo-surface .mo-eye > * {
+  animation: none;
+  transform: none;
+  translate: none;
+  rotate: none;
+  scale: none;
+}
+
+.mo-surface .mo-eyes {
+  transform: none;
+  translate: none;
+  animation-name: mo-surface-blink, mo-surface-scan;
+  animation-duration: calc(var(--mo-blink, 5000ms) * var(--mo-rate, 1)), calc(var(--mo-saccade, 5600ms) * var(--mo-rate, 1));
+  animation-delay: calc(var(--mo-blink-phase, 0ms) * var(--mo-rate, 1)), calc(var(--mo-saccade-phase, 0ms) * var(--mo-rate, 1));
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+@keyframes mo-surface-blink {
+  0%, 96%, 100% { --mo-lid: 1; }
+  98% { --mo-lid: 0.08; }
+}
+
+@keyframes mo-surface-scan {
+  0%, 15%, 100% { --mo-scan-x: 0; --mo-scan-y: 0; }
+  16.5%, 31% { --mo-scan-x: -1.6; --mo-scan-y: -1.8; }
+  32.5%, 47% { --mo-scan-x: 2; --mo-scan-y: 0.2; }
+  48.5%, 63% { --mo-scan-x: -0.3; --mo-scan-y: 1.7; }
+  64.5%, 79% { --mo-scan-x: 1.5; --mo-scan-y: -1.6; }
+  80.5%, 98.5% { --mo-scan-x: -2; --mo-scan-y: -0.3; }
+}
+
 /**
  * Fully static, not gentler. "Reduce, don't remove" applies to motion that aids
  * comprehension; the idle loop is decorative, so removing it costs nothing.
@@ -1016,6 +1059,7 @@
   .mo-breathe,
   .mo-bob,
   .mo-eyes,
+  .mo-surface .mo-eyes,
   .mo-eye,
   .mo-eye > * {
     animation: none;
