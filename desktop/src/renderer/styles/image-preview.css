@@ -18,6 +18,9 @@
   position: fixed;
   inset: 0;
   z-index: 2147483000;
+  /* Exclude the underlying titlebar's native drag region from hit testing.
+     A high z-index alone does not restore pointer events in Electron. */
+  -webkit-app-region: no-drag;
   display: flex;
   flex-direction: column;
   background: var(--image-preview-overlay-bg);

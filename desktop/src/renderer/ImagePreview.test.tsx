@@ -1,4 +1,6 @@
 import { act } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -54,6 +56,14 @@ function renderWithProbe(): { getAPI: () => ImagePreviewContextValue | null } {
 }
 
 describe("ImagePreviewProvider", () => {
+  it("excludes the full overlay from Electron's native window drag region", () => {
+    // jsdom cannot exercise native hit testing; guard the CSS contract that
+    // keeps the visible toolbar clickable above the underlying titlebar.
+    const css = readFileSync(resolve(__dirname, "styles/image-preview.css"), "utf8");
+    const overlayRule = css.match(/\.image-preview-overlay\s*\{([^}]+)\}/)?.[1];
+    expect(overlayRule).toMatch(/-webkit-app-region:\s*no-drag\s*;/);
+  });
+
   it("does not render the overlay when nothing is open", () => {
     renderWithProbe();
     expect(overlayRoot()).toBeNull();
@@ -75,6 +85,32 @@ describe("ImagePreviewProvider", () => {
 
     act(() => {
       probe.getAPI()?.closePreview();
+    });
+    expect(overlayRoot()).toBeNull();
+  });
+
+  it("closes when the visible X icon is clicked", () => {
+    const probe = renderWithProbe();
+    act(() => {
+      probe.getAPI()?.openPreview({ src: "data:image/png;base64,AAA" });
+    });
+    const icon = container.querySelector(".image-preview-toolbar-button .lucide-x");
+    expect(icon).not.toBeNull();
+    act(() => {
+      icon!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(overlayRoot()).toBeNull();
+  });
+
+  it("closes when the close button itself is clicked", () => {
+    const probe = renderWithProbe();
+    act(() => {
+      probe.getAPI()?.openPreview({ src: "data:image/png;base64,AAA" });
+    });
+    const button = container.querySelector(".lucide-x")?.closest("button");
+    expect(button).not.toBeNull();
+    act(() => {
+      button!.click();
     });
     expect(overlayRoot()).toBeNull();
   });

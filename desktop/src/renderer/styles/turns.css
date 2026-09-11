@@ -911,13 +911,14 @@
 
 .message-image {
   display: block;
-  width: 112px;
+  width: 96px;
   max-width: 100%;
-  height: 84px;
-  border: 1px solid var(--hairline);
+  height: 72px;
+  border: 2px solid var(--hairline-strong);
   border-radius: var(--radius-media);
   object-fit: cover;
   background: var(--paper);
+  box-shadow: var(--shadow-card);
 }
 
 .message-image-overflow {
