@@ -1,0 +1,40 @@
+{
+  "bodyX": 718,
+  "bodyY": 718,
+  "radius": 450,
+  "faceX": -0.305,
+  "faceY": -0.35,
+  "eyeWidth": 86,
+  "eyeHeight": 184,
+  "eyeGap": 185,
+  "tilt": 28,
+  "fanAngle": 228,
+  "fanSpread": 18,
+  "fanGap": 52,
+  "bodyDepth": 0.55,
+  "markOpacity": 0.88,
+  "marks": [
+    {
+      "length": 92,
+      "width": 38,
+      "gap": -4,
+      "angle": -1
+    },
+    {
+      "length": 128,
+      "width": 41,
+      "gap": 8,
+      "angle": 1
+    },
+    {
+      "length": 102,
+      "width": 38,
+      "gap": -2,
+      "angle": 3
+    }
+  ],
+  "background": "#ffffff",
+  "bodyColor": "#b8f2fc",
+  "eyeColor": "#005cff",
+  "markColor": "#32b5fa"
+}
