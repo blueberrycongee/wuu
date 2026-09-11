@@ -29,7 +29,7 @@ token, so anything you do not override keeps the built-in appearance:
 
 The contract defines **82 public tokens** (**7**
 legacy compatibility aliases) and **16 syntax-highlighting
-tokens**; **56** of them are currently wired into host surfaces.
+tokens**; **54** of them are currently wired into host surfaces.
 "Wired" means host styles already reference the token and overrides take effect;
 "Not wired (reserved)" means the token is declared but the host does not consume
 it yet, so overrides do not change anything.
@@ -44,7 +44,7 @@ it yet, so overrides do not change anything.
 | `--wuu-hairline` | Legacy name; use `--wuu-color-border-subtle` instead | Wired |
 | `--wuu-surface-muted` | Legacy name; use `--wuu-color-surface-muted` instead | Not wired (reserved) |
 | `--wuu-accent` | Legacy name; use `--wuu-color-accent` instead | Wired |
-| `--wuu-accent-press` | Legacy name; use `--wuu-color-accent-pressed` instead | Wired |
+| `--wuu-accent-press` | Legacy name; use `--wuu-color-accent-pressed` instead | Not wired (reserved) |
 | `--wuu-color-canvas` | Base background of the window and panel layers | Wired |
 | `--wuu-color-surface` | Background of content surfaces such as messages and lists | Wired |
 | `--wuu-color-surface-muted` | Muted surface background for hover states and sectioning | Wired |
@@ -56,7 +56,7 @@ it yet, so overrides do not change anything.
 | `--wuu-color-border-subtle` | Subtle borders | Wired |
 | `--wuu-color-border-strong` | Strong borders | Wired |
 | `--wuu-color-accent` | Accent color for primary actions and selection | Wired |
-| `--wuu-color-accent-pressed` | Pressed state of the accent color | Wired |
+| `--wuu-color-accent-pressed` | Pressed state of the accent color | Not wired (reserved) |
 | `--wuu-color-focus` | Focus ring | Wired |
 | `--wuu-color-success` | Success semantic color | Wired |
 | `--wuu-color-warning` | Warning semantic color | Wired |

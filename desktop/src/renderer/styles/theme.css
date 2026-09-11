@@ -70,29 +70,13 @@
   --ink-overlay-8: rgba(220, 228, 235, 0.09);
   --ink-overlay-12: rgba(220, 228, 235, 0.13);
   --ink-overlay-18: rgba(220, 228, 235, 0.2);
-  --shadow-color-subtle: rgba(0, 0, 0, 0.24);
-  --shadow-color-medium: rgba(0, 0, 0, 0.32);
-  --shadow-color-strong: rgba(0, 0, 0, 0.4);
-  --shadow-color-heavy: rgba(0, 0, 0, 0.5);
+  /* Use the same geometry as light mode. Existing borders carry the edge;
+     only black ambient opacity changes, avoiding stacked bright keylines. */
+  --shadow-color-subtle: rgba(0, 0, 0, 0.16);
+  --shadow-color-medium: rgba(0, 0, 0, 0.2);
+  --shadow-color-strong: rgba(0, 0, 0, 0.24);
+  --shadow-color-heavy: rgba(0, 0, 0, 0.3);
   --modal-backdrop-bg: var(--wuu-color-overlay-backdrop, rgba(0, 0, 0, 0.5));
-
-  /* Dark elevation needs two signals: a restrained light keyline to preserve
-     the silhouette, then a black ambient shadow for depth. A black shadow on
-     its own disappears into the canvas and encourages every component to use
-     a different, heavier blur. Keep the light-theme recipes in base.css
-     untouched; these are the shared dark fallbacks only. */
-  --shadow-soft: var(
-    --wuu-elevation-panel,
-    0 0 0 1px rgba(228, 232, 235, 0.06), 0 1px 2px rgba(0, 0, 0, 0.28)
-  );
-  --shadow-card: var(
-    --wuu-elevation-panel,
-    0 0 0 1px rgba(228, 232, 235, 0.07), 0 3px 10px rgba(0, 0, 0, 0.32)
-  );
-  --shadow-pop: var(
-    --wuu-elevation-overlay,
-    0 0 0 1px rgba(228, 232, 235, 0.1), 0 16px 40px rgba(0, 0, 0, 0.44), 0 3px 10px rgba(0, 0, 0, 0.28)
-  );
 
   /* --- Status colors: brighter hues, deep soft backgrounds --- */
   --success: var(--wuu-color-success, #4cc38a);
@@ -132,9 +116,6 @@
 
   /* workspace.css */
   --workspace-panel-title-icon: var(--wuu-color-text-muted, #9aa0a5);
-  --workspace-document-drawer-shadow: rgba(0, 0, 0, 0.24);
-  --workspace-document-drawer-shadow-hover: rgba(0, 0, 0, 0.3);
-  --workspace-document-drawer-shadow-expanded: rgba(0, 0, 0, 0.34);
   --workspace-tool-tab-text: var(--wuu-color-text-muted, #a2a8ad);
   --workspace-tab-highlight: rgba(255, 255, 255, 0.07);
   --workspace-tab-active-bg: var(--selection-surface);
@@ -159,14 +140,12 @@
   --browser-home-bg: var(--wuu-color-canvas, #17191c);
   --browser-status-overlay-bg: rgba(20, 22, 24, 0.86);
   --browser-error-text: var(--wuu-color-danger, #f2b8ae);
-  --browser-error-shadow: rgba(0, 0, 0, 0.4);
   --browser-error-span-text: var(--wuu-color-danger, #e59c90);
   --browser-retry-hover-bg: #c0392b;
   --browser-loading-dot-bg: var(--wuu-color-info, #58a6ff);
   --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
   --skill-row-chevron: var(--wuu-color-text-muted, #686f75);
   --skill-artwork-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-artwork-shadow: rgba(0, 0, 0, 0.28);
   --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #24282c);
   --skill-artwork-neutral-fg: var(--wuu-color-text-muted, #a5abb0);
   --skill-artwork-official-bg: var(--wuu-color-surface-elevated, #292d31);
@@ -238,7 +217,7 @@
   --split-composer-shadow: rgba(0, 0, 0, 0.4);
 
   /* composer.css / composer-context-meter.css / chat.css */
-  --composer-frame-shadow: var(--shadow-card);
+  --composer-frame-shadow: var(--shadow-composer);
   --composer-image-attachment-button-shadow: var(--shadow-card);
   --composer-file-attachment-button-hover-bg: #2b2f34;
   --composer-textarea-placeholder: var(--ink-tertiary);
@@ -248,17 +227,14 @@
   --composer-slash-menu-shadow: var(--shadow-pop);
   --composer-project-menu-icon: var(--wuu-color-text-muted, #9aa0a5);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #e2a04a);
-  --composer-accessory-shadow: rgba(0, 0, 0, 0.4);
-  --composer-accessory-shadow-hover: rgba(0, 0, 0, 0.45);
-  --composer-accessory-shadow-expanded: rgba(0, 0, 0, 0.5);
   --composer-context-meter-focus-outline: var(--focus-ring);
   --composer-context-meter-tooltip-divider: var(--wuu-border-subtle, rgba(228, 232, 235, 0.1));
   --context-meter-tooltip-bg: var(--wuu-color-surface-elevated, var(--surface-3));
   --context-meter-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
-  --context-meter-tooltip-shadow: var(--shadow-pop);
+  --context-meter-tooltip-shadow: var(--shadow-card);
   --token-gauge-tooltip-bg: var(--wuu-color-surface-elevated, var(--surface-3));
   --token-gauge-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
-  --token-gauge-tooltip-shadow: var(--shadow-pop);
+  --token-gauge-tooltip-shadow: var(--shadow-card);
   --composer-token-gauge-focus-outline: var(--focus-ring);
   --chat-user-message-bg: var(--wuu-message-user-background, #26282b);
 
@@ -292,12 +268,6 @@
   --env-context-segment-shadow-outer: rgba(0, 0, 0, 0.35);
   --env-context-bar-gradient-mid: rgba(255, 255, 255, 0.04);
   --env-context-bar-gradient-bottom: rgba(0, 0, 0, 0.2);
-  --env-shadow-dark-024: rgba(0, 0, 0, 0.5);
-  --env-shadow-dark-010: rgba(0, 0, 0, 0.35);
-  --env-shadow-dark-008: rgba(0, 0, 0, 0.3);
-  --env-shadow-dark-007: rgba(0, 0, 0, 0.28);
-  --env-shadow-dark-006: rgba(0, 0, 0, 0.25);
-  --env-shadow-dark-005: rgba(0, 0, 0, 0.22);
   --env-tone-system: #7a90ff;
   --env-tone-stable: #4cc38a;
   --env-tone-turn: #e0a848;
@@ -426,7 +396,6 @@
   --diff-delete-bg: rgba(239, 106, 94, 0.12);
   --diff-delete-text-color: var(--wuu-color-danger, #f0857a);
   --turn-source-icon-color-fallback: rgba(255, 255, 255, 0.85);
-  --turn-source-icon-hover-shadow: rgba(0, 0, 0, 0.45);
   /* conversation-shell.css */
   --shell-process-control-color: var(--wuu-color-text-muted, var(--gray-400));
   --shell-session-tab-active-bg: var(--selection-surface);
@@ -438,7 +407,6 @@
   --shell-session-tab-drag-overlay-ring: rgba(20, 22, 24, 0.72);
   --shell-todo-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
   --shell-todo-card-border: var(--wuu-color-border-subtle, var(--hairline));
-  --shell-todo-card-shadow: rgba(0, 0, 0, 0.44);
   --shell-todo-card-ink: var(--wuu-color-text, var(--ink-strong));
   --shell-todo-card-soft: var(--wuu-color-text, var(--ink));
   --shell-todo-card-muted: var(--wuu-color-text-muted, var(--ink-tertiary));
@@ -447,10 +415,6 @@
   --conversation-floating-surface-hover-bg: var(--wuu-color-surface, var(--surface-2));
   --conversation-floating-surface-hover-border: var(--wuu-color-border-strong, var(--hairline-strong));
   --conversation-floating-surface-focus: var(--focus-ring);
-  --shell-jump-pill-shadow: rgba(0, 0, 0, 0.5);
-  --shell-jump-pill-contact-shadow: rgba(0, 0, 0, 0.35);
-  --shell-jump-pill-hover-shadow: rgba(0, 0, 0, 0.55);
-  --shell-jump-pill-focus-shadow-2: rgba(0, 0, 0, 0.45);
   --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 6%, transparent);
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #e4e8eb) 20%, transparent);
   --shell-turn-rail-bar-bg: rgba(174, 178, 186, 0.4);

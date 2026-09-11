@@ -78,7 +78,7 @@
   padding: 5px;
   border-radius: 14px;
   background: var(--menu-bg);
-  box-shadow: 0 4px 16px var(--ink-overlay-6);
+  box-shadow: var(--shadow-pop);
   --menu-enter-y: 4px;
 }
 .sidebar-account-menu .select-menu-item {

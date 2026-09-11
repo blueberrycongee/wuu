@@ -23,7 +23,7 @@
   height: min(720px, calc(100vh - 48px));
   border: 1px solid var(--border-subtle);
   border-radius: var(--menu-radius);
-  box-shadow: var(--shadow-lg, 0 18px 60px rgba(0, 0, 0, 0.24));
+  box-shadow: var(--shadow-modal);
 }
 
 .plugin-workbench-view-auxiliary {
@@ -458,7 +458,7 @@
   height: 16px;
   border-radius: var(--radius-pill);
   background: var(--wuu-color-canvas, var(--paper));
-  box-shadow: 0 1px 2px var(--shadow-color-strong, rgba(0, 0, 0, 0.3));
+  box-shadow: var(--shadow-soft);
   transition: transform var(--wuu-motion-duration-base, var(--motion-base)) var(--wuu-motion-easing-standard, var(--ease-out));
 }
 
@@ -561,5 +561,5 @@
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--surface-primary, var(--background));
-  box-shadow: var(--shadow-sm, 0 2px 10px rgba(0, 0, 0, 0.12));
+  box-shadow: var(--shadow-card);
 }

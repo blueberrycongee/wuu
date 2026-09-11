@@ -142,7 +142,7 @@
   grid-row: auto;
   border-left: none;
   /* Elevation: the sheet is a layer over the workspace, not a column of it. */
-  box-shadow: -16px 0 40px var(--shadow-color-medium);
+  box-shadow: var(--shadow-drawer-left);
 }
 
 /* arming/docking are one-frame teleport states: they place the sheet without
@@ -415,13 +415,13 @@
   :is(.titlebar, .settings-titlebar)
   .sidebar-toggle-button {
   background-color: var(--surface-3);
-  box-shadow: 0 4px 12px var(--shadow-color-subtle);
+  box-shadow: var(--shadow-card);
   color: var(--ink);
 }
 
 .sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   background-color: var(--surface-3);
-  box-shadow: 0 4px 12px var(--shadow-color-subtle);
+  box-shadow: var(--shadow-card);
   color: var(--ink);
 }
 
@@ -452,9 +452,7 @@
   min-width: var(--sidebar-open-width, 296px);
   border-right-color: var(--sidebar-drawer-edge);
   background: var(--sidebar-drawer-bg);
-  box-shadow:
-    inset -1px 0 0 var(--sidebar-drawer-inner-edge),
-    10px 0 24px var(--ink-overlay-8);
+  box-shadow: inset -1px 0 0 var(--sidebar-drawer-inner-edge), var(--shadow-drawer-right);
   overflow: visible;
   pointer-events: auto;
   transform: translate3d(0, 0, 0);
@@ -523,9 +521,7 @@
   min-width: var(--sidebar-open-width, 296px);
   border-right-color: var(--sidebar-drawer-edge);
   background: var(--sidebar-drawer-bg);
-  box-shadow:
-    inset -1px 0 0 var(--sidebar-drawer-inner-edge),
-    10px 0 24px var(--ink-overlay-8);
+  box-shadow: inset -1px 0 0 var(--sidebar-drawer-inner-edge), var(--shadow-drawer-right);
   overflow: visible;
   pointer-events: auto;
   transform: translate3d(0, 0, 0);
@@ -585,7 +581,7 @@
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   border-right: 1px solid var(--sidebar-drawer-edge);
-  box-shadow: 10px 0 24px var(--ink-overlay-8);
+  box-shadow: var(--shadow-drawer-right);
 }
 
 /* The desktop drawer keeps its content at --sidebar-open-width so the rail is
@@ -3025,7 +3021,5 @@
   opacity: 0.98;
   pointer-events: none;
   transform: scale(1.025);
-  box-shadow:
-    inset 0 0 0 1px var(--sidebar-glass-overlay-bright),
-    0 9px 24px var(--ink-overlay-12);
+  box-shadow: inset 0 0 0 1px var(--sidebar-glass-overlay-bright), var(--shadow-pop);
 }

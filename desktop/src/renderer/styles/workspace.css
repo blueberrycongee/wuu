@@ -26,14 +26,12 @@
   --browser-home-bg: var(--wuu-color-canvas, #fcfcfb);
   --browser-status-overlay-bg: rgba(255, 255, 255, 0.86);
   --browser-error-text: var(--wuu-color-danger, #5d1f17);
-  --browser-error-shadow: rgba(180, 35, 24, 0.08);
   --browser-error-span-text: var(--wuu-color-danger, #6e2a22);
   --browser-retry-hover-bg: #93190f;
   --browser-loading-dot-bg: var(--wuu-color-info, #2f98ff);
   --skills-section-border: var(--wuu-color-border-subtle, var(--hairline-soft));
   --skill-row-chevron: var(--wuu-color-text-muted, #a3a7aa);
   --skill-artwork-border: var(--wuu-color-border-subtle, var(--hairline-soft));
-  --skill-artwork-shadow: rgba(17, 19, 21, 0.08);
   --skill-artwork-neutral-bg: var(--wuu-color-surface-muted, #f4f4f1);
   --skill-artwork-neutral-fg: var(--wuu-color-text-muted, #696e72);
   --skill-artwork-official-bg: var(--wuu-color-surface-elevated, #ffffff);
@@ -80,9 +78,6 @@
   --skill-mark-default-a: var(--wuu-skill-mark-default-a, #ff8a52);
   --skill-mark-default-b: var(--wuu-skill-mark-default-b, #ee4d74);
   --skill-mark-default-c: var(--wuu-skill-mark-default-c, #8d4de8);
-  --workspace-document-drawer-shadow: color-mix(in srgb, var(--wuu-color-text, #1f2328) 7%, transparent);
-  --workspace-document-drawer-shadow-hover: color-mix(in srgb, var(--wuu-color-text, #1f2328) 10%, transparent);
-  --workspace-document-drawer-shadow-expanded: color-mix(in srgb, var(--wuu-color-text, #1f2328) 11%, transparent);
   --hljs-keyword: var(--wuu-syntax-keyword, #2f6ea5);
   --hljs-function: var(--wuu-syntax-function, #7a4b9d);
   --hljs-string: var(--wuu-syntax-string, #2f7d5c);
@@ -640,7 +635,7 @@
   opacity: 0.98;
   pointer-events: none;
   transform: scale(1.025);
-  box-shadow: 0 9px 24px var(--shadow-color-medium);
+  box-shadow: var(--shadow-pop);
 }
 
 .workspace-tool-tab-drag-overlay .workspace-tool-tab-close {
@@ -1135,7 +1130,7 @@ html.resizing-workspace-file-split * {
   border: 1px solid var(--hairline);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  box-shadow: 0 -6px 24px var(--workspace-document-drawer-shadow);
+  box-shadow: var(--shadow-tray);
   pointer-events: auto;
   transition:
     max-height 180ms var(--ease-out),
@@ -1152,7 +1147,7 @@ html.resizing-workspace-file-split * {
   translate: 0 -6px;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   border-color: var(--hairline-strong);
-  box-shadow: 0 -10px 34px var(--workspace-document-drawer-shadow-expanded);
+  box-shadow: var(--shadow-tray);
 }
 
 .workspace-document-turn-drawer:not(.expanded):hover,
@@ -1160,7 +1155,7 @@ html.resizing-workspace-file-split * {
   z-index: 3;
   translate: 0 -2px;
   border-color: var(--hairline-strong);
-  box-shadow: 0 -8px 28px var(--workspace-document-drawer-shadow-hover);
+  box-shadow: var(--shadow-tray);
 }
 
 .workspace-document-turn-summary {
@@ -1272,7 +1267,7 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-document-composer .composer-frame {
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--composer-frame-shadow);
 }
 
 .workspace-right-panel.document-focus .workspace-file-code-scroll,
@@ -1492,9 +1487,7 @@ html.resizing-workspace-file-split * {
   background: var(--menu-bg);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  box-shadow:
-    0 12px 32px var(--ink-overlay-8),
-    0 2px 6px var(--ink-overlay-6);
+  box-shadow: var(--menu-shadow);
   font-family: var(--font-ui, var(--font-body));
   animation: workspace-tree-context-menu-in var(--motion-fast) var(--ease-out);
 }
@@ -2123,7 +2116,7 @@ html.resizing-workspace-terminal-split * {
   border: 1px solid var(--danger-border);
   color: var(--browser-error-text);
   font-size: var(--font-sm, 12.5px);
-  box-shadow: 0 4px 14px var(--browser-error-shadow);
+  box-shadow: var(--shadow-card);
 }
 
 .workspace-browser-error strong {
@@ -2556,7 +2549,7 @@ html.resizing-workspace-terminal-split * {
   width: 44px;
   height: 44px;
   border-radius: var(--radius-xs);
-  box-shadow: 0 2px 6px var(--skill-artwork-shadow);
+  box-shadow: var(--shadow-soft);
 }
 
 .plugin-detail-dialog .environment-dialog-icon .skill-artwork svg {
@@ -4737,7 +4730,7 @@ html.resizing-workspace-terminal-split * {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
   background: var(--slider-thumb-bg);
-  box-shadow: 0 2px 5px var(--shadow-color-medium);
+  box-shadow: var(--shadow-soft);
   pointer-events: none;
   transition: left var(--motion-base) var(--ease-bounce);
 }
@@ -4831,7 +4824,7 @@ html.resizing-workspace-terminal-split * {
   overflow: hidden;
   padding: 0;
   border-color: var(--hairline-soft);
-  box-shadow: 0 8px 24px var(--shadow-color-subtle), 0 1px 2px var(--shadow-color-subtle);
+  box-shadow: var(--menu-shadow);
   transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -5195,7 +5188,7 @@ html.resizing-workspace-terminal-split * {
 }
 
 .conversation-split-pane.active {
-  --composer-frame-shadow: 0 3px 14px color-mix(in srgb, var(--ink) 9%, transparent);
+  --composer-frame-shadow: var(--shadow-composer);
 }
 
 .conversation-split-close {

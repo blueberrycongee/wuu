@@ -8,7 +8,7 @@
   color-scheme: light dark;
   /* A PDF page is content: it keeps paper-white regardless of theme. */
   --pdf-page-bg: #ffffff;
-  --pdf-page-shadow: 0 8px 24px rgba(17, 24, 39, 0.1);
+  --pdf-page-shadow: var(--shadow-card);
 }
 
 * {

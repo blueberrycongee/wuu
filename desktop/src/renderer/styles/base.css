@@ -108,24 +108,39 @@
   --ink-overlay-12: rgba(31, 35, 40, 0.12);
   --ink-overlay-18: rgba(31, 35, 40, 0.18);
 
-  /* Shadow colors are not ink overlays. They happen to share the same dark
-     ingredient in light mode, but must stay black when the text ramp flips in
-     dark mode; otherwise every soft drop shadow becomes a pale glow. */
-  --shadow-color-subtle: color-mix(in srgb, var(--wuu-color-text, #1f2328) 8%, transparent);
-  --shadow-color-medium: color-mix(in srgb, var(--wuu-color-text, #1f2328) 12%, transparent);
-  --shadow-color-strong: color-mix(in srgb, var(--wuu-color-text, #1f2328) 18%, transparent);
-  --shadow-color-heavy: color-mix(in srgb, var(--wuu-color-text, #1f2328) 24%, transparent);
+  /* Elevation recipes: controls < cards < popovers < modal dialogs.
+     Keep blur and alpha here, not in components. Negative spread confines the
+     ambient shadow; existing surface borders provide the visible edge.
+     Black is independent of text color so custom themes cannot turn shadows
+     into a light glow. Public panel/overlay overrides remain authoritative. */
+  --shadow-color-subtle: rgba(0, 0, 0, 0.035);
+  --shadow-color-medium: rgba(0, 0, 0, 0.06);
+  --shadow-color-strong: rgba(0, 0, 0, 0.1);
+  --shadow-color-heavy: rgba(0, 0, 0, 0.14);
+  --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px var(--shadow-color-subtle));
+  --shadow-card: var(--wuu-elevation-panel, 0 2px 8px -2px var(--shadow-color-medium));
+  /* The composer needs a faint ambient edge around its larger footprint. */
+  --shadow-composer: var(
+    --wuu-elevation-panel,
+    0 1px 2px var(--shadow-color-subtle), 0 4px 16px -4px var(--shadow-color-medium)
+  );
+  --shadow-pop: var(
+    --wuu-elevation-overlay,
+    0 8px 24px -6px var(--shadow-color-strong), 0 2px 6px -2px var(--shadow-color-medium)
+  );
+  --shadow-modal: var(
+    --wuu-elevation-overlay,
+    0 16px 48px -12px var(--shadow-color-heavy), 0 4px 12px -4px var(--shadow-color-medium)
+  );
+  /* Attached trays and edge drawers keep their direction without increasing
+     elevation on hover, focus, or expansion. */
+  --shadow-tray: var(--wuu-elevation-panel, 0 -4px 16px -6px var(--shadow-color-medium));
+  --shadow-drawer-left: var(--wuu-elevation-overlay, -6px 0 20px -8px var(--shadow-color-strong));
+  --shadow-drawer-right: var(--wuu-elevation-overlay, 6px 0 20px -8px var(--shadow-color-strong));
 
   /* Shared backdrop for standard modal surfaces. Immersive viewers can keep
      their own treatment, but dialogs and command palettes use this one layer. */
   --modal-backdrop-bg: var(--wuu-color-overlay-backdrop, rgba(38, 42, 46, 0.24));
-
-  --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px rgba(20, 24, 28, 0.06));
-  --shadow-card: var(--wuu-elevation-panel, 0 2px 8px var(--ink-overlay-6));
-  --shadow-pop: var(
-    --wuu-elevation-overlay,
-    0 14px 34px rgba(20, 24, 28, 0.12), 0 2px 8px rgba(20, 24, 28, 0.08)
-  );
 
                                                                           
   --success: var(--wuu-color-success, #1f9d55);

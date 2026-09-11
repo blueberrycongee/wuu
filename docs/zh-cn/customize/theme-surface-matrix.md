@@ -24,7 +24,7 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 ## Token 一览
 
 合同共定义 **82 个公开 token**（其中 **7 个**
-旧名称兼容别名）与 **16 个语法高亮 token**；当前 **56 个**
+旧名称兼容别名）与 **16 个语法高亮 token**；当前 **54 个**
 已接入宿主界面。「已接入」表示宿主样式已在引用该 token，覆盖会立即生效；
 「未接入（预留）」表示 token 已声明但宿主尚未引用，覆盖暂不改变任何界面。
 
@@ -38,7 +38,7 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 | `--wuu-hairline` | 旧名称，请使用 `--wuu-color-border-subtle` | 已接入 |
 | `--wuu-surface-muted` | 旧名称，请使用 `--wuu-color-surface-muted` | 未接入（预留） |
 | `--wuu-accent` | 旧名称，请使用 `--wuu-color-accent` | 已接入 |
-| `--wuu-accent-press` | 旧名称，请使用 `--wuu-color-accent-pressed` | 已接入 |
+| `--wuu-accent-press` | 旧名称，请使用 `--wuu-color-accent-pressed` | 未接入（预留） |
 | `--wuu-color-canvas` | 窗口与面板层的基础背景 | 已接入 |
 | `--wuu-color-surface` | 内容区表面背景（消息、列表等） | 已接入 |
 | `--wuu-color-surface-muted` | 弱化的表面背景，用于悬停与分区 | 已接入 |
@@ -50,7 +50,7 @@ Wuu 桌面端把界面外观收敛为一组公开的 CSS 自定义属性（desig
 | `--wuu-color-border-subtle` | 弱边框 | 已接入 |
 | `--wuu-color-border-strong` | 强边框 | 已接入 |
 | `--wuu-color-accent` | 强调色，用于主操作与选中态 | 已接入 |
-| `--wuu-color-accent-pressed` | 强调色的按下态 | 已接入 |
+| `--wuu-color-accent-pressed` | 强调色的按下态 | 未接入（预留） |
 | `--wuu-color-focus` | 焦点环 | 已接入 |
 | `--wuu-color-success` | 成功语义色 | 已接入 |
 | `--wuu-color-warning` | 警告语义色 | 已接入 |

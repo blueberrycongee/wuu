@@ -21,7 +21,7 @@
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-xs);
   background: var(--surface-3);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--shadow-card);
   color: var(--ink);
   font-size: 12px;
   line-height: 1.4;

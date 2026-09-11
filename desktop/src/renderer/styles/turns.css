@@ -94,10 +94,8 @@
   --turn-sources-pill-border-fallback: rgba(127, 127, 127, 0.16);
   --turn-sources-pill-color-fallback: rgba(127, 127, 127, 0.85);
   --turn-source-icon-color-fallback: rgba(0, 0, 0, 0.85);
-  --turn-source-icon-hover-shadow: rgba(0, 0, 0, 0.18);
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
   --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
-  --artifact-preview-shell-shadow: rgba(0, 0, 0, 0.36);
   --artifact-preview-frame-bg: #fff;
 }
 
@@ -796,7 +794,7 @@
   justify-content: center;
   gap: 4px;
   border-radius: var(--radius-pill);
-  box-shadow: 0 1px 3px var(--shadow-color-subtle);
+  box-shadow: var(--shadow-soft);
   background: var(--message-copy-bg);
   color: var(--ink-tertiary);
   cursor: pointer;
@@ -818,7 +816,7 @@
 .message-copy-button:hover,
 .message-copy-button:focus-visible {
   outline: 0;
-  box-shadow: 0 4px 12px var(--shadow-color-medium);
+  box-shadow: var(--shadow-card);
   background: var(--paper);
   color: var(--ink);
 }
@@ -1067,7 +1065,7 @@
   border-radius: var(--radius-pill);
   background: var(--paper);
   color: var(--ink);
-  box-shadow: 0 2px 8px var(--shadow-color-medium);
+  box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
@@ -4063,7 +4061,7 @@ pre {
   border: 1px solid var(--hairline);
   border-radius: 31%;
   background: var(--surface-2);
-  box-shadow: 0 24px 64px var(--shadow-color-medium);
+  box-shadow: var(--shadow-modal);
   animation: wuu-launch-glass-enter 620ms var(--ease-out) both;
 }
 
@@ -4359,7 +4357,7 @@ pre {
   background: var(--paper);
   color: var(--ink);
   border-radius: var(--radius-lg);
-  box-shadow: 0 24px 64px var(--shadow-color-heavy);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -4543,7 +4541,7 @@ pre {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--paper);
-  box-shadow: 0 10px 30px var(--shadow-color-medium);
+  box-shadow: var(--shadow-pop);
   color: var(--ink);
   font-size: var(--font-sm);
   line-height: 1.5;
@@ -4846,7 +4844,7 @@ pre {
   border: 1px solid var(--artifact-preview-shell-border);
   border-radius: var(--radius-lg);
   background: var(--paper);
-  box-shadow: 0 24px 80px var(--artifact-preview-shell-shadow);
+  box-shadow: var(--shadow-modal);
 }
 
 .artifact-preview-toolbar {
@@ -5401,7 +5399,7 @@ button.turn-sources-pill:focus-visible {
 .turn-source-icon:hover,
 .turn-source-icon:focus-visible {
   transform: translateY(-1px);
-  box-shadow: 0 2px 6px var(--turn-source-icon-hover-shadow);
+  box-shadow: var(--shadow-soft);
   z-index: 1;
 }
 

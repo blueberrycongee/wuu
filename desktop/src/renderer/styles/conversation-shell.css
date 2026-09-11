@@ -11,7 +11,6 @@
   --shell-session-tab-drag-overlay-ring: rgba(255, 255, 255, 0.72);
   --shell-todo-card-bg: #fff;
   --shell-todo-card-border: var(--hairline);
-  --shell-todo-card-shadow: rgba(17, 19, 21, 0.14);
   --shell-todo-card-ink: #111315;
   --shell-todo-card-soft: #3e4449;
   --shell-todo-card-muted: #74797e;
@@ -27,13 +26,9 @@
   --conversation-floating-surface-focus: var(--focus-ring);
   --shell-jump-pill-bg: var(--conversation-floating-surface-bg);
   --shell-jump-pill-border: var(--conversation-floating-surface-border);
-  --shell-jump-pill-shadow: rgba(20, 24, 28, 0.12);
-  --shell-jump-pill-contact-shadow: rgba(20, 24, 28, 0.06);
   --shell-jump-pill-hover-bg: var(--conversation-floating-surface-hover-bg);
   --shell-jump-pill-hover-border: var(--conversation-floating-surface-hover-border);
-  --shell-jump-pill-hover-shadow: rgba(20, 24, 28, 0.16);
   --shell-jump-pill-focus-shadow-1: var(--conversation-floating-surface-focus);
-  --shell-jump-pill-focus-shadow-2: rgba(20, 24, 28, 0.12);
   --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #111315) 6%, transparent);
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #111315) 20%, transparent);
   --shell-turn-rail-bar-bg: rgba(60, 60, 67, 0.4);
@@ -419,7 +414,7 @@
   opacity: 0.98;
   pointer-events: none;
   transform: scale(1.025);
-  box-shadow: 0 9px 24px var(--shadow-color-medium);
+  box-shadow: var(--shadow-pop);
 }
 
 .session-tab-drag-overlay .session-tab-close {
@@ -844,9 +839,7 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--menu-bg);
-  box-shadow:
-    0 24px 60px var(--shell-run-debug-panel-shadow-1),
-    0 2px 10px var(--shell-run-debug-panel-shadow-2);
+  box-shadow: var(--shadow-modal);
   color: var(--ink);
   text-align: left;
   transform-origin: top right;
@@ -1149,9 +1142,7 @@
   border-radius: var(--radius-pill);
   border: 1px solid var(--shell-jump-pill-border);
   background: var(--shell-jump-pill-bg);
-  box-shadow:
-    0 1px 2px var(--shell-jump-pill-contact-shadow),
-    0 8px 24px var(--shell-jump-pill-shadow);
+  box-shadow: var(--shadow-card);
 
   color: var(--ink);
   font-size: 12px;
@@ -1271,7 +1262,7 @@ button.conversation-status-capsule,
   border: 1px solid var(--shell-todo-card-border);
   border-radius: var(--radius-md);
   background: var(--shell-todo-card-bg);
-  box-shadow: 0 16px 40px var(--shell-todo-card-shadow);
+  box-shadow: var(--shadow-pop);
   opacity: 0;
   visibility: hidden;
   transform: translate(-50%, 4px);
@@ -1389,17 +1380,15 @@ button.conversation-status-capsule,
 .conversation-status-capsule:hover {
   background: var(--shell-jump-pill-hover-bg);
   border-color: var(--shell-jump-pill-hover-border);
-  box-shadow:
-    0 1px 3px var(--shell-jump-pill-contact-shadow),
-    0 10px 30px var(--shell-jump-pill-hover-shadow);
+  box-shadow: var(--shadow-card);
 }
 
 .jump-to-latest-pill:focus-visible,
 .conversation-status-capsule:focus-visible {
-  outline: 0;
-  box-shadow:
-    0 0 0 2px var(--shell-jump-pill-focus-shadow-1),
-    0 10px 30px var(--shell-jump-pill-focus-shadow-2);
+  /* Keep focus visible even when a theme sets panel elevation to none. */
+  outline: 2px solid var(--shell-jump-pill-focus-shadow-1);
+  outline-offset: 0;
+  box-shadow: var(--shadow-card);
 }
 
 .jump-to-latest-pill svg {

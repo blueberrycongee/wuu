@@ -26,7 +26,7 @@
   color: var(--ink, #1c2024);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop, 0 14px 34px rgba(0, 0, 0, 0.18));
+  box-shadow: var(--shadow-pop);
   font-size: var(--font-ui, 13px);
   line-height: 1.4;
   transform: translate(-50%, -8px);

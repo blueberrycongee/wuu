@@ -279,7 +279,7 @@
   background: var(--responsive-design-toggle-bg);
   color: var(--paper);
   cursor: pointer;
-  box-shadow: 0 2px 8px var(--responsive-design-toggle-shadow);
+  box-shadow: var(--shadow-card);
   transition:
     background var(--motion-fast) var(--ease-out),
     transform var(--motion-fast) var(--ease-out),
@@ -290,7 +290,7 @@
 .design-tokens-toggle:focus-visible {
   background: var(--responsive-design-toggle-hover-bg);
   transform: scale(1.05);
-  box-shadow: 0 4px 12px var(--responsive-design-toggle-hover-shadow);
+  box-shadow: var(--shadow-card);
   outline: 0;
 }
 
@@ -308,7 +308,7 @@
   flex-direction: column;
   width: 320px;
   background: var(--paper);
-  box-shadow: -2px 0 16px var(--responsive-design-panel-shadow);
+  box-shadow: var(--shadow-drawer-left);
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink);

@@ -223,25 +223,19 @@
 
 :root {
   /* Component color tokens for composer.css.
-     Light-theme values; the dark theme overrides these in base.css theme blocks. */
+     Light-theme values; dark overrides live in theme.css. */
   /* Keep the ambient shadow close to the frame so its geometric edge remains
      legible against the message canvas instead of reading as a wider haze. */
-  --composer-frame-shadow: 0 1px 2px rgba(20, 24, 28, 0.025), 0 4px 18px rgba(20, 24, 28, 0.025);
-  --composer-image-attachment-button-shadow: 0 2px 8px rgba(20, 24, 28, 0.12);
+  --composer-frame-shadow: var(--shadow-composer);
+  --composer-image-attachment-button-shadow: var(--shadow-card);
   --composer-file-attachment-button-hover-bg: #eceee9;
   --composer-textarea-placeholder: color-mix(in srgb, var(--ink) 26%, var(--paper));
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
   --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
-  --composer-slash-menu-shadow: 0 14px 38px rgba(20, 24, 28, 0.08), 0 1px 4px rgba(20, 24, 28, 0.06);
+  --composer-slash-menu-shadow: var(--shadow-pop);
   --composer-project-menu-icon: var(--wuu-color-text-muted, #6b7176);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);
-  /* Accessory drawer upward shadow. Ink-sampled in light (a soft shade);
-     redefined black-based in dark — an ink-colored shadow would read as a
-     white glow above the drawer on dark paper. */
-  --composer-accessory-shadow: color-mix(in srgb, var(--ink) 7%, transparent);
-  --composer-accessory-shadow-hover: color-mix(in srgb, var(--ink) 10%, transparent);
-  --composer-accessory-shadow-expanded: color-mix(in srgb, var(--ink) 11%, transparent);
 }
 
 .composer-wrap {
@@ -792,7 +786,7 @@
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: var(--conversation-floating-surface-bg);
-  box-shadow: 0 -6px 24px var(--composer-accessory-shadow);
+  box-shadow: var(--shadow-tray);
   color: var(--ink);
   font-size: 13.5px;
   line-height: 1.5;
@@ -954,14 +948,14 @@
   translate: 0 -2px;
   border-color: var(--conversation-floating-surface-hover-border);
   background: var(--conversation-floating-surface-hover-bg);
-  box-shadow: 0 -8px 28px var(--composer-accessory-shadow-hover);
+  box-shadow: var(--shadow-tray);
 }
 
 .document-composer-wrap .composer-accessory-drawer.expanded {
   z-index: 4;
   translate: 0 -6px;
   border-color: var(--conversation-floating-surface-hover-border);
-  box-shadow: 0 -10px 34px var(--composer-accessory-shadow-expanded);
+  box-shadow: var(--shadow-tray);
 }
 
 .document-composer-wrap .composer-stack:not(.is-expanded) .composer textarea {

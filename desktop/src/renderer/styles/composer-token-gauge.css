@@ -7,7 +7,7 @@
   --token-gauge-track: rgba(138, 142, 145, 0.24);
   --token-gauge-tooltip-bg: var(--paper);
   --token-gauge-tooltip-border: var(--wuu-border-subtle, rgba(15, 17, 21, 0.08));
-  --token-gauge-tooltip-shadow: 0 6px 22px rgba(15, 17, 21, 0.12);
+  --token-gauge-tooltip-shadow: var(--shadow-card);
   --composer-token-gauge-focus-outline: var(--focus-ring);
 }
 

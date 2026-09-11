@@ -24,7 +24,7 @@
     z-index: 139;
     border-radius: 24px 0 0 24px;
     overflow: hidden;
-    box-shadow: -10px 0 24px var(--ink-overlay-8);
+    box-shadow: var(--shadow-drawer-left);
     will-change: transform;
   }
 
