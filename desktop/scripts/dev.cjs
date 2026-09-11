@@ -7,7 +7,6 @@ const {
   prepareDevElectronApp,
   speechHelperPathForApp,
 } = require("./prepare-dev-electron-app.cjs");
-const { buildCodeModeHost } = require("./build-codemode-host.cjs");
 const { ensureDevSigningIdentity } = require("./dev-signing.cjs");
 
 const desktopRoot = resolve(__dirname, "..");
@@ -51,13 +50,6 @@ const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers], {
 });
 if (coreBuild.status !== 0) {
   process.exit(coreBuild.status ?? 1);
-}
-
-// Code mode is opt-in at runtime through `code_mode.mode`. Its V8 host is
-// expensive to build, so development launches skip it unless a developer
-// explicitly requests it for code-mode work or tests.
-if (process.env.WUU_BUILD_CODE_MODE_HOST === "1") {
-  buildCodeModeHost();
 }
 
 const env = { ...process.env };

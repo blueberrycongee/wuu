@@ -116,13 +116,8 @@ function mountAnchor({
   return { container, node };
 }
 
-function flushTimers(): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 250);
-  });
-}
-
 beforeEach(() => {
+  vi.useFakeTimers();
   // jsdom does not implement scrollTo — stub it so the tests can
   // observe what scroll target the helper picks.
   Element.prototype.scrollTo = function scrollTo(
@@ -142,11 +137,12 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.clearAllTimers();
   vi.useRealTimers();
 });
 
 describe("scrollToUserMessage", () => {
-  it("scrolls the .scroll-region container so the anchor lands below the top padding", async () => {
+  it("scrolls the .scroll-region container so the anchor lands below the top padding", () => {
     const { container, node } = mountAnchor({
       variant: "scroll-region",
       containerHeight: 800,
@@ -157,7 +153,6 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1");
-    await flushTimers();
 
     // The helper subtracts JUMP_TOP_OFFSET_PX (64) from the node's
     // offsetTop so the message sits 64px below the visible top — this
@@ -167,7 +162,7 @@ describe("scrollToUserMessage", () => {
     expect(node.classList.contains("user-message-jump-flash")).toBe(true);
   });
 
-  it("scrolls without the highlight pulse when highlight is disabled", async () => {
+  it("scrolls without the highlight pulse when highlight is disabled", () => {
     const { container, node } = mountAnchor({
       variant: "scroll-region",
       containerHeight: 800,
@@ -176,13 +171,12 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1", { highlight: false });
-    await flushTimers();
 
     expect(container.scrollTop).toBe(600 - 64);
     expect(node.classList.contains("user-message-jump-flash")).toBe(false);
   });
 
-  it("also scrolls the split-pane container when split mode is active", async () => {
+  it("also scrolls the split-pane container when split mode is active", () => {
     const { container, node } = mountAnchor({
       variant: "conversation-split-body",
       containerHeight: 600,
@@ -193,13 +187,12 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1");
-    await flushTimers();
 
     expect(container.scrollTop).toBe(700 - 64);
     expect(node.classList.contains("user-message-jump-flash")).toBe(true);
   });
 
-  it("clamps the target scrollTop so the scroll surface does not overshoot", async () => {
+  it("clamps the target scrollTop so the scroll surface does not overshoot", () => {
     const { container } = mountAnchor({
       variant: "scroll-region",
       containerHeight: 800,
@@ -210,7 +203,6 @@ describe("scrollToUserMessage", () => {
     });
 
     scrollToUserMessage("turn-1", "item-1");
-    await flushTimers();
 
     expect(container.scrollTop).toBe(800);
   });
@@ -231,7 +223,9 @@ describe("scrollToUserMessage", () => {
 
     scrollToUserMessage("turn-1", "item-1");
 
-    // Re-mount the anchor before the longest retry delay (200ms) fires.
+    expect(container.scrollTop).toBe(0);
+
+    // Re-mount the anchor before the next retry fires.
     const replacement = document.createElement("div");
     replacement.className = "user-message-block";
     replacement.id = userMessageAnchorID("turn-1", "item-1");
@@ -251,16 +245,16 @@ describe("scrollToUserMessage", () => {
     });
     container.appendChild(replacement);
 
-    // Wait for the longest retry delay (200ms) plus a safety margin.
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    await vi.advanceTimersByTimeAsync(260);
 
+    expect(container.scrollTop).toBe(600 - 64);
     expect(replacement.classList.contains("user-message-jump-flash")).toBe(true);
   });
 
   it("does nothing when no anchor exists and retries are exhausted", async () => {
     // No DOM at all — the helper should give up silently.
     scrollToUserMessage("missing", "missing");
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    await vi.runAllTimersAsync();
     expect(document.body.innerHTML).toBe("");
   });
 });
