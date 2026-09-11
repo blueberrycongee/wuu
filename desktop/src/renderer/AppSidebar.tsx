@@ -380,6 +380,7 @@ export function AppSidebar({
   workbenchController = desktopWorkbenchController,
   mobileNavigation = false,
   drawerVisible = false,
+  sidebarVisible = true,
   onNavigateAway,
 }: {
   state: AppState;
@@ -456,6 +457,7 @@ export function AppSidebar({
   workbenchController?: WorkbenchController;
   mobileNavigation?: boolean;
   drawerVisible?: boolean;
+  sidebarVisible?: boolean;
   onNavigateAway?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -1949,11 +1951,11 @@ export function AppSidebar({
             id="sidebar.footer"
             context={Object.freeze({ initialized: Boolean(state.initialized) })}
           />
-          <SidebarAccountMenu
+          {sidebarVisible && <SidebarAccountMenu
             disabled={!state.initialized}
             onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
             onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
-          />
+          />}
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu

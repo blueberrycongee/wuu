@@ -2,7 +2,6 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { BarChart3, ChevronsUpDown, LogOut, Settings, UserRound } from "lucide-react";
 import type { AccountView } from "./AccountPanel";
-import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import "./SidebarAccountMenu.css";
@@ -75,7 +74,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
   };
   const avatar = <span className="sidebar-account-avatar" aria-hidden="true">{account.username ? (account.display_name || account.username).slice(0, 2).toUpperCase() : <UserRound size={18} />}</span>;
 
-  return <>
+  return <div className="sidebar-account">
     <button ref={anchor} className="sidebar-account-trigger" type="button" disabled={disabled}
       aria-label={t("account.menu")} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
       onClick={() => setOpen(!open)} onKeyDown={event => {
@@ -83,7 +82,7 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
       }}>
       {avatar}<span className="sidebar-account-name">{account.display_name || account.username || (driver ? t("account.connect") : "Wuu")}</span><ChevronsUpDown size={14} aria-hidden="true" />
     </button>
-    {open && <FloatingMenuPortal anchorRef={anchor} owner="sidebar-account" placement="above" align="left" width={280}>
+    {open &&
       <div ref={panel} id={id} role="menu" aria-label={t("account.menu")} className="select-menu-panel sidebar-account-menu"
         onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== anchor.current) setOpen(false); }}
         onKeyDown={event => {
@@ -106,6 +105,6 @@ export function SidebarAccountMenu({ disabled, onOpenSettings, onOpenAccount }: 
         {error && <p className="sidebar-account-message settings-error" role="alert">{error}</p>}
         {notice && <p className="sidebar-account-message" role="status">{t("account.localLogout")}</p>}
       </div>
-    </FloatingMenuPortal>}
-  </>;
+    }
+  </div>;
 }

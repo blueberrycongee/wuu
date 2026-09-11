@@ -1,3 +1,9 @@
+.sidebar-account {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
 .sidebar-account-trigger {
   display: flex;
   align-items: center;
@@ -40,7 +46,35 @@
 }
 
 .sidebar-account-trigger > svg { flex-shrink: 0; color: var(--ink-muted); }
-.sidebar-account-menu { width: 280px; overflow-y: auto; }
+.sidebar-account-menu {
+  position: absolute;
+  inset-inline: 0;
+  bottom: calc(100% + 8px);
+  z-index: 2;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  max-height: min(400px, calc(100dvh - 160px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border-radius: 14px;
+  background: var(--menu-bg);
+  box-shadow: 0 4px 16px var(--ink-overlay-6);
+  --menu-enter-y: 4px;
+}
+.sidebar-account-menu .select-menu-item {
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.sidebar-account-menu .select-menu-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sidebar-account-menu .select-menu-item { justify-content: flex-start; min-height: 38px; flex-shrink: 0; }
 .sidebar-account-menu .select-menu-item > svg { flex-shrink: 0; color: var(--ink-soft); }
 .sidebar-account-profile { display: flex; align-items: center; gap: 10px; padding: 10px 9px; }

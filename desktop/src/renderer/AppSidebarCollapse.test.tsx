@@ -188,6 +188,29 @@ describe("sidebar collapse-state independence", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it("keeps the account menu inside the sidebar and dismisses it on collapse", async () => {
+    installWuuApi();
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    const accountTrigger = () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger");
+    expect(accountTrigger()).not.toBeNull();
+    await act(async () => accountTrigger()?.click());
+    expect(container.querySelector(".sidebar .sidebar-account-menu")).not.toBeNull();
+
+    const toggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
+    expect(toggle).not.toBeNull();
+    await act(async () => toggle?.click());
+    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
+    expect(accountTrigger()).toBeNull();
+
+    await act(async () => toggle?.click());
+    expect(accountTrigger()?.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
+  });
+
   it("collapses the active 对话 section on the first header click", async () => {
     installWuuApi();
     await act(async () => {
