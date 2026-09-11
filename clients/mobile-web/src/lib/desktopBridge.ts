@@ -1,4 +1,5 @@
 import { PluginAssets } from "./pluginAssets";
+import { AndroidBackgroundSync } from './backgroundSync';
 import { languagePreferenceStore } from './language';
 import { downloadWorkspaceFile } from "./workspaceDownload";
 import { pickComputerFolder } from "./folderPicker";
@@ -35,6 +36,7 @@ export type WebConnectionSnapshot = {
   phase: "connecting" | "connected" | "reconnecting" | "restoring" | "error" | "disconnected";
   revision: number;
   error?: string;
+  backgroundSyncError?: string;
 };
 
 type WorkspaceSnapshot = {
@@ -57,6 +59,12 @@ const DEFAULT_MESSAGE_SIZE = 16;
  *  Short enough that a real outage still surfaces within a second, long
  *  enough that returning from background and wifi blips stay silent. */
 const RECONNECT_GRACE_MS = 600;
+// Snapshot replies share the relay with other bootstrap reads. A large thread
+// catalog can take longer than the ordinary action deadline on a slow link.
+const SNAPSHOT_READ_METHODS = new Set([
+  "initialize", "workspace/list", "thread/list", "thread/listAll", "thread/listArchived", "thread/resume", "user-question/list",
+]);
+const SNAPSHOT_READ_TIMEOUT_MS = 90_000;
 
 function basename(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");
@@ -178,12 +186,23 @@ export class RemoteDesktopBridge {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private needsRestore = false;
   private stopped = false;
+  private backgrounded = false;
+  private readonly backgroundSync = new AndroidBackgroundSync((error) => {
+    if (this.stopped) return;
+    this.connection = { ...this.connection, backgroundSyncError: error };
+    for (const listener of this.connectionListeners) listener();
+    if (this.backgrounded) {
+      if (this.backgroundSync.active) this.client.wake();
+      else this.client.suspend();
+    }
+  });
   // synchronize() already applies the workspace snapshot before restore
   // listeners and initial mount. This one-shot flag lets the immediately
   // following listProjects() return that state without a second workspace/list
   // round trip, while explicit refreshes still refetch and failed or
   // disconnected connections clear the flag.
   private workspaceSnapshotFresh = false;
+  private readonly snapshotReads = new Map<string, Promise<unknown>>();
 
   getConnectionSnapshot = (): WebConnectionSnapshot => this.connection;
   subscribeConnection = (listener: () => void): (() => void) => {
@@ -192,7 +211,7 @@ export class RemoteDesktopBridge {
   };
 
   private setConnection(phase: WebConnectionSnapshot["phase"], error?: string): number {
-    this.connection = { phase, revision: this.connection.revision + 1, ...(error ? { error } : {}) };
+    this.connection = { phase, revision: this.connection.revision + 1, backgroundSyncError: this.connection.backgroundSyncError, ...(error ? { error } : {}) };
     for (const listener of this.connectionListeners) listener();
     return this.connection.revision;
   }
@@ -205,23 +224,18 @@ export class RemoteDesktopBridge {
   }
 
   private async synchronize(first: boolean, resumed = false): Promise<void> {
-    // A resumed attach already replayed missed events on the same app-server
-    // connection. Keep the workbench in place unless a previous fresh
-    // connection still needs initialize + thread snapshots.
-    if (!first && resumed && !this.needsRestore) {
-      this.workspaceSnapshotFresh = false;
-      this.setConnection("connected");
-      return;
-    }
+    const restoreNeeded = !resumed || this.needsRestore;
     const revision = this.setConnection(first ? "connecting" : "restoring");
     this.workspaceSnapshotFresh = false;
     try {
-      const workspace = await this.client.call<WorkspaceSnapshot>("workspace/list", { remote_delivery: 1 }, 30_000);
+      // The host sends attached before replay. An RPC reply on the ordered
+      // connection is a barrier behind that replay, even for resumed sessions.
+      const workspace = await this.client.call<WorkspaceSnapshot>("workspace/list", { remote_delivery: 1 }, SNAPSHOT_READ_TIMEOUT_MS);
       if (this.connection.revision !== revision || this.stopped) return;
       if (!workspace.current) throw new Error("Remote host did not provide a workspace");
       this.updateWorkspaces(workspace);
       this.workspaceSnapshotFresh = true;
-      if (!first) await Promise.all([...this.restoreListeners].map((restore) => restore()));
+      if (!first && restoreNeeded) await Promise.all([...this.restoreListeners].map((restore) => restore()));
       if (this.connection.revision !== revision || this.stopped) return;
       this.needsRestore = false;
       this.setConnection("connected");
@@ -240,7 +254,7 @@ export class RemoteDesktopBridge {
   };
 
   private scheduleReconnecting(): void {
-    if (this.reconnectTimer) return;
+    if (this.reconnectTimer || this.backgrounded) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.stopped) this.setConnection("reconnecting");
@@ -391,7 +405,10 @@ export class RemoteDesktopBridge {
   }
 
   async connect(): Promise<void> {
+    await this.backgroundSync.start();
+    if (this.stopped) return;
     this.client.start();
+    if (this.backgrounded && !this.backgroundSync.active) this.client.suspend();
     await this.client.waitAttached(30_000);
     await this.attachSync;
     this.hostState = this.client.latestState();
@@ -403,19 +420,27 @@ export class RemoteDesktopBridge {
     this.workspaceSnapshotFresh = false;
     this.setConnection("disconnected");
     this.clearPendingRequests();
-    await this.client.stop();
-    this.pluginAssets.clear();
+    try {
+      await Promise.all([this.client.stop(), this.backgroundSync.stop()]);
+    } finally {
+      this.pluginAssets.clear();
+    }
   }
 
   suspend(): void {
     if (this.stopped) return;
-    // Explicitly detach before the OS freezes JavaScript, so completion hints
-    // are not suppressed by a TCP connection that merely appears alive.
-    this.client.suspend();
+    this.backgrounded = true;
+    this.cancelReconnecting();
+    // Without an acknowledged foreground service, detach before JS can freeze.
+    if (!this.backgroundSync.active) this.client.suspend();
   }
 
   wake(): void {
-    if (!this.stopped) this.client.wake();
+    if (this.stopped) return;
+    this.backgrounded = false;
+    void this.backgroundSync.start();
+    if (!this.client.isAttached() && this.connection.phase === 'connected') this.scheduleReconnecting();
+    this.client.wake();
   }
 
   install(): void {
@@ -432,18 +457,30 @@ export class RemoteDesktopBridge {
   }
 
   private async call<T>(method: string, params?: unknown): Promise<T> {
-    this.assertAvailable([
-      "initialize", "workspace/list", "thread/list", "thread/listAll", "thread/listArchived", "thread/resume", "user-question/list",
-    ].includes(method));
+    const snapshotRead = SNAPSHOT_READ_METHODS.has(method);
+    this.assertAvailable(snapshotRead);
     const revision = this.connection.revision;
     const workdir = this.requestWorkdir(params);
-    const result = await this.client.call<T>(method, params, 30_000, workdir);
-    if (this.stopped || this.connection.revision !== revision) {
-      throw new Error("Remote connection changed while the request was in flight");
+    const key = snapshotRead ? JSON.stringify([revision, workdir, method, params]) : undefined;
+    if (key) {
+      const pending = this.snapshotReads.get(key);
+      if (pending) return pending as Promise<T>;
     }
-    this.recordThreadLocations(result);
-    this.recordQuestionLocations(result, workdir);
-    return result;
+    const request = (async () => {
+      const result = await this.client.call<T>(method, params, snapshotRead ? SNAPSHOT_READ_TIMEOUT_MS : 30_000, workdir);
+      if (this.stopped || this.connection.revision !== revision) {
+        throw new Error("Remote connection changed while the request was in flight");
+      }
+      this.recordThreadLocations(result);
+      this.recordQuestionLocations(result, workdir);
+      return result;
+    })();
+    if (key) this.snapshotReads.set(key, request);
+    try {
+      return await request;
+    } finally {
+      if (key) this.snapshotReads.delete(key);
+    }
   }
 
   private requestWorkdir(params: unknown): string {

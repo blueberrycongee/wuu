@@ -254,7 +254,7 @@ function StatusCard({
   return (
     <main className="web-gate">
       <section className="web-gate-card web-gate-status">
-        {title.startsWith('正在') && <ViewSwitchLoading compact />}
+        {title.startsWith('正在') && <ViewSwitchLoading inline />}
         <h1 role="status">{title}</h1>
         {detail ? <p className="web-gate-detail">{detail}</p> : null}
         {children}
@@ -286,6 +286,12 @@ function ConnectedWorkbench({ bridge, onReset, resetLabel }: {
             <button type="button" onClick={() => void bridge.retryRestore().catch(() => {})}>重试恢复</button>
           ) : null}
           <button type="button" onClick={onReset}>{resetLabel}</button>
+        </aside>
+      ) : null}
+      {ready && connection.backgroundSyncError ? (
+        <aside className="web-connection-status" role="status" aria-live="polite">
+          <span>后台同步未能启动，切到后台后将暂停连接。</span>
+          <button type="button" onClick={() => bridge.wake()}>重试</button>
         </aside>
       ) : null}
     </>

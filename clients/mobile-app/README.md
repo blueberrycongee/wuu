@@ -58,6 +58,8 @@ Debug APK 可直接安装到允许 USB 调试或侧载的设备。正式 APK/AAB
 
 ## 本地数据与升级
 
+Android 连接电脑后会显示“Wuu 正在同步消息”通知，在 App 留在后台时继续接收内容。返回电脑列表、断开连接或从最近任务划掉 App 后停止同步服务。服务启动失败会在工作台提示并提供重试；系统终止进程或网络断开后，仍需重新连接并回放消息。前台服务不保证绕过所有厂商的省电限制。
+
 后台提醒可直接连接部署者自己的 APNs/FCM，配置与签名步骤见 [系统推送](../../deploy/remote/PUSH.md)。未配置时设备页明确展示状态，回到前台仍会恢复真实会话。
 
 手机的账号令牌和设备私钥保存在 iOS Keychain（仅本设备、解锁可读）或 Android Keystore AES-GCM 加密的私有存储中。Android 禁用应用备份。设备私钥不能靠复制 App 数据迁移，换机请重新登录。iOS 删除再安装 App 可能保留 Keychain 项；转交设备前先退出账号并在其他设备移除该设备。
@@ -67,6 +69,13 @@ Debug APK 可直接安装到允许 USB 调试或侧载的设备。正式 APK/AAB
 账号退出及检测到撤销会清除手机保存的 Wuu 登录状态和账号相关界面偏好，保留语言选择与按服务端、账号隔离的设备私钥，让重新登录复用同一设备记录。清除应用存储或更换设备仍可能产生新记录；历史重复记录需手动移除，不能仅按名称合并。主动退出在离线时也会清除本地登录，并提示远端撤销未确认；刷新时的临时网络错误保留凭据以便恢复。历史的权威副本位于电脑；服务端仅存身份和设备目录，服务端备份不能恢复电脑上的会话与工作区。更新 App 前保留电脑数据，更新后可直接重连；恢复码与电脑数据备份说明见服务端文档。
 
 ## Android 真实链路测试
+
+后台服务的启动确认、连接切换及最后一个连接释放可独立运行，不需要账号或模型：
+
+```sh
+clients/mobile-app/android/gradlew -p clients/mobile-app/android :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.blueberrycongee.wuu.BackgroundSyncTest
+```
 
 需要隔离验证数据时，先构建电脑端与 Go 核心，再用专用目录启动实际桌面入口：
 

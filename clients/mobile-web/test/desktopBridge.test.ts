@@ -1,11 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Credentials, RemoteClientOptions } from "@wuu/remote-core";
+import type { Thread } from "@wuu/protocol";
 
-const remote = vi.hoisted(() => ({ call: vi.fn(), wake: vi.fn(), options: {} as RemoteClientOptions, attached: true }));
+const remote = vi.hoisted(() => ({ call: vi.fn(), wake: vi.fn(), suspend: vi.fn(), options: {} as RemoteClientOptions, attached: true }));
+const background = vi.hoisted(() => ({ active: false, start: vi.fn(), stop: vi.fn(), change: (_error?: string) => {} }));
+vi.mock('../src/lib/backgroundSync', () => ({
+  AndroidBackgroundSync: class {
+    constructor(change: (error?: string) => void) { background.change = change; }
+    get active() { return background.active; }
+    start = background.start;
+    stop = background.stop;
+  },
+}));
 vi.mock("@wuu/remote-core", () => ({
   RemoteClient: class {
     call = remote.call;
     wake = remote.wake;
+    suspend = remote.suspend;
     constructor(_credentials: Credentials, options: RemoteClientOptions) { remote.options = options; }
     isAttached = () => remote.attached;
     start = () => remote.options.onAttach?.({ session: "first", resumed: false });
@@ -17,10 +28,15 @@ vi.mock("@wuu/remote-core", () => ({
 }));
 
 import { RemoteDesktopBridge, UnavailableHostOperationError } from "../src/lib/desktopBridge";
+import { ProtocolClient, type ProtocolEnvelope } from "../../core/src/rpc";
 
 beforeEach(() => {
   remote.attached = true;
   remote.wake.mockReset();
+  remote.suspend.mockReset();
+  background.active = false;
+  background.start.mockReset().mockResolvedValue(undefined);
+  background.stop.mockReset().mockResolvedValue(undefined);
   remote.call.mockReset().mockResolvedValue({ current: "/paired/workspace" });
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", {
@@ -165,6 +181,43 @@ function deferred<T>() {
 }
 
 describe("connection recovery", () => {
+  it("shares concurrent catalog reads only until they settle", async () => {
+    const bridge = await connectBridge();
+    const pending = deferred<{ threads: Thread[] }>();
+    remote.call.mockClear().mockReturnValueOnce(pending.promise);
+    const first = bridge.api.listThreads();
+    const second = bridge.api.listThreads();
+    expect(remote.call).toHaveBeenCalledOnce();
+    pending.resolve({ threads: [] });
+    await expect(first).resolves.toEqual({ threads: [] });
+    await expect(second).resolves.toEqual({ threads: [] });
+    await bridge.api.listThreads();
+    expect(remote.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts slow bootstrap replies while keeping action timeouts bounded", async () => {
+    vi.useFakeTimers();
+    const sent: ProtocolEnvelope[] = [];
+    const protocol = new ProtocolClient(env => sent.push(env));
+    try {
+      const bridge = await connectBridge();
+      remote.call.mockImplementation((method, params, timeout, cwd) => protocol.call(method, params, timeout, cwd));
+      const initialized = bridge.api.initialize();
+      const listed = bridge.api.listThreads();
+      const interrupted = bridge.api.interruptTurn("thread-1");
+      const actionTimeout = expect(interrupted).rejects.toThrow("rpc timeout: turn/interrupt");
+      await vi.advanceTimersByTimeAsync(45_000);
+      await actionTimeout;
+      protocol.feed({ id: sent[0].id, result: { status: "ready", features: {} } });
+      protocol.feed({ id: sent[1].id, result: { threads: [] } });
+      await expect(initialized).resolves.toMatchObject({ status: "ready" });
+      await expect(listed).resolves.toEqual({ threads: [] });
+    } finally {
+      protocol.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("wakes only the owned live client", async () => {
     const bridge = await connectBridge();
     bridge.wake();
@@ -248,7 +301,7 @@ describe("connection recovery", () => {
     expect(refreshed.projects.map((project) => project.id)).toContain("paired");
     expect(refreshed.active_context?.cwd).toBe("/paired/workspace");
     expect(remote.call).toHaveBeenCalledTimes(1);
-    expect(remote.call).toHaveBeenCalledWith("workspace/list", undefined, 30_000, expect.any(String));
+    expect(remote.call).toHaveBeenCalledWith("workspace/list", undefined, 90_000, expect.any(String));
   });
 
   it("does not serve a stale workspace snapshot after disconnecting", async () => {
@@ -272,17 +325,82 @@ describe("connection recovery", () => {
     expect(remote.call).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a resumed connection in place without restoring the workbench", async () => {
+  it("waits for the replay barrier on resume without reloading the workbench", async () => {
     const bridge = await connectBridge();
     const handler = vi.fn(async () => {});
     bridge.api.onRuntimeRestore!(handler);
     remote.call.mockClear();
+    const replayBarrier = deferred<{ current: string }>();
+    remote.call.mockReturnValueOnce(replayBarrier.promise);
     remote.options.onDetach?.();
     expect(bridge.getConnectionSnapshot().phase).toBe("connected");
     remote.options.onAttach?.({ session: "next", resumed: true });
+    expect(bridge.getConnectionSnapshot().phase).toBe('restoring');
+    expect(handler).not.toHaveBeenCalled();
+    replayBarrier.resolve({ current: '/paired/workspace' });
     await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
     expect(handler).not.toHaveBeenCalled();
-    expect(remote.call).not.toHaveBeenCalled();
+    expect(remote.call).toHaveBeenCalledExactlyOnceWith('workspace/list', { remote_delivery: 1 }, 90_000);
+  });
+
+  it('retains a protected Android connection and releases its service on disconnect', async () => {
+    background.active = true;
+    const bridge = await connectBridge();
+    bridge.suspend();
+    expect(remote.suspend).not.toHaveBeenCalled();
+    bridge.wake();
+    expect(remote.wake).toHaveBeenCalledOnce();
+    await bridge.disconnect();
+    expect(background.stop).toHaveBeenCalledOnce();
+  });
+
+  it('detaches when protection is unavailable or lost in the background', async () => {
+    const bridge = await connectBridge();
+    bridge.suspend();
+    expect(remote.suspend).toHaveBeenCalledOnce();
+    bridge.wake();
+    background.active = true;
+    bridge.suspend();
+    expect(remote.suspend).toHaveBeenCalledOnce();
+    background.active = false;
+    background.change('service stopped');
+    expect(remote.suspend).toHaveBeenCalledTimes(2);
+    expect(bridge.getConnectionSnapshot().backgroundSyncError).toBe('service stopped');
+    background.active = true;
+    remote.wake.mockClear();
+    background.change();
+    expect(bridge.getConnectionSnapshot().backgroundSyncError).toBeUndefined();
+    expect(remote.wake).toHaveBeenCalledOnce();
+  });
+
+  it('does not start an unprotected background connection after a late service failure', async () => {
+    const starting = deferred<void>();
+    background.start.mockReturnValueOnce(starting.promise);
+    const bridge = new RemoteDesktopBridge({ relay_url: 'ws://relay', host_pub: 'host', device_seed: 'seed' } as Credentials);
+    const connected = bridge.connect();
+    bridge.suspend();
+    remote.suspend.mockClear();
+    starting.resolve();
+    await connected;
+    expect(remote.suspend).toHaveBeenCalledOnce();
+    await bridge.disconnect();
+  });
+
+  it('starts the reconnect grace period on foreground return', async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = await connectBridge();
+      bridge.suspend();
+      remote.attached = false;
+      remote.options.onDetach?.();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(bridge.getConnectionSnapshot().phase).toBe('connected');
+      bridge.wake();
+      await vi.advanceTimersByTimeAsync(599);
+      expect(bridge.getConnectionSnapshot().phase).toBe('connected');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(bridge.getConnectionSnapshot().phase).toBe('reconnecting');
+    } finally { vi.useRealTimers(); }
   });
 
   it("hides a brief disconnect and only surfaces reconnecting after the grace window", async () => {
@@ -376,7 +494,7 @@ describe("workspace routing", () => {
     const selected = await bridge.api.selectProject("beta");
     expect(selected.active_context).toEqual({ kind: "project", project_id: "beta", cwd: "/computer/beta" });
     await bridge.api.listThreads();
-    expect(remote.call).toHaveBeenLastCalledWith("thread/list", { cwd: "/computer/beta", summary_only: true }, 30_000, "/computer/beta");
+    expect(remote.call).toHaveBeenLastCalledWith("thread/list", { cwd: "/computer/beta", summary_only: true }, 90_000, "/computer/beta");
     await bridge.api.startThread({ model: "chosen-model" });
     expect(remote.call).toHaveBeenLastCalledWith("thread/start", {
       model: "chosen-model", cwd: "/computer/beta", workspace_id: "beta",
@@ -448,7 +566,7 @@ it("synchronizes a resumed snapshot once from the response without requesting a 
   const result = { thread: { id: "t", cwd: "/paired/workspace", turns: [] }, held_user_messages: [{id:"held"}] };
   remote.call.mockResolvedValueOnce(result);
   expect(await bridge.api.resumeThread("t")).toEqual(result);
-  expect(remote.call).toHaveBeenLastCalledWith("thread/resume", {session_id:"t", response_only:true}, 30_000, "/paired/workspace");
+  expect(remote.call).toHaveBeenLastCalledWith("thread/resume", {session_id:"t", response_only:true}, 90_000, "/paired/workspace");
   expect(listener).toHaveBeenCalledTimes(1);
   expect(listener.mock.calls[0][0].message).toEqual({method:"thread/resumed", params:result});
 });
