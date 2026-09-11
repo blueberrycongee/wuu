@@ -1686,14 +1686,14 @@ describe("Composer send control", () => {
     expect(slashLayer).not.toBeNull();
   });
 
-  it("shows the hero project selector inside the composer toolbar", () => {
+  it("shows the hero project selector above the input card", () => {
     renderComposer({
       variant: "hero",
     });
 
     expect(container.querySelector(".composer-context-bar")).toBeNull();
     expect(container.querySelector(".context-project-button")).toBeNull();
-    expect(container.querySelector(".composer-bar-left > .hero-project-pill-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-workspace-bar > .hero-project-pill-anchor")).not.toBeNull();
     expect(container.querySelector(".hero-project-pill")).not.toBeNull();
     expect(container.querySelector(".hero-project-pill")?.textContent).toContain("选择项目");
     expect(container.querySelector<HTMLButtonElement>("button[aria-label=\"打开项目\"]")).toBeNull();
@@ -1794,8 +1794,8 @@ describe("Composer send control", () => {
     expect(container.querySelector(".composer-attachment-button")).toBeNull();
     expect(container.querySelector(".composer-slash-button")).toBeNull();
 
-    const shell = container.querySelector<HTMLElement>(".composer-shell");
-    vi.spyOn(shell as HTMLElement, "getBoundingClientRect").mockReturnValue({
+    const frame = container.querySelector<HTMLElement>(".composer-frame");
+    vi.spyOn(frame as HTMLElement, "getBoundingClientRect").mockReturnValue({
       bottom: 500,
       height: 100,
       left: 80,
@@ -1819,8 +1819,8 @@ describe("Composer send control", () => {
     const menu = document.body.querySelector<HTMLElement>('[data-floating-menu-owner="composer-plus"]');
     expect(menu?.style.width).toBe("640px");
     expect(menu?.style.left).toBe("80px");
-    expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 8}px`);
-    expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("384px");
+    expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 4}px`);
+    expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("388px");
     expect(menu?.querySelectorAll(".composer-plus-menu-section")).toHaveLength(2);
     expect(menu?.textContent).toContain("添加");
     expect(menu?.textContent).toContain("添加附件");

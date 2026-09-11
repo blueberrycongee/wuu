@@ -4,7 +4,7 @@ import {
   Folder,
   FolderOpen,
   FolderX,
-  Send,
+  ArrowUp,
   Square
 } from "lucide-react";
 import {
@@ -1179,6 +1179,53 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
+          {canSelectProject ? (
+            <div className="composer-workspace-bar">
+              <div className="hero-project-pill-anchor composer-project-control" ref={menuRef}>
+                <Tooltip
+                  content={projectPillTitle}
+                  disabled={projectPillTitle === projectPillLabel}
+                >
+                  <button
+                    className="hero-project-pill"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    aria-label={t("composer.switchProject", { project: projectPillLabel })}
+                    onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
+                    onClick={onToggleMenu}
+                  >
+                    <span className="hero-project-pill-icon" aria-hidden="true">
+                      <ProjectPillIcon />
+                    </span>
+                    <span className="hero-project-pill-text">{projectPillLabel}</span>
+                    <ChevronDown className="hero-project-pill-chevron" aria-hidden="true" />
+                  </button>
+                </Tooltip>
+                {menuOpen ? (
+                  <FloatingMenuPortal
+                    anchorRef={menuRef}
+                    owner="composer-runtime"
+                    placement="above"
+                    align="left"
+                    width={300}
+                    mobileSheet={{ label: t("composer.switchProject", { project: projectPillLabel }), onClose: onToggleMenu }}
+                  >
+                    <ProjectPickerMenu
+                      projects={projects}
+                      activeContext={activeContext}
+                      query={projectFilter}
+                      setQuery={setProjectFilter}
+                      onSelectProject={onSelectProject}
+                      onSelectNoProject={onSelectNoProject}
+                      onCreateProject={onCreateProject}
+                      onOpenProject={onOpenProject}
+                    />
+                  </FloatingMenuPortal>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           {cameraOpen && !textOnly && !readOnly ? (
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
@@ -1282,59 +1329,12 @@ export function Composer({
             >
               <div className="composer-bar-left">
                 {leadingActions}
-                {canSelectProject ? (
-                  // Project selection depends on whether a session has been
-                  // created, independently of where the composer is placed.
-                  <div className="hero-project-pill-anchor composer-project-control" ref={menuRef}>
-                    <Tooltip
-                      content={projectPillTitle}
-                      disabled={projectPillTitle === projectPillLabel}
-                    >
-                      <button
-                        className="hero-project-pill"
-                        type="button"
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen}
-                        aria-label={t("composer.switchProject", { project: projectPillLabel })}
-                        onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
-                        onClick={onToggleMenu}
-                      >
-                        <span className="hero-project-pill-icon" aria-hidden="true">
-                          <ProjectPillIcon />
-                        </span>
-                        <span className="hero-project-pill-text">{projectPillLabel}</span>
-                        <ChevronDown className="hero-project-pill-chevron" aria-hidden="true" />
-                      </button>
-                    </Tooltip>
-                    {menuOpen ? (
-                      <FloatingMenuPortal
-                        anchorRef={menuRef}
-                        owner="composer-runtime"
-                        placement="above"
-                        align="left"
-                        width={300}
-                        mobileSheet={{ label: t("composer.switchProject", { project: projectPillLabel }), onClose: onToggleMenu }}
-                      >
-                        <ProjectPickerMenu
-                          projects={projects}
-                          activeContext={activeContext}
-                          query={projectFilter}
-                          setQuery={setProjectFilter}
-                          onSelectProject={onSelectProject}
-                          onSelectNoProject={onSelectNoProject}
-                          onCreateProject={onCreateProject}
-                          onOpenProject={onOpenProject}
-                        />
-                      </FloatingMenuPortal>
-                    ) : null}
-                  </div>
-                ) : null}
                 {!textOnly && !hidePlusButton ? (
                   <ComposerPlusButton
                     variant={variant}
                     disabled={readOnly}
                     commands={slashCommands}
-                    menuAnchorRef={composerShellRef}
+                    menuAnchorRef={composerFrameRef}
                     onAddAttachment={() => attachmentInputRef.current?.click()}
                     mobileAttachments={
                       mobileWeb
@@ -1473,7 +1473,7 @@ export function Composer({
                     (voiceSendPending || effectiveSendDisabled || readOnly || (!voiceRecording && !hasDraft) || (handoffMode && !canConfirmHandoff))
                   }
                 >
-                  {showComposerStopAction ? <Square aria-hidden="true" /> : <Send aria-hidden="true" />}
+                  {showComposerStopAction ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
                 </button>
               </div>
             </div>

@@ -226,10 +226,10 @@
      Light-theme values; the dark theme overrides these in base.css theme blocks. */
   /* Keep the ambient shadow close to the frame so its geometric edge remains
      legible against the message canvas instead of reading as a wider haze. */
-  --composer-frame-shadow: 0 1px 3px rgba(20, 24, 28, 0.1), 0 5px 16px rgba(20, 24, 28, 0.06);
+  --composer-frame-shadow: 0 1px 2px rgba(20, 24, 28, 0.025), 0 4px 18px rgba(20, 24, 28, 0.025);
   --composer-image-attachment-button-shadow: 0 2px 8px rgba(20, 24, 28, 0.12);
   --composer-file-attachment-button-hover-bg: #eceee9;
-  --composer-textarea-placeholder: var(--wuu-color-text-muted, #a0a3a5);
+  --composer-textarea-placeholder: color-mix(in srgb, var(--ink) 26%, var(--paper));
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
   --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
@@ -351,6 +351,26 @@
   width: 100%;
 }
 
+/* Separate workspace context from the input actions. */
+.composer-workspace-bar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 46px;
+  margin: 0 14px -10px;
+  padding: 4px 8px 12px;
+  border-radius: 18px 18px 0 0;
+  background: var(--surface-1);
+}
+
+.composer-workspace-bar .hero-project-pill-anchor {
+  max-width: 100%;
+}
+
+.composer .codex-runtime-trigger {
+  font-weight: 400;
+}
+
 .composer-frame {
   position: relative;
   width: 100%;
@@ -366,7 +386,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -415,7 +435,7 @@
   color: var(--ink-muted);
   border-radius: var(--radius-sm);
   background: transparent;
-  opacity: 1;
+  opacity: 0;
   transition:
     color var(--motion-fast) var(--ease-out),
     background-color var(--motion-fast) var(--ease-out),
@@ -430,7 +450,8 @@
 
 .composer-frame:hover .composer-expand-button,
 .composer-expand-button:hover,
-.composer-expand-button:focus-visible {
+.composer-expand-button:focus-visible,
+.composer-expand-button[aria-pressed="true"] {
   opacity: 1;
   color: var(--ink-muted);
 }
@@ -501,7 +522,7 @@
 }
 
 .hero-composer-wrap .composer {
-  --composer-text-start: 24px;
+  --composer-text-start: 16px;
   min-height: var(--composer-collapsed-min-height);
 }
 
@@ -1393,7 +1414,7 @@
   background: transparent;
   color: var(--ink-muted);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: 400;
   padding: 0 8px;
   white-space: nowrap;
 }
@@ -1619,8 +1640,8 @@
 }
 
 .composer-send-button {
-  background: var(--wuu-accent);
-  color: var(--ink-on-accent);
+  background: var(--ink);
+  color: var(--paper);
 }
 
 .composer-send-button svg {
@@ -1646,8 +1667,15 @@
   transform-origin: center;
 }
 
+.composer-send-button svg.lucide-arrow-up {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.75;
+  transform: none;
+}
+
 .composer-send-button:hover {
-  background: var(--wuu-accent-press);
+  background: var(--ink-strong);
 }
 
 .composer-send-button:disabled {
@@ -1708,7 +1736,7 @@
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-weight: 400;
   padding: 0 8px;
   cursor: pointer;
   transition:
@@ -1826,11 +1854,11 @@
 }
 
 .composer-send-button::before {
-  background: var(--wuu-accent);
+  background: var(--ink);
 }
 
 .composer-send-button:hover::before {
-  background: var(--wuu-accent-press);
+  background: var(--ink-strong);
 }
 
 .composer-send-button:hover {
@@ -2072,43 +2100,6 @@
   width: 300px;
 }
 
-.composer-plus-menu {
-  width: 100%;
-  max-height: min(
-    420px,
-    var(--floating-menu-available-height, calc(100vh - 180px))
-  );
-  gap: 1px;
-  padding: 7px;
-}
-
-.composer-plus-menu-section {
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  line-height: 16px;
-  padding: 7px 10px 4px;
-  user-select: none;
-}
-
-.composer-plus-menu button {
-  height: 38px;
-  gap: 9px;
-  padding: 0 10px;
-}
-
-.composer-plus-menu button .composer-plus-menu-item-title {
-  flex: 0 1 auto;
-  color: var(--ink);
-  font-weight: var(--weight-medium);
-}
-
-.composer-plus-menu button .composer-plus-menu-item-desc {
-  flex: 1 1 auto;
-  color: var(--ink-muted);
-  font-weight: 400;
-}
-
 .composer-context-menu button {
   display: flex;
   height: 34px;
@@ -2175,6 +2166,73 @@
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
+}
+
+/* The add panel is a continuation of the input card, with quiet rows. */
+.composer-context-menu.composer-plus-menu {
+  width: 100%;
+  max-height: min(
+    320px,
+    var(--floating-menu-available-height, calc(100vh - 180px))
+  );
+  gap: 0;
+  padding: 4px;
+  border-color: var(--hairline-soft);
+  border-radius: var(--session-composer-radius, var(--radius-md));
+  background: var(--paper);
+  box-shadow: var(--composer-frame-shadow);
+  overscroll-behavior: contain;
+}
+
+.composer-plus-menu-section {
+  padding: 6px 8px 4px;
+  color: var(--ink-muted);
+  font-size: var(--font-ui);
+  font-weight: 400;
+  line-height: 18px;
+  user-select: none;
+}
+
+.composer-plus-menu-section:not(:first-child) {
+  padding-top: 10px;
+}
+
+.composer-context-menu.composer-plus-menu button {
+  height: 28px;
+  min-height: 28px;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+.composer-plus-menu button .composer-plus-menu-item-title {
+  flex: 0 1 auto;
+  color: inherit;
+  font-weight: 400;
+}
+
+.composer-plus-menu button .composer-plus-menu-item-desc {
+  flex: 1 1 auto;
+  color: color-mix(in srgb, var(--ink-soft) 55%, var(--paper));
+  font-weight: 400;
+}
+
+.composer-plus-menu button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.75;
+}
+
+.composer-plus-menu button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.composer-plus-button[aria-expanded="true"]::before {
+  border-radius: var(--radius-pill);
+  background: var(--ink-overlay-4);
 }
 
 .composer-menu-note,

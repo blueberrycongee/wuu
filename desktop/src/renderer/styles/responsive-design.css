@@ -77,7 +77,7 @@
   }
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 540px) {
   .permission-menu-anchor {
     max-width: 56px;
     flex: 0 0 56px;
@@ -122,7 +122,7 @@
   }
 }
 
-@container composer-toolbar (max-width: 620px) {
+@container composer-toolbar (max-width: 420px) {
   .permission-menu-anchor {
     max-width: 52px;
     flex: 0 0 52px;

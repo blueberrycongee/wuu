@@ -1188,7 +1188,6 @@ function defaultVariantForRuntimeModel(
 // Clicking a command behaves exactly like picking it in the "/" panel.
 // Open state is local, so the host's floating-menu registry needs no wiring.
 export function ComposerPlusButton({
-  variant,
   disabled,
   commands,
   menuAnchorRef,
@@ -1265,7 +1264,7 @@ export function ComposerPlusButton({
           owner="composer-plus"
           placement="above"
           align="left"
-          offset={variant === "hero" ? 10 : 8}
+          offset={4}
           width={320}
           matchAnchorWidth
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
