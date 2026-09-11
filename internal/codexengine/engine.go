@@ -167,13 +167,13 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	}
 	unregister := s.registerApprovalHandlers()
 	defer unregister()
-	prompt := turnPrompt(input.History)
+	inputs := turnInputs(input.History)
 	// Subscribe before turn/start: the app-server streams notifications
 	// immediately after responding, so a late subscription would drop them.
 	done := make(chan turnOutcome, 1)
 	sub := newTurnSubscription(s.client, sink, done)
 	defer sub.close()
-	turnResp, err := s.startTurn(ctx, prompt)
+	turnResp, err := s.startTurn(ctx, inputs)
 	if err != nil {
 		return agentengine.TurnResult{}, err
 	}
@@ -360,7 +360,7 @@ func (s *Session) threadConfig() map[string]any {
 	return config
 }
 
-func (s *Session) startTurn(ctx context.Context, prompt string) (TurnStartResponse, error) {
+func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartResponse, error) {
 	var resp TurnStartResponse
 	_, approval, sandboxPolicy := codexPermissionSettings(s.permissionMode)
 	if sandboxPolicy.Type == SandboxPolicyWorkspaceWrite && strings.TrimSpace(s.rootDir) != "" {
@@ -368,7 +368,7 @@ func (s *Session) startTurn(ctx context.Context, prompt string) (TurnStartRespon
 	}
 	err := s.client.Request(ctx, MethodTurnStart, TurnStartParams{
 		ThreadID:        s.ref,
-		Input:           []UserInput{{Type: "text", Text: prompt}},
+		Input:           inputs,
 		Model:           s.model,
 		ReasoningEffort: s.effort,
 		ApprovalPolicy:  approval,
@@ -426,15 +426,24 @@ func (s *Session) Close(context.Context) error {
 	return nil
 }
 
-// turnPrompt extracts the user's latest message as the turn input.
-func turnPrompt(history []providers.ChatMessage) string {
+// turnInputs selects the latest user message, including image-only turns.
+// Earlier turns already belong to the native Codex thread.
+func turnInputs(history []providers.ChatMessage) []UserInput {
 	for i := len(history) - 1; i >= 0; i-- {
 		msg := history[i]
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
-			return msg.Content
+		if msg.Role != "user" {
+			continue
 		}
+		inputs := make([]UserInput, 0, 1+len(msg.Images))
+		if strings.TrimSpace(msg.Content) != "" {
+			inputs = append(inputs, UserInput{Type: "text", Text: msg.Content})
+		}
+		for _, img := range msg.Images {
+			inputs = append(inputs, UserInput{Type: "image", URL: "data:" + img.MediaType + ";base64," + img.Data})
+		}
+		return inputs
 	}
-	return ""
+	return nil
 }
 
 // turnOutcome carries the converted loop result and terminal error.

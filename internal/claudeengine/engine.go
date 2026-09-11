@@ -159,8 +159,8 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	if err := ctx.Err(); err != nil {
 		return agentengine.TurnResult{}, err
 	}
-	prompt := turnPrompt(input.History)
-	if strings.TrimSpace(prompt) == "" {
+	message := turnMessage(input.History)
+	if strings.TrimSpace(message.Content) == "" && len(message.Images) == 0 {
 		return agentengine.TurnResult{}, errors.New("claude turn requires a user message")
 	}
 
@@ -178,7 +178,7 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	}()
 
 	s.writeMu.Lock()
-	err = transport.WriteLine(ctx, marshalLine(userPromptEnvelope(prompt)))
+	err = transport.WriteLine(ctx, marshalLine(userPromptEnvelope(message)))
 	s.writeMu.Unlock()
 	if err != nil {
 		return agentengine.TurnResult{}, fmt.Errorf("send claude user input: %w", err)
@@ -318,15 +318,15 @@ func claudePermissionMode(mode string) string {
 	}
 }
 
-// turnPrompt extracts the user's latest message as the turn input.
-func turnPrompt(history []providers.ChatMessage) string {
+// turnMessage selects the latest user message without replaying older text
+// when the current turn contains only images.
+func turnMessage(history []providers.ChatMessage) providers.ChatMessage {
 	for i := len(history) - 1; i >= 0; i-- {
-		msg := history[i]
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
-			return msg.Content
+		if history[i].Role == "user" {
+			return history[i]
 		}
 	}
-	return ""
+	return providers.ChatMessage{}
 }
 
 func marshalLine(v any) string {

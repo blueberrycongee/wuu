@@ -69,6 +69,11 @@ func main() {
 				"cwd":    ".",
 			})
 		case "turn/start":
+			if path := os.Getenv("WUU_TEST_CODEX_INPUT"); path != "" {
+				if err := os.WriteFile(path, req.Params, 0600); err != nil {
+					panic(err)
+				}
+			}
 			var params struct {
 				ThreadID string `json:"threadId"`
 			}

@@ -64,6 +64,13 @@ func main() {
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			continue
 		}
+		if path := os.Getenv("WUU_TEST_CLAUDE_INPUT"); path != "" {
+			if err := os.WriteFile(path, []byte(line), 0600); err != nil {
+				panic(err)
+			}
+			sendResult(false, "Input captured")
+			continue
+		}
 		if strings.Contains(line, "wait_forever") {
 			send(map[string]any{
 				"type": "stream_event",

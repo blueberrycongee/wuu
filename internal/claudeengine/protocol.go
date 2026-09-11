@@ -1,5 +1,11 @@
 package claudeengine
 
+import (
+	"strings"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
+)
+
 // Claude CLI stream-json protocol types. Wire fields are snake_case; the
 // top-level "type" field dispatches (system / assistant / user / result /
 // stream_event).
@@ -20,19 +26,39 @@ type userMessage struct {
 // contentBlock is one Anthropic-style content block (text / tool_result /
 // image etc.).
 type contentBlock struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	ToolUseID string `json:"tool_use_id,omitempty"`
-	Content   any    `json:"content,omitempty"`
-	IsError   bool   `json:"is_error,omitempty"`
+	Source    *imageSource `json:"source,omitempty"`
+	Type      string       `json:"type"`
+	Text      string       `json:"text,omitempty"`
+	ToolUseID string       `json:"tool_use_id,omitempty"`
+	Content   any          `json:"content,omitempty"`
+	IsError   bool         `json:"is_error,omitempty"`
 }
 
 // outgoing envelope helpers -------------------------------------------------
 
-func userPromptEnvelope(prompt string) userEnvelope {
+type imageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+func userPromptEnvelope(message providers.ChatMessage) userEnvelope {
+	var content any = message.Content
+	if len(message.Images) > 0 {
+		blocks := make([]contentBlock, 0, 1+len(message.Images))
+		if strings.TrimSpace(message.Content) != "" {
+			blocks = append(blocks, contentBlock{Type: "text", Text: message.Content})
+		}
+		for _, img := range message.Images {
+			blocks = append(blocks, contentBlock{Type: "image", Source: &imageSource{
+				Type: "base64", MediaType: img.MediaType, Data: img.Data,
+			}})
+		}
+		content = blocks
+	}
 	return userEnvelope{
 		Type:    "user",
-		Message: userMessage{Role: "user", Content: prompt},
+		Message: userMessage{Role: "user", Content: content},
 	}
 }
 
