@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { RuntimePicker } from '../../../desktop/src/renderer/ComposerRuntimeMenus';
 import { FloatingMenuPortal } from '../../../desktop/src/renderer/ComposerFloatingMenu';
 import { AccountPanel } from '../../../desktop/src/renderer/AccountPanel';
+import { useSidebarTouchGesture } from '../../../desktop/src/renderer/SidebarTouchGesture';
 import { WuuUIRoot } from '../../../desktop/src/renderer/ui/layers/UILayerHost';
 import { setActiveLocale } from '../../../desktop/src/renderer/i18n';
 import { startWebViewportSync } from '../src/lib/viewport';
@@ -16,6 +17,24 @@ setActiveLocale('en-US');
 startWebViewportSync();
 localStorage.setItem('wuu.account.server', 'https://example.invalid');
 const accountDriver = async () => ({ github: false });
+
+function NavigationFixture() {
+  const shell = useRef<HTMLDivElement>(null);
+  const [opened, setOpened] = useState(false);
+  useSidebarTouchGesture(shell, true, opened ? 'open' : 'closed', () => setOpened(true), () => setOpened(false));
+  return <div className="account-workbench-content" style={{ height: '100%' }}>
+    <div ref={shell} style={{ '--sidebar-width': '0px' } as React.CSSProperties} className={`app-shell compact-navigation sidebar-collapsed${opened ? ' sidebar-drawer-open' : ''}`}>
+      <aside className="sidebar"><div className="sidebar-content"><button onClick={() => setOpened(false)}>Choose session</button></div></aside>
+      <button className="compact-session-switcher-backdrop" aria-label="Close navigation" onClick={() => setOpened(false)} />
+      <main className="conversation-pane">
+        <header className="titlebar"><div className="title-block"><button className="sidebar-toggle-button" onClick={() => setOpened(true)}>Open</button></div>
+          <div className="title-actions"><div className="compact-conversation-actions"><button className="icon-button">More</button></div></div>
+        </header>
+        <div className="scroll-region"><p>First message</p><textarea aria-label="Navigation draft" defaultValue="Unsent draft" /></div>
+      </main>
+    </div>
+  </div>;
+}
 
 function Fixture() {
   const anchor = useRef<HTMLDivElement>(null);
@@ -38,4 +57,4 @@ function Fixture() {
       onSelectModel={(nextProvider, nextModel) => { setProvider(nextProvider); setModel(nextModel); }} onSelectEffort={() => {}} />}
   </main></WuuUIRoot>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+createRoot(document.getElementById('root')!).render(location.search.includes('navigation') ? <NavigationFixture /> : <Fixture />);

@@ -33,12 +33,13 @@ export function useSidebarTouchGesture(
     if (!sidebar) return;
     const backdrop = shell.querySelector<HTMLElement>(".compact-session-switcher-backdrop");
     const closeButton = shell.querySelector<HTMLElement>(".compact-session-switcher-close");
-    const surfaces = [sidebar, backdrop, closeButton].filter((node): node is HTMLElement => !!node);
+    const conversation = shell.querySelector<HTMLElement>(".conversation-pane");
+    const surfaces = [sidebar, backdrop, closeButton, conversation].filter((node): node is HTMLElement => !!node);
     const wasOpen = phase === "open";
     let gesture: {
       id: number; x: number; y: number; horizontal: boolean;
       interrupted: boolean; originOpen: boolean; startPosition: number;
-      width: number; openDistance: number; position: number; lastX: number; lastTime: number; velocity: number;
+      width: number; position: number; lastX: number; lastTime: number; velocity: number;
     } | null = null;
     let settleTimer: number | undefined;
     let settleTarget = wasOpen;
@@ -64,7 +65,11 @@ export function useSidebarTouchGesture(
       // Inherited variables on the shell invalidate the entire conversation.
       sidebar.style.transform = `translate3d(${position - width}px, 0, 0)`;
       if (closeButton) closeButton.style.transform = sidebar.style.transform;
-      if (backdrop) backdrop.style.opacity = String(position / width);
+      if (conversation) conversation.style.transform = `translate3d(${position}px, 0, 0)`;
+      if (backdrop) {
+        backdrop.style.transform = `translate3d(${position}px, 0, 0)`;
+        backdrop.style.opacity = String(position / width);
+      }
     };
     const settle = (toOpen: boolean, velocity = 0): void => {
       if (!gesture || (!gesture.horizontal && !gesture.interrupted)) { gesture = null; return; }
@@ -125,9 +130,6 @@ export function useSidebarTouchGesture(
       gesture = {
         id: touch.identifier, x: touch.clientX, y: touch.clientY, horizontal: false,
         interrupted, originOpen, startPosition: position,
-        // A right-hand thumb has little travel left near the screen edge.
-        // Keep opening reachable there without treating tiny movements as swipes.
-        openDistance: Math.max(24, Math.min(32, (window.innerWidth - touch.clientX) / 3)),
         width, position, lastX: touch.clientX, lastTime: event.timeStamp, velocity: 0,
       };
     };
@@ -172,7 +174,7 @@ export function useSidebarTouchGesture(
       if (event.cancelable) event.preventDefault();
       const velocity = event.timeStamp - gesture.lastTime <= 100 ? gesture.velocity : 0;
       const distance = Math.abs(touch.clientX - gesture.x);
-      const threshold = gesture.interrupted || wasOpen ? gesture.width / 2 : gesture.openDistance;
+      const threshold = gesture.width / 2;
       // A deliberate short fling can complete independently of drag distance.
       // The smaller distance floor still filters tap jitter; a hold expires speed.
       settle(Math.abs(velocity) >= 0.3 && distance >= 12 ? velocity > 0 : gesture.position >= threshold, velocity);

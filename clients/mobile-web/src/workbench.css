@@ -6,6 +6,7 @@
 }
 
 .account-workbench-content {
+  --phone-navigation-safe-top: 0px;
   padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
 }
 
@@ -16,7 +17,7 @@
 .workspace-file-export-actions [role="alert"] { display: block; color: var(--danger); }
 
 .account-workbench-content .app-shell.compact-navigation .conversation-pane {
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: 56px minmax(0, 1fr);
   /* The floating composer already reserves the bottom safe area. */
   padding-bottom: 0;
   --conversation-flow-top-gap: 12px;

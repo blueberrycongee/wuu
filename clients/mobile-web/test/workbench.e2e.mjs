@@ -275,9 +275,26 @@ try {
       return rect && rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= width && rect.y + rect.height <= height;
     }, `composer reachable at ${width}x${height}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
+    const paneBefore = await page.locator('.conversation-pane').boundingBox();
+    const inputBefore = await input.boundingBox();
+    const header = await page.locator('.titlebar').boundingBox();
+    const flow = await page.locator('.scroll-region').filter({ visible: true }).first().boundingBox();
+    assert(header && flow && header.y + header.height <= flow.y + 1, 'navigation reserves space above messages');
+    for (const button of await page.locator('.titlebar button').filter({ visible: true }).all()) {
+      const rect = await button.boundingBox();
+      assert(rect && rect.y >= header.y && rect.y + rect.height <= header.y + header.height + 1, 'navigation buttons stay inside the header');
+    }
     await page.getByRole('button', { name: '展开左侧栏', exact: true }).filter({visible:true}).tap();
     const closeDrawer = page.locator('.compact-session-switcher-close');
     await closeDrawer.waitFor({ state: 'visible' });
+    await until(async () => {
+      const pane = await page.locator('.conversation-pane').boundingBox();
+      const sidebar = await page.locator('.sidebar').boundingBox();
+      const composer = await input.boundingBox();
+      return pane && sidebar && composer && Math.abs(pane.x - sidebar.x - sidebar.width) < 1
+        && Math.abs(pane.width - paneBefore.width) < 1 && Math.abs(composer.width - inputBefore.width) < 1
+        && Math.abs(composer.x - inputBefore.x - (pane.x - paneBefore.x)) < 1;
+    }, 'drawer moves the whole conversation without reflowing messages or composer');
     for (const target of await page.locator('.sidebar :is(button.sidebar-mode-option, .sidebar-notifications-button)').all()) {
       await target.tap({ trial: true });
       const box = await target.boundingBox();

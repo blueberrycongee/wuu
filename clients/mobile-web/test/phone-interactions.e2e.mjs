@@ -15,6 +15,30 @@ try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));
+  await page.goto(`${url}?navigation`);
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    const pane = page.locator('.conversation-pane');
+    const before = await pane.boundingBox();
+    const flow = await page.locator('.scroll-region').boundingBox();
+    const header = await page.locator('.titlebar').boundingBox();
+    assert(header.y + header.height <= flow.y + 1, 'header reserves message space');
+    for (const name of ['Open', 'More']) {
+      const button = await page.getByRole('button', { name, exact: true }).boundingBox();
+      assert(button.y >= header.y && button.y + button.height <= flow.y, 'buttons never overlap messages');
+    }
+    await page.getByRole('button', { name: 'Open', exact: true }).tap();
+    await page.waitForFunction(() => {
+      const pane = document.querySelector('.conversation-pane').getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+      return Math.abs(pane.left - sidebar.right) < 1;
+    });
+    assert(Math.abs((await pane.boundingBox()).width - before.width) < 1, 'opening keeps the page width');
+    await page.getByRole('button', { name: 'Choose session' }).tap({ trial: true });
+    await page.getByRole('button', { name: 'Close navigation' }).tap({ position: { x: 16, y: 100 } });
+    await page.waitForFunction(() => Math.abs(document.querySelector('.conversation-pane').getBoundingClientRect().left) < 1);
+    assert.equal(await page.getByRole('textbox', { name: 'Navigation draft' }).inputValue(), 'Unsent draft');
+  }
   await page.goto(url);
   const draft = page.getByRole('textbox', { name: 'Draft' });
   await draft.fill('Keep my draft');

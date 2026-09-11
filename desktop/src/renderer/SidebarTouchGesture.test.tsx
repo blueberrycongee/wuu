@@ -10,13 +10,14 @@ let target: HTMLElement;
 let open: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
 let newSession: ReturnType<typeof vi.fn>;
+let eventTime: number;
 
 function Harness({ opened, withPull = false }: { opened: boolean; withPull?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   useSidebarTouchGesture(ref, true, opened ? "open" : "closed", open, close);
-  return <div ref={ref}><div className="sidebar" /><div ref={viewport} className="scroll-region"><div ref={content} /></div>
+  return <div ref={ref}><div className="sidebar" /><main className="conversation-pane"><div ref={viewport} className="scroll-region"><div ref={content} /></div></main>
     <button className="compact-session-switcher-backdrop" />
     {withPull && <PullToNewSession containerRef={viewport} contentRef={content} bottomAnchor={null} onNewSession={newSession} />}
   </div>;
@@ -29,10 +30,11 @@ function render(opened = false, withPull = false) {
   target = opened ? sidebar : host.querySelector<HTMLElement>(".scroll-region")!;
 }
 
-function touch(type: string, dx: number, dy: number, cancelable = true) {
+function touch(type: string, dx: number, dy: number, cancelable = true, elapsed = 16) {
   const point = { identifier: 1, clientX: 180 + dx, clientY: 300 + dy };
   const event = new Event(type, { bubbles: true, cancelable });
   Object.defineProperties(event, {
+    timeStamp: { value: eventTime += elapsed },
     touches: { value: type === "touchend" ? [] : [point] },
     changedTouches: { value: [point] },
   });
@@ -46,6 +48,7 @@ function finish(dx: number, dy: number) {
 }
 
 beforeEach(() => {
+  eventTime = 0;
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ matches: query === "(pointer: coarse)" })));
   document.documentElement.dataset.hostKind = "web";
@@ -67,6 +70,20 @@ afterEach(() => {
 });
 
 describe("sidebar thumb gestures", () => {
+  it.each([false, true])("returns a short slow drag and completes a long slow drag when opened=%s", (opened) => {
+    render(opened);
+    const direction = opened ? -1 : 1;
+    touch("touchstart", 0, 0);
+    touch("touchmove", direction * 40, 0, true, 400);
+    finish(direction * 40, 0);
+    expect(open).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    touch("touchstart", 0, 0);
+    touch("touchmove", direction * 180, 0, true, 1000);
+    finish(direction * 180, 0);
+    expect(opened ? close : open).toHaveBeenCalledOnce();
+  });
+
   it.each([false, true])("opens from an upward thumb arc at the bottom with sparse events=%s", (sparse) => {
     render(false, true);
     Object.defineProperties(target, {
@@ -185,11 +202,17 @@ describe("sidebar thumb gestures", () => {
     touch("touchmove", 90, 0);
     act(() => vi.advanceTimersToNextFrame());
     expect(sidebar.style.transform).toBe("translate3d(-190px, 0, 0)");
+    const conversation = host.querySelector<HTMLElement>(".conversation-pane")!;
+    const backdrop = host.querySelector<HTMLElement>(".compact-session-switcher-backdrop")!;
+    expect(conversation.style.transform).toBe("translate3d(90px, 0, 0)");
+    expect(backdrop.style.transform).toBe(conversation.style.transform);
     touch("touchmove", 120, 0);
     act(() => window.dispatchEvent(new Event("resize")));
     act(() => vi.runAllTimers());
     expect(sidebar.style.transform).toBe("");
     expect(host.querySelector<HTMLElement>(".compact-session-switcher-backdrop")!.style.opacity).toBe("");
+    expect(conversation.style.transform).toBe("");
+    expect(backdrop.style.transform).toBe("");
     expect(open).not.toHaveBeenCalled();
   });
 });
