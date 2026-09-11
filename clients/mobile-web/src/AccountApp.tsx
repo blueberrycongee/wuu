@@ -20,16 +20,10 @@ export default function AccountApp(): React.JSX.Element {
   const [pair, setPair] = useState(() =>
     window.location.hash.includes("pair="),
   );
-  const [lastAccount, setLastAccount] = useState<Credentials | null>(null);
   const [remembered, setRemembered] = useState<Credentials | null>(null);
   const navigating = useRef(0);
   const [error, setError] = useState("");
   const [boot, setBoot] = useState(true);
-  useEffect(() => {
-    const changed = () => { void loadAccount().then(account => { if (!account) setLastAccount(null); }); };
-    window.addEventListener('wuu:account-change', changed);
-    return () => window.removeEventListener('wuu:account-change', changed);
-  }, []);
   useEffect(() => { void startPushLifecycle().catch(error => setError(String(error))); }, []);
   useEffect(() => {
     if (boot) return;
@@ -59,7 +53,7 @@ export default function AccountApp(): React.JSX.Element {
         )
           {
             const saved = { ...credentials, account_username: account.username };
-            setSelected(saved); setLastAccount(saved);
+            setSelected(saved);
             void webCredStore.save(saved);
           }
         else if (credentials && !account && !credentials.account_username) {
@@ -84,7 +78,7 @@ export default function AccountApp(): React.JSX.Element {
       if (!session) throw new Error("请重新登录");
       const credentials = accountCredentials(session, device);
       await webCredStore.save(credentials);
-      if (generation === navigating.current) { setSelected(credentials); setLastAccount(credentials); }
+      if (generation === navigating.current) setSelected(credentials);
     } catch (e) {
       setError(String(e));
     }
@@ -127,13 +121,6 @@ export default function AccountApp(): React.JSX.Element {
       </PhoneNavigationContext.Provider>
     )}
     <main className="account-home" hidden={inWorkbench}>
-      {lastAccount && <section className="account-panel account-resume">
-        <button className="account-primary" onClick={() => void (async () => {
-          const session = await loadAccount();
-          if (!session || session.username !== lastAccount.account_username || session.device_seed !== lastAccount.device_seed || lastAccount.relay_url !== session.server.replace(/^http/, 'ws') + '/v1/connect') { setLastAccount(null); throw new Error('请重新登录'); }
-          await webCredStore.save(lastAccount); setSelected(lastAccount);
-        })().catch(e => setError(String(e)))}>{t('account.resumeConnection')}{lastAccount.host_name ? ` · ${lastAccount.host_name}` : ''}</button>
-      </section>}
       {remembered && <section className="account-panel account-resume">
         <button className="account-primary" onClick={() => void webCredStore.save(remembered).then(() => setPair(true)).catch(e => setError(String(e)))}>{t('account.resumeConnection')}{remembered.host_name ? ` · ${remembered.host_name}` : ''}</button>
         <button onClick={() => void webCredStore.forgetPair().then(async () => { const active = await webCredStore.load(); if (active?.host_pub === remembered.host_pub && !active.account_username) await webCredStore.clear(); setRemembered(null); }).catch(e => setError(String(e)))}>{t('account.forgetConnection')}</button>

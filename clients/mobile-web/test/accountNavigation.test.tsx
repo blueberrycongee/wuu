@@ -53,15 +53,17 @@ it('starting another pairing does not reconnect to the previous computer', async
  expect(await webCredStore.loadPair()).toEqual(saved);
 });
 
-it('can resume the last account computer even when the directory is unavailable on first return', async () => {
+it('reopens an account computer through its list entry after returning from the workbench', async () => {
  state.account = { server: 'https://example.test', device_seed: 'test-seed', username: 'tester', token: 'test-token', pub: 'test-phone' };
  await webCredStore.forgetPair();
  await webCredStore.save({ ...saved, account_username: 'tester' });
- state.status.mockResolvedValue({ username: 'tester', server: 'https://example.test', unavailable: true });
+ state.status.mockResolvedValue({ username: 'tester', server: 'https://example.test', devices: [
+  { pub: saved.host_pub, name: saved.host_name, account: 'tester', role: 'host', online: true, added_at: 1 },
+ ] });
  await render(); await click('电脑与账号');
- expect(container.textContent).toContain('登录仍保留');
- expect(container.querySelector('input[autocomplete="username"]')).toBeNull();
- await click('返回已连接的电脑');
+ const entries = [...container.querySelectorAll('button')].filter(button => button.textContent?.includes(saved.host_name));
+ expect(entries).toHaveLength(1);
+ await act(async () => entries[0].click());
  expect(container.querySelector('[data-testid="connected"]')).not.toBeNull();
  expect(state.connect).toHaveBeenCalledTimes(2);
 });
