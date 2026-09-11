@@ -321,6 +321,15 @@ describe("RichContent code block", () => {
     expect(container.textContent).toContain("missing-icon.png");
   });
 
+  it("hides Markdown images that fail to load", () => {
+    renderWithImagePreview(<RichContent text="![饿鹅骑自行车](missing.svg)" />);
+
+    const image = container.querySelector<HTMLImageElement>("img.rich-image");
+    expect(image).not.toBeNull();
+    act(() => image?.dispatchEvent(new Event("error")));
+    expect(container.querySelector("img.rich-image")).toBeNull();
+  });
+
   it("does not preview image paths inside inline code", async () => {
     renderWithImagePreview(
       <RichContent text="Keep `icon.png` literal here." cwd="/repo/wuu" />,

@@ -749,7 +749,11 @@ function RichImage({
 }): JSX.Element {
   const { t } = useI18n();
   const resolvedSource = resolveImageSource(source, cwd);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
   const { openPreview } = useImagePreview();
+  if (failedSource === resolvedSource) {
+    return <></>;
+  }
   const titleText = imageTarget(source);
   const handleActivate = (): void => {
     openPreview({ src: resolvedSource, alt, title: titleText });
@@ -774,6 +778,7 @@ function RichImage({
         }
         onClick={handleActivate}
         onKeyDown={handleKeyDown}
+        onError={() => setFailedSource(resolvedSource)}
       />
     </Tooltip>
   );
