@@ -47,7 +47,7 @@ describe("RuntimeLoading", () => {
 });
 
 describe("EmptyConversationHome", () => {
-  it("shows the approved icon composition with separate animated eyes", () => {
+  it("keeps the greeting as a full round mascot in the icon palette", () => {
     const view = render(
       <EmptyConversationHome title="Hello">
         <div className="hero-composer" />
@@ -55,16 +55,15 @@ describe("EmptyConversationHome", () => {
     );
 
     const mascot = view.querySelector<SVGSVGElement>("svg.empty-home-mascot");
-    const eyes = mascot?.querySelector(".wuu-icon-gaze");
     expect(mascot).not.toBeNull();
     expect(mascot?.getAttribute("aria-hidden")).toBe("true");
-    expect(mascot?.getAttribute("viewBox")).toBe("0 0 1024 1024");
-    expect(eyes?.parentElement?.getAttribute("transform")).toBe(
-      `translate(${icon.bodyX + icon.radius * icon.faceX} ${icon.bodyY + icon.radius * icon.faceY}) rotate(${icon.tilt})`,
-    );
-    expect(eyes?.parentElement?.getAttribute("fill")).toBe(icon.eyeColor);
-    expect(eyes?.querySelectorAll(".wuu-icon-blink rect")).toHaveLength(2);
-    expect(mascot?.querySelector('stop[offset="0.52"]')?.getAttribute("stop-color")).toBe(icon.bodyColor);
-    expect(mascot?.querySelectorAll(`g[fill="${icon.markColor}"] rect`)).toHaveLength(3);
+    expect(mascot?.getAttribute("viewBox")).toBe("0 0 100 100");
+    expect(mascot?.style.getPropertyValue("--mo-head")).toBe(icon.bodyColor);
+    expect(mascot?.style.getPropertyValue("--mo-eye")).toBe(icon.eyeColor);
+    expect(mascot?.querySelector(".mo-eyes")).not.toBeNull();
+    expect(mascot?.hasAttribute("data-wuu-mascot-follows-pointer")).toBe(true);
+    expect(mascot?.getAttribute("data-wuu-mascot-accessory")).toBe("none");
+    expect(mascot?.querySelector("clipPath")).toBeNull();
+    expect(mascot?.classList.contains("wuu-icon-mascot")).toBe(false);
   });
 });
