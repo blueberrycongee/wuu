@@ -27,7 +27,7 @@ export const RIGHT_PANEL_MOTION_MS = motionDurationMs(
   "--workspace-panel-motion-duration",
   280,
 );
-export const SIDEBAR_DEFAULT_WIDTH = 326;
+export const SIDEBAR_DEFAULT_WIDTH = 296;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
 // breakpoint, so shrinking it further saves no canvas space and only makes

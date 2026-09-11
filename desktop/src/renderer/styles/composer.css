@@ -253,6 +253,10 @@
 }
 
 .dock-composer-wrap {
+  --composer-dock-bottom-space: max(
+    clamp(12px, calc(2.5vw + 2px), 24px),
+    env(safe-area-inset-bottom, 0px)
+  );
   position: relative;
   z-index: 5;
   grid-column: 1;
@@ -261,7 +265,7 @@
   /* Keep the bottom spacing continuous across the navigation breakpoint,
      just like the shared fluid horizontal gutters. */
   padding-block: clamp(12px, calc(0.833333vw + 8.666667px), 16px)
-    max(clamp(12px, calc(2.5vw + 2px), 24px), env(safe-area-inset-bottom, 0px));
+    var(--composer-dock-bottom-space);
   /* Match the scroll region's stable scrollbar gutter so the dock composer
      and message flow are centered inside the same visible content box.
      --scrollbar-width is stamped from a runtime measurement (see
@@ -281,9 +285,12 @@
 
 .dock-composer-wrap::before {
   position: absolute;
-  inset: 0;
+  inset: auto 0 0;
+  height: calc(var(--composer-dock-bottom-space) + var(--session-composer-radius));
   z-index: 0;
-  background: transparent;
+  /* Keep the upper rounded outline floating over the conversation. Only
+     cover the lower corners and the gap beneath the input. */
+  background: var(--paper);
   content: "";
   pointer-events: none;
 }
@@ -303,7 +310,7 @@
 }
 
 .composer-stack {
-  --composer-collapsed-min-height: 112px;
+  --composer-collapsed-min-height: 100px;
   --composer-expanded-min-height: clamp(240px, 44vh, 420px);
   --composer-expanded-delta: calc(var(--composer-expanded-min-height) - var(--composer-collapsed-min-height));
   display: flex;
@@ -877,8 +884,8 @@
 .composer textarea {
   display: block;
   width: 100%;
-  height: 72px;
-  min-height: 72px;
+  height: 60px;
+  min-height: 60px;
   resize: none;
   border: 0;
   outline: 0;

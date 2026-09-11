@@ -23,7 +23,9 @@
     env(safe-area-inset-left, 0px),
     env(safe-area-inset-right, 0px)
   );
-  --session-composer-width: 800px;
+  /* Keep long answers readable on wide desktop windows. The composer and
+   * message flow retain one shared edge, including empty sessions. */
+  --session-composer-width: 736px;
   --session-outer-width: calc(
     var(--session-composer-width) + var(--session-outer-padding-inline) +
       var(--session-outer-padding-inline)

@@ -79,7 +79,7 @@
 .app-shell {
   display: grid;
   position: relative;
-  grid-template-columns: var(--sidebar-width, 326px) minmax(0, 1fr) 0;
+  grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) 0;
   grid-template-rows: minmax(0, 1fr) 0;
   min-width: 0;
   min-height: 0;
@@ -97,7 +97,7 @@
 }
 
 .app-shell.right-panel-open {
-  grid-template-columns: var(--sidebar-width, 326px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
+  grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
 }
 
 .app-shell.popped-out-shell,
@@ -336,10 +336,10 @@
   --sidebar-row-control-pad-x: 8px;
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
   /* Functional grouping uses a 4px base rhythm: rows stay close inside a
-   * group, headings get one 8px beat, and unrelated groups get 24px. */
+   * group, headings get one 8px beat, and unrelated groups get 20px. */
   --sidebar-functional-row-gap: 4px;
   --sidebar-functional-heading-gap: 8px;
-  --sidebar-functional-group-gap: 24px;
+  --sidebar-functional-group-gap: 20px;
   --sidebar-section-body-gap: 5px;
   --sidebar-row-gap: 3px;
   --sidebar-list-pad-y: 2px;
@@ -354,8 +354,8 @@
   --sidebar-session-spinner-size: 9px;
   --sidebar-session-spinner-border-width: 1.5px;
   display: flex;
-  width: var(--sidebar-open-width, 326px);
-  min-width: var(--sidebar-open-width, 326px);
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
   min-height: 0;
   height: 100%;
   flex-direction: column;
@@ -440,8 +440,8 @@
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 140;
-  width: var(--sidebar-open-width, 326px);
-  min-width: var(--sidebar-open-width, 326px);
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
   border-right-color: var(--sidebar-drawer-edge);
   background: var(--sidebar-drawer-bg);
   box-shadow:
@@ -511,8 +511,8 @@
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 140;
-  width: var(--sidebar-open-width, 326px);
-  min-width: var(--sidebar-open-width, 326px);
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
   border-right-color: var(--sidebar-drawer-edge);
   background: var(--sidebar-drawer-bg);
   box-shadow:
@@ -567,7 +567,7 @@
   /* Crossing into compact navigation must not resize an already-open drawer.
    * Keep the responsive desktop width and only cap it when the phone viewport
    * genuinely cannot leave enough backdrop visible to dismiss the sheet. */
-  --compact-session-switcher-width: min(var(--sidebar-open-width, 326px), 80vw);
+  --compact-session-switcher-width: min(var(--sidebar-open-width, 296px), 80vw);
 }
 
 .app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
@@ -621,7 +621,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--sidebar-width, 326px) - 5px);
+  left: calc(var(--sidebar-width, 296px) - 5px);
   z-index: 10;
   width: 10px;
   cursor: col-resize;
@@ -791,7 +791,7 @@
 
 .sidebar-brand-wordmark {
   font-family: var(--empty-home-title-font);
-  font-size: 40px;
+  font-size: 34px;
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;

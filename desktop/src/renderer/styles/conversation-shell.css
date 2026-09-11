@@ -153,10 +153,10 @@
   --conversation-visible-inset-right: 0px;
   --dock-composer-height: 0px;
   /*
-   * Min-height for the composer shell. A 72px textarea plus the compact 40px
-   * toolbar lands on this 112px baseline without reserving hidden space.
+   * Min-height for the composer shell. A 60px textarea plus the compact 40px
+   * toolbar lands on this 100px baseline without reserving hidden space.
    */
-  --conversation-composer-min-height: 112px;
+  --conversation-composer-min-height: 100px;
   grid-column: 2;
   grid-row: 1;
   display: grid;
