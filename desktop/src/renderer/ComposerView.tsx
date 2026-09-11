@@ -1080,6 +1080,8 @@ export function Composer({
   // existing prompt text out — copy/select-all remain enabled; only
   // mutating actions (cut/paste/delete) are blocked.
   function handleComposerContextMenu(event: ReactMouseEvent<HTMLTextAreaElement>): void {
+    // Mobile long-press belongs to the native text selection and paste UI.
+    if (isTouchWebShell()) return;
     event.preventDefault();
     const textarea = textareaRef.current;
     const hasSelection = textarea

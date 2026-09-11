@@ -261,6 +261,19 @@ describe("mobile composer attachments", () => {
     else Reflect.deleteProperty(navigator, "mediaDevices");
   });
 
+  it.each(["main", "split"])("preserves native long-press editing in the %s composer", (variant) => {
+    if (variant === "main") renderComposer({ prompt: "Keep this draft" });
+    else renderStatefulSplitPaneComposer({ initialPrompt: "Keep this draft" });
+    const textarea = container.querySelector("textarea")!;
+    textarea.setSelectionRange(0, 4);
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    act(() => { textarea.dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.querySelector('.composer-textarea-context-menu')).toBeNull();
+    expect(textarea.value).toBe("Keep this draft");
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 4]);
+  });
+
   function chooseSource(key: "composer.takePhoto" | "composer.choosePhotos" | "composer.chooseFiles"): void {
     act(() => { container.querySelector<HTMLButtonElement>(".composer-plus-button, .composer-attach-button")!.click(); });
     const choice = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
