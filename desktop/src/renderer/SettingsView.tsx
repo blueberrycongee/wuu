@@ -3518,7 +3518,10 @@ function SettingsRemotePageContainer(): JSX.Element {
       window.wuu
         .getRemoteControlSnapshot()
         .then((snap) => {
-          if (!cancelled) setSnapshot(snap);
+          if (!cancelled) {
+            setSnapshot(snap);
+            if (snap.pair_uri) setActionError("");
+          }
         })
         .catch(() => {});
     };

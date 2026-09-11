@@ -36,7 +36,7 @@ describe("phone access lifecycle", () => {
       });
       return child;
     });
-    const host = { stopHost: vi.fn(async () => {}), startHost: vi.fn(), isRunning: () => true, status: vi.fn(async () => ({ devices: paired ? [{ fingerprint: "known-phone" }] : [] })) };
+    const host = { stopHost: vi.fn(async () => {}), startHost: vi.fn(), waitForPairing: vi.fn(async () => {}), isRunning: () => true, status: vi.fn(async () => ({ devices: paired ? [{ fingerprint: "known-phone" }] : [] })) };
     const appServer = { start: vi.fn(async (_workdir: string) => {}), stop: vi.fn() };
     const changed = vi.fn();
     return { service: new PhoneAccess(host as unknown as RemoteHostManager, root, changed, appServer, settingsPath), host, child, settingsPath, appServer, changed };
@@ -69,7 +69,7 @@ describe("phone access lifecycle", () => {
     const { service, host, child } = await fixture();
     try {
       await service.setEnabled("/tmp", true);
-      expect(host.startHost).toHaveBeenCalledWith("/tmp", { pair: true, relay: expect.stringMatching(/^ws:\/\/.*:8787\/v1\/connect$/) });
+      expect(host.startHost).toHaveBeenCalledWith("/tmp", { pair: true, relay: expect.stringMatching(/^ws:\/\/.*:8787\/v1\/connect$/), localRelay: "ws://192.168.1.8:8787/v1/connect" });
       expect(service.url()).toMatch(/^http:/);
       await service.stop();
       expect(child.kill).toHaveBeenCalledWith("SIGTERM");
@@ -95,7 +95,7 @@ describe("phone access lifecycle", () => {
     const second = await fixture({ settingsPath: first.settingsPath });
     try {
       await second.service.restore("/tmp");
-      expect(second.host.startHost).toHaveBeenCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect" });
+      expect(second.host.startHost).toHaveBeenCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect", localRelay: "ws://192.168.1.8:8787/v1/connect" });
       expect(second.host.status).toHaveBeenCalledWith("/tmp");
       expect(second.service.url()).toBe(url);
       expect(second.appServer.start).toHaveBeenCalledWith("/tmp");
@@ -117,9 +117,48 @@ describe("phone access lifecycle", () => {
     const { service, host } = await fixture({ paired: true });
     try {
       await service.setEnabled("/tmp", true);
-      expect(host.startHost).toHaveBeenLastCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect" });
+      expect(host.startHost).toHaveBeenLastCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect", localRelay: "ws://192.168.1.8:8787/v1/connect" });
       await service.openPairing("/tmp");
-      expect(host.startHost).toHaveBeenLastCalledWith("/tmp", { pair: true, relay: "ws://192.168.1.8:8787/v1/connect" });
+      expect(host.startHost).toHaveBeenLastCalledWith("/tmp", { pair: true, relay: "ws://192.168.1.8:8787/v1/connect", localRelay: "ws://192.168.1.8:8787/v1/connect" });
+    } finally { await service.stop(); }
+  });
+
+  it("waits for pairing readiness and reports failure without stopping existing access", async () => {
+    const { service, host } = await fixture({ paired: true });
+    let fail!: (error: Error) => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    host.waitForPairing.mockImplementationOnce(() => {
+      entered();
+      return new Promise((_resolve, reject) => { fail = reject; });
+    });
+    try {
+      await service.setEnabled("/tmp", true);
+      const finished = vi.fn();
+      const pairing = service.openPairing("/tmp");
+      void pairing.then(finished, () => {});
+      await waiting;
+      expect(finished).not.toHaveBeenCalled();
+      const stopped = host.stopHost.mock.calls.length;
+      const rejected = expect(pairing).rejects.toThrow("relay unavailable");
+      fail(new Error("relay unavailable"));
+      await rejected;
+      expect(host.stopHost).toHaveBeenCalledTimes(stopped);
+      expect(service.enabled()).toBe(true);
+    } finally { await service.stop(); }
+  });
+
+  it("connects locally while advertising the HTTPS reverse proxy to phones", async () => {
+    vi.stubEnv("WUU_WEB_URL", "https://computer.example");
+    const { service, host } = await fixture();
+    try {
+      await service.openPairing("/tmp");
+      expect(host.startHost).toHaveBeenCalledWith("/tmp", {
+        pair: true, relay: "wss://computer.example/v1/connect", localRelay: "ws://127.0.0.1:8787/v1/connect",
+      });
+      expect(mocks.spawn.mock.calls[0][1]).toContain("127.0.0.1:8787");
+      expect(service.url()).toBe("https://computer.example/");
+      expect(host.waitForPairing).toHaveBeenCalledOnce();
     } finally { await service.stop(); }
   });
 
@@ -144,7 +183,7 @@ describe("phone access lifecycle", () => {
     try {
       await second.service.restore("/tmp");
       expect(second.service.error()).toBeNull();
-      expect(second.host.startHost).toHaveBeenCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect" });
+      expect(second.host.startHost).toHaveBeenCalledWith("/tmp", { pair: false, relay: "ws://192.168.1.8:8787/v1/connect", localRelay: "ws://192.168.1.8:8787/v1/connect" });
     } finally { await second.service.stop(); }
   });
 

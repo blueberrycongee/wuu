@@ -70,6 +70,8 @@ export class RemoteHostManager {
   private childWorkdir: string | null = null;
   private pairUri: string | null = null;
   private relayOverride: string | undefined;
+  private localRelayOverride: string | undefined;
+  private eventListeners = new Set<(event: RemoteHostEvent) => void>();
   private pairExpiry: ReturnType<typeof setTimeout> | undefined;
   private hostExitPromise: Promise<void> | null = null;
   private resolveHostExit: (() => void) | null = null;
@@ -100,30 +102,40 @@ export class RemoteHostManager {
     if (this.child) {
       const restartWorkdir = this.childWorkdir ?? workdir;
       await this.stopHost();
-      this.startHost(restartWorkdir, { pair: false, relay: this.relayOverride });
+      this.startHost(restartWorkdir, { pair: false, relay: this.relayOverride, localRelay: this.localRelayOverride });
     }
   }
 
   /** Spawns the long-lived `wuu remote host` daemon. With pair=true a
    *  pairing window opens and the pairing URI is surfaced via onEvent (and
    *  currentPairUri) as soon as the daemon prints it. */
-  startHost(workdir: string, options: { pair?: boolean; relay?: string } = {}): void {
+  startHost(workdir: string, options: { pair?: boolean; relay?: string; localRelay?: string } = {}): void {
     if (this.child) {
       return;
     }
     const command = this.commandFor(workdir);
     const args = [...command.args, "remote", "host", "--workdir", workdir];
     this.relayOverride = options.relay;
-    if (options.relay) args.push("--relay", options.relay);
+    this.localRelayOverride = options.localRelay;
+    const dialRelay = options.localRelay ?? options.relay;
+    if (dialRelay) args.push("--relay", dialRelay);
     if (options.pair) {
       args.push("--pair");
     }
     const endpoint = this.opts.appServerEndpoint?.();
     if (this.opts.appServerEndpoint && !endpoint) throw new Error("Shared desktop app-server is unavailable");
+    const env = { ...this.env() };
+    if (options.localRelay) {
+      // Only the desktop-owned relay bypasses proxy settings. Provider and
+      // external relay traffic retain the user's proxy configuration.
+      const hostname = new URL(options.localRelay).hostname.replace(/^\[|\]$/g, "");
+      const bypass = [env.NO_PROXY || env.no_proxy, hostname].filter(Boolean).join(",");
+      env.NO_PROXY = env.no_proxy = bypass;
+    }
     const child = this.spawnFn()(command.command, args, {
       cwd: command.cwd,
       env: {
-        ...this.env(),
+        ...env,
         ...(endpoint ? {
           WUU_DESKTOP_APP_SERVER_ADDR: endpoint.address,
           WUU_DESKTOP_APP_SERVER_TOKEN: endpoint.token,
@@ -224,6 +236,25 @@ export class RemoteHostManager {
     return this.pairUri;
   }
 
+  /** Resolves only after a usable pairing URI arrives, never just on spawn. */
+  waitForPairing(timeoutMs = 30_000): Promise<void> {
+    if (this.pairUri) return Promise.resolve();
+    if (!this.child) return Promise.reject(new Error("手机访问服务未运行，无法生成配对二维码。"));
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        this.eventListeners.delete(onEvent);
+        error ? reject(error) : resolve();
+      };
+      const onEvent = (event: RemoteHostEvent) => {
+        if (event.kind === "pair-uri") finish();
+        if (event.kind === "host-exit") finish(new Error("手机访问服务已停止，未能生成配对二维码。"));
+      };
+      const timer = setTimeout(() => finish(new Error("配对二维码生成超时，请检查远程访问服务的连接后重试。")), timeoutMs);
+      this.eventListeners.add(onEvent);
+    });
+  }
+
   private finalizeHostChild(
     child: RemoteChild,
     code: number | null,
@@ -278,6 +309,11 @@ export class RemoteHostManager {
     // The daemon prints the pairing URI on its own line; the exact scheme
     // prefix keeps this parse stable across surrounding human text.
     if (line.startsWith("wuu://pair?")) {
+      if (this.localRelayOverride && this.relayOverride) {
+        const uri = new URL(line);
+        uri.searchParams.set("r", this.relayOverride);
+        line = uri.href;
+      }
       clearTimeout(this.pairExpiry);
       this.pairExpiry = setTimeout(() => {
         this.pairUri = null;
@@ -339,6 +375,7 @@ export class RemoteHostManager {
   }
 
   private emit(event: RemoteHostEvent): void {
+    for (const listener of this.eventListeners) listener(event);
     this.opts.onEvent?.(event);
   }
 

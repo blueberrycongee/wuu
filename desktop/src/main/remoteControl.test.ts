@@ -84,24 +84,26 @@ class FakeChild implements RemoteChild {
   }
 }
 
-function makeManager(overrides: { onEvent?: (ev: RemoteHostEvent) => void } = {}) {
+function makeManager(overrides: { onEvent?: (ev: RemoteHostEvent) => void; env?: NodeJS.ProcessEnv } = {}) {
   const children: FakeChild[] = [];
-  const spawn: RemoteSpawn = (command, args) => {
+  const environments: NodeJS.ProcessEnv[] = [];
+  const spawn: RemoteSpawn = (command, args, options) => {
     const child = new FakeChild(command, args);
     children.push(child);
+    environments.push(options.env);
     return child;
   };
   const events: RemoteHostEvent[] = [];
   const manager = new RemoteHostManager({
     spawn,
     resolveCommand: (workdir) => ({ command: "wuu", args: [], cwd: workdir }),
-    env: {},
+    env: overrides.env ?? {},
     onEvent: (ev) => {
       events.push(ev);
       overrides.onEvent?.(ev);
     },
   });
-  return { manager, children, events };
+  return { manager, children, events, environments };
 }
 
 async function flush(): Promise<void> {
@@ -302,6 +304,75 @@ describe("RemoteHostManager.removeDevice", () => {
 
 
 describe("phone access pairing lifecycle", () => {
+  it("keeps pairing pending until the relay publishes its URI", async () => {
+    const { manager, children } = makeManager();
+    manager.startHost("/work", { pair: true });
+    const completed = vi.fn();
+    const ready = manager.waitForPairing().then(completed);
+    children[0].stderr.push("remote host: connected to relay\n");
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+    children[0].stdout.push("wuu://pair?v=1&p=ready\n");
+    await ready;
+    expect(completed).toHaveBeenCalledOnce();
+    await manager.waitForPairing();
+    await manager.stopHost();
+  });
+
+  it("rejects a stalled pairing attempt and allows a subsequent attempt", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, children } = makeManager();
+      manager.startHost("/work", { pair: true });
+      const timedOut = expect(manager.waitForPairing(100)).rejects.toThrow(/超时/);
+      await vi.advanceTimersByTimeAsync(100);
+      await timedOut;
+      const ready = manager.waitForPairing(100);
+      children[0].stdout.push("wuu://pair?v=1&p=recovered\n");
+      await ready;
+      await manager.stopHost();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("rejects readiness when the host exits before publishing a URI", async () => {
+    const { manager, children } = makeManager();
+    manager.startHost("/work", { pair: true });
+    const stopped = expect(manager.waitForPairing()).rejects.toThrow(/已停止/);
+    children[0].exit(1);
+    await stopped;
+  });
+
+  it("bypasses the proxy only for the owned relay and advertises the phone endpoint", async () => {
+    const env = { HTTP_PROXY: "http://127.0.0.1:7897", NO_PROXY: "localhost,127.0.0.1", no_proxy: "localhost" };
+    const { manager, children, events, environments } = makeManager({ env });
+    const relay = "wss://computer.example/v1/connect";
+    const localRelay = "ws://192.168.1.8:8787/v1/connect";
+    manager.startHost("/work", { pair: true, relay, localRelay });
+    expect(children[0].args).toContain(localRelay);
+    expect(children[0].args).not.toContain(relay);
+    expect(environments[0].HTTP_PROXY).toBe(env.HTTP_PROXY);
+    expect(environments[0].NO_PROXY).toBe("localhost,127.0.0.1,192.168.1.8");
+    expect(environments[0].no_proxy).toBe(environments[0].NO_PROXY);
+    expect(env.NO_PROXY).toBe("localhost,127.0.0.1");
+    children[0].stdout.push(`wuu://pair?v=1&p=offer&k=KEY&h=HOST&r=${encodeURIComponent(localRelay)}\n`);
+    const uri = new URL(manager.currentPairUri()!);
+    expect(uri.searchParams.get("r")).toBe(relay);
+    expect(uri.searchParams.get("k")).toBe("KEY");
+    expect(events.find(event => event.kind === "pair-uri")).toEqual({ kind: "pair-uri", uri: uri.href });
+
+    const removing = manager.removeDevice("/work", "fingerprint");
+    children[1].exit(0);
+    await removing;
+    expect(children[2].args).toContain(localRelay);
+    expect(environments[2].NO_PROXY).toBe(environments[0].NO_PROXY);
+    await manager.stopHost();
+
+    manager.startHost("/work", { relay });
+    expect(children[3].args).toContain(relay);
+    expect(environments[3]).toEqual(env);
+    await manager.stopHost();
+  });
+
   it("expires an unused pairing offer", () => {
     vi.useFakeTimers();
     try {

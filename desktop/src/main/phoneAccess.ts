@@ -25,7 +25,7 @@ export function phonePairLink(base: string | null, uri: string | null): string |
 
 /** Deployment belongs to the operator; the same host supports LAN, private
  * networks, a local reverse proxy, or a separately hosted blind relay. */
-export function phoneAccessConfig(env = process.env): { base: string; relay: string; args: string[]; external: boolean } {
+export function phoneAccessConfig(env = process.env): { base: string; relay: string; localRelay?: string; args: string[]; external: boolean } {
   const external = Boolean(env.WUU_WEB_RELAY_URL);
   const configured = env.WUU_WEB_URL;
   if (external && !configured) throw new Error("WUU_WEB_RELAY_URL requires WUU_WEB_URL");
@@ -42,7 +42,17 @@ export function phoneAccessConfig(env = process.env): { base: string; relay: str
   if (!/^wss?:$/.test(relay.protocol) || relay.username || relay.password || relay.hash || (base.protocol === "https:" && relay.protocol !== "wss:")) {
     throw new Error("WUU_WEB_RELAY_URL must be a ws(s) URL; HTTPS pages require wss");
   }
-  return { base: base.href, relay: relay.href, external, args: ["--addr", address, "--public-url", base.href, ...(cert && key ? ["--tls-cert", cert, "--tls-key", key] : [])] };
+  // The desktop can reach its own HTTP listener without going through the
+  // public reverse proxy or its DNS. TLS listeners retain the certificate's
+  // advertised hostname for verification.
+  let localRelay: string | undefined;
+  if (!external) {
+    const local = new URL(`ws://${address}/v1/connect`);
+    if (local.hostname === "0.0.0.0") local.hostname = "127.0.0.1";
+    if (local.hostname === "[::]") local.hostname = "[::1]";
+    localRelay = cert ? relay.href : local.href;
+  }
+  return { base: base.href, relay: relay.href, localRelay, external, args: ["--addr", address, "--public-url", base.href, ...(cert && key ? ["--tls-cert", cert, "--tls-key", key] : [])] };
 }
 
 /** Owns the LAN listener alongside the existing encrypted remote host. */
@@ -140,8 +150,11 @@ export class PhoneAccess {
       this.assertOpen();
       await this.appServer?.start(workdir);
       this.assertOpen();
-      this.host.startHost(workdir, { pair, relay: config.relay });
+      this.host.startHost(workdir, { pair, relay: config.relay, ...("localRelay" in config && config.localRelay ? { localRelay: config.localRelay } : {}) });
     } catch (error) { await this.stop(); throw error; }
+    // Keep the action pending until the relay confirms enrollment readiness.
+    // A timeout leaves existing phone access running and lets the user retry.
+    if (pair) await this.host.waitForPairing();
   }
   shutdown(): Promise<void> {
     // Quit must invalidate queued and suspended starts before killing children.

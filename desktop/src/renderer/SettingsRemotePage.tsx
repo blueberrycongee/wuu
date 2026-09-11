@@ -80,7 +80,7 @@ export function SettingsRemotePage({
               <PairQRCode uri={pairUri} />
               <p className="settings-remote-pair-hint">{t("remote.pairHint")}</p>
               <button className="settings-button" type="button" onClick={() => void navigator.clipboard.writeText(pairUri)}>{t("remote.copyLink")}</button>
-              <button className="settings-button" type="button" disabled={busy} onClick={onOpenPairing}>{t("remote.refreshPairQr")}</button>
+              <button className="settings-button" type="button" disabled={busy} aria-busy={busy} onClick={onOpenPairing}>{t(busy ? "remote.generatingPairQr" : "remote.refreshPairQr")}</button>
             </div>
           ) : (
             <RemoteRow
@@ -91,9 +91,10 @@ export function SettingsRemotePage({
                 className="settings-button"
                 type="button"
                 disabled={busy || !hostRunning}
+                aria-busy={busy}
                 onClick={onOpenPairing}
               >
-                {t("remote.showPairQr")}
+                {t(busy ? "remote.generatingPairQr" : "remote.showPairQr")}
               </button>
             </RemoteRow>
           )}
