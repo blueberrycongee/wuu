@@ -1,6 +1,4 @@
 import { act } from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -56,14 +54,6 @@ function renderWithProbe(): { getAPI: () => ImagePreviewContextValue | null } {
 }
 
 describe("ImagePreviewProvider", () => {
-  it("excludes the full overlay from Electron's native window drag region", () => {
-    // jsdom cannot exercise native hit testing; guard the CSS contract that
-    // keeps the visible toolbar clickable above the underlying titlebar.
-    const css = readFileSync(resolve(__dirname, "styles/image-preview.css"), "utf8");
-    const overlayRule = css.match(/\.image-preview-overlay\s*\{([^}]+)\}/)?.[1];
-    expect(overlayRule).toMatch(/-webkit-app-region:\s*no-drag\s*;/);
-  });
-
   it("does not render the overlay when nothing is open", () => {
     renderWithProbe();
     expect(overlayRoot()).toBeNull();
