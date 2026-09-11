@@ -48,6 +48,11 @@ function launchEnvironment(
     WUU_DESKTOP_CORE: desktopCore,
     WUU_DESKTOP_USE_GO_RUN: desktopCore ? undefined : "1",
     WUU_SOURCE_ROOT: root,
+    WUU_WEB_URL: env.WUU_WEB_URL,
+    WUU_WEB_LISTEN: env.WUU_WEB_LISTEN,
+    WUU_WEB_RELAY_URL: env.WUU_WEB_RELAY_URL,
+    WUU_WEB_TLS_CERT: env.WUU_WEB_TLS_CERT,
+    WUU_WEB_TLS_KEY: env.WUU_WEB_TLS_KEY,
   };
   return Object.entries(values)
     .filter(([, value]) => typeof value === "string" && value.length > 0)

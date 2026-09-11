@@ -62,6 +62,23 @@ const disabledEnvironment = launchEnvironment(
 assert.ok(!disabledEnvironment.some((entry) => entry.startsWith("WUU_ENABLE_CUA_MAC=")));
 assert.ok(disabledEnvironment.includes("WUU_DESKTOP_USE_GO_RUN=1"));
 
+const webDeployment = {
+  WUU_WEB_URL: "https://computer.example",
+  WUU_WEB_LISTEN: "127.0.0.1:8787",
+  WUU_WEB_RELAY_URL: "wss://relay.example/v1/connect",
+  WUU_WEB_TLS_CERT: "/certs/web.pem",
+  WUU_WEB_TLS_KEY: "/certs/web.key",
+};
+const launchedWebDeployment = Object.fromEntries(
+  launchEnvironment(webDeployment, "web-token").map(entry => {
+    const index = entry.indexOf("=");
+    return [entry.slice(0, index), entry.slice(index + 1)];
+  }),
+);
+for (const [name, value] of Object.entries(webDeployment)) {
+  assert.equal(launchedWebDeployment[name], value);
+}
+
 const processList = [
   "  41 /path/Electron Helper WUU_DEV_LAUNCH_TOKEN=token-1",
   "  42 /repo/desktop/build/dev-host/Wuu Dev.app/Contents/MacOS/Electron /repo/desktop WUU_DEV_LAUNCH_TOKEN=token-1",
