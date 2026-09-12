@@ -7,6 +7,7 @@ import {
 import { accountDriver, loadAccount } from "./lib/accountStore";
 import { webCredStore } from "./lib/credStore";
 import PairedApp from "./App";
+import ConversationWorkspace from './ConversationWorkspace';
 import { reserveAuthorization } from "./lib/native";
 import { NotificationSettings } from './NotificationSettings';
 import { startPushLifecycle, consumeNotificationHost } from './lib/notifications';
@@ -115,7 +116,7 @@ export default function AccountApp(): React.JSX.Element {
       <PhoneNavigationContext.Provider value={{ computer: selected?.host_name || remembered?.host_name, openDevices: back }}>
       <div className="account-workbench">
         <div className="account-workbench-content">
-          <PairedApp key={selected?.host_pub || "pair"} onAccountBack={back} />
+          {selected ? <ConversationWorkspace key={selected.host_pub} credentials={selected} back={back} /> : <PairedApp key="pair" onAccountBack={back} />}
         </div>
       </div>
       </PhoneNavigationContext.Provider>

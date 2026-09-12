@@ -60,10 +60,11 @@ it('reopens an account computer through its list entry after returning from the 
  state.status.mockResolvedValue({ username: 'tester', server: 'https://example.test', devices: [
   { pub: saved.host_pub, name: saved.host_name, account: 'tester', role: 'host', online: true, added_at: 1 },
  ] });
- await render(); await click('电脑与账号');
+ await render(); await click('连接电脑'); await click('电脑与账号');
  const entries = [...container.querySelectorAll('button')].filter(button => button.textContent?.includes(saved.host_name));
  expect(entries).toHaveLength(1);
  await act(async () => entries[0].click());
+ await click('连接电脑');
  expect(container.querySelector('[data-testid="connected"]')).not.toBeNull();
  expect(state.connect).toHaveBeenCalledTimes(2);
 });

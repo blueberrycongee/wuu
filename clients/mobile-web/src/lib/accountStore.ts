@@ -15,6 +15,7 @@ import type {
 } from "../../../../desktop/src/renderer/AccountPanel";
 import { webCredStore } from "./credStore";
 import { secretStorage, clearNativeShareCache, isNative } from "./native";
+import { clearConversationCaches } from './conversationCache';
 
 const key = "wuu.account.v1";
 const identitiesKey = "wuu.account-identities.v1";
@@ -43,6 +44,8 @@ async function clearAccount(expected: AccountSession): Promise<void> {
     if (current?.token !== expected.token || current.server !== expected.server)
       return;
     await secretStorage.remove(key);
+    let historyError: unknown;
+    try { await clearConversationCaches(); } catch (error) { historyError = error; }
     await secretStorage.remove(pendingKey);
     await webCredStore.clear();
     await clearNativeShareCache();
@@ -50,12 +53,24 @@ async function clearAccount(expected: AccountSession): Promise<void> {
     for (const name of Object.keys(localStorage))
       if (name.startsWith("wuu.") && name !== identitiesKey && name !== "wuu.web.language" && name !== "wuu.account.server" && name !== "wuu.web.paired") localStorage.removeItem(name);
     window.dispatchEvent(new Event('wuu:account-change'));
+    if (historyError) throw new Error('已退出账号，但历史缓存清理失败，请清除应用存储：' + String(historyError));
   });
 }
 
 export async function loadAccount(): Promise<AccountSession | null> {
   const raw = await secretStorage.get(key);
   return raw ? (JSON.parse(raw) as AccountSession) : null;
+}
+
+// History authorization also depends on the selected host. Confirm that the
+// login itself was revoked before clearing every account cache and credential.
+export async function revalidateAccount(expected: AccountSession): Promise<void> {
+  try {
+    await accountRequest(expected.server, expected.token, 'GET', '/devices');
+  } catch (error) {
+    if (!(error instanceof AccountRequestError) || error.status !== 401) throw error;
+    await clearAccount(expected);
+  }
 }
 
 // Scope identities to an account and service: one public key cannot belong to

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from "vitest";
 import { AccountRequestError, Identity, b64encode, encodeKey } from "@wuu/remote-core";
-import { accountDriver, loadAccount } from "../src/lib/accountStore";
+import { accountDriver, loadAccount, revalidateAccount } from "../src/lib/accountStore";
 import { webCredStore } from "../src/lib/credStore";
 vi.mock("../src/lib/native", () => ({
   isNative: false,
@@ -49,6 +49,33 @@ it("forgets revoked credentials and account-specific renderer state", async () =
   expect(await loadAccount()).toBeNull();
   expect(await webCredStore.load()).toBeNull();
   expect(localStorage.getItem("wuu.desktop.lastDraftRuntime")).toBeNull();
+});
+it('keeps the login when only the selected computer is unavailable', async () => {
+  saved();
+  const current = (await loadAccount())!;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ devices: [] }))));
+  await revalidateAccount(current);
+  expect(await loadAccount()).toEqual(current);
+});
+it('does not clear a replacement login after a late authorization failure', async () => {
+  saved();
+  const expired = (await loadAccount())!;
+  let release!: () => void;
+  let requested!: () => void;
+  const started = new Promise<void>(resolve => { requested = resolve; });
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    requested();
+    await new Promise<void>(resolve => { release = resolve; });
+    return new Response(JSON.stringify({ error: 'revoked' }), { status: 401 });
+  }));
+  const check = revalidateAccount(expired);
+  await started;
+  const replacement = { ...expired, token: 'new-login' };
+  localStorage.setItem('wuu.account.v1', JSON.stringify(replacement));
+  release();
+  await check;
+  expect(await loadAccount()).toEqual(replacement);
+  expect(await webCredStore.load()).not.toBeNull();
 });
 it("preserves the account on failed refresh but allows local logout", async () => {
   saved();

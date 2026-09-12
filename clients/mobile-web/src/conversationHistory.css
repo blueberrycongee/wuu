@@ -1,0 +1,10 @@
+.conversation-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.conversation-toolbar { display: flex; gap: .5rem; padding: .5rem; padding-top: max(.5rem, env(safe-area-inset-top)); flex-shrink: 0; }
+.conversation-live { flex: 1; min-height: 0; }
+.conversation-history { overflow: auto; padding: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.conversation-history h1 { font-size: 1.2rem; }
+.conversation-history nav { display: flex; gap: .5rem; overflow: auto; margin: 1rem 0; }
+.conversation-history nav button { flex-shrink: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+.conversation-history article section { margin: 1rem 0; }
+.conversation-text { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.conversation-workspace [hidden] { display: none; }
