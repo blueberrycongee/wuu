@@ -635,6 +635,7 @@ export function App(): JSX.Element {
 
   const [collaborationSection, setCollaborationSection] = useState<ChannelSection>("rooms");
   const [newRoomRequest, setNewRoomRequest] = useState(0);
+  const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [namedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
   const directoryRefreshInFlightRef = useRef(false);
@@ -3431,16 +3432,14 @@ export function App(): JSX.Element {
   }
 
   function selectChannelRoom(roomID: string): void {
-    const room = activeChannelRooms.find((candidate) => candidate.id === roomID);
-    if (!room) {
-      return;
-    }
-    setSelectedChannelRoomIDState(room.id);
+    setAgentOnboardingActive(false);
+    // A newly opened room can arrive before the directory update renders.
+    setSelectedChannelRoomIDState(roomID);
     selectedCollaborationAgentRequestRef.current = "";
     setSelectedCollaborationAgentID("");
     setCollaborationSection("rooms");
     setAppMode("collaboration");
-    clearChannelRoomUnread(room.id);
+    clearChannelRoomUnread(roomID);
     prepareChannelTab();
   }
 
@@ -3485,6 +3484,7 @@ export function App(): JSX.Element {
   }
 
   async function selectCollaborationAgent(agentID: string): Promise<void> {
+    setAgentOnboardingActive(false);
     if (!namedAgents.some((agent) => agent.id === agentID)) return;
     try {
       await openCollaborationAgentConversation(agentID);
@@ -3524,7 +3524,9 @@ export function App(): JSX.Element {
   function openNewNamedAgent(): void {
     closeCompactSessionSwitcher();
     openCollaborationView();
-    setAgentOnboardingDraft(createAgentOnboardingDraft(state.initialized));
+    setCollaborationSection("rooms");
+    setAgentOnboardingActive(true);
+    setAgentOnboardingDraft((current) => current ?? createAgentOnboardingDraft(state.initialized));
   }
 
   function openAgentProviderSettings(): void {
@@ -3533,11 +3535,13 @@ export function App(): JSX.Element {
   }
 
   function openNewChannelRoom(): void {
+    setAgentOnboardingActive(false);
     openChannelsView();
     setNewRoomRequest((count) => count + 1);
   }
 
   function openAgentManagement(): void {
+    setAgentOnboardingActive(false);
     selectedCollaborationAgentRequestRef.current = "";
     setSelectedCollaborationAgentID("");
     setCollaborationSection("agents");
@@ -5146,7 +5150,9 @@ export function App(): JSX.Element {
                 closeCompactSessionSwitcher();
                 openAgentManagement();
               }}
-              onCreateAgent={openNewNamedAgent}
+              draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
+              draftSelected={agentOnboardingActive}
+              onSelectDraft={openNewNamedAgent}
               onCreateRoom={() => {
                 closeCompactSessionSwitcher();
                 openNewChannelRoom();
@@ -5367,7 +5373,24 @@ export function App(): JSX.Element {
                 aria-hidden="true"
               />
             </header> : null}
-            <ChannelView
+            {agentOnboardingActive && agentOnboardingDraft ? (
+              <AgentOnboarding
+                navigation={collaborationNavigation}
+                draft={agentOnboardingDraft}
+                onDraftChange={setAgentOnboardingDraft}
+                initialized={state.initialized}
+                onCreate={async (params) => {
+                  const { agent } = await window.wuu.createNamedAgent(params);
+                  setNamedAgents((current) => current.some((item) => item.id === agent.id)
+                    ? current.map((item) => item.id === agent.id ? agent : item)
+                    : [...current, agent]);
+                  return agent;
+                }}
+                onOpenConversation={(agent) => openCollaborationAgentConversation(agent.id)}
+                onManageProviders={openAgentProviderSettings}
+                onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
+              />
+            ) : <ChannelView
               navigation={collaborationNavigation}
               initialized={sessionRuntime ?? state.initialized}
               engines={engineInventory?.engines}
@@ -5388,7 +5411,7 @@ export function App(): JSX.Element {
               onNewRoomRequestHandled={() => setNewRoomRequest(0)}
               onCreateAgent={openNewNamedAgent}
               onManageProviders={openAgentProviderSettings}
-            />
+            />}
           </>
         ) : (
           <>
@@ -5822,23 +5845,7 @@ export function App(): JSX.Element {
         />
       )}
       </>
-      {agentOnboardingDraft ? (
-        <AgentOnboarding
-          draft={agentOnboardingDraft}
-          onDraftChange={setAgentOnboardingDraft}
-          initialized={state.initialized}
-          onCreate={async (params) => {
-            const { agent } = await window.wuu.createNamedAgent(params);
-            setNamedAgents((current) => current.some((item) => item.id === agent.id)
-              ? current.map((item) => item.id === agent.id ? agent : item)
-              : [...current, agent]);
-            return agent;
-          }}
-          onOpenConversation={(agent) => openCollaborationAgentConversation(agent.id)}
-          onManageProviders={openAgentProviderSettings}
-          onClose={() => setAgentOnboardingDraft(null)}
-        />
-      ) : null}
+
       {environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={state.gitStatus}

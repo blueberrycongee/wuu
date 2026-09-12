@@ -3243,7 +3243,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   flex: 1;
 }
@@ -3252,7 +3252,13 @@
   flex: 0 0 auto;
   color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+}
+
+.channel-recipient-field {
+  position: relative;
+  min-width: 0;
+  flex: 1;
 }
 
 .channel-recipient-control {
@@ -3260,7 +3266,7 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
-  flex: 1;
+  width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -3269,7 +3275,7 @@
 
 .channel-recipient-control > input {
   min-width: 120px;
-  height: 32px;
+  height: 28px;
   flex: 1 0 120px;
   border: 0;
   outline: 0;
@@ -3283,25 +3289,25 @@
 .channel-recipient-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  max-width: 180px;
+  gap: 4px;
+  height: 26px;
+  max-width: 150px;
   flex: 0 0 auto;
   padding: 2px 4px 2px 3px;
   border-radius: var(--radius-pill);
   background: var(--ink-overlay-6);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
-.channel-recipient-chip > span:first-child { width: 24px; height: 24px; flex: 0 0 auto; }
+.channel-recipient-chip > span:first-child { width: 20px; height: 20px; flex: 0 0 auto; }
 .channel-recipient-chip .agent-avatar-mark { width: 100%; height: 100%; }
 .channel-recipient-chip > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-recipient-chip > button {
   display: grid;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   place-items: center;
   padding: 0;
   border: 0;
@@ -3310,43 +3316,43 @@
   color: var(--text-tertiary);
 }
 .channel-recipient-chip > button:hover { background: var(--ink-overlay-6); color: var(--text-primary); }
-.channel-recipient-chip > button svg { width: 12px; height: 12px; }
+.channel-recipient-chip > button svg { width: 11px; height: 11px; }
 
 .channel-recipient-options {
   position: absolute;
-  top: calc(100% + 12px);
+  top: calc(100% + 6px);
   left: 0;
-  width: min(640px, 100%);
-  max-height: min(480px, calc(100vh - 140px));
-  padding: 6px;
+  width: min(620px, 100%);
+  max-height: min(440px, calc(100dvh - 220px));
+  padding: 3px;
   overflow-y: auto;
   border: 1px solid var(--hairline);
-  border-radius: 16px;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-card);
 }
 
 .channel-recipient-options > button {
   display: grid;
   width: 100%;
-  min-height: 46px;
+  min-height: 38px;
   grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 5px 10px;
+  gap: 8px;
+  padding: 3px 8px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary);
   text-align: left;
 }
 
 .channel-recipient-options > button:hover,
-.channel-recipient-options > button.active { background: var(--selection-surface); }
+.channel-recipient-options > button.active { background: var(--ink-overlay-6); }
 .channel-recipient-option-avatar { width: 28px; height: 28px; }
 .channel-recipient-option-avatar .agent-avatar-mark { width: 100%; height: 100%; }
-.channel-recipient-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.channel-recipient-options kbd { display: inline-flex; gap: 4px; color: var(--text-tertiary); font-family: inherit; font-size: 11px; }
+.channel-recipient-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.channel-recipient-options kbd { display: inline-flex; gap: 3px; color: var(--text-tertiary); font-family: inherit; font-size: 10px; opacity: 0.75; }
 .channel-recipient-options kbd span { padding-right: 4px; border-right: 1px solid var(--hairline); }
 .channel-recipient-empty { padding: 16px; color: var(--text-tertiary); font-size: 13px; text-align: center; }
 .channel-new-room-close { flex: 0 0 auto; }

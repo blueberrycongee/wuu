@@ -824,8 +824,8 @@ func (s *Service) ensureNamedAgentKindColumns() error {
 		}
 	}
 	for _, statement := range []string{
+		// Names are display labels; existing installations must also allow duplicates.
 		`DROP INDEX IF EXISTS idx_named_agents_name`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_named_agents_name ON named_agents(name) WHERE kind = 'named'`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_named_agents_room ON named_agents(room_id) WHERE kind = 'room'`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -1270,9 +1270,6 @@ func (s *Service) createAgent(ctx context.Context, params CreateNamedAgentParams
 		agent.ID, agent.Name, agent.Role, "named", nil, agent.MemoryDir, agent.AvatarKey, agent.AvatarImage, nullableString(agent.EngineOverride), nullableString(agent.ProviderOverride), nullableString(agent.ModelOverride), nullableString(agent.EffortOverride), tokenHash(token), boolInt(agent.Autostart), toMillis(now),
 	)
 	if err != nil {
-		if isUniqueConstraint(err) {
-			return AgentCredential{}, fmt.Errorf("%w: named agent %q already exists", ErrConflict, name)
-		}
 		return AgentCredential{}, fmt.Errorf("insert named agent: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -1370,9 +1367,6 @@ func (s *Service) UpdateNamedAgent(ctx context.Context, params UpdateNamedAgentP
 		UPDATE named_agents SET name = ?, role = ?, avatar_key = ?, avatar_image = ?, engine_override = ?, provider_override = ?, model_override = ?, effort_override = ? WHERE id = ?`,
 		name, role, avatarKey, avatarImage, nullableString(engine), nullableString(provider), nullableString(model), nullableString(effort), id)
 	if err != nil {
-		if isUniqueConstraint(err) {
-			return NamedAgent{}, fmt.Errorf("%w: named agent %q already exists", ErrConflict, name)
-		}
 		return NamedAgent{}, fmt.Errorf("update named agent: %w", err)
 	}
 	if count, _ := result.RowsAffected(); count == 0 {

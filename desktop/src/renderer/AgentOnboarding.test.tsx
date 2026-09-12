@@ -4,10 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import { agentAvatarConfig } from "./AgentAvatarMark";
-import { squareAvatarImageFromFile } from "./avatarImage";
 
 vi.mock("blobatar/react", () => ({ Blobatar: () => null }));
-vi.mock("./avatarImage", () => ({ squareAvatarImageFromFile: vi.fn() }));
 
 const initialized: InitializeResult = {
   protocol_version: "1", workspace_root: "/workspace", provider: "primary", model: "reasoner", effort: "high",
@@ -71,11 +69,12 @@ async function type(name: string, value: string): Promise<void> {
 }
 async function choose(field: string, value: string): Promise<void> {
   await click(`[data-field="${field}"]`);
-  await click(`[role="menuitemradio"][data-value="${value}"]`);
+  const option = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.dataset.value === value || item.dataset.value === `${currentDraft.provider}\u0000${value}`);
+  expect(option).toBeTruthy();
+  await act(async () => option!.click());
 }
 async function next(): Promise<void> {
   await type("agent-name", "Ada");
-  await click('[data-action="submit"]');
 }
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
   let resolve!: (value: T) => void;
@@ -94,29 +93,19 @@ describe("AgentOnboarding", () => {
     expect(create.mock.calls[0][0].request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
-  it("creates an identity with the explicitly selected runtime and preserves it when going back", async () => {
+  it("shows the model selector in the conversation and creates the selected identity without a naming step", async () => {
     const { create, open, close } = await mount();
-    expect(query<HTMLButtonElement>('[data-action="submit"]').disabled).toBe(true);
-    await type("agent-name", " Ada ");
-    await type("agent-role", "Investigate evidence and explain the result.");
-    await click('[data-shape="capsule"]');
-    await click('[data-hue="202"]');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(query<HTMLTextAreaElement>(".channel-composer textarea").disabled).toBe(true);
     const identity = { ...currentDraft };
+    expect(agentAvatarConfig(identity.avatarKey).accessory).toBe("none");
     await click('[data-action="submit"]');
-    expect(currentDraft.provider).toBe("primary");
-    expect(currentDraft.model).toBe("reasoner");
-    expect(currentDraft.effort).toBe("high");
-    await click('[data-action="back"]');
-    expect(currentDraft).toEqual(identity);
-    await click('[data-action="submit"]');
-    await click('[data-action="submit"]');
-    expect(create).toHaveBeenCalledExactlyOnceWith({
-      request_id: identity.requestId, name: "Ada", role: identity.role,
-      avatar_key: identity.avatarKey, avatar_image: undefined, engine_override: "wuu",
+    expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      request_id: identity.requestId, name: expect.any(String),
+      avatar_key: identity.avatarKey, engine_override: "wuu",
       provider_override: "primary", model_override: "reasoner", effort_override: "high",
-    });
-    expect(agentAvatarConfig(identity.avatarKey)).toEqual({ shape: "capsule", hue: 202, accessory: "none" });
-    expect(currentDraft.createdAgent).toEqual(agent);
+    }));
+    expect(create.mock.calls[0][0].name.length).toBeGreaterThan(0);
     expect(open).toHaveBeenCalledExactlyOnceWith(agent);
     expect(close).toHaveBeenCalledOnce();
   });
@@ -124,9 +113,10 @@ describe("AgentOnboarding", () => {
   it("switches to each model's supported effort and excludes unavailable providers", async () => {
     await mount();
     await next();
-    await click('[data-field="agent-provider"]');
-    expect(document.querySelector('[role="menuitemradio"][data-value="not-connected"]')).toBeNull();
-    await click('[role="menuitemradio"][data-value="primary"]');
+    await click('[data-field="agent-model"]');
+    expect([...document.querySelectorAll('[role="menuitemradio"]')].some((item) => item.getAttribute("data-value")?.startsWith("not-connected"))).toBe(false);
+    await act(async () => query('[role="menu"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+
     await choose("agent-model", "adaptive");
     expect(currentDraft.effort).toBe("max");
     await click('[data-field="agent-effort"]');
@@ -134,11 +124,11 @@ describe("AgentOnboarding", () => {
     await click('[role="menuitemradio"][data-value="medium"]');
     await choose("agent-model", "plain");
     expect(currentDraft.effort).toBe("");
-    expect(query<HTMLButtonElement>('[data-field="agent-effort"]').disabled).toBe(true);
+    expect(document.querySelector('[data-field="agent-effort"]')).toBeNull();
     await choose("agent-model", "toggle");
     await choose("agent-effort", "none");
     expect(currentDraft.effort).toBe("none");
-    await choose("agent-provider", "secondary");
+    await choose("agent-model", "secondary\u0000writer");
     expect(currentDraft.model).toBe("writer");
     expect(currentDraft.effort).toBe("medium");
   });
@@ -152,16 +142,11 @@ describe("AgentOnboarding", () => {
     await act(async () => {
       query("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       query("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      query('[role="dialog"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      query<HTMLButtonElement>('[data-action="close"]').click();
     });
     expect(create).toHaveBeenCalledOnce();
     expect(close).not.toHaveBeenCalled();
     expect(query<HTMLButtonElement>('[data-action="close"]').disabled).toBe(true);
-    expect(query<HTMLButtonElement>('[data-action="back"]').disabled).toBe(true);
-    expect(document.activeElement).toBe(query('[role="dialog"]'));
-    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-    await act(async () => document.activeElement!.dispatchEvent(tab));
-    expect(tab.defaultPrevented).toBe(true);
     await act(async () => result.resolve(agent));
     expect(close).toHaveBeenCalledOnce();
   });
@@ -176,7 +161,8 @@ describe("AgentOnboarding", () => {
     await click('[data-action="submit"]');
     expect(create.mock.calls[0][0].request_id).toBe(requestID);
     expect(create.mock.calls[1][0].request_id).toBe(requestID);
-    await click('[data-action="back"]');
+    await choose("agent-model", "reasoner");
+    expect(currentDraft.requestId).toBe(requestID);
     await type("agent-name", "Grace");
     expect(currentDraft.requestId).not.toBe(requestID);
     await click('[data-action="submit"]');
@@ -193,8 +179,7 @@ describe("AgentOnboarding", () => {
     expect(currentDraft.createdAgent).toEqual(agent);
     expect(query('[role="alert"]').textContent).toContain("connection lost");
     expect(document.activeElement).toBe(query('[data-action="submit"]'));
-    expect(query<HTMLButtonElement>('[data-action="back"]').disabled).toBe(true);
-    expect(query<HTMLButtonElement>('[data-field="agent-provider"]').disabled).toBe(true);
+    expect(query<HTMLButtonElement>('[data-field="agent-model"]').disabled).toBe(true);
     expect(close).not.toHaveBeenCalled();
     await click('[data-action="submit"]');
     expect(create).toHaveBeenCalledOnce();
@@ -206,12 +191,11 @@ describe("AgentOnboarding", () => {
   it("resumes a draft after connecting a provider without discarding its identity", async () => {
     const disconnected = { ...initialized, providers: [] };
     const manage = vi.fn();
-    await mount({ initialized: disconnected, onManageProviders: manage });
+    const { create } = await mount({ initialized: disconnected, onManageProviders: manage });
     await type("agent-name", "Ada");
-    await type("agent-role", "Remember my working role.");
-    await click('[data-action="submit"]');
-    expect(query<HTMLButtonElement>('[data-action="submit"]').disabled).toBe(true);
-    expect(document.activeElement).toBe(query('[data-action="manage-providers"]'));
+    expect(document.querySelector('[data-action="submit"]')).toBeNull();
+    await act(async () => query("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(create).not.toHaveBeenCalled();
     await click('[data-action="manage-providers"]');
     expect(manage).toHaveBeenCalledOnce();
     const saved = currentDraft;
@@ -221,7 +205,6 @@ describe("AgentOnboarding", () => {
     expect(currentDraft.name).toBe(saved.name);
     expect(currentDraft.role).toBe(saved.role);
     expect(currentDraft.avatarKey).toBe(saved.avatarKey);
-    expect(currentDraft.step).toBe("model");
     expect(currentDraft.provider).toBe("primary");
     expect(query<HTMLButtonElement>('[data-action="submit"]').disabled).toBe(false);
   });
@@ -233,7 +216,7 @@ describe("AgentOnboarding", () => {
     await act(async () => query('[role="menu"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(close).not.toHaveBeenCalled();
-    await act(async () => query('[role="dialog"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    await click('[data-action="close"]');
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -259,26 +242,4 @@ describe("AgentOnboarding", () => {
     }
   });
 
-  it("keeps custom images behind the appearance disclosure and recovers from conversion failure", async () => {
-    vi.mocked(squareAvatarImageFromFile).mockResolvedValueOnce("data:image/webp;base64,avatar").mockRejectedValueOnce(new Error("invalid-avatar-image"));
-    await mount();
-    const details = query<HTMLDetailsElement>("details");
-    expect(details.open).toBe(false);
-    await click("summary");
-    expect(details.open).toBe(true);
-    const imageInput = query<HTMLInputElement>('input[type="file"]');
-    const upload = async (file: File): Promise<void> => {
-      Object.defineProperty(imageInput, "files", { configurable: true, value: [file] });
-      await act(async () => imageInput.dispatchEvent(new Event("change", { bubbles: true })));
-    };
-    await upload(new File(["image"], "avatar.png", { type: "image/png" }));
-    expect(currentDraft.avatarImage).toBe("data:image/webp;base64,avatar");
-    expect(query<HTMLImageElement>('[data-agent-avatar-id="new-agent-preview"] img').src).toBe(currentDraft.avatarImage);
-    await upload(new File(["text"], "invalid.txt", { type: "text/plain" }));
-    expect(document.querySelector('[role="alert"]')).not.toBeNull();
-    expect(currentDraft.avatarImage).toBe("data:image/webp;base64,avatar");
-    await click('[data-action="remove-image"]');
-    expect(currentDraft.avatarImage).toBe("");
-    expect(document.querySelector('[role="alert"]')).toBeNull();
-  });
 });

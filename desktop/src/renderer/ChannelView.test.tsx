@@ -511,7 +511,7 @@ describe("ChannelView", () => {
     act(() => root?.render(<ChannelView />));
     await settle();
 
-    expect(container.querySelector(".channel-empty-action")?.textContent).toBe("新建群聊");
+    expect(container.querySelector(".channel-empty-action")?.textContent).toBe("新建对话");
     expect(container.querySelector(".channel-conversation-footer")).toBeNull();
     expect(container.querySelector(".channel-composer")).toBeNull();
     expect(container.querySelector(".channel-room-members-button")).toBeNull();
@@ -564,14 +564,13 @@ describe("ChannelView", () => {
     const dialog = document.querySelector('[data-wuu-component="agent-onboarding"]')!;
     expect(dialog).not.toBeNull();
     act(() => setInputValue(dialog.querySelector<HTMLInputElement>('[name="agent-name"]')!, "Researcher"));
-    await act(async () => dialog.querySelector<HTMLFormElement>("form")?.requestSubmit());
     expect(api.createNamedAgent).not.toHaveBeenCalled();
     await act(async () => dialog.querySelector<HTMLFormElement>("form")?.requestSubmit());
     await settle();
     expect(api.createNamedAgent).toHaveBeenCalledOnce();
     expect(api.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Researcher", provider_override: "openai", model_override: "gpt-reasoner", effort_override: "low", request_id: expect.any(String) }));
     expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("Room temporarily unavailable");
-    expect(container.querySelector(".channel-conversation-footer")).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")?.disabled).toBe(true);
 
     await act(async () => dialog.querySelector<HTMLFormElement>("form")?.requestSubmit());
     await settle();
@@ -766,6 +765,27 @@ describe("ChannelView", () => {
 
     expect(textarea?.value).toBe("@Alpha ");
     expect(document.activeElement).toBe(textarea);
+  });
+
+  it("mentions the selected identity when room members share a display name", async () => {
+    const api = createApi();
+    const sameNameAgents = agents.map((agent) => ({ ...agent, name: "Alex" }));
+    api.bootstrapChannels = vi.fn(async () => ({ agents: sameNameAgents, rooms }));
+    api.listNamedAgents = vi.fn(async () => ({ agents: sameNameAgents }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView />));
+    await settle();
+    const textarea = container.querySelector<HTMLTextAreaElement>(".channel-conversation-footer textarea")!;
+    act(() => setInputValue(textarea, "@"));
+    await act(async () => { await new Promise<number>(requestAnimationFrame); });
+    const options = document.querySelectorAll<HTMLButtonElement>(".channel-mention-menu button");
+    expect(options).toHaveLength(2);
+    act(() => options[1].click());
+    expect(textarea.value).toBe(`@${sameNameAgents[1].id} `);
+    act(() => setInputValue(textarea, ""));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="提及 Alex"]')!.click());
+    expect(textarea.value).toBe(`@${sameNameAgents[0].id} `);
   });
 
   it("opens and filters the member picker when typing @", async () => {
@@ -1590,6 +1610,9 @@ describe("ChannelView", () => {
     await settle();
 
     expect(onNewRoomRequestHandled).toHaveBeenCalledOnce();
+    act(() => setInputValue(container.querySelector<HTMLInputElement>(".channel-recipient-control input")!, "Alpha"));
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-create-group")?.click());
+    expect(container.querySelector<HTMLInputElement>(".channel-recipient-control input")?.value).toBe("");
     const recipientInput = container.querySelector<HTMLInputElement>('.channel-recipient-control input');
     expect(recipientInput?.getAttribute("role")).toBe("combobox");
     act(() => recipientInput?.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit1", key: "1", metaKey: true, bubbles: true })));

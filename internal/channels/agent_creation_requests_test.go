@@ -89,12 +89,17 @@ func TestNamedAgentCreationRequestSerializesConcurrentConnections(t *testing.T) 
 func TestNamedAgentCreationFailureDoesNotConsumeRequest(t *testing.T) {
 	service := openTestService(t, nil)
 	ctx := context.Background()
-	if _, err := service.CreateNamedAgent(ctx, CreateNamedAgentParams{Name: "Taken"}); err != nil {
+	// Fail after the request claim so rollback, rather than input validation, is exercised.
+	if _, err := service.db.Exec(`CREATE TRIGGER reject_agent_create BEFORE INSERT ON named_agents
+		BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	params := CreateNamedAgentParams{RequestID: "retry-after-error", Name: "Taken"}
-	if _, err := service.CreateNamedAgent(ctx, params); !errors.Is(err, ErrConflict) {
-		t.Fatalf("duplicate name error = %v, want conflict", err)
+	if _, err := service.CreateNamedAgent(ctx, params); err == nil {
+		t.Fatal("creation succeeded despite storage failure")
+	}
+	if _, err := service.db.Exec(`DROP TRIGGER reject_agent_create`); err != nil {
+		t.Fatal(err)
 	}
 	// A failed transaction must not pin this request to the rejected payload.
 	params.Name = "Available"

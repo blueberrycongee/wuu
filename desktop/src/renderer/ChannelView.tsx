@@ -771,6 +771,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const [agentResetStatus, setAgentResetStatus] = useState("");
   const [agentAppearanceOpen, setAgentAppearanceOpen] = useState(false);
   const [roomName, setRoomName] = useState("");
+  const [newConversationGroup, setNewConversationGroup] = useState(false);
   const [roomAgentIDs, setRoomAgentIDs] = useState<string[]>([]);
   const [proposalModels, setProposalModels] = useState<Record<string, string>>({});
   const [resolvingProposalID, setResolvingProposalID] = useState("");
@@ -1317,6 +1318,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
 
   function openAgentOnboarding(): void {
     if (selectedAgentID) void saveAgentDetails(selectedAgentID, agentDetailDraftRef.current);
+    setSetupPanel(null);
     if (onCreateAgent) onCreateAgent();
     else setOnboardingDraft((current) => current ?? createAgentOnboardingDraft(initialized));
   }
@@ -1579,7 +1581,24 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setRoomMemberSelectionIDs([]);
   }
 
+  async function openDirectConversation(agentID: string): Promise<void> {
+    if (creatingRoom) return;
+    setCreatingRoom(true);
+    setNewRoomError("");
+    try {
+      const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID });
+      setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
+      closeRoomPanel();
+      openSessionRoom(room.id);
+    } catch (reason) {
+      setNewRoomError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setCreatingRoom(false);
+    }
+  }
+
   function openNewRoom(): void {
+    setNewConversationGroup(false);
     setEditingRoomID("");
     setRoomName("");
     setRoomAgentIDs([]);
@@ -1785,6 +1804,26 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     }
   }
 
+  if (onboardingDraft) return <AgentOnboarding
+        navigation={navigation}
+        draft={onboardingDraft}
+        onDraftChange={setOnboardingDraft}
+        initialized={initialized}
+        onCreate={async (params) => {
+          const { agent } = await window.wuu!.createNamedAgent(params);
+          setAgents((current) => [...current.filter((entry) => entry.id !== agent.id), agent]);
+          return agent;
+        }}
+        onOpenConversation={async (agent) => {
+          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id });
+          setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
+          setSelectedAgentID("");
+          openSessionRoom(room.id);
+        }}
+        onManageProviders={onManageProviders}
+        onClose={() => setOnboardingDraft(null)}
+      />;
+
   return (
     <section
       className={`channel-view channel-mode-${section}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
@@ -1805,7 +1844,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 <ChannelRecipientPicker
                   agents={agents}
                   selectedAgentIDs={roomAgentIDs}
-                  onToggle={toggleRoomAgent}
+                  onCreateAgent={!newConversationGroup ? openAgentOnboarding : undefined}
+                  onCreateGroup={!newConversationGroup ? () => setNewConversationGroup(true) : undefined}
+                  onToggle={(agentID) => {
+                    if (newConversationGroup) toggleRoomAgent(agentID);
+                    else void openDirectConversation(agentID);
+                  }}
                   maxSelected={MAX_ROOM_AGENTS}
                   onCancel={closeRoomPanel}
                   disabled={creatingRoom}
@@ -1832,7 +1876,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               {newRoomError ? <div className="channel-send-error" role="alert">{newRoomError}</div> : null}
               <ChannelComposer
                 draft={newRoomBody}
-                placeholder={roomAgentIDs.length > 0 ? t("channels.firstGroupMessage") : t("channels.chooseRecipientsFirst")}
+                placeholder={!newConversationGroup ? t("channels.chooseConversationFirst") : roomAgentIDs.length > 0 ? t("channels.firstGroupMessage") : t("channels.chooseRecipientsFirst")}
                 compact
                 disabled={roomAgentIDs.length === 0}
                 sending={creatingRoom}
@@ -1851,7 +1895,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             <div className="channel-room-main-empty channel-start-empty">
               {agents.length === 0 ? <span className="channel-start-avatar" aria-hidden="true"><AgentAvatarMark seed="new-agent" avatarKey="abstract-3" /></span> : null}
               <button className="channel-empty-action" type="button" onClick={agents.length === 0 ? openAgentOnboarding : openNewRoom}>
-                {t(agents.length === 0 ? "channels.newAgent" : "channels.newGroup")}
+                {t(agents.length === 0 ? "channels.newAgent" : "channels.newConversation")}
               </button>
             </div>
           ) : null}
@@ -1987,7 +2031,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 meta={!own && !direct && !continued ? (
                   <div className="channel-message-meta">
                     {!own ? (
-                      <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author)} />
+                      <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author, agent?.id ?? message.author_id)} />
                     ) : null}
                   </div>
                 ) : undefined}
@@ -2344,24 +2388,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         </div>
       )}
 
-      {onboardingDraft ? <AgentOnboarding
-        draft={onboardingDraft}
-        onDraftChange={setOnboardingDraft}
-        initialized={initialized}
-        onCreate={async (params) => {
-          const { agent } = await window.wuu!.createNamedAgent(params);
-          setAgents((current) => [...current.filter((entry) => entry.id !== agent.id), agent]);
-          return agent;
-        }}
-        onOpenConversation={async (agent) => {
-          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id });
-          setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
-          setSelectedAgentID("");
-          openSessionRoom(room.id);
-        }}
-        onManageProviders={onManageProviders}
-        onClose={() => setOnboardingDraft(null)}
-      /> : null}
+
       <SidebarNameDialog
         open={setupPanel === "agent" && Boolean(editingAgentID)}
         title={agentName}

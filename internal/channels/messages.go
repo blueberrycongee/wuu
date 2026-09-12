@@ -480,22 +480,32 @@ func resolveMentionsTx(ctx context.Context, tx *sql.Tx, roomID, body string) ([]
 	}
 	defer rows.Close()
 	mentions := make([]RoomMember, 0)
+	type mentionableMember struct {
+		RoomMember
+		name string
+	}
+	members := make([]mentionableMember, 0)
+	nameCounts := make(map[string]int)
 	for rows.Next() {
 		var memberType MemberType
 		var id, name string
 		if err := rows.Scan(&memberType, &id, &name); err != nil {
 			return nil, fmt.Errorf("scan mentionable member: %w", err)
 		}
-		needle := name
-		if memberType == MemberHuman {
-			needle = id
-		}
-		if mentionPresent(body, needle) || (memberType == MemberAgent && (mentionPresent(body, "all") || mentionPresent(body, "everyone"))) {
-			mentions = append(mentions, RoomMember{MemberType: memberType, MemberID: id})
+		members = append(members, mentionableMember{RoomMember{MemberType: memberType, MemberID: id}, name})
+		if memberType == MemberAgent {
+			nameCounts[name]++
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list mentionable members: %w", err)
+	}
+	for _, member := range members {
+		// A display name only identifies one member when it is unambiguous.
+		if mentionPresent(body, member.MemberID) || (member.MemberType == MemberAgent &&
+			((nameCounts[member.name] == 1 && mentionPresent(body, member.name)) || mentionPresent(body, "all") || mentionPresent(body, "everyone"))) {
+			mentions = append(mentions, member.RoomMember)
+		}
 	}
 	sort.Slice(mentions, func(i, j int) bool {
 		if mentions[i].MemberType != mentions[j].MemberType {

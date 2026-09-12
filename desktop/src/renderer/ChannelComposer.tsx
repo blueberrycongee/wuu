@@ -20,7 +20,7 @@ type MentionRange = { start: number; end: number; query: string };
 
 export type ChannelComposerHandle = {
   focus: () => void;
-  insertMention: (name: string) => void;
+  insertMention: (name: string, agentID?: string) => void;
 };
 
 export function mentionRangeAtCursor(draft: string, cursor: number): MentionRange | null {
@@ -138,20 +138,21 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
     setSelectedMentionIndex(0);
   }, [textarea]);
 
-  const insertMention = useCallback((name: string, range?: MentionRange | null): void => {
+  const insertMention = useCallback((name: string, range?: MentionRange | null, agentID?: string): void => {
     const input = textarea();
     const inputFocused = input === document.activeElement;
     const start = range?.start ?? (inputFocused ? (input?.selectionStart ?? draft.length) : draft.length);
     const end = range?.end ?? (inputFocused ? (input?.selectionEnd ?? start) : draft.length);
-    const next = draftWithMention(draft, name, start, end);
+    const target = agentID && mentionAgents.filter((agent) => agent.name === name).length > 1 ? agentID : name;
+    const next = draftWithMention(draft, target, start, end);
     onChangeDraft(next.value);
     setMentionRange(null);
     focusComposerTextarea(textarea(), next.cursor);
-  }, [draft, onChangeDraft, textarea]);
+  }, [draft, mentionAgents, onChangeDraft, textarea]);
 
   useImperativeHandle(ref, () => ({
     focus: () => textarea()?.focus(),
-    insertMention: (name) => insertMention(name),
+    insertMention: (name, agentID) => insertMention(name, undefined, agentID),
   }), [insertMention, textarea]);
 
   function handleKeyDownCapture(event: KeyboardEvent<HTMLDivElement>): void {
@@ -171,7 +172,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
     } else if (event.key === "Enter" || event.key === "Tab") {
       event.preventDefault();
       event.stopPropagation();
-      insertMention(matchingAgents[selectedMentionIndex]!.name, mentionRange);
+      insertMention(matchingAgents[selectedMentionIndex]!.name, mentionRange, matchingAgents[selectedMentionIndex]!.id);
     }
   }
 
@@ -212,7 +213,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  insertMention(agent.name, mentionRange);
+                  insertMention(agent.name, mentionRange, agent.id);
                 }}
               >
                 <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} />

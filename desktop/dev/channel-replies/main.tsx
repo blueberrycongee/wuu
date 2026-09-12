@@ -69,7 +69,7 @@ function Preview() {
   return <div className={`app-shell${collapsed ? " collaboration-rail" : ""}`} style={{height: "100vh", display: "grid", gridTemplateColumns: "var(--sidebar-width) minmax(0, 1fr)", "--sidebar-width": collapsed ? "88px" : "296px", "--sidebar-open-width": collapsed ? "88px" : "296px"} as React.CSSProperties}>
     <CollaborationSidebar initialized agents={directory as any} rooms={groups as any} pinnedRoomIDs={["second"]}
       collapsed={collapsed} selectedRoomID={selected} selectedAgentID={selected} onToggleCollapsed={() => setCollapsed(!collapsed)}
-      onSelectAgent={setSelected} onSelectRoom={setSelected} onManageAgents={() => {}} onCreateAgent={() => {}}
+      onSelectAgent={setSelected} onSelectRoom={setSelected} onManageAgents={() => {}}
       onCreateRoom={() => {}} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />
     <div style={{minWidth: 0, height: "100vh", display: "flex"}}><ChannelView selectedRoomID="room" initialized={initialized} /></div>
   </div>;

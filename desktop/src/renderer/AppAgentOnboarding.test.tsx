@@ -30,7 +30,7 @@ async function click(label: string): Promise<void> {
 }
 
 async function enterName(value: string): Promise<void> {
-  const input = document.querySelector<HTMLInputElement>('[role="dialog"] input[type="text"], [role="dialog"] input:not([type])');
+  const input = document.querySelector<HTMLInputElement>('[name="agent-name"]');
   expect(input).toBeTruthy();
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
@@ -51,6 +51,8 @@ beforeEach(() => {
   const projectState = { projects: [], active_context: { kind: "no_project", cwd: workspace } };
   const api = {
     initialize: vi.fn().mockResolvedValue(initialized),
+    getBuildInfo: vi.fn().mockResolvedValue({ desktop: { version: "2026.9.1", build_date: "2026-09-12" } }),
+    listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     listProjects: vi.fn().mockResolvedValue(projectState), selectNoProject: vi.fn().mockResolvedValue(projectState),
     listThreads: vi.fn().mockResolvedValue({ threads: [] }), listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
@@ -87,10 +89,13 @@ afterEach(async () => {
 it("opens a newly created identity's conversation before the next directory refresh", async () => {
   await act(async () => { root.render(<App />); });
   await click("collaboration");
+  await click(t("channels.newConversation"));
+  expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
   await click(t("channels.newAgent"));
+  expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")).toBeTruthy();
+  expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
   await enterName("Research");
-  await click(t("agentOnboarding.continue"));
-  await click(t("agentOnboarding.create"));
+  await click(t("agentOnboarding.startChat"));
   expect(window.wuu.createNamedAgent).toHaveBeenCalledTimes(1);
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledWith({ agent_id: "new-agent" });
   expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -98,18 +103,84 @@ it("opens a newly created identity's conversation before the next directory refr
   expect(container.querySelector(".collaboration-contact-row.active")?.textContent).toContain("Research");
 });
 
+it("creates independent conversations for consecutive agents with the default display name", async () => {
+  vi.mocked(window.wuu.createNamedAgent).mockImplementation(async (params) => {
+    const agent = { ...params, id: `agent-${agents.length + 1}`, memory_dir: "", autostart: true, created_at: "2026-09-12T00:00:00Z" } as NamedAgent;
+    agents = [...agents, agent];
+    return { agent };
+  });
+  vi.mocked(window.wuu.openChannelDirectMessage).mockImplementation(async ({ agent_id }) => {
+    const room = { id: `dm-${agent_id}`, kind: "dm", name: agents.find((agent) => agent.id === agent_id)!.name,
+      members: [{ member_type: "agent", member_id: agent_id }], created_at: "2026-09-12T00:00:00Z" } as ChannelRoom;
+    rooms = [...rooms, room];
+    return { room };
+  });
+  await act(async () => { root.render(<App />); });
+  await click("collaboration");
+  for (let index = 1; index <= 2; index += 1) {
+    await click(t("channels.newConversation"));
+    await act(async () => { container.querySelector<HTMLButtonElement>("#channel-recipient-create-agent")!.click(); });
+    await click(t("agentOnboarding.startChat"));
+    expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith({ agent_id: `agent-${index}` });
+  }
+  expect(agents.map((agent) => agent.name)).toEqual([t("channels.newAgent"), t("channels.newAgent")]);
+  expect(new Set(rooms.map((room) => room.id)).size).toBe(2);
+  const requests = vi.mocked(window.wuu.createNamedAgent).mock.calls.map(([params]) => params.request_id);
+  expect(new Set(requests).size).toBe(2);
+});
+
 it("preserves the agent draft across provider settings and returns to the model step", async () => {
   await act(async () => { root.render(<App />); });
   await click("collaboration");
+  await click(t("channels.newConversation"));
+  expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
   await click(t("channels.newAgent"));
+  expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")).toBeTruthy();
+  expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
   await enterName("Research");
-  await click(t("agentOnboarding.continue"));
   await click(t("agentOnboarding.manageProviders"));
+  await act(async () => { await vi.dynamicImportSettled(); });
+  expect(container.querySelector('[data-wuu-component="settings-shell"]')).toBeTruthy();
+  expect(container.querySelector(".settings-provider-card")?.textContent).toContain("reasoner");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Research");
-  await click(t("agentOnboarding.create"));
+  expect(document.querySelector('[data-wuu-component="agent-onboarding"]')?.textContent).toContain("Research");
+  await click(t("agentOnboarding.startChat"));
   expect(window.wuu.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Research", provider_override: "byok", model_override: "reasoner" }));
+});
+
+
+it("opens an existing agent from the recipient picker before its new DM is in the directory", async () => {
+  agents = [{ id: "existing-agent", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  vi.mocked(window.wuu.openChannelDirectMessage).mockImplementation(async () => {
+    const room = { id: "ada-dm", kind: "dm", name: "Ada", members: [{ member_type: "agent", member_id: "existing-agent" }], created_at: "2026-09-12T00:00:00Z" } as ChannelRoom;
+    rooms = [room];
+    return { room };
+  });
+  await act(async () => { root.render(<App />); });
+  await click("collaboration");
+  await click(t("channels.newConversation"));
+  await act(async () => { container.querySelector<HTMLButtonElement>("#channel-recipient-existing-agent")!.click(); });
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledExactlyOnceWith({ agent_id: "existing-agent" });
+  expect(container.querySelector(".channel-room-header")?.textContent).toContain("Ada");
+  expect(container.querySelector(".collaboration-contact-row.active")?.textContent).toContain("Ada");
+  expect(container.querySelector(".channel-recipient-picker")).toBeNull();
+  expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
+});
+
+it("keeps the unfinished identity and avatar when navigating away and back", async () => {
+  await act(async () => { root.render(<App />); });
+  await click("collaboration");
+  await click(t("channels.newConversation"));
+  await click(t("channels.newAgent"));
+  await enterName("Unfinished");
+  const avatar = container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML;
+  await click(t("channels.manageAgents"));
+  expect(container.querySelector('[data-wuu-component="agent-onboarding"]')).toBeNull();
+  await click("Unfinished");
+  expect(container.querySelector<HTMLInputElement>('[name="agent-name"]')?.value).toBe("Unfinished");
+  expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML).toBe(avatar);
+  expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
 });
 
 

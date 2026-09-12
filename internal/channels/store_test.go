@@ -406,9 +406,6 @@ func TestNamedAgentIdentityIsIndependentAndTokenIsHashed(t *testing.T) {
 	if _, err := client.Check(context.Background()); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("bound client did not authenticate each call: %v", err)
 	}
-	if _, err := service.CreateNamedAgent(context.Background(), CreateNamedAgentParams{Name: "alpha"}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("case-insensitive duplicate name error = %v, want ErrConflict", err)
-	}
 	state, err := service.WakeState(context.Background(), credential.Agent.ID)
 	if err != nil {
 		t.Fatalf("WakeState() error = %v", err)

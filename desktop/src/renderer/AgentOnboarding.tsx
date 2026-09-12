@@ -1,18 +1,15 @@
-import { ArrowLeft, ArrowRight, ChevronDown, X } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { ArrowRight, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChannelAgentCreateParams, InitializeResult, NamedAgent, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
-import { AgentAvatarCreator } from "./AgentAvatarCreator";
-import { AGENT_AVATAR_SHAPES, AgentAvatarMark, agentAvatarConfig, randomAgentAvatarKey, serializeAgentAvatarConfig } from "./AgentAvatarMark";
-import { AVATAR_HUES } from "./DefaultAvatar";
+import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
+import { ChannelComposer } from "./ChannelComposer";
 import { effortLabel, providerModelEffortOptions, providerModelReasoningMode } from "./RuntimeHelpers";
+import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
-import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { squareAvatarImageFromFile } from "./avatarImage";
 import "./styles/agent-onboarding.css";
 
 export type AgentOnboardingDraft = {
-  step: "identity" | "model";
   name: string;
   role: string;
   avatarKey: string;
@@ -28,6 +25,7 @@ type AgentOnboardingProps = {
   draft: AgentOnboardingDraft;
   onDraftChange: (draft: AgentOnboardingDraft) => void;
   initialized?: InitializeResult;
+  navigation?: ReactNode;
   onCreate: (params: ChannelAgentCreateParams) => Promise<NamedAgent>;
   onOpenConversation: (agent: NamedAgent) => Promise<void>;
   onManageProviders?: () => void;
@@ -84,25 +82,18 @@ function initialModel(initialized?: InitializeResult): Pick<AgentOnboardingDraft
 
 export function createAgentOnboardingDraft(initialized?: InitializeResult): AgentOnboardingDraft {
   return {
-    step: "identity", name: "", role: "", avatarKey: randomAgentAvatarKey(), avatarImage: "",
+    name: "", role: "", avatarKey: randomAgentAvatarKey(), avatarImage: "",
     ...initialModel(initialized), requestId: newRequestID(),
   };
 }
 
-const TEMPLATES = ["code", "research", "writing"] as const;
-const COLORS = AVATAR_HUES.filter((_, index) => index % 2 === 0);
-
-export function AgentOnboarding({ draft, onDraftChange, initialized, onCreate, onOpenConversation, onManageProviders, onClose }: AgentOnboardingProps): JSX.Element {
+export function AgentOnboarding({ draft, onDraftChange, initialized, navigation, onCreate, onOpenConversation, onManageProviders, onClose }: AgentOnboardingProps): JSX.Element {
   const { t } = useI18n();
   const [busy, setBusy] = useState<"creating" | "opening" | null>(null);
   const [error, setError] = useState("");
-  const [imageBusy, setImageBusy] = useState(false);
-  const [customizing, setCustomizing] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const draftRef = useRef(draft);
   const pendingRef = useRef(false);
-  const completedRef = useRef(false);
   draftRef.current = draft;
   const providers = configuredProviders(initialized);
   const provider = providers.find((item) => item.name === draft.provider);
@@ -110,15 +101,14 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, onCreate, o
   const model = models.find((item) => item.id === draft.model);
   const reasoning = providerModelReasoningMode(provider, draft.model);
   const efforts = effortsFor(provider, draft.model);
-  const config = agentAvatarConfig(draft.avatarKey);
-  const locked = Boolean(busy || imageBusy || draft.createdAgent);
-  const canCreate = Boolean(draft.name.trim() && draft.role.length <= 280 && provider && model && efforts.includes(draft.effort));
+  const locked = Boolean(busy || draft.createdAgent);
+  const canCreate = Boolean(provider && model && efforts.includes(draft.effort));
 
   function update(patch: Partial<AgentOnboardingDraft>): void {
     if (pendingRef.current || draftRef.current.createdAgent) return;
     const current = draftRef.current;
-    const contentChanged = Object.entries(patch).some(([key, value]) => key !== "step" && value !== current[key as keyof AgentOnboardingDraft]);
-    const next = { ...current, ...patch, requestId: contentChanged ? newRequestID() : current.requestId };
+    if (Object.entries(patch).every(([key, value]) => value === current[key as keyof AgentOnboardingDraft])) return;
+    const next = { ...current, ...patch, requestId: newRequestID() };
     draftRef.current = next;
     onDraftChange(next);
     setError("");
@@ -131,74 +121,15 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, onCreate, o
   }, [initialized, draft.provider, draft.createdAgent]);
 
   useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => { if (!completedRef.current && previous?.isConnected) previous.focus(); };
+    panelRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    const panel = panelRef.current;
-    const target = panel?.querySelector<HTMLElement>(draft.step === "identity" ? '[name="agent-name"]:not(:disabled)' : '[data-field="agent-provider"]:not(:disabled)')
-      ?? panel?.querySelector<HTMLElement>('[data-action="manage-providers"]:not(:disabled), [data-action="submit"]:not(:disabled)')
-      ?? panel?.querySelector<HTMLElement>('[data-action="close"]:not(:disabled)');
-    (target ?? panel)?.focus();
-  }, [draft.step]);
-
-  useEffect(() => {
-    // Disabling the focused submit button can otherwise move focus behind the dialog.
-    if (busy || imageBusy) panelRef.current?.focus();
-    else if (error) panelRef.current?.querySelector<HTMLElement>(draft.step === "identity" ? '[data-action="upload-image"]' : '[data-action="submit"]')?.focus();
-  }, [busy, imageBusy, error, draft.step]);
-
-  function close(): void {
-    if (!pendingRef.current) onClose();
-  }
-
-  async function uploadImage(file: File): Promise<void> {
-    if (pendingRef.current || draftRef.current.createdAgent) return;
-    pendingRef.current = true;
-    setImageBusy(true);
-    setError("");
-    try {
-      const avatarImage = await squareAvatarImageFromFile(file);
-      pendingRef.current = false;
-      update({ avatarImage });
-    } catch {
-      setError(t("agentOnboarding.imageError"));
-    } finally {
-      pendingRef.current = false;
-      setImageBusy(false);
-    }
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    event.stopPropagation();
-    if (event.defaultPrevented) return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-    }
-    if (event.key !== "Tab" || (event.target instanceof Element && event.target.closest("[data-floating-menu-owner]"))) return;
-    const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]') ?? [])
-      .filter((element) => !element.closest("details:not([open])") || element.tagName === "SUMMARY");
-    const first = controls[0];
-    const last = controls.at(-1);
-    if (!first) {
-      event.preventDefault(); panelRef.current?.focus();
-      return;
-    }
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault(); last?.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault(); first?.focus();
-    }
-  }
+    if (error) panelRef.current?.querySelector<HTMLElement>('[data-action="submit"]')?.focus();
+  }, [error]);
 
   async function submit(): Promise<void> {
     if (pendingRef.current) return;
-    if (draft.step === "identity") {
-      if (draft.name.trim() && draft.role.length <= 280) update({ step: "model" });
-      return;
-    }
     if (!draft.createdAgent && !canCreate) return;
     pendingRef.current = true;
     setError("");
@@ -209,7 +140,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, onCreate, o
         const current = draftRef.current;
         agent = await onCreate({
           request_id: current.requestId,
-          name: current.name.trim(), role: current.role.trim(),
+          name: current.name.trim() || t("channels.newAgent"), role: current.role.trim(),
           avatar_key: current.avatarKey, avatar_image: current.avatarImage || undefined,
           engine_override: "wuu", provider_override: current.provider,
           model_override: current.model, effort_override: current.effort,
@@ -221,7 +152,6 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, onCreate, o
       }
       setBusy("opening");
       await onOpenConversation(agent);
-      completedRef.current = true;
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("agentOnboarding.unexpectedError"));
@@ -231,75 +161,50 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, onCreate, o
     }
   }
 
-  return <UILayerPortal layer="dialog">
-    <div className="agent-onboarding" data-wuu-component="agent-onboarding" role="dialog" aria-modal="true" aria-labelledby="agent-onboarding-title" tabIndex={-1} onKeyDown={handleKeyDown} ref={panelRef}>
-      <header className="agent-onboarding-header">
-        <h1 id="agent-onboarding-title">{t("agentOnboarding.title")}</h1>
-        <ol className="agent-onboarding-progress" aria-label={t("agentOnboarding.steps")}>
-          <li aria-current={draft.step === "identity" ? "step" : undefined}>{t("agentOnboarding.identityStep")}</li>
-          <li aria-hidden="true"><ArrowRight size={12} /></li>
-          <li aria-current={draft.step === "model" ? "step" : undefined}>{t("agentOnboarding.modelStep")}</li>
-        </ol>
-        <button type="button" className="agent-onboarding-close" data-action="close" aria-label={t("agentOnboarding.cancel")} onClick={close} disabled={Boolean(busy || imageBusy)}><X size={18} /></button>
-      </header>
-      <div className="agent-onboarding-scroll">
-        <form className="agent-onboarding-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <div className="agent-onboarding-preview">
-            <AgentAvatarMark seed="new-agent-preview" avatarKey={draft.avatarKey} avatarImage={draft.avatarImage} status={busy ? "thinking" : error ? "failed" : "idle"} />
-            <h2>{draft.name.trim() || t("agentOnboarding.previewName")}</h2>
-            {draft.step === "model" && draft.role.trim() ? <p>{draft.role}</p> : null}
-          </div>
-          <div className="agent-onboarding-step" key={draft.step} data-step={draft.step}>
-            {draft.step === "identity" ? <>
-              <label className="agent-onboarding-field"><span>{t("agentOnboarding.name")}</span><input name="agent-name" value={draft.name} onChange={(event) => update({ name: event.target.value })} placeholder={t("agentOnboarding.namePlaceholder")} autoComplete="off" disabled={locked} required /></label>
-              <label className="agent-onboarding-field"><span>{t("agentOnboarding.role")}<small>{draft.role.length}/280</small></span><textarea name="agent-role" value={draft.role} onChange={(event) => update({ role: event.target.value })} placeholder={t("agentOnboarding.rolePlaceholder")} maxLength={280} rows={3} disabled={locked} /></label>
-              <div className="agent-onboarding-templates" role="group" aria-label={t("agentOnboarding.templates")}>
-                {TEMPLATES.map((template) => <button type="button" key={template} data-template={template} disabled={locked} onClick={() => update({ name: t(`agentOnboarding.template.${template}.name`), role: t(`agentOnboarding.template.${template}.role`) })}>{t(`agentOnboarding.template.${template}.label`)}</button>)}
-              </div>
-              <fieldset className="agent-onboarding-appearance" disabled={locked}>
-                <legend>{t("agentOnboarding.appearance")}</legend>
-                <div className="agent-onboarding-shapes" role="group" aria-label={t("agentOnboarding.shape")}>
-                  {AGENT_AVATAR_SHAPES.map((shape) => {
-                    const avatarKey = serializeAgentAvatarConfig({ ...config, shape: shape.id });
-                    return <button type="button" key={shape.id} data-shape={shape.id} aria-label={t(`agentOnboarding.shape.${shape.id}`)} aria-pressed={!draft.avatarImage && config.shape === shape.id} onClick={() => update({ avatarKey, avatarImage: "" })}><AgentAvatarMark seed={`shape-${shape.id}`} avatarKey={avatarKey} /></button>;
-                  })}
-                </div>
-                <div className="agent-onboarding-colors" role="group" aria-label={t("agentOnboarding.color")}>
-                  {COLORS.map((hue, index) => <button type="button" key={hue} data-hue={hue} aria-label={t("agentOnboarding.colorOption", { number: index + 1 })} aria-pressed={!draft.avatarImage && config.hue === hue} style={{ "--agent-onboarding-hue": hue } as CSSProperties} onClick={() => update({ avatarKey: serializeAgentAvatarConfig({ ...config, hue }), avatarImage: "" })} />)}
-                </div>
-                <details className="agent-onboarding-customize" open={customizing}>
-                  <summary onClick={(event) => { event.preventDefault(); setCustomizing((current) => !current); }}>{t("agentOnboarding.customize")}<ChevronDown size={13} /></summary>
-                  {customizing ? <><div className="agent-onboarding-photo-actions">
-                    <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={locked} aria-label={t("agentOnboarding.uploadImage")} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadImage(file); }} />
-                    <button type="button" data-action="upload-image" disabled={locked} onClick={() => imageInputRef.current?.click()}>{t(imageBusy ? "agentOnboarding.preparingImage" : "agentOnboarding.uploadImage")}</button>
-                    {draft.avatarImage ? <button type="button" data-action="remove-image" disabled={locked} onClick={() => update({ avatarImage: "" })}>{t("agentOnboarding.removeImage")}</button> : null}
-                  </div>
-                  <AgentAvatarCreator seed="new-agent-preview" avatarKey={draft.avatarKey} avatarImage={draft.avatarImage} showShapes={false} onChange={(avatarKey) => update({ avatarKey, avatarImage: "" })} />
-                  </> : null}
-                </details>
-              </fieldset>
-            </> : <>
-              {providers.length > 0 ? <>
-                <div className="agent-onboarding-field"><label htmlFor="agent-onboarding-provider">{t("agentOnboarding.provider")}</label><SelectMenu id="agent-onboarding-provider" dataField="agent-provider" value={draft.provider} ariaLabel={t("agentOnboarding.provider")} placeholder={t("agentOnboarding.chooseProvider")} disabled={locked} options={providers.map((item) => ({ value: item.name, label: item.name }))} onChange={(value) => {
-                  const nextProvider = providers.find((item) => item.name === value);
-                  const nextModel = modelsFor(nextProvider).find((item) => item.id === nextProvider?.model)?.id ?? modelsFor(nextProvider)[0]?.id ?? "";
-                  update({ provider: value, model: nextModel, effort: modelEffort(nextProvider, nextModel) });
-                }} /></div>
-                <div className="agent-onboarding-field"><label htmlFor="agent-onboarding-model">{t("agentOnboarding.model")}</label><SelectMenu id="agent-onboarding-model" dataField="agent-model" value={draft.model} ariaLabel={t("agentOnboarding.model")} placeholder={t("agentOnboarding.chooseModel")} disabled={locked || !models.length} searchable flip options={models.map((item) => ({ value: item.id, label: item.display_name || item.id, hint: item.display_name && item.display_name !== item.id ? item.id : undefined }))} onChange={(value) => update({ model: value, effort: modelEffort(provider, value) })} /></div>
-                <div className="agent-onboarding-field"><label htmlFor="agent-onboarding-effort">{t("agentOnboarding.effort")}</label><SelectMenu id="agent-onboarding-effort" dataField="agent-effort" value={draft.effort} ariaLabel={t("agentOnboarding.effort")} disabled={locked || !model || reasoning === "off"} options={efforts.map((value) => ({ value, label: reasoning === "off" ? t("agentOnboarding.effortUnavailable") : reasoning === "toggle" ? t(value === "none" ? "agentOnboarding.thinkingOff" : "agentOnboarding.thinkingOn") : value ? effortLabel(value) : t("agentOnboarding.modelDefault") }))} onChange={(value) => update({ effort: value })} /></div>
-                {!provider || !model || !efforts.includes(draft.effort) ? <p className="agent-onboarding-error" role="status">{t("agentOnboarding.selectionUnavailable")}</p> : null}
-                <p className="agent-onboarding-model-note">{t("agentOnboarding.modelNote")}</p>
-              </> : <p className="agent-onboarding-provider-empty">{t("agentOnboarding.noProviders")}</p>}
-              {onManageProviders ? <button type="button" className="agent-onboarding-manage" data-action="manage-providers" onClick={() => { if (!pendingRef.current) onManageProviders(); }} disabled={locked}>{t(providers.length ? "agentOnboarding.manageProviders" : "agentOnboarding.addProvider")}<ArrowRight size={14} /></button> : null}
-            </>}
-          </div>
-          {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span></div> : null}
-          <footer className="agent-onboarding-footer">
-            {draft.step === "model" ? <button type="button" className="agent-onboarding-back" data-action="back" disabled={locked} onClick={() => update({ step: "identity" })}><ArrowLeft size={14} />{t("agentOnboarding.back")}</button> : <span />}
-            <button type="submit" className="agent-onboarding-submit" data-action="submit" disabled={Boolean(busy || imageBusy) || (draft.step === "identity" ? !draft.name.trim() || draft.role.length > 280 : !draft.createdAgent && !canCreate)}>{busy === "creating" ? t("agentOnboarding.creating") : busy === "opening" ? t("agentOnboarding.opening") : draft.createdAgent ? t("agentOnboarding.openConversation") : draft.step === "identity" ? t("agentOnboarding.continue") : t("agentOnboarding.create")} {!busy ? <ArrowRight size={14} /> : null}</button>
-          </footer>
-        </form>
-      </div>
+  return <section className="channel-view channel-mode-rooms agent-onboarding" data-wuu-component="agent-onboarding" aria-label={t("channels.newAgent")} tabIndex={-1} ref={panelRef}>
+    <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
+      {navigation}
+      <span className="channel-room-header-avatar"><AgentAvatarMark seed={draft.requestId} avatarKey={draft.avatarKey} /></span>
+      <input className="agent-onboarding-name" name="agent-name" aria-label={t("agentOnboarding.name")} value={draft.name} placeholder={t("channels.newAgent")} onChange={(event) => update({ name: event.currentTarget.value })} disabled={locked} />
+      <button type="button" className="icon-button" data-action="close" aria-label={t("agentOnboarding.cancel")} onClick={() => { if (!pendingRef.current) onClose(); }} disabled={Boolean(busy)}><X size={18} /></button>
+    </header>
+    <div className="agent-onboarding-scroll">
+      <MessageBubbleRow outgoing={false} className="channel-message agent" contentClassName="channel-message-content"
+        avatar={<AgentAvatarMark seed={draft.requestId} avatarKey={draft.avatarKey} status={busy ? "thinking" : "idle"} />}
+        meta={<div className="channel-message-meta"><strong className="agent-onboarding-author">{draft.name.trim() || t("channels.newAgent")}</strong></div>}>
+        <MessageBubble outgoing={false} className="agent-onboarding-bubble">
+          <form className="agent-onboarding-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+            <p className="agent-onboarding-prompt">{t(providers.length ? "agentOnboarding.selectBeforeChat" : "agentOnboarding.noProviders")}</p>
+            {providers.length > 0 ? <>
+              <SelectMenu dataField="agent-model" className="agent-onboarding-model" triggerClassName="agent-onboarding-model-trigger"
+                value={`${draft.provider}\u0000${draft.model}`} ariaLabel={t("agentOnboarding.model")} placeholder={t("agentOnboarding.chooseModel")}
+                disabled={locked} searchable flip groups={providers.map((item) => ({
+                  label: item.name,
+                  options: modelsFor(item).map((candidate) => ({ value: `${item.name}\u0000${candidate.id}`, label: candidate.display_name || candidate.id, keywords: [item.name, candidate.id] })),
+                }))} onChange={(value) => {
+                  const [providerName, modelID] = value.split("\u0000");
+                  const nextProvider = providers.find((item) => item.name === providerName);
+                  update({ provider: providerName, model: modelID, effort: modelEffort(nextProvider, modelID, providerName === draft.provider && modelID === draft.model ? draft.effort : "") });
+                }} />
+              {model && reasoning !== "off" ? <div className="agent-onboarding-effort">
+                <span>{t("agentOnboarding.effort")}</span>
+                <SelectMenu dataField="agent-effort" value={draft.effort} ariaLabel={t("agentOnboarding.effort")} disabled={locked}
+                  options={efforts.map((value) => ({ value, label: reasoning === "toggle" ? t(value === "none" ? "agentOnboarding.thinkingOff" : "agentOnboarding.thinkingOn") : value ? effortLabel(value) : t("agentOnboarding.modelDefault") }))}
+                  onChange={(value) => update({ effort: value })} />
+              </div> : null}
+              {!provider || !model || !efforts.includes(draft.effort) ? <p className="agent-onboarding-error" role="status">{t("agentOnboarding.selectionUnavailable")}</p> : null}
+            </> : null}
+            {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span></div> : null}
+            <footer className="agent-onboarding-footer">
+              {onManageProviders ? <button type="button" className={providers.length ? "agent-onboarding-manage" : "agent-onboarding-submit"} data-action="manage-providers" onClick={() => { if (!pendingRef.current) onManageProviders(); }} disabled={locked}>{t(providers.length ? "agentOnboarding.manageProviders" : "agentOnboarding.addProvider")}</button> : null}
+              {providers.length > 0 || draft.createdAgent ? <button type="submit" className="agent-onboarding-submit" data-action="submit" disabled={Boolean(busy) || (!draft.createdAgent && !canCreate)}>{busy === "creating" ? t("agentOnboarding.creating") : busy === "opening" ? t("agentOnboarding.opening") : draft.createdAgent ? t("agentOnboarding.openConversation") : t("agentOnboarding.startChat")} {!busy ? <ArrowRight size={14} /> : null}</button> : null}
+            </footer>
+          </form>
+        </MessageBubble>
+      </MessageBubbleRow>
     </div>
-  </UILayerPortal>;
+    <div className="channel-conversation-footer">
+      <ChannelComposer draft="" placeholder={t("agentOnboarding.chooseModelFirst")} compact disabled sending={false} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={() => {}} onSend={() => {}} />
+    </div>
+  </section>;
 }

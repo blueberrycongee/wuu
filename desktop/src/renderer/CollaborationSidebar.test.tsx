@@ -62,21 +62,11 @@ it("keeps pinned rooms first, updates incoming previews, and filters by the curr
   expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
 });
 
-it("supports keyboard creation and restores focus on Escape", () => {
+it("opens the conversation picker directly from the add button", () => {
   render();
-  const trigger = host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+  const trigger = host.querySelector<HTMLButtonElement>('[aria-label="新建对话"]')!;
   act(() => trigger.click());
-  const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
-  expect(items).toHaveLength(2);
-  expect(document.activeElement).toBe(items[0]);
-  act(() => items[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-  expect(document.activeElement).toBe(items[1]);
-  act(() => items[1].click());
   expect(callbacks.onCreateRoom).toHaveBeenCalledOnce();
-  expect(document.querySelector('[role="menu"]')).toBeNull();
-  act(() => trigger.click());
-  act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-  expect(document.activeElement).toBe(trigger);
   expect(document.querySelector('[role="menu"]')).toBeNull();
 });
 
@@ -105,9 +95,9 @@ it("keeps collapsed conversations accessible, selected and unread while exposing
   const footer = host.querySelector(".collaboration-sidebar-footer")!;
   act(() => footer.querySelector<HTMLButtonElement>('[title="展开左侧栏"]')?.click());
   expect(callbacks.onToggleCollapsed).toHaveBeenCalledOnce();
-  const create = footer.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+  const create = footer.querySelector<HTMLButtonElement>('[aria-label="新建对话"]')!;
   act(() => create.click());
-  expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(2);
+  expect(callbacks.onCreateRoom).toHaveBeenCalledOnce();
 });
 
 it("does not let a hidden search filter remove rail shortcuts", () => {
