@@ -1674,7 +1674,7 @@ describe("ChannelView", () => {
     const recipientInput = container.querySelector<HTMLInputElement>('.channel-recipient-control input');
     expect(recipientInput?.getAttribute("role")).toBe("combobox");
     act(() => recipientInput?.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit1", key: "1", metaKey: true, bubbles: true })));
-    act(() => container.querySelector<HTMLButtonElement>('.channel-recipient-options [role="option"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>('#channel-recipient-agent-2')?.click());
     expect(container.querySelectorAll(".channel-recipient-chip")).toHaveLength(2);
     expect(api.createChannelRoom).not.toHaveBeenCalled();
     const textarea = container.querySelector<HTMLTextAreaElement>(".channel-new-room-surface textarea");
@@ -1686,6 +1686,74 @@ describe("ChannelView", () => {
       agent_ids: ["agent-1", "agent-2"],
     }));
     expect(api.sendChannelMessage).toHaveBeenCalledWith({ room_id: "room-2", body: "Review the release", images: [], files: [] });
+  });
+
+  it.each(["Enter", "click"])("creates an empty group after selecting all recipients via %s", async (confirm) => {
+    const api = createApi();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView newRoomRequest={1} />));
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-create-group")!.click());
+    expect(container.querySelector("#channel-recipient-confirm-group")).toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-agent-1")!.click());
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-agent-2")!.click());
+    expect(api.createChannelRoom).not.toHaveBeenCalled();
+    await act(async () => {
+      if (confirm === "Enter") {
+        container.querySelector<HTMLInputElement>('[role="combobox"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      } else {
+        container.querySelector<HTMLButtonElement>("#channel-recipient-confirm-group")!.click();
+      }
+    });
+    await settle();
+    expect(api.createChannelRoom).toHaveBeenCalledExactlyOnceWith({ name: expect.stringMatching(/Alpha.*Beta/u), agent_ids: ["agent-1", "agent-2"] });
+    expect(api.sendChannelMessage).not.toHaveBeenCalled();
+    expect(container.querySelector(".channel-recipient-picker")).toBeNull();
+    expect(container.querySelector(".channel-message-stream")).not.toBeNull();
+  });
+
+  it("keeps recipient search and IME Enter separate from group confirmation", async () => {
+    const api = createApi();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView newRoomRequest={1} />));
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-create-group")!.click());
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-agent-1")!.click());
+    const input = container.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true })));
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true })));
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true })));
+    expect(api.createChannelRoom).not.toHaveBeenCalled();
+    act(() => setInputValue(input, "Beta"));
+    expect(container.querySelector("#channel-recipient-confirm-group")).toBeNull();
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(container.querySelectorAll(".channel-recipient-chip")).toHaveLength(2);
+    expect(api.createChannelRoom).not.toHaveBeenCalled();
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true })));
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(api.createChannelRoom).toHaveBeenCalledWith({ name: "Alpha", agent_ids: ["agent-1"] });
+    expect(api.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves recipients when empty group creation fails and allows retry", async () => {
+    const api = createApi();
+    vi.mocked(api.createChannelRoom!).mockRejectedValueOnce(new Error("Create failed"));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView newRoomRequest={1} />));
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-create-group")!.click());
+    act(() => container.querySelector<HTMLButtonElement>("#channel-recipient-agent-1")!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>("#channel-recipient-confirm-group")!.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Create failed");
+    expect(container.querySelectorAll(".channel-recipient-chip")).toHaveLength(1);
+    expect(container.querySelector<HTMLButtonElement>("#channel-recipient-confirm-group")!.disabled).toBe(false);
+    await act(async () => container.querySelector<HTMLButtonElement>("#channel-recipient-confirm-group")!.click());
+    expect(api.createChannelRoom).toHaveBeenCalledTimes(2);
+    expect(api.sendChannelMessage).not.toHaveBeenCalled();
+    expect(container.querySelector(".channel-recipient-picker")).toBeNull();
   });
 
   it("adds channel members through an explicit selection flow and separates channel deletion", async () => {

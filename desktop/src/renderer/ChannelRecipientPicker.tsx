@@ -16,6 +16,7 @@ export function ChannelRecipientPicker({
   onCancel,
   onCreateAgent,
   onCreateGroup,
+  onConfirmGroup,
   disabled = false,
 }: {
   agents: NamedAgent[];
@@ -25,6 +26,7 @@ export function ChannelRecipientPicker({
   onCancel: () => void;
   onCreateAgent?: () => void;
   onCreateGroup?: () => void;
+  onConfirmGroup?: () => void;
   disabled?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
@@ -48,6 +50,8 @@ export function ChannelRecipientPicker({
     ));
   }, [agents, maxSelected, query, selectedAgentIDs]);
   const actions = [
+    ...(onConfirmGroup && selectedAgentIDs.length > 0 && !query.trim()
+      ? [{ id: "confirm-group", label: t("channels.create"), run: onConfirmGroup, icon: MessagesSquare }] : []),
     ...(onCreateAgent ? [{ id: "create-agent", label: t("channels.newAgent"), run: onCreateAgent, icon: Plus }] : []),
     ...(onCreateGroup ? [{ id: "create-group", label: t("channels.newGroup"), run: onCreateGroup, icon: MessagesSquare }] : []),
   ];
@@ -82,6 +86,7 @@ export function ChannelRecipientPicker({
   };
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (disabled || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.repeat) return;
     if ((event.metaKey || event.ctrlKey) && /^Digit[1-9]$/u.test(event.code)) {
       const index = Number(event.code.slice(-1)) - 1;
       if (index < optionCount) {

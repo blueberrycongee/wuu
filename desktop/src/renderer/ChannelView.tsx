@@ -1678,9 +1678,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     }
   }
 
-  async function createRoomWithFirstMessage(promptOverride?: string): Promise<void> {
+  async function createNewRoom(promptOverride?: string): Promise<void> {
     const messageBody = (promptOverride ?? newRoomBody).trim();
-    if (!window.wuu || roomAgentIDs.length === 0 || (!messageBody && newRoomImages.length === 0 && newRoomFiles.length === 0) || creatingRoom) return;
+    if (!window.wuu || roomAgentIDs.length === 0 || creatingRoom) return;
     setCreatingRoom(true);
     setNewRoomError("");
     let roomID = newRoomCreatedID;
@@ -1697,10 +1697,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         setNewRoomCreatedID(roomID);
         setRooms((current) => [...current.filter((room) => room.id !== result.room.id), result.room]);
       }
-      const result = await window.wuu.sendChannelMessage({ room_id: roomID, body: messageBody, images, files });
-      messagesByRoomIDRef.current.set(roomID, [result.message]);
-      setMessagesByRoomID((current) => ({ ...current, [roomID]: [result.message] }));
-      setLoadedRoomIDs((current) => new Set(current).add(roomID));
+      if (messageBody || images.length > 0 || files.length > 0) {
+        const result = await window.wuu.sendChannelMessage({ room_id: roomID, body: messageBody, images, files });
+        messagesByRoomIDRef.current.set(roomID, [result.message]);
+        setMessagesByRoomID((current) => ({ ...current, [roomID]: [result.message] }));
+        setLoadedRoomIDs((current) => new Set(current).add(roomID));
+      }
       await refreshRoomsAndAgents();
       setSelectedRoomID(roomID);
       setSetupPanel(null);
@@ -1871,6 +1873,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   selectedAgentIDs={roomAgentIDs}
                   onCreateAgent={!newConversationGroup ? openAgentOnboarding : undefined}
                   onCreateGroup={!newConversationGroup ? () => setNewConversationGroup(true) : undefined}
+                  onConfirmGroup={newConversationGroup ? () => void createNewRoom() : undefined}
                   onToggle={(agentID) => {
                     if (newConversationGroup) toggleRoomAgent(agentID);
                     else void openDirectConversation(agentID);
@@ -1912,7 +1915,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 onPasteAttachmentFiles={(files) => void attachNewRoomFiles(files)}
                 onRemoveFile={(id) => setNewRoomFiles((current) => current.filter((file) => file.id !== id))}
                 onRemoveImage={(id) => setNewRoomImages((current) => current.filter((image) => image.id !== id))}
-                onSend={(promptOverride) => void createRoomWithFirstMessage(promptOverride)}
+                onSend={(promptOverride) => void createNewRoom(promptOverride)}
               />
             </div>
           </div> : null}
