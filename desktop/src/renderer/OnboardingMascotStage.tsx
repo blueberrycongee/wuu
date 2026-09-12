@@ -1,18 +1,12 @@
-import { _layout } from "blobatar";
 import type { CSSProperties, ReactNode } from "react";
 import { ENGINE_ICON_PATHS } from "./EngineIcons";
 import { WuuMascot } from "./WuuMascot";
-import { WUU_MASCOT_NAME, WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
 
 import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
 
 export type OnboardingPluginID = (typeof ONBOARDING_PLUGIN_ORDER)[number];
 
 const COMPANIONS = ["wuu", "blue", "sage"] as const;
-const { body } = _layout(WUU_MASCOT_NAME, { traits: WUU_MASCOT_TRAITS });
-// Equipment is authored around a radius-40 body, then fitted to Wuu's actual
-// identity geometry. The face and equipment share one moving parent.
-const equipmentFit = `translate(${body.cx} ${body.cy}) scale(${body.rx / 40} ${body.ry / 40}) translate(-50 -50)`;
 
 export function OnboardingMascotStage({
   pluginIDs,
@@ -41,21 +35,16 @@ export function OnboardingMascotStage({
             data-onboarding-companion={color}
             hidden={index !== 0 && !split}
           >
-            <div className="onboarding-mascot-body">
-              <div className="onboarding-mascot-pose">
-                <WuuMascot
-                  className="onboarding-mascot"
-                  size={200}
-                  brand
-                  activity="compose"
-                  accessory="none"
-                  animate="hover"
-                  followPointer
-                  style={index === 0 ? undefined : { "--mo-head": `var(--companion-${color})`, "--mo-eye": "var(--equipment-ink)" } as CSSProperties}
-                />
-                {index === 0 ? <CompanionEquipment worn={worn} engineMark={engineMark} engineID={engineID} /> : null}
-              </div>
-            </div>
+            <WuuMascot
+              className="onboarding-mascot"
+              size={200}
+              brand
+              activity="idle"
+              ambient={index === 0}
+              followPointer
+              equipment={index === 0 ? <CompanionEquipment worn={worn} engineMark={engineMark} engineID={engineID} /> : undefined}
+              style={index === 0 ? undefined : { "--mo-head": `var(--companion-${color})`, "--mo-eye": "var(--equipment-ink)" } as CSSProperties}
+            />
           </div>
         ))}
       </div>
@@ -84,8 +73,7 @@ function CompanionEquipment({
   }
 
   return (
-    <svg className="onboarding-mascot-equipment" viewBox="0 0 100 100" aria-hidden="true">
-      <g transform={equipmentFit}>
+    <g className="onboarding-mascot-equipment">
         {engineMark ? (
           <g className="onboarding-equipment-module" data-onboarding-engine-mark={engineID}>
             <g className="onboarding-engine-mark" transform="translate(68 18) scale(0.72)">
@@ -163,7 +151,6 @@ function CompanionEquipment({
           <rect className="equipment-bookmark" x="53.5" y="82.5" width="5" height="6" rx="1" />
           <path className="equipment-detail" d="M55 85.5 H57" />
         </g>)}
-      </g>
-    </svg>
+    </g>
   );
 }

@@ -1,3 +1,34 @@
+[data-wuu-mascot-presence="enter"] {
+  animation: wuu-mascot-enter 240ms var(--ease-out, ease-out) both;
+}
+
+[data-wuu-mascot-presence="exit"] {
+  animation: wuu-mascot-exit var(--wuu-mascot-exit) ease-in both;
+}
+
+@keyframes wuu-mascot-enter {
+  from {
+    margin-inline-start: calc(-1 * var(--wuu-mascot-size));
+    margin-inline-end: 0;
+    opacity: 0;
+    transform: translateY(2px) scale(0.8);
+  }
+}
+
+@keyframes wuu-mascot-exit {
+  to {
+    margin-inline-start: calc(-1 * var(--wuu-mascot-size));
+    margin-inline-end: 0;
+    opacity: 0;
+    transform: translateY(-2px) scale(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-wuu-mascot-presence] { animation: none; }
+  [data-wuu-mascot-presence="exit"] { opacity: 0; }
+}
+
 .wuu-mascot-accessory {
   --wuu-mascot-mix-white: white;
   pointer-events: none;
@@ -26,16 +57,16 @@
   fill: color-mix(in oklab, var(--mo-head) 58%, var(--mo-eye));
 }
 
+.wuu-mascot-detail {
+  fill: none;
+  stroke: color-mix(in oklab, var(--mo-head) 45%, var(--mo-eye));
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .wuu-mascot-headphone-band {
   stroke-width: 3.6;
-}
-
-.wuu-mascot-petal {
-  fill: color-mix(in oklab, var(--mo-head) 42%, var(--wuu-mascot-mix-white));
-}
-
-.wuu-mascot-flower-center {
-  fill: color-mix(in oklab, var(--mo-head) 58%, var(--mo-eye));
 }
 
 .wuu-mascot-halo {
@@ -97,7 +128,7 @@
 /* Activity props can reach the same canvas edge. The process summary text
  * wrapper still owns ellipsis; the summary row itself stays overflow-visible
  * so these parts are not clipped by the 28px layout box. */
-.process-surface-blobatar[data-wuu-mascot-activity]:not(
+[data-wuu-mascot-activity]:not(
     [data-wuu-mascot-activity="idle"]
   ) {
   overflow: visible;
@@ -124,7 +155,7 @@
   margin-right: 0;
 }
 
-.process-surface-blobatar[data-wuu-mascot-activity="compact"] .mo-bob > g {
+[data-wuu-mascot-activity="compact"] .mo-bob > g {
   transform-box: view-box;
   transform-origin: center;
   animation: wuu-mascot-compact var(--wuu-compact-cycle, 5.4s) ease-in-out infinite;
@@ -305,7 +336,7 @@
   .wuu-mascot-accessory,
   .wuu-mascot-activity-prop,
   .wuu-mascot-activity-motion,
-  .process-surface-blobatar[data-wuu-mascot-activity="compact"] .mo-bob > g {
+  [data-wuu-mascot-activity="compact"] .mo-bob > g {
     animation: none;
   }
 }

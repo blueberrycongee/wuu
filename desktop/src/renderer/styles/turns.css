@@ -2585,36 +2585,6 @@
   margin-right: 2px;
 }
 
-.process-surface-blobatar.is-entering {
-  animation: process-surface-blobatar-enter var(--motion-base) var(--ease-bounce) both;
-}
-
-.process-surface-blobatar.is-exiting {
-  pointer-events: none;
-  animation: process-surface-blobatar-exit var(--motion-fast) var(--ease-in) both;
-}
-
-/* Negative inline margin changes the mascot's occupied space without
- * squashing its artwork. That lets the label glide into place while opacity
- * and transform remain compositor-friendly. */
-@keyframes process-surface-blobatar-enter {
-  from {
-    margin-left: -28px;
-    margin-right: 0;
-    opacity: 0;
-    transform: translateY(2px) scale(0.72);
-  }
-}
-
-@keyframes process-surface-blobatar-exit {
-  to {
-    margin-left: -28px;
-    margin-right: 0;
-    opacity: 0;
-    transform: translateY(-2px) scale(0.72);
-  }
-}
-
 /* The sweep overlay duplicates the row text via `data-text` and anchors to
  * this wrapper, not the whole summary line: the blobatar sits outside it, so
  * an overlay on the line itself would start one avatar-width left of the

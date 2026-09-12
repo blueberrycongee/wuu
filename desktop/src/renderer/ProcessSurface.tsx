@@ -39,7 +39,6 @@ import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
  * mid-transition value.
  */
 const REASONING_FOLD_OPEN_SNAP_DELAY_MS = 280;
-const PROCESS_BLOBATAR_EXIT_FALLBACK_MS = 180;
 
 export function ProcessSurfaceMascot({
   active,
@@ -52,34 +51,14 @@ export function ProcessSurfaceMascot({
   provider?: string;
   model?: string;
 }): JSX.Element | null {
-  const [keepMounted, setKeepMounted] = useState(active);
-
-  useEffect(() => {
-    if (active) {
-      setKeepMounted(true);
-      return undefined;
-    }
-    if (!keepMounted) return undefined;
-
-    const timeoutID = window.setTimeout(
-      () => setKeepMounted(false),
-      PROCESS_BLOBATAR_EXIT_FALLBACK_MS,
-    );
-    return () => window.clearTimeout(timeoutID);
-  }, [active, keepMounted]);
-
-  if (!active && !keepMounted) return null;
-
   return (
     <WuuMascot
-      className={`process-surface-blobatar ${active ? "is-entering" : "is-exiting"}`}
+      className="process-surface-blobatar"
+      visible={active}
       size={28}
       provider={provider}
       model={model}
       activity={active ? activity : "idle"}
-      onAnimationEnd={() => {
-        if (!active) setKeepMounted(false);
-      }}
     />
   );
 }

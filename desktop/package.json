@@ -14,7 +14,7 @@
     "dev:onboarding": "electron-vite --config dev/onboarding/electron.vite.config.ts --entry out-dev/onboarding/main/index.js --ignoreConfigWarning",
     "dev:remote": "node scripts/env-run.cjs VITE_ENABLE_REMOTE_CONTROL=true npm run dev",
     "dev:direct": "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
-    "lab:mascot": "cd vendor/blobatar/demo && bun dev",
+    "lab:mascot": "vite dev/mascot --host 127.0.0.1 --port 5177",
     "build:cua-mac": "node scripts/build-cua-mac.cjs",
     "build:speech-mac": "node scripts/build-speech-mac.cjs",
     "icon:generate": "bun scripts/generate-icon.ts",

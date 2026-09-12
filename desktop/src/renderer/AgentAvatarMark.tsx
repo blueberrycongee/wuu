@@ -1,8 +1,6 @@
-import "blobatar/motion.css";
-import type { Expression } from "blobatar/expression";
 import type { JSX } from "react";
 import { AVATAR_HUES } from "./DefaultAvatar";
-import { WuuMascot, wuuMascotExpression, type WuuMascotAccessory } from "./WuuMascot";
+import { WuuMascot, WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascot";
 import { WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
 import "./styles/agent-avatar-feedback.css";
 
@@ -21,17 +19,6 @@ export const AGENT_AVATAR_KEYS = [
 export type AgentAvatarKey = (typeof AGENT_AVATAR_KEYS)[number];
 
 export type AgentAvatarStatus = "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
-
-const EXPRESSIONS: Record<AgentAvatarStatus, Expression> = {
-  idle: wuuMascotExpression(),
-  thinking: wuuMascotExpression({ esy: 0.94, tilt: 2 }),
-  responding: wuuMascotExpression({ esy: 1.04, tilt: -1 }),
-  sending: wuuMascotExpression({ esy: 1.04, tilt: -1 }),
-  queued: wuuMascotExpression({ esy: 0.96 }),
-  waiting: wuuMascotExpression({ esy: 0.92, esy2: -0.03 }),
-  failed: wuuMascotExpression({ esy: 0.9, tilt: 2 }),
-  interrupted: wuuMascotExpression({ esy: 0.92 }),
-};
 
 function AgentAvatarFeedback({ status, active }: { status: AgentAvatarStatus; active: boolean }): JSX.Element | null {
   if (status === "idle") return null;
@@ -62,31 +49,7 @@ export const AGENT_AVATAR_SHAPES = [
   { id: "sun", trait: 0.97 },
 ] as const;
 
-export const AGENT_AVATAR_ACCESSORIES = [
-  "none",
-  "cap",
-  "beanie",
-  "top-hat",
-  "sprout",
-  "crown",
-  "headphones",
-  "scarf",
-  "beret",
-  "party-hat",
-  "wizard-hat",
-  "chef-hat",
-  "flower",
-  "halo",
-  "bow-tie",
-  "graduation-cap",
-  "cowboy-hat",
-  "propeller-cap",
-  "mushroom-cap",
-  "bunny-ears",
-  "cat-ears",
-  "ribbon",
-  "necktie",
-] as const satisfies readonly WuuMascotAccessory[];
+export const AGENT_AVATAR_ACCESSORIES = WUU_MASCOT_ACCESSORIES;
 
 export type AgentAvatarShape = (typeof AGENT_AVATAR_SHAPES)[number]["id"];
 
@@ -155,9 +118,7 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle" 
         identityHue={config.hue}
         identityTraits={{ ...WUU_MASCOT_TRAITS, shape: shape.trait }}
         accessory={config.accessory}
-        activity={status === "thinking" ? "thinking" : status === "sending" || status === "responding" ? "compose" : "idle"}
-        animate={active ? "always" : "hover"}
-        expression={EXPRESSIONS[status]}
+        activity={status}
         showActivityProp={false}
       />}
       <AgentAvatarFeedback status={status} active={active} />

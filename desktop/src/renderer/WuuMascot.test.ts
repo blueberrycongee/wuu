@@ -70,8 +70,7 @@ describe("vendored mascot geometry", () => {
 
   it("aims the read pose at the open book on the lower right", () => {
     expect(WUU_MASCOT_ACTIVITY_PERSPECTIVES.read).toEqual({ yaw: 12, pitch: -8, strength: 1 });
-    // And idle greets by looking down toward the composer rather than staring ahead.
-    expect(WUU_MASCOT_ACTIVITY_PERSPECTIVES.idle.pitch).toBeLessThan(0);
+    expect(WUU_MASCOT_ACTIVITY_PERSPECTIVES.compose.pitch).toBeLessThan(0);
   });
 
   it("keeps status props off the live eyes on the process-row canvas", () => {
@@ -98,12 +97,12 @@ describe("vendored mascot geometry", () => {
     }
   });
 
-  it("lifts the mascot's head from the composer when a draft exists", () => {
+  it("looks toward the draft when composing without a caller-specific pose inversion", () => {
     const idle = forActivity("idle");
     const compose = forActivity("compose");
     const idleY = (idle.eyes[0]!.cy + idle.eyes[1]!.cy) / 2;
     const composeY = (compose.eyes[0]!.cy + compose.eyes[1]!.cy) / 2;
-    expect(composeY).toBeLessThan(idleY);
+    expect(composeY).toBeGreaterThan(idleY);
   });
 });
 

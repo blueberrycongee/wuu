@@ -42,7 +42,13 @@ export type WuuMascotActivity =
   | "edit"
   | "command"
   | "read"
-  | "tool";
+  | "tool"
+  | "sending"
+  | "responding"
+  | "queued"
+  | "waiting"
+  | "failed"
+  | "interrupted";
 
 /**
  * Where the mascot looks in each activity, layered on top of the expression.
@@ -50,9 +56,7 @@ export type WuuMascotActivity =
  * the complete eye contours through this camera after applying the expression.
  * Live changes interpolate angles and update paths without replacing nodes.
  *
- * - idle greets with its gaze lowered toward the composer (or the status text
- *   under the launch view): an invitation, not a stare.
- * - compose lifts its head to face the user the moment a draft exists.
+ * - idle faces the user; compose looks toward the draft below the mascot.
  * - thinking glances up and aside; compact watches the hole descend overhead.
  * - search/edit/command/tool look down into the work unfolding below the row.
  * - read follows the open book carried at the lower-right edge of the body.
@@ -60,8 +64,8 @@ export type WuuMascotActivity =
 export const WUU_MASCOT_ACTIVITY_PERSPECTIVES: Readonly<
   Record<WuuMascotActivity, { yaw: number; pitch: number; strength: number }>
 > = {
-  idle: { yaw: 8, pitch: -16, strength: 1 },
-  compose: { yaw: 0, pitch: 2, strength: 1 },
+  idle: { yaw: 0, pitch: 2, strength: 1 },
+  compose: { yaw: 8, pitch: -16, strength: 1 },
   thinking: { yaw: 22, pitch: 14, strength: 1 },
   compact: { yaw: -12, pitch: 12, strength: 1 },
   search: { yaw: -16, pitch: -10, strength: 1 },
@@ -69,7 +73,13 @@ export const WUU_MASCOT_ACTIVITY_PERSPECTIVES: Readonly<
   command: { yaw: -10, pitch: -12, strength: 1 },
   read: { yaw: 12, pitch: -8, strength: 1 },
   tool: { yaw: 12, pitch: -10, strength: 1 },
+  sending: { yaw: 0, pitch: 2, strength: 1 },
+  responding: { yaw: 0, pitch: 2, strength: 1 },
+  queued: { yaw: -8, pitch: 2, strength: 1 },
+  waiting: { yaw: 0, pitch: 6, strength: 1 },
+  failed: { yaw: 0, pitch: -8, strength: 1 },
+  interrupted: { yaw: -8, pitch: -6, strength: 1 },
 };
 
 export const WUU_MASCOT_IDENTITY_PERSPECTIVE =
-  WUU_MASCOT_ACTIVITY_PERSPECTIVES.idle;
+  WUU_MASCOT_ACTIVITY_PERSPECTIVES.compose;
