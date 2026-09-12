@@ -769,6 +769,7 @@
    * sidebar has no other drag strip, and matching heights keep the rail's
    * vertical rhythm identical across OSes. */
   height: 46px;
+  flex-shrink: 0;
   -webkit-app-region: drag;
 }
 
@@ -787,6 +788,7 @@
 
 .sidebar-brand {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-end;
   gap: 6px;
   padding: 2px 8px 10px;
@@ -1175,12 +1177,16 @@
   padding: 0 8px 8px;
 }
 
+.collaboration-sidebar .sidebar-brand {
+  margin-inline: 4px;
+}
+
 .collaboration-sidebar-topbar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   flex: 0 0 auto;
-  min-height: 48px;
+  min-height: 46px;
   padding: 0 4px 0 max(4px, var(--window-controls-inset-left));
   -webkit-app-region: drag;
 }
