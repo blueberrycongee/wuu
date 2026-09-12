@@ -312,8 +312,8 @@ func (s *Service) AdmitCollaborationSession(ctx context.Context, sessionRef stri
 	if binding.State == CollaborationSessionStarting || binding.State == CollaborationSessionRunning {
 		return binding, nil
 	}
-	if binding.State != CollaborationSessionIdle && binding.State != CollaborationSessionQueued && binding.State != CollaborationSessionCompleted {
-		return CollaborationSessionBinding{}, fmt.Errorf("%w: session must be idle, queued or completed before admission", ErrConflict)
+	if binding.State != CollaborationSessionIdle && binding.State != CollaborationSessionQueued && binding.State != CollaborationSessionCompleted && binding.State != CollaborationSessionWaiting {
+		return CollaborationSessionBinding{}, fmt.Errorf("%w: session must be idle, queued, waiting or completed before admission", ErrConflict)
 	}
 	var identityCount, roomCount, globalCount int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN principal_id = ? THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN room_id = ? THEN 1 ELSE 0 END), 0), COUNT(*) FROM collaboration_session_bindings WHERE state IN ('starting', 'running')`, binding.PrincipalID, binding.RoomID).Scan(&identityCount, &roomCount, &globalCount); err != nil {
@@ -323,7 +323,7 @@ func (s *Service) AdmitCollaborationSession(ctx context.Context, sessionRef stri
 	if identityCount >= s.agentRunLimit || roomCount >= s.roomRunLimit || globalCount >= s.globalRunLimit {
 		state = CollaborationSessionQueued
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state = ?, updated_at = ? WHERE session_ref = ?`, state, toMillis(s.now()), binding.SessionRef); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state = ?, turn_id = CASE WHEN ? = 'starting' THEN '' ELSE turn_id END, updated_at = ? WHERE session_ref = ?`, state, state, toMillis(s.now()), binding.SessionRef); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
 	binding, err = scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.SessionRef))

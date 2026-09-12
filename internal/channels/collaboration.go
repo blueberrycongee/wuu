@@ -321,7 +321,7 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 	if err := tx.Commit(); err != nil {
 		return CollaborationMessage{}, fmt.Errorf("commit collaboration send: %w", err)
 	}
-	if shouldDeliver && s.wake != nil {
+	if (shouldDeliver || message.TargetSessionRef != "") && s.wake != nil {
 		s.wake.Deliver(params.ToAgentID)
 	}
 	if implicitRoomRecipient {

@@ -73,7 +73,7 @@ func (s *Service) migrateCollaborationSessionStates() error {
 	if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collaboration_session_bindings'`).Scan(&schema); err != nil {
 		return err
 	}
-	if strings.Contains(schema, "'completed'") && strings.Contains(schema, "'queued'") {
+	if strings.Contains(schema, "'completed'") && strings.Contains(schema, "'queued'") && strings.Contains(schema, "'waiting'") {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -84,6 +84,9 @@ func (s *Service) migrateCollaborationSessionStates() error {
 	updated := strings.Replace(schema, "collaboration_session_bindings", "collaboration_session_bindings_next", 1)
 	if !strings.Contains(updated, "'completed'") {
 		updated = strings.Replace(updated, "'missing'", "'missing', 'completed', 'cancelled', 'failed'", 1)
+	}
+	if !strings.Contains(updated, "'waiting'") {
+		updated = strings.Replace(updated, "'idle'", "'idle', 'waiting'", 1)
 	}
 	if !strings.Contains(updated, "'queued'") {
 		updated = strings.Replace(updated, "'idle'", "'idle', 'queued'", 1)

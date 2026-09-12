@@ -14,6 +14,7 @@ const (
 type CollaborationSessionState string
 
 const (
+	CollaborationSessionWaiting     CollaborationSessionState = "waiting"
 	CollaborationSessionQueued      CollaborationSessionState = "queued"
 	CollaborationSessionIdle        CollaborationSessionState = "idle"
 	CollaborationSessionStarting    CollaborationSessionState = "starting"
@@ -28,6 +29,7 @@ const (
 // CollaborationSessionBinding is the durable execution identity behind a
 // collaboration principal. Named Agents may own any number of bindings.
 type CollaborationSessionBinding struct {
+	TurnID           string                      `json:"turn_id,omitempty"`
 	SessionRef       string                      `json:"session_ref"`
 	Title            string                      `json:"title,omitempty"`
 	Objective        string                      `json:"objective,omitempty"`
@@ -76,6 +78,7 @@ type CollaborationSessionListParams struct {
 }
 
 type CollaborationSessionStateParams struct {
+	TurnID        string
 	FailureReason string
 	SessionRef    string
 	State         CollaborationSessionState

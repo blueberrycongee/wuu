@@ -517,7 +517,7 @@ func (s *Service) migrate() error {
 			work_id TEXT,
 			run_id TEXT UNIQUE,
 			purpose TEXT NOT NULL CHECK (purpose IN ('conversation', 'coordination', 'work', 'verification')),
-			state TEXT NOT NULL CHECK (state IN ('idle', 'queued', 'starting', 'running', 'interrupted', 'missing', 'completed', 'cancelled', 'failed')),
+			state TEXT NOT NULL CHECK (state IN ('idle', 'queued', 'starting', 'running', 'waiting', 'interrupted', 'missing', 'completed', 'cancelled', 'failed')),
 			title TEXT NOT NULL DEFAULT '',
 			objective TEXT NOT NULL DEFAULT '',
 			parent_session_ref TEXT NOT NULL DEFAULT '',
@@ -536,6 +536,13 @@ func (s *Service) migrate() error {
 			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
 			FOREIGN KEY (work_id) REFERENCES works(id) ON DELETE CASCADE,
 			FOREIGN KEY (run_id) REFERENCES work_runs(id) ON DELETE SET NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS collaboration_session_settlements (
+			session_ref TEXT NOT NULL,
+			turn_id TEXT NOT NULL,
+			result_hash TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (session_ref, turn_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS collaboration_session_requests (
 			actor_id TEXT NOT NULL,
@@ -872,6 +879,7 @@ func (s *Service) ensureLegacyColumns() error {
 		{table: "works", name: "selection_reason", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "works", name: "promotion_request_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "drafts", name: "session_ref", definition: "TEXT"},
+		{table: "collaboration_session_bindings", name: "turn_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "collaboration_session_bindings", name: "title", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "collaboration_session_bindings", name: "objective", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "collaboration_session_bindings", name: "parent_session_ref", definition: "TEXT NOT NULL DEFAULT ''"},

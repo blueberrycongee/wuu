@@ -74,14 +74,14 @@ func (s *Service) EnqueueSessionInput(ctx context.Context, params CollaborationS
 	if err := recordCollaborationRequestTx(ctx, tx, send, requestHash, message.ID); err != nil {
 		return CollaborationMessage{}, err
 	}
-	shouldDeliver, err := requestWakeTx(ctx, tx, target.PrincipalID, toMillis(now))
+	_, err = requestWakeTx(ctx, tx, target.PrincipalID, toMillis(now))
 	if err != nil {
 		return CollaborationMessage{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return CollaborationMessage{}, err
 	}
-	if shouldDeliver && s.wake != nil {
+	if s.wake != nil {
 		s.wake.Deliver(target.PrincipalID)
 	}
 	return message, nil

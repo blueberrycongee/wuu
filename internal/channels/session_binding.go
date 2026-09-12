@@ -13,7 +13,7 @@ const collaborationSessionSelect = `
 	SELECT binding.session_ref, binding.principal_id, COALESCE(binding.named_agent_id, ''),
 		COALESCE(binding.room_id, ''), COALESCE(binding.work_id, ''), COALESCE(binding.run_id, ''),
 		binding.purpose, binding.state, binding.created_at, binding.updated_at,
-		binding.title, binding.objective, binding.parent_session_ref, binding.provider, binding.model, binding.effort, binding.runtime_version, binding.failure_reason
+		binding.title, binding.objective, binding.parent_session_ref, binding.provider, binding.model, binding.effort, binding.runtime_version, binding.failure_reason, binding.turn_id
 	FROM collaboration_session_bindings binding`
 
 func validCollaborationSessionPurpose(purpose CollaborationSessionPurpose) bool {
@@ -28,7 +28,7 @@ func validCollaborationSessionPurpose(purpose CollaborationSessionPurpose) bool 
 
 func validCollaborationSessionState(state CollaborationSessionState) bool {
 	switch state {
-	case CollaborationSessionQueued, CollaborationSessionIdle, CollaborationSessionStarting, CollaborationSessionRunning,
+	case CollaborationSessionWaiting, CollaborationSessionQueued, CollaborationSessionIdle, CollaborationSessionStarting, CollaborationSessionRunning,
 		CollaborationSessionInterrupted, CollaborationSessionMissing, CollaborationSessionCompleted,
 		CollaborationSessionCancelled, CollaborationSessionFailed:
 		return true
@@ -44,7 +44,7 @@ func scanCollaborationSession(row scanner) (CollaborationSessionBinding, error) 
 		&binding.SessionRef, &binding.PrincipalID, &binding.NamedAgentID,
 		&binding.RoomID, &binding.WorkID, &binding.RunID, &binding.Purpose,
 		&binding.State, &createdAt, &updatedAt,
-		&binding.Title, &binding.Objective, &binding.ParentSessionRef, &binding.Provider, &binding.Model, &binding.Effort, &binding.RuntimeVersion, &binding.FailureReason,
+		&binding.Title, &binding.Objective, &binding.ParentSessionRef, &binding.Provider, &binding.Model, &binding.Effort, &binding.RuntimeVersion, &binding.FailureReason, &binding.TurnID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CollaborationSessionBinding{}, ErrNotFound
@@ -353,8 +353,8 @@ func (s *Service) UpdateCollaborationSessionState(ctx context.Context, params Co
 	clearRun := params.State != CollaborationSessionRunning
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE collaboration_session_bindings
-		SET state = ?, run_id = CASE WHEN ? THEN NULL ELSE run_id END, failure_reason = ?, updated_at = ?
-		WHERE session_ref = ?`, params.State, clearRun, strings.TrimSpace(params.FailureReason), toMillis(s.now()), binding.SessionRef); err != nil {
+		SET state = ?, run_id = CASE WHEN ? THEN NULL ELSE run_id END, failure_reason = ?, turn_id = CASE WHEN ? != '' THEN ? ELSE turn_id END, updated_at = ?
+		WHERE session_ref = ?`, params.State, clearRun, strings.TrimSpace(params.FailureReason), strings.TrimSpace(params.TurnID), strings.TrimSpace(params.TurnID), toMillis(s.now()), binding.SessionRef); err != nil {
 		return CollaborationSessionBinding{}, fmt.Errorf("update collaboration session state: %w", err)
 	}
 	updated, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.SessionRef))
@@ -472,7 +472,7 @@ func validateCollaborationSessionWriteTx(
 }
 
 func availableCollaborationSessionState(state CollaborationSessionState) bool {
-	return state == CollaborationSessionQueued || state == CollaborationSessionIdle || state == CollaborationSessionStarting || state == CollaborationSessionRunning
+	return state == CollaborationSessionWaiting || state == CollaborationSessionQueued || state == CollaborationSessionIdle || state == CollaborationSessionStarting || state == CollaborationSessionRunning
 }
 
 func (s *Service) requireRoomPrincipalAccess(ctx context.Context, roomID, principalID string) error {

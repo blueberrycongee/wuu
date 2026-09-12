@@ -337,7 +337,7 @@ func TestSessionStateMigrationRetainsExistingBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := strings.Replace(schema, "collaboration_session_bindings", "legacy_binding", 1)
-	legacy = strings.ReplaceAll(legacy, "'idle', 'queued', 'starting', 'running', 'interrupted', 'missing', 'completed', 'cancelled', 'failed'", "'idle', 'running', 'interrupted', 'missing'")
+	legacy = strings.ReplaceAll(legacy, "'idle', 'queued', 'starting', 'running', 'waiting', 'interrupted', 'missing', 'completed', 'cancelled', 'failed'", "'idle', 'running', 'interrupted', 'missing'")
 	for _, statement := range []string{legacy, `INSERT INTO legacy_binding SELECT * FROM collaboration_session_bindings`, `DROP TABLE collaboration_session_bindings`, `ALTER TABLE legacy_binding RENAME TO collaboration_session_bindings`} {
 		if _, err := service.db.Exec(statement); err != nil {
 			t.Fatal(err)
