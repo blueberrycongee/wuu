@@ -9,6 +9,7 @@ import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ChannelSessions } from "./ChannelSessions";
+import type { SessionInspectionTarget } from "./SessionInspectorWindow";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
 import { ChannelMemberPicker } from "./ChannelMemberPicker";
@@ -492,12 +493,13 @@ function ChannelMessageBubble({
   );
 }
 
-function ChannelAgentActivity({ agent, agentID, state, error, onResume }: {
+function ChannelAgentActivity({ agent, agentID, state, error, onResume, onInspect }: {
   agent?: NamedAgent;
   agentID: string;
   state: ChannelResponse["state"];
   error?: string;
   onResume?: () => Promise<void>;
+  onInspect?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [resuming, setResuming] = useState(false);
@@ -518,6 +520,8 @@ function ChannelAgentActivity({ agent, agentID, state, error, onResume }: {
   };
   return (
     <div className={`channel-response-status${failed ? " failed" : ""}`} role={failed ? "alert" : "status"}>
+      <button className="channel-activity-inspect" type="button" disabled={!onInspect} onClick={onInspect}
+        aria-label={`${agent?.name ?? agentID} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
         <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} />
       </span>
@@ -525,6 +529,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, onResume }: {
         <strong>{agent?.name ?? agentID}</strong>
         <span>{status}</span>
       </span>
+      </button>
       {failed && error ? <span className="channel-response-error">{error}</span> : null}
       {failed && onResume ? <button type="button" disabled={resuming} onClick={() => void resume()}>{t(resuming ? "channels.sessions.starting" : state === "interrupted" ? "channels.sessions.resume" : "channels.sessions.retry")}</button> : null}
       {resumeError ? <span className="channel-response-error">{resumeError}</span> : null}
@@ -577,7 +582,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onInspectSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -591,6 +596,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onSelectRoom?: (roomID: string) => void;
   onRoomRead?: (roomID: string) => void;
   onOpenMemoryDirectory?: (path: string) => void;
+  onInspectSession?: (target: SessionInspectionTarget) => void;
   onOpenSession?: (sessionID: string) => void;
   onCreateAgent?: () => void;
   onManageProviders?: () => void;
@@ -1750,7 +1756,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   </span> : null}
                   <h2>{selectedRoom?.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} title={t("channels.memberCount", { count: selectedRoom.members.length })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}><span>{selectedRoomTitle}</span><ChevronDown aria-hidden="true" /></button> : selectedRoomTitle || t("channels.rooms")}</h2>
                 </div>
-                {selectedRoom ? <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} /> : null}
               </>}
             </header>
           {composingNewRoom ? <div className="channel-new-room-surface">
@@ -1944,6 +1949,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               {responseActivities.map((response) => <ChannelAgentActivity key={response.id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}
+                onInspect={onInspectSession ? () => onInspectSession({ roomID: selectedRoomID, sessionRef: response.session_ref, name: agentNames.get(response.agent_id) ?? response.agent_id }) : undefined}
                 onResume={async () => { await window.wuu!.resumeChannelSession({ sessionRef: response.session_ref }); await refreshMessages(response.room_id, true); }}
               />)}
               {responsesByRoomID[selectedRoomID] === undefined ? respondingAgents.map(({ agent }) => (

@@ -1756,6 +1756,24 @@ describe("ChannelView", () => {
       owner_id: "agent-2",
     });
   });
+  it("opens the working agent's exact session without a header launcher or partial text in the room", async () => {
+    const api = createApi();
+    const onInspectSession = vi.fn();
+    api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [{ id: "reply-beta", room_id: "room-1", agent_id: "agent-2", session_ref: "beta-session", turn_id: "turn", state: "responding" as const, body: "Private live text", created_at: "2026-09-12T00:00:00Z" }] }));
+    api.readChannelSession = vi.fn().mockResolvedValue({ session: { state: "running" }, thread: { id: "beta-session", turns: [{ id: "turn", items: [{ id: "text", type: "agent_message", text: "Private live text" }] }] } });
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" onInspectSession={onInspectSession} />));
+    await settle();
+    expect(container.querySelector(".channel-room-header .channel-sessions-launcher")).toBeNull();
+    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Private live text");
+    const trigger = container.querySelector<HTMLButtonElement>(".channel-activity-inspect")!;
+    expect(trigger.textContent).toContain("Beta");
+    await act(async () => trigger.click());
+    expect(onInspectSession).toHaveBeenCalledWith({ roomID: "room-1", sessionRef: "beta-session", name: "Beta" });
+    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Private live text");
+  });
+
   it("keeps partial answers out of the transcript and shows one bubble only after publication", async () => {
     vi.useFakeTimers();
     try {
@@ -1851,7 +1869,7 @@ describe("ChannelView", () => {
     expect(alert?.textContent).toContain("Provider unavailable");
     expect(container.textContent).not.toContain("Partial answer");
     expect(container.querySelector(".channel-message-stream [role=alert]")).toBeNull();
-    await act(async () => alert?.querySelector<HTMLButtonElement>("button")?.click());
+    await act(async () => alert?.querySelector<HTMLButtonElement>("button:not(.channel-activity-inspect)")?.click());
     expect(api.resumeChannelSession).toHaveBeenCalledWith({ sessionRef: "beta-room-session" });
     expect(api.sendChannelMessage).not.toHaveBeenCalled();
     act(() => root?.render(<ChannelView selectedRoomID="room-2" />));

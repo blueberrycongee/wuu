@@ -3536,6 +3536,33 @@
 .channel-session-message + .channel-session-message { margin-top: 12px; }
 .channel-session-message .rich-content { font-size: 13px; overflow-wrap: anywhere; }
 .channel-session-history { min-width: 0; }
+.channel-response-status .channel-activity-inspect {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+.channel-response-status .channel-activity-inspect:disabled { cursor: default; }
+.channel-response-status .channel-activity-inspect:disabled:hover { background: transparent; }
+.session-inspector-expanded .channel-view { --channel-horizontal-gutter: var(--inspector-original-gutter); }
+.session-inspector-extension {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--border-default);
+  overflow: hidden;
+}
+.session-inspector-header { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 16px; border-bottom: 1px solid var(--border-default); }
+.session-inspector-header > strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-inspector-header .channel-sessions-close { position: static; }
+.session-inspector-extension > .channel-error,
+.session-inspector-extension > p { padding: 12px 16px; }
+.session-inspector-history { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .channel-session-history pre { max-width: 100%; overflow-x: auto; }
 .channel-session-activity { margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
 .channel-session-activity summary { cursor: pointer; padding: 6px 0; }

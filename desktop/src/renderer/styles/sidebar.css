@@ -1356,6 +1356,70 @@
 .collaboration-sidebar-footer-action:hover,
 .collaboration-sidebar-footer-action:focus-visible { background: var(--ink-overlay-4); color: var(--ink); }
 
+.collaboration-sidebar-rail .sidebar-content {
+  width: 88px;
+  min-width: 88px;
+  padding: 0 12px 12px;
+}
+
+.collaboration-sidebar-rail .collaboration-sidebar-topbar { padding: 0; min-height: 52px; }
+.collaboration-sidebar-rail .collaboration-sidebar-main { gap: 4px; overflow-x: hidden; }
+.collaboration-sidebar-rail .collaboration-contact-row {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  min-height: 60px;
+  border-radius: 14px;
+  padding: 10px;
+}
+.collaboration-sidebar-rail .collaboration-contact-copy { display: none; }
+.collaboration-sidebar-rail .collaboration-contact-row.pinned + .collaboration-contact-row:not(.pinned) {
+  margin-top: 18px;
+}
+.collaboration-sidebar-rail .collaboration-contact-row.pinned + .collaboration-contact-row:not(.pinned)::before {
+  content: "";
+  position: absolute;
+  top: -11px;
+  left: 4px;
+  right: 4px;
+  border-top: 1px solid var(--hairline);
+}
+.collaboration-rail-unread {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 9px;
+  background: var(--info);
+  color: var(--ink-on-info);
+  font-size: 10px;
+  line-height: 14px;
+}
+.collaboration-sidebar-rail .collaboration-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.collaboration-sidebar-rail .collaboration-sidebar-footer > button {
+  display: flex;
+  justify-content: center;
+  width: 40px;
+  min-height: 36px;
+  padding: 8px;
+}
+.collaboration-sidebar-rail .collaboration-sidebar-footer-action > span,
+.collaboration-sidebar-rail .sidebar-account-name,
+.collaboration-sidebar-rail .sidebar-account-trigger > svg { display: none; }
+.collaboration-sidebar-rail .sidebar-account-trigger {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+}
+.collaboration-sidebar-rail .sidebar-account-trigger .sidebar-account-avatar { width: 32px; height: 32px; font-size: 12px; }
+.collaboration-sidebar-rail .sidebar-account-menu { width: min(260px, calc(100vw - 24px)); right: auto; }
+
 @media (max-width: 760px) {
   .collaboration-sidebar-topbar { padding-top: env(safe-area-inset-top, 0px); }
   .collaboration-sidebar-footer-action { min-height: 40px; }

@@ -94,6 +94,25 @@ function setInnerWidth(value: number): void {
   window.innerWidth = value;
 }
 
+it("keeps the original sidebar layout while a native right-hand extension grows the viewport", () => {
+  setInnerWidth(900);
+  window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
+  let view!: ReturnType<typeof useAppLayoutState>;
+  function ExtensionHarness({ width }: { width?: number }) {
+    view = useAppLayoutState({ viewportWidth: width, onCloseProjectMenu: () => {} });
+    return null;
+  }
+  root = createRoot(container);
+  act(() => root!.render(<ExtensionHarness />));
+  const before = { sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed, compact: view.compactNavigation };
+  act(() => root!.render(<ExtensionHarness width={900} />));
+  act(() => { setInnerWidth(1380); window.dispatchEvent(new Event("resize")); });
+  expect({ sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed, compact: view.compactNavigation }).toEqual(before);
+  act(() => { setInnerWidth(900); root!.render(<ExtensionHarness />); });
+  act(() => window.dispatchEvent(new Event("resize")));
+  expect({ sidebarWidth: view.sidebarWidth, collapsed: view.sidebarCollapsed, compact: view.compactNavigation }).toEqual(before);
+});
+
 beforeEach(() => {
   setInnerWidth(1280);
   container = document.createElement("div");

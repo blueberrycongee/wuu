@@ -2839,6 +2839,14 @@
   scrollbar-gutter: stable;
 }
 
+.tool-result-data-json {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--conversation-process-font-size);
+  line-height: var(--conversation-process-line-height);
+}
+
 /* Expanded context-compaction body: the replacement-context summary is
  * model prose, so keep the author's line breaks and wrap long tokens. */
 .context-compaction-summary {

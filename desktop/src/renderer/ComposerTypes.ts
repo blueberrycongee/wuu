@@ -31,6 +31,7 @@ export type FloatingMenuOwner =
   | "composer-query-history"
   | "minute-clock"
   | "channel-mention"
+  | "collaboration-new"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";
 export type FloatingMenuAlign = "left" | "right";

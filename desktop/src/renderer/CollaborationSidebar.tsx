@@ -1,4 +1,4 @@
-import { MessagesSquare, Pin, Plus, Search, UsersRound } from "lucide-react";
+import { Code2, MessagesSquare, PanelLeftOpen, Pin, Plus, Search, UsersRound } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
@@ -11,10 +11,13 @@ import { useI18n } from "./i18n";
 
 export function CollaborationSidebar({
   initialized, agents, rooms, pinnedRoomIDs = [], selectedAgentID, selectedRoomID,
+  collapsed = false, onToggleCollapsed,
   onSelectAgent, onSelectRoom, onManageAgents, onCreateAgent, onCreateRoom,
   onSwitchToHarness, onOpenSettings, onOpenAccount, onPointerEnter, onPointerLeave,
 }: {
   initialized: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   agents: NamedAgent[];
   rooms: ChannelRoom[];
   pinnedRoomIDs?: readonly string[];
@@ -38,8 +41,8 @@ export function CollaborationSidebar({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuID = useId();
   const conversations = useMemo(
-    () => collaborationConversations(agents, rooms, pinnedRoomIDs, query),
-    [agents, rooms, pinnedRoomIDs, query],
+    () => collaborationConversations(agents, rooms, pinnedRoomIDs, collapsed ? "" : query),
+    [agents, rooms, pinnedRoomIDs, query, collapsed],
   );
   const agentNames = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   useEffect(() => {
@@ -52,20 +55,21 @@ export function CollaborationSidebar({
     return () => document.removeEventListener("pointerdown", outside, true);
   }, [newMenuOpen]);
   const closeMenu = () => { setNewMenuOpen(false); newButtonRef.current?.focus(); };
+  const newConversationButton = <button ref={newButtonRef} className="icon-button" type="button" disabled={!initialized}
+    aria-label={t("channels.newConversation")} title={t("channels.newConversation")}
+    aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? menuID : undefined}
+    onClick={() => setNewMenuOpen((open) => !open)}
+    onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setNewMenuOpen(true); } }}>
+    <Plus aria-hidden="true" />
+  </button>;
 
   return (
-    <aside className="sidebar collaboration-sidebar" data-wuu-component="collaboration-sidebar"
+    <aside className={`sidebar collaboration-sidebar${collapsed ? " collaboration-sidebar-rail" : ""}`} data-wuu-component="collaboration-sidebar"
       onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
       <div className="sidebar-content">
         <div className="collaboration-sidebar-topbar">
-          <button ref={newButtonRef} className="icon-button" type="button" disabled={!initialized}
-            aria-label={t("channels.newConversation")} title={t("channels.newConversation")}
-            aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? menuID : undefined}
-            onClick={() => setNewMenuOpen((open) => !open)}
-            onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setNewMenuOpen(true); } }}>
-            <Plus aria-hidden="true" />
-          </button>
-          {newMenuOpen ? <FloatingMenuPortal anchorRef={newButtonRef} owner="collaboration-new" placement="below" align="right" width={200}>
+          {!collapsed ? newConversationButton : null}
+          {newMenuOpen ? <FloatingMenuPortal anchorRef={newButtonRef} owner="collaboration-new" placement={collapsed ? "above" : "below"} align="right" width={200}>
             <div ref={menuRef} id={menuID} className="select-menu-panel" role="menu" aria-label={t("channels.newConversation")}
               onBlur={(event) => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== newButtonRef.current) setNewMenuOpen(false); }}
               onKeyDown={(event) => {
@@ -83,14 +87,14 @@ export function CollaborationSidebar({
             </div>
           </FloatingMenuPortal> : null}
         </div>
-        <AppModeSwitch mode="collaboration" collaborationEnabled onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }} />
-        <div className="collaboration-sidebar-tools">
+        {!collapsed ? <AppModeSwitch mode="collaboration" collaborationEnabled onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }} /> : null}
+        {!collapsed ? <div className="collaboration-sidebar-tools">
           <label className="collaboration-sidebar-search">
             <Search aria-hidden="true" />
             <input type="search" value={query} placeholder={t("channels.searchConversations")}
               aria-label={t("channels.searchConversations")} onChange={(event) => setQuery(event.currentTarget.value)} />
           </label>
-        </div>
+        </div> : null}
         <nav className="collaboration-sidebar-main" aria-label={t("channels.conversations")}>
           {conversations.map(({ id, name, agent, room, pinned }) => {
             const selected = room ? selectedRoomID === room.id : selectedAgentID === agent?.id;
@@ -103,13 +107,16 @@ export function CollaborationSidebar({
             const date = message ? new Date(message.created_at) : undefined;
             const timestamp = date && !Number.isNaN(date.getTime()) ? formatDate(date, date.toDateString() === new Date().toDateString()
               ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" }) : "";
-            return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}`}
+            return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
               aria-current={selected ? "page" : undefined} disabled={!initialized}
+              aria-label={collapsed ? `${name}${unread > 0 ? `, ${t("channels.unreadMessages", { count: unread })}` : ""}` : undefined}
+              title={collapsed ? `${name}${thinking ? ` · ${t("channels.agentWorking")}` : ""}` : undefined}
               onClick={() => { if (room) onSelectRoom(room.id); else if (agent) onSelectAgent(agent.id); }}>
               <span className="collaboration-contact-avatar" aria-hidden="true">
                 {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={thinking ? "thinking" : "idle"} />
                   : room ? <ChannelGroupAvatar room={room} agents={agents} /> : null}
               </span>
+              {collapsed && unread > 0 ? <span className="collaboration-rail-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}
               <span className="collaboration-contact-copy">
                 <span className="collaboration-contact-heading"><strong>{name}</strong>{timestamp ? <time dateTime={message?.created_at}>{timestamp}</time> : null}</span>
                 <span className="collaboration-contact-detail"><span className={`collaboration-contact-preview${thinking ? " thinking" : ""}`}>{preview}</span>
@@ -122,7 +129,12 @@ export function CollaborationSidebar({
           {conversations.length === 0 ? <div className="collaboration-contact-empty">{t(query.trim() ? "channels.noMatchingConversations" : "channels.noConversations")}</div> : null}
         </nav>
         <div className="collaboration-sidebar-footer">
-          <button className="collaboration-sidebar-footer-action" type="button" disabled={!initialized} onClick={onManageAgents}><UsersRound aria-hidden="true" /><span>{t("channels.manageAgents")}</span></button>
+          {collapsed ? <>
+            <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("app.expandLeftSidebar")} title={t("app.expandLeftSidebar")} onClick={onToggleCollapsed}><PanelLeftOpen aria-hidden="true" /></button>
+            {newConversationButton}
+            <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("sidebar.harness")} title={t("sidebar.harness")} onClick={onSwitchToHarness}><Code2 aria-hidden="true" /></button>
+          </> : null}
+          <button className="collaboration-sidebar-footer-action" type="button" disabled={!initialized} aria-label={t("channels.manageAgents")} title={collapsed ? t("channels.manageAgents") : undefined} onClick={onManageAgents}><UsersRound aria-hidden="true" /><span>{t("channels.manageAgents")}</span></button>
           <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
         </div>
       </div>

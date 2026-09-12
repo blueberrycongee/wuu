@@ -98,6 +98,8 @@ import {
 } from "./AppSidebar";
 import { ChannelView, type ChannelSection } from "./ChannelView";
 import { CollaborationSidebar } from "./CollaborationSidebar";
+import { ChannelSessionInspector } from "./ChannelSessionInspector";
+import { useSessionInspectorWindow } from "./SessionInspectorWindow";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import type { AppMode } from "./AppModeSwitch";
 import {
@@ -449,6 +451,7 @@ export function App(): JSX.Element {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
+  const sessionInspector = useSessionInspectorWindow(appShellRef);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
@@ -482,6 +485,7 @@ export function App(): JSX.Element {
     resetSplitPercent,
   } = useAppLayoutState({
     layoutRootRef: appShellRef,
+    viewportWidth: sessionInspector.extension?.baseWidth,
     settingsLayoutRootRef: settingsShellRef,
     onCloseProjectMenu: closeProjectMenu,
   });
@@ -539,7 +543,9 @@ export function App(): JSX.Element {
   // A manually expanded workspace owns the main stage, not the navigation
   // rail. Keep a docked sidebar docked; only an already-collapsed or compact
   // sidebar remains a drawer while the workspace is expanded.
-  const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
+  const [appMode, setAppMode] = useState<AppMode>("harness");
+  const collaborationRail = ENABLE_GROUP_CHAT && appMode === "collaboration" && sidebarCollapsed && !compactNavigation && !poppedOutMode;
+  const sidebarDrawerMode = compactNavigation || (sidebarCollapsed && !collaborationRail);
   const {
     sidebarDrawerPhase,
     sidebarHoverZoneRef,
@@ -631,7 +637,6 @@ export function App(): JSX.Element {
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
 
-  const [appMode, setAppMode] = useState<AppMode>("harness");
   const [collaborationSection, setCollaborationSection] = useState<ChannelSection>("rooms");
   const [newRoomRequest, setNewRoomRequest] = useState(0);
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
@@ -2751,7 +2756,11 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  useEffect(() => {
+    const target = sessionInspector.extension?.target;
+    if (target && (appMode !== "collaboration" || collaborationSection !== "rooms" || settingsOpen || selectedChannelRoomID !== target.roomID)) void sessionInspector.close();
+  }, [appMode, collaborationSection, selectedChannelRoomID, settingsOpen, sessionInspector.extension, sessionInspector.close]);
+  const shellClassName = `app-shell${sessionInspector.extension ? " session-inspector-expanded" : ""}${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${collaborationRail ? " collaboration-rail" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -2769,9 +2778,10 @@ export function App(): JSX.Element {
     resizingRightPanel ? " resizing-right-panel" : ""
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
-    "--sidebar-width": `${effectiveSidebarWidth}px`,
-    "--sidebar-open-width": `${sidebarWidth}px`,
-    "--workspace-sheet-left": `${sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
+    ...(sessionInspector.extension ? { width: `${sessionInspector.extension.baseWidth}px`, "--inspector-original-gutter": sessionInspector.extension.gutter } : {}),
+    "--sidebar-width": `${collaborationRail ? 88 : effectiveSidebarWidth}px`,
+    "--sidebar-open-width": `${collaborationRail ? 88 : sidebarWidth}px`,
+    "--workspace-sheet-left": `${collaborationRail ? 88 : sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
@@ -5050,7 +5060,7 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible ? (
+  const collaborationNavigation = sidebarToggleVisible && !collaborationRail ? (
     <button
       className="icon-button side-panel-toggle-button sidebar-toggle-button"
       data-wuu-component="sidebar-toggle"
@@ -5084,12 +5094,16 @@ export function App(): JSX.Element {
       {checkoutErrorTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
+        {sessionInspector.extension?.target ? <ChannelSessionInspector key={sessionInspector.extension.target.sessionRef}
+          sessionRef={sessionInspector.extension.target.sessionRef} name={sessionInspector.extension.target.name}
+          left={sessionInspector.extension.baseWidth} width={sessionInspector.extension.panelWidth}
+          onClose={() => void sessionInspector.close()} /> : null}
         <div
           ref={appShellRef}
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
-          data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
+          data-wuu-sidebar-mode={collaborationRail ? "rail" : sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           {!poppedOutMode ? (
             <>
@@ -5125,6 +5139,8 @@ export function App(): JSX.Element {
           {appMode === "collaboration" && ENABLE_GROUP_CHAT ? (
             <CollaborationSidebar
               initialized={Boolean(state.initialized)}
+              collapsed={collaborationRail}
+              onToggleCollapsed={toggleSidebar}
               agents={namedAgents}
               rooms={collaborationSidebarRooms}
               pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
@@ -5299,7 +5315,7 @@ export function App(): JSX.Element {
             </>
           ) : null}
 
-          {sidebarDrawerMode ? null : (
+          {sidebarDrawerMode || collaborationRail ? null : (
             <div
               className="sidebar-resizer"
               inert={rightPanelOpen && rightPanelGlobalized}
@@ -5374,6 +5390,7 @@ export function App(): JSX.Element {
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
               onOpenSession={handleOpenThreadInSplit}
+              onInspectSession={(target) => { void sessionInspector.open(target); }}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}

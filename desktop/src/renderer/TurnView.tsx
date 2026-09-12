@@ -31,6 +31,7 @@ export { latestAgentMessageItemID, scrollToUserMessage };
 
 export type TurnViewProps = {
   turn: Turn;
+  threadID?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onOpenAgent?: (agentID: string) => void;
@@ -59,7 +60,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
-  const threadId = desktopPluginHost.getActiveConversationThreadId();
+  const threadId = props.threadID ?? desktopPluginHost.getActiveConversationThreadId();
   return (
     <PluginSurface
       host={desktopPluginHost}

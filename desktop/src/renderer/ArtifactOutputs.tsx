@@ -8,6 +8,7 @@ import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
 import { AttachmentImage } from "./AttachmentImage";
+import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -148,7 +149,7 @@ function ArtifactRenderer({
 }): JSX.Element {
   const fallback = artifact.type === "text" ? (
     <div className="turn-artifact-text-part">
-      <RichContent text={artifact.text ?? ""} cwd={cwd} onOpenFile={onOpenFile} />
+      <ToolResultText text={artifact.text ?? ""} cwd={cwd} onOpenFile={onOpenFile} />
     </div>
   ) : variant === "inline" && artifact.mimeType.startsWith("image/") ? (
     <InlineArtifact artifact={artifact} cwd={cwd} />
@@ -185,6 +186,26 @@ function ArtifactRenderer({
       fallback={fallback}
     />
   );
+}
+
+function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string; onOpenFile?: (path: string) => void }): JSX.Element {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const structured = useMemo(() => {
+    try {
+      const value: unknown = JSON.parse(text);
+      return value !== null && typeof value === "object" ? JSON.stringify(value, null, 2) : undefined;
+    } catch { return undefined; }
+  }, [text]);
+  // Mixed image/data results retain every part, but machine-readable metadata
+  // must not turn into a page of answer prose merely because an image follows.
+  if (structured === undefined) return <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />;
+  return <div className="process-surface tool-result-data">
+    <ProcessSurfaceFold open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}
+      summary={<span className="process-surface-summary-line">{t("artifacts.structuredData")}</span>}>
+      {expanded ? <pre className="tool-result-data-json">{structured}</pre> : null}
+    </ProcessSurfaceFold>
+  </div>;
 }
 
 function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: string }): JSX.Element {

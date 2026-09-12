@@ -171,6 +171,7 @@ try {
 }
 
 const api: WuuDesktopApi = {
+  setSessionInspectorExpansion: (params) => ipcRenderer.invoke("wuu:session-inspector-expansion", params),
   initialOnboardingComplete,
   completeOnboarding: () => ipcRenderer.invoke("wuu:onboarding-complete"),
   platform: desktopPlatform,

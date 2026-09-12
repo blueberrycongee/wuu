@@ -20,10 +20,11 @@ let root: Root;
 const callbacks = {
   onSelectAgent: vi.fn(), onSelectRoom: vi.fn(), onManageAgents: vi.fn(), onCreateAgent: vi.fn(),
   onCreateRoom: vi.fn(), onSwitchToHarness: vi.fn(), onOpenSettings: vi.fn(),
+  onToggleCollapsed: vi.fn(),
 };
-function render(rooms: ChannelRoom[] = [dm, group], pinnedRoomIDs: string[] = []) {
+function render(rooms: ChannelRoom[] = [dm, group], pinnedRoomIDs: string[] = [], collapsed = false) {
   act(() => root.render(<WuuUIRoot><CollaborationSidebar initialized agents={[agent, { ...agent, id: "beta", name: "Beta" }]}
-    rooms={rooms} pinnedRoomIDs={pinnedRoomIDs} selectedRoomID="dm" {...callbacks} /></WuuUIRoot>));
+    rooms={rooms} pinnedRoomIDs={pinnedRoomIDs} selectedRoomID="dm" collapsed={collapsed} {...callbacks} /></WuuUIRoot>));
 }
 function rows() { return Array.from(host.querySelectorAll<HTMLButtonElement>("nav button")); }
 beforeEach(() => {
@@ -89,4 +90,36 @@ it("keeps the shared mode switch in the sidebar with Collaboration selected", ()
   const harness = modes.querySelector<HTMLButtonElement>('[aria-pressed="false"]')!;
   act(() => harness.click());
   expect(callbacks.onSwitchToHarness).toHaveBeenCalledOnce();
+});
+
+it("keeps collapsed conversations accessible, selected and unread while exposing expand and creation actions", () => {
+  render([dm, group], ["group"], true);
+  expect(host.querySelector('input[type="search"]')).toBeNull();
+  expect(rows()[0].getAttribute("aria-label")).toContain("Design");
+  expect(rows()[0].getAttribute("aria-label")).toContain("3");
+  expect(rows()[0].querySelector(".collaboration-rail-unread")?.textContent).toBe("3");
+  expect(rows()[1].getAttribute("aria-current")).toBe("page");
+  expect(rows()[1].getAttribute("title")).toBe("Alpha");
+  act(() => rows()[0].click());
+  expect(callbacks.onSelectRoom).toHaveBeenCalledWith("group");
+  const footer = host.querySelector(".collaboration-sidebar-footer")!;
+  act(() => footer.querySelector<HTMLButtonElement>('[title="展开左侧栏"]')?.click());
+  expect(callbacks.onToggleCollapsed).toHaveBeenCalledOnce();
+  const create = footer.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+  act(() => create.click());
+  expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(2);
+});
+
+it("does not let a hidden search filter remove rail shortcuts", () => {
+  render();
+  const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "ALPHA");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(rows()).toHaveLength(1);
+  render([dm, group], [], true);
+  expect(rows()).toHaveLength(3);
+  render();
+  expect(rows()).toHaveLength(1);
 });

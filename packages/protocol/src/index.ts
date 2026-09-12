@@ -815,6 +815,16 @@ export type ChannelRoom = {
   members: ChannelRoomMember[];
   unread_count?: number;
   activity_status?: "idle" | "thinking";
+  /** Latest public message excerpt (at most 240 characters), without attachment payloads. */
+  last_message?: {
+    id: string;
+    author_type: "human" | "agent";
+    author_id: string;
+    kind: "text" | "task" | "system";
+    body: string;
+    has_attachments: boolean;
+    created_at: string;
+  };
 };
 
 export type ChannelAgentCreationProposal = {
@@ -2727,7 +2737,18 @@ export type SpeechRecognitionStartResult =
   | { ok: true; session_id: string }
   | { ok: false; error: string };
 
+export type SessionInspectorExpansionResult = {
+  expanded: boolean;
+  /** Actual added width in renderer CSS pixels (including native rounding). */
+  panelWidth: number;
+  reason?: "insufficient-space" | "unsupported-window";
+};
+
 export type WuuDesktopApi = {
+  /** Desktop-only right-edge extension. Repeated opens do not add width;
+   * closing preserves the user's current position and removes the extension.
+   * Hosts without native window control omit this method. */
+  setSessionInspectorExpansion?: (params: { open: boolean; width?: number }) => Promise<SessionInspectorExpansionResult>;
   /** Host operations that this adapter cannot perform. Omitted means the
    * desktop contract; renderers must hide or disable unavailable actions. */
   unsupportedMethods?: readonly (keyof WuuDesktopApi)[];

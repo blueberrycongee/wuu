@@ -342,6 +342,7 @@ function useLiveWidthWriter(write: (width: number) => void): LiveWidthWriter {
 export function useAppLayoutState({
   layoutRootRef,
   settingsLayoutRootRef,
+  viewportWidth,
   onCloseProjectMenu
 }: {
   layoutRootRef?: RefObject<HTMLElement | null>;
@@ -349,6 +350,8 @@ export function useAppLayoutState({
   // same sidebar width/collapse state. Live drag writes must land on
   // whichever root is currently mounted, so both refs are consulted.
   settingsLayoutRootRef?: RefObject<HTMLElement | null>;
+  // A native right-hand extension must not change the existing workspace layout.
+  viewportWidth?: number;
   onCloseProjectMenu: () => void;
 }): {
   compactNavigation: boolean;
@@ -381,7 +384,8 @@ export function useAppLayoutState({
   resetSplitPercent: () => void;
 } {
   const [sidebarPreferredWidth, setSidebarPreferredWidth] = useState(initialSidebarWidth);
-  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const [observedWindowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const windowWidth = viewportWidth ?? observedWindowWidth;
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(initialSidebarCollapsed);
   const [resizingSidebar, setResizingSidebar] = useState(false);
   const [sidebarAnimating, setSidebarAnimating] = useState(false);
@@ -740,6 +744,7 @@ export function useAppLayoutState({
 
   useEffect(() => {
     function handleResize(): void {
+      if (viewportWidth !== undefined) return;
       const nextWindowWidth = window.innerWidth;
       setWindowWidth(nextWindowWidth);
       const autoCollapseSidebar =
@@ -780,6 +785,7 @@ export function useAppLayoutState({
     sidebarCollapsed,
     sidebarPreferredWidth,
     startSidebarMotion,
+    viewportWidth,
   ]);
 
   // Sidebar / right-panel drags resize the conversation viewport every frame.

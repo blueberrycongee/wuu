@@ -1,4 +1,5 @@
 import { readCatalogSkill } from "./remoteSkills";
+import { createSessionInspectorExpansion } from "./sessionInspectorExpansion";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { PhoneAccess, phonePairLink } from "./phoneAccess";
 import {
@@ -210,7 +211,7 @@ import { requestRemoteProjects } from "./remoteProjects";
 import { requestRemoteTerminal } from "./remoteTerminal";
 import { requestRemoteFiles } from "./remoteFiles";
 import { requestRemoteGit } from "./remoteGit";
-import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
+import { isAllowedRendererNavigation, openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
@@ -693,6 +694,10 @@ function scheduleMainWindowBoundsSave(win: BrowserWindow, delay = 200): void {
   }, delay);
 }
 
+const sessionInspectorExpansion = createSessionInspectorExpansion(
+  bounds => screen.getDisplayMatching(bounds).workArea,
+);
+
 function persistMainWindowBoundsNow(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
   // Maximised / fullscreen bounds are full-rect; restoring to them on the
@@ -700,7 +705,7 @@ function persistMainWindowBoundsNow(win: BrowserWindow): void {
   // last non-maximised bounds stay saved.
   if (win.isMinimized()) return;
   if (win.isMaximized() || win.isFullScreen()) return;
-  saveMainWindowBounds(win.getBounds());
+  saveMainWindowBounds(sessionInspectorExpansion.unexpandedBounds(win));
 }
 
 function loadRenderer(window: BrowserWindow): void {
@@ -2448,6 +2453,18 @@ app.whenReady().then(async () => {
       appServerClientPool.rejectServerRequest(id, message);
     },
   );
+  ipcMain.handle("wuu:session-inspector-expansion", (event, payload: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const role = windowRegistry.roleForWindow(event.sender.id);
+    const rendererURL = (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) ||
+      pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+    if (!window || window.isDestroyed() || event.senderFrame !== event.sender.mainFrame ||
+        !isAllowedRendererNavigation(event.senderFrame.url, rendererURL) ||
+        (role !== "main" && role !== "popped-out")) {
+      return { expanded: false, panelWidth: 0, reason: "unsupported-window" };
+    }
+    return sessionInspectorExpansion.set(window, payload);
+  });
   // Embedded browser: the renderer reports the on-screen bounds of the host div
   // while an agent view is taken over (rAF-polled — pure motion isn't caught by
   // ResizeObserver), so main can position the reparented WebContentsView. The
