@@ -338,9 +338,6 @@ func ensureInferenceExecution(ctx context.Context, req ChatRequest, fallbackKind
 	}
 	req.Execution = execution
 	req.Operation = execution.Operation()
-	if lineage := inferenceOperationLineageFromContext(ctx); lineage != nil {
-		lineage.advance(req.Operation.ID)
-	}
 	return req, nil
 }
 
@@ -353,15 +350,20 @@ func EnsureInferenceExecutionContext(ctx context.Context, req ChatRequest, fallb
 
 func bindInferenceJournalContext(ctx context.Context, req ChatRequest) (ChatRequest, error) {
 	journal := InferenceJournalFromContext(ctx)
-	if journal == nil {
-		return req, nil
+	if journal != nil {
+		requestHash, err := InferenceRequestHash(req)
+		if err != nil {
+			return req, err
+		}
+		if err := req.Execution.bindJournal(journal, requestHash); err != nil {
+			return req, err
+		}
 	}
-	requestHash, err := InferenceRequestHash(req)
-	if err != nil {
-		return req, err
-	}
-	if err := req.Execution.bindJournal(journal, requestHash); err != nil {
-		return req, err
+	// Capability probes can allocate an execution without preparing an attempt
+	// (for example unavailable native compaction). Such identities must never
+	// become parents: the next operation's journal requires a persisted parent.
+	if lineage := inferenceOperationLineageFromContext(ctx); lineage != nil {
+		lineage.advance(req.Operation.ID)
 	}
 	return req, nil
 }

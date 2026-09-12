@@ -3,9 +3,56 @@ package providers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
+
+type rejectedLineageJournal struct {
+	InferenceJournal
+}
+
+func (rejectedLineageJournal) PrepareOperation(InferenceOperationJournalRecord) error {
+	return errors.New("journal unavailable")
+}
+
+func TestInferenceLineageDoesNotAdvanceAfterJournalBindFailure(t *testing.T) {
+	ctx := WithInferenceWorkflow(context.Background(), testInferenceWorkflow(WorkflowBudgetSpec{}))
+	root, err := EnsureInferenceAttemptContext(ctx, ChatRequest{}, InferenceOperationAgentRound, InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, lineage := BeginInferenceOperationLineage(WithInferenceJournal(ctx, rejectedLineageJournal{}), root.Operation.ID)
+	_, err = EnsureInferenceAttemptContext(ctx, ChatRequest{}, InferenceOperationCompaction, InferenceProfileContinuationCritical)
+	if err == nil || !strings.Contains(err.Error(), "journal unavailable") {
+		t.Fatalf("expected journal preparation failure, got %v", err)
+	}
+	if got := lineage.LastOperationID(); got != root.Operation.ID {
+		t.Fatalf("failed operation became lineage parent: %q", got)
+	}
+}
+
+func TestInferenceLineageRetryPreservesOperationParentWithoutJournal(t *testing.T) {
+	ctx := WithInferenceWorkflow(context.Background(), testInferenceWorkflow(WorkflowBudgetSpec{}))
+	root, err := EnsureInferenceAttemptContext(ctx, ChatRequest{}, InferenceOperationAgentRound, InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, lineage := BeginInferenceOperationLineage(ctx, root.Operation.ID)
+	req, err := EnsureInferenceAttemptContext(ctx, ChatRequest{}, InferenceOperationCompaction, InferenceProfileContinuationCritical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		req, err = BeginInferenceAttemptContext(ctx, req, InferenceOperationCompaction, InferenceProfileContinuationCritical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Operation.ParentOperationID != root.Operation.ID || lineage.LastOperationID() != req.Operation.ID {
+			t.Fatalf("retry changed parent or lineage: operation=%+v tail=%q", req.Operation, lineage.LastOperationID())
+		}
+	}
+}
 
 // failAfterFirstSubmissionJournal accepts the pre-send submission checkpoint and
 // then fails every subsequent (streaming) UpsertSubmission. It does NOT implement

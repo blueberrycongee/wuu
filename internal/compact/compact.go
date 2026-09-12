@@ -237,7 +237,7 @@ func CompactWithBudgetAndOptions(ctx context.Context, messages []providers.ChatM
 // and quota failures are returned without another provider request.
 func CompactWithNativeOrSummary(ctx context.Context, messages []providers.ChatMessage, client providers.Client, model string, budget Budget, options NativeOptions) ([]providers.ChatMessage, error) {
 	native, ok := client.(providers.NativeCompactor)
-	if !ok {
+	if !ok || !native.NativeCompactionAvailable() {
 		return CompactWithBudgetAndOptions(ctx, messages, client, model, budget, options.ProviderOptions)
 	}
 	req := providers.ChatRequest{
@@ -252,36 +252,80 @@ func CompactWithNativeOrSummary(ctx context.Context, messages []providers.ChatMe
 		Operation:                   providers.EnsureInferenceOperation(providers.InferenceOperation{}, providers.InferenceOperationCompaction, providers.InferenceProfileContinuationCritical),
 	}
 	var err error
-	req, err = providers.EnsureInferenceExecutionContext(ctx, req, providers.InferenceOperationCompaction, providers.InferenceProfileContinuationCritical)
-	if err != nil {
-		return messages, err
-	}
 	for attempt := 0; attempt < 2; attempt++ {
+		if !req.Attempt.Valid() {
+			req, err = providers.PrepareInferenceAttemptContext(ctx, client, req, providers.InferenceOperationCompaction, providers.InferenceProfileContinuationCritical)
+			if err != nil {
+				return messages, finishNativeCompaction(req, err)
+			}
+		}
 		result, nativeErr := native.NativeCompact(ctx, req)
 		if nativeErr == nil {
 			if len(result.Replacement) == 0 {
-				return messages, errors.New("native compaction returned empty replacement history")
+				nativeErr = errors.New("native compaction returned empty replacement history")
+			} else {
+				if err := req.Attempt.Complete(providers.InferenceOutcomeSucceeded, providers.NormalizedFailure{}); err != nil {
+					return messages, finishNativeCompaction(req, err)
+				}
+				if err := req.Execution.Complete(providers.InferenceOutcomeSucceeded, providers.NormalizedFailure{}); err != nil {
+					return messages, err
+				}
+				return result.Replacement, nil
 			}
-			return result.Replacement, nil
 		}
 		err = nativeErr
+		failure := providers.NormalizeFailure(err)
+		outcome := providers.InferenceOutcomeFailed
+		if failure.Category == providers.FailureCanceled || failure.Category == providers.FailureDeadline {
+			outcome = providers.InferenceOutcomeCanceled
+		}
+		if attemptErr := req.Attempt.Complete(outcome, failure); attemptErr != nil {
+			err = errors.Join(err, attemptErr)
+			break
+		}
 		if errors.Is(err, providers.ErrNativeCompactionUnavailable) {
 			break
 		}
 		if ctx.Err() != nil {
-			return messages, ctx.Err()
+			return messages, finishNativeCompaction(req, ctx.Err())
 		}
-		failure := providers.NormalizeFailure(err)
 		switch failure.Category {
 		case providers.FailureAuthentication, providers.FailureQuota, providers.FailureCanceled:
-			return messages, err
+			return messages, finishNativeCompaction(req, err)
 		}
-		if !providers.IsRetryable(err) {
+		if !providers.IsRetryable(err) || attempt == 1 {
 			break
+		}
+		nextAttempt, recoveryErr := req.Attempt.PrepareRecoveryAttempt(ctx, providers.PlanRecovery(failure), time.Time{})
+		if recoveryErr != nil {
+			err = errors.Join(err, recoveryErr)
+			break
+		}
+		req.Attempt = nextAttempt
+	}
+	if req.Execution != nil {
+		failure := providers.NormalizeFailure(err)
+		if completeErr := req.Execution.Complete(providers.InferenceOutcomeFailed, failure); completeErr != nil {
+			return messages, errors.Join(err, completeErr)
 		}
 	}
 	providers.DebugLogf("native compaction unavailable after attempt, using portable summary: %v", err)
 	return CompactWithBudgetAndOptions(ctx, messages, client, model, budget, options.ProviderOptions)
+}
+
+func finishNativeCompaction(req providers.ChatRequest, err error) error {
+	if err == nil || req.Execution == nil {
+		return err
+	}
+	failure := providers.NormalizeFailure(err)
+	outcome := providers.InferenceOutcomeFailed
+	if failure.Category == providers.FailureCanceled || failure.Category == providers.FailureDeadline {
+		outcome = providers.InferenceOutcomeCanceled
+	}
+	if completeErr := req.Execution.Complete(outcome, failure); completeErr != nil {
+		return errors.Join(err, completeErr)
+	}
+	return err
 }
 
 type compactionPlan struct {

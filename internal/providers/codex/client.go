@@ -183,26 +183,21 @@ func (c *Client) PrepareInferenceRequest(ctx context.Context, req providers.Chat
 
 // NativeCompact invokes Codex Remote Compaction V2 over the normal Responses
 // stream. It never calls the legacy /responses/compact endpoint.
+func (c *Client) NativeCompactionAvailable() bool {
+	return c != nil && c.nativeCompaction
+}
+
 func (c *Client) NativeCompact(ctx context.Context, req providers.ChatRequest) (providers.NativeCompactionResult, error) {
 	if !c.nativeCompaction {
 		return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
 	}
-	client, creds, err := c.openAIClient(ctx, false)
+	client, _, err := c.openAIClient(ctx, false)
 	if err != nil {
 		return providers.NativeCompactionResult{}, err
 	}
 	req = codexRequest(req)
-	req.ProviderStateScope = codexNativeCompactionScope(c.baseURL, req.Model, creds)
 	req.Messages = providers.ResolveProviderHistory(req.Messages, req.Provider, req.ProviderStateScope)
 	item, usage, err := client.CompactResponsesV2(ctx, req)
-	if err != nil && providers.IsAuthError(err) && creds.refreshable {
-		client, creds, err = c.openAIClient(ctx, true)
-		if err == nil {
-			req.ProviderStateScope = codexNativeCompactionScope(c.baseURL, req.Model, creds)
-			req.Messages = providers.ResolveProviderHistory(req.Messages, req.Provider, req.ProviderStateScope)
-			item, usage, err = client.CompactResponsesV2(ctx, req)
-		}
-	}
 	if err != nil {
 		return providers.NativeCompactionResult{}, err
 	}

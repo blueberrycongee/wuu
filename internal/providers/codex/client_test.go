@@ -557,6 +557,63 @@ func TestCompactWithCodexClientUsesNormalResponsesEndpoint(t *testing.T) {
 	}
 }
 
+func TestNativeCompactionPreparesInferenceAttemptBeforeSubmission(t *testing.T) {
+	token := fakeJWT(t, time.Now().Add(time.Hour), "acct_native_compact")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("path = %q, want /responses", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		input, ok := body["input"].([]any)
+		if !ok || len(input) == 0 {
+			t.Fatalf("missing native compact input: %#v", body["input"])
+		}
+		trigger, _ := input[len(input)-1].(map[string]any)
+		if trigger["type"] != "compaction_trigger" {
+			t.Fatalf("last input = %#v, want compaction_trigger", trigger)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_item.done\n" +
+			"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"cmp_1\",\"type\":\"compaction\",\"status\":\"completed\",\"encrypted_content\":\"opaque\"},\"output_index\":0}\n\n" +
+			"event: response.completed\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{
+		BaseURL:         server.URL,
+		APIKey:          token,
+		HTTPClient:      server.Client(),
+		StreamTransport: providers.StreamTransportSSE,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "first reply"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "second reply"},
+	}
+	result, err := compact.CompactWithNativeOrSummary(
+		providers.WithInferenceJournal(context.Background(), codexJournal{}),
+		messages,
+		client,
+		"gpt-5-codex",
+		compact.Budget{ContextTokens: 100_000, KeepRecentTokens: 1},
+		compact.NativeOptions{Provider: "openai-codex"},
+	)
+	if err != nil {
+		t.Fatalf("native compact: %v", err)
+	}
+	if len(result) != 1 || len(result[0].ProviderItems) != 1 || result[0].ProviderItems[0].Type != "compaction" {
+		t.Fatalf("unexpected native replacement: %#v", result)
+	}
+}
+
 func TestCodexRequestAppliesDefaultsButAllowsOverride(t *testing.T) {
 	// Empty ProviderOptions: defaults are filled in.
 	out := codexRequest(providers.ChatRequest{})

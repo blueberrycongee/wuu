@@ -21,6 +21,24 @@ func prepareInferenceRequest(ctx context.Context, client Client, req ChatRequest
 	return preparer.PrepareInferenceRequest(ctx, req)
 }
 
+// PrepareInferenceAttemptContext applies provider-specific wire shaping before
+// durably binding the operation and its first attempt. Specialized inference
+// executors, such as provider-native compaction, use this when they submit
+// through a protocol path other than Client.Chat.
+func PrepareInferenceAttemptContext(
+	ctx context.Context,
+	client Client,
+	req ChatRequest,
+	kind InferenceOperationKind,
+	profile InferenceWorkloadProfile,
+) (ChatRequest, error) {
+	prepared, err := prepareInferenceRequest(ctx, client, req)
+	if err != nil {
+		return prepared, err
+	}
+	return EnsureInferenceAttemptContext(ctx, prepared, kind, profile)
+}
+
 // ExecuteChat owns one complete unary operation attempt. Protocol clients are
 // responsible only for one physical send; this executor owns durable prepare,
 // terminal attempt, and terminal operation transitions.
@@ -120,12 +138,7 @@ func ExecuteChatAttempt(
 	if client == nil {
 		return ChatResponse{}, ChatRequest{}, errors.New("chat client is required")
 	}
-	var err error
-	req, err = prepareInferenceRequest(ctx, client, req)
-	if err != nil {
-		return ChatResponse{}, req, completePreparedAttemptError(req, err)
-	}
-	prepared, err := EnsureInferenceAttemptContext(ctx, req, kind, profile)
+	prepared, err := PrepareInferenceAttemptContext(ctx, client, req, kind, profile)
 	if err != nil {
 		return ChatResponse{}, prepared, completePreparedAttemptError(prepared, err)
 	}

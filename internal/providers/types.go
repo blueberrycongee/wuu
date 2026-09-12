@@ -692,9 +692,11 @@ type NativeCompactionResult struct {
 	ProviderStateScope string
 }
 
-// NativeCompactor is an optional provider capability. Implementations must not
-// replace caller history until they return a successful result.
+// NativeCompactor is an optional provider capability. NativeCompact receives a
+// provider-normalized request with a valid inference attempt. Implementations
+// must not replace caller history until they return a successful result.
 type NativeCompactor interface {
+	NativeCompactionAvailable() bool
 	NativeCompact(ctx context.Context, req ChatRequest) (NativeCompactionResult, error)
 }
 
