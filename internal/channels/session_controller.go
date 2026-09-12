@@ -322,6 +322,17 @@ func (s *Service) AdmitCollaborationSession(ctx context.Context, sessionRef stri
 	if binding.State != CollaborationSessionIdle && binding.State != CollaborationSessionQueued && binding.State != CollaborationSessionCompleted && binding.State != CollaborationSessionWaiting {
 		return CollaborationSessionBinding{}, fmt.Errorf("%w: session must be idle, queued, waiting or completed before admission", ErrConflict)
 	}
+	var work *Work
+	if binding.WorkID != "" {
+		current, err := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id=?`, binding.WorkID))
+		if err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+		work = &current
+	}
+	if err := s.checkCollaborationTokenBudgetTx(ctx, tx, binding.RoomID, work); err != nil {
+		return CollaborationSessionBinding{}, err
+	}
 	identityCount, roomCount, globalCount, err := activeCollaborationCountsTx(ctx, tx, binding.PrincipalID, binding.RoomID, binding.SessionRef)
 	if err != nil {
 		return CollaborationSessionBinding{}, err

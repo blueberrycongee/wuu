@@ -220,6 +220,12 @@ func TestIdentityWorkSettlementPersistsUsageAndBudgetAcrossRestart(t *testing.T)
 		t.Fatal(err)
 	}
 	params := CollaborationSessionSettleParams{SessionRef: binding.SessionRef, TurnID: "measured", State: CollaborationSessionIdle, Result: "Recorded evidence", InputTokens: 120, OutputTokens: 30, Provider: "test", Model: "test"}
+	// Reproduce the existing provenance table before turn-level usage columns.
+	for _, column := range []string{"input_tokens", "output_tokens"} {
+		if _, err := s.db.Exec(`ALTER TABLE collaboration_turn_scopes DROP COLUMN ` + column); err != nil {
+			t.Fatal(err)
+		}
+	}
 	dir := s.dir
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -238,6 +244,14 @@ func TestIdentityWorkSettlementPersistsUsageAndBudgetAcrossRestart(t *testing.T)
 	if err != nil || len(work.Runs) != 1 || work.Runs[0].State != WorkRunCompleted || work.Runs[0].InputTokens != 120 || work.Runs[0].OutputTokens != 30 {
 		t.Fatalf("recovered settlement lost or duplicated usage: %+v %v", work.Runs, err)
 	}
+	scope, err := reopened.LookupCollaborationTurnScope(ctx, binding.SessionRef, "measured")
+	if err != nil || scope.InputTokens != 120 || scope.OutputTokens != 30 {
+		t.Fatalf("turn usage was not persisted: %+v %v", scope, err)
+	}
+	diagnostics, err := reopened.GetWorkDiagnostics(ctx, work.RoomID)
+	if err != nil || diagnostics.InputTokens != 120 || diagnostics.OutputTokens != 30 {
+		t.Fatalf("diagnostics duplicated the run's mirrored turn usage: %+v %v", diagnostics, err)
+	}
 	client, err := reopened.BindAgent(ctx, agent.Agent.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +259,113 @@ func TestIdentityWorkSettlementPersistsUsageAndBudgetAcrossRestart(t *testing.T)
 	reopened.roomInputTokenLimit = 100
 	if _, err := client.StartWorkRun(ctx, WorkRunStartParams{WorkID: task.ID, Kind: WorkRunProducer}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("accounted usage did not enforce the room budget: %v", err)
+	}
+}
+
+func TestIdentityResultTurnWithoutRunConsumesBudget(t *testing.T) {
+	for _, budget := range []string{"work_input", "work_output", "room_input", "room_output"} {
+		t.Run(budget, func(t *testing.T) {
+			ctx := context.Background()
+			s, client, agent, room, task := newIdentityTaskFixture(t)
+			policy := WorkPolicyUpdateParams{WorkID: task.ID, MaxVerifierAttempts: 1, MaxCandidates: 1}
+			switch budget {
+			case "work_input":
+				policy.MaxInputTokens = 120
+			case "work_output":
+				policy.MaxOutputTokens = 30
+			case "room_input":
+				s.roomInputTokenLimit = 120
+			case "room_output":
+				s.roomOutputTokenLimit = 30
+			}
+			if _, err := client.UpdateWorkPolicy(ctx, policy); err != nil {
+				t.Fatal(err)
+			}
+			owner, binding := prepareIdentityTestTurn(t, s, agent.Agent.ID)
+			run, err := owner.StartWorkRun(ctx, WorkRunStartParams{WorkID: task.ID, Kind: WorkRunProducer})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := owner.AttachWorkRunTurn(ctx, WorkRunTurnParams{WorkID: task.ID, RunID: run.ID, TurnID: "dispatch"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.SettleCollaborationSession(ctx, CollaborationSessionSettleParams{SessionRef: binding.SessionRef, TurnID: "dispatch", State: CollaborationSessionIdle, Result: "Dispatched independent investigation", InputTokens: 20, OutputTokens: 5}); err != nil {
+				t.Fatal(err)
+			}
+			enqueue := func(requestID string) {
+				t.Helper()
+				result, err := s.EnqueueSessionResult(ctx, SessionResultEnqueueParams{ParentSessionRef: binding.SessionRef, ParentTurnID: "dispatch", SourceSessionRef: "temporary-investigator", RequestID: requestID, Body: "Returned evidence"})
+				if err != nil || result.Discarded || result.Message == nil || result.Message.Kind != CollaborationPeerResult {
+					t.Fatalf("enqueue child result: %+v %v", result, err)
+				}
+			}
+			enqueue("first-result")
+			owner, resultBinding := prepareIdentityTestTurn(t, s, agent.Agent.ID)
+			if resultBinding.WorkID != task.ID || resultBinding.RunID != "" {
+				t.Fatalf("result processing lost its work or created another run: %+v", resultBinding)
+			}
+			if _, err := owner.UpdateCollaborationSessionState(ctx, CollaborationSessionStateParams{SessionRef: binding.SessionRef, State: CollaborationSessionRunning, TurnID: "integrate-result"}); err != nil {
+				t.Fatal(err)
+			}
+			settle := CollaborationSessionSettleParams{SessionRef: binding.SessionRef, TurnID: "integrate-result", State: CollaborationSessionIdle, Result: "Integrated returned evidence", InputTokens: 100, OutputTokens: 25}
+			for range 2 {
+				if _, err := s.SettleCollaborationSession(ctx, settle); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dir := s.dir
+			inputLimit, outputLimit := s.roomInputTokenLimit, s.roomOutputTokenLimit
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err = Open(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			s.roomInputTokenLimit, s.roomOutputTokenLimit = inputLimit, outputLimit
+			if _, err := s.SettleCollaborationSession(ctx, settle); err != nil {
+				t.Fatalf("replay after restart: %v", err)
+			}
+			scope, err := s.LookupCollaborationTurnScope(ctx, binding.SessionRef, settle.TurnID)
+			if err != nil || scope.RunID != "" || scope.WorkID != task.ID || scope.InputTokens != 100 || scope.OutputTokens != 25 {
+				t.Fatalf("result turn usage lost after restart: %+v %v", scope, err)
+			}
+			otherRoom := createTestRoom(t, s, agent)
+			for _, roomID := range []string{room.ID, "", otherRoom.ID} {
+				diagnostics, err := s.GetWorkDiagnostics(ctx, roomID)
+				wantInput, wantOutput := int64(120), int64(30)
+				if roomID == otherRoom.ID {
+					wantInput, wantOutput = 0, 0
+				}
+				if err != nil || diagnostics.InputTokens != wantInput || diagnostics.OutputTokens != wantOutput {
+					t.Fatalf("diagnostics room=%q: %+v %v", roomID, diagnostics, err)
+				}
+			}
+			client, err = s.BindAgent(ctx, agent.Agent.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.StartWorkRun(ctx, WorkRunStartParams{WorkID: task.ID, Kind: WorkRunProducer}); !errors.Is(err, ErrConflict) {
+				t.Fatalf("new run bypassed result processing usage: %v", err)
+			}
+			enqueue("second-result")
+			runtime, err := s.GetAgentRuntime(ctx, agent.Agent.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next, ready, err := s.PrepareIdentityConversation(ctx, runtime, CollaborationSessionBindParams{})
+			if err != nil || !ready || next.WorkID != task.ID || next.RunID != "" {
+				t.Fatalf("prepare next result: %+v %v %v", next, ready, err)
+			}
+			if _, err := s.AdmitCollaborationSession(ctx, next.SessionRef); !errors.Is(err, ErrConflict) {
+				t.Fatalf("result-only admission bypassed consumed budget: %v", err)
+			}
+			work, err := client.GetWork(ctx, task.ID)
+			if err != nil || len(work.Runs) != 1 {
+				t.Fatalf("result processing changed run history: %+v %v", work.Runs, err)
+			}
+		})
 	}
 }
 
