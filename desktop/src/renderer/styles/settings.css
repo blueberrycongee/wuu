@@ -1278,7 +1278,7 @@
   display: block;
   overflow: hidden;
   width: 100%;
-  height: 76px;
+  aspect-ratio: 4 / 3;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   transition:

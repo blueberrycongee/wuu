@@ -56,7 +56,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
   gap: 20px;
 }
 .settings-theme-card { gap: 12px; }
-.settings-theme-preview { height: clamp(76px, 10vw, 120px); border-radius: var(--radius-lg); }
+.settings-theme-preview { border-radius: var(--radius-lg); }
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   font-size: var(--conversation-message-font-size, 14px);
