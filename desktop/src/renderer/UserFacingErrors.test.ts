@@ -2,11 +2,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ThreadItem, Turn, TurnError } from "../shared/protocol";
 import { turnEventForItem, turnEventForTurn } from "./TurnEvents";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
-import { setActiveLocale } from "./i18n";
+import { setActiveLocale, translateCurrent as t } from "./i18n";
 
 afterEach(() => setActiveLocale("zh-CN"));
 
 describe("userFacingErrorForMessage", () => {
+  it.each(["zh-CN", "en-US"] as const)("distinguishes empty replies from generic provider errors in %s", (locale) => {
+    setActiveLocale(locale);
+    const message = "model returned empty answer (stop_reason=completed)";
+    const live = userFacingErrorForMessage({ message, category: "provider" }, "turn");
+    const restored = userFacingErrorForMessage(message, "turn");
+    expect(live).toEqual(restored);
+    expect(live.title).toBe(t("error.modelEmpty"));
+    expect(live.detail).toBe(t("error.modelEmptyDetail"));
+    expect(live.title).not.toBe(t("error.modelError"));
+    expect(live.detail).not.toBe(t("error.providerDetail"));
+    expect(live.diagnostic).toBe(message);
+  });
   it("classifies wrapped context overflow as a provider error", () => {
     const display = userFacingErrorForMessage(
       "stream request failed: stream error (context_length_exceeded): Your input exceeds the context window",

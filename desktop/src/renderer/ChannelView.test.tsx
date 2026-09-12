@@ -7,6 +7,7 @@ import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
 import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
 import { clearToasts, ToastViewport } from "./Toast";
+import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 let container: HTMLDivElement;
@@ -1860,13 +1861,15 @@ describe("ChannelView", () => {
   it.each(["failed", "interrupted"] as const)("offers session recovery for a %s reply and scopes it to that response", async (state) => {
     const api = createApi();
     api.resumeChannelSession = vi.fn().mockResolvedValue({});
-    api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: [], responses: room_id === "room-1" ? [{ id: "failed-reply", room_id, agent_id: "agent-2", session_ref: "beta-room-session", turn_id: "turn-failed", state, body: "Partial answer", error: "Provider unavailable", created_at: "2026-07-23T00:03:00Z" }] : [] }));
+    const rawError = "model returned empty answer (stop_reason=completed)";
+    api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: [], responses: room_id === "room-1" ? [{ id: "failed-reply", room_id, agent_id: "agent-2", session_ref: "beta-room-session", turn_id: "turn-failed", state, body: "Partial answer", error: rawError, created_at: "2026-07-23T00:03:00Z" }] : [] }));
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
     act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
     await settle();
     const alert = container.querySelector(".channel-activity-region [role=alert]");
-    expect(alert?.textContent).toContain("Provider unavailable");
+    expect(alert?.textContent).toContain(userFacingErrorForMessage(rawError, "turn").title);
+    expect(alert?.textContent).not.toContain(rawError);
     expect(container.textContent).not.toContain("Partial answer");
     expect(container.querySelector(".channel-message-stream [role=alert]")).toBeNull();
     await act(async () => alert?.querySelector<HTMLButtonElement>("button:not(.channel-activity-inspect)")?.click());

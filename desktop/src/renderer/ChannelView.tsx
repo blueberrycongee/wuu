@@ -39,6 +39,7 @@ import { SidebarNameDialog } from "./SidebarNameDialog";
 import { RichContent } from "./RichContent";
 import { effortLabel, providerModelEffortOptions } from "./RuntimeHelpers";
 import { showErrorToast, toastErrorMessage } from "./Toast";
+import { userFacingErrorForMessage } from "./UserFacingErrors";
 
 type SetupPanel = "agent" | "room" | "task" | null;
 type RoomMemberMode = "add" | null;
@@ -505,6 +506,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, onResume, onInspec
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState("");
   const failed = state === "failed" || state === "interrupted";
+  const errorDisplay = failed && error ? userFacingErrorForMessage(error, "turn") : undefined;
   const status = state === "thinking" || state === "responding"
     ? t("channels.agentWorking") : t(`channels.sessions.state.${state}`);
   const resume = async (): Promise<void> => {
@@ -530,7 +532,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, onResume, onInspec
         <span>{status}</span>
       </span>
       </button>
-      {failed && error ? <span className="channel-response-error">{error}</span> : null}
+      {errorDisplay ? <span className="channel-response-error" title={errorDisplay.detail}>{errorDisplay.title}</span> : null}
       {failed && onResume ? <button type="button" disabled={resuming} onClick={() => void resume()}>{t(resuming ? "channels.sessions.starting" : state === "interrupted" ? "channels.sessions.resume" : "channels.sessions.retry")}</button> : null}
       {resumeError ? <span className="channel-response-error">{resumeError}</span> : null}
     </div>

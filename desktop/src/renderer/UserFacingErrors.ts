@@ -27,6 +27,7 @@ export type UserFacingErrorDisplay = {
   tone: UserFacingErrorTone;
   title: string;
   detail: string;
+  diagnostic?: string;
 };
 
 export function rawErrorMessage(error: unknown, fallback = ""): string {
@@ -181,8 +182,8 @@ function extractSpecificDisplay(
       if (lower.includes("content policy") || lower.includes("content_policy")) return { title: t("error.contentPolicy") };
       if (lower.includes("rate_limit") || lower.includes("rate limit")) return { title: t("error.rateLimited") };
       if (lower.includes("model_not_found")) return { title: t("error.modelNotFound") };
-      if (lower.includes("model returned")) return { title: t("error.modelError") };
       if (lower.includes("empty response") || lower.includes("empty answer")) return { title: t("error.modelEmpty") };
+      if (lower.includes("model returned")) return { title: t("error.modelError") };
       if (lower.includes("response failed") || lower.includes("response error")) return { title: t("error.responseFailed") };
       if (lower.includes("invalid_request_error")) return { title: t("error.invalidRequest") };
       return {};
@@ -286,6 +287,7 @@ export function userFacingErrorForMessage(
     tone: toneForCategory(category),
     title,
     detail,
+    diagnostic: message || undefined,
   };
 }
 
@@ -352,6 +354,9 @@ function specificDetailForMessage(
   category: UserFacingErrorCategory,
 ): string | undefined {
   const normalized = message.toLowerCase();
+  if (category === "provider" && (normalized.includes("empty response") || normalized.includes("empty answer"))) {
+    return t("error.modelEmptyDetail");
+  }
   if (
     (category === "provider" || category === "network") &&
     isResponseCompletedMissingMessage(normalized)

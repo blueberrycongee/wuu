@@ -107,8 +107,7 @@ export function TurnNotice({
     <SystemEventNotice
       event={{
         label: display.title,
-        detail: display.detail,
-        expandedDetail: display.detail,
+        expandedDetail: [display.detail, display.diagnostic].filter(Boolean).join("\n\n"),
         tone: display.tone,
       }}
     />

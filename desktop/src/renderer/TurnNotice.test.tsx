@@ -286,10 +286,12 @@ describe("TurnNotice process row", () => {
     expect(aside).not.toBeNull();
     expect(aside?.querySelector(".process-surface-row")).not.toBeNull();
     expect(aside?.querySelector(".system-event-title")?.textContent).toBe(display.title);
-    expect(aside?.querySelector(".system-event-detail")?.textContent).toBe(display.detail);
-    expect(aside?.querySelector(".system-event-expanded-detail")?.textContent).toBe(display.detail);
+    expect(aside?.querySelector("summary")?.textContent).not.toContain(display.detail);
+    expect(aside?.querySelector("summary")?.textContent).not.toContain(display.diagnostic);
+    expect(aside?.querySelector("details")?.open).toBe(false);
+    expect(aside?.querySelector(".system-event-expanded-detail")?.textContent).toContain(display.detail);
+    expect(aside?.querySelector(".system-event-expanded-detail")?.textContent).toContain(display.diagnostic);
     expect(aside?.getAttribute("aria-label")).toContain(display.title);
-    expect(aside?.getAttribute("aria-label")).toContain(display.detail);
     expect(aside?.querySelector(".process-surface-chevron")).not.toBeNull();
   });
 

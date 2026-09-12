@@ -2644,7 +2644,7 @@
 
 .system-event-expanded-detail {
   min-width: 0;
-  white-space: normal;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: var(--conversation-process-font-size);
   line-height: var(--conversation-process-line-height);
