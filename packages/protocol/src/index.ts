@@ -1279,7 +1279,6 @@ export type RuntimeAdvancedSettingsUpdate = {
   disable_auto_compact?: boolean;
   provider_context_window?: number;
   model_aliases?: Record<string, ModelAliasSummary>;
-  coordination_model?: ModelAliasSummary;
   verification_model?: ModelAliasSummary;
 };
 

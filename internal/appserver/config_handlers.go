@@ -965,9 +965,8 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
-	coordinationModel := modelRoleConfigUpdate(params.CoordinationModel)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || coordinationModel != nil || verificationModel != nil {
+	if modelAliases != nil || verificationModel != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -979,9 +978,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 					candidate.Agent.ModelAliases[name] = *alias
 				}
 			}
-		}
-		if coordinationModel != nil {
-			candidate.Agent.ModelRoles.Coordination = *coordinationModel
 		}
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
@@ -999,7 +995,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		DisableAutoCompact:      params.DisableAutoCompact,
 		ProviderContextWindow:   params.ProviderContextWindow,
 		ModelAliases:            modelAliases,
-		CoordinationModel:       coordinationModel,
 		VerificationModel:       verificationModel,
 	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)

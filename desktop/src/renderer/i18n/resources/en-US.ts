@@ -148,8 +148,6 @@ export const enUS = {
   "settings.navigation": "Settings",
   "settings.providers": "Model providers",
   "settings.collaboration": "Collaboration models",
-  "settings.coordinationModel": "Group coordination model",
-  "settings.coordinationModelDescription": "Understands room messages, decides when work should be tracked, and assigns it. Inherits the Wuu default model when unset.",
   "settings.verificationModel": "Delivery quality check model",
   "settings.verificationModelDescription": "Checks concrete task results in an independent context before delivery. Inherits the Wuu default model when unset.",
   "settings.collaborationInheritDefault": "Inherit Wuu default model",

@@ -146,8 +146,6 @@ export const zhCN = {
   "settings.navigation": "设置",
   "settings.providers": "模型服务",
   "settings.collaboration": "协作模型",
-  "settings.coordinationModel": "群聊协调模型",
-  "settings.coordinationModelDescription": "用于理解群消息、判断是否形成任务并分配工作。留空时继承 Wuu 默认模型。",
   "settings.verificationModel": "交付质量检查模型",
   "settings.verificationModelDescription": "用于在具体任务交付前进行独立上下文检查。留空时继承 Wuu 默认模型。",
   "settings.collaborationInheritDefault": "继承 Wuu 默认模型",

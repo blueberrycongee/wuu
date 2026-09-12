@@ -1702,26 +1702,13 @@ function SettingsCollaborationPage({
     const role = initialized?.model_roles?.find((candidate) => candidate.role === name);
     return role && !role.inherited ? `${role.provider}\u0000${role.model}` : "";
   };
-  const saveRole = (field: "coordination_model" | "verification_model", value: string): void => {
+  const saveRole = (value: string): void => {
     const [provider = "", model = ""] = value.split("\u0000");
-    void onSave({ [field]: { provider, model } });
+    void onSave({ verification_model: { provider, model } });
   };
   return (
     <SettingsSection testID="settings-collaboration">
       <SettingsCard>
-        <SettingsRow
-          title={t("settings.coordinationModel")}
-          hint={t("settings.coordinationModelDescription")}
-        >
-          <SelectMenu
-            triggerClassName="settings-select-trigger"
-            ariaLabel={t("settings.coordinationModel")}
-            value={roleValue("coordination")}
-            options={options}
-            disabled={running || !initialized}
-            onChange={(value) => saveRole("coordination_model", value)}
-          />
-        </SettingsRow>
         <SettingsRow
           title={t("settings.verificationModel")}
           hint={t("settings.verificationModelDescription")}
@@ -1732,7 +1719,7 @@ function SettingsCollaborationPage({
             value={roleValue("verification")}
             options={options}
             disabled={running || !initialized}
-            onChange={(value) => saveRole("verification_model", value)}
+            onChange={saveRole}
           />
         </SettingsRow>
       </SettingsCard>

@@ -17,7 +17,6 @@ type Role string
 const (
 	RoleMain         Role = "main"
 	RoleReview       Role = "review"
-	RoleCoordination Role = "coordination"
 	RoleVerification Role = "verification"
 	RoleCompact      Role = "compact"
 	RoleTitle        Role = "title"
@@ -28,7 +27,6 @@ const (
 var orderedRoles = []Role{
 	RoleMain,
 	RoleReview,
-	RoleCoordination,
 	RoleVerification,
 	RoleCompact,
 	RoleTitle,
@@ -47,7 +45,6 @@ type ResolveOptions struct {
 type Set struct {
 	Main         Selection
 	Review       Selection
-	Coordination Selection
 	Verification Selection
 	Compact      Selection
 	Title        Selection
@@ -136,8 +133,6 @@ func (s Set) ForRole(role Role) Selection {
 		return s.Main
 	case RoleReview:
 		return s.Review
-	case RoleCoordination:
-		return s.Coordination
 	case RoleVerification:
 		return s.Verification
 	case RoleCompact:
@@ -189,10 +184,6 @@ func Resolve(cfg config.Config, opts ResolveOptions) (Set, error) {
 	set := Set{Main: main}
 	var resolveErr error
 	set.Review, resolveErr = resolveConfiguredRole(cfg, RoleReview, cfg.Agent.ModelRoles.Review, main)
-	if resolveErr != nil {
-		return Set{}, resolveErr
-	}
-	set.Coordination, resolveErr = resolveConfiguredRole(cfg, RoleCoordination, cfg.Agent.ModelRoles.Coordination, main)
 	if resolveErr != nil {
 		return Set{}, resolveErr
 	}

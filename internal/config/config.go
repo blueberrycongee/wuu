@@ -393,7 +393,6 @@ func (a AgentConfig) MaxParallelValue() int {
 // configs.
 type ModelRolesConfig struct {
 	Review       ModelRoleConfig `json:"review,omitempty"`
-	Coordination ModelRoleConfig `json:"coordination,omitempty"`
 	Verification ModelRoleConfig `json:"verification,omitempty"`
 	Compact      ModelRoleConfig `json:"compact,omitempty"`
 	Title        ModelRoleConfig `json:"title,omitempty"`
@@ -424,7 +423,6 @@ type AdvancedRuntimeUpdate struct {
 	// clears any existing aliases and writes only the entries with non-nil
 	// values. Settings uses this to add, edit, and delete aliases in one call.
 	ModelAliases      map[string]*ModelRoleConfig
-	CoordinationModel *ModelRoleConfig
 	VerificationModel *ModelRoleConfig
 }
 
@@ -603,10 +601,10 @@ func stripLegacyPermissionKeys(data []byte) []byte {
 			delete(agent, key)
 		}
 		if roles, _ := agent["model_roles"].(map[string]any); roles != nil {
-			// The Memory plugin now selects ordinary private-session model aliases;
-			// the retired core-only role is accepted but discarded on migration.
+			// Retired core-only roles are accepted at the load boundary so an old
+			// model selection cannot prevent startup after its runtime is removed.
 			for key := range roles {
-				if strings.EqualFold(key, "memory") {
+				if strings.EqualFold(key, "memory") || strings.EqualFold(key, "coordination") {
 					delete(roles, key)
 				}
 			}
@@ -845,7 +843,6 @@ func engineExplicitlyDisabled(engine *EngineBinaryConfig) bool {
 func validateModelRolesConfig(c Config) error {
 	roles := map[string]ModelRoleConfig{
 		"review":       c.Agent.ModelRoles.Review,
-		"coordination": c.Agent.ModelRoles.Coordination,
 		"verification": c.Agent.ModelRoles.Verification,
 		"compact":      c.Agent.ModelRoles.Compact,
 		"title":        c.Agent.ModelRoles.Title,
@@ -1397,7 +1394,7 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 			agent["model_aliases"] = aliases
 		}
 	}
-	if update.CoordinationModel != nil || update.VerificationModel != nil {
+	if update.VerificationModel != nil {
 		roles, _ := agent["model_roles"].(map[string]any)
 		if roles == nil {
 			roles = make(map[string]any)
@@ -1429,7 +1426,6 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 			}
 			roles[name] = entry
 		}
-		setRole("coordination", update.CoordinationModel)
 		setRole("verification", update.VerificationModel)
 		if len(roles) == 0 {
 			delete(agent, "model_roles")

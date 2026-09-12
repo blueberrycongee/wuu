@@ -1032,7 +1032,6 @@ type ConfigAdvancedUpdateParams struct {
 	DisableAutoCompact      *bool                         `json:"disable_auto_compact,omitempty"`
 	ProviderContextWindow   *int                          `json:"provider_context_window,omitempty"`
 	ModelAliases            *map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	CoordinationModel       *ModelAliasSummary            `json:"coordination_model,omitempty"`
 	VerificationModel       *ModelAliasSummary            `json:"verification_model,omitempty"`
 }
 

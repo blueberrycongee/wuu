@@ -373,6 +373,37 @@ func TestRetiredMemoryProductFieldsAreIgnoredAtLoadBoundary(t *testing.T) {
 	}
 }
 
+func TestRetiredCoordinationModelDoesNotBlockConfigLoading(t *testing.T) {
+	workdir := t.TempDir()
+	configPath := filepath.Join(workdir, ".wuu.json")
+	data := `{
+  "default_provider": "main",
+  "providers": {
+    "main": {
+      "type": "openai-compatible",
+      "base_url": "https://example.test/v1",
+      "model": "main-model"
+    }
+  },
+  "agent": {
+    "model_roles": {
+      "coordination": {"provider": "removed-provider", "model": "old-room-model"},
+      "verification": {"provider": "main", "model": "verification-model"}
+    }
+  }
+}`
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, _, err := LoadProjectConfig(workdir)
+	if err != nil {
+		t.Fatalf("load config with retired coordination model: %v", err)
+	}
+	if cfg.DefaultProvider != "main" || cfg.Agent.ModelRoles.Verification.Model != "verification-model" {
+		t.Fatalf("active model selections were not preserved: %+v", cfg.Agent.ModelRoles)
+	}
+}
+
 func TestUpdateExtensionSettingsPreservesConcurrentDecisions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := writeConfigJSON(path, Default()); err != nil {
