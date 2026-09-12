@@ -110,7 +110,7 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 		if binding.WorkID != "" {
 			hasWorkBinding[binding.WorkID] = true
 		}
-		if binding.WorkID != "" && (binding.State == channels.CollaborationSessionIdle || binding.State == channels.CollaborationSessionRunning) {
+		if binding.WorkID != "" && (binding.State == channels.CollaborationSessionIdle || binding.State == channels.CollaborationSessionRunning || binding.State == channels.CollaborationSessionWaiting) {
 			if _, exists := byWork[binding.WorkID]; !exists {
 				byWork[binding.WorkID] = binding
 			}
@@ -449,6 +449,15 @@ func (s *Server) finishNamedAgentWorkRun(ctx context.Context, agentID, sessionRe
 			switch turn.Status {
 			case TurnStatusCompleted:
 				state, outcome = channels.WorkRunCompleted, "turn_completed"
+				var messages []string
+				for _, item := range turn.Items {
+					if item.Type == ThreadItemAgentMessage && strings.TrimSpace(item.Text) != "" {
+						messages = append(messages, item.Text)
+					}
+				}
+				if len(messages) > 0 {
+					outcome = strings.Join(messages, "\n")
+				}
 			case TurnStatusInterrupted:
 				state, outcome = channels.WorkRunInterrupted, "turn_interrupted"
 			}

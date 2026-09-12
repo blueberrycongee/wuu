@@ -97,15 +97,11 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	}
 	effectiveState := params.State
 	if params.State == CollaborationSessionCompleted || params.State == CollaborationSessionIdle {
-		var activeChildren int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_session_bindings WHERE parent_session_ref = ? AND state IN ('starting', 'running', 'queued', 'waiting')`, binding.SessionRef).Scan(&activeChildren); err != nil {
+		waiting, err := collaborationSessionWaitingTx(ctx, tx, binding.SessionRef)
+		if err != nil {
 			return CollaborationSessionBinding{}, err
 		}
-		var followups int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_followups WHERE session_ref=? AND state='active'`, binding.SessionRef).Scan(&followups); err != nil {
-			return CollaborationSessionBinding{}, err
-		}
-		if activeChildren > 0 || followups > 0 {
+		if waiting {
 			effectiveState = CollaborationSessionWaiting
 		}
 	}
@@ -184,4 +180,13 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 		}
 	}
 	return updated, nil
+}
+
+// Dependencies remain durable while a yielded turn releases execution capacity.
+func collaborationSessionWaitingTx(ctx context.Context, tx *sql.Tx, sessionRef string) (bool, error) {
+	var waiting bool
+	err := tx.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM collaboration_session_bindings WHERE parent_session_ref = ? AND state IN ('starting','running','queued','waiting'))
+		OR EXISTS(SELECT 1 FROM collaboration_followups WHERE session_ref = ? AND state = 'active')`, sessionRef, sessionRef).Scan(&waiting)
+	return waiting, err
 }

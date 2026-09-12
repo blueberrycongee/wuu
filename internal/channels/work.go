@@ -724,20 +724,41 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	if err := refreshWorkCurrentRunRefTx(ctx, tx, work.ID, now); err != nil {
 		return WorkRun{}, fmt.Errorf("settle work run handle: %w", err)
 	}
+	nextState := CollaborationSessionIdle
+	if run.State == WorkRunInterrupted {
+		nextState = CollaborationSessionInterrupted
+	} else if run.State == WorkRunFailed {
+		nextState = CollaborationSessionFailed
+	}
 	if run.SessionRef != "" {
-		nextState := CollaborationSessionIdle
-		if run.State == WorkRunInterrupted {
-			nextState = CollaborationSessionInterrupted
+		if run.State == WorkRunCompleted {
+			waiting, err := collaborationSessionWaitingTx(ctx, tx, run.SessionRef)
+			if err != nil {
+				return WorkRun{}, err
+			}
+			if waiting {
+				nextState = CollaborationSessionWaiting
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE collaboration_session_bindings SET state = ?, run_id = NULL, updated_at = ?
 			WHERE session_ref = ? AND run_id = ?`, nextState, toMillis(now), run.SessionRef, run.ID); err != nil {
 			return WorkRun{}, fmt.Errorf("release work run session: %w", err)
 		}
+		if run.TurnID != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_results(session_ref,turn_id,body,state,created_at) VALUES(?,?,?,?,?) ON CONFLICT(session_ref,turn_id) DO NOTHING`, run.SessionRef, run.TurnID, run.Outcome, nextState, toMillis(now)); err != nil {
+				return WorkRun{}, err
+			}
+		}
 	}
-	wakeIDs, err := s.enqueueWorkRunTerminalTx(ctx, tx, work, run, now)
-	if err != nil {
-		return WorkRun{}, err
+	var wakeIDs []string
+	// A yielded parent has finished this turn, but its children/followups still
+	// own the next event. Keep the slot free without asking the lead to reassign.
+	if nextState != CollaborationSessionWaiting || run.Qualified {
+		wakeIDs, err = s.enqueueWorkRunTerminalTx(ctx, tx, work, run, now)
+		if err != nil {
+			return WorkRun{}, err
+		}
 	}
 	admittedWakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, now)
 	if err != nil {

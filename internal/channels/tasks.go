@@ -284,6 +284,10 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		setState = string(params.State)
 	}
 	if params.GoalCorrection != "" {
+		correctionFromType, correctionFromID := MemberAgent, params.AgentID
+		if params.HumanID != "" {
+			correctionFromType, correctionFromID = MemberHuman, params.HumanID
+		}
 		message.Body = params.GoalCorrection
 		message.TaskGoalRevision++
 		setState = string(TaskStateOpen)
@@ -314,7 +318,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			return Message{}, fmt.Errorf("clear stale work candidate: %w", err)
 		}
 		if err := insertWorkEventTx(ctx, tx, WorkEvent{
-			WorkID: message.ID, Kind: "correction", State: string(WorkOpen), Summary: "User goal revised",
+			WorkID: message.ID, Kind: "correction", State: string(WorkOpen), Summary: "Task goal revised",
 			GoalRevision: message.TaskGoalRevision, CandidateRevision: message.TaskCandidateRevision, CreatedAt: updatedAt,
 		}); err != nil {
 			return Message{}, err
@@ -322,7 +326,8 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
 			RoomID: message.RoomID, ToAgentID: newOwner,
 			WorkID: message.ID, Kind: CollaborationControl,
-			Body:            "The user changed this task's goal. Output for the previous goal was not applied or delivered. Stop the old approach, read the complete current task, and continue on this same task.",
+			FromType: correctionFromType, FromID: correctionFromID, FromSessionRef: params.SessionRef,
+			Body:            "The task brief was revised. Read the complete current task, reconcile your progress with the updated requirements, and continue on this same task.",
 			SourceMessageID: message.ID, GoalRevision: message.TaskGoalRevision,
 			CandidateRevision: message.TaskCandidateRevision, CreatedAt: updatedAt,
 		}); err != nil {

@@ -387,7 +387,7 @@ func TestTaskVerificationRejectsStaleGoalAndCandidateRevisions(t *testing.T) {
 	}
 	foundRevisionNotice := false
 	for _, delivery := range ownerInbox.Collaboration {
-		foundRevisionNotice = foundRevisionNotice || delivery.WorkID == task.ID && strings.Contains(delivery.Body, "previous goal was not applied")
+		foundRevisionNotice = foundRevisionNotice || delivery.WorkID == task.ID && delivery.Kind == CollaborationControl && delivery.GoalRevision == revised.TaskGoalRevision && delivery.FromType == MemberAgent && delivery.FromID == leadClient.AgentID() && delivery.FromSessionRef == leadClient.SessionRef()
 	}
 	if !foundRevisionNotice {
 		t.Fatalf("owner did not receive explicit goal revision notice: %#v", ownerInbox.Collaboration)
