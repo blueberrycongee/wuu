@@ -330,6 +330,8 @@ func TestNamedAgentDispatchErrorKeepsWakeRetryableWithoutTarget(t *testing.T) {
 func prepareRecoverableNamedAgentWork(t *testing.T, server *Server, rt *runtime.Session) (channels.AgentCredential, channels.Message, channels.WorkRun, string) {
 	t.Helper()
 	ctx := context.Background()
+	// Recovery is driven explicitly below; startup maintenance must not observe a partial fixture.
+	server.stopChannelMaintenance()
 	server.channelService.SetWakeSink(nil)
 	credential, err := server.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Alpha", Autostart: true})
 	if err != nil {
