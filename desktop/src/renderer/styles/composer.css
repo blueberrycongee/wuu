@@ -2198,10 +2198,11 @@
 }
 
 .composer-context-menu.composer-plus-menu button {
-  height: 28px;
+  height: auto;
   min-height: 28px;
   gap: 8px;
-  padding: 0 8px;
+  padding: 5px 8px;
+  line-height: 18px;
   border-radius: var(--radius-pill);
   color: var(--ink-soft);
   font-weight: 400;
@@ -2209,12 +2210,15 @@
 
 .composer-plus-menu button .composer-plus-menu-item-title {
   flex: 0 1 auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
   color: inherit;
   font-weight: 400;
 }
 
 .composer-plus-menu button .composer-plus-menu-item-desc {
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   color: color-mix(in srgb, var(--ink-soft) 55%, var(--paper));
   font-weight: 400;
 }
