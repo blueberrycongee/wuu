@@ -1858,9 +1858,42 @@ describe("ChannelView", () => {
       owner_id: "agent-2",
     });
   });
+  it("opens waiting member sessions on the right and switches traces without leaving the room", async () => {
+    const api = createApi();
+    api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [], coordinator: { state: "waiting" as const, agent_ids: ["agent-2"] } }));
+    const sessions: CollaborationSessionBinding[] = [
+      { session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Review integration", state: "waiting", purpose: "work", created_at: "", updated_at: "2026-09-13T00:00:00Z" },
+      { session_ref: "child", parent_session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Implement settings", state: "running", purpose: "work", created_at: "", updated_at: "2026-09-13T00:01:00Z" },
+    ];
+    api.listChannelSessions = vi.fn(async () => ({ sessions }));
+    api.readChannelSession = vi.fn().mockImplementation(async ({ sessionRef }) => ({ session: sessions.find(s => s.session_ref === sessionRef), thread: { id: sessionRef, turns: [{ id: "turn", status: "completed", items: [{ id: "text", type: "agent_message", text: `Trace for ${sessionRef}` }] }] } }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    await act(async () => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    const avatar = container.querySelector<HTMLButtonElement>(".channel-coordinator-member button")!;
+    expect(avatar.disabled).toBe(false);
+    await act(async () => avatar.click());
+    await settle();
+    expect(api.listChannelSessions).toHaveBeenCalledWith({ roomId: "room-1", agentId: "agent-2" });
+    expect(api.readChannelSession).not.toHaveBeenCalled();
+    const panel = () => container.querySelector(".session-inspector-extension")!;
+    expect(panel().querySelectorAll(".channel-activity-session-entry")).toHaveLength(2);
+    await act(async () => panel().querySelector<HTMLButtonElement>(".channel-activity-session-entry")!.click());
+    await settle();
+    expect(panel().textContent).toContain("Trace for child");
+    await act(async () => panel().querySelector<HTMLButtonElement>('button[aria-label="全部会话"]')!.click());
+    await act(async () => panel().querySelectorAll<HTMLButtonElement>(".channel-activity-session-entry")[1].click());
+    await settle();
+    expect(panel().textContent).toContain("Trace for parent");
+    expect(container.querySelector(".channel-message-stream")).not.toBeNull();
+    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Trace for");
+  });
+
   it("opens the working agent's exact session without a header launcher or partial text in the room", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [{ id: "reply-beta", room_id: "room-1", agent_id: "agent-2", session_ref: "beta-session", turn_id: "turn", state: "responding" as const, body: "Private live text", created_at: "2026-09-12T00:00:00Z" }] }));
+    api.listChannelSessions = vi.fn(async () => ({ sessions: [{ session_ref: "beta-session", named_agent_id: "agent-2", principal_id: "agent-2", room_id: "room-1", state: "running" as const, purpose: "work" as const, created_at: "", updated_at: "" }] }));
     api.readChannelSession = vi.fn().mockResolvedValue({ session: { state: "running" }, thread: { id: "beta-session", turns: [{ id: "turn", status: "in_progress", items: [{ id: "text", type: "agent_message", text: "Private live text" }] }] } });
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);

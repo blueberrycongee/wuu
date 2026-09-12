@@ -11,6 +11,7 @@ import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from ".
 import { ChannelContinuity } from "./ChannelContinuity";
 import { ChannelSessions } from "./ChannelSessions";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
+import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { ChannelAgentSettings } from "./ChannelAgentSettings";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
@@ -580,7 +581,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     directoryAgents !== undefined && directoryRooms !== undefined;
   const [internalSelectedRoomID, setInternalSelectedRoomID] = useState("");
   const selectedRoomID = controlledRoomID ?? internalSelectedRoomID;
-  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef: string; turnID?: string; name: string } | null>(null);
+  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; turnID?: string; name: string } | null>(null);
   const [inspectorClosing, setInspectorClosing] = useState(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const inspectionTrigger = useRef<HTMLElement | null>(null);
@@ -621,6 +622,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setInspectorClosing(false);
     inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setInspectedSession({ roomID: selectedRoomID, sessionRef, turnID, name });
+  };
+  const inspectAgentActivity = (agentID: string, fallbackSessionRef?: string) => {
+    if (!inspectorClosing && inspectedSession?.agentID === agentID) { closeInspector(); return; }
+    setInspectorClosing(false);
+    inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setInspectedSession({ roomID: selectedRoomID, agentID, sessionRef: fallbackSessionRef, name: agents.find(agent => agent.id === agentID)?.name ?? agentID });
   };
   const setSelectedRoomID = useCallback((value: string | ((current: string) => string)): void => {
     const base = controlledRoomID ?? internalSelectedRoomID;
@@ -2069,17 +2076,19 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
             <div className="channel-activity-region channel-activity-motion" aria-live="polite">
               <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={agents} activeAgentIDs={responseActivities.map(response => response.agent_id)}
+                onInspectAgent={inspectAgentActivity}
+                onInspectCoordinator={ref => inspectSession(ref, undefined, t("channels.sessions.coordination"))}
                 onRetry={async (sessionRef) => { await window.wuu!.resumeChannelSession({ sessionRef }); await refreshMessages(selectedRoomID, true); }} />
               <ChannelActivityPresence key={`members:${selectedRoomID}`}>
-              {responseActivities.map((response) => <ChannelAgentActivity key={response.id}
+              {responseActivities.filter((response, index, items) => items.findIndex(item => item.agent_id === response.agent_id) === index).map((response) => <ChannelAgentActivity key={response.id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}
-                selected={!inspectorClosing && inspectedSession?.sessionRef === response.session_ref && inspectedSession.turnID === (response.turn_id || undefined)}
-                onInspect={() => inspectSession(response.session_ref, response.turn_id || undefined, agentNames.get(response.agent_id) ?? response.agent_id)}
+                selected={!inspectorClosing && inspectedSession?.agentID === response.agent_id}
+                onInspect={() => inspectAgentActivity(response.agent_id, response.session_ref)}
                 onResume={async () => { await window.wuu!.resumeChannelSession({ sessionRef: response.session_ref }); await refreshMessages(response.room_id, true); }}
               />)}
               {responsesByRoomID[selectedRoomID] === undefined ? respondingAgents.map(({ agent }) => (
-                <ChannelAgentActivity key={agent.id} agent={agent} agentID={agent.id} state="thinking" />
+                <ChannelAgentActivity key={agent.id} agent={agent} agentID={agent.id} state="thinking" onInspect={() => inspectAgentActivity(agent.id)} />
               )) : null}
               </ChannelActivityPresence>
             </div>
@@ -2105,7 +2114,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           </div>
         ) : null}
         </div>
-        {inspectedSession ? <ChannelSessionInspector
+        {inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
+          roomID={inspectedSession.roomID} agentID={inspectedSession.agentID} name={inspectedSession.name}
+          fallbackSessionRef={inspectedSession.sessionRef} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
+        /> : inspectedSession?.sessionRef ? <ChannelSessionInspector
           key={`${inspectedSession.sessionRef}:${inspectedSession.turnID ?? "latest"}`}
           sessionRef={inspectedSession.sessionRef}
           name={inspectedSession.name}

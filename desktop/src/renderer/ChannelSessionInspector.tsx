@@ -7,12 +7,13 @@ import { latestAgentMessageItemID, TurnView } from "./TurnView";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
 
-export function ChannelSessionInspector({ sessionRef, turnID, name, overlay = false, closing = false, onClose }: {
+export function ChannelSessionInspector({ sessionRef, turnID, name, overlay = false, closing = false, onBack, onClose }: {
   sessionRef: string;
   turnID?: string;
   name: string;
   overlay?: boolean;
   closing?: boolean;
+  onBack?: () => void;
   onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -123,6 +124,7 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, overlay = fa
         aria-label={t(overlay ? "channels.backToChat" : "common.close")} onClick={onClose}>
         {overlay ? <ArrowLeft className="icon" /> : <PanelRightClose className="icon" />}
       </button>
+      {onBack ? <button type="button" className="icon-button" aria-label={t("channels.sessions.back")} onClick={onBack}><ArrowLeft className="icon" /></button> : null}
       <strong>{name}</strong>
       {status ? <div className="channel-session-meta">{status}</div> : null}
     </header>

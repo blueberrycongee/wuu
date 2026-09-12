@@ -9,7 +9,8 @@ let root = createRoot(container);
 afterEach(async () => { await act(async () => root.unmount()); container.replaceChildren(); root = createRoot(container); });
 
 it("shows responsible members without exposing the hidden session identity", async () => {
-  await act(async () => root.render(<ChannelCoordinatorActivity
+  const inspect = vi.fn();
+  await act(async () => root.render(<ChannelCoordinatorActivity onInspectAgent={inspect}
     status={{ state: "waiting", session_ref: "private-coordination-session", agent_ids: ["alice", "removed-member"] }}
     agents={[{ id: "alice", name: "Alice" } as NamedAgent]} onRetry={vi.fn()} />));
   expect(container.querySelector('[role="status"]')?.getAttribute("aria-label")).toContain("Alice");
@@ -18,7 +19,8 @@ it("shows responsible members without exposing the hidden session identity", asy
   expect(container.textContent).not.toContain("private-coordination-session");
   expect(container.textContent).not.toContain("removed-member");
   expect(container.textContent).not.toContain("{");
-  expect(container.querySelector("button")).toBeNull();
+  await act(async () => container.querySelector("button")!.click());
+  expect(inspect).toHaveBeenCalledExactlyOnceWith("alice");
 });
 
 it("retries the failed coordinator once and reports a retry failure", async () => {
@@ -26,7 +28,7 @@ it("retries the failed coordinator once and reports a retry failure", async () =
   const onRetry = vi.fn(() => new Promise<void>((_, rejectPromise) => { reject = rejectPromise; }));
   await act(async () => root.render(<ChannelCoordinatorActivity
     status={{ state: "failed", session_ref: "room-session", error: "Provider unavailable" }} agents={[]} onRetry={onRetry} />));
-  const button = container.querySelector("button")!;
+  const button = container.querySelector<HTMLButtonElement>("button:not(.channel-activity-inspect)")!;
   await act(async () => button.click());
   expect(onRetry).toHaveBeenCalledExactlyOnceWith("room-session");
   expect(button.disabled).toBe(true);

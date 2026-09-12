@@ -36,10 +36,29 @@ app.whenReady().then(async () => {
       fs.writeFileSync(path.join(output, `${theme}-${width}-${state}.png`), (await win.webContents.capturePage()).toPNG());
     }
     if (state === "failed") {
-      await win.webContents.executeJavaScript(`document.querySelector('.channel-coordinator-activity button').click()`);
-      await waitFor(win, `window.retryCount === 1 && !!document.querySelector('.channel-activity-motion [role=status]') && !document.querySelector('.channel-coordinator-activity button')`);
+      await win.webContents.executeJavaScript(`document.querySelector('.channel-coordinator-activity button:not(.channel-activity-inspect)').click()`);
+      await waitFor(win, `window.retryCount === 1 && !!document.querySelector('.channel-activity-motion [role=status]') && !document.querySelector('.channel-coordinator-activity button:not(.channel-activity-inspect)')`);
       assert.equal(await win.webContents.executeJavaScript(`window.retryCount`), 1);
     }
+  }
+  for (const theme of ["light", "dark"]) for (const width of [1500, 390]) {
+    win.setSize(width, 800);
+    await win.loadURL(`${baseURL}/dev/room-coordinator/index.html?theme=${theme}&state=waiting&sessions=multiple`);
+    await waitFor(win, `!!document.querySelector('.channel-coordinator-member button')`);
+    await win.webContents.executeJavaScript(`document.querySelector('.channel-coordinator-member button').click()`);
+    await waitFor(win, `document.querySelectorAll('.channel-activity-session-entry').length === 2`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert(await win.webContents.executeJavaScript(`(() => { const r = document.querySelector('.session-inspector-extension').getBoundingClientRect(); return r.x >= 0 && r.right <= innerWidth + 1 && document.querySelector('.channel-message-stream'); })()`));
+    fs.writeFileSync(path.join(output, `sessions-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+    await win.webContents.executeJavaScript(`document.querySelector('.channel-activity-session-entry').click()`);
+    await waitFor(win, `window.lastReadSession === 'implementation-session'`);
+    await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="全部会话"]').click()`);
+    await waitFor(win, `document.querySelectorAll('.channel-activity-session-entry').length === 2`);
+    await win.webContents.executeJavaScript(`document.querySelectorAll('.channel-activity-session-entry')[1].click()`);
+    await waitFor(win, `window.lastReadSession === 'parent-session'`);
+    await waitFor(win, `!!document.querySelector('.session-inspector-history .turn')`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    fs.writeFileSync(path.join(output, `trace-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
   }
   for (const reduced of [false, true]) {
     await win.webContents.debugger.attach("1.3");

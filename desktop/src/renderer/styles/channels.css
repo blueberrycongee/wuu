@@ -3710,3 +3710,24 @@
 @media (prefers-reduced-motion: reduce) {
   .channel-typing-dots i { animation: none; opacity: 0.7; }
 }
+
+.channel-activity-session-list { padding: 8px 16px; }
+.channel-activity-session-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+  text-align: left;
+  color: var(--text-primary);
+}
+.channel-activity-session-entry:hover { background: var(--bg-hover); }
+.channel-activity-session-entry > span { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.channel-activity-session-entry strong { font-size: 13px; overflow-wrap: anywhere; }
+.channel-activity-session-entry small { color: var(--text-secondary); font-size: 12px; }
+.channel-activity-session-objective { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.channel-activity-session-row { position: relative; }
+.channel-activity-session-resume { margin: 0 0 8px; font-size: 12px; }

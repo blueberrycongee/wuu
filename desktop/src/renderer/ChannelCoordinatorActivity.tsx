@@ -7,10 +7,12 @@ import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { toastErrorMessage } from "./Toast";
 import "./styles/channel-coordinator.css";
 
-export function ChannelCoordinatorActivity({ status, agents, activeAgentIDs = [], onRetry }: {
+export function ChannelCoordinatorActivity({ status, agents, activeAgentIDs = [], onInspectAgent, onInspectCoordinator, onRetry }: {
   status?: ChannelCoordinatorStatus;
   agents: readonly NamedAgent[];
   activeAgentIDs?: readonly string[];
+  onInspectAgent?: (agentID: string) => void;
+  onInspectCoordinator?: (sessionRef: string) => void;
   onRetry: (sessionRef: string) => Promise<void>;
 }): JSX.Element | null {
   const { t } = useI18n();
@@ -34,11 +36,14 @@ export function ChannelCoordinatorActivity({ status, agents, activeAgentIDs = []
   return <ChannelActivityPresence>
     {showCoordinator ? <div key="coordinator" className="channel-coordinator-activity channel-animated-activity"
       data-activity-state={status?.state === "working" ? "thinking" : status?.state} role="status" aria-label={label} title={label}>
+      <button type="button" className="channel-activity-inspect" disabled={!onInspectCoordinator || !status?.session_ref}
+        aria-label={`${label} · ${t("channels.executionTrace")}`} onClick={() => status?.session_ref && onInspectCoordinator?.(status.session_ref)}>
       <span className="channel-coordinator-mascot" aria-hidden="true">
         <WuuMascot size={32} brand accessory="none" showActivityProp={false}
           style={{ "--mo-head": "var(--channel-coordinator-body)", "--mo-eye": "var(--channel-coordinator-eyes)" } as CSSProperties}
           activity={status?.state === "working" ? "thinking" : status?.state === "needs_members" ? "waiting" : status?.state ?? "idle"} />
       </span>
+      </button>
       {needsAttention ? <span>{label}</span> : null}
       {status?.state === "failed" && status.error ? <span className="channel-coordinator-error">{status.error}</span> : null}
       {status?.state === "failed" && status.session_ref ? <button type="button" disabled={retrying} onClick={() => void retry()}>{t("channels.coordinator.retry")}</button> : null}
@@ -47,7 +52,10 @@ export function ChannelCoordinatorActivity({ status, agents, activeAgentIDs = []
     {members.filter(agent => !activeAgentIDs.includes(agent.id)).map(agent => <div key={agent.id}
       className="channel-coordinator-member channel-animated-activity" data-activity-state="waiting" role="status"
       title={agent.name} aria-label={t("channels.coordinator.assigned", { names: agent.name })}>
+      <button type="button" className="channel-activity-inspect" disabled={!onInspectAgent}
+        aria-label={`${agent.name} · ${t("channels.sessions.history")}`} onClick={() => onInspectAgent?.(agent.id)}>
       <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key ?? "abstract-1"} avatarImage={agent.avatar_image} status="waiting" />
+      </button>
     </div>)}
   </ChannelActivityPresence>;
 }

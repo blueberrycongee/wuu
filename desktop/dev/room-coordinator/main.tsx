@@ -57,7 +57,10 @@ host.wuu = {
   listNamedAgents: async () => ({ agents }),
   listChannelRooms: async () => ({ rooms: [room] }),
   listChannelTasks: async () => ({ tasks: [] }),
-  listChannelSessions: async () => ({ sessions: [] }),
+  listChannelSessions: async ({ agentId }: any = {}) => ({ sessions: query.has("sessions") ? [
+    { session_ref: "parent-session", named_agent_id: "a0", principal_id: "a0", room_id: "room", title: "检查登录恢复并整合结果", objective: "等待实现会话完成后，验证恢复流程与界面状态。", purpose: "work", state: "waiting", created_at, updated_at: created_at },
+    { session_ref: "implementation-session", parent_session_ref: "parent-session", named_agent_id: "a0", principal_id: "a0", room_id: "room", title: "实现登录恢复", objective: "修复连接恢复后状态未同步的问题，并检查相关交互。", purpose: "work", state: "running", created_at, updated_at: created_at },
+  ] : host.responses.filter((r:any) => !agentId || r.agent_id === agentId).map((r:any) => ({session_ref:r.session_ref,named_agent_id:r.agent_id,principal_id:r.agent_id,room_id:"room",purpose:"work",state:"running",created_at,updated_at:created_at})) }),
   markChannelRoomRead: async () => ({ read: true }),
   onEvent: () => () => {},
   onServerEvent: () => () => {},
