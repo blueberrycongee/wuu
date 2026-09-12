@@ -76,7 +76,10 @@
 }
 
 .channel-activity-motion .channel-activity-inspect {
-  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 2px 0;
   border: 0;
   border-radius: 50%;
   background: transparent;

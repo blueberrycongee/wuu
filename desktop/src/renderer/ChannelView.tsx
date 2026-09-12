@@ -184,7 +184,6 @@ function workDisplayState(state?: string): "open" | "doing" | "checking" | "revi
 }
 
 function ChannelOrchestrationCluster({
-  room,
   tasks,
   agents,
   onOpenSession,
@@ -194,237 +193,172 @@ function ChannelOrchestrationCluster({
   agents: NamedAgent[];
   onOpenSession?: (sessionID: string) => void;
 }): JSX.Element {
-  const { formatDate, t } = useI18n();
+  const { t } = useI18n();
   const agentByID = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
-  const ownerIDs = [...new Set(tasks.map((task) => task.task_owner).filter(Boolean))] as string[];
-  const doneCount = tasks.filter((task) => assignmentState(task.task_state) === "done").length;
-  const allDone = tasks.length > 0 && doneCount === tasks.length;
-  const [expanded, setExpanded] = useState(!allDone);
-  const previousAllDone = useRef(allDone);
-  const latestTask = tasks[tasks.length - 1];
-
-  useEffect(() => {
-    if (allDone !== previousAllDone.current) setExpanded(!allDone);
-    previousAllDone.current = allDone;
-  }, [allDone]);
-
-  const coordinationLabel = allDone
-    ? t("channels.coordinationComplete", { count: ownerIDs.length, done: doneCount })
-    : t("channels.coordinatingAgents", { count: ownerIDs.length });
-
   return (
-      <MessageBubbleRow
-        outgoing={false}
-        className={`channel-message channel-orchestration-message channel-orchestration-row${allDone ? " complete" : ""}`}
-        contentClassName="channel-message-content"
-        meta={(
-          <div className="channel-message-meta">
-            <span className="channel-orchestration-meta">
-              <strong>{t("channels.tasks")}</strong>
-              <span className="channel-coordinator-state">{coordinationLabel}</span>
-              <time dateTime={latestTask.created_at}>
-                {formatDate(latestTask.created_at, { hour: "2-digit", minute: "2-digit" })}
-              </time>
-              {allDone && expanded ? (
-                <button className="channel-orchestration-toggle" type="button" onClick={() => setExpanded(false)}>
-                  {t("channels.hideAssignments")}
-                  <ChevronUp aria-hidden="true" />
-                </button>
-              ) : null}
-            </span>
-          </div>
-        )}
-      >
-        {allDone && !expanded ? (
-          <MessageBubble outgoing={false} className="channel-message-bubble channel-orchestration-summary">
-            <button type="button" onClick={() => setExpanded(true)}>
-              <span className="channel-orchestration-owner-stack" aria-hidden="true">
-                {ownerIDs.slice(0, 3).map((ownerID) => {
-                  const owner = agentByID.get(ownerID);
-                  return (
-                    <span key={ownerID}>
-                      <AgentAvatarMark
-                        seed={ownerID}
-                        avatarKey={owner?.avatar_key ?? "abstract-1"}
-                        avatarImage={owner?.avatar_image}
-                      />
-                    </span>
-                  );
-                })}
-              </span>
-              <span>{coordinationLabel}</span>
-              <ChevronDown aria-hidden="true" />
-            </button>
-          </MessageBubble>
-        ) : (
-          <div className="channel-assignment-list">
-            {tasks.map((task, index) => {
-              const owner = agentByID.get(task.task_owner ?? "");
-              const ownerName = owner?.name ?? task.task_owner ?? t("channels.taskOwnerLabel");
-              const work = task.work;
-              const workState = workDisplayState(work?.state ?? task.task_state);
-              const statusLabel = workState === "cancelled"
-                ? t("channels.workStatus.cancelled")
-                : workState === "failed"
-                  ? t("channels.workStatus.failed")
-                  : workState === "interrupted"
-                    ? t("channels.workStatus.interrupted")
-                    : workState === "integrating"
-                      ? t("channels.workStatus.integrating")
-                      : t(`channels.assignmentStatus.${assignmentStatusKey(workState)}`);
-              const elapsedMilliseconds = work
-                ? Math.max(0, Date.parse(work.updated_at) - Date.parse(work.created_at))
-                : 0;
-              const elapsedMinutes = Math.max(1, Math.round(elapsedMilliseconds / 60_000));
-              const elapsed = elapsedMinutes >= 60
-                ? `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m`
-                : `${elapsedMinutes}m`;
-              const inputTokens = work?.runs?.reduce((sum, run) => sum + (run.input_tokens ?? 0), 0) ?? 0;
-              const outputTokens = work?.runs?.reduce((sum, run) => sum + (run.output_tokens ?? 0), 0) ?? 0;
-              const queuedRuns = work?.runs?.filter((run) => run.state === "queued").length ?? 0;
-              const hasInternalDetails = Boolean(
-                work?.checks_summary
-                || work?.verification?.report
-                || work?.artifacts?.length
-                || work?.runs?.length
-                || work?.deliveries?.length
-                || work?.unresolved_items,
-              );
-              const title = task.task_title?.trim() || task.body.trim() || t("channels.newTask");
-              const body = task.task_title?.trim() && task.body.trim() !== task.task_title.trim()
-                ? task.body.trim()
-                : "";
-              return (
-                <div
-                  className="channel-assignment-item"
-                  data-state={workState}
-                  key={task.id}
-                  style={{ "--channel-assignment-index": index } as CSSProperties}
-                >
-                  <MessageBubble outgoing={false} className="channel-message-bubble channel-assignment-bubble">
-                    <span className="channel-assignment-target" aria-hidden="true">
-                      <AgentAvatarMark
-                        seed={owner?.id ?? task.task_owner ?? task.id}
-                        avatarKey={owner?.avatar_key ?? "abstract-1"}
-                        avatarImage={owner?.avatar_image}
-                        status={owner?.activity_status === "thinking" ? "thinking" : "idle"}
-                      />
-                    </span>
-                    <div className="channel-assignment-copy">
-                      <span className="channel-assignment-owner">
-                        <span aria-hidden="true">→</span>
-                        {ownerName}
-                      </span>
-                      <strong>{title}</strong>
-                      {body ? <div className="channel-assignment-body"><RichContent text={body} /></div> : null}
-                    </div>
-                    <span className="channel-assignment-status" data-state={workState}>
-                      <i aria-hidden="true" />
-                      {statusLabel}
-                    </span>
-                  </MessageBubble>
-                  {work ? (
-                    <div className="channel-work-card-details">
-                      <div className="channel-work-summary-line">
-                        {work.changed_files_count ? <span>{t("channels.workFilesChanged", { count: work.changed_files_count })}</span> : null}
-                        <span>{t("channels.workElapsed", { duration: elapsed })}</span>
+    <MessageBubbleRow
+      outgoing={false}
+      className="channel-message channel-orchestration-message channel-orchestration-row"
+      contentClassName="channel-message-content"
+    >
+      <div className="channel-assignment-list">
+        {tasks.map((task, index) => {
+          const owner = agentByID.get(task.task_owner ?? "");
+          const ownerName = owner?.name ?? task.task_owner ?? t("channels.taskOwnerLabel");
+          const work = task.work;
+          const workState = workDisplayState(work?.state ?? task.task_state);
+          const statusLabel = workState === "cancelled"
+            ? t("channels.workStatus.cancelled")
+            : workState === "failed"
+              ? t("channels.workStatus.failed")
+              : workState === "interrupted"
+                ? t("channels.workStatus.interrupted")
+                : workState === "integrating"
+                  ? t("channels.workStatus.integrating")
+                  : t(`channels.assignmentStatus.${assignmentStatusKey(workState)}`);
+          const elapsedMilliseconds = work
+            ? Math.max(0, Date.parse(work.updated_at) - Date.parse(work.created_at))
+            : 0;
+          const elapsedMinutes = Math.max(1, Math.round(elapsedMilliseconds / 60_000));
+          const elapsed = elapsedMinutes >= 60
+            ? `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m`
+            : `${elapsedMinutes}m`;
+          const inputTokens = work?.runs?.reduce((sum, run) => sum + (run.input_tokens ?? 0), 0) ?? 0;
+          const outputTokens = work?.runs?.reduce((sum, run) => sum + (run.output_tokens ?? 0), 0) ?? 0;
+          const queuedRuns = work?.runs?.filter((run) => run.state === "queued").length ?? 0;
+          const hasInternalDetails = Boolean(
+            work?.checks_summary
+            || work?.verification?.report
+            || work?.artifacts?.length
+            || work?.runs?.length
+            || work?.deliveries?.length
+            || work?.unresolved_items,
+          );
+          const title = task.task_title?.trim() || task.body.trim() || t("channels.newTask");
+          const body = task.task_title?.trim() && task.body.trim() !== task.task_title.trim()
+            ? task.body.trim()
+            : "";
+          return (
+            <details
+              className="channel-assignment-item"
+              data-state={workState}
+              key={task.id}
+              style={{ "--channel-assignment-index": index } as CSSProperties}
+            >
+              <summary className="channel-assignment-heading" title={ownerName}>
+                <span className="channel-assignment-target" aria-hidden="true">
+                  <AgentAvatarMark seed={owner?.id ?? task.task_owner ?? task.id}
+                    avatarKey={owner?.avatar_key ?? "abstract-1"} avatarImage={owner?.avatar_image} />
+                </span>
+                <span className="channel-assignment-copy"><strong>{title}</strong></span>
+                <ChevronDown className="channel-assignment-chevron" aria-hidden="true" />
+              </summary>
+              <div className="channel-assignment-context">
+                <span>{ownerName}</span>
+                <span className="channel-assignment-status" data-state={workState}>{statusLabel}</span>
+              </div>
+              {body ? <div className="channel-assignment-body"><RichContent text={body} /></div> : null}
+              {work ? (
+                <div className="channel-work-card-details">
+                  <div className="channel-work-summary-line">
+                    {work.changed_files_count ? <span>{t("channels.workFilesChanged", { count: work.changed_files_count })}</span> : null}
+                    <span>{t("channels.workElapsed", { duration: elapsed })}</span>
+                  </div>
+                  {hasInternalDetails ? (
+                    <details className="channel-work-evidence">
+                      <summary>{t("channels.workDetails")}</summary>
+                      <div className="channel-work-evidence-body">
+                        <section>
+                          <strong>{t("channels.workOrchestration")}</strong>
+                          <p>{t("channels.workRevisions", { goal: work.goal_revision, candidate: work.candidate_revision })}</p>
+                          <p>{t("channels.workRounds", { current: work.current_round ?? 1, max: work.max_rounds ?? 3, qualified: work.qualified_candidates ?? 0, candidates: work.candidates_used })}</p>
+                          <p>{t("channels.workUsage", { input: inputTokens.toLocaleString(), output: outputTokens.toLocaleString(), queued: queuedRuns })}</p>
+                          {work.total_cost_usd ? <p>{t("channels.workCost", { cost: work.total_cost_usd.toFixed(4) })}</p> : null}
+                          {work.owner_capacity && work.room_capacity && work.global_capacity ? (
+                            <p>{t("channels.workCapacity", {
+                              ownerActive: work.owner_capacity.active + work.owner_capacity.starting,
+                              ownerStarting: work.owner_capacity.starting,
+                              ownerLimit: work.owner_capacity.limit,
+                              roomActive: work.room_capacity.active + work.room_capacity.starting,
+                              roomStarting: work.room_capacity.starting,
+                              roomLimit: work.room_capacity.limit,
+                              globalActive: work.global_capacity.active + work.global_capacity.starting,
+                              globalStarting: work.global_capacity.starting,
+                              globalLimit: work.global_capacity.limit,
+                            })}</p>
+                          ) : null}
+                          {work.deadline_at ? <p>{t("channels.workDeadline", { deadline: new Date(work.deadline_at).toLocaleString() })}</p> : null}
+                          {work.selection_reason ? <p>{t("channels.workSelection", { reason: work.selection_reason })}</p> : null}
+                        </section>
+                        {work.checks_summary ? <p>{t("channels.workChecks", { summary: work.checks_summary })}</p> : null}
+                        {work.verification?.report ? (
+                          <section>
+                            <strong>{t("channels.workVerifierReport")}</strong>
+                            <RichContent text={work.verification.report} />
+                          </section>
+                        ) : null}
+                        {work.artifacts?.length ? (
+                          <section>
+                            <strong>{t("channels.workArtifacts")}</strong>
+                            <ul>{work.artifacts.map((artifact) => (
+                              <li key={artifact.id}>
+                                <a href={artifact.uri}>{artifact.label || artifact.summary || artifact.kind}</a>
+                                {artifact.id === work.candidate_artifact_ref ? <strong> · {t("channels.workCanonicalCandidate")}</strong> : null}
+                              </li>
+                            ))}</ul>
+                          </section>
+                        ) : null}
+                        {work.runs?.length ? (
+                          <section>
+                            <strong>{t("channels.workRuns")}</strong>
+                            <ul>{work.runs.map((run) => (
+                              <li key={run.id}>
+                                <span>
+                                  {run.profile || run.kind} · {run.state} · {t("channels.workRunRound", { round: run.round ?? 1 })}
+                                  {run.qualified ? ` · ${t("channels.workQualified")}` : ""}
+                                  {(run.input_tokens || run.output_tokens) ? ` · ${((run.input_tokens ?? 0) + (run.output_tokens ?? 0)).toLocaleString()} tokens` : ""}
+                                  {run.cost_usd ? ` · $${run.cost_usd.toFixed(4)}` : ""}
+                                  {run.started_at && Date.parse(run.started_at) > Date.parse(run.created_at)
+                                    ? ` · ${t("channels.workQueuedFor", { seconds: Math.max(1, Math.round((Date.parse(run.started_at) - Date.parse(run.created_at)) / 1000)) })}`
+                                    : ""}
+                                  {run.queue_reason ? ` · ${run.queue_reason}` : ""}
+                                </span>
+                                {run.session_ref ? (
+                                  <button className="channel-work-session-link" type="button" onClick={() => onOpenSession?.(run.session_ref ?? "")}>
+                                    <code>{run.session_ref}</code>
+                                  </button>
+                                ) : null}
+                              </li>
+                            ))}</ul>
+                          </section>
+                        ) : null}
+                        {work.deliveries?.length ? (
+                          <section>
+                            <strong>{t("channels.workPrivateMessages")}</strong>
+                            <ul>{work.deliveries.map((delivery) => (
+                              <li key={delivery.id}>
+                                <span>
+                                  {delivery.kind || "control"} · {delivery.visibility ?? "private"} · {delivery.target_kind ?? "named_agent"}{delivery.target_id ? `:${delivery.target_id}` : ""}
+                                  {delivery.terminal_state ? ` · ${delivery.terminal_state}` : ""}
+                                  {delivery.correlation_id ? ` · #${delivery.correlation_id}` : ""}
+                                  {delivery.invalidated_at ? ` · ${t("channels.workMessageInvalidated")}` : ""}
+                                </span>
+                                <RichContent text={delivery.body} />
+                              </li>
+                            ))}</ul>
+                          </section>
+                        ) : null}
+                        {work.unresolved_items ? <p>{t("channels.workUnresolved", { items: work.unresolved_items })}</p> : null}
                       </div>
-                      {hasInternalDetails ? (
-                        <details className="channel-work-evidence">
-                          <summary>{t("channels.workDetails")}</summary>
-                          <div className="channel-work-evidence-body">
-                            <section>
-                              <strong>{t("channels.workOrchestration")}</strong>
-                              <p>{t("channels.workRevisions", { goal: work.goal_revision, candidate: work.candidate_revision })}</p>
-                              <p>{t("channels.workRounds", { current: work.current_round ?? 1, max: work.max_rounds ?? 3, qualified: work.qualified_candidates ?? 0, candidates: work.candidates_used })}</p>
-                              <p>{t("channels.workUsage", { input: inputTokens.toLocaleString(), output: outputTokens.toLocaleString(), queued: queuedRuns })}</p>
-                              {work.total_cost_usd ? <p>{t("channels.workCost", { cost: work.total_cost_usd.toFixed(4) })}</p> : null}
-                              {work.owner_capacity && work.room_capacity && work.global_capacity ? (
-                                <p>{t("channels.workCapacity", {
-                                  ownerActive: work.owner_capacity.active + work.owner_capacity.starting,
-                                  ownerStarting: work.owner_capacity.starting,
-                                  ownerLimit: work.owner_capacity.limit,
-                                  roomActive: work.room_capacity.active + work.room_capacity.starting,
-                                  roomStarting: work.room_capacity.starting,
-                                  roomLimit: work.room_capacity.limit,
-                                  globalActive: work.global_capacity.active + work.global_capacity.starting,
-                                  globalStarting: work.global_capacity.starting,
-                                  globalLimit: work.global_capacity.limit,
-                                })}</p>
-                              ) : null}
-                              {work.deadline_at ? <p>{t("channels.workDeadline", { deadline: new Date(work.deadline_at).toLocaleString() })}</p> : null}
-                              {work.selection_reason ? <p>{t("channels.workSelection", { reason: work.selection_reason })}</p> : null}
-                            </section>
-                            {work.checks_summary ? <p>{t("channels.workChecks", { summary: work.checks_summary })}</p> : null}
-                            {work.verification?.report ? (
-                              <section>
-                                <strong>{t("channels.workVerifierReport")}</strong>
-                                <RichContent text={work.verification.report} />
-                              </section>
-                            ) : null}
-                            {work.artifacts?.length ? (
-                              <section>
-                                <strong>{t("channels.workArtifacts")}</strong>
-                                <ul>{work.artifacts.map((artifact) => (
-                                  <li key={artifact.id}>
-                                    <a href={artifact.uri}>{artifact.label || artifact.summary || artifact.kind}</a>
-                                    {artifact.id === work.candidate_artifact_ref ? <strong> · {t("channels.workCanonicalCandidate")}</strong> : null}
-                                  </li>
-                                ))}</ul>
-                              </section>
-                            ) : null}
-                            {work.runs?.length ? (
-                              <section>
-                                <strong>{t("channels.workRuns")}</strong>
-                                <ul>{work.runs.map((run) => (
-                                  <li key={run.id}>
-                                    <span>
-                                      {run.profile || run.kind} · {run.state} · {t("channels.workRunRound", { round: run.round ?? 1 })}
-                                      {run.qualified ? ` · ${t("channels.workQualified")}` : ""}
-                                      {(run.input_tokens || run.output_tokens) ? ` · ${((run.input_tokens ?? 0) + (run.output_tokens ?? 0)).toLocaleString()} tokens` : ""}
-                                      {run.cost_usd ? ` · $${run.cost_usd.toFixed(4)}` : ""}
-                                      {run.started_at && Date.parse(run.started_at) > Date.parse(run.created_at)
-                                        ? ` · ${t("channels.workQueuedFor", { seconds: Math.max(1, Math.round((Date.parse(run.started_at) - Date.parse(run.created_at)) / 1000)) })}`
-                                        : ""}
-                                      {run.queue_reason ? ` · ${run.queue_reason}` : ""}
-                                    </span>
-                                    {run.session_ref ? (
-                                      <button className="channel-work-session-link" type="button" onClick={() => onOpenSession?.(run.session_ref ?? "")}>
-                                        <code>{run.session_ref}</code>
-                                      </button>
-                                    ) : null}
-                                  </li>
-                                ))}</ul>
-                              </section>
-                            ) : null}
-                            {work.deliveries?.length ? (
-                              <section>
-                                <strong>{t("channels.workPrivateMessages")}</strong>
-                                <ul>{work.deliveries.map((delivery) => (
-                                  <li key={delivery.id}>
-                                    <span>
-                                      {delivery.kind || "control"} · {delivery.visibility ?? "private"} · {delivery.target_kind ?? "named_agent"}{delivery.target_id ? `:${delivery.target_id}` : ""}
-                                      {delivery.terminal_state ? ` · ${delivery.terminal_state}` : ""}
-                                      {delivery.correlation_id ? ` · #${delivery.correlation_id}` : ""}
-                                      {delivery.invalidated_at ? ` · ${t("channels.workMessageInvalidated")}` : ""}
-                                    </span>
-                                    <RichContent text={delivery.body} />
-                                  </li>
-                                ))}</ul>
-                              </section>
-                            ) : null}
-                            {work.unresolved_items ? <p>{t("channels.workUnresolved", { items: work.unresolved_items })}</p> : null}
-                          </div>
-                        </details>
-                      ) : null}
-                    </div>
+                    </details>
                   ) : null}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </MessageBubbleRow>
+              ) : null}
+            </details>
+          );
+        })}
+      </div>
+    </MessageBubbleRow>
   );
 }
 

@@ -368,6 +368,14 @@ describe("ChannelView", () => {
     act(() => root?.render(<ChannelView selectedRoomID="room-1" onOpenSession={onOpenSession} />));
     await settle();
 
+    const task = container.querySelector<HTMLDetailsElement>(".channel-assignment-item");
+    expect(task?.open).toBe(false);
+    const heading = task?.querySelector("summary");
+    expect(heading?.textContent).toBe("Fix callback");
+    expect(heading?.querySelector(".agent-avatar-mark")).not.toBeNull();
+    act(() => heading?.click());
+    expect(task?.open).toBe(true);
+    expect(task?.textContent).toContain("Reject callback replay");
     expect(container.querySelector(".channel-work-activity")).toBeNull();
     expect(container.querySelector(".channel-assignment-status")?.textContent).toBe("验收中");
     expect(container.querySelector(".channel-work-summary-line")?.textContent).toContain("3");

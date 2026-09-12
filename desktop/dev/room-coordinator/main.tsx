@@ -15,6 +15,11 @@ const agents = ["Alice", "Bob"].map((name, index) => ({
   id: `a${index}`, name, memory_dir: "/preview", avatar_key: `abstract-${index + 1}`,
   autostart: true, created_at, activity_status: "idle", activity_room_ids: [],
 }));
+const tasks = query.has("tasks") ? [{
+  id: "assignment", room_id: "room", seq: 2, author_type: "agent", author_id: "a0",
+  kind: "task", task_title: "把群成员头像/名称做成资料与配置入口", task_owner: "a0", task_state: "doing",
+  body: "请在群聊中将成员头像和名称作为资料入口。点击后，在右侧打开名称、头像、角色说明和模型配置。中间聊天继续保留，完成后汇报结果并提交改动。", created_at,
+}] : [];
 const room = { id: "room", name: "项目协作", kind: "channel", created_by: "human", created_at,
   members: agents.map(a => ({ room_id: "room", member_type: "agent", member_id: a.id, joined_at: created_at })) };
 const initialized = { protocol_version: "1", provider: "openai", model: "gpt-5.5", effort: "medium", workspace_root: "/preview", providers: [] };
@@ -52,7 +57,7 @@ host.wuu = {
   onEvent: () => () => {},
   onServerEvent: () => () => {},
   listChannelMessages: async () => ({
-    messages: [{ id: "human", room_id: "room", seq: 1, author_type: "human", author_id: "user", kind: "text", body: "检查登录恢复的问题，安排合适的成员处理。", created_at }],
+    messages: [{ id: "human", room_id: "room", seq: 1, author_type: "human", author_id: "user", kind: "text", body: "检查登录恢复的问题，安排合适的成员处理。", created_at }, ...tasks],
     responses: host.responses, coordinator: host.coordination,
   }),
   readChannelSession: async ({ sessionRef }: { sessionRef: string }) => {

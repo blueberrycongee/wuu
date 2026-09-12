@@ -937,9 +937,9 @@
 }
 
 .channel-assignment-list {
-  width: 100%;
+  width: min(100%, 560px);
   display: grid;
-  gap: 10px;
+  gap: 0;
 }
 
 .channel-assignment-item {
@@ -982,70 +982,29 @@
   }
 }
 
-.channel-assignment-bubble {
-  width: 100%;
+.channel-assignment-heading {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) 14px;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  transition: background 150ms ease;
+  gap: 10px;
+  padding: 5px 0;
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
 }
-
-.channel-assignment-bubble:hover {
-  background: var(--surface-2);
-}
-
-.channel-assignment-item[data-state="done"] .channel-assignment-bubble,
-.channel-assignment-item[data-state="completed"] .channel-assignment-bubble {
-  opacity: 0.6;
-}
-
-.channel-assignment-item[data-state="failed"] .channel-assignment-bubble,
-.channel-assignment-item[data-state="cancelled"] .channel-assignment-bubble,
-.channel-assignment-item[data-state="interrupted"] .channel-assignment-bubble {
-  opacity: 0.5;
-}
-
-.channel-assignment-target {
-  width: 32px;
-  height: 32px;
-  overflow: hidden;
-  border-radius: var(--radius-circle);
-}
-
-.channel-assignment-target > * {
-  width: 100%;
-  height: 100%;
-}
-
-.channel-assignment-copy {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.channel-assignment-owner {
-  display: none;
-}
-
-.channel-assignment-copy > strong {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  color: var(--text-primary);
-}
-
-.channel-assignment-body {
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
+.channel-assignment-heading::-webkit-details-marker { display: none; }
+.channel-assignment-heading:hover .channel-assignment-copy > strong { color: var(--ink-strong); }
+.channel-assignment-heading:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }
+.channel-assignment-chevron { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-fast) ease; }
+.channel-assignment-item[open] > summary .channel-assignment-chevron { transform: rotate(180deg); }
+.channel-assignment-target { width: 24px; height: 24px; }
+.channel-assignment-target > * { width: 100%; height: 100%; }
+.channel-assignment-copy { min-width: 0; display: grid; gap: 3px; }
+.channel-assignment-copy > strong { color: var(--text-secondary); font-size: 13px; font-weight: 500; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-assignment-item[open] .channel-assignment-copy > strong { white-space: normal; overflow-wrap: anywhere; }
+.channel-assignment-body { padding: 6px 0 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.channel-assignment-item[open] .channel-work-card-details { display: block; padding: 0 0 12px; }
+.channel-assignment-context { display: flex; gap: 8px; padding-top: 8px; color: var(--text-tertiary); font-size: 11px; }
 
 .channel-assignment-body .rich-content {
   gap: 4px;
