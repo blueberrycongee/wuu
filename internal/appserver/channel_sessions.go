@@ -129,7 +129,7 @@ func (s *Server) CreateSession(ctx context.Context, params channels.Collaboratio
 	binding, lookupErr := s.channelService.LookupCollaborationSession(ctx, params.SessionRef)
 	if errors.Is(lookupErr, channels.ErrNotFound) {
 		selection := s.currentSessionRuntimeSelection()
-		selection.Provider, selection.Model, selection.Effort = agentRuntimeModelSelection(selection.Provider, selection.Model, selection.Effort, agent)
+		selection = agentRuntimeSelection(selection, agent)
 		if params.Provider != "" {
 			selection.Provider = params.Provider
 		}

@@ -59,12 +59,11 @@ func (s *Server) handleChannelAgentCreate(ctx context.Context, req Request) erro
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	engineID := agentengine.NormalizeEngineID(params.EngineOverride)
-	if s.rt == nil || !s.rt.EngineAvailable(engineID) {
-		return s.writeResponse(req.ID, nil, agentengine.ErrUnknownEngine)
+	if err := s.validateNamedAgentCreation(&params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	credential, err := s.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{
-		Name: params.Name, Role: params.Role, AvatarKey: params.AvatarKey, AvatarImage: params.AvatarImage, EngineOverride: string(engineID), ProviderOverride: params.ProviderOverride, ModelOverride: params.ModelOverride, EffortOverride: params.EffortOverride, Autostart: true,
+		RequestID: params.RequestID, Name: params.Name, Role: params.Role, AvatarKey: params.AvatarKey, AvatarImage: params.AvatarImage, EngineOverride: params.EngineOverride, ProviderOverride: params.ProviderOverride, ModelOverride: params.ModelOverride, EffortOverride: params.EffortOverride, Autostart: true,
 	})
 	if err == nil {
 		s.invalidateChannelAgentInsights()

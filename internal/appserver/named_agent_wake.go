@@ -232,7 +232,7 @@ func (s *Server) namedAgentPinnedSelection(agent channels.AgentRuntime, threadID
 		return runtimeSelectionFromSession(metadata), nil
 	}
 	selection := s.currentSessionRuntimeSelection()
-	selection.Provider, selection.Model, selection.Effort = agentRuntimeModelSelection(selection.Provider, selection.Model, selection.Effort, agent)
+	selection = agentRuntimeSelection(selection, agent)
 	if sessionRef != "" {
 		client, err := s.bindCollaborationPrincipal(context.Background(), agent, "")
 		if err != nil {
@@ -252,9 +252,8 @@ func (s *Server) namedAgentPinnedSelection(agent channels.AgentRuntime, threadID
 			selection.Model = binding.Model
 			selection.Variant = ""
 		}
-		if binding.Effort != "" {
-			selection.Effort = binding.Effort
-		}
+		// Empty effort is also a pinned choice, independent of later identity edits.
+		selection.Effort = binding.Effort
 	}
 	return selection, nil
 }
@@ -263,10 +262,20 @@ func namedAgentModelSelection(provider, model, effort string, agent channels.Nam
 	return agentRuntimeModelSelection(provider, model, effort, agentRuntimeFromNamed(agent))
 }
 
+func agentRuntimeSelection(selection session.RuntimeSelection, agent channels.AgentRuntime) session.RuntimeSelection {
+	if strings.TrimSpace(agent.ModelOverride) != "" {
+		selection.Variant = ""
+	}
+	selection.Provider, selection.Model, selection.Effort = agentRuntimeModelSelection(selection.Provider, selection.Model, selection.Effort, agent)
+	return selection
+}
+
 func agentRuntimeModelSelection(provider, model, effort string, agent channels.AgentRuntime) (string, string, string) {
 	if override := strings.TrimSpace(agent.ModelOverride); override != "" {
 		provider = firstNonEmpty(strings.TrimSpace(agent.ProviderOverride), strings.TrimSpace(agent.EngineOverride))
 		model = override
+		// A model's default effort must not inherit another model's setting.
+		effort = ""
 	}
 	if override := strings.TrimSpace(agent.EffortOverride); override != "" {
 		effort = override

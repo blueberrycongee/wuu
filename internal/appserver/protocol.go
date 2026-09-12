@@ -2487,6 +2487,7 @@ type ChannelAgentInsightsResult struct {
 type ChannelBootstrapResult = channels.BootstrapResult
 
 type ChannelAgentCreateParams struct {
+	RequestID        string `json:"request_id,omitempty"`
 	Name             string `json:"name"`
 	Role             string `json:"role,omitempty"`
 	AvatarKey        string `json:"avatar_key,omitempty"`

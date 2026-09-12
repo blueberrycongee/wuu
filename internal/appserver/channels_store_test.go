@@ -47,6 +47,7 @@ func TestServerOpensIndependentChannelsStore(t *testing.T) {
 
 func TestChannelAgentRPCPersistsEffortOverride(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	configureNamedAgentCreationProvider(t, rt)
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
 	out := &lockedBuffer{}
 	server := NewWithCredentialStore(rt, out, nil, nil)
@@ -71,6 +72,7 @@ func TestChannelAgentRPCPersistsEffortOverride(t *testing.T) {
 
 func TestChannelAgentUpdatePreservesExistingSessionSelection(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	configureNamedAgentCreationProvider(t, rt)
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
 	attachNamedAgentTestToolkit(t, rt)
 	out := &lockedBuffer{}
@@ -78,7 +80,7 @@ func TestChannelAgentUpdatePreservesExistingSessionSelection(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	var created ChannelAgentCreateResult
-	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Reasoner"}, &created)
+	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Reasoner", ProviderOverride: "fake-provider", ModelOverride: "fake-model"}, &created)
 	thread, err := server.ensureNamedAgentThreadLocked(created.Agent)
 	if err != nil {
 		t.Fatalf("ensureNamedAgentThreadLocked() error = %v", err)
@@ -131,6 +133,7 @@ func TestNamedAgentRuntimeSelectionAppliesModelAndEffortOverrides(t *testing.T) 
 
 func TestChannelHumanRPCsCreateRoomAndSendMessage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	configureNamedAgentCreationProvider(t, rt)
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
 	attachNamedAgentTestToolkit(t, rt)
 	out := &lockedBuffer{}
@@ -138,7 +141,7 @@ func TestChannelHumanRPCsCreateRoomAndSendMessage(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	var createdAgent ChannelAgentCreateResult
-	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Alpha"}, &createdAgent)
+	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Alpha", ProviderOverride: "fake-provider", ModelOverride: "fake-model"}, &createdAgent)
 	if createdAgent.Agent.ID == "" || createdAgent.Agent.Name != "Alpha" {
 		t.Fatalf("created agent = %#v", createdAgent.Agent)
 	}
@@ -1283,13 +1286,14 @@ func TestRoomMessageWakesVisibleMemberAfterTurnRuntimeRebuild(t *testing.T) {
 
 func TestChannelRoomUpdateAndDeleteRPCs(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	configureNamedAgentCreationProvider(t, rt)
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
 	out := &lockedBuffer{}
 	server := NewWithCredentialStore(rt, out, nil, nil)
 	t.Cleanup(server.Close)
 
 	var createdAgent ChannelAgentCreateResult
-	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Alpha"}, &createdAgent)
+	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Alpha", ProviderOverride: "fake-provider", ModelOverride: "fake-model"}, &createdAgent)
 	var createdRoom ChannelRoomCreateResult
 	callChannelRPC(t, server, out, MethodChannelRoomCreate, ChannelRoomCreateParams{
 		Name: "Review", AgentIDs: []string{createdAgent.Agent.ID},
@@ -1305,7 +1309,7 @@ func TestChannelRoomUpdateAndDeleteRPCs(t *testing.T) {
 		t.Fatalf("updated room = %#v", updated.Room)
 	}
 	var createdAgentTwo ChannelAgentCreateResult
-	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Beta"}, &createdAgentTwo)
+	callChannelRPC(t, server, out, MethodChannelAgentCreate, ChannelAgentCreateParams{Name: "Beta", ProviderOverride: "fake-provider", ModelOverride: "fake-model"}, &createdAgentTwo)
 	agentIDs := []string{createdAgent.Agent.ID, createdAgentTwo.Agent.ID}
 	callChannelRPC(t, server, out, MethodChannelRoomUpdate, ChannelRoomUpdateParams{
 		RoomID:   createdRoom.Room.ID,

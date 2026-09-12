@@ -1063,6 +1063,7 @@ export type ChannelAgentInsight = {
 export type ChannelAgentInsightsResult = { generated_at: string; insights: ChannelAgentInsight[] };
 export type ChannelBootstrapResult = { agents: NamedAgent[]; rooms: ChannelRoom[] };
 export type ChannelAgentCreateParams = {
+  request_id?: string;
   name: string;
   role?: string;
   avatar_key?: string;
@@ -1073,7 +1074,7 @@ export type ChannelAgentCreateParams = {
   effort_override?: string;
 };
 export type ChannelAgentCreateResult = { agent: NamedAgent };
-export type ChannelAgentUpdateParams = ChannelAgentCreateParams & { agent_id: string };
+export type ChannelAgentUpdateParams = Omit<ChannelAgentCreateParams, "request_id"> & { agent_id: string };
 export type ChannelAgentUpdateResult = { agent: NamedAgent };
 export type ChannelAgentDeleteParams = { agent_id: string };
 export type ChannelAgentDeleteResult = { deleted: boolean };

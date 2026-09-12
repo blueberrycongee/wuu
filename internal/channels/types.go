@@ -168,6 +168,8 @@ type AgentCredential struct {
 }
 
 type CreateNamedAgentParams struct {
+	// RequestID makes retries of the same creation return the existing identity.
+	RequestID        string
 	Name             string
 	Role             string
 	AvatarKey        string
