@@ -1237,12 +1237,12 @@
   display: grid;
   flex: 0 0 auto;
   min-width: 0;
-  min-height: 62px;
+  min-height: 54px;
   grid-template-columns: var(--collaboration-contact-avatar-size) minmax(0, 1fr);
   align-items: center;
   column-gap: 10px;
   border-radius: var(--radius-sm);
-  padding: 8px;
+  padding: 6px 8px;
   background: transparent;
   color: var(--ink);
   text-align: left;
