@@ -2521,6 +2521,11 @@ func TestLocalDebugAppServerSandboxIsolatesChannelState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new sandbox debug client: %v", err)
 	}
+	t.Cleanup(func() {
+		if client != nil {
+			shutdownDebugClient(client)
+		}
+	})
 	sandboxHome := client.rt.WuuHome
 	if sandboxHome == realWuuHome || !strings.Contains(sandboxHome, "wuu-channel-e2e-") {
 		t.Fatalf("sandbox WUU_HOME = %q, real = %q", sandboxHome, realWuuHome)
@@ -2529,8 +2534,9 @@ func TestLocalDebugAppServerSandboxIsolatesChannelState(t *testing.T) {
 	if err := client.Call(context.Background(), appserver.MethodChannelBootstrap, nil, &bootstrap); err != nil {
 		t.Fatalf("sandbox bootstrap: %v", err)
 	}
-	if len(bootstrap.Rooms) == 0 {
-		t.Fatal("sandbox bootstrap did not create a room")
+	var created appserver.ChannelRoomCreateResult
+	if err := client.Call(context.Background(), appserver.MethodChannelRoomCreate, appserver.ChannelRoomCreateParams{Name: "Sandbox"}, &created); err != nil {
+		t.Fatalf("create sandbox room: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(realWuuHome, "channels")); !os.IsNotExist(err) {
 		t.Fatalf("real channel state was touched: %v", err)
@@ -2540,6 +2546,7 @@ func TestLocalDebugAppServerSandboxIsolatesChannelState(t *testing.T) {
 	if err := client.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown sandbox debug client: %v", err)
 	}
+	client = nil
 	if got := os.Getenv("WUU_HOME"); got != realWuuHome {
 		t.Fatalf("WUU_HOME after shutdown = %q, want %q", got, realWuuHome)
 	}
@@ -2598,6 +2605,11 @@ func TestNamedDebugSandboxPersistsStateAndCanBeDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new named sandbox client: %v", err)
 	}
+	t.Cleanup(func() {
+		if client != nil {
+			shutdownDebugClient(client)
+		}
+	})
 	sandboxHome := client.rt.WuuHome
 	wantHome := filepath.Join(realWuuHome, "debug", "sandboxes", sandboxName)
 	if sandboxHome != wantHome {
@@ -2607,9 +2619,13 @@ func TestNamedDebugSandboxPersistsStateAndCanBeDeleted(t *testing.T) {
 	if err := client.Call(context.Background(), appserver.MethodChannelBootstrap, nil, &bootstrap); err != nil {
 		t.Fatalf("sandbox bootstrap: %v", err)
 	}
+	var created appserver.ChannelRoomCreateResult
+	if err := client.Call(context.Background(), appserver.MethodChannelRoomCreate, appserver.ChannelRoomCreateParams{Name: "Sandbox"}, &created); err != nil {
+		t.Fatalf("create sandbox room: %v", err)
+	}
 	var sent appserver.ChannelMessageSendResult
 	if err := client.Call(context.Background(), appserver.MethodChannelMessageSend, appserver.ChannelMessageSendParams{
-		RoomID: bootstrap.Rooms[0].ID, Body: "first round",
+		RoomID: created.Room.ID, Body: "first round",
 	}, &sent); err != nil {
 		t.Fatalf("send first round: %v", err)
 	}
@@ -2619,6 +2635,7 @@ func TestNamedDebugSandboxPersistsStateAndCanBeDeleted(t *testing.T) {
 		t.Fatalf("shutdown first client: %v", err)
 	}
 	cancel()
+	client = nil
 
 	client, err = newLocalDebugAppServerClient(context.Background(), debugAppServerOptions{
 		workdir: workdir, noTools: true, sandboxName: sandboxName,
@@ -2628,7 +2645,7 @@ func TestNamedDebugSandboxPersistsStateAndCanBeDeleted(t *testing.T) {
 	}
 	var messages appserver.ChannelMessageListResult
 	if err := client.Call(context.Background(), appserver.MethodChannelMessageList, appserver.ChannelMessageListParams{
-		RoomID: bootstrap.Rooms[0].ID, Limit: 100,
+		RoomID: created.Room.ID, Limit: 100,
 	}, &messages); err != nil {
 		t.Fatalf("list resumed messages: %v", err)
 	}
@@ -2641,10 +2658,11 @@ func TestNamedDebugSandboxPersistsStateAndCanBeDeleted(t *testing.T) {
 		t.Fatalf("shutdown resumed client: %v", err)
 	}
 	cancel()
+	client = nil
 	output := captureStdout(t, func() {
 		if err := runDebugChannelSend([]string{
 			"--sandbox", sandboxName, "--workdir", workdir, "--no-tools",
-			"--room", bootstrap.Rooms[0].ID, "second", "round",
+			"--room", created.Room.ID, "second", "round",
 		}); err != nil {
 			t.Fatalf("send through named sandbox CLI: %v", err)
 		}
@@ -2659,7 +2677,7 @@ func TestNamedDebugSandboxPersistsStateAndCanBeDeleted(t *testing.T) {
 	output = captureStdout(t, func() {
 		if err := runDebugChannelInspect([]string{
 			"--sandbox", sandboxName, "--workdir", workdir, "--no-tools",
-			"--room", bootstrap.Rooms[0].ID,
+			"--room", created.Room.ID,
 		}); err != nil {
 			t.Fatalf("inspect through named sandbox CLI: %v", err)
 		}
