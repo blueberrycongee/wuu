@@ -1611,7 +1611,8 @@ describe("ChannelView", () => {
     expect(editor.querySelector<HTMLDetailsElement>("details")?.open).toBe(false);
     act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
     expect(editor.querySelector(".agent-avatar-creator")).not.toBeNull();
-    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="云朵"]')?.click());
+    // Mascot accessories replaced the old blobatar "cloud" preset.
+    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="小叶子"]')?.click());
     act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
     expect(editor.querySelector(".agent-avatar-creator")).toBeNull();
     act(() => setInputValue(editor.querySelector<HTMLTextAreaElement>("textarea")!, "Reviews the interface"));
@@ -1632,7 +1633,7 @@ describe("ChannelView", () => {
       agent_id: "agent-1",
       name: "Reasoner",
       role: "Reviews the interface",
-      avatar_key: expect.stringContaining(":cloud:"),
+      avatar_key: expect.stringMatching(/^mascot-v1:.+:leaf:\d+$/),
       avatar_image: "",
       provider_override: "openai",
       model_override: "gpt-reasoner",
