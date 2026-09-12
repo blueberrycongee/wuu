@@ -530,7 +530,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -563,6 +563,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onNewRoomRequestHandled?: () => void;
   editAgentRequestID?: string;
   onEditAgentRequestHandled?: () => void;
+  editRoomRequestID?: string;
+  onEditRoomRequestHandled?: () => void;
   // App.tsx owns these arrays in the full desktop shell. Standalone tests and
   // embedded callers may omit them and keep the legacy local directory state.
   directoryAgents?: NamedAgent[];
@@ -849,10 +851,20 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     if (!editAgentRequestID) return;
     const agent = agents.find((candidate) => candidate.id === editAgentRequestID);
     if (!agent) return;
-    if (section === "rooms") openConversationAgent(agent);
-    else { loadAgentDraft(agent); setSetupPanel("agent"); }
+    setSettingsRoomID("");
+    loadAgentDraft(agent);
+    setSetupPanel("agent");
     onEditAgentRequestHandled?.();
   }, [agents, editAgentRequestID]);
+
+  useEffect(() => {
+    if (!editRoomRequestID) return;
+    const room = rooms.find((candidate) => candidate.id === editRoomRequestID && candidate.kind === "channel");
+    if (!room) return;
+    closeAgentPanel();
+    editRoom(room);
+    onEditRoomRequestHandled?.();
+  }, [rooms, editRoomRequestID]);
 
   function startSplitResize(event: ReactPointerEvent<HTMLButtonElement>): void {
     event.preventDefault();

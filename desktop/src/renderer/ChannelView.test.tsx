@@ -1757,6 +1757,51 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-recipient-picker")).toBeNull();
   });
 
+  it("opens the requested Agent's standalone management without creating or switching conversations", async () => {
+    const api = createApi();
+    api.openChannelDirectMessage = vi.fn(async () => ({ room: rooms[0] }));
+    const onSelectRoom = vi.fn();
+    const onHandled = vi.fn();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" onSelectRoom={onSelectRoom} editAgentRequestID="agent-2" onEditAgentRequestHandled={onHandled} />));
+    await settle();
+    const editor = document.querySelector(".channel-agent-editor-dialog");
+    expect(editor).not.toBeNull();
+    expect(editor?.querySelector<HTMLInputElement>('.channel-agent-editor-name input')?.value).toBe("Beta");
+    expect(editor?.textContent).toContain("重置 Agent");
+    expect(editor?.textContent).toContain("删除 Agent");
+    expect(api.openChannelDirectMessage).not.toHaveBeenCalled();
+    expect(onSelectRoom).not.toHaveBeenCalled();
+    expect(onHandled).toHaveBeenCalledOnce();
+    expect(container.querySelector(".channel-message-stream")?.textContent).toContain("Hello from");
+  });
+
+  it("manages an unselected group by its requested ID while preserving the current conversation", async () => {
+    const api = createApi();
+    const onSelectRoom = vi.fn();
+    const onHandled = vi.fn();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" onSelectRoom={onSelectRoom} editRoomRequestID="room-2" onEditRoomRequestHandled={onHandled} />));
+    await settle();
+    const dialog = document.querySelector(".sidebar-name-dialog");
+    expect(dialog?.querySelector<HTMLInputElement>("input")?.value).toBe("research");
+    expect(dialog?.querySelector(".channel-room-member-add")).not.toBeNull();
+    expect(onHandled).toHaveBeenCalledOnce();
+    expect(onSelectRoom).not.toHaveBeenCalled();
+    expect(container.querySelector(".channel-message-stream")?.textContent).toContain("Hello from");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const remove = Array.from(dialog!.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "删除频道")!;
+    expect(remove).toBeDefined();
+    await act(async () => remove.click());
+    expect(api.deleteChannelRoom).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    await act(async () => remove.click());
+    expect(api.deleteChannelRoom).toHaveBeenCalledExactlyOnceWith({ room_id: "room-2" });
+    confirm.mockRestore();
+  });
+
   it("adds channel members through an explicit selection flow and separates channel deletion", async () => {
     const api = createApi();
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
