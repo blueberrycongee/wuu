@@ -1,12 +1,11 @@
 import { useId } from "react";
 import { _layout } from "blobatar";
-import { superellipse } from "../../vendor/blobatar/src/shape";
 import icon from "../../../assets/app-icon-source.json";
 import { WUU_MASCOT_NAME, WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
 import "./styles/wuu-icon-mascot.css";
 
 const { body } = _layout(WUU_MASCOT_NAME, { traits: WUU_MASCOT_TRAITS });
-const bodyPath = superellipse(body);
+const bodyPath = body.path;
 /** The approved icon composition, with a flat body and live eyes in-app. */
 export function WuuIconMascot({ className, composing = false }: {
   className?: string;

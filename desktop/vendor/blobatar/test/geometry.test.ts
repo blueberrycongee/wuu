@@ -5,6 +5,7 @@ import { superellipse, blobPath } from "../src/shape";
 import * as blob from "../src/styles/blob";
 import { traits } from "../src/traits";
 import { BLOB_KEYS } from "./keys";
+import { SHAPES } from "../src/styles/silhouette";
 
 /**
  * These are the checks that replace eyeballing the grid one cell at a time.
@@ -56,7 +57,7 @@ describe("blob", () => {
   const layouts = SEEDS.map(s => blob.layout(traits(s)));
 
   test("compact Wuu eyes keep their crisp capsule footprint", () => {
-    const l = _layout("wuu", { traits: { shape: 0.2, "body.ratio": 0.5 } });
+    const l = _layout("wuu", { traits: { shape: 0.1 } });
     for (const eye of l.eyes) {
       expect(eye.rx / l.body.rx).toBeGreaterThan(0.07);
       expect(eye.rx / l.body.rx).toBeLessThan(0.115);
@@ -67,16 +68,11 @@ describe("blob", () => {
 
   test("eyes sit inside the body core", () => {
     for (const l of layouts) {
-      // For the spline shapes the core dips to its smallest sampled radius
-      // between vertices, so containment is measured against that, not the mean.
-      const shrink =
-        l.shape === "organic" || l.shape === "cloud" ? Math.min(...l.body.radii) * 0.95 : 1;
       const core = {
         cx: l.body.cx,
         cy: l.body.cy,
-        rx: l.body.rx * shrink,
-        ry: l.body.ry * shrink,
-        // Understate squareness: a boxy body is roomier than the ellipse we test.
+        rx: l.body.rx,
+        ry: l.body.ry,
         n: 2,
       };
       for (const e of l.eyes) {
@@ -97,27 +93,11 @@ describe("blob", () => {
     }
   });
 
-  test("decoration stays attached to the body", () => {
-    for (const l of layouts) {
-      for (const p of l.petals) {
-        const d = Math.hypot(p.cx - l.body.cx, p.cy - l.body.cy);
-        // Overlapping the core is what makes the union read as one creature.
-        expect(d).toBeLessThan(l.body.rx * 0.95 + p.r);
-      }
-    }
-  });
-
   test("every shape in the vocabulary is reachable", () => {
     const seen = new Set(layouts.map(l => l.shape));
-    expect(seen).toEqual(new Set(["round", "organic", "boxy", "nub", "cloud", "sun"]));
+    expect(seen).toEqual(new Set(SHAPES.map(shape => shape.id)));
   });
 
-  test("common shapes stay common", () => {
-    const round = layouts.filter(l => l.shape === "round").length / layouts.length;
-    const sun = layouts.filter(l => l.shape === "sun").length / layouts.length;
-    expect(round).toBeGreaterThan(0.2);
-    expect(sun).toBeLessThan(0.12);
-  });
 });
 
 /**
@@ -156,13 +136,11 @@ describe("blob under trait overrides", () => {
 
   test("eyes sit inside the body core", () => {
     for (const l of layouts) {
-      const shrink =
-        l.shape === "organic" || l.shape === "cloud" ? Math.min(...l.body.radii) * 0.95 : 1;
       const core = {
         cx: l.body.cx,
         cy: l.body.cy,
-        rx: l.body.rx * shrink,
-        ry: l.body.ry * shrink,
+        rx: l.body.rx,
+        ry: l.body.ry,
         n: 2,
       };
       for (const e of l.eyes) {
@@ -179,15 +157,6 @@ describe("blob under trait overrides", () => {
         return Math.abs(e.rx * Math.cos(t)) + Math.abs(e.ry * Math.sin(t));
       };
       expect(Math.abs(b.cx - a.cx)).toBeGreaterThan(reach(a) + reach(b));
-    }
-  });
-
-  test("decoration stays attached to the body", () => {
-    for (const l of layouts) {
-      for (const p of l.petals) {
-        const d = Math.hypot(p.cx - l.body.cx, p.cy - l.body.cy);
-        expect(d).toBeLessThan(l.body.rx * 0.95 + p.r);
-      }
     }
   });
 

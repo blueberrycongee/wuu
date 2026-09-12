@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type JSX } from "react";
+import { SHAPES } from "blobatar/blob";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { WuuMascot, WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascot";
 import { WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
@@ -78,14 +79,7 @@ function AgentAvatarRibbon({ front }: { front: boolean }): JSX.Element {
   </svg>;
 }
 
-export const AGENT_AVATAR_SHAPES = [
-  { id: "round", trait: 0.12 },
-  { id: "organic", trait: 0.42 },
-  { id: "boxy", trait: 0.65 },
-  { id: "nub", trait: 0.78 },
-  { id: "cloud", trait: 0.88 },
-  { id: "sun", trait: 0.97 },
-] as const;
+export const AGENT_AVATAR_SHAPES = SHAPES;
 
 export const AGENT_AVATAR_ACCESSORIES = WUU_MASCOT_ACCESSORIES;
 
@@ -115,13 +109,18 @@ export function randomAgentAvatarKey(): string {
 export function parseAgentAvatarConfig(value: string): AgentAvatarConfig | null {
   const [prefix, shape, accessory, rawHue, ...rest] = value.split(":");
   if (prefix !== AGENT_AVATAR_CONFIG_PREFIX || rest.length > 0) return null;
-  if (!AGENT_AVATAR_SHAPES.some((item) => item.id === shape)) return null;
+  const legacyShapes: Record<string, AgentAvatarShape> = {
+    organic: "round", nub: "round", boxy: "rounded-square", cloud: "capsule", sun: "diamond",
+  };
+  const normalizedShape = AGENT_AVATAR_SHAPES.find(item => item.id === shape)?.id
+    ?? (Object.hasOwn(legacyShapes, shape) ? legacyShapes[shape] : undefined);
+  if (!normalizedShape) return null;
   if (!accessory) return null;
   const hue = Number(rawHue);
   if (!Number.isInteger(hue) || hue < 0 || hue > 359) return null;
   // Removed or newer accessories do not erase the rest of a saved identity.
   const selected = AGENT_AVATAR_ACCESSORIES.find(item => item === accessory) ?? "none";
-  return { shape: shape as AgentAvatarShape, accessory: selected, hue };
+  return { shape: normalizedShape, accessory: selected, hue };
 }
 
 export function serializeAgentAvatarConfig(config: AgentAvatarConfig): string {

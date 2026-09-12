@@ -39,9 +39,8 @@ import {
 /**
  * The channels a pose may touch, and nothing else.
  *
- * Petals are excluded on purpose: a sun's nine petals are silhouette, and moving
- * them independently reads as wind or as the creature coming apart. Expressions
- * describe the authored eye chart; the surface renderer projects it afterward.
+ * Expressions describe the authored eye chart; the surface renderer projects
+ * it afterward, within the body's face surface.
  *
  * **The body deforms for nothing, so it no longer deforms.** `bsx`, `bsy` and
  * `skew` used to scale and lean the whole creature and have been removed. Three
@@ -49,9 +48,8 @@ import {
  * they are the only channels with no headroom, since frame containment binds at
  * roughly `bsx: 1.08` and a 3° lean puts a body outside the viewBox — so they
  * break the frame before they get loud enough to read; and in this variant the
- * silhouette *is* the identity. Six shapes, a seeded lopsidedness and a seeded
- * lean are what make a grid read as a crowd, and squashing that per-expression
- * is the one move that makes a blobatar stop looking like itself.
+ * silhouette *is* the identity. The five contours stay recognizable across
+ * expressions instead of squashing into a different shape.
  *
  * `bdy` survives because it is a rigid translate. It moves the creature without
  * distorting it, which is what `happy`'s lift and `sad`'s sink actually needed.

@@ -2,13 +2,13 @@ import { palette } from "blobatar";
 import type { CSSProperties } from "react";
 
 /** These IDs also appear in saved agent identities. */
-export const WUU_MASCOT_ACCESSORIES = ["none", "beanie", "hard-hat", "headset", "bandana", "leaf"] as const;
+export const WUU_MASCOT_ACCESSORIES = ["none", "beanie", "hard-hat", "headset", "leaf"] as const;
 export type WuuMascotAccessory = typeof WUU_MASCOT_ACCESSORIES[number];
 type WornAccessory = Exclude<WuuMascotAccessory, "none">;
 
 type Body = { cx: number; cy: number; rx: number; ry: number };
-export type AccessoryFit = { top: number; leafTop: number; bottom: number; left: number; right: number; crownX: number; crownWidth: number; neckX: number; neckWidth: number };
-const ROUND_FIT: AccessoryFit = { top: -32, leafTop: -32, bottom: 32, left: -32, right: 32, crownX: 0, crownWidth: 1, neckX: 0, neckWidth: 1 };
+export type AccessoryFit = { top: number; leafTop: number; left: number; right: number; crownX: number; crownWidth: number };
+const ROUND_FIT: AccessoryFit = { top: -32, leafTop: -32, left: -32, right: 32, crownX: 0, crownWidth: 1 };
 
 // Read the rendered core and petals once per identity. Reusing their fill avoids
 // a second implementation of the avatar generator's organic contour geometry.
@@ -32,15 +32,14 @@ export function measureAccessoryFit(layer: SVGGElement, body: Body): AccessoryFi
   };
   // A cap bridges the forehead; a dip between two lobes is not its support.
   const top = Math.min(...[-16, -8, 0, 8, 16].map(x => edge(false, x, true)));
-  const bottom = edge(false, 0, false);
   const span = (y: number) => {
     const left = edge(true, y, true);
     const right = edge(true, y, false);
     return { x: (left + right) / 2, width: Math.max(0.65, Math.min(1.5, (right - left) / (2 * Math.sqrt(32 ** 2 - 20 ** 2)))) };
   };
   const crown = span(top + 12);
-  const neck = span(bottom - 12);
-  return { top, leafTop: edge(false, 4, true), bottom, left: Math.min(...[-8, 0, 8].map(y => edge(true, y, true))), right: Math.max(...[-8, 0, 8].map(y => edge(true, y, false))), crownX: crown.x, crownWidth: crown.width, neckX: neck.x, neckWidth: neck.width };
+  // Fit the full ear cushion height, including bodies that widen below the eyes.
+  return { top, leafTop: edge(false, 4, true), left: Math.min(...[-12, 0, 14].map(y => edge(true, y, true))), right: Math.max(...[-12, 0, 14].map(y => edge(true, y, false))), crownX: crown.x, crownWidth: crown.width };
 }
 
 function fitTransform(accessory: WornAccessory, fit: AccessoryFit): string {
@@ -48,7 +47,6 @@ function fitTransform(accessory: WornAccessory, fit: AccessoryFit): string {
     case "beanie":
     case "hard-hat": return `translate(${fit.crownX} ${fit.top + 32}) scale(${fit.crownWidth} 1)`;
     case "leaf": return `translate(0 ${fit.leafTop + 32})`;
-    case "bandana": return `translate(${fit.neckX} ${fit.bottom - 32}) scale(${fit.neckWidth} 1)`;
     case "headset": return `translate(${(fit.left + fit.right) / 2} 0) scale(${(fit.right - fit.left) / 64} 1)`;
   }
 }
@@ -59,10 +57,9 @@ const ACCESSORY_COLORS = {
   beanie: [222, 52],
   "hard-hat": [52, 222],
   headset: [14, 222],
-  bandana: [150, 288],
   leaf: [96, 14],
 } as const satisfies Record<WornAccessory, readonly [number, number]>;
-const SWATCHES = Object.fromEntries([14, 52, 96, 150, 222, 288].map(hue => [hue, palette(hue).head]));
+const SWATCHES = Object.fromEntries([14, 52, 96, 222].map(hue => [hue, palette(hue).head]));
 
 export function mascotAccessoryColor(accessory: WornAccessory, bodyHue: number): string {
   const [primary, alternate] = ACCESSORY_COLORS[accessory];
@@ -76,7 +73,6 @@ function AccessoryArt({ accessory, rear }: { accessory: WornAccessory; rear: boo
     switch (accessory) {
       case "beanie": return <path className="wuu-accessory-trim" transform="translate(0 -3) rotate(8)" d="M-27-17C-30-29-18-36 0-36C18-36 30-29 27-17Q0-26-27-17Z" />;
       case "headset": return <path className="wuu-accessory-line wuu-accessory-headband" d="M-30-8L-31-25Q-31-37-20-36L23-31Q34-30 33-19L32 1" />;
-      case "bandana": return <path className="wuu-accessory-fill" d="M-23 18Q-38 13-36 25L-28 25L-33 34Q-20 35-19 24Z" />;
       default: return null;
     }
   }
@@ -94,10 +90,6 @@ function AccessoryArt({ accessory, rear }: { accessory: WornAccessory; rear: boo
       <path className="wuu-accessory-line" d="M32 10Q32 28 9 29" />
       <rect className="wuu-accessory-fill" x="30" y="-12" width="12" height="26" rx="6" transform="rotate(8 36 1)" />
       <rect className="wuu-accessory-trim" x="3" y="26" width="9" height="6" rx="3" />
-    </>;
-    case "bandana": return <>
-      <path className="wuu-accessory-fill" d="M-26 18Q0 28 26 18Q18 30 5 38Q2 40-1 38Q-17 30-26 18Z" />
-      <path className="wuu-accessory-trim" d="M-25 17Q0 26 25 17L23 23Q0 32-23 23Z" />
     </>;
     case "leaf": return <>
       <path className="wuu-accessory-fill" d="M-2-33C-17-32-24-40-20-48C-7-50 7-46 5-37Q3-33-2-33Z" />

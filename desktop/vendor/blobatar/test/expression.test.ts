@@ -204,15 +204,11 @@ describe("geometry survives every expression", () => {
     for (const [, e] of NAMED) {
       for (const s of SEEDS.slice(0, 2000)) {
         const l = posed(s, e);
-        const shrink =
-          l.shape === "organic" || l.shape === "cloud"
-            ? Math.min(...(l.body as { radii: number[] }).radii) * 0.95
-            : 1;
         const core = {
           cx: l.body.cx,
           cy: l.body.cy,
-          rx: l.body.rx * shrink * 1.12,
-          ry: l.body.ry * shrink * 1.12,
+          rx: l.body.rx * 1.12,
+          ry: l.body.ry * 1.12,
           n: 2,
         };
         for (const eye of l.eyes as {

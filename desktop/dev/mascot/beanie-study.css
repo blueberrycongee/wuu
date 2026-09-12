@@ -9,7 +9,7 @@
 .beanie-sizes { display: flex; justify-content: center; align-items: end; gap: 48px; padding: 36px 0; }
 .beanie-sizes figure > div { height: 100px; display: flex; align-items: center; }
 .beanie-colors { display: flex; flex-wrap: wrap; justify-content: center; gap: 32px; padding: 28px 0; }
-.accessory-collection { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding-top: 32px; }
+.accessory-collection { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding-top: 32px; }
 .accessory-collection button { display: grid; justify-items: center; gap: 12px; padding: 20px 4px 12px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .accessory-collection button[aria-pressed="true"] { background: color-mix(in oklab, CanvasText 7%, Canvas); }
 .accessory-collection button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }

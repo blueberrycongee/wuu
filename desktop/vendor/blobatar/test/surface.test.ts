@@ -61,7 +61,7 @@ describe("curved face geometry", () => {
   });
 
   test("expression deformation happens before projection in the exported SVG", () => {
-    const traits = { shape: 0.2, "body.ratio": 0.5, "body.n": 1 / 6 };
+    const traits = { shape: 0.1 };
     const perspective = { yaw: 38, pitch: -24, strength: 1 };
     const authored = _layout("wuu", { traits });
     for (const expression of [idle, happy, mad, scared, sleepy, wink]) {

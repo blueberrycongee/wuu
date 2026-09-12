@@ -2,7 +2,7 @@ import { Blobatar } from "blobatar/react";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WuuMascot, WuuMascotRuntimeProvider, WUU_MASCOT_ACTIVITY_PROP_LAYOUT } from "./WuuMascot";
+import { WuuMascot, WuuMascotRuntimeProvider, WUU_MASCOT_ACTIVITY_PROP_LAYOUT, modelMascotAccessory } from "./WuuMascot";
 import { EmptyConversationHome } from "./LoadingViews";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 
@@ -111,7 +111,11 @@ describe("WuuMascot activity morph", () => {
     expect(svg.querySelector(".wuu-mascot-accessory")).toBe(art);
     const nextColour = svg.style.getPropertyValue("--mo-head");
 
-    rerender(home("anthropic", "claude-sonnet-4"));
+    // Models may share an accessory; exercise a switch without pinning buckets.
+    const nextModel = Array.from({ length: 32 }, (_, index) => `model-${index}`)
+      .find(model => modelMascotAccessory(model) !== accessory);
+    expect(nextModel).toBeDefined();
+    rerender(home("anthropic", nextModel!));
     expect(svg.style.getPropertyValue("--mo-head")).toBe(nextColour);
     expect(svg.getAttribute("data-wuu-mascot-accessory")).not.toBe(accessory);
     expect(svg.querySelector(".wuu-mascot-accessory")).not.toBeNull();

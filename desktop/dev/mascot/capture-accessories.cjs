@@ -21,6 +21,17 @@ app.whenReady().then(async () => {
     await settle();
   };
   const inspect = () => evaluate(() => {
+    const escapedEyes = [...document.querySelectorAll('svg[data-wuu-mascot-accessory]')].filter(svg => {
+      const body = svg.querySelector('.mo-bob > g:not(.mo-eyes) > path');
+      return [...svg.querySelectorAll('.mo-eye path')].some(eye => {
+        const box = eye.getBBox();
+        for (let x = 1; x < 12; x++) for (let y = 1; y < 12; y++) {
+          const p = new DOMPoint(box.x + box.width * x / 12, box.y + box.height * y / 12);
+          if (eye.isPointInFill(p) && !body.isPointInFill(p.matrixTransform(eye.getScreenCTM()).matrixTransform(body.getScreenCTM().inverse()))) return true;
+        }
+        return false;
+      });
+    }).map(svg => svg.closest('figure')?.querySelector('figcaption')?.textContent);
     const avatars = [...document.querySelectorAll('svg[data-wuu-mascot-accessory]:not([data-wuu-mascot-accessory="none"])')];
     const collisions = [];
     const covered = avatars.filter(svg => {
@@ -58,7 +69,7 @@ app.whenReady().then(async () => {
       });
     }).map(svg => ({ accessory: svg.dataset.wuuMascotAccessory, shape: svg.closest('figure')?.querySelector('figcaption')?.textContent }));
     return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, count: avatars.length,
-      detached,
+      detached, escapedEyes,
       covered: covered.map(svg => ({ accessory: svg.dataset.wuuMascotAccessory, section: svg.closest('section')?.getAttribute('aria-label'), shape: svg.closest('figure')?.querySelector('figcaption')?.textContent, index: [...(svg.closest('figure')?.querySelectorAll('svg[data-wuu-mascot-accessory]') || [])].indexOf(svg), collisions })), colors: [...new Set(colors)] };
   });
   for (const width of [1100, 390]) {
@@ -76,6 +87,7 @@ app.whenReady().then(async () => {
       assert.ok(metrics.scrollWidth <= metrics.width, JSON.stringify(metrics));
       assert.deepEqual(metrics.covered, [], `Accessory covers eyes: ${label}`);
       assert.deepEqual(metrics.detached, [], `Accessory floats off body: ${label}`);
+      assert.deepEqual(metrics.escapedEyes, [], `Eyes outside body: ${label}`);
       assert.equal(metrics.colors.length, 2, `Expected both curated palettes: ${label}`);
       reports.push({ label, dark, ...metrics });
       await evaluate(() => window.scrollTo(0, 0));
@@ -86,17 +98,18 @@ app.whenReady().then(async () => {
     }
   }
   win.setContentSize(1100, 900);
-  const states = await evaluate(() => [...document.querySelector('.beanie-controls select').options].map(o => o.value));
+  const states = await evaluate(() => [...document.querySelector('select[aria-label="动作"]').options].map(o => o.value));
   for (const state of states) {
-    await win.webContents.executeJavaScript(`(() => { const input = document.querySelector('.beanie-controls select'); input.value = ${JSON.stringify(state)}; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await win.webContents.executeJavaScript(`(() => { const input = document.querySelector('select[aria-label="动作"]'); input.value = ${JSON.stringify(state)}; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     for (const label of choices) {
       await selectAccessory(label);
       const metrics = await inspect();
       assert.deepEqual(metrics.covered, [], `Eye coverage: ${state}/${label}`);
       assert.deepEqual(metrics.detached, [], `Accessory floats off body: ${state}/${label}`);
+      assert.deepEqual(metrics.escapedEyes, [], `Eyes outside body: ${state}/${label}`);
     }
   }
-  await evaluate(() => { const input = document.querySelector('.beanie-controls select'); input.value = 'idle'; input.dispatchEvent(new Event('change', { bubbles: true })); window.scrollTo(0, 0); });
+  await evaluate(() => { const input = document.querySelector('select[aria-label="动作"]'); input.value = 'idle'; input.dispatchEvent(new Event('change', { bubbles: true })); window.scrollTo(0, 0); });
   await selectAccessory(choices[0]);
   const hatTransform = () => evaluate(() => getComputedStyle(document.querySelector('.beanie-hero .wuu-accessory-motion')).transform);
   const before = await hatTransform();
@@ -111,6 +124,21 @@ app.whenReady().then(async () => {
   await settle();
   assert.equal(await hatTransform(), "none");
   win.webContents.debugger.detach();
+  await win.loadURL(process.env.MASCOT_PREVIEW_URL || "http://127.0.0.1:5177");
+  await settle();
+  assert.ok(await evaluate(() => {
+    const body = document.querySelector('.wuu-icon-mascot path');
+    const box = body.getBBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    // A square's diagonal radius is larger than its cardinal radius.
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 16) {
+      for (const ratio of [0.98, 1.02]) {
+        const point = new DOMPoint(cx + Math.cos(angle) * box.width / 2 * ratio, cy + Math.sin(angle) * box.height / 2 * ratio);
+        if (body.isPointInFill(point) !== (ratio < 1)) return false;
+      }
+    }
+    return true;
+  }), "Loading mascot must keep its circular body");
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(reports, null, 2));
   console.log(`Accessory rendered checks passed: ${output}`);

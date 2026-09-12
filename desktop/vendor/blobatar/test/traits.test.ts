@@ -83,23 +83,22 @@ describe("configuring a blobatar", () => {
     const a = blobLayout("one", { traits: { shape: 0.95 } });
     const b = blobLayout("two", { traits: { shape: 0.95 } });
 
-    expect(a.shape).toBe("sun");
-    expect(b.shape).toBe("sun");
-    // Same silhouette family, still two different creatures.
-    expect(a.body.rx).not.toBe(b.body.rx);
+    expect(a.shape).toBe("diamond");
+    expect(b.shape).toBe("diamond");
+    // The chosen contour stays stable; faces and colors still carry identity.
+    expect(a.body.path).toBe(b.body.path);
+    expect(a.eyes).not.toEqual(b.eyes);
     expect(a.palette.head).not.toBe(b.palette.head);
   });
 
   test("every shape in the vocabulary is reachable by band midpoint", () => {
-    // What an editor's six shape buttons write. The bands live in `shapeOf`,
-    // and these are the values that land in the middle of each.
+    // Values written by an editor's shape buttons.
     const bands = [
-      [0.14, "round"],
-      [0.43, "organic"],
-      [0.65, "boxy"],
-      [0.78, "nub"],
-      [0.885, "cloud"],
-      [0.965, "sun"],
+      [0.1, "round"],
+      [0.3, "rounded-square"],
+      [0.5, "capsule"],
+      [0.7, "triangle"],
+      [0.9, "diamond"],
     ] as const;
     for (const [v, shape] of bands) {
       expect(blobLayout(SEED, { traits: { shape: v } }).shape).toBe(shape);

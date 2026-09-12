@@ -11,11 +11,10 @@ import { useI18n } from "./i18n";
 
 const SHAPE_LABEL_KEYS = {
   round: "channels.avatarShapeRound",
-  organic: "channels.avatarShapeOrganic",
-  boxy: "channels.avatarShapeBoxy",
-  nub: "channels.avatarShapeNub",
-  cloud: "channels.avatarShapeCloud",
-  sun: "channels.avatarShapeSun",
+  "rounded-square": "channels.avatarShapeRoundedSquare",
+  capsule: "channels.avatarShapeCapsule",
+  triangle: "channels.avatarShapeTriangle",
+  diamond: "channels.avatarShapeDiamond",
 } as const;
 
 const ACCESSORY_LABEL_KEYS = {
@@ -23,7 +22,6 @@ const ACCESSORY_LABEL_KEYS = {
   beanie: "channels.avatarAccessoryBeanie",
   "hard-hat": "channels.avatarAccessoryHardHat",
   headset: "channels.avatarAccessoryHeadset",
-  bandana: "channels.avatarAccessoryBandana",
   leaf: "channels.avatarAccessoryLeaf",
 } as const;
 

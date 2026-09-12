@@ -11,7 +11,7 @@ The state sheet compares eyes and abstract accents. The turn button replays the
 brief ribbon gesture used when entering work; it is not a progress indicator.
 
 Open `/?study=accessories` for the accessory study: body comparison, curated colour
-pairs, six body shapes, pointer following, camera angles and actual display sizes.
+pairs, five body shapes, pointer following, camera angles and actual display sizes.
 Run `node_modules/.bin/electron dev/mascot/capture-accessories.cjs` for optional rendered
 checks and screenshots in `artifacts/mascot-accessories`. If the default port is busy,
 use `npm run lab:mascot -- --port 5189 --strictPort` and set

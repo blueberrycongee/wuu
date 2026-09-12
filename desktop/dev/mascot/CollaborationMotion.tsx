@@ -9,8 +9,8 @@ const states: [AgentAvatarStatus, string][] = [
 ];
 const identities = [
   { seed: "research", name: "Research", key: "mascot-v1:round:none:150" },
-  { seed: "builder", name: "Builder", key: "mascot-v1:organic:beanie:202" },
-  { seed: "reviewer", name: "Reviewer", key: "mascot-v1:boxy:headphones:33" },
+  { seed: "builder", name: "Builder", key: "mascot-v1:capsule:beanie:202" },
+  { seed: "reviewer", name: "Reviewer", key: "mascot-v1:rounded-square:headset:33" },
 ];
 
 function CollaborationMotion(): JSX.Element {

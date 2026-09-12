@@ -14,7 +14,24 @@ This is vendored **as source**, not as a tarball: `package.json`'s `exports`
 point at `src/*.ts` and the desktop renderer bundles the TypeScript directly
 through the `file:vendor/blobatar` dependency. There is no dist and no build
 step here — editing `src/` and restarting the desktop dev build is the whole
-integration loop.
+integration loop. Package managers that copy local dependencies must refresh
+that copy too; restart Vite with `--force` after changing vendored modules to
+discard prebundled dependencies.
+
+## Wuu shape contract
+
+`SHAPES` from `blobatar/blob` is the shared selector catalogue: circle, rounded
+square, horizontal capsule, rounded triangle, and rounded diamond. Contours are
+fixed across seeds, with per-shape optical sizing: tapered contours are wider
+than the rounded square, and the diamond sits horizontally. The former irregular
+contours and their body/decorative trait controls are retired. This deliberately
+changes seeded silhouettes; persisted Wuu identities migrate known old shape
+IDs while retaining color and supported headwear.
+
+Layout exposes `body.path` as the painted contour and `face` as the inscribed
+projection surface. Consumers drawing the body must use its path; recreating a
+superellipse from its bounds loses the selected shape. Static and animated eye
+projection both use `face`, so turns stay inside sloping triangle/diamond sides.
 
 ## Layout
 

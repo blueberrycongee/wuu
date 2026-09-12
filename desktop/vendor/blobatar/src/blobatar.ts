@@ -103,6 +103,6 @@ export function _layout(name: string, opts: BlobatarOptions = {}) {
     // static renderer paints rather than the ramp they came from.
     palette: (e?.tint ? e.tint(palette as Palette, e.p) : palette) as Palette,
     ...posed,
-    eyes: opts.perspective ? posed.eyes.map((eye) => surfaceEye(eye, l.body, opts.perspective)) : posed.eyes,
+    eyes: opts.perspective ? posed.eyes.map((eye) => surfaceEye(eye, l.face, opts.perspective)) : posed.eyes,
   };
 }

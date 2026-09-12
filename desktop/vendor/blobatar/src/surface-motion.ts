@@ -66,7 +66,7 @@ export function animateSurface(root: SVGGElement, layout: Layout) {
     if (next === signature) return;
     signature = next;
     const posed = bakePose(layout, p).l;
-    const data = posed.eyes.map((eye) => surfaceEye(eye, layout.body, view, spin).path);
+    const data = posed.eyes.map((eye) => surfaceEye(eye, layout.face, view, spin).path);
     return () => paths.forEach((path, i) => path.setAttribute("d", data[i]!));
   };
   const flush = () => read()?.();

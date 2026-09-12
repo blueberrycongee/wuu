@@ -759,12 +759,12 @@ func TestNamedAgentModelCanFollowWorkspaceOrUseExplicitProvider(t *testing.T) {
 	service := openTestService(t, nil)
 	created := createTestAgent(t, service, "Andy")
 	updated, err := service.UpdateNamedAgent(ctx, UpdateNamedAgentParams{
-		ID: created.Agent.ID, Name: "Andy", AvatarKey: "mascot-v1:cloud:headset:202", ProviderOverride: "anthropic", ModelOverride: "claude-sonnet", EffortOverride: "high",
+		ID: created.Agent.ID, Name: "Andy", AvatarKey: "mascot-v1:capsule:headset:202", ProviderOverride: "anthropic", ModelOverride: "claude-sonnet", EffortOverride: "high",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.AvatarKey != "mascot-v1:cloud:headset:202" || updated.ProviderOverride != "anthropic" || updated.ModelOverride != "claude-sonnet" || updated.EffortOverride != "high" {
+	if updated.AvatarKey != "mascot-v1:capsule:headset:202" || updated.ProviderOverride != "anthropic" || updated.ModelOverride != "claude-sonnet" || updated.EffortOverride != "high" {
 		t.Fatalf("updated = %#v", updated)
 	}
 	inherited, err := service.UpdateNamedAgent(ctx, UpdateNamedAgentParams{ID: created.Agent.ID, Name: "Andy"})
@@ -774,7 +774,7 @@ func TestNamedAgentModelCanFollowWorkspaceOrUseExplicitProvider(t *testing.T) {
 	if inherited.ProviderOverride != "" || inherited.ModelOverride != "" || inherited.EffortOverride != "" {
 		t.Fatalf("inherited = %#v", inherited)
 	}
-	if inherited.AvatarKey != "mascot-v1:cloud:headset:202" {
+	if inherited.AvatarKey != "mascot-v1:capsule:headset:202" {
 		t.Fatalf("avatar was not preserved: %#v", inherited)
 	}
 }

@@ -99,7 +99,7 @@ describe("AgentOnboarding", () => {
     expect(query<HTMLButtonElement>('[data-action="submit"]').disabled).toBe(true);
     await type("agent-name", " Ada ");
     await type("agent-role", "Investigate evidence and explain the result.");
-    await click('[data-shape="cloud"]');
+    await click('[data-shape="capsule"]');
     await click('[data-hue="202"]');
     const identity = { ...currentDraft };
     await click('[data-action="submit"]');
@@ -115,7 +115,7 @@ describe("AgentOnboarding", () => {
       avatar_key: identity.avatarKey, avatar_image: undefined, engine_override: "wuu",
       provider_override: "primary", model_override: "reasoner", effort_override: "high",
     });
-    expect(agentAvatarConfig(identity.avatarKey)).toEqual({ shape: "cloud", hue: 202, accessory: "none" });
+    expect(agentAvatarConfig(identity.avatarKey)).toEqual({ shape: "capsule", hue: 202, accessory: "none" });
     expect(currentDraft.createdAgent).toEqual(agent);
     expect(open).toHaveBeenCalledExactlyOnceWith(agent);
     expect(close).toHaveBeenCalledOnce();

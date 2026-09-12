@@ -7,11 +7,7 @@ import { ProductMascotWorkbench } from "./ProductMascotWorkbench";
 const EXPRESSIONS = { idle, happy, sad, mad, surprised, wink, sleepy, smug, unsure, scared, love, shy, sick } satisfies Record<string, Expression>;
 const TRAIT_GROUPS = {
   identity: ["shape", "hue", "tone"],
-  body: ["body.r", "body.ratio", "body.x", "body.y", "body.n", "body.rot", "body.pts", "body.r0", "body.r1", "body.r2", "body.r3", "body.r4", "body.r5", "body.r6", "body.r7"],
   eyes: ["gaze.x", "gaze.y", "eye.rx", "eye.ratio", "eye.scale", "eye.stretch", "eye.gap", "eye.n", "eye.lean", "eye.lean2", "eye.dy"],
-  sun: ["sun.n", "sun.dist", "sun.r", "sun.rot"],
-  cloud: ["cloud.n", "cloud.r0", "cloud.r1", "cloud.r2", "cloud.r3", "cloud.r4", "cloud.r5"],
-  nub: ["nub.n", "nub.a0", "nub.a1", "nub.r0", "nub.r1"],
 } as const;
 const ALL_TRAITS = Object.values(TRAIT_GROUPS).flat();
 type TraitKey = (typeof ALL_TRAITS)[number];

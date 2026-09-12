@@ -3,6 +3,7 @@ import * as style from "./styles/blob";
 
 export type { BlobatarOptions };
 export type { Shape } from "./styles/blob";
+export { SHAPES } from "./styles/silhouette";
 export type { TraitOverrides } from "./traits";
 
 /**

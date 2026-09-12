@@ -2200,15 +2200,27 @@ func normalizeNamedAgentAvatarKey(value string) (string, error) {
 		}
 	}
 	parts := strings.Split(value, ":")
+	if len(parts) == 4 {
+		// Retired contours migrate without losing the saved color or headwear.
+		switch parts[1] {
+		case "organic", "nub":
+			parts[1] = "round"
+		case "boxy":
+			parts[1] = "rounded-square"
+		case "cloud":
+			parts[1] = "capsule"
+		case "sun":
+			parts[1] = "diamond"
+		}
+	}
 	if len(parts) == 4 && parts[0] == "mascot-v1" && validNamedAgentAvatarShape(parts[1]) && parts[2] != "" {
 		hue, err := strconv.Atoi(parts[3])
 		if err == nil && hue >= 0 && hue <= 359 && parts[3] == strconv.Itoa(hue) {
 			// Removed or newer accessories must not prevent editing an identity.
 			if !validNamedAgentAvatarAccessory(parts[2]) {
 				parts[2] = "none"
-				return strings.Join(parts, ":"), nil
 			}
-			return value, nil
+			return strings.Join(parts, ":"), nil
 		}
 	}
 	return "", fmt.Errorf("invalid named agent avatar %q", value)
@@ -2216,7 +2228,7 @@ func normalizeNamedAgentAvatarKey(value string) (string, error) {
 
 func validNamedAgentAvatarShape(value string) bool {
 	switch value {
-	case "round", "organic", "boxy", "nub", "cloud", "sun":
+	case "round", "rounded-square", "capsule", "triangle", "diamond":
 		return true
 	default:
 		return false
@@ -2225,7 +2237,7 @@ func validNamedAgentAvatarShape(value string) bool {
 
 func validNamedAgentAvatarAccessory(value string) bool {
 	switch value {
-	case "none", "beanie", "hard-hat", "headset", "bandana", "leaf":
+	case "none", "beanie", "hard-hat", "headset", "leaf":
 		return true
 	default:
 		return false
