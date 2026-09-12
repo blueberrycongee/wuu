@@ -15,6 +15,7 @@ function searchable(value: string): string {
 
 export function collaborationConversations(
   agents: NamedAgent[], rooms: ChannelRoom[], pinnedRoomIDs: readonly string[], query: string,
+  archivedRoomIDs: readonly string[] = [],
 ): CollaborationConversation[] {
   const agentsByID = new Map(agents.map((agent) => [agent.id, agent]));
   const representedAgents = new Set<string>();
@@ -37,7 +38,7 @@ export function collaborationConversations(
     });
   }
   const normalizedQuery = searchable(query.trim());
-  return conversations.filter((item) => !normalizedQuery || searchable(item.name).includes(normalizedQuery))
+  return conversations.filter((item) => !archivedRoomIDs.includes(item.id) && (!normalizedQuery || searchable(item.name).includes(normalizedQuery)))
     .sort((left, right) => Number(right.pinned) - Number(left.pinned)
       || (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0)
       || left.id.localeCompare(right.id));

@@ -98,6 +98,7 @@ import {
   AppSidebar,
 } from "./AppSidebar";
 import { ChannelView, type ChannelSection } from "./ChannelView";
+import type { CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import type { AppMode } from "./AppModeSwitch";
@@ -172,8 +173,9 @@ import {
   type ThreadSummary,
 } from "./AppState";
 import {
-  channelRoomIsPinned,
+  archiveChannelRoomPreference,
   readChannelRoomPreferences,
+  togglePinnedChannelRoom,
   unarchiveChannelRoomPreference,
   visibleChannelRooms,
   writeChannelRoomPreferences,
@@ -636,6 +638,8 @@ export function App(): JSX.Element {
 
   const [collaborationSection, setCollaborationSection] = useState<ChannelSection>("rooms");
   const [newRoomRequest, setNewRoomRequest] = useState(0);
+  const [editChannelAgentRequestID, setEditChannelAgentRequestID] = useState("");
+  const [editChannelRoomRequestID, setEditChannelRoomRequestID] = useState("");
   const [agentOnboardingActive, setAgentOnboardingActive] = useState(false);
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [namedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
@@ -1084,24 +1088,8 @@ export function App(): JSX.Element {
     ],
     [channelRoomPreferences, channelRooms],
   );
-  const pinnedChannelRooms = useMemo(
-    () =>
-      activeChannelRooms.filter((room) => channelRoomIsPinned(channelRoomPreferences, room.id)),
-    [activeChannelRooms, channelRoomPreferences],
-  );
-  const sidebarChannelRooms = useMemo(
-    () =>
-      activeChannelRooms.filter(
-        (room) => !channelRoomIsPinned(channelRoomPreferences, room.id),
-      ),
-    [activeChannelRooms, channelRoomPreferences],
-  );
-  const collaborationSidebarRooms = useMemo(
-    () => [...pinnedChannelRooms, ...sidebarChannelRooms],
-    [pinnedChannelRooms, sidebarChannelRooms],
-  );
   const archivedChannelRooms = useMemo(
-    () => channelRooms.filter((room) => room.kind === "channel" && channelRoomPreferences.archivedRoomIDs.includes(room.id)),
+    () => channelRooms.filter((room) => channelRoomPreferences.archivedRoomIDs.includes(room.id)),
     [channelRoomPreferences.archivedRoomIDs, channelRooms],
   );
   const selectedChannelRoomID =
@@ -3433,6 +3421,7 @@ export function App(): JSX.Element {
   }
 
   function selectChannelRoom(roomID: string): void {
+    if (channelRoomPreferences.archivedRoomIDs.includes(roomID)) unarchiveChannelRoom({ id: roomID });
     setAgentOnboardingActive(false);
     // A newly opened room can arrive before the directory update renders.
     setSelectedChannelRoomIDState(roomID);
@@ -3518,6 +3507,7 @@ export function App(): JSX.Element {
       return next;
     });
     if (selectedCollaborationAgentRequestRef.current !== agentID) return;
+    if (channelRoomPreferences.archivedRoomIDs.includes(result.room.id)) unarchiveChannelRoom(result.room);
     setSelectedChannelRoomIDState(result.room.id);
     clearChannelRoomUnread(result.room.id);
   }
@@ -3802,6 +3792,35 @@ export function App(): JSX.Element {
 
   function unarchiveChannelRoom(room: Pick<ChannelRoom, "id">): void {
     updateChannelRoomPreferences((current) => unarchiveChannelRoomPreference(current, room.id));
+  }
+
+  async function updateCollaborationConversationPreference(conversation: CollaborationConversation, action: "pin" | "hide"): Promise<void> {
+    try {
+      // Agents without a DM need a persisted conversation ID, but managing it
+      // must not navigate away from the user's current chat.
+      const room = conversation.room ?? (await window.wuu.openChannelDirectMessage({ agent_id: conversation.agent!.id })).room;
+      if (!conversation.room) setChannelRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
+      updateChannelRoomPreferences((current) => action === "pin"
+        ? togglePinnedChannelRoom(current, room.id)
+        : archiveChannelRoomPreference(current, room.id));
+    } catch (reason) {
+      showErrorToast(reason);
+    }
+  }
+
+  async function deleteCollaborationConversation(conversation: CollaborationConversation): Promise<void> {
+    const { agent, room, name } = conversation;
+    if (!agent && room?.kind !== "channel") return;
+    if (!window.confirm(t(agent ? "channels.deleteAgentConfirm" : "channels.deleteRoomConfirm", { name }))) return;
+    try {
+      if (agent) await window.wuu.deleteNamedAgent({ agent_id: agent.id });
+      else await window.wuu.deleteChannelRoom({ room_id: room!.id });
+      const [agentResult, roomResult] = await Promise.all([window.wuu.listNamedAgents(), window.wuu.listChannelRooms()]);
+      setNamedAgents(agentResult.agents);
+      setChannelRooms(roomResult.rooms);
+    } catch (reason) {
+      showErrorToast(reason);
+    }
   }
 
   const {
@@ -5135,8 +5154,12 @@ export function App(): JSX.Element {
               collapsed={collaborationRail}
               onToggleCollapsed={toggleSidebar}
               agents={namedAgents}
-              rooms={collaborationSidebarRooms}
+              rooms={channelRooms}
               pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
+              archivedRoomIDs={channelRoomPreferences.archivedRoomIDs}
+              onTogglePinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
+              onHideConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
+              onDeleteConversation={(conversation) => void deleteCollaborationConversation(conversation)}
               selectedAgentID={collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
               selectedRoomID={collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
               onSelectAgent={(agent) => {
@@ -5150,6 +5173,20 @@ export function App(): JSX.Element {
               onManageAgents={() => {
                 closeCompactSessionSwitcher();
                 openAgentManagement();
+              }}
+              onEditAgent={(agentID) => {
+                closeCompactSessionSwitcher();
+                setAgentOnboardingActive(false);
+                setNewRoomRequest(0);
+                setEditChannelRoomRequestID("");
+                setEditChannelAgentRequestID(agentID);
+              }}
+              onEditRoom={(roomID) => {
+                closeCompactSessionSwitcher();
+                setAgentOnboardingActive(false);
+                setNewRoomRequest(0);
+                setEditChannelAgentRequestID("");
+                setEditChannelRoomRequestID(roomID);
               }}
               draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
               draftSelected={agentOnboardingActive}
@@ -5410,6 +5447,10 @@ export function App(): JSX.Element {
               onDirectoryRoomsChange={setChannelRooms}
               newRoomRequest={newRoomRequest}
               onNewRoomRequestHandled={() => setNewRoomRequest(0)}
+              editAgentRequestID={editChannelAgentRequestID}
+              onEditAgentRequestHandled={() => setEditChannelAgentRequestID("")}
+              editRoomRequestID={editChannelRoomRequestID}
+              onEditRoomRequestHandled={() => setEditChannelRoomRequestID("")}
               onCreateAgent={openNewNamedAgent}
               onManageProviders={openAgentProviderSettings}
             />}

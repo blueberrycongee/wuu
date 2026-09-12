@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
+import { translateCurrent as t } from "./i18n";
 
 const agent: NamedAgent = { id: "alpha", name: "Alpha", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-01T00:00:00Z" };
 const dm: ChannelRoom = {
@@ -21,12 +22,17 @@ const callbacks = {
   onSelectAgent: vi.fn(), onSelectRoom: vi.fn(), onManageAgents: vi.fn(), onCreateAgent: vi.fn(),
   onCreateRoom: vi.fn(), onSwitchToHarness: vi.fn(), onOpenSettings: vi.fn(),
   onToggleCollapsed: vi.fn(),
+  onEditAgent: vi.fn(), onEditRoom: vi.fn(),
+  onTogglePinned: vi.fn(), onHideConversation: vi.fn(), onDeleteConversation: vi.fn(),
 };
 function render(rooms: ChannelRoom[] = [dm, group], pinnedRoomIDs: string[] = [], collapsed = false) {
   act(() => root.render(<WuuUIRoot><CollaborationSidebar initialized agents={[agent, { ...agent, id: "beta", name: "Beta" }]}
     rooms={rooms} pinnedRoomIDs={pinnedRoomIDs} selectedRoomID="dm" collapsed={collapsed} {...callbacks} /></WuuUIRoot>));
 }
 function rows() { return Array.from(host.querySelectorAll<HTMLButtonElement>("nav button")); }
+function rightClick(row: HTMLButtonElement) {
+  act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 })));
+}
 beforeEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(window, "wuu", { configurable: true, value: {} });
@@ -60,6 +66,62 @@ it("keeps pinned rooms first, updates incoming previews, and filters by the curr
   });
   expect(rows()).toHaveLength(1);
   expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
+});
+
+it.each([false, true])("manages groups, DM agents, and agents without a DM from the context menu (rail=%s)", (collapsed) => {
+  render([dm, group], [], collapsed);
+  for (const [index, target, callback] of [
+    [0, "group", callbacks.onEditRoom], [1, "alpha", callbacks.onEditAgent], [2, "beta", callbacks.onEditAgent],
+  ] as const) {
+    rightClick(rows()[index]);
+    expect(callbacks.onSelectAgent).not.toHaveBeenCalled();
+    expect(callbacks.onSelectRoom).not.toHaveBeenCalled();
+    const action = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === t(index === 0 ? "channels.roomDetails" : "channels.editAgent"));
+    expect(action).not.toBeNull();
+    act(() => action!.click());
+    expect(callback).toHaveBeenLastCalledWith(target);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  }
+});
+
+it("dismisses management without taking action and drops menus for removed targets", () => {
+  render();
+  rightClick(rows()[0]);
+  act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  rightClick(rows()[0]);
+  act(() => document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  rightClick(rows()[0]);
+  render([dm]);
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  expect(callbacks.onEditAgent).not.toHaveBeenCalled();
+  expect(callbacks.onEditRoom).not.toHaveBeenCalled();
+});
+
+it("exposes pin, hide, delete and ID copying for the exact conversation", async () => {
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  render([dm, group], ["dm"]);
+  for (const [key, callback] of [
+    ["sidebar.unpin", callbacks.onTogglePinned], ["channels.hideConversation", callbacks.onHideConversation], ["channels.deleteAgent", callbacks.onDeleteConversation],
+  ] as const) {
+    rightClick(rows()[0]);
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === t(key))!;
+    act(() => item.click());
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ id: "dm", agent, room: dm }));
+  }
+  rightClick(rows()[0]);
+  const copy = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === t("threadSidebar.copyConversationID"))!;
+  await act(async () => copy.click());
+  expect(writeText).toHaveBeenCalledWith("dm");
+});
+
+it("does not resurrect a hidden DM as a standalone Agent and restores it when unhidden", () => {
+  act(() => root.render(<WuuUIRoot><CollaborationSidebar initialized agents={[agent]} rooms={[dm, group]} archivedRoomIDs={["dm"]} {...callbacks} /></WuuUIRoot>));
+  expect(rows().map(row => row.querySelector("strong")?.textContent)).toEqual(["Design"]);
+  act(() => root.render(<WuuUIRoot><CollaborationSidebar initialized agents={[agent]} rooms={[dm, group]} archivedRoomIDs={[]} {...callbacks} /></WuuUIRoot>));
+  expect(rows().map(row => row.querySelector("strong")?.textContent)).toEqual(["Design", "Alpha"]);
 });
 
 it("opens the conversation picker directly from the add button", () => {

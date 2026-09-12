@@ -86,6 +86,66 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+async function manageSidebarRow(name: string, action: string): Promise<void> {
+  const row = Array.from(container.querySelectorAll<HTMLButtonElement>(".collaboration-contact-row")).find(button => button.querySelector("strong")?.textContent === name)!;
+  expect(row).toBeTruthy();
+  act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 100 })));
+  await click(action);
+}
+
+it("pins a new Agent without navigation, persists hiding, and restores its DM from settings", async () => {
+  agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  rooms = [{ id: "general", name: "General", kind: "channel", members: [], created_by: "human", created_at: agents[0].created_at }];
+  vi.mocked(window.wuu.openChannelDirectMessage).mockImplementation(async () => {
+    const room = { id: "new-dm", name: "Research", kind: "dm", members: [{ member_type: "agent", member_id: "new-agent" }], created_at: agents[0].created_at } as ChannelRoom;
+    rooms = [...rooms, room];
+    return { room };
+  });
+  await act(async () => { root.render(<App />); });
+  await click("collaboration");
+  await manageSidebarRow("Research", t("sidebar.pin"));
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledExactlyOnceWith({ agent_id: "new-agent" });
+  expect(container.querySelector(".channel-room-settings-name")?.textContent).toBe("General");
+  expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).pinnedRoomIDs).toEqual(["new-dm"]);
+  await manageSidebarRow("Research", t("channels.hideConversation"));
+  expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!)).toEqual({ pinnedRoomIDs: [], archivedRoomIDs: ["new-dm"] });
+  expect(container.querySelector(".collaboration-sidebar nav")?.textContent).not.toContain("Research");
+  await click(t("account.menu"));
+  await click(t("sidebar.settings"));
+  await act(async () => { await vi.dynamicImportSettled(); });
+  await click(t("settings.archive"));
+  await click(t("settings.restoreRoom", { title: "Research" }));
+  expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).archivedRoomIDs).toEqual([]);
+  await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
+  expect(container.querySelector(".collaboration-sidebar nav")?.textContent).toContain("Research");
+});
+
+it.each(["agent", "group"])("confirms context deletion and removes only the requested %s", async (target) => {
+  agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  rooms = [{ id: "general", name: "General", kind: "channel", members: [], created_by: "human", created_at: agents[0].created_at }];
+  window.wuu.deleteNamedAgent = vi.fn(async () => { agents = []; return { deleted: true }; });
+  window.wuu.deleteChannelRoom = vi.fn(async () => { rooms = []; return { deleted: true }; });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await act(async () => { root.render(<App />); });
+  await click("collaboration");
+  const name = target === "agent" ? "Research" : "General";
+  const label = t(target === "agent" ? "channels.deleteAgent" : "channels.deleteRoom");
+  await manageSidebarRow(name, label);
+  expect(window.wuu.deleteNamedAgent).not.toHaveBeenCalled();
+  expect(window.wuu.deleteChannelRoom).not.toHaveBeenCalled();
+  confirm.mockReturnValue(true);
+  await manageSidebarRow(name, label);
+  if (target === "agent") {
+    expect(window.wuu.deleteNamedAgent).toHaveBeenCalledExactlyOnceWith({ agent_id: "new-agent" });
+    expect(window.wuu.deleteChannelRoom).not.toHaveBeenCalled();
+  } else {
+    expect(window.wuu.deleteChannelRoom).toHaveBeenCalledExactlyOnceWith({ room_id: "general" });
+    expect(window.wuu.deleteNamedAgent).not.toHaveBeenCalled();
+  }
+  expect(container.querySelector(".collaboration-sidebar nav")?.textContent).not.toContain(name);
+  confirm.mockRestore();
+});
+
 it("opens a newly created identity's conversation before the next directory refresh", async () => {
   await act(async () => { root.render(<App />); });
   await click("collaboration");

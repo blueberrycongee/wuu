@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
@@ -23,6 +23,8 @@ export type ThreadContextMenuItem =
       onSelect: () => void | Promise<void>;
       /** When true, the item is rendered disabled and clicks are ignored. */
       disabled?: boolean;
+      icon?: ReactNode;
+      danger?: boolean;
     }
   | {
       /** Render a horizontal divider between items. */
@@ -113,12 +115,14 @@ export function ThreadContextMenu({
               type="button"
               className="thread-row-context-menu-item"
               disabled={item.disabled}
+              style={item.danger ? { color: "var(--danger)" } : undefined}
               onClick={() => {
                 if (item.disabled) return;
                 void item.onSelect();
                 onClose();
               }}
             >
+              {item.icon}
               <span>{item.label}</span>
             </button>
           );
