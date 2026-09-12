@@ -1224,6 +1224,11 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 		providers.DebugLogf("read named agent memory index: %v", err)
 	}
 	toolkit := threadRuntime.Toolkit
+	if toolkit != nil && toolkit.IsRoomAgent() {
+		// Coordination state lives in room tasks and the durable session. Do not
+		// teach an execution-restricted coordinator to edit an identity notebook.
+		teaching, index = "", ""
+	}
 	if toolkit != nil {
 		toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(rootDir, s.WuuHome, memoryDir))
 	}

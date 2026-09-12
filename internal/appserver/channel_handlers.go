@@ -369,8 +369,12 @@ func (s *Server) handleChannelMessageList(ctx context.Context, req Request) erro
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	coordinator, err := s.channelCoordinatorStatus(ctx, params.RoomID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	messages, err := s.channelService.ListMessages(ctx, params.RoomID, params.AfterSeq, params.Limit)
-	return s.writeResponse(req.ID, ChannelMessageListResult{Messages: messages, Responses: responses}, err)
+	return s.writeResponse(req.ID, ChannelMessageListResult{Messages: messages, Responses: responses, Coordinator: coordinator}, err)
 }
 
 func (s *Server) handleChannelMessageSend(ctx context.Context, req Request) error {

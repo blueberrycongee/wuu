@@ -63,6 +63,11 @@ func TestRoomCoordinatorDelegatesStaysResponsiveAndPublishesThroughMember(t *tes
 		t.Fatalf("request did not reach only the hidden coordinator: %+v %v", bindings, err)
 	}
 	parent := bindings[0]
+
+	status, err := fixture.server.channelCoordinatorStatus(ctx, fixture.room.ID)
+	if err != nil || status.State != "working" || len(status.AgentIDs) != 0 {
+		t.Fatalf("coordination status: %#v %v", status, err)
+	}
 	thread := fixture.server.thread(parent.SessionRef)
 	thread.mu.Lock()
 	kit := thread.execRuntime.Toolkit
@@ -92,6 +97,10 @@ func TestRoomCoordinatorDelegatesStaysResponsiveAndPublishesThroughMember(t *tes
 	correction.response <- providers.ChatResponse{Content: "The active investigation remains read-only"}
 	waitCoordinatorCompletion(t, fixture)
 	waitForThreadLeaseRelease(t, fixture.server.rt.SessionDir, parent.SessionRef)
+	status, err = fixture.server.channelCoordinatorStatus(ctx, fixture.room.ID)
+	if err != nil || status.State != "waiting" || len(status.AgentIDs) != 1 || status.AgentIDs[0] != fixture.identity.ID {
+		t.Fatalf("responsibility status: %#v %v", status, err)
+	}
 	const evidence = "The reconnect callback retained a stale cursor"
 	worker.response <- providers.ChatResponse{Content: evidence}
 	waitCoordinatorCompletion(t, fixture)
@@ -156,6 +165,10 @@ func TestRoomCoordinatorFailureCanBeResumedWithoutBroadcast(t *testing.T) {
 		t.Fatalf("failure lost: %+v %v", bindings, err)
 	}
 	binding := bindings[0]
+	status, err := fixture.server.channelCoordinatorStatus(ctx, fixture.room.ID)
+	if err != nil || status.State != "failed" || status.SessionRef != binding.SessionRef || status.Error == "" {
+		t.Fatalf("failed coordinator status: %#v %v", status, err)
+	}
 	waitForThreadLeaseRelease(t, fixture.server.rt.SessionDir, binding.SessionRef)
 	if _, err := fixture.server.channelService.ResumeSession(ctx, channels.CollaborationSessionControlParams{SessionRef: binding.SessionRef}); err != nil {
 		t.Fatal(err)
@@ -169,5 +182,23 @@ func TestRoomCoordinatorFailureCanBeResumedWithoutBroadcast(t *testing.T) {
 	bindings, err = fixture.server.channelService.ListAllCollaborationSessions(ctx)
 	if err != nil || len(bindings) != 1 {
 		t.Fatalf("retry broadcast to members: %+v %v", bindings, err)
+	}
+}
+
+func TestRoomCoordinatorStatusDoesNotExposeAWorkerInEmptyRoomsOrDMs(t *testing.T) {
+	fixture, _ := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	empty := createPeerRoom(t, fixture, "Unstaffed")
+	status, err := fixture.server.channelCoordinatorStatus(ctx, empty.ID)
+	if err != nil || status == nil || status.State != "needs_members" || status.SessionRef != "" {
+		t.Fatalf("empty room status: %#v %v", status, err)
+	}
+	dm, err := fixture.server.channelService.OpenDirectMessage(ctx, "human-1", fixture.identity.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err = fixture.server.channelCoordinatorStatus(ctx, dm.ID)
+	if err != nil || status != nil {
+		t.Fatalf("DM exposed a coordinator: %#v %v", status, err)
 	}
 }

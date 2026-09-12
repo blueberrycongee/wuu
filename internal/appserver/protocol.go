@@ -2612,8 +2612,9 @@ type ChannelMessageListParams struct {
 }
 
 type ChannelMessageListResult struct {
-	Messages  []channels.Message `json:"messages"`
-	Responses []ChannelResponse  `json:"responses"`
+	Coordinator *ChannelCoordinatorStatus `json:"coordinator,omitempty"`
+	Messages    []channels.Message        `json:"messages"`
+	Responses   []ChannelResponse         `json:"responses"`
 }
 
 type ChannelMessageSendParams struct {

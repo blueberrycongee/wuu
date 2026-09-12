@@ -1148,7 +1148,13 @@ export type ChannelResponse = {
   error?: string;
   created_at: string;
 };
-export type ChannelMessageListResult = { messages: ChannelMessage[]; responses?: ChannelResponse[] };
+export type ChannelCoordinatorStatus = {
+  state: "idle" | "queued" | "working" | "waiting" | "failed" | "needs_members";
+  session_ref?: string;
+  agent_ids?: string[];
+  error?: string;
+};
+export type ChannelMessageListResult = { messages: ChannelMessage[]; responses?: ChannelResponse[]; coordinator?: ChannelCoordinatorStatus };
 export type ChannelMessageSendParams = {
   room_id: string;
   body: string;

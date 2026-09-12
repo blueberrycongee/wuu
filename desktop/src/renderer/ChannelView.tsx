@@ -11,6 +11,7 @@ import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from ".
 import { ChannelSessions } from "./ChannelSessions";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
+import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
 import { ChannelMemberPicker } from "./ChannelMemberPicker";
@@ -699,6 +700,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     }
   }, [inspectedSession, section, selectedRoomID]);
   const [messagesByRoomID, setMessagesByRoomID] = useState<Record<string, ChannelMessage[]>>({});
+  const [coordinatorsByRoomID, setCoordinatorsByRoomID] = useState<Record<string, ChannelMessageListResult["coordinator"]>>({});
   const [responsesByRoomID, setResponsesByRoomID] = useState<Record<string, ChannelResponseActivity[]>>({});
   const responses = useMemo(() => (responsesByRoomID[selectedRoomID] ?? []).filter(
     (response) => !messagesByRoomID[selectedRoomID]?.some((message) => message.id === response.id),
@@ -1070,6 +1072,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     try {
       const result = await readChannelMessages(roomID);
       if (messageRefreshGenerationByRoomRef.current.get(roomID) !== generation) return;
+      setCoordinatorsByRoomID((current) => JSON.stringify(current[roomID]) === JSON.stringify(result.coordinator) ? current : { ...current, [roomID]: result.coordinator });
       if (result.responses !== undefined) {
         // Only committed messages belong in the transcript. Token updates must
         // not rerender it, scroll it, or expose incomplete answers as messages.
@@ -2018,6 +2021,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
             <div className="channel-activity-region" aria-live="polite">
+              <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={agents}
+                onRetry={async (sessionRef) => { await window.wuu!.resumeChannelSession({ sessionRef }); await refreshMessages(selectedRoomID, true); }} />
               {responseActivities.map((response) => <ChannelAgentActivity key={response.id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}

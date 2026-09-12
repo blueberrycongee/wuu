@@ -1,0 +1,32 @@
+.channel-coordinator-activity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.channel-coordinator-activity button {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.channel-coordinator-activity button:disabled { opacity: 0.5; cursor: default; }
+.channel-coordinator-error { color: var(--text-danger, var(--text-secondary)); }
+
+@media (pointer: coarse) {
+  .channel-coordinator-activity button { min-height: 44px; }
+}
