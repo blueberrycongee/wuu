@@ -5,10 +5,13 @@
 }
 .channel-view.has-agent-settings > .channel-conversation { grid-column: 1; grid-row: 1 / -1; }
 .channel-view.has-agent-settings > .channel-settings-panel { grid-column: 2; grid-row: 1 / -1; }
-.channel-room-settings-trigger {
+.channel-room-header .channel-room-settings-trigger {
+  /* Leave the remaining titlebar to Electron's native drag region. */
+  flex: 0 1 auto;
+  max-width: min(320px, 70%);
   border: 0;
-  border-radius: 6px;
-  padding: 4px 6px;
+  border-radius: var(--radius-pill);
+  padding: 4px 8px 4px 4px;
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -28,16 +31,29 @@
   color: var(--ink);
   overflow: hidden;
 }
-.channel-settings-header { display: flex; flex: 0 0 48px; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--hairline); }
+.channel-settings-header { display: flex; flex: 0 0 var(--channel-header-height, 48px); align-items: center; gap: 8px; padding: 0 16px; -webkit-app-region: drag; }
 .channel-settings-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 13px; font-weight: 600; }
 .channel-settings-header .icon-button { width: 28px; height: 28px; }
 .channel-settings-header .icon-button svg { width: 16px; height: 16px; }
 .channel-settings-form { min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .channel-settings-fields { min-width: 0; min-height: 0; margin: 0; padding: 18px 16px; border: 0; overflow-y: auto; flex: 1; }
 .channel-settings-fields .channel-agent-editor-body { overflow: visible; }
-.channel-settings-panel .channel-agent-editor-field textarea { min-height: 130px; max-height: 320px; }
+.channel-settings-panel .channel-agent-editor-field textarea { min-height: 96px; max-height: 320px; }
 .channel-settings-panel :is(input, textarea):focus { border-color: var(--ink-soft); }
-.channel-settings-actions { flex: none; padding: 12px 16px; border-top: 1px solid var(--hairline); }
+.channel-settings-actions { flex: none; padding: 12px 16px; }
+/* Use the shared editor's quiet surfaces, with spacing rather than rules
+   separating sections in the narrow conversation column. */
+.channel-settings-panel .channel-agent-editor-appearance { border-bottom: 0; padding-bottom: 0; }
+.channel-settings-panel .channel-agent-editor-more { border-top: 0; padding-top: 0; }
+.channel-settings-panel .channel-agent-editor-setting .select-menu-trigger {
+  border-color: transparent;
+  background: var(--surface-1);
+}
+.channel-settings-panel :is(button, summary):focus-visible {
+  outline: 1px solid var(--ink-soft);
+  outline-offset: 2px;
+  box-shadow: none;
+}
 .channel-settings-members { min-height: 0; overflow-y: auto; padding: 10px; }
 .channel-settings-member { display: flex; align-items: center; width: 100%; gap: 10px; padding: 10px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; }
 .channel-settings-member:hover { background: var(--surface-1); }

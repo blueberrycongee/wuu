@@ -34,7 +34,22 @@ app.whenReady().then(async () => {
       // Mobile navigation is normally controlled by App. This fixture keeps it
       // hidden at handset widths so it exercises the actual conversation width.
       if (width < 800) await js(`document.querySelector('.app-shell').style.gridTemplateColumns='minmax(0,1fr)'; document.querySelector('.app-shell').firstElementChild.style.display='none'`);
-      await click(".channel-room-settings-trigger");
+      const titlebar = await js(`(() => {
+        const header = document.querySelector('.channel-room-header');
+        const trigger = document.querySelector('.channel-room-settings-trigger');
+        const style = getComputedStyle(trigger);
+        return {width: trigger.getBoundingClientRect().width, headerWidth: header.getBoundingClientRect().width,
+          radius: parseFloat(style.borderRadius), height: trigger.getBoundingClientRect().height,
+          drag: getComputedStyle(header).getPropertyValue('-webkit-app-region'),
+          click: style.getPropertyValue('-webkit-app-region')};
+      })()`);
+      assert(titlebar.width <= 320 && titlebar.width < titlebar.headerWidth * .7, 'Header entry must be a short, content-sized pill');
+      assert(titlebar.radius >= titlebar.height / 2, 'Header entry must have pill corners');
+      assert.equal(titlebar.drag, 'drag', 'Blank titlebar must retain native window dragging');
+      assert.equal(titlebar.click, 'no-drag', 'Avatar/name must remain clickable');
+      const entryPoint = await js(`(() => { const r = document.querySelector('.channel-room-settings-trigger').getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
+      win.webContents.sendInputEvent({type: 'mouseDown', ...entryPoint, button: 'left', clickCount: 1});
+      win.webContents.sendInputEvent({type: 'mouseUp', ...entryPoint, button: 'left', clickCount: 1});
       await waitFor(win, `!!document.querySelector('.channel-settings-panel input')`);
       const g = await geometry();
       assert(!g.hidden && !g.modal && !g.overflow, "Settings must retain the chat without overlays or horizontal overflow");
@@ -49,6 +64,10 @@ app.whenReady().then(async () => {
       fs.writeFileSync(path.join(output, `${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
       await click('.channel-identity-avatar-button');
       await waitFor(win, `!!document.querySelector('.channel-agent-editor-appearance')`);
+      assert(await js(`['.channel-settings-header', '.channel-agent-editor-appearance', '.channel-agent-editor-more', '.channel-settings-actions'].every(selector => {
+        const style = getComputedStyle(document.querySelector(selector));
+        return style.borderTopWidth === '0px' && style.borderBottomWidth === '0px';
+      })`), 'Panel sections should use spacing rather than divider frames');
       fs.writeFileSync(path.join(output, `${theme}-${width}-appearance.png`), (await win.webContents.capturePage()).toPNG());
       const overflow = await js(`Array.from(document.querySelectorAll('.channel-settings-fields *')).filter(el => el.getBoundingClientRect().right > innerWidth + 1 && getComputedStyle(el).position !== 'absolute').map(el => el.className)`);
       assert.equal(overflow.length, 0, `Settings content must fit: ${overflow}`);
