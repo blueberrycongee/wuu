@@ -1,6 +1,5 @@
-import { ArrowLeft, ChevronRight, PanelRightClose } from "lucide-react";
+import { ArrowLeft, PanelRightClose } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { CollaborationSessionBinding } from "../shared/protocol";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
@@ -14,17 +13,13 @@ export function ChannelActivityInspector({ roomID, agentID, name, fallbackSessio
   closing: boolean;
   onClose: () => void;
 }): JSX.Element {
-  const { t, formatDate } = useI18n();
-  const [sessions, setSessions] = useState<CollaborationSessionBinding[]>([]);
-  const [selected, setSelected] = useState<string>();
-  const [loading, setLoading] = useState(true);
+  const { t } = useI18n();
+  const [sessionRef, setSessionRef] = useState(fallbackSessionRef);
+  const [loading, setLoading] = useState(!fallbackSessionRef);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  const [resuming, setResuming] = useState("");
-  const [limit, setLimit] = useState(20);
-  const initialized = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => { if (!selected) closeButton.current?.focus({ preventScroll: true }); }, [selected]);
+  useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => {
     let active = true;
     let inFlight = false;
@@ -34,15 +29,9 @@ export function ChannelActivityInspector({ roomID, agentID, name, fallbackSessio
       try {
         const result = await window.wuu!.listChannelSessions({ roomId: roomID, agentId: agentID });
         if (!active) return;
-        const rank = (s: CollaborationSessionBinding) => ["running", "starting", "waiting", "queued"].includes(s.state) ? 0 : 1;
-        const items = [...result.sessions].sort((a, b) => rank(a) - rank(b) || b.updated_at.localeCompare(a.updated_at) || a.session_ref.localeCompare(b.session_ref));
-        setSessions(items);
+        const primary = result.sessions.find(session => session.primary) ?? (result.sessions.length === 1 ? result.sessions[0] : undefined);
+        setSessionRef(primary?.session_ref ?? fallbackSessionRef);
         setError("");
-        if (!initialized.current) {
-          initialized.current = true;
-          if (items.length === 1) setSelected(items[0].session_ref);
-          else if (!items.length && fallbackSessionRef) setSelected(fallbackSessionRef);
-        }
       } catch (reason) {
         if (active) setError(toastErrorMessage(reason));
       } finally {
@@ -54,41 +43,20 @@ export function ChannelActivityInspector({ roomID, agentID, name, fallbackSessio
     const timer = window.setInterval(() => { if (document.visibilityState !== "hidden") void read(); }, 2_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [roomID, agentID, fallbackSessionRef, retry]);
-  const selectedTitle = sessions.find(session => session.session_ref === selected)?.title;
-  const resume = async (sessionRef: string) => {
-    if (resuming) return;
-    setResuming(sessionRef);
-    try { await window.wuu!.resumeChannelSession({ sessionRef }); setRetry(n => n + 1); }
-    catch (reason) { setError(toastErrorMessage(reason)); }
-    finally { setResuming(""); }
-  };
-  if (selected) return <ChannelSessionInspector key={selected} sessionRef={selected} name={selectedTitle && selectedTitle !== name ? `${name} · ${selectedTitle}` : name}
-    overlay={overlay} closing={closing} onClose={onClose}
-    onBack={sessions.length > 1 ? () => setSelected(undefined) : undefined} />;
+  if (sessionRef) return <ChannelSessionInspector key={sessionRef} sessionRef={sessionRef} name={name}
+    overlay={overlay} closing={closing} onClose={onClose} />;
   return <aside inert={closing} className={`conversation-pane session-inspector-extension${closing ? " closing" : ""}`}
-    aria-label={`${name} · ${t("channels.sessions.title")}`} onKeyDown={event => {
+    aria-label={`${name} · ${t("channels.executionTrace")}`} onKeyDown={event => {
       if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); onClose(); }
     }}>
     <header className="session-inspector-header">
       <button ref={closeButton} className="icon-button channel-sessions-close" type="button" aria-label={t(overlay ? "channels.backToChat" : "common.close")} onClick={onClose}>
         {overlay ? <ArrowLeft className="icon" /> : <PanelRightClose className="icon" />}
       </button>
-      <strong>{name}</strong><span className="channel-session-meta">{t("channels.sessions.title")}</span>
+      <strong>{name}</strong>
     </header>
     {error ? <div className="channel-error" role="alert">{error}<button type="button" onClick={() => setRetry(n => n + 1)}>{t("channels.sessions.retry")}</button></div> : null}
     {loading ? <p role="status">{t("channels.sessions.loading")}</p> : null}
-    {!loading && !error && !sessions.length ? <p>{t("channels.sessions.noHistory")}</p> : null}
-    <div className="scroll-region channel-activity-session-list">
-      {sessions.slice(0, limit).map(session => <div className="channel-activity-session-row" key={session.session_ref}><button type="button" title={session.session_ref}
-        className="channel-activity-session-entry" onClick={() => setSelected(session.session_ref)}>
-        <span><strong>{session.title || session.objective || t("channels.sessions.untitled")}</strong>
-          {session.title && session.objective && session.objective !== session.title ? <span className="channel-activity-session-objective">{session.objective}</span> : null}
-          <small><span className={`channel-session-state ${session.state}`}>{t(`channels.sessions.state.${session.state}`)}</span><time dateTime={session.updated_at}>{formatDate(session.updated_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></small>
-        </span><ChevronRight className="icon" />
-      </button>
-        {session.state === "failed" || session.state === "interrupted" ? <button className="channel-activity-session-resume" type="button" disabled={!!resuming} onClick={() => void resume(session.session_ref)}>{t(session.state === "failed" ? "channels.sessions.retry" : "channels.sessions.resume")}</button> : null}
-      </div>)}
-      {sessions.length > limit ? <button className="channel-activity-session-more" type="button" onClick={() => setLimit(n => n + 20)}>{t("channels.sessions.earlier")}</button> : null}
-    </div>
+    {!loading && !error ? <p>{t("channels.sessions.noHistory")}</p> : null}
   </aside>;
 }

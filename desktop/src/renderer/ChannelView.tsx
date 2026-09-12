@@ -9,7 +9,6 @@ import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ChannelContinuity } from "./ChannelContinuity";
-import { ChannelSessions } from "./ChannelSessions";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
@@ -2238,7 +2237,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                     <p>{activityText(activityFor(selectedAgent))}</p>
                   </div>
                   <div className="channel-agent-detail-actions">
-                    <ChannelSessions key={selectedAgent.id} agents={[selectedAgent]} rooms={rooms} agentId={selectedAgent.id} initialized={initialized} onOpenRoom={openSessionRoom} />
                     <button type="button" disabled={Boolean(resettingAgentID || savingAgentID)} onClick={() => void resetAgent(selectedAgent.id)}>
                       {t(resettingAgentID === selectedAgent.id ? "channels.resettingAgent" : "channels.resetAgent")}
                     </button>

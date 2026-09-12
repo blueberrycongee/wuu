@@ -446,7 +446,7 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-room-row")).toBeNull();
   });
 
-  it("returns from an identity's task session to a room that is already selected in the app shell", async () => {
+  it("does not offer separate session management from an identity's configuration", async () => {
     const api = createApi();
     const session: CollaborationSessionBinding = {
       session_ref: "work-session", principal_id: agents[0].id, named_agent_id: agents[0].id,
@@ -465,15 +465,9 @@ describe("ChannelView", () => {
     await settle();
     act(() => container.querySelector<HTMLButtonElement>(".channel-agent-directory-identity")!.click());
     await settle();
-    act(() => container.querySelector<HTMLButtonElement>(".channel-sessions-launcher")!.click());
-    await settle();
-    act(() => container.querySelector<HTMLButtonElement>(".channel-session-row")!.click());
-    await settle();
-    const returnButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "返回频道处理任务");
-    expect(returnButton).toBeTruthy();
-    act(() => returnButton!.click());
-    expect(onSelectRoom).toHaveBeenCalledExactlyOnceWith("room-1");
-    expect(container.querySelector("[role=dialog]")).toBeNull();
+    expect(container.querySelector(".channel-sessions-launcher")).toBeNull();
+    expect(api.listChannelSessions).not.toHaveBeenCalled();
+    expect(onSelectRoom).not.toHaveBeenCalled();
   });
 
   it("uses WeChat-style centered rows for one through nine members", () => {
@@ -1859,11 +1853,11 @@ describe("ChannelView", () => {
       owner_id: "agent-2",
     });
   });
-  it("opens waiting member sessions on the right and switches traces without leaving the room", async () => {
+  it("opens the identity conversation directly without session selection", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [], coordinator: { state: "waiting" as const, agent_ids: ["agent-2"] } }));
     const sessions: CollaborationSessionBinding[] = [
-      { session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Review integration", state: "waiting", purpose: "work", created_at: "", updated_at: "2026-09-13T00:00:00Z" },
+      { primary: true, session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Review integration", state: "waiting", purpose: "work", created_at: "", updated_at: "2026-09-13T00:00:00Z" },
       { session_ref: "child", parent_session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Implement settings", state: "running", purpose: "work", created_at: "", updated_at: "2026-09-13T00:01:00Z" },
     ];
     api.listChannelSessions = vi.fn(async () => ({ sessions }));
@@ -1877,16 +1871,12 @@ describe("ChannelView", () => {
     await act(async () => avatar.click());
     await settle();
     expect(api.listChannelSessions).toHaveBeenCalledWith({ roomId: "room-1", agentId: "agent-2" });
-    expect(api.readChannelSession).not.toHaveBeenCalled();
+    expect(api.readChannelSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "parent" }));
     const panel = () => container.querySelector(".session-inspector-extension")!;
-    expect(panel().querySelectorAll(".channel-activity-session-entry")).toHaveLength(2);
-    await act(async () => panel().querySelector<HTMLButtonElement>(".channel-activity-session-entry")!.click());
-    await settle();
-    expect(panel().textContent).toContain("Trace for child");
-    await act(async () => panel().querySelector<HTMLButtonElement>('button[aria-label="全部会话"]')!.click());
-    await act(async () => panel().querySelectorAll<HTMLButtonElement>(".channel-activity-session-entry")[1].click());
-    await settle();
+    expect(panel().querySelectorAll(".channel-activity-session-entry")).toHaveLength(0);
     expect(panel().textContent).toContain("Trace for parent");
+    expect(panel().textContent).not.toContain("Trace for child");
+    expect(panel().querySelector('button[aria-label="全部会话"]')).toBeNull();
     expect(container.querySelector(".channel-message-stream")).not.toBeNull();
     expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Trace for");
   });
