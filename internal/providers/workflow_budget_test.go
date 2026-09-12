@@ -56,20 +56,20 @@ func TestWorkflowBudgetAdmitsAttemptsWithoutReplayAccounting(t *testing.T) {
 func TestInferenceOperationLineageChainsSequentialChildren(t *testing.T) {
 	workflow := testInferenceWorkflow(WorkflowBudgetSpec{})
 	ctx := WithInferenceWorkflow(context.Background(), workflow)
-	root, err := EnsureInferenceExecutionContext(ctx, ChatRequest{
+	root, err := EnsureInferenceAttemptContext(ctx, ChatRequest{
 		Operation: NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive),
 	}, InferenceOperationAgentRound, InferenceProfileInteractive)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lineageCtx, lineage := BeginInferenceOperationLineage(ctx, root.Operation.ID)
-	first, err := EnsureInferenceExecutionContext(lineageCtx, ChatRequest{
+	first, err := EnsureInferenceAttemptContext(lineageCtx, ChatRequest{
 		Operation: NewInferenceOperation(InferenceOperationCompaction, InferenceProfileContinuationCritical),
 	}, InferenceOperationCompaction, InferenceProfileContinuationCritical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := EnsureInferenceExecutionContext(lineageCtx, ChatRequest{
+	second, err := EnsureInferenceAttemptContext(lineageCtx, ChatRequest{
 		Operation: NewInferenceOperation(InferenceOperationCompaction, InferenceProfileContinuationCritical),
 	}, InferenceOperationCompaction, InferenceProfileContinuationCritical)
 	if err != nil {

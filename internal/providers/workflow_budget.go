@@ -242,7 +242,7 @@ func InferenceWorkflowFromContext(ctx context.Context) *InferenceWorkflow {
 }
 
 // BeginInferenceOperationLineage creates a sequential child-operation scope.
-// Every operation prepared under the returned context advances the cursor, so
+// Every operation bound for an attempt under the returned context advances the cursor, so
 // the next operation becomes its child. Callers may read LastOperationID to
 // connect the next operation outside the nested flow.
 func BeginInferenceOperationLineage(ctx context.Context, parentOperationID string) (context.Context, *InferenceOperationLineage) {
