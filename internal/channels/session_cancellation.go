@@ -42,6 +42,9 @@ func (s *Service) CancelCollaborationSessions(ctx context.Context, sessionRef st
 	}
 	var wakeIDs []string
 	for i, binding := range bindings {
+		if err := cancelSessionFollowupsTx(ctx, tx, binding.SessionRef, now); err != nil {
+			return nil, err
+		}
 		// Resolve active runs by their durable session address as well as the
 		// binding handle. This also settles a partially recovered cancelled binding
 		// whose old run has not yet received its terminal notification.

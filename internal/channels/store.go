@@ -106,6 +106,10 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := service.migrateFollowups(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := service.initializeRoomCoordinators(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -168,8 +172,12 @@ func (s *Service) runDeadlineLoop() {
 	defer close(s.doneCh)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	followups := time.NewTicker(time.Second)
+	defer followups.Stop()
 	for {
 		select {
+		case <-followups.C:
+			_, _ = s.FireDueFollowups(context.Background())
 		case <-ticker.C:
 			_, _ = s.ExpireWorkRuns(context.Background())
 		case <-s.stopCh:

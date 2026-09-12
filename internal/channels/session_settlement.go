@@ -101,7 +101,11 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_session_bindings WHERE parent_session_ref = ? AND state IN ('starting', 'running', 'queued', 'waiting')`, binding.SessionRef).Scan(&activeChildren); err != nil {
 			return CollaborationSessionBinding{}, err
 		}
-		if activeChildren > 0 {
+		var followups int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_followups WHERE session_ref=? AND state='active'`, binding.SessionRef).Scan(&followups); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+		if activeChildren > 0 || followups > 0 {
 			effectiveState = CollaborationSessionWaiting
 		}
 	}
