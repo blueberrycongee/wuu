@@ -1034,6 +1034,7 @@ export type CollaborationSessionBinding = {
   effort?: string;
   runtime_version?: string;
   failure_reason?: string;
+  primary?: boolean;
   purpose: "conversation" | "coordination" | "work" | "verification";
   state: "queued" | "waiting" | "idle" | "starting" | "running" | "interrupted" | "missing" | "completed" | "cancelled" | "failed";
   created_at: string;
