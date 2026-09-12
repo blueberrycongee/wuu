@@ -35,6 +35,7 @@ import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { useI18n } from "./i18n";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { useLongTextCollapse } from "./LongTextCollapse";
+import { useChannelMessageMotion } from "./useChannelMessageMotion";
 import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
 import { SelectMenu, type SelectMenuGroup } from "./SelectMenu";
 import { SidebarNameDialog } from "./SidebarNameDialog";
@@ -807,6 +808,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     open: section === "rooms" && Boolean(selectedRoomID),
     observeKey: selectedRoomID,
   });
+  const acknowledgeMessageMotion = useChannelMessageMotion(
+    messageScroll.scrollRef, section === "rooms" ? selectedRoomID : "",
+    loadedRoomIDs.has(selectedRoomID), messages,
+    pendingMessage?.room_id === selectedRoomID ? pendingMessage.id : undefined,
+  );
 
   const updateSplitWidth = useCallback((width: number): void => {
     const nextWidth = clampChannelSplitWidth(width);
@@ -1360,6 +1366,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       const files = inputFilesFromComposer(composerFiles);
       setPendingMessage({ ...pending, images, files });
       const result = await window.wuu.sendChannelMessage({ room_id: roomID, body: messageBody, images, files });
+      acknowledgeMessageMotion(pending.id, result.message.id);
       // The acknowledged message is already durable. Show it immediately and
       // invalidate any list snapshot that started before this send completed.
       messageRefreshGenerationByRoomRef.current.set(roomID, (messageRefreshGenerationByRoomRef.current.get(roomID) ?? 0) + 1);
@@ -1962,6 +1969,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               </time> : null}
               <MessageBubbleRow
                 outgoing={own}
+                messageID={message.id}
                 className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
                 contentClassName="channel-message-content"
                 avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
@@ -1988,7 +1996,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             );
           })}
           {pendingMessage?.room_id === selectedRoomID ? (
-            <MessageBubbleRow outgoing className="channel-message own channel-message-pending" contentClassName="channel-message-content">
+            <MessageBubbleRow outgoing messageID={pendingMessage.id} className="channel-message own channel-message-pending" contentClassName="channel-message-content">
               <ChannelMessageBubble message={pendingMessage} outgoing allowCollapse={false} attachmentIDPrefix="pending" />
               <span className="channel-send-status" role="status">{t("channels.messageSending")}</span>
             </MessageBubbleRow>

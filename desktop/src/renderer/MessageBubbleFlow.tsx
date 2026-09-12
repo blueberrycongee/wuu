@@ -8,6 +8,7 @@ export function MessageBubbleRow({
   footer,
   className = "",
   contentClassName = "",
+  messageID,
 }: {
   outgoing: boolean;
   avatar?: ReactNode;
@@ -16,9 +17,11 @@ export function MessageBubbleRow({
   footer?: ReactNode;
   className?: string;
   contentClassName?: string;
+  messageID?: string;
 }): JSX.Element {
   return (
     <article
+      data-message-id={messageID}
       className={`chat-row ${outgoing ? "chat-row--user" : "chat-row--participant"}${className ? ` ${className}` : ""}`}
     >
       {!outgoing && avatar ? <div className="chat-avatar-slot">{avatar}</div> : null}
