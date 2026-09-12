@@ -33,7 +33,18 @@ func (s *Service) BindAgent(ctx context.Context, agentID string) (*AgentClient, 
 }
 
 func (s *Service) BindRuntime(ctx context.Context, runtimeID string) (*AgentClient, error) {
-	return nil, fmt.Errorf("%w: room runtimes have been retired", ErrUnauthorized)
+	token, err := s.loadPrincipalToken(ctx, runtimeID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: unavailable room coordinator", ErrUnauthorized)
+	}
+	runtime, err := s.AuthenticatePrincipal(ctx, runtimeID, token)
+	if err != nil {
+		return nil, err
+	}
+	if !runtime.IsRoomRuntime() {
+		return nil, ErrUnauthorized
+	}
+	return &AgentClient{service: s, agentID: runtimeID, principalKind: PrincipalRoomRuntime, token: token}, nil
 }
 
 func (s *Service) BindAgentSession(ctx context.Context, agentID, sessionRef string) (*AgentClient, error) {

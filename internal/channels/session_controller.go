@@ -190,6 +190,13 @@ func (s *Service) authorizeSessionTarget(ctx context.Context, params Collaborati
 	if !control || params.ActorID == binding.PrincipalID {
 		return binding, nil
 	}
+	actor, err := s.AuthenticatePrincipal(ctx, params.ActorID, params.Token)
+	if err != nil {
+		return CollaborationSessionBinding{}, err
+	}
+	if actor.IsRoomRuntime() && actor.RoomID == binding.RoomID {
+		return binding, nil
+	}
 	if binding.ParentSessionRef != "" {
 		var parentPrincipal string
 		if err := s.db.QueryRowContext(ctx, `SELECT principal_id FROM collaboration_session_bindings WHERE session_ref = ?`, binding.ParentSessionRef).Scan(&parentPrincipal); err == nil && parentPrincipal == params.ActorID {
