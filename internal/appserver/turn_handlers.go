@@ -254,6 +254,9 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	if err != nil || threadRuntime == nil {
 		return threadRuntime, err
 	}
+	if th.NamedAgentID != "" {
+		s.rt.ConfigureCollaborationTools(threadRuntime, th.ID)
+	}
 	if err := s.refreshThreadGitAttribution(threadRuntime); err != nil {
 		// Attribution is metadata, not a reason to block the user's turn when a
 		// concurrently edited or test-only config cannot be reloaded. Preserve

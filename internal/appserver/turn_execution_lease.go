@@ -33,7 +33,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
-	usesInteractiveExtensions := strings.TrimSpace(th.NamedAgentID) == ""
+	usesInteractiveExtensions := strings.TrimSpace(th.NamedAgentID) == "" || (s.rt != nil && s.rt.HasCollaborationTools())
 	if usesInteractiveExtensions && s != nil && s.pluginGenerationMutation.Load() {
 		return false, nil
 	}

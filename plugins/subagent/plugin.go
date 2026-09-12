@@ -62,9 +62,9 @@ func Handler() pluginapi.Handler {
 		ConcurrentCapabilities: []string{capabilityPrompt, capabilityClient},
 		Definition: pluginapi.Definition{
 			Tools: []pluginapi.Tool{
-				{ID: "spawn_agent", Description: "Delegate a bounded task when separate context materially improves the result. Set run_in_background=false when the next step depends on the child result; the tool waits in the current turn and returns the result directly. Background tasks return immediately and deliver completion later as a normal read-only query bubble.", InputSchema: spawnSchema(), ExecutionScopes: []string{"root"}, Activity: &pluginapi.ToolActivity{ConcurrencySafe: true}},
-				{ID: "send_message", Description: "Send a follow-up turn to an existing child task by session id or task name.", InputSchema: objectSchema(map[string]any{"target": stringField("Child session id or task name."), "message": stringField("Message to deliver.")}, "target", "message"), ExecutionScopes: []string{"root"}, Activity: &pluginapi.ToolActivity{ConcurrencySafe: true}},
-				{ID: "close_agent", Description: "Cancel an existing child task by session id or task name.", InputSchema: objectSchema(map[string]any{"target": stringField("Child session id or task name.")}, "target"), ExecutionScopes: []string{"root"}, Activity: &pluginapi.ToolActivity{ConcurrencySafe: true}},
+				{ID: "spawn_agent", Description: "Delegate a bounded task when separate context materially improves the result. Set run_in_background=false when the next step depends on the child result; the tool waits in the current turn and returns the result directly. Background tasks return immediately and deliver completion later as a normal read-only query bubble.", InputSchema: spawnSchema(), ExecutionScopes: []string{"root", "collaboration"}, Activity: &pluginapi.ToolActivity{ConcurrencySafe: true}},
+				{ID: "send_message", Description: "Send a follow-up turn to an existing child task by session id or task name.", InputSchema: objectSchema(map[string]any{"target": stringField("Child session id or task name."), "message": stringField("Message to deliver.")}, "target", "message"), ExecutionScopes: []string{"root", "collaboration"}, Activity: &pluginapi.ToolActivity{ConcurrencySafe: true}},
+				{ID: "close_agent", Description: "Cancel an existing child task by session id or task name.", InputSchema: objectSchema(map[string]any{"target": stringField("Child session id or task name.")}, "target"), ExecutionScopes: []string{"root", "collaboration"}, Activity: &pluginapi.ToolActivity{ConcurrencySafe: true}},
 			},
 			Capabilities: []pluginapi.Capability{
 				{ID: capabilityPrompt, Kind: "transform", Version: 1},
@@ -354,7 +354,7 @@ func invokeCapability(ctx context.Context, host pluginapi.Host, call pluginapi.C
 		}
 		prompt := fmt.Sprintf("子任务 %s 已%s。请检查并整合以下交接结果：\n\n%s", record.Name, lifecycleLabel(input.State), output)
 		var sent pluginapi.SessionSendResult
-		if err := host.CallHost(ctx, pluginapi.HostServiceSessionSend, pluginapi.SessionSendParams{RequestID: deliveryRequestID, SessionID: record.ParentSessionID, Input: pluginapi.SessionInput{Prompt: prompt}, Presentation: &pluginapi.SessionInputPresentation{Kind: "query_bubble", Text: "子任务 " + record.Name + " 已更新", Name: record.Name, RelatedSessionID: record.SessionID}, Cause: "subagent.completion", IfRunning: pluginapi.SessionIfRunningSteer}, &sent); err != nil {
+		if err := host.CallHost(ctx, pluginapi.HostServiceSessionSend, pluginapi.SessionSendParams{RequestID: deliveryRequestID, SessionID: record.ParentSessionID, ReplyToTurnID: record.ParentTurnID, Input: pluginapi.SessionInput{Prompt: prompt}, Presentation: &pluginapi.SessionInputPresentation{Kind: "query_bubble", Text: "子任务 " + record.Name + " 已更新", Name: record.Name, RelatedSessionID: record.SessionID}, Cause: "subagent.completion", IfRunning: pluginapi.SessionIfRunningSteer}, &sent); err != nil {
 			if tracksContinuation {
 				return nil, errors.Join(err, saveRecord(ctx, host, continuationParent))
 			}

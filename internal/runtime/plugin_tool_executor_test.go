@@ -49,6 +49,7 @@ func (e *recordingToolExecutor) AuthorizeTool(_ context.Context, call providers.
 
 type pluginToolTestClient struct {
 	executed bool
+	scopes   []string
 }
 
 type denyPluginAuthorizer struct{ calls int }
@@ -64,7 +65,7 @@ func (c *pluginToolTestClient) Status() pluginhost.Status {
 }
 func (c *pluginToolTestClient) Close(context.Context) error { return nil }
 func (c *pluginToolTestClient) Tools() []pluginhost.ToolRegistration {
-	return []pluginhost.ToolRegistration{{ID: "change", Description: "change state", InputSchema: map[string]any{"type": "object"}}}
+	return []pluginhost.ToolRegistration{{ID: "change", Description: "change state", ExecutionScopes: c.scopes, InputSchema: map[string]any{"type": "object"}}}
 }
 func (c *pluginToolTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteParams) (pluginhost.ToolExecuteResult, error) {
 	c.executed = true
@@ -311,5 +312,55 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 		if def.Name == name {
 			t.Fatal("replaced plugin host left a stale code-mode catalog")
 		}
+	}
+}
+
+func TestCollaborationPluginToolsRequireExplicitOptIn(t *testing.T) {
+	for _, scopes := range [][]string{nil, {"root"}, {"collaboration"}, {"root", "collaboration"}} {
+		client := &pluginToolTestClient{scopes: scopes}
+		host := pluginhost.New(client)
+		name := host.ToolDefinitions()[0].Name
+		executor := &pluginToolExecutor{inner: &recordingToolExecutor{}, host: host, threadID: "identity", scope: "collaboration"}
+		allowed := false
+		for _, scope := range scopes {
+			if scope == "collaboration" {
+				allowed = true
+			}
+		}
+		found := false
+		for _, def := range executor.Definitions() {
+			if def.Name == name {
+				found = true
+			}
+		}
+		if found != allowed {
+			t.Fatalf("tool discovery scopes %v: found=%v", scopes, found)
+		}
+		_, err := executor.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`})
+		if (err == nil) != allowed || client.executed != allowed {
+			t.Fatalf("tool dispatch scopes %v: %v, executed=%v", scopes, err, client.executed)
+		}
+	}
+}
+
+func TestCollaborationPluginReplacementRemovesRetiredTools(t *testing.T) {
+	s, _ := collaborationTestSession(t)
+	thread := collaborationTestThread(t, s, "plugin-generation", ThreadModelSelection{})
+	client := &pluginToolTestClient{scopes: []string{"collaboration"}}
+	s.PluginHost = pluginhost.New(client)
+	name := s.PluginHost.ToolDefinitions()[0].Name
+	s.ConfigureCollaborationTools(thread, "plugin-generation")
+	if !s.HasCollaborationTools() {
+		t.Fatal("opt-in plugin was not available")
+	}
+	s.PluginHost = pluginhost.New()
+	s.ConfigureCollaborationTools(thread, "plugin-generation")
+	for _, def := range thread.StreamRunner.Tools.Definitions() {
+		if def.Name == name {
+			t.Fatal("retired plugin stayed in conversation tools")
+		}
+	}
+	if _, err := thread.StreamRunner.Tools.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`}); err == nil || client.executed {
+		t.Fatal("retired plugin remained callable")
 	}
 }

@@ -269,6 +269,22 @@ Steering does not create a second lifecycle event, and cannot carry
 `context_blocks`; completion remains correlated with the active Turn's original
 request.
 
+A child Session inherits its parent's provider, model and reasoning settings
+unless the create request explicitly overrides them. `fresh` still starts with
+an independent context. Tools that support Named Agent conversations opt in
+with `execution_scopes: ["collaboration"]`; `root` and `child` keep their
+ordinary execution scopes. This opt-in exposes tools only, without importing
+interactive hooks, prompts or loop drivers into Collaboration.
+
+To return a child result to a Named Agent, send to its continuing Session with
+`reply_to_turn_id` set to the parent Turn that created the child and
+`presentation.related_session_id` set to that plugin-owned child. The host verifies
+ownership and parentage, then durably queues the result in that Turn's original
+Room and task scope. It does so even if the Agent has since moved to another
+Room. Revoked task scopes return `discarded`; a stopped Agent retains a valid
+result until resumed. Result delivery does not create another producer or steer
+an unrelated active Turn.
+
 `host.session.list` defaults to Sessions owned by the calling plugin's
 generation. Passing `scope: "shared"` instead returns non-archived,
 user-visible Session metadata across owners and workspaces for read-only discovery;

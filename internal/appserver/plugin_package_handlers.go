@@ -468,9 +468,9 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 				continue
 			}
 			th.mu.Lock()
-			// Collaboration sessions own an independent execution environment and
-			// hold no references to the interactive extension generation.
-			busy := th.NamedAgentID == "" && (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
+			// Only collaboration turns using explicitly opted-in plugin tools hold
+			// a reference to the active extension generation.
+			busy := (th.NamedAgentID == "" || th.pluginExecutionLease != nil) && (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
 				(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)))
 			th.mu.Unlock()
 			if busy {

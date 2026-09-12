@@ -321,12 +321,14 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
-	RequestID    string                    `json:"request_id"`
-	SessionID    string                    `json:"session_id"`
-	Input        SessionInput              `json:"input"`
-	Presentation *SessionInputPresentation `json:"presentation,omitempty"`
-	Cause        string                    `json:"cause,omitempty"`
-	IfRunning    string                    `json:"if_running,omitempty"`
+	// ReplyToTurnID preserves the original turn scope when a plugin returns deferred work.
+	ReplyToTurnID string                    `json:"reply_to_turn_id,omitempty"`
+	RequestID     string                    `json:"request_id"`
+	SessionID     string                    `json:"session_id"`
+	Input         SessionInput              `json:"input"`
+	Presentation  *SessionInputPresentation `json:"presentation,omitempty"`
+	Cause         string                    `json:"cause,omitempty"`
+	IfRunning     string                    `json:"if_running,omitempty"`
 }
 
 type SessionSendResult struct {

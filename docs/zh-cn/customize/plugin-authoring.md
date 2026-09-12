@@ -214,6 +214,17 @@ context blocks、稳定 cause，以及可选的 `presentation: { kind: "query_bu
 `steered: true` 和当前 `turn_id`。steer 不会创建第二组生命周期事件，也不能携带
 `context_blocks`；完成事件仍关联当前 Turn 的原始请求。
 
+子 Session 默认继承父 Session 的提供商、模型和推理设置，创建时可以显式覆盖。
+`fresh` 仍使用独立上下文。支持 Named Agent 会话的工具通过
+`execution_scopes: ["collaboration"]` 显式开放；`root` 和 `child` 保持各自的执行范围。
+这只开放工具，不会把交互会话的 hooks、提示词或 loop driver 带入 Collaboration。
+
+向 Named Agent 回传子任务结果时，目标是它的持续 Session，`reply_to_turn_id` 填创建子任务的
+父 Turn，`presentation.related_session_id` 填当前插件拥有的子 Session。宿主校验所有权和父子关系后，
+将结果持久排入原 Turn 所属 Room 和任务，即使 Agent 已开始处理另一个 Room 的消息。
+任务范围已撤销时返回 `discarded`；Agent 已停止时保留有效结果，等待恢复。
+结果回传不会自动新建 producer，也不会插入另一个正在执行的 Turn。
+
 `host.session.list` 默认只返回当前 generation 所属插件拥有的 Session；传入 `scope: "shared"`
 时，则返回跨 owner、跨 workspace 的未归档用户可见 Session 元数据，用于只读发现，插件私有 Session
 仍不会暴露。即使 Session 来自 shared scope，`host.session.cancel` 也始终执行原有的所有权校验。
