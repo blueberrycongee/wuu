@@ -2892,7 +2892,7 @@ function SettingsUsageSkeleton(): JSX.Element {
           <span className="settings-usage-skeleton-line settings-usage-skeleton-period" />
         </div>
         <div className="settings-usage-skeleton-trend">
-          {[28, 42, 34, 58, 48, 72, 38, 64, 52, 82, 46, 68, 36, 56, 76, 44, 62, 50, 88, 54, 70, 40, 60, 78, 48, 66, 36, 74, 52, 68].map((height, index) => (
+          {[24, 28, 34, 30, 38, 44, 50, 46, 40, 34, 38, 46, 54, 62, 56, 48, 42, 46, 52, 60, 68, 62, 54, 48, 42, 46, 54, 60, 56, 50].map((height, index) => (
             <i className="settings-usage-skeleton-trend-day" key={index} style={{ height: `${height}%` }} />
           ))}
         </div>
@@ -2906,7 +2906,7 @@ function SettingsUsageSkeleton(): JSX.Element {
           {[0, 1, 2, 3].map((item) => <span className="settings-usage-skeleton-line" key={item} />)}
         </div>
         <div className="settings-usage-skeleton-grid">
-          {Array.from({ length: 84 }, (_, index) => <i key={index} />)}
+          {Array.from({ length: 53 * 7 }, (_, index) => <i key={index} />)}
         </div>
         <div className="settings-usage-skeleton-legend">
           <span className="settings-usage-skeleton-line" />
@@ -2926,9 +2926,6 @@ function SettingsUsageSkeleton(): JSX.Element {
           </div>
         ))}
       </section>
-      <div className="settings-usage-skeleton-footer" aria-hidden="true">
-        <span className="settings-usage-skeleton-line settings-usage-skeleton-heading" />
-      </div>
     </>
   );
 }

@@ -1613,12 +1613,12 @@
 }
 
 .settings-usage-loading {
-  gap: 32px;
+  animation: settings-usage-skeleton-pulse 2.4s ease-in-out infinite;
 }
 
 .settings-usage-skeleton-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 
@@ -1632,41 +1632,38 @@
   padding: 12px 14px;
 }
 
-.settings-usage-skeleton-line,
-.settings-usage-skeleton-row {
+.settings-usage-skeleton-line {
   display: block;
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
-  background-size: 200% 100%;
-  animation: settings-usage-skeleton-shimmer 1.5s ease-in-out infinite;
+  max-width: 100%;
+  background: var(--surface-2);
 }
 
 .settings-usage-skeleton-stat-value {
-  width: 62%;
+  width: 76px;
   height: 22px;
   border-radius: 4px;
 }
 
 .settings-usage-skeleton-stat-value-1 {
-  width: 48%;
+  width: 62px;
 }
 
 .settings-usage-skeleton-stat-value-2 {
-  width: 70%;
+  width: 88px;
 }
 
 .settings-usage-skeleton-stat-value-3 {
-  width: 42%;
+  width: 48px;
 }
 
 .settings-usage-skeleton-stat-label {
-  width: 48%;
+  width: 56px;
   height: 10px;
   border-radius: 3px;
 }
 
 .settings-usage-skeleton-chart {
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: 24px;
+  min-width: 0;
 }
 
 .settings-usage-skeleton-chart-header,
@@ -1698,9 +1695,7 @@
   min-width: 0;
   flex: 1;
   border-radius: 2px 2px 0 0;
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
-  background-size: 200% 100%;
-  animation: settings-usage-skeleton-shimmer 1.5s ease-in-out infinite;
+  background: var(--surface-2);
 }
 
 .settings-usage-skeleton-axis {
@@ -1716,8 +1711,7 @@
 }
 
 .settings-usage-skeleton-heatmap,
-.settings-usage-skeleton-list,
-.settings-usage-skeleton-footer {
+.settings-usage-skeleton-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1743,17 +1737,18 @@
 
 .settings-usage-skeleton-grid {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-rows: repeat(7, minmax(0, 1fr));
+  /* The loaded heatmap spans a year. Match its weeks so the placeholder
+   * stays compact and does not push the following sections down. */
+  grid-template-columns: repeat(53, minmax(0, 1fr));
   gap: 3px;
-  aspect-ratio: 12 / 7;
 }
 
 .settings-usage-skeleton-grid i {
   display: block;
+  min-width: 0;
+  aspect-ratio: 1;
   border-radius: 2px;
   background: var(--surface-2);
-  animation: settings-usage-skeleton-shimmer 1.5s ease-in-out infinite;
 }
 
 .settings-usage-skeleton-legend {
@@ -1775,9 +1770,10 @@
 
 .settings-usage-skeleton-row {
   display: grid;
-  grid-template-columns: minmax(100px, 0.7fr) minmax(100px, 1.6fr) 52px;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.6fr) 32px;
   align-items: center;
   gap: 12px;
+  min-height: 20px;
 }
 
 .settings-usage-skeleton-row .settings-usage-skeleton-line {
@@ -1786,7 +1782,24 @@
 }
 
 .settings-usage-skeleton-row .settings-usage-skeleton-line:first-child {
-  width: 68%;
+  width: 96px;
+}
+
+.settings-usage-skeleton-row .settings-usage-skeleton-line:nth-child(2) {
+  height: 5px;
+  width: 80%;
+}
+
+.settings-usage-skeleton-row:nth-child(3) .settings-usage-skeleton-line:nth-child(2) {
+  width: 62%;
+}
+
+.settings-usage-skeleton-row:nth-child(4) .settings-usage-skeleton-line:nth-child(2) {
+  width: 48%;
+}
+
+.settings-usage-skeleton-row:nth-child(5) .settings-usage-skeleton-line:nth-child(2) {
+  width: 34%;
 }
 
 .settings-usage-skeleton-row .settings-usage-skeleton-line:last-child {
@@ -1794,14 +1807,15 @@
   justify-self: end;
 }
 
-.settings-usage-skeleton-footer {
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: 24px;
+@keyframes settings-usage-skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
-@keyframes settings-usage-skeleton-shimmer {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
+@media (prefers-reduced-motion: reduce) {
+  .settings-usage-loading {
+    animation: none;
+  }
 }
 
 .settings-skill-usage {
@@ -2085,7 +2099,8 @@
  * moved with the content column: at the column's own 640px cap the full
  * table always fits. */
 @container settings-usage (max-width: 520px) {
-  .settings-usage-trend {
+  .settings-usage-trend,
+  .settings-usage-skeleton-trend {
     gap: 2px;
     height: 112px;
   }

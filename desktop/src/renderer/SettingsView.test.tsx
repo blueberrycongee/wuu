@@ -1598,7 +1598,7 @@ describe("SettingsView About section", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("无法加载用量信息，请稍后重试。");
   });
 
-  it("mirrors the usage page sections while loading", () => {
+  it("marks usage as busy and hides placeholder graphics from assistive technology", () => {
     installBuildInfoStub({
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
@@ -1609,10 +1609,12 @@ describe("SettingsView About section", () => {
       usageLoading: true,
     });
 
-    expect(container.querySelectorAll(".settings-usage-skeleton-stat")).toHaveLength(4);
-    expect(container.querySelectorAll(".settings-usage-skeleton-trend-day")).toHaveLength(30);
-    expect(container.querySelectorAll(".settings-usage-skeleton-grid i")).toHaveLength(84);
-    expect(container.querySelectorAll(".settings-usage-skeleton-row")).toHaveLength(4);
+    const usage = container.querySelector('[data-testid="settings-usage"]');
+    expect(usage?.getAttribute("aria-busy")).toBe("true");
+    expect(usage?.children.length).toBeGreaterThan(0);
+    for (const section of usage?.children ?? []) {
+      expect(section.getAttribute("aria-hidden")).toBe("true");
+    }
   });
 });
 
