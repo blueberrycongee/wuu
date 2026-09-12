@@ -49,18 +49,6 @@ func TestSessionMaxParallelDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
-func TestCollaborationSkillsExcludePluginSkills(t *testing.T) {
-	all := []skills.Skill{
-		{Name: "project-review", Source: "project"},
-		{Name: "user-review", Source: "user"},
-		{Name: "plugin-review", Source: "plugin:review"},
-	}
-	got := collaborationSkills(all)
-	if len(got) != 2 || got[0].Name != "project-review" || got[1].Name != "user-review" {
-		t.Fatalf("collaborationSkills() = %#v", got)
-	}
-}
-
 func TestThreadProcessManagerSharesRuntimeHostGeneration(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	workspaceManager, err := process.NewManager(workspaceRoot, filepath.Join(t.TempDir(), "workspace-runtime"))

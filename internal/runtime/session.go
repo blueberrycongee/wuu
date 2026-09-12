@@ -186,6 +186,7 @@ type Session struct {
 	DefaultEngine      agentengine.EngineID
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
+	workerOrientation  string
 }
 
 // MaxParallel returns the worker concurrency configured for this session.
@@ -286,6 +287,9 @@ type ThreadRuntime struct {
 	// EngineID is the agent engine this runtime executes for. It is stamped
 	// from the thread's persisted binding; the built-in engine is "wuu".
 	EngineID agentengine.EngineID
+	// ExecutionProfile identifies the execution contract used to construct the
+	// runtime. A profile change requires a new runtime rather than hook mutation.
+	ExecutionProfile string
 }
 
 // ThreadModelSelection is the model choice persisted with one conversation.
@@ -1198,6 +1202,9 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 	if s == nil || threadRuntime == nil || threadRuntime.StreamRunner == nil {
 		return errors.New("named agent thread runtime is required")
 	}
+	if threadRuntime.ExecutionProfile != CollaborationRuntimeVersion {
+		return errors.New("named agent requires the collaboration execution profile")
+	}
 	rootDir = strings.TrimSpace(rootDir)
 	memoryDir = strings.TrimSpace(memoryDir)
 	if rootDir == "" || memoryDir == "" {
@@ -1214,13 +1221,7 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 		providers.DebugLogf("read named agent memory index: %v", err)
 	}
 	toolkit := threadRuntime.Toolkit
-	identitySkills := collaborationSkills(s.Skills)
 	if toolkit != nil {
-		if toolkit.IsRoomAgent() {
-			identitySkills = nil
-		}
-		toolkit.SetMCPManager(nil)
-		toolkit.SetSkills(identitySkills)
 		toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(rootDir, s.WuuHome, memoryDir))
 	}
 	catalog := ""
@@ -1232,11 +1233,7 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 		}
 	}
 	runner := threadRuntime.StreamRunner
-	// Collaboration identities are a product boundary of their own. Ordinary
-	// plugin tools and request hooks must not silently change their behavior.
 	runner.Tools = toolkit
-	runner.BeforeModelStep = nil
-	runner.BeforeRequest = nil
 	runner.BeforeRequestContext = RuntimeContextInjector(
 		threadRuntime.AgentControl,
 		rootDir,
@@ -1247,21 +1244,10 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 	promptResult := buildBaseSystemPromptResult(
 		rootDir, s.SessionDate, config.DefaultSystemPrompt(), userPrompt,
 		runner.ProviderName, runner.APIModel, activeSurfaceWithDeferredToolCatalog(toolkit, catalog),
-		nil, teaching, index, identitySkills,
+		nil, teaching, index, nil,
 	)
 	runner.UpdateSystemPromptWithSections(promptResult.Content, agentPromptSections(promptResult.Sections))
 	return nil
-}
-
-func collaborationSkills(all []skills.Skill) []skills.Skill {
-	filtered := make([]skills.Skill, 0, len(all))
-	for _, skill := range all {
-		if strings.HasPrefix(strings.TrimSpace(skill.Source), "plugin:") {
-			continue
-		}
-		filtered = append(filtered, skill)
-	}
-	return filtered
 }
 
 func (s *Session) NewNamedAgentThreadRuntime(sessionID, rootDir, memoryDir, orientation string, selected ThreadModelSelection) (*ThreadRuntime, error) {
@@ -1272,18 +1258,16 @@ func (s *Session) NewNamedAgentThreadRuntime(sessionID, rootDir, memoryDir, orie
 	if rootDir == "" {
 		return nil, errors.New("named agent root is required")
 	}
-	stateDir, err := resolveWorkspaceStateDir(s.WuuHome, "", rootDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve named agent state directory: %w", err)
-	}
-	shadow := s.cloneForThreadModel()
-	shadow.WorkspaceID = ""
-	shadow.StateDir = stateDir
-	threadRuntime, err := shadow.NewThreadRuntimeForRootModel(sessionID, rootDir, selected)
+	base, err := s.newCollaborationSession(rootDir, orientation, selected)
 	if err != nil {
 		return nil, err
 	}
-	if err := shadow.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation); err != nil {
+	threadRuntime, err := base.NewThreadRuntimeForRoot(sessionID, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	threadRuntime.ExecutionProfile = CollaborationRuntimeVersion
+	if err := base.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation); err != nil {
 		return nil, err
 	}
 	return threadRuntime, nil
@@ -1411,7 +1395,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			workerBaseSystemPrompt := buildWorkerBasePrompt(
 				threadRoot,
 				s.SessionDate,
-				"",
+				s.workerOrientation,
 				workerToolProviderName,
 				workerToolModeModel,
 				workerToolSurface,
@@ -1439,7 +1423,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				HarnessDir:                     filepath.Join(artifactDir, "harness"),
 				WorkerSysPrompt:                workerBaseSystemPrompt,
 				WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-					return buildWorkerBasePrompt(workerRoot, s.SessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, s.Skills), nil
+					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, s.Skills), nil
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 					workerKit, err := kit.CloneForRoot(workerRoot)
