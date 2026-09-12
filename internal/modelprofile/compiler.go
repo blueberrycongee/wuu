@@ -301,6 +301,7 @@ func addContextWindowTools(b *surfaceBuilder) {
 }
 
 func addChatTools(b *surfaceBuilder) {
+	b.addVisible("yield_turn", capability.CapabilityChat)
 	b.addVisible("chat_check", capability.CapabilityChat)
 	b.addVisible("chat_read", capability.CapabilityChat)
 	b.addVisible("chat_session", capability.CapabilityChat)

@@ -345,6 +345,7 @@ func (t *Toolkit) rebuildRegistry() {
 		NewToolSearchTool(t),
 	}
 	if e.ChatAgent != nil {
+		registered = append(registered, NewYieldTurnTool())
 		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewChatSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e))
 		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
 	}
