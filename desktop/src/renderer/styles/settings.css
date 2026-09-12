@@ -1254,6 +1254,11 @@
  * colors, never theme tokens.
  * ----------------------------------------------------------------------------- */
 
+.settings-theme-field {
+  display: grid;
+  gap: 8px;
+}
+
 .settings-theme-options {
   display: flex;
   gap: 16px;

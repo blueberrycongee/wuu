@@ -2068,11 +2068,10 @@ function SettingsGeneralPage({
   return (
     <>
       <SettingsSection title={t("settings.appearance")} testID="settings-appearance">
-        <SettingsCard>
-          <SettingsRow title={t("settings.theme")} block>
-            <ThemePreferenceControl />
-          </SettingsRow>
-        </SettingsCard>
+        <div className="settings-theme-field">
+          <span className="settings-row-label-title">{t("settings.theme")}</span>
+          <ThemePreferenceControl />
+        </div>
       </SettingsSection>
       <SettingsSection title={t("settings.typography")} testID="settings-typography">
         <SettingsCard><AppearanceTypography /></SettingsCard>
