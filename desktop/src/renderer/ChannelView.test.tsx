@@ -1908,7 +1908,7 @@ describe("ChannelView", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector(".channel-conversation")?.classList.contains("has-session-inspector")).toBe(true);
     expect(container.querySelector(".session-inspector-extension")?.textContent).toContain("Private live text");
-    expect(api.readChannelSession).toHaveBeenCalledWith({ sessionRef: "beta-session" });
+    expect(api.readChannelSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "beta-session" }));
     expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Private live text");
     vi.useFakeTimers();
     try {
@@ -1986,7 +1986,7 @@ describe("ChannelView", () => {
     await act(async () => { trace.click(); });
     expect(document.querySelector(".channel-agent-hover-card")).toBeNull();
     await settle();
-    expect(api.readChannelSession).toHaveBeenCalledWith({ sessionRef: "original-session" });
+    expect(api.readChannelSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "original-session" }));
     const panel = container.querySelector<HTMLElement>(".session-inspector-extension")!;
     expect(panel.textContent).toContain("Original evidence");
     expect(panel.querySelector(".channel-session-meta")?.textContent).toBe("完成");

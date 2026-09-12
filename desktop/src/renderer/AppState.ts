@@ -338,6 +338,17 @@ type StreamingNotificationHandling =
   | "background-stream"
   | "skip";
 
+// Both Harness and a mounted inspector may consume the same bridge event.
+// Text belongs to the shared stream store and must be appended only once.
+const ingestedStreamEvents = new WeakMap<ServerEvent, boolean>();
+function ingestStreamOnce(event: ServerEvent, ingest: () => boolean): boolean {
+  const previous = ingestedStreamEvents.get(event);
+  if (previous !== undefined) return previous;
+  const visible = ingest();
+  ingestedStreamEvents.set(event, visible);
+  return visible;
+}
+
 function handleStreamingNotification(
   event: ServerEvent,
   state: AppState,
@@ -353,7 +364,7 @@ function handleStreamingNotification(
       if (!active && !notificationTargetsKnownThread(params, state)) {
         return "skip";
       }
-      const hasVisibleText = appendStreamDelta(params, "text");
+      const hasVisibleText = ingestStreamOnce(event, () => appendStreamDelta(params, "text"));
       return streamHandlingForThread(active, hasVisibleText);
     }
     case "item/agentMessage/replace": {
@@ -361,7 +372,7 @@ function handleStreamingNotification(
       if (!active && !notificationTargetsKnownThread(params, state)) {
         return "skip";
       }
-      const hasVisibleText = replaceStreamText(params, "text");
+      const hasVisibleText = ingestStreamOnce(event, () => replaceStreamText(params, "text"));
       return streamHandlingForThread(active, hasVisibleText);
     }
     case "item/reasoning/delta": {
@@ -369,7 +380,7 @@ function handleStreamingNotification(
       if (!active && !notificationTargetsKnownThread(params, state)) {
         return "skip";
       }
-      const hasVisibleText = appendStreamDelta(params, "text");
+      const hasVisibleText = ingestStreamOnce(event, () => appendStreamDelta(params, "text"));
       return streamHandlingForThread(active, hasVisibleText);
     }
     case "item/reasoning/replace": {
@@ -377,7 +388,7 @@ function handleStreamingNotification(
       if (!active && !notificationTargetsKnownThread(params, state)) {
         return "skip";
       }
-      const hasVisibleText = replaceStreamText(params, "text");
+      const hasVisibleText = ingestStreamOnce(event, () => replaceStreamText(params, "text"));
       return streamHandlingForThread(active, hasVisibleText);
     }
     case "item/toolCall/delta": {
@@ -385,7 +396,7 @@ function handleStreamingNotification(
       if (!active && !notificationTargetsKnownThread(params, state)) {
         return "skip";
       }
-      appendStreamDelta(params, "arguments");
+      ingestStreamOnce(event, () => appendStreamDelta(params, "arguments"));
       return active ? "stream" : "background-stream";
     }
     case "item/toolCall/outputDelta": {
@@ -393,7 +404,7 @@ function handleStreamingNotification(
       if (!active && !notificationTargetsKnownThread(params, state)) {
         return "skip";
       }
-      appendStreamDelta(params, "result");
+      ingestStreamOnce(event, () => appendStreamDelta(params, "result"));
       return active ? "stream" : "background-stream";
     }
     case "turn/event":
@@ -3636,6 +3647,7 @@ export {
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
+  syncRunningThreadStreamItems,
   hasText,
   initialSplitComposerDrafts,
   initialState,

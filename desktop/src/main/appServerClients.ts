@@ -64,6 +64,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export class AppServerClientPool {
   private clients = new Map<string, AppServerClient>();
+  private sessionOwners = new Map<string, AppServerClient>();
   private nextServerRequestRouteID = 1;
   private serverRequestRoutes = new Map<string, ServerRequestRoute>();
   // Most-recently-used workdirs (most recent last). prewarmContexts fills the
@@ -82,6 +83,7 @@ export class AppServerClientPool {
     private readonly getRuntimeContext: () => RuntimeContext,
     private readonly getActiveWorkdir: () => string | undefined,
     private readonly emitToRenderer: (event: ServerEvent) => void,
+    private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
   ) {}
 
   // A workdir the check pins (e.g. it owns a live agent browser tab) is treated
@@ -168,6 +170,17 @@ export class AppServerClientPool {
     return this.clientForContext(context).request<T>(method, params, onResponse);
   }
 
+  requestForSession<T>(
+    context: RuntimeContext,
+    sessionID: string,
+    method: string,
+    params?: unknown,
+    onResponse?: (response: AppServerResponse, workdir: string) => void,
+  ): Promise<T> {
+    const client = this.sessionOwners.get(sessionID) ?? this.clientForContext(context);
+    return client.request<T>(method, params, (response) => onResponse?.(response, client.workdir));
+  }
+
   requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
     const client = this.clients.get(resolve(workdir));
     if (!client) {
@@ -237,6 +250,7 @@ export class AppServerClientPool {
       this.clientTorndownHandler?.(client.workdir);
     }
     this.clients.clear();
+    this.sessionOwners.clear();
     this.serverRequestRoutes.clear();
   }
 
@@ -272,6 +286,7 @@ export class AppServerClientPool {
           this.evictIdleClients();
           this.maybeBroadcastRunningThreads();
         },
+        this.spawnAppServer,
       );
       this.clients.set(workdir, client);
     }
@@ -285,7 +300,22 @@ export class AppServerClientPool {
     client: AppServerClient,
     event: AppServerClientEvent,
   ): void {
+    if (event.kind === "notification") {
+      const params = isRecord(event.message.params) ? event.message.params : undefined;
+      const id = params?.thread_id;
+      if (typeof id === "string" && event.message.method === "turn/started") {
+        this.sessionOwners.set(id, client);
+      }
+    } else if (event.kind === "server-exit") {
+      this.forgetSessionOwner(client);
+    }
     this.emitToRenderer(this.routeServerEvent(client, event));
+  }
+
+  private forgetSessionOwner(client: AppServerClient): void {
+    for (const [id, owner] of this.sessionOwners) {
+      if (owner === client) this.sessionOwners.delete(id);
+    }
   }
 
   private routeServerEvent(
@@ -333,6 +363,7 @@ export class AppServerClientPool {
 
   private disposeClient(client: AppServerClient): void {
     this.clients.delete(client.workdir);
+    this.forgetSessionOwner(client);
     this.dropServerRequestRoutesForClient(client);
     client.dispose();
     // After the routes are dropped so any view-recycle broadcast the handler

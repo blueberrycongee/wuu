@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({
   app: {
@@ -211,6 +211,41 @@ describe("AppServerClientPool Activity routing", () => {
         activity_id: "activity-1",
       }),
     ).rejects.toThrow("activity workspace is no longer connected");
+  });
+});
+
+describe("AppServerClientPool session routing", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("reads the execution owner across workspaces, retains completion, and forgets exited owners", async () => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const children = new Map<string, FakeAppServerChild>();
+    const order: string[] = [];
+    const active = { kind: "no_project" as const, cwd: "/active" };
+    const owner = { kind: "no_project" as const, cwd: "/owner" };
+    const pool = new AppServerClientPool(() => active, () => active.cwd, event => {
+      if (event.kind === "notification") order.push(event.message.method);
+    }, (_cmd, _args, options) => {
+      const child = new FakeAppServerChild();
+      children.set(options.cwd, child);
+      return child.asChildProcess();
+    });
+    pool.prewarmContexts([active, owner]);
+    const send = (cwd: string, message: unknown) => children.get(cwd)!.stdout.write(`${JSON.stringify(message)}\n`);
+    send(owner.cwd, { method: "turn/started", params: { thread_id: "session" } });
+    const read = pool.requestForSession(active, "session", "channel/session/read", { sessionRef: "session" }, (_response, cwd) => order.push(`snapshot:${cwd}`));
+    send(owner.cwd, { id: "client-1", result: { text: "Live" } });
+    send(owner.cwd, { method: "item/agentMessage/delta", params: { thread_id: "session", delta: " later" } });
+    expect(await read).toEqual({ text: "Live" });
+    expect(order.slice(-2)).toEqual(["snapshot:/owner", "item/agentMessage/delta"]);
+    send(owner.cwd, { method: "turn/completed", params: { thread_id: "session" } });
+    const completed = pool.requestForSession(active, "session", "channel/session/read");
+    send(owner.cwd, { id: "client-2", result: { text: "Completed" } });
+    expect(await completed).toEqual({ text: "Completed" });
+    children.get(owner.cwd)!.emit("exit", 0, null);
+    const restored = pool.requestForSession(active, "session", "channel/session/read");
+    send(active.cwd, { id: "client-1", result: { text: "Durable history" } });
+    expect(await restored).toEqual({ text: "Durable history" });
+    pool.shutdown();
   });
 });
 

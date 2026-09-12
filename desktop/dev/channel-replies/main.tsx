@@ -10,7 +10,7 @@ import "../../src/renderer/styles.css";
 const host = window as any;
 host.stage = 0;
 const listeners = new Set<(event: any) => void>();
-host.emitSession = (thread_id: string) => listeners.forEach(listener => listener({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id } } }));
+host.emitSession = (thread_id: string) => listeners.forEach(listener => listener({ kind: "notification", workdir: "/preview-executor", message: { method: "item/agentMessage/replace", params: { thread_id, turn_id: "turn-23", item_id: "answer-23", text: `实时输出版本 ${host.stage}，对应 ${thread_id}` } } }));
 document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") || "light";
 document.documentElement.dataset.platform = "mac";
 const created_at = "2026-09-12T14:00:00Z";
@@ -34,9 +34,9 @@ host.wuu = {
   markChannelRoomRead: async () => ({ read: true }),
   onEvent: () => () => {},
   onServerEvent: (listener: (event: any) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
-  readChannelSession: async ({ sessionRef }: { sessionRef: string }) => {
+  readChannelSession: async ({ sessionRef, requestId }: { sessionRef: string; requestId?: string }) => {
     host.lastReadSession = sessionRef;
-    return {
+    const result = {
       session: { session_ref: sessionRef, principal_id: sessionRef, named_agent_id: sessionRef, room_id: "room", state: "running", purpose: "conversation", created_at, updated_at: created_at },
       thread: { id: sessionRef, turns: Array.from({length: 24}, (_, index) => ({ id: `turn-${index}`, status: index === 23 ? "in_progress" : "completed", items: [
         { id: `user-${index}`, type: "user_message", text: `历史问题 ${index}` },
@@ -47,9 +47,11 @@ host.wuu = {
             { type: "image", mime_type: "image/svg+xml", data: btoa('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="lightblue"/></svg>'), name: "Screenshot" },
           ] } } : {}),
         },
-        { id: `answer-${index}`, type: "agent_message", phase: "final_answer", text: index === 23 ? `实时输出版本 ${host.stage}，对应 ${sessionRef}` : `历史回答 ${index}` },
+        { id: `answer-${index}`, type: "agent_message", status: index === 23 ? "in_progress" : "completed", terminal: true, phase: "final_answer", text: index === 23 ? `实时输出版本 ${host.stage}，对应 ${sessionRef}` : `历史回答 ${index}` },
       ] })) },
     };
+    if (requestId) listeners.forEach(listener => listener({ kind: "notification", workdir: "/preview-executor", message: { method: "channel/session/snapshot", params: { request_id: requestId, result } } }));
+    return result;
   },
   listChannelMessages: async () => {
     const responses = replies.map((r, i) => ({ ...r, state: host.stage > (i === 1 ? 0 : 1) ? "responding" : "thinking", body: host.stage > (i === 1 ? 0 : 1) ? `${agents[i].name}：消息有内容后才出现，并保持阅读顺序。` : "" }));

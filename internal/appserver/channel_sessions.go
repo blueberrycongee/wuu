@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -95,9 +96,27 @@ func (s *Server) handleChannelSession(ctx context.Context, req Request) error {
 		if loadErr != nil {
 			return s.writeResponse(req.ID, nil, loadErr)
 		}
+		th.streamMu.Lock()
+		defer th.streamMu.Unlock()
 		th.mu.Lock()
 		snapshot := th.snapshotLocked()
+		running := th.running
 		th.mu.Unlock()
+		if !running {
+			// Another workspace process may have executed this shared session.
+			// An idle local cache is not an authoritative history snapshot.
+			persisted, err := s.loadPersistedThreadState(params.SessionRef, time.Now().UTC())
+			if err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			th.mu.Lock()
+			if th.running {
+				snapshot = th.snapshotLocked()
+			} else {
+				snapshot = persisted.snapshotLocked()
+			}
+			th.mu.Unlock()
+		}
 		snapshot.ReadOnly = true
 		return s.writeResponse(req.ID, ChannelSessionReadResult{binding, snapshot}, nil)
 	case MethodChannelSessionSend:

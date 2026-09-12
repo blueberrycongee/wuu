@@ -1,3 +1,4 @@
+import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
@@ -1826,7 +1827,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     let mounted = true;
-    const off = window.wuu.onServerEvent((event) => {
+    const off = subscribeServerEvents((event) => {
       if (!mounted) {
         return;
       }

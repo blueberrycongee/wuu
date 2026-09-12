@@ -2079,10 +2079,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// group-broadcast outlet so a thread/updated snapshot in the batch is
 	// re-wrapped with group Members (see notifyOutboundBatch).
 	notifyBatch := s.notifyOutboundBatch
-	if th != nil && strings.TrimSpace(th.NamedAgentID) != "" {
-		notify = func(string, any) {}
-		notifyBatch = func([]outboundNotification) {}
-	}
 	runner := s.rt.StreamRunner
 	if threadRuntime != nil && threadRuntime.StreamRunner != nil {
 		runner = threadRuntime.StreamRunner
@@ -2460,6 +2456,8 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		ExecutionID: turnID,
 	})
 	turnResult, err := engine.RunTurn(driverCtx, agentengine.TurnInput{History: history}, func(ev providers.StreamEvent) {
+		th.streamMu.Lock()
+		defer th.streamMu.Unlock()
 		th.mu.Lock()
 		if th.currentTurn != turnID {
 			th.mu.Unlock()

@@ -21,6 +21,7 @@ type collaborationRPCCall struct {
 	request providers.ChatRequest
 	ctx     context.Context
 	release chan struct{}
+	stream  chan providers.StreamEvent
 }
 
 type collaborationRPCProvider struct {
@@ -32,17 +33,23 @@ func (client *collaborationRPCProvider) Chat(context.Context, providers.ChatRequ
 }
 
 func (client *collaborationRPCProvider) StreamChat(ctx context.Context, request providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	call := &collaborationRPCCall{request: request, ctx: ctx, release: make(chan struct{})}
+	call := &collaborationRPCCall{request: request, ctx: ctx, release: make(chan struct{}), stream: make(chan providers.StreamEvent)}
 	client.started <- call
 	events := make(chan providers.StreamEvent, 2)
 	go func() {
 		defer close(events)
-		select {
-		case <-ctx.Done():
-			events <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
-		case <-call.release:
-			events <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "Independent result"}
-			events <- providers.StreamEvent{Type: providers.EventDone}
+		for {
+			select {
+			case <-ctx.Done():
+				events <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
+				return
+			case event := <-call.stream:
+				events <- event
+			case <-call.release:
+				events <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "Independent result"}
+				events <- providers.StreamEvent{Type: providers.EventDone}
+				return
+			}
 		}
 	}()
 	return events, nil
@@ -276,4 +283,96 @@ func TestChannelSessionRPCDrainsDurableQueueAfterCapacityRelease(t *testing.T) {
 	if err != nil || binding.State != channels.CollaborationSessionCompleted {
 		t.Fatalf("queued session did not complete: %+v, %v", binding, err)
 	}
+}
+
+func TestChannelSessionReadRefreshesIdleCacheAfterAnotherServerCompletes(t *testing.T) {
+	fixture := newCollaborationRPCFixture(t)
+	binding, call := fixture.create(t, "Inspect shared execution")
+	// A reader on another workspace can cache the prompt while the execution
+	// owner is still streaming. It must not keep serving that prompt forever.
+	reader := &Server{rt: fixture.server.rt, channelService: fixture.server.channelService, threads: make(map[string]*threadState), out: &lockedBuffer{}}
+	cached, err := reader.ensureThreadLoaded(binding.SessionRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if threadIsRunning(cached) {
+		t.Fatal("reader acquired the owner's execution")
+	}
+	close(call.release)
+	fixture.waitForCompletion(t)
+	readerFixture := &collaborationRPCFixture{server: reader, out: reader.out.(*lockedBuffer)}
+	var read ChannelSessionReadResult
+	readerFixture.rpc(t, MethodChannelSessionRead, ChannelSessionRefParams{SessionRef: binding.SessionRef}, &read)
+	found := false
+	for _, turn := range read.Thread.Turns {
+		for _, item := range turn.Items {
+			if item.Type == ThreadItemAgentMessage && strings.Contains(item.Text, "Independent result") {
+				found = true
+			}
+		}
+	}
+	if !found || !read.Thread.ReadOnly || read.Session.State != channels.CollaborationSessionCompleted {
+		t.Fatalf("reader returned a stale session: %+v", read)
+	}
+}
+
+type collaborationNotificationWriter struct {
+	buffer  *lockedBuffer
+	methods chan string
+}
+
+func (w *collaborationNotificationWriter) Write(p []byte) (int, error) {
+	n, err := w.buffer.Write(p)
+	var envelope struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(p, &envelope) == nil && envelope.Method != "" {
+		w.methods <- envelope.Method
+	}
+	return n, err
+}
+
+func TestChannelSessionStreamsExecutionEventsBeforeCompletion(t *testing.T) {
+	fixture := newCollaborationRPCFixture(t)
+	methods := make(chan string, 128)
+	fixture.server.out = &collaborationNotificationWriter{buffer: fixture.out, methods: methods}
+	binding, call := fixture.create(t, "Inspect streaming progress")
+	waitForMethod := func(expected string) {
+		t.Helper()
+		deadline := time.NewTimer(collaborationTestWaitTimeout)
+		defer deadline.Stop()
+		for {
+			select {
+			case method := <-methods:
+				if method == expected {
+					return
+				}
+			case <-deadline.C:
+				t.Fatalf("session never emitted %s", expected)
+			}
+		}
+	}
+	waitForMethod(NotificationTurnStarted)
+	call.stream <- providers.StreamEvent{Type: providers.EventThinkingDelta, Content: "Inspecting callers"}
+	waitForMethod(NotificationReasoningDelta)
+	call.stream <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "Live progress. "}
+	waitForMethod(NotificationAgentMessageDelta)
+	var read ChannelSessionReadResult
+	fixture.rpc(t, MethodChannelSessionRead, ChannelSessionRefParams{SessionRef: binding.SessionRef}, &read)
+	turn := read.Thread.Turns[len(read.Thread.Turns)-1]
+	if turn.Status != TurnStatusInProgress {
+		t.Fatalf("stream was only visible after completion: %+v", turn)
+	}
+	found := false
+	for _, item := range turn.Items {
+		if item.Text == "Live progress. " {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("live snapshot lost streamed text: %+v", turn)
+	}
+	close(call.release)
+	fixture.waitForCompletion(t)
+	waitForMethod(NotificationTurnCompleted)
 }

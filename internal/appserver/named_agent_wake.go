@@ -473,6 +473,14 @@ func (s *Server) startAgentRuntimeSessionWakeLocked(agent channels.AgentRuntime,
 		return errors.Join(errServerClosed, s.abortStartedThreadTurnDurably(th, started, errServerClosed))
 	}
 	defer launch.Cancel()
+	// Execution events feed the session inspector. Public room delivery remains
+	// owned by collaboration settlement and does not publish these private items.
+	if err := s.writeNotification(NotificationTurnStarted, TurnStartedNotification{
+		ThreadID: th.ID,
+		Turn:     started.turn,
+	}); err != nil {
+		return errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
+	}
 	launch.Commit()
 	return nil
 }

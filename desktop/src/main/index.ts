@@ -1777,8 +1777,20 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:channel-session-create", (event, params: ChannelSessionCreateParams) =>
     appServerRequest<ChannelSessionResult>(event, "channel/session/create", params),
   );
-  ipcMain.handle("wuu:channel-session-read", (event, params: ChannelSessionRefParams) =>
-    appServerRequest<ChannelSessionReadResult>(event, "channel/session/read", params),
+  ipcMain.handle("wuu:channel-session-read", (event, params: ChannelSessionRefParams & { requestId?: string }) =>
+    appServerClientPool.requestForSession<ChannelSessionReadResult>(
+      runtimeContextForEvent(event), params.sessionRef, "channel/session/read", params,
+      (response, workdir) => {
+        // Put the snapshot on the same ordered channel as subsequent deltas.
+        // The invoke promise can resolve after later stdout notifications.
+        if (params.requestId && !response.error && !event.sender.isDestroyed()) {
+          event.sender.send("wuu:server-event", {
+            kind: "notification", workdir,
+            message: { method: "channel/session/snapshot", params: { request_id: params.requestId, result: response.result } },
+          } satisfies ServerEvent);
+        }
+      },
+    ),
   );
   ipcMain.handle("wuu:channel-session-send", (event, params: ChannelSessionSendParams) =>
     appServerRequest<ChannelSessionResult>(event, "channel/session/send", params),

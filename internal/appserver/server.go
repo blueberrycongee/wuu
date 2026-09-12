@@ -94,6 +94,9 @@ type threadState struct {
 	runtimeSelectionMutation bool
 	runtimeSubscription      *threadRuntimeSubscription
 
+	// streamMu keeps a live snapshot and its response ordered with stream
+	// mutations and notifications. Acquire it before mu when both are needed.
+	streamMu              sync.Mutex
 	mu                    sync.Mutex
 	running               bool
 	currentTurn           string
