@@ -126,23 +126,3 @@ export function surfaceEye<E extends Superellipse>(eye: E, body: FaceBody, view?
     rot: 0, path, contour,
   };
 }
-
-/** Broad diffuse light contours on the same sphere; no gloss or cast shadow. */
-export function surfaceLight(body: FaceBody): string {
-  const light: Vec3 = [-0.3, -0.4, Math.sqrt(0.75)];
-  const right: Vec3 = [0.8, -0.6, 0];
-  const down: Vec3 = [0.6 * light[2], 0.8 * light[2], 0.5];
-  const { project } = faceSurface(body);
-  // All these caps are in front of the horizon. Each is an equal diffuse-light
-  // increment (normal dot light), rather than a painted highlight ellipse.
-  return Array.from({ length: 12 }, (_, i) => {
-    const level = 0.73 + i * 0.023;
-    const radius = Math.sqrt(1 - level * level);
-    const points = Array.from({ length: 64 }, (_, k) => {
-      const a = k * 2 * Math.PI / 64;
-      const p = light.map((v, axis) => v * level + radius * (right[axis]! * Math.cos(a) + down[axis]! * Math.sin(a))) as Vec3;
-      return project(p).map((v) => Math.round(v * 1000) / 1000).join(" ");
-    });
-    return `<path d="M${points.join("L")}Z" fill="white" fill-opacity="0.014"/>`;
-  }).join("");
-}

@@ -1,7 +1,7 @@
 import type { Palette } from "../color";
 import type { FacePerspective } from "../render";
 import { blobPath, blobSegs, segsBounds, superellipse, superellipseSegs } from "../shape";
-import { surfaceEye, surfaceLight } from "../surface";
+import { surfaceEye } from "../surface";
 import type { Traits } from "../traits";
 
 /**
@@ -321,7 +321,6 @@ export function render(l: Layout, p: Palette, mo?: boolean): string {
       .map((d) => `<circle cx="${r2(d.cx)}" cy="${r2(d.cy)}" r="${r2(d.r)}"/>`)
       .join("") +
     `<path d="${core}"/>` +
-    (l.shape === "round" && (l.perspective?.strength ?? 0) > 0 ? surfaceLight(b) : "") +
     `</g>` +
     // The eye group already existed to share a fill, and it is exactly the
     // element the saccade layer needs: both eyes must move as one, because
