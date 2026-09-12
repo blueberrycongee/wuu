@@ -12,6 +12,7 @@ export default defineConfig({
     },
   },
   renderer: {
+    cacheDir: resolve(__dirname, "../../node_modules/.vite/onboarding"),
     root: ".",
     plugins: [react()],
     resolve: { dedupe: ["react", "react-dom"] },
