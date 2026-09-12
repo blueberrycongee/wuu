@@ -23,6 +23,7 @@ type pluginToolExecutor struct {
 	host     *pluginhost.Host
 	threadID string
 	cwd      string
+	scope    string
 }
 
 func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, threadID, cwd string) agent.ToolExecutor {
@@ -156,8 +157,19 @@ func (e *pluginToolExecutor) SupportsTool(name string) bool {
 
 func (e *pluginToolExecutor) pluginToolAllowed(name string) bool {
 	tool, ok := e.host.Tool(name)
-	if !ok || len(tool.Registration.ExecutionScopes) == 0 {
-		return ok
+	if !ok {
+		return false
+	}
+	if e.scope != "" {
+		for _, allowed := range tool.Registration.ExecutionScopes {
+			if allowed == e.scope {
+				return true
+			}
+		}
+		return false
+	}
+	if len(tool.Registration.ExecutionScopes) == 0 {
+		return true
 	}
 	actorPath := ""
 	if provider, ok := e.inner.(interface{ ExecutionActor() (string, string) }); ok {
@@ -217,4 +229,35 @@ func (e *pluginToolExecutor) DiscoveredTools(call providers.ToolCall) []provider
 		return nil
 	}
 	return provider.DiscoveredTools(call)
+}
+
+// ConfigureCollaborationTools exposes only tools explicitly registered for
+// collaboration. Prompts, hooks and loop drivers retain the isolated runtime.
+func (s *Session) ConfigureCollaborationTools(thread *ThreadRuntime, id string) {
+	if thread == nil || thread.Toolkit == nil || thread.StreamRunner == nil {
+		return
+	}
+	thread.StreamRunner.Tools = thread.Toolkit
+	if s.PluginHost != nil && !thread.Toolkit.IsRoomAgent() {
+		thread.StreamRunner.Tools = &pluginToolExecutor{inner: thread.Toolkit, host: s.PluginHost, threadID: id, cwd: thread.Toolkit.RootDir(), scope: "collaboration"}
+	}
+}
+
+// HasCollaborationTools reports whether a turn will hold plugin references.
+func (s *Session) HasCollaborationTools() bool {
+	if s == nil || s.PluginHost == nil {
+		return false
+	}
+	for _, definition := range s.PluginHost.ToolDefinitions() {
+		tool, ok := s.PluginHost.Tool(definition.Name)
+		if !ok {
+			continue
+		}
+		for _, scope := range tool.Registration.ExecutionScopes {
+			if scope == "collaboration" {
+				return true
+			}
+		}
+	}
+	return false
 }

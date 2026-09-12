@@ -186,7 +186,7 @@ func TestHandlerOwnsSubagentToolsAndPrompt(t *testing.T) {
 		}
 	}
 	for _, tool := range handler.Definition.Tools {
-		if len(tool.ExecutionScopes) != 1 || tool.ExecutionScopes[0] != "root" {
+		if len(tool.ExecutionScopes) != 2 || tool.ExecutionScopes[0] != "root" || tool.ExecutionScopes[1] != "collaboration" {
 			t.Fatalf("tool %q scopes = %v", tool.ID, tool.ExecutionScopes)
 		}
 	}

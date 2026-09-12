@@ -1235,6 +1235,10 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 	}
 	runner := threadRuntime.StreamRunner
 	runner.Tools = toolkit
+	if toolkit != nil {
+		id, _ := toolkit.ExecutionActor()
+		s.ConfigureCollaborationTools(threadRuntime, id)
+	}
 	runner.BeforeRequestContext = RuntimeContextInjector(
 		threadRuntime.AgentControl,
 		rootDir,
