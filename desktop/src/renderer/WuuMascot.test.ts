@@ -2,7 +2,7 @@ import { _layout } from "blobatar";
 import { describe, expect, it } from "vitest";
 import approvedIcon from "../../../assets/app-icon-source.json";
 import { AVATAR_HUES } from "./DefaultAvatar";
-import { providerMascotHue, WUU_MASCOT_ACTIVITY_EXPRESSIONS, WUU_MASCOT_ACTIVITY_PROP_LAYOUT } from "./WuuMascot";
+import { providerMascotHue, WUU_MASCOT_ACTIVITY_PROP_LAYOUT } from "./WuuMascot";
 import {
   WUU_MASCOT_ACTIVITY_PERSPECTIVES,
   WUU_MASCOT_NAME,
@@ -30,20 +30,13 @@ describe("vendored mascot geometry", () => {
     expect(read.eyes[1]!.ry).not.toBeCloseTo(read.eyes[0]!.ry, 3);
   });
 
-  it("derives the capsule eyes from the approved icon and retains their portrait outline in every activity", () => {
+  it("derives the resting capsule eyes from the approved icon", () => {
     const aspect = approvedIcon.eyeHeight / approvedIcon.eyeWidth;
     for (const eye of flat.eyes) {
       expect(eye.ry / eye.rx).toBeCloseTo(aspect, 6);
       expect(eye.rx / flat.body.rx).toBeCloseTo(approvedIcon.eyeWidth / (approvedIcon.radius * 2), 6);
     }
-    for (const [activity, expression] of Object.entries(WUU_MASCOT_ACTIVITY_EXPRESSIONS)) {
-      const posed = expression!.bake(flat, expression!.p).l;
-      for (const eye of posed.eyes) {
-        expect(eye.ry / eye.rx, activity).toBeGreaterThan(aspect * 0.85);
-        expect(eye.ry / eye.rx, activity).toBeLessThan(aspect * 1.12);
-        expect(Math.abs(eye.rot), activity).toBeLessThan(5);
-      }
-    }
+
   });
 
   it("carries a distinct, naturally projected gaze in every activity", () => {

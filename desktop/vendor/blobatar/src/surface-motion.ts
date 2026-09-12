@@ -60,11 +60,13 @@ export function animateSurface(root: SVGGElement, layout: Layout) {
       pitch: value("pitch") - amp * value("scan-y") * value("look-y", 1.1) + (reduced?.matches ? 0 : value("pointer-pitch")),
       strength: 1,
     };
-    const next = JSON.stringify([p, view]);
+    // Consumers can briefly carry the face around the sphere without changing its resting camera.
+    const spin = reduced?.matches ? 0 : value("spin");
+    const next = JSON.stringify([p, view, spin]);
     if (next === signature) return;
     signature = next;
     const posed = bakePose(layout, p).l;
-    const data = posed.eyes.map((eye) => surfaceEye(eye, layout.body, view).path);
+    const data = posed.eyes.map((eye) => surfaceEye(eye, layout.body, view, spin).path);
     return () => paths.forEach((path, i) => path.setAttribute("d", data[i]!));
   };
   const flush = () => read()?.();

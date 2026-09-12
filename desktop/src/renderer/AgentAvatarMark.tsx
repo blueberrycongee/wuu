@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type JSX } from "react";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { WuuMascot, WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascot";
 import { WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
@@ -20,24 +20,62 @@ export type AgentAvatarKey = (typeof AGENT_AVATAR_KEYS)[number];
 
 export type AgentAvatarStatus = "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
 
-function AgentAvatarFeedback({ status, active }: { status: AgentAvatarStatus; active: boolean }): JSX.Element | null {
+function AgentAvatarAccent({ status }: { status: AgentAvatarStatus }): JSX.Element | null {
   if (status === "idle") return null;
-  if (active) {
-    return (
-      <svg className="agent-avatar-feedback-orbit" data-agent-avatar-feedback="active" viewBox="0 0 48 48" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" strokeDasharray="25 113.2" />
-        <circle cx="24" cy="2" r="2" className="agent-avatar-feedback-dot" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="agent-avatar-feedback-marker" data-agent-avatar-feedback={status} viewBox="0 0 20 20" aria-hidden="true">
-      <circle className="agent-avatar-feedback-marker-background" cx="10" cy="10" r="8.5" />
-      {status === "failed" ? <><path d="M10 5.5v5" /><circle className="agent-avatar-feedback-dot" cx="10" cy="14" r="0.8" /></>
-        : status === "queued" ? <path d="M10 5.5V10l3 2" />
-          : <path d="M7.5 6.5v7m5-7v7" />}
-    </svg>
-  );
+  return <svg className="agent-avatar-accent" viewBox="0 0 100 100" aria-hidden="true">
+    {status === "thinking" ? <g className="agent-avatar-thoughts"><circle cx="77" cy="17" r="2.5" /><circle cx="86" cy="10" r="3.2" /><circle cx="97" cy="6" r="3.8" /></g> : null}
+    {status === "responding" ? <path d="M20 22C17 22 8 15 10 12C12 9 21 17 22 20Q23 23 20 22ZM28 13C25 13 23 1 26 0C30-1 32 12 28 13ZM11 34C8 35-2 31-1 28C0 25 12 29 13 31Q14 33 11 34Z" /> : null}
+    {status === "sending" ? <path d="M82 18C94 19 101 27 104 37Q104 41 100 38C95 30 89 26 81 24Q77 21 82 18ZM88 7C99 10 106 17 110 27Q111 31 107 29C101 21 95 16 87 13Q84 10 88 7Z" /> : null}
+    {status === "queued" ? <g><circle cx="8" cy="66" r="3.2" /><circle cx="-1" cy="70" r="2.6" /></g> : null}
+    {status === "waiting" ? <path d="M18 22C13 22 6 16 8 12C11 9 20 17 21 20Q21 23 18 22ZM29 12C24 12 23 3 26-1Q29-3 30 1C32 6 32 12 29 12Z" /> : null}
+    {status === "failed" ? <path d="M13 65C12 72 5 76 8 83Q10 87 5 86C-1 83 3 70 10 65Q13 62 13 65ZM87 65C88 72 95 76 92 83Q90 87 95 86C101 83 97 70 90 65Q87 62 87 65Z" /> : null}
+    {status === "interrupted" ? <g>
+      <path transform="translate(76 18) scale(.7)" d="M0 0H12V3L4 11H12V14H0V11L8 3H0Z" />
+      <path transform="translate(86 5) scale(.9)" d="M0 0H12V3L4 11H12V14H0V11L8 3H0Z" />
+      <path transform="translate(99 -10) scale(1.1)" d="M0 0H12V3L4 11H12V14H0V11L8 3H0Z" />
+    </g> : null}
+  </svg>;
+}
+
+const AGENT_TURN_MS = 1100;
+
+/** Work begins with one turn. Work sub-states share it; pauses cancel it. */
+function useAgentAvatarTurn(status: AgentAvatarStatus, enabled: boolean, signal: number): number {
+  const active = status === "thinking" || status === "responding" || status === "sending";
+  const previous = useRef({ active: false, signal });
+  const sequence = useRef(0);
+  const [turn, setTurn] = useState(0);
+  useEffect(() => {
+    const requested = (active && !previous.current.active) || signal !== previous.current.signal;
+    previous.current = { active, signal };
+    if (!enabled || (!active && !requested)) { setTurn(0); return; }
+    if (requested && !document.hidden && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setTurn(current => current || ++sequence.current);
+  }, [active, enabled, signal, status]);
+  useEffect(() => {
+    if (!turn) return;
+    const cancel = () => setTurn(0);
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const timer = window.setTimeout(cancel, AGENT_TURN_MS);
+    const hide = () => { if (document.hidden) cancel(); };
+    reduced?.addEventListener("change", cancel);
+    document.addEventListener("visibilitychange", hide);
+    return () => { window.clearTimeout(timer); reduced?.removeEventListener("change", cancel); document.removeEventListener("visibilitychange", hide); };
+  }, [turn]);
+  return turn;
+}
+
+/** Two clipped halves let the same ribbon pass behind and in front of the body. */
+function AgentAvatarRibbon({ front }: { front: boolean }): JSX.Element {
+  const id = useId().replace(/:/g, "");
+  return <svg className={`agent-avatar-ribbon ${front ? "front" : "rear"}`} viewBox="0 0 100 100" aria-hidden="true">
+    <defs><clipPath id={id}><rect x="-20" y={front ? 57 : -20} width="140" height={front ? 63 : 77} /></clipPath></defs>
+    <g transform="rotate(-16 50 57)"><g clipPath={`url(#${id})`}>
+      <ellipse className="agent-avatar-ribbon-lead" cx="50" cy="57" rx="47" ry="13" pathLength="360" />
+      <ellipse className="agent-avatar-ribbon-tail" cx="50" cy="57" rx="50" ry="19" pathLength="360" />
+      <ellipse className="agent-avatar-ribbon-third" cx="50" cy="57" rx="48" ry="25" pathLength="360" />
+      <ellipse className="agent-avatar-ribbon-fourth" cx="50" cy="57" rx="45" ry="31" pathLength="360" />
+    </g></g>
+  </svg>;
 }
 
 export const AGENT_AVATAR_SHAPES = [
@@ -102,26 +140,42 @@ export function agentAvatarConfig(value: string): AgentAvatarConfig {
   return DEFAULT_AGENT_AVATAR_CONFIG;
 }
 
-export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle" }: {
+export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", motion = "expressive", turnSignal = 0 }: {
   seed: string;
   avatarKey: string;
   avatarImage?: string;
   status?: AgentAvatarStatus;
+  /** Secondary placements retain state cues without the working gaze loop. */
+  motion?: "expressive" | "subtle";
+  /** Increment to replay a deliberate character gesture, independent of status. */
+  turnSignal?: number;
 }): JSX.Element {
   const active = status === "thinking" || status === "responding" || status === "sending";
+  const turn = useAgentAvatarTurn(status, motion === "expressive" && !avatarImage, turnSignal);
   const config = agentAvatarConfig(avatarKey);
   const shape = AGENT_AVATAR_SHAPES.find((item) => item.id === config.shape) ?? AGENT_AVATAR_SHAPES[0];
+  const phase = Array.from(seed).reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0) % 2600;
   return (
-    <span className="agent-avatar-mark" data-agent-avatar-id={seed} data-agent-avatar-state={status} aria-hidden="true">
+    <span className="agent-avatar-mark" data-agent-avatar-id={seed} data-agent-avatar-state={status} data-agent-avatar-motion={motion}
+      data-agent-avatar-turn={turn || undefined} style={{ "--agent-avatar-hue": config.hue, "--agent-turn-duration": `${AGENT_TURN_MS}ms` } as CSSProperties} aria-hidden="true">
+      {turn ? <AgentAvatarRibbon key={`rear-${turn}`} front={false} /> : null}
       {avatarImage ? <img className="agent-avatar-image" src={avatarImage} alt="" draggable={false} /> : <WuuMascot
         identityName={`agent-avatar:${avatarKey}`}
         identityHue={config.hue}
         identityTraits={{ ...WUU_MASCOT_TRAITS, shape: shape.trait }}
         accessory={config.accessory}
         activity={status}
+        idlePerspective={{ yaw: 0, pitch: 2, strength: 1 }}
+        animate={active && motion === "expressive" ? "always" : "hover"}
+        style={{
+          "--agent-attention-delay": `${-phase}ms`,
+          "--mo-look-x": 1,
+          "--mo-look-y": 1,
+        } as CSSProperties}
         showActivityProp={false}
       />}
-      <AgentAvatarFeedback status={status} active={active} />
+      {avatarImage ? null : <AgentAvatarAccent status={status} />}
+      {turn ? <AgentAvatarRibbon key={`front-${turn}`} front /> : null}
     </span>
   );
 }

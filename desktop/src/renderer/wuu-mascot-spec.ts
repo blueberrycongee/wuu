@@ -66,19 +66,19 @@ export const WUU_MASCOT_ACTIVITY_PERSPECTIVES: Readonly<
 > = {
   idle: { yaw: 0, pitch: 2, strength: 1 },
   compose: { yaw: 8, pitch: -16, strength: 1 },
-  thinking: { yaw: 22, pitch: 14, strength: 1 },
+  thinking: { yaw: 20, pitch: 15, strength: 1 },
   compact: { yaw: -12, pitch: 12, strength: 1 },
   search: { yaw: -16, pitch: -10, strength: 1 },
   edit: { yaw: 14, pitch: -16, strength: 1 },
   command: { yaw: -10, pitch: -12, strength: 1 },
   read: { yaw: 12, pitch: -8, strength: 1 },
   tool: { yaw: 12, pitch: -10, strength: 1 },
-  sending: { yaw: 0, pitch: 2, strength: 1 },
+  sending: { yaw: 26, pitch: -2, strength: 1 },
   responding: { yaw: 0, pitch: 2, strength: 1 },
-  queued: { yaw: -8, pitch: 2, strength: 1 },
-  waiting: { yaw: 0, pitch: 6, strength: 1 },
-  failed: { yaw: 0, pitch: -8, strength: 1 },
-  interrupted: { yaw: -8, pitch: -6, strength: 1 },
+  queued: { yaw: -18, pitch: 2, strength: 1 },
+  waiting: { yaw: 0, pitch: 10, strength: 1 },
+  failed: { yaw: 0, pitch: -14, strength: 1 },
+  interrupted: { yaw: -22, pitch: -6, strength: 1 },
 };
 
 export const WUU_MASCOT_IDENTITY_PERSPECTIVE =

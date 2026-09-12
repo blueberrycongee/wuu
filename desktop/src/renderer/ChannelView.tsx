@@ -86,10 +86,9 @@ function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, mod
   const accessibleDescription = model ? `${name}: ${statusText}, ${modelLabel}: ${model}` : `${name}: ${statusText}`;
   return (
     <span className={`channel-agent-avatar${compact ? " compact" : ""}`} tabIndex={0} aria-label={accessibleDescription}>
-      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={expressive ? status : "idle"} />
-      <span className={`channel-agent-status-dot ${status}`} aria-hidden="true" />
+      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={expressive ? status : "idle"} motion={expressive ? "expressive" : "subtle"} />
       <span className="channel-agent-status-card" role="tooltip">
-        <span><i className={`channel-agent-status-swatch ${status}`} />{statusText}</span>
+        <span>{statusText}</span>
         {model ? <span className="channel-agent-model">{model}</span> : null}
       </span>
     </span>

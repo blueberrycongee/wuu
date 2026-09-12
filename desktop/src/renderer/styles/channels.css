@@ -388,25 +388,6 @@
   border-radius: var(--radius-circle);
 }
 
-.channel-agent-status-dot {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 7px;
-  height: 7px;
-  border: 0;
-  border-radius: var(--radius-circle);
-}
-
-.channel-agent-status-dot.idle,
-.channel-agent-status-swatch.idle { background: var(--success); }
-
-.channel-agent-status-dot.thinking,
-.channel-agent-status-swatch.thinking { background: var(--warning); }
-
-.channel-agent-status-dot.sending,
-.channel-agent-status-swatch.sending { background: var(--info); }
-
 .channel-agent-status-card {
   position: absolute;
   z-index: 20;
@@ -435,13 +416,6 @@
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
-}
-
-.channel-agent-status-swatch {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-circle);
 }
 
 .channel-agent-avatar:hover .channel-agent-status-card,

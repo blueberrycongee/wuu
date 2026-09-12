@@ -4,6 +4,12 @@ Run `npm run lab:mascot` from `desktop` to check the production mascot at hero,
 avatar and process-row sizes. Change state, provider, model and visibility while
 watching the same instance. Use the browser's reduced-motion emulation as well.
 
+Open `/collaboration.html` for the Agent motion preview. Switch states during a
+turn, play a work/reply cycle, and compare the quiet sidebar with the live reply
+at 24, 32, and 48 pixels. The preview uses the production `AgentAvatarMark`.
+The state sheet compares eyes and abstract accents. The turn button replays the
+brief ribbon gesture used when entering work; it is not a progress indicator.
+
 Callers render `WuuMascot` and pass `activity`; the component owns expression,
 gaze, props and state transitions. `visible` retains the character during exit,
 so keep the component mounted while changing that prop. `ambient` enables

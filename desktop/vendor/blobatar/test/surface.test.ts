@@ -38,6 +38,14 @@ describe("curved face geometry", () => {
     expect(rear.contour).toHaveLength(0);
   });
 
+  test("an unbounded yaw offset carries an eye around the back and returns it to rest", () => {
+    const frontal = surfaceEye(eye, body);
+    const rear = surfaceEye(eye, body, undefined, 180);
+    const returned = surfaceEye(eye, body, undefined, 360);
+    expect(rear.path).toBe("");
+    expect(returned.path).toBe(frontal.path);
+  });
+
   test("partial eyes close along the silhouette and stay inside it during clipping", () => {
     let partial = false;
     for (let yaw = 35; yaw <= 55; yaw += 0.25) {

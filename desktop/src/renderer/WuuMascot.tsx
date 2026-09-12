@@ -73,19 +73,19 @@ export const WUU_MASCOT_ACTIVITY_EXPRESSIONS: Readonly<
 > = {
   idle: wuuMascotExpression(),
   compose: wuuMascotExpression({ esy: 1.04 }),
-  thinking: wuuMascotExpression({ esy: 0.94, tilt: 2 }),
+  thinking: wuuMascotExpression({ esy: 0.68, esy2: -0.08, tilt: 5 }),
   compact: wuuMascotExpression({ esy: 0.9 }),
   search: wuuMascotExpression({ esy: 1.08 }),
   edit: wuuMascotExpression({ esy: 0.97, tilt: 1 }),
   command: wuuMascotExpression({ esy: 0.94 }),
   read: wuuMascotExpression({ esy: 0.94, tilt: -1 }),
   tool: wuuMascotExpression({ esy: 1.02 }),
-  sending: wuuMascotExpression({ esy: 1.04, tilt: -1 }),
-  responding: wuuMascotExpression({ esy: 1.04, tilt: -1 }),
-  queued: wuuMascotExpression({ esy: 0.96 }),
-  waiting: wuuMascotExpression({ esy: 0.92, esy2: -0.03 }),
-  failed: wuuMascotExpression({ esy: 0.9, tilt: 2 }),
-  interrupted: wuuMascotExpression({ esy: 0.92 }),
+  sending: wuuMascotExpression({ esy: 0.82, tilt: -5 }),
+  responding: wuuMascotExpression({ esy: 1.1, esx: 0.94, tilt: -2 }),
+  queued: wuuMascotExpression({ esy: 0.48 }),
+  waiting: wuuMascotExpression({ esy: 1.04, esy2: -0.28, tilt2: -7 }),
+  failed: wuuMascotExpression({ esy: 0.58, tilt: -12 }),
+  interrupted: wuuMascotExpression({ esy: 0.32, tilt: 2 }),
 };
 
 type WuuMascotRuntime = {
@@ -203,6 +203,8 @@ type WuuMascotProps = Omit<
   identityName?: string;
   identityHue?: number;
   identityTraits?: Readonly<Record<string, number>>;
+  /** Resting gaze for an identity; activity and ambient attention retain their own direction. */
+  idlePerspective?: { yaw: number; pitch: number; strength: number };
   /** Low-level motion gate. Idle attention is controlled separately by ambient. */
   animate?: Animate;
 };
@@ -223,6 +225,7 @@ export function WuuMascot({
   identityName = WUU_MASCOT_NAME,
   identityHue,
   identityTraits = WUU_MASCOT_TRAITS,
+  idlePerspective,
   animate = activity === "idle" || activity === "queued" || activity === "waiting" || activity === "failed" || activity === "interrupted" ? "hover" : "always",
   style,
   ...svgProps
@@ -372,7 +375,7 @@ export function WuuMascot({
         hue={WUU_MASCOT_DEFAULT_HUE}
         background={false}
         traits={identityTraits}
-        perspective={WUU_MASCOT_ACTIVITY_PERSPECTIVES[attention]}
+        perspective={attention === "idle" && idlePerspective ? idlePerspective : WUU_MASCOT_ACTIVITY_PERSPECTIVES[attention]}
         animate={animate}
         expression={expression ?? WUU_MASCOT_ACTIVITY_EXPRESSIONS[activity]}
         focusable={false}

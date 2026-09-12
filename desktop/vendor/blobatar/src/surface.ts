@@ -12,6 +12,7 @@ const FOCAL = Math.sqrt(DISTANCE * DISTANCE - 1);
 const HORIZON = 1 / DISTANCE;
 const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
 const finite = (n: number | undefined, fallback = 0) => Number.isFinite(n) ? n! : fallback;
+const normalizeTurn = (degrees: number) => ((degrees + 180) % 360 + 360) % 360 - 180;
 
 /** Strength scales rotation, never interpolates already projected coordinates. */
 export function faceAngles(view?: FacePerspective): { yaw: number; pitch: number } {
@@ -23,9 +24,10 @@ export function faceAngles(view?: FacePerspective): { yaw: number; pitch: number
 }
 
 /** A camera-facing chart lifted by ray/sphere intersection, then rigidly turned. */
-export function faceSurface(body: FaceBody, view?: FacePerspective) {
+export function faceSurface(body: FaceBody, view?: FacePerspective, yawOffset = 0) {
   const angles = faceAngles(view);
-  const yaw = angles.yaw * Math.PI / 180;
+  // The authored camera stays clamped while a transient turn may cross the rear hemisphere.
+  const yaw = normalizeTurn(angles.yaw + finite(yawOffset)) * Math.PI / 180;
   const pitch = angles.pitch * Math.PI / 180;
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
@@ -68,8 +70,8 @@ function outline(eye: Superellipse): Point[] {
  * remain painted on the back of the ball. The returned contour measures the
  * actual visible mark; rx/ry are only its screen-space bounding half-extents.
  */
-export function surfaceEye<E extends Superellipse>(eye: E, body: FaceBody, view?: FacePerspective) {
-  const surface = faceSurface(body, view);
+export function surfaceEye<E extends Superellipse>(eye: E, body: FaceBody, view?: FacePerspective, yawOffset = 0) {
+  const surface = faceSurface(body, view, yawOffset);
   const authored = outline(eye);
   const lifted = authored.map(surface.lift);
   const visible = lifted.map((p) => p[2] >= HORIZON);
@@ -113,7 +115,9 @@ export function surfaceEye<E extends Superellipse>(eye: E, body: FaceBody, view?
   }
   const center = surface.at([eye.cx, eye.cy]);
   const xs = contour.map((p) => p[0]), ys = contour.map((p) => p[1]);
-  const { yaw, pitch } = faceAngles(view);
+  const angles = faceAngles(view);
+  const yaw = normalizeTurn(angles.yaw + finite(yawOffset));
+  const pitch = angles.pitch;
   const round = (v: number) => Math.round(v * 1000) / 1000;
   const path = contour.length === 0 ? "" : yaw === 0 && pitch === 0 &&
     authored.every((p) => Math.hypot((p[0] - body.cx) / body.rx, (p[1] - body.cy) / body.ry) <= 1)
