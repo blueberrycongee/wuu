@@ -2089,6 +2089,7 @@ func namedAgentWorkspaceContextProvider(wuuHome, agentHome, memoryDir string, to
 			return nil
 		}
 		var content strings.Builder
+		fmt.Fprintf(&content, "Current execution-host time: %s (%s). Schedules can use Local for this device or an explicit IANA timezone from the user.\n", time.Now().Format(time.RFC3339), time.Now().Weekday())
 		fmt.Fprintf(&content, "Agent home (identity/state anchor, not project scope): %s\n", agentHome)
 		if len(registered) == 0 {
 			content.WriteString("Registered project workspaces: none. Projectless conversation sessions are excluded.")

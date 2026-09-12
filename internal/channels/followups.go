@@ -203,7 +203,7 @@ func (c *AgentClient) SetFollowup(ctx context.Context, p FollowupSetParams) (Fol
 	}
 	if p.Cron != "" {
 		if p.Timezone == "" {
-			return Followup{}, errors.New("recurring schedules require an IANA timezone")
+			return Followup{}, errors.New("recurring schedules require a timezone (IANA region or Local)")
 		}
 		next, err = nextFollowupTime(p.Cron, p.Timezone, now)
 		if err != nil {
