@@ -36,10 +36,13 @@ Do not run this command for an app downloaded from an untrusted source.
 
 ### CLI
 
-Install the CLI with Go. The module currently declares Go 1.26.5:
+Build the CLI from a checked-out source tree. Product releases use CalVer tags,
+which are not Go module major versions:
 
 ```bash
-go install github.com/blueberrycongee/wuu/cmd/wuu@latest
+git clone https://github.com/blueberrycongee/wuu.git
+cd wuu
+make install
 wuu --version
 ```
 

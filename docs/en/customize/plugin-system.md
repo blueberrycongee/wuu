@@ -817,7 +817,7 @@ plugins from trusted sources.
 
 The following must not be written as completed compatibility promises:
 
-- there is no previous-minor/current-minor SDK and host compatibility matrix yet;
+- there is no previous/current SDK and host compatibility matrix yet;
   plugin releases should declare `minimum_wuu_version`, and re-validate after wuu
   upgrades;
 - left-side entries have scrolling and right-side tabs have overflow, but user

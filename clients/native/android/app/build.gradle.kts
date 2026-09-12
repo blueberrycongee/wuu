@@ -10,8 +10,8 @@ android {
         applicationId = "ai.wuu.nativeapp"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 260900199
+        versionName = "2026.9.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

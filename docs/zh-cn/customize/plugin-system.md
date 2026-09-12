@@ -600,7 +600,7 @@ Subagent、Automation、Memory、Dream、TODO 已经通过与第三方插件相�
 
 以下内容不能写成已经完成的兼容承诺：
 
-- 还没有 previous-minor/current-minor 的 SDK 与宿主兼容矩阵；插件发布时应声明
+- 还没有 previous/current 的 SDK 与宿主兼容矩阵；插件发布时应声明
   `minimum_wuu_version`，Wuu 升级后重新验证；
 - 左侧入口已有滚动，右侧 Tab 已有溢出，但用户固定、取消固定、重排和统一“更多”菜单尚未完成；
 - 右侧工具和设置页已有声明式入口，通用底部面板贡献仍未形成稳定公开合同；

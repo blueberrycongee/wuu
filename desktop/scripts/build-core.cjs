@@ -47,7 +47,7 @@ function optionValue(args, name) {
 function main() {
   const desktopRoot = resolve(__dirname, "..");
   const repoRoot = resolve(desktopRoot, "..");
-  const version = readFileSync(join(repoRoot, "VERSION"), "utf8").trim() || "0.1.0";
+  const version = readFileSync(join(repoRoot, "VERSION"), "utf8").trim() || "2026.1.1";
   const commit =
     run("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, optional: true }) || "none";
   const date = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");

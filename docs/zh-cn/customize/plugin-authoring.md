@@ -702,10 +702,10 @@ Host Actions、generation 替换、失败恢复、disposal 和卸载，并演示
 
 ## 版本兼容
 
-插件跨 Wuu 小版本继续工作的承诺（开发者不 fork 也能跟上更新）是当前平台的
+插件跨具备兼容性的 Wuu 产品版本继续工作的承诺（开发者不 fork 也能跟上更新）是当前平台的
 release gate，尚未完成验证：协议与 manifest 兼容锚点已存在，但还缺少
-previous-minor/current-minor 的 SDK 与宿主兼容矩阵。在矩阵验证完成前，不要承诺
-插件会跨小版本无条件工作；发布插件时声明 `minimum_wuu_version`，并在 Wuu 升级后
+previous/current 的 SDK 与宿主兼容矩阵。在矩阵验证完成前，不要承诺
+插件会跨产品版本无条件工作；发布插件时声明 `minimum_wuu_version`，并在 Wuu 升级后
 重新验证。
 
 ## 信任边界与安全内核

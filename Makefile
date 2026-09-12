@@ -1,10 +1,10 @@
 .PHONY: setup dev docs-dev check repository-check repository-metadata-check version-check eval-check test-policy-check theme-contract-check generate-theme-contract theme-surface-matrix-check generate-theme-surface-matrix check-go check-desktop check-clients check-docs test test-go \
 	test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
 	build-clients build-docs build-macos ci install vet clean release-check \
-	print-version tag-release version-check release-prepare
+	print-version tag-release version-check version-sync release-prepare
 
 VERSION_FILE := VERSION
-BASE_VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "0.1.0")
+BASE_VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "2026.1.1")
 BUILD_VERSION ?= v$(BASE_VERSION)-dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -131,8 +131,10 @@ release-check: version-check check-go test-go-uncached test-desktop test-native
 version-check:
 	node scripts/release-version.mjs check
 
+version-sync:
+	node scripts/release-version.mjs sync
+
 release-prepare:
-	@test -n "$(RELEASE_VERSION)" || { echo "usage: make release-prepare RELEASE_VERSION=0.4.0"; exit 1; }
 	node scripts/release-version.mjs prepare "$(RELEASE_VERSION)"
 
 print-version:

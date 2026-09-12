@@ -7,9 +7,11 @@ Tagged releases are published by `.github/workflows/release.yml`.
 `VERSION` is the product version source. Do not edit package versions by hand.
 
 1. Add user-visible changes under `CHANGELOG.md`'s `[Unreleased]` section.
-2. Run `make release-prepare RELEASE_VERSION=0.4.0`. The command validates the
-   version, updates `VERSION`, the desktop manifest and lockfile,
-   and moves the unreleased notes into a dated release section.
+2. Run `make release-prepare` to select the next UTC CalVer automatically, or
+   run `make release-prepare RELEASE_VERSION=2026.9.2` when the release number
+   is already decided. The command updates `VERSION`, the desktop manifest and
+   lockfile, and the active native app metadata, then moves the unreleased notes
+   into a dated release section.
 3. Review the diff, run `make ci release-check`, and commit the release change.
 4. After the commit is on `main`, run `make tag-release` and push the annotated
    tag printed by that command.
@@ -20,14 +22,19 @@ missing or empty.
 
 ## Version policy
 
-wuu uses Semantic Versioning while it is pre-1.0:
+wuu uses Calendar Versioning (CalVer) for product releases:
 
-- Patch (`0.x.Y`) releases contain compatible fixes and small UI improvements.
-- Minor (`0.X.0`) releases add features or change protocol, configuration,
-  stored data, or user-visible behavior in a compatibility-sensitive way.
-- Prereleases such as `0.4.0-rc.1` are used when packaged builds need broader
+- `YYYY.M.N` uses the UTC release year, month, and the release sequence within
+  that month. For example, `2026.9.1` is the first September 2026 release and
+  `2026.9.2` is a later release in the same month.
+- `N` resets to `1` when the month changes. Prereleases such as `2026.9.2-rc.1`
+  are used when packaged builds need broader
   validation before becoming the current release. Tags with a prerelease suffix
   are automatically marked as prereleases on GitHub.
+
+The product version communicates release recency. It does not define
+compatibility for the Extension API, remote protocol, stored data, or migrations;
+those contracts must document their own compatibility and migration rules.
 
 The private protocol, remote-core, and mobile packages remain at `0.0.0` until
 they have an independent public release contract.
@@ -39,6 +46,10 @@ run. After `npm ci`, the workflow explicitly installs and verifies the Electron
 binary so runner-level install settings cannot leave the test or build steps
 with an incomplete Electron package. Release tooling consumes committed module
 manifests and does not update `go.mod` or `go.sum`.
+
+Calendar tags have a numeric major component that is not a Go module major
+version. Install the standalone CLI from a checked-out source tree with
+`make install`; the desktop release remains the primary packaged product.
 
 ## GitHub Secrets
 

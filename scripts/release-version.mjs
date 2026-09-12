@@ -2,108 +2,164 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const versionFile = resolve(repoRoot, "VERSION");
-const desktopManifest = resolve(repoRoot, "desktop/package.json");
-const desktopLock = resolve(repoRoot, "desktop/package-lock.json");
-const changelogFile = resolve(repoRoot, "CHANGELOG.md");
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const calverPattern = /^[1-9]\d{3}\.(?:[1-9]|1[0-2])\.[1-9]\d*(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const nativeAndroid = "clients/native/android/app/build.gradle.kts";
+const nativeIOS = "clients/native/ios/Wuu.xcodeproj/project.pbxproj";
 
-const [command = "check", rawVersion] = process.argv.slice(2);
-
-switch (command) {
-  case "check":
-    checkVersions(rawVersion);
-    break;
-  case "prepare":
-    prepare(rawVersion);
-    break;
-  case "notes":
-    process.stdout.write(`${releaseNotes(requireVersion(rawVersion))}\n`);
-    break;
-  default:
-    fail("usage: release-version.mjs check [v<version>] | prepare <version> | notes <version>");
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const [command = "check", rawVersion] = process.argv.slice(2);
+  try {
+    switch (command) {
+      case "check":
+        checkVersions(rawVersion);
+        break;
+      case "sync":
+        syncVersions();
+        break;
+      case "next":
+        console.log(nextVersion(currentVersion(), new Date()));
+        break;
+      case "prepare":
+        prepare(rawVersion);
+        break;
+      case "notes":
+        process.stdout.write(`${releaseNotes(requireSemver(rawVersion))}\n`);
+        break;
+      default:
+        fail("usage: release-version.mjs check [v<version>] | sync | next | prepare [version] | notes <version>");
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
 
 function checkVersions(expectedTag) {
-  const versions = currentVersions();
-  requireVersion(versions.root);
-  for (const [source, version] of Object.entries(versions)) {
-    if (version !== versions.root) {
-      fail(`release versions differ: VERSION=${versions.root} ${source}=${version}`);
+  const version = requireCalver(currentVersion());
+  const files = versionFiles(version);
+  for (const [path, expected] of files) {
+    if (read(path) !== expected) {
+      fail(`release version differs from VERSION=${version}: ${path}; run make version-sync`);
     }
   }
   if (expectedTag) {
-    const expected = requireVersion(expectedTag);
-    if (versions.root !== expected) {
-      fail(`release version ${versions.root} does not match tag v${expected}`);
-    }
+    const expected = requireCalver(expectedTag);
+    if (version !== expected) fail(`release version ${version} does not match tag v${expected}`);
     releaseNotes(expected);
   }
-  console.log(`release versions match: ${versions.root}`);
+  console.log(`release versions match: ${version}`);
+}
+
+function syncVersions() {
+  const version = requireCalver(currentVersion());
+  writeFiles(versionFiles(version));
+  console.log(`synchronized product version ${version}`);
 }
 
 function prepare(rawNextVersion) {
-  const nextVersion = requireVersion(rawNextVersion);
-  const current = currentVersions().root;
-  requireVersion(current);
-  if (compareVersions(nextVersion, current) <= 0) {
-    fail(`new version ${nextVersion} must be greater than current version ${current}`);
+  const current = requireCalver(currentVersion());
+  const now = new Date();
+  const version = requireCalver(rawNextVersion || nextVersion(current, now));
+  if (compareVersions(version, current) <= 0) fail(`new version ${version} must be greater than current version ${current}`);
+
+  const changelog = read("CHANGELOG.md");
+  const unreleased = findSection(changelog, "Unreleased");
+  if (findSection(changelog, version)) fail(`CHANGELOG.md already contains ${version}`);
+  const candidate = current.includes("-") && version === current.split("-")[0]
+    ? findSection(changelog, current)
+    : null;
+  const body = [candidate?.body, unreleased?.body].filter(Boolean).join("\n\n");
+  if (!body) fail("CHANGELOG.md [Unreleased] is empty; document user-visible changes first");
+
+  const released = `## [Unreleased]\n\n## [${version}] - ${now.toISOString().slice(0, 10)}\n\n${body}\n\n`;
+  const files = versionFiles(version);
+  files.set("VERSION", `${version}\n`);
+  const unreleasedStart = unreleased?.start ?? changelog.length;
+  const unreleasedEnd = unreleased?.end ?? changelog.length;
+  files.set("CHANGELOG.md", changelog.slice(0, unreleasedStart) + released + changelog.slice(unreleasedEnd));
+  writeFiles(files);
+  console.log(`prepared release ${version}`);
+}
+
+function releaseNotes(version) {
+  const changelog = read("CHANGELOG.md");
+  const section = findSection(changelog, version);
+  if (!section || !section.body) fail(`CHANGELOG.md section for ${version} is empty or missing`);
+  return `# wuu v${version}\n\n${section.body}`;
+}
+
+function versionFiles(version) {
+  const files = new Map();
+  for (const path of ["desktop/package.json", "desktop/package-lock.json"]) {
+    const json = JSON.parse(read(path));
+    json.version = version;
+    if (path.endsWith("package-lock.json")) {
+      if (!json.packages?.[""]) fail(`${path} is missing its root package entry`);
+      json.packages[""].version = version;
+    }
+    files.set(path, `${JSON.stringify(json, null, 2)}\n`);
   }
 
-  const changelog = readFileSync(changelogFile, "utf8");
-  const marker = "## [Unreleased]";
-  const markerStart = changelog.indexOf(marker);
-  if (markerStart < 0) fail("CHANGELOG.md is missing an [Unreleased] section");
-  const bodyStart = markerStart + marker.length;
-  const nextHeadingOffset = changelog.slice(bodyStart).search(/^## \[/m);
-  const bodyEnd = nextHeadingOffset < 0 ? changelog.length : bodyStart + nextHeadingOffset;
-  const unreleased = changelog.slice(bodyStart, bodyEnd).trim();
-  if (!unreleased) fail("CHANGELOG.md [Unreleased] is empty; document user-visible changes first");
+  const buildNumber = nativeBuildNumber(version);
+  let android = read(nativeAndroid).replace(/(\bversionName\s*=\s*")[^"\n]+(")/, `$1${version}$2`);
+  android = android.replace(/(\bversionCode\s*=\s*)\d+(\b)/, `$1${buildNumber}$2`);
+  files.set(nativeAndroid, android);
 
-  writeFileSync(versionFile, `${nextVersion}\n`);
-  updateJSON(desktopManifest, (json) => { json.version = nextVersion; });
-  updateJSON(desktopLock, (json) => {
-    json.version = nextVersion;
-    json.packages[""].version = nextVersion;
-  });
-  const date = new Date().toISOString().slice(0, 10);
-  const released = `${marker}\n\n## [${nextVersion}] - ${date}\n\n${unreleased}\n\n`;
-  writeFileSync(changelogFile, changelog.slice(0, markerStart) + released + changelog.slice(bodyEnd));
-  checkVersions();
-  console.log(`prepared release ${nextVersion}`);
+  const appleVersion = version.split("-")[0];
+  let ios = read(nativeIOS).replace(/(\bMARKETING_VERSION\s*=\s*)[^;]+(;)/g, `$1${appleVersion}$2`);
+  ios = ios.replace(/(\bCURRENT_PROJECT_VERSION\s*=\s*)\d+(;)/g, `$1${buildNumber}$2`);
+  files.set(nativeIOS, ios);
+  return files;
 }
 
-function releaseNotes(rawVersion) {
-  const version = requireVersion(rawVersion);
-  const changelog = readFileSync(changelogFile, "utf8");
-  const heading = `## [${version}]`;
-  const start = changelog.indexOf(heading);
-  if (start < 0) fail(`CHANGELOG.md has no section for ${version}`);
-  const contentStart = changelog.indexOf("\n", start);
-  const nextHeadingOffset = changelog.slice(contentStart + 1).search(/^## \[/m);
-  const end = nextHeadingOffset < 0 ? changelog.length : contentStart + 1 + nextHeadingOffset;
-  const body = changelog.slice(contentStart + 1, end).trim();
-  if (!body) fail(`CHANGELOG.md section for ${version} is empty`);
-  return `# wuu v${version}\n\n${body}`;
+function nativeBuildNumber(version) {
+  const [base, modifier] = version.split("-", 2);
+  const [year, month, sequence] = base.split(".").map(Number);
+  // Android limits versionCode to 2,100,000,000. Two-digit year + month + sequence
+  // keeps the value monotonic for this product while leaving room for many releases.
+  // Candidate builds use their numeric prerelease suffix; the final build uses 99,
+  // so promoting a candidate never reuses a store build number.
+  const candidateNumber = modifier?.match(/(?:^|\.)(\d+)$/)?.[1];
+  const buildIteration = modifier ? Math.min(Number(candidateNumber || 1), 98) : 99;
+  const value = (year % 100) * 10000000 + month * 100000 + sequence * 100 + buildIteration;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 2100000000) {
+    fail(`version ${version} cannot be represented as an Android build number`);
+  }
+  return String(value);
 }
 
-function currentVersions() {
-  const desktop = readJSON(desktopManifest);
-  const lock = readJSON(desktopLock);
-  return {
-    root: readFileSync(versionFile, "utf8").trim(),
-    desktop: desktop.version,
-    desktopLock: lock.version,
-    desktopLockRoot: lock.packages?.[""]?.version,
-  };
+function nextVersion(rawCurrent, now) {
+  const current = requireCalver(rawCurrent);
+  const [year, month, sequence] = current.split("-")[0].split(".").map(Number);
+  const isPrerelease = current.includes("-");
+  const nextYear = now.getUTCFullYear();
+  const nextMonth = now.getUTCMonth() + 1;
+  if (year > nextYear || (year === nextYear && month > nextMonth)) {
+    fail(`current version ${current} is ahead of the UTC release month`);
+  }
+  if (year === nextYear && month === nextMonth) {
+    return `${year}.${month}.${isPrerelease ? sequence : sequence + 1}`;
+  }
+  return `${nextYear}.${nextMonth}.1`;
 }
 
-function requireVersion(rawVersion) {
+function currentVersion() {
+  return read("VERSION").trim();
+}
+
+function requireSemver(rawVersion) {
   const version = String(rawVersion ?? "").trim().replace(/^v/, "");
-  if (!semverPattern.test(version)) fail(`invalid semantic version: ${rawVersion ?? ""}`);
+  if (!semverPattern.test(version)) fail(`invalid version: ${rawVersion ?? ""}`);
+  return version;
+}
+
+function requireCalver(rawVersion) {
+  const version = requireSemver(rawVersion);
+  if (!calverPattern.test(version)) fail(`invalid product version: ${version}; expected YYYY.M.N`);
   return version;
 }
 
@@ -120,17 +176,31 @@ function compareVersions(left, right) {
   return a[4].localeCompare(b[4], "en", { numeric: true });
 }
 
-function readJSON(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
+function findSection(changelog, version) {
+  const headings = [...changelog.matchAll(/^## \[([^\]]+)\][^\n]*\n/gm)];
+  const index = headings.findIndex((heading) => heading[1] === version);
+  if (index < 0) return null;
+  const heading = headings[index];
+  const end = headings[index + 1]?.index ?? changelog.length;
+  return {
+    start: heading.index,
+    end,
+    body: changelog.slice(heading.index + heading[0].length, end).trim(),
+  };
 }
 
-function updateJSON(path, update) {
-  const json = readJSON(path);
-  update(json);
-  writeFileSync(path, `${JSON.stringify(json, null, 2)}\n`);
+function read(path) {
+  return readFileSync(resolve(repoRoot, path), "utf8");
+}
+
+function writeFiles(files) {
+  for (const [path, content] of files) {
+    if (read(path) !== content) writeFileSync(resolve(repoRoot, path), content);
+  }
 }
 
 function fail(message) {
-  console.error(message);
-  process.exit(1);
+  throw new Error(message);
 }
+
+export { compareVersions, nativeBuildNumber, nextVersion, requireCalver };

@@ -28,10 +28,12 @@ open /Applications/wuu.app
 
 ## 安装 CLI
 
-CLI 模块当前声明使用 Go 1.26.5。安装后检查版本：
+产品版本使用日期版本，日期标签不是 Go 模块主版本。请从源码工作树构建 CLI，构建后检查版本：
 
 ```bash
-go install github.com/blueberrycongee/wuu/cmd/wuu@latest
+git clone https://github.com/blueberrycongee/wuu.git
+cd wuu
+make install
 wuu --version
 ```
 

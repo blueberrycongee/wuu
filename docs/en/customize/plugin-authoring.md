@@ -875,12 +875,12 @@ independently of Manga Studio.
 
 ## Version compatibility
 
-The promise that plugins keep working across Wuu minor versions (developers
-keep up without forking) is the platform's release gate and has not been
+The promise that plugins keep working across compatible Wuu product releases
+(developers keep up without forking) is the platform's release gate and has not been
 verified yet: protocol and manifest compatibility anchors exist, but a
-previous-minor/current-minor SDK and host compatibility matrix is still
+previous/current SDK and host compatibility matrix is still
 missing. Until the matrix is verified, do not promise that plugins work
-across minor versions unconditionally; declare `minimum_wuu_version` when
+across releases unconditionally; declare `minimum_wuu_version` when
 publishing and re-validate after Wuu upgrades.
 
 ## Trust boundary and security core

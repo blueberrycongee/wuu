@@ -18,6 +18,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Asked the Agent to skip tool-call preambles unless it has a finding,
   interpretation, or blocker to add.
 
+## [2026.9.1] - 2026-09-12
+
+### Changed
+
+- Switched product releases to UTC Calendar Versioning (`YYYY.M.N`).
+- Synchronized desktop and active native app metadata from the root product
+  version source.
+
 ## [0.18.0] - 2026-08-16
 
 ### Added

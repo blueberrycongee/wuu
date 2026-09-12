@@ -77,10 +77,12 @@ See the [user guide](https://blueberrycongee.github.io/wuu/en/getting-started/) 
 
 ## CLI
 
-The desktop app includes its own core and does not require a separate CLI. For scripts, CI, or non-interactive work, install `wuu` with Go. The module currently declares Go 1.26.5:
+The desktop app includes its own core and does not require a separate CLI. For scripts, CI, or non-interactive work, build the CLI from a checked-out source tree. Product releases use CalVer tags, which are not Go module major versions:
 
 ```bash
-go install github.com/blueberrycongee/wuu/cmd/wuu@latest
+git clone https://github.com/blueberrycongee/wuu.git
+cd wuu
+make install
 wuu --version
 wuu init
 

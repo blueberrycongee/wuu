@@ -64,10 +64,12 @@ wuu 会保存会话。你可以在左侧栏重新打开它，继续补充要求�
 
 ## CLI 快速路径
 
-桌面应用和 CLI 可以独立安装。只需要自动化入口时，可以使用 Go 1.26.5 安装并初始化 CLI：
+桌面应用和 CLI 可以独立安装。产品版本使用日期版本，日期标签不是 Go 模块主版本；只需要自动化入口时，从源码工作树构建并初始化 CLI：
 
 ```bash
-go install github.com/blueberrycongee/wuu/cmd/wuu@latest
+git clone https://github.com/blueberrycongee/wuu.git
+cd wuu
+make install
 wuu init
 cd path/to/project
 wuu exec "描述一下这个工作区"

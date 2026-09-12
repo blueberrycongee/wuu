@@ -120,7 +120,7 @@ Install code plugins only from sources you trust.
 
 ## Current compatibility boundary
 
-Keeping plugins working across Wuu minor releases without a fork is the platform's
+Keeping plugins working across compatible Wuu product releases without a fork is the platform's
 current completion gate, but the compatibility matrix has not yet been verified.
 Declare `minimum_wuu_version` and retest after Wuu upgrades.
 
