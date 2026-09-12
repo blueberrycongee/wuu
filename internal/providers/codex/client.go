@@ -191,7 +191,7 @@ func (c *Client) NativeCompact(ctx context.Context, req providers.ChatRequest) (
 	if !c.nativeCompaction {
 		return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
 	}
-	client, _, err := c.openAIClient(ctx, false)
+	client, creds, err := c.openAIClient(ctx, false)
 	if err != nil {
 		return providers.NativeCompactionResult{}, err
 	}
@@ -199,6 +199,9 @@ func (c *Client) NativeCompact(ctx context.Context, req providers.ChatRequest) (
 	req.Messages = providers.ResolveProviderHistory(req.Messages, req.Provider, req.ProviderStateScope)
 	item, usage, err := client.CompactResponsesV2(ctx, req)
 	if err != nil {
+		if providers.IsAuthError(err) && creds.refreshable {
+			err = providers.MarkAuthRefreshable(err)
+		}
 		return providers.NativeCompactionResult{}, err
 	}
 	item.Fallback = providers.CloneChatMessages(req.Messages)

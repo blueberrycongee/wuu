@@ -253,12 +253,17 @@ func CompactWithNativeOrSummary(ctx context.Context, messages []providers.ChatMe
 	}
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		if !req.Attempt.Valid() {
-			req, err = providers.PrepareInferenceAttemptContext(ctx, client, req, providers.InferenceOperationCompaction, providers.InferenceProfileContinuationCritical)
-			if err != nil {
-				return messages, finishNativeCompaction(req, err)
+		prepared, prepareErr := providers.PrepareInferenceAttemptContext(ctx, client, req, providers.InferenceOperationCompaction, providers.InferenceProfileContinuationCritical)
+		if prepareErr != nil {
+			if prepared.Execution != nil {
+				req = prepared
 			}
+			if req.Attempt.Valid() {
+				prepareErr = errors.Join(prepareErr, req.Attempt.Complete(providers.InferenceOutcomeFailed, providers.NormalizeFailure(prepareErr)))
+			}
+			return messages, finishNativeCompaction(req, prepareErr)
 		}
+		req = prepared
 		result, nativeErr := native.NativeCompact(ctx, req)
 		if nativeErr == nil {
 			if len(result.Replacement) == 0 {
@@ -289,19 +294,37 @@ func CompactWithNativeOrSummary(ctx context.Context, messages []providers.ChatMe
 		if ctx.Err() != nil {
 			return messages, finishNativeCompaction(req, ctx.Err())
 		}
+		plan := providers.PlanRecovery(failure)
+		applier, canApplyRecovery := client.(providers.InferenceRecoveryApplier)
+		refreshAuth := plan.Action == providers.RecoveryRefreshAuth && canApplyRecovery && attempt == 0
 		switch failure.Category {
-		case providers.FailureAuthentication, providers.FailureQuota, providers.FailureCanceled:
+		case providers.FailureAuthentication:
+			if !refreshAuth {
+				return messages, finishNativeCompaction(req, err)
+			}
+		case providers.FailureQuota, providers.FailureCanceled:
 			return messages, finishNativeCompaction(req, err)
 		}
-		if !providers.IsRetryable(err) || attempt == 1 {
+		if (!providers.IsRetryable(err) && !refreshAuth) || attempt == 1 {
 			break
 		}
-		nextAttempt, recoveryErr := req.Attempt.PrepareRecoveryAttempt(ctx, providers.PlanRecovery(failure), time.Time{})
+		nextAttempt, recoveryErr := req.Attempt.PrepareRecoveryAttempt(ctx, plan, time.Time{})
 		if recoveryErr != nil {
 			err = errors.Join(err, recoveryErr)
 			break
 		}
 		req.Attempt = nextAttempt
+		if refreshAuth {
+			if applyErr := applier.ApplyInferenceRecovery(ctx, plan); applyErr != nil {
+				failure := providers.NormalizeFailure(applyErr)
+				outcome := providers.InferenceOutcomeFailed
+				if failure.Category == providers.FailureCanceled || failure.Category == providers.FailureDeadline {
+					outcome = providers.InferenceOutcomeCanceled
+				}
+				applyErr = errors.Join(applyErr, req.Attempt.Complete(outcome, failure))
+				return messages, finishNativeCompaction(req, applyErr)
+			}
+		}
 	}
 	if req.Execution != nil {
 		failure := providers.NormalizeFailure(err)
