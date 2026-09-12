@@ -257,13 +257,20 @@ type AgentCapabilitySummary struct {
 }
 
 type AgentSessionSummary struct {
-	SessionRef string                      `json:"session_ref"`
-	RoomID     string                      `json:"room_id,omitempty"`
-	WorkID     string                      `json:"work_id,omitempty"`
-	RunID      string                      `json:"run_id,omitempty"`
-	Purpose    CollaborationSessionPurpose `json:"purpose"`
-	State      CollaborationSessionState   `json:"state"`
-	UpdatedAt  time.Time                   `json:"updated_at"`
+	Title            string                      `json:"title,omitempty"`
+	Objective        string                      `json:"objective,omitempty"`
+	ParentSessionRef string                      `json:"parent_session_ref,omitempty"`
+	Provider         string                      `json:"provider,omitempty"`
+	Model            string                      `json:"model,omitempty"`
+	Effort           string                      `json:"effort,omitempty"`
+	RuntimeVersion   string                      `json:"runtime_version,omitempty"`
+	SessionRef       string                      `json:"session_ref"`
+	RoomID           string                      `json:"room_id,omitempty"`
+	WorkID           string                      `json:"work_id,omitempty"`
+	RunID            string                      `json:"run_id,omitempty"`
+	Purpose          CollaborationSessionPurpose `json:"purpose"`
+	State            CollaborationSessionState   `json:"state"`
+	UpdatedAt        time.Time                   `json:"updated_at"`
 }
 
 type AgentCreationProposalState string

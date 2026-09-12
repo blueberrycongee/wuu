@@ -48,7 +48,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	if binding.PrincipalID != actor.ID {
 		return CheckResult{}, ErrUnauthorized
 	}
-	if binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionMissing {
+	if !availableCollaborationSessionState(binding.State) {
 		return CheckResult{}, fmt.Errorf("%w: collaboration session %q is unavailable", ErrConflict, binding.SessionRef)
 	}
 	checkedAt := fromMillis(toMillis(s.now()))
@@ -111,7 +111,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	if binding.WorkID != "" {
 		scopeSQL = "delivery.room_id = ? AND delivery.work_id = ?"
 		scopeArgs = append(scopeArgs, binding.RoomID, binding.WorkID)
-	} else if binding.RoomID != "" {
+	} else if binding.RoomID != "" && (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination) {
 		scopeSQL = "delivery.room_id = ? AND delivery.work_id IS NULL"
 		scopeArgs = append(scopeArgs, binding.RoomID)
 	}

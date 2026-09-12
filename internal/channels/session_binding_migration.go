@@ -1,8 +1,14 @@
 package channels
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 func (s *Service) migrateCollaborationSessions() error {
+	if err := s.migrateCollaborationSessionStates(); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin collaboration session migration: %w", err)
@@ -58,4 +64,44 @@ func (s *Service) migrateCollaborationSessions() error {
 		return fmt.Errorf("commit collaboration session migration: %w", err)
 	}
 	return nil
+}
+
+// SQLite cannot extend a CHECK constraint in place. Copy the existing table
+// atomically so installed work bindings retain their scopes and run references.
+func (s *Service) migrateCollaborationSessionStates() error {
+	var schema string
+	if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'collaboration_session_bindings'`).Scan(&schema); err != nil {
+		return err
+	}
+	if strings.Contains(schema, "'completed'") && strings.Contains(schema, "'queued'") {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	updated := strings.Replace(schema, "collaboration_session_bindings", "collaboration_session_bindings_next", 1)
+	if !strings.Contains(updated, "'completed'") {
+		updated = strings.Replace(updated, "'missing'", "'missing', 'completed', 'cancelled', 'failed'", 1)
+	}
+	if !strings.Contains(updated, "'queued'") {
+		updated = strings.Replace(updated, "'idle'", "'idle', 'queued'", 1)
+	}
+	if !strings.Contains(updated, "'starting'") {
+		updated = strings.Replace(updated, "'idle'", "'idle', 'starting'", 1)
+	}
+	for _, statement := range []string{
+		updated,
+		`INSERT INTO collaboration_session_bindings_next SELECT * FROM collaboration_session_bindings`,
+		`DROP TABLE collaboration_session_bindings`,
+		`ALTER TABLE collaboration_session_bindings_next RENAME TO collaboration_session_bindings`,
+		`CREATE INDEX idx_collaboration_sessions_principal ON collaboration_session_bindings(principal_id, state, updated_at)`,
+		`CREATE INDEX idx_collaboration_sessions_scope ON collaboration_session_bindings(room_id, work_id, principal_id)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("migrate collaboration session states: %w", err)
+		}
+	}
+	return tx.Commit()
 }

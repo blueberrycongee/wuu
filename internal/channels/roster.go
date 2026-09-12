@@ -156,3 +156,47 @@ func (s *Service) requireRoomRuntime(ctx context.Context, runtimeID, token, room
 	}
 	return runtime, nil
 }
+
+// RoomPeers exposes shared identity capabilities and session activity to room
+// members without sharing identity memory or private conversation contents.
+func (s *Service) RoomPeers(ctx context.Context, actorID, token, roomID string) ([]AgentCapabilitySummary, error) {
+	actor, err := s.AuthenticatePrincipal(ctx, actorID, token)
+	if err != nil {
+		return nil, err
+	}
+	roomID = strings.TrimSpace(roomID)
+	if err := s.requireRoomPrincipalAccess(ctx, roomID, actor.ID); err != nil {
+		return nil, err
+	}
+	room, err := s.GetRoom(ctx, roomID)
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := s.ListCollaborationSessions(ctx, CollaborationSessionListParams{RoomID: roomID, AgentID: actorID, Token: token})
+	if err != nil {
+		return nil, err
+	}
+	byAgent := make(map[string][]AgentSessionSummary)
+	for _, session := range sessions {
+		if session.NamedAgentID == "" {
+			continue
+		}
+		byAgent[session.NamedAgentID] = append(byAgent[session.NamedAgentID], AgentSessionSummary{SessionRef: session.SessionRef, RoomID: session.RoomID, WorkID: session.WorkID, RunID: session.RunID, Purpose: session.Purpose, State: session.State, Title: session.Title, Objective: session.Objective, ParentSessionRef: session.ParentSessionRef, Provider: session.Provider, Model: session.Model, Effort: session.Effort, RuntimeVersion: session.RuntimeVersion, UpdatedAt: session.UpdatedAt})
+	}
+	peers := make([]AgentCapabilitySummary, 0)
+	for _, member := range room.Members {
+		if member.MemberType != MemberAgent {
+			continue
+		}
+		agent, err := s.GetNamedAgent(ctx, member.MemberID)
+		if err != nil {
+			return nil, err
+		}
+		peer := agentCapabilitySummary(agent)
+		if owned, ok := byAgent[agent.ID]; ok {
+			peer.Sessions = owned
+		}
+		peers = append(peers, peer)
+	}
+	return peers, nil
+}

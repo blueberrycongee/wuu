@@ -14,38 +14,58 @@ const (
 type CollaborationSessionState string
 
 const (
+	CollaborationSessionQueued      CollaborationSessionState = "queued"
 	CollaborationSessionIdle        CollaborationSessionState = "idle"
 	CollaborationSessionStarting    CollaborationSessionState = "starting"
 	CollaborationSessionRunning     CollaborationSessionState = "running"
 	CollaborationSessionInterrupted CollaborationSessionState = "interrupted"
 	CollaborationSessionMissing     CollaborationSessionState = "missing"
+	CollaborationSessionCompleted   CollaborationSessionState = "completed"
+	CollaborationSessionCancelled   CollaborationSessionState = "cancelled"
+	CollaborationSessionFailed      CollaborationSessionState = "failed"
 )
 
 // CollaborationSessionBinding is the durable execution identity behind a
 // collaboration principal. Named Agents may own any number of bindings.
 type CollaborationSessionBinding struct {
-	SessionRef   string                      `json:"session_ref"`
-	PrincipalID  string                      `json:"principal_id"`
-	NamedAgentID string                      `json:"named_agent_id,omitempty"`
-	RoomID       string                      `json:"room_id,omitempty"`
-	WorkID       string                      `json:"work_id,omitempty"`
-	RunID        string                      `json:"run_id,omitempty"`
-	Purpose      CollaborationSessionPurpose `json:"purpose"`
-	State        CollaborationSessionState   `json:"state"`
-	CreatedAt    time.Time                   `json:"created_at"`
-	UpdatedAt    time.Time                   `json:"updated_at"`
+	SessionRef       string                      `json:"session_ref"`
+	Title            string                      `json:"title,omitempty"`
+	Objective        string                      `json:"objective,omitempty"`
+	ParentSessionRef string                      `json:"parent_session_ref,omitempty"`
+	Provider         string                      `json:"provider,omitempty"`
+	Model            string                      `json:"model,omitempty"`
+	Effort           string                      `json:"effort,omitempty"`
+	RuntimeVersion   string                      `json:"runtime_version,omitempty"`
+	FailureReason    string                      `json:"failure_reason,omitempty"`
+	PrincipalID      string                      `json:"principal_id"`
+	NamedAgentID     string                      `json:"named_agent_id,omitempty"`
+	RoomID           string                      `json:"room_id,omitempty"`
+	WorkID           string                      `json:"work_id,omitempty"`
+	RunID            string                      `json:"run_id,omitempty"`
+	Purpose          CollaborationSessionPurpose `json:"purpose"`
+	State            CollaborationSessionState   `json:"state"`
+	CreatedAt        time.Time                   `json:"created_at"`
+	UpdatedAt        time.Time                   `json:"updated_at"`
 }
 
 type CollaborationSessionBindParams struct {
-	SessionRef  string
-	PrincipalID string
-	RoomID      string
-	WorkID      string
-	RunID       string
-	Purpose     CollaborationSessionPurpose
-	State       CollaborationSessionState
-	AgentID     string
-	Token       string
+	Title            string
+	Objective        string
+	ParentSessionRef string
+	Provider         string
+	Model            string
+	Effort           string
+	RuntimeVersion   string
+	FailureReason    string
+	SessionRef       string
+	PrincipalID      string
+	RoomID           string
+	WorkID           string
+	RunID            string
+	Purpose          CollaborationSessionPurpose
+	State            CollaborationSessionState
+	AgentID          string
+	Token            string
 }
 
 type CollaborationSessionListParams struct {
@@ -56,8 +76,9 @@ type CollaborationSessionListParams struct {
 }
 
 type CollaborationSessionStateParams struct {
-	SessionRef string
-	State      CollaborationSessionState
-	AgentID    string
-	Token      string
+	FailureReason string
+	SessionRef    string
+	State         CollaborationSessionState
+	AgentID       string
+	Token         string
 }

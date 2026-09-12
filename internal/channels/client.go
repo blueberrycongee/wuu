@@ -148,6 +148,9 @@ func (c *AgentClient) SendCollaboration(ctx context.Context, params Collaboratio
 	}
 	params.AgentID = c.agentID
 	params.Token = c.token
+	if c.sessionRef != "" && params.FromSessionRef != "" && params.FromSessionRef != c.sessionRef {
+		return CollaborationMessage{}, ErrUnauthorized
+	}
 	if params.FromSessionRef == "" {
 		params.FromSessionRef = c.sessionRef
 	}
@@ -160,6 +163,13 @@ func (c *AgentClient) BindCollaborationSession(ctx context.Context, params Colla
 	}
 	params.AgentID, params.Token = c.agentID, c.token
 	return c.service.BindCollaborationSession(ctx, params)
+}
+
+func (c *AgentClient) GetCollaborationSession(ctx context.Context, sessionRef string) (CollaborationSessionBinding, error) {
+	if c == nil || c.service == nil {
+		return CollaborationSessionBinding{}, errors.New("chat agent is not bound")
+	}
+	return c.service.GetCollaborationSession(ctx, c.agentID, c.token, sessionRef)
 }
 
 func (c *AgentClient) ListCollaborationSessions(ctx context.Context, params CollaborationSessionListParams) ([]CollaborationSessionBinding, error) {
@@ -386,4 +396,27 @@ func (c *AgentClient) UpdateWorkEvidence(ctx context.Context, params WorkEvidenc
 	}
 	params.AgentID, params.Token = c.agentID, c.token
 	return c.service.UpdateWorkEvidence(ctx, params)
+}
+
+func (s *Service) BindRuntimeSession(ctx context.Context, runtimeID, sessionRef string) (*AgentClient, error) {
+	client, err := s.BindRuntime(ctx, runtimeID)
+	if err != nil {
+		return nil, err
+	}
+	binding, err := s.GetCollaborationSession(ctx, client.agentID, client.token, strings.TrimSpace(sessionRef))
+	if err != nil {
+		return nil, err
+	}
+	if binding.PrincipalID != client.agentID {
+		return nil, ErrUnauthorized
+	}
+	client.sessionRef = binding.SessionRef
+	return client, nil
+}
+
+func (c *AgentClient) RoomPeers(ctx context.Context, roomID string) ([]AgentCapabilitySummary, error) {
+	if c == nil || c.service == nil {
+		return nil, ErrUnauthorized
+	}
+	return c.service.RoomPeers(ctx, c.agentID, c.token, roomID)
 }

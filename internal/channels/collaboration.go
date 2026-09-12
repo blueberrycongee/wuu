@@ -66,10 +66,12 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 	if params.TargetKind == CollaborationTargetSession && params.TargetSessionRef == "" {
 		params.TargetSessionRef = params.TargetID
 	}
-	if params.Kind == CollaborationControl && params.ToAgentID == "" && params.TargetKind == CollaborationTargetNamedAgent {
+	if params.Kind == CollaborationControl && params.ToAgentID == "" && params.TargetKind == CollaborationTargetNamedAgent && params.ReplyTo == "" {
 		return CollaborationMessage{}, errors.New("control delivery recipient is required")
 	}
 
+	requestHash := collaborationRequestHash(params)
+	originalParams := params
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -77,6 +79,33 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 		return CollaborationMessage{}, fmt.Errorf("begin collaboration send: %w", err)
 	}
 	defer tx.Rollback()
+	if err := requireRoomPrincipalAccessTx(ctx, tx, params.RoomID, actor.ID); err != nil {
+		return CollaborationMessage{}, err
+	}
+	if existing, found, err := findCollaborationRequestTx(ctx, tx, originalParams, requestHash); found || err != nil {
+		return existing, err
+	}
+	if params.ReplyTo != "" {
+		original, err := scanCollaborationMessage(tx.QueryRowContext(ctx, collaborationMessageSelect+` WHERE delivery.id = ? AND delivery.room_id = ?`, params.ReplyTo, params.RoomID))
+		if err != nil {
+			return CollaborationMessage{}, err
+		}
+		if original.ToAgentID != actor.ID || (original.TargetSessionRef != "" && original.TargetSessionRef != params.FromSessionRef) {
+			return CollaborationMessage{}, ErrUnauthorized
+		}
+		if params.ToAgentID == "" && params.Kind == CollaborationControl {
+			params.ToAgentID = original.FromID
+		}
+		if params.Kind == CollaborationControl && params.TargetSessionRef == "" && params.ToAgentID == original.FromID && original.FromSessionRef != "" {
+			params.TargetSessionRef, params.TargetKind, params.TargetID = original.FromSessionRef, CollaborationTargetSession, original.FromSessionRef
+		}
+		if params.CorrelationID == "" {
+			params.CorrelationID = original.CorrelationID
+			if params.CorrelationID == "" {
+				params.CorrelationID = original.ID
+			}
+		}
+	}
 	if params.TargetKind == CollaborationTargetSession && params.ToAgentID == "" {
 		if err := tx.QueryRowContext(ctx, `SELECT principal_id FROM collaboration_session_bindings WHERE session_ref = ?`, params.TargetSessionRef).Scan(&params.ToAgentID); err != nil {
 			return CollaborationMessage{}, fmt.Errorf("resolve collaboration target session: %w", err)
@@ -93,19 +122,9 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 			params.TargetID = params.TargetSessionRef
 		}
 	}
-	if params.RequestID != "" {
-		existing, findErr := scanCollaborationMessage(tx.QueryRowContext(ctx, collaborationMessageSelect+` WHERE delivery.room_id = ? AND delivery.from_id = ? AND delivery.request_id = ?`, params.RoomID, params.AgentID, params.RequestID))
-		if findErr == nil {
-			targetCompatible := existing.TargetKind == params.TargetKind && existing.TargetID == params.TargetID
-			targetCompatible = targetCompatible || params.TargetKind == CollaborationTargetNamedAgent && existing.TargetKind == CollaborationTargetSession && existing.ToAgentID == params.ToAgentID
-			targetCompatible = targetCompatible || (params.Kind == CollaborationCandidateReady || params.Kind == CollaborationPeerResult) && existing.TargetKind == CollaborationTargetRoomRuntime
-			if !targetCompatible || existing.Body != params.Body {
-				return CollaborationMessage{}, fmt.Errorf("%w: collaboration request id was reused for different content", ErrConflict)
-			}
-			return existing, nil
-		}
-		if !errors.Is(findErr, ErrNotFound) {
-			return CollaborationMessage{}, findErr
+	if params.TargetSessionRef != "" && params.WorkID == "" && params.Kind == CollaborationControl {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(work_id, '') FROM collaboration_session_bindings WHERE session_ref = ?`, params.TargetSessionRef).Scan(&params.WorkID); err != nil {
+			return CollaborationMessage{}, err
 		}
 	}
 	implicitRoomRecipient := false
@@ -180,7 +199,11 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 			return CollaborationMessage{}, err
 		}
 	}
-	if err := validateCollaborationSessionWriteTx(ctx, tx, params.FromSessionRef, params.AgentID, params.RoomID, params.WorkID, 0); err != nil {
+	sourceWorkID := params.WorkID
+	if params.Kind == CollaborationControl {
+		sourceWorkID = ""
+	}
+	if err := validateCollaborationSessionWriteTx(ctx, tx, params.FromSessionRef, params.AgentID, params.RoomID, sourceWorkID, 0); err != nil {
 		return CollaborationMessage{}, err
 	}
 	if err := validateCollaborationSessionRouteTx(ctx, tx, params.TargetSessionRef, params.ToAgentID, params.RoomID, params.WorkID); err != nil {
@@ -287,6 +310,9 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 				return CollaborationMessage{}, err
 			}
 		}
+	}
+	if err := recordCollaborationRequestTx(ctx, tx, originalParams, requestHash, message.ID); err != nil {
+		return CollaborationMessage{}, err
 	}
 	shouldDeliver, err := requestWakeTx(ctx, tx, params.ToAgentID, toMillis(now))
 	if err != nil {
@@ -487,7 +513,7 @@ func (s *Service) RoutePendingCollaborationToSession(ctx context.Context, agentI
 		return ErrUnauthorized
 	}
 	if binding.WorkID != workID || binding.RoomID == "" ||
-		binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionMissing {
+		!availableCollaborationSessionState(binding.State) {
 		return fmt.Errorf("%w: collaboration session does not own the requested work", ErrConflict)
 	}
 	if _, err := tx.ExecContext(ctx, `

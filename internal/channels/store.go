@@ -58,6 +58,9 @@ type Service struct {
 	stopCh               chan struct{}
 	doneCh               chan struct{}
 
+	sessionControllerMu sync.RWMutex
+	sessionController   SessionController
+
 	telemetryMu sync.RWMutex
 	telemetry   TelemetrySink
 }
@@ -514,7 +517,15 @@ func (s *Service) migrate() error {
 			work_id TEXT,
 			run_id TEXT UNIQUE,
 			purpose TEXT NOT NULL CHECK (purpose IN ('conversation', 'coordination', 'work', 'verification')),
-			state TEXT NOT NULL CHECK (state IN ('idle', 'starting', 'running', 'interrupted', 'missing')),
+			state TEXT NOT NULL CHECK (state IN ('idle', 'queued', 'starting', 'running', 'interrupted', 'missing', 'completed', 'cancelled', 'failed')),
+			title TEXT NOT NULL DEFAULT '',
+			objective TEXT NOT NULL DEFAULT '',
+			parent_session_ref TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			effort TEXT NOT NULL DEFAULT '',
+			runtime_version TEXT NOT NULL DEFAULT '',
+			failure_reason TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			CHECK (named_agent_id IS NULL OR named_agent_id = principal_id),
@@ -525,6 +536,15 @@ func (s *Service) migrate() error {
 			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
 			FOREIGN KEY (work_id) REFERENCES works(id) ON DELETE CASCADE,
 			FOREIGN KEY (run_id) REFERENCES work_runs(id) ON DELETE SET NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS collaboration_session_requests (
+			actor_id TEXT NOT NULL,
+			source_session_ref TEXT NOT NULL,
+			request_id TEXT NOT NULL,
+			session_ref TEXT NOT NULL,
+			request_hash TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (actor_id, source_session_ref, request_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_collaboration_sessions_principal ON collaboration_session_bindings(principal_id, state, updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_collaboration_sessions_scope ON collaboration_session_bindings(room_id, work_id, principal_id)`,
@@ -615,6 +635,18 @@ func (s *Service) migrate() error {
 	if err := s.migrateInternalDeliveries(); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS collaboration_send_requests (
+			room_id TEXT NOT NULL,
+			from_id TEXT NOT NULL,
+			from_session_ref TEXT NOT NULL,
+			request_id TEXT NOT NULL,
+			request_hash TEXT NOT NULL,
+			message_id TEXT NOT NULL,
+			PRIMARY KEY (room_id, from_id, from_session_ref, request_id),
+			FOREIGN KEY (message_id) REFERENCES collaboration_messages(id) ON DELETE CASCADE
+		)`); err != nil {
+		return fmt.Errorf("create collaboration request storage: %w", err)
+	}
 	if err := s.migrateCollaborationSessions(); err != nil {
 		return err
 	}
@@ -637,7 +669,8 @@ func (s *Service) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_inbox_items_agent_pull ON inbox_items(member_type, member_id, pulled_at, created_at, id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_unique ON inbox_items(member_type, member_id, COALESCE(message_id,''), COALESCE(reminder_id,''), kind)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_work_runs_start_request ON work_runs(work_id, request_id) WHERE request_id != ''`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_request ON collaboration_messages(room_id, from_id, request_id, target_id) WHERE request_id != ''`,
+		`DROP INDEX IF EXISTS idx_collaboration_request`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_session_request ON collaboration_messages(room_id, from_id, COALESCE(from_session_ref, ''), request_id, target_id) WHERE request_id != ''`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			return fmt.Errorf("migrate channels inbox index: %w", err)
@@ -839,6 +872,14 @@ func (s *Service) ensureLegacyColumns() error {
 		{table: "works", name: "selection_reason", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "works", name: "promotion_request_id", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "drafts", name: "session_ref", definition: "TEXT"},
+		{table: "collaboration_session_bindings", name: "title", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "objective", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "parent_session_ref", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "provider", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "model", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "effort", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "runtime_version", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "collaboration_session_bindings", name: "failure_reason", definition: "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {
 		exists, err := s.tableHasColumn(column.table, column.name)

@@ -12,7 +12,8 @@ import (
 const collaborationSessionSelect = `
 	SELECT binding.session_ref, binding.principal_id, COALESCE(binding.named_agent_id, ''),
 		COALESCE(binding.room_id, ''), COALESCE(binding.work_id, ''), COALESCE(binding.run_id, ''),
-		binding.purpose, binding.state, binding.created_at, binding.updated_at
+		binding.purpose, binding.state, binding.created_at, binding.updated_at,
+		binding.title, binding.objective, binding.parent_session_ref, binding.provider, binding.model, binding.effort, binding.runtime_version, binding.failure_reason
 	FROM collaboration_session_bindings binding`
 
 func validCollaborationSessionPurpose(purpose CollaborationSessionPurpose) bool {
@@ -27,8 +28,9 @@ func validCollaborationSessionPurpose(purpose CollaborationSessionPurpose) bool 
 
 func validCollaborationSessionState(state CollaborationSessionState) bool {
 	switch state {
-	case CollaborationSessionIdle, CollaborationSessionRunning,
-		CollaborationSessionInterrupted, CollaborationSessionMissing:
+	case CollaborationSessionQueued, CollaborationSessionIdle, CollaborationSessionStarting, CollaborationSessionRunning,
+		CollaborationSessionInterrupted, CollaborationSessionMissing, CollaborationSessionCompleted,
+		CollaborationSessionCancelled, CollaborationSessionFailed:
 		return true
 	default:
 		return false
@@ -42,6 +44,7 @@ func scanCollaborationSession(row scanner) (CollaborationSessionBinding, error) 
 		&binding.SessionRef, &binding.PrincipalID, &binding.NamedAgentID,
 		&binding.RoomID, &binding.WorkID, &binding.RunID, &binding.Purpose,
 		&binding.State, &createdAt, &updatedAt,
+		&binding.Title, &binding.Objective, &binding.ParentSessionRef, &binding.Provider, &binding.Model, &binding.Effort, &binding.RuntimeVersion, &binding.FailureReason,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CollaborationSessionBinding{}, ErrNotFound
@@ -62,6 +65,14 @@ func (s *Service) BindCollaborationSession(ctx context.Context, params Collabora
 	params.RoomID = strings.TrimSpace(params.RoomID)
 	params.WorkID = strings.TrimSpace(params.WorkID)
 	params.RunID = strings.TrimSpace(params.RunID)
+	params.Title = strings.TrimSpace(params.Title)
+	params.Objective = strings.TrimSpace(params.Objective)
+	params.ParentSessionRef = strings.TrimSpace(params.ParentSessionRef)
+	params.Provider = strings.TrimSpace(params.Provider)
+	params.Model = strings.TrimSpace(params.Model)
+	params.Effort = strings.TrimSpace(params.Effort)
+	params.RuntimeVersion = strings.TrimSpace(params.RuntimeVersion)
+	params.FailureReason = strings.TrimSpace(params.FailureReason)
 	if params.PrincipalID == "" {
 		params.PrincipalID = actor.ID
 	}
@@ -131,6 +142,18 @@ func bindCollaborationSessionTx(ctx context.Context, tx *sql.Tx, actor AgentRunt
 			return CollaborationSessionBinding{}, fmt.Errorf("%w: collaboration session work belongs to another room", ErrConflict)
 		}
 	}
+	if params.ParentSessionRef != "" {
+		parent, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.ParentSessionRef))
+		if err != nil {
+			return CollaborationSessionBinding{}, fmt.Errorf("load parent collaboration session: %w", err)
+		}
+		if parent.SessionRef == params.SessionRef || parent.RoomID != params.RoomID || params.RoomID == "" {
+			return CollaborationSessionBinding{}, fmt.Errorf("%w: parent session must be another session in the same room", ErrConflict)
+		}
+		if err := requireRoomPrincipalAccessTx(ctx, tx, params.RoomID, parent.PrincipalID); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+	}
 	namedAgentID := ""
 	if principalKind == PrincipalNamedAgent {
 		namedAgentID = params.PrincipalID
@@ -154,9 +177,10 @@ func bindCollaborationSessionTx(ctx context.Context, tx *sql.Tx, actor AgentRunt
 		if existing.PrincipalID != params.PrincipalID {
 			return CollaborationSessionBinding{}, fmt.Errorf("%w: session %q already belongs to another principal", ErrConflict, params.SessionRef)
 		}
-		if existing.State == CollaborationSessionRunning &&
-			(params.State != CollaborationSessionRunning || existing.RoomID != params.RoomID ||
-				existing.WorkID != params.WorkID || existing.RunID != params.RunID || existing.Purpose != params.Purpose) {
+		if (existing.State == CollaborationSessionRunning || existing.State == CollaborationSessionStarting) &&
+			(params.State != existing.State || existing.RoomID != params.RoomID ||
+				existing.WorkID != params.WorkID || existing.RunID != params.RunID || existing.Purpose != params.Purpose || (params.ParentSessionRef != "" && existing.ParentSessionRef != params.ParentSessionRef) ||
+				(params.Model != "" && existing.Model != params.Model) || (params.Provider != "" && existing.Provider != params.Provider)) {
 			return CollaborationSessionBinding{}, fmt.Errorf("%w: running session %q cannot change scope or state", ErrConflict, params.SessionRef)
 		}
 		if existing.RoomID != params.RoomID || existing.WorkID != params.WorkID {
@@ -176,18 +200,26 @@ func bindCollaborationSessionTx(ctx context.Context, tx *sql.Tx, actor AgentRunt
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO collaboration_session_bindings(
 			session_ref, principal_id, named_agent_id, room_id, work_id, run_id,
-			purpose, state, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			purpose, state, created_at, updated_at, title, objective, parent_session_ref, provider, model, effort, runtime_version, failure_reason
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_ref) DO UPDATE SET
 			room_id = excluded.room_id,
 			work_id = excluded.work_id,
 			run_id = excluded.run_id,
 			purpose = excluded.purpose,
 			state = excluded.state,
+			title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
+			objective = CASE WHEN excluded.objective != '' THEN excluded.objective ELSE objective END,
+			parent_session_ref = CASE WHEN excluded.parent_session_ref != '' THEN excluded.parent_session_ref ELSE parent_session_ref END,
+			provider = CASE WHEN excluded.provider != '' THEN excluded.provider ELSE provider END,
+			model = CASE WHEN excluded.model != '' THEN excluded.model ELSE model END,
+			effort = CASE WHEN excluded.effort != '' THEN excluded.effort ELSE effort END,
+			runtime_version = CASE WHEN excluded.runtime_version != '' THEN excluded.runtime_version ELSE runtime_version END,
+			failure_reason = excluded.failure_reason,
 			updated_at = excluded.updated_at`,
 		params.SessionRef, params.PrincipalID, nullableString(namedAgentID),
 		nullableString(params.RoomID), nullableString(params.WorkID), nullableString(params.RunID),
-		params.Purpose, params.State, now, now)
+		params.Purpose, params.State, now, now, params.Title, params.Objective, params.ParentSessionRef, params.Provider, params.Model, params.Effort, params.RuntimeVersion, params.FailureReason)
 	if err != nil {
 		return CollaborationSessionBinding{}, fmt.Errorf("bind collaboration session: %w", err)
 	}
@@ -204,7 +236,15 @@ func (s *Service) GetCollaborationSession(ctx context.Context, agentID, token, s
 		return CollaborationSessionBinding{}, err
 	}
 	if !canAccessCollaborationSession(actor, binding) {
-		return CollaborationSessionBinding{}, ErrUnauthorized
+		if binding.RoomID == "" {
+			return CollaborationSessionBinding{}, ErrUnauthorized
+		}
+		if err := s.requireRoomPrincipalAccess(ctx, binding.RoomID, actor.ID); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+		if err := s.requireRoomPrincipalAccess(ctx, binding.RoomID, binding.PrincipalID); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
 	}
 	return binding, nil
 }
@@ -223,6 +263,10 @@ func (s *Service) ListCollaborationSessions(ctx context.Context, params Collabor
 		if params.RoomID != actor.RoomID {
 			return nil, ErrUnauthorized
 		}
+	} else if params.RoomID != "" {
+		if err := s.requireRoomPrincipalAccess(ctx, params.RoomID, actor.ID); err != nil {
+			return nil, err
+		}
 	} else {
 		if params.PrincipalID == "" {
 			params.PrincipalID = actor.ID
@@ -232,6 +276,9 @@ func (s *Service) ListCollaborationSessions(ctx context.Context, params Collabor
 		}
 	}
 	query := collaborationSessionSelect + ` WHERE 1 = 1`
+	if params.RoomID != "" && !actor.IsRoomRuntime() {
+		query += ` AND EXISTS (SELECT 1 FROM room_members member WHERE member.room_id = binding.room_id AND member.member_type = 'agent' AND member.member_id = binding.principal_id)`
+	}
 	args := make([]any, 0, 2)
 	if params.PrincipalID != "" {
 		query += ` AND binding.principal_id = ?`
@@ -306,8 +353,8 @@ func (s *Service) UpdateCollaborationSessionState(ctx context.Context, params Co
 	clearRun := params.State != CollaborationSessionRunning
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE collaboration_session_bindings
-		SET state = ?, run_id = CASE WHEN ? THEN NULL ELSE run_id END, updated_at = ?
-		WHERE session_ref = ?`, params.State, clearRun, toMillis(s.now()), binding.SessionRef); err != nil {
+		SET state = ?, run_id = CASE WHEN ? THEN NULL ELSE run_id END, failure_reason = ?, updated_at = ?
+		WHERE session_ref = ?`, params.State, clearRun, strings.TrimSpace(params.FailureReason), toMillis(s.now()), binding.SessionRef); err != nil {
 		return CollaborationSessionBinding{}, fmt.Errorf("update collaboration session state: %w", err)
 	}
 	updated, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.SessionRef))
@@ -342,7 +389,7 @@ func validateCollaborationSessionRouteTx(ctx context.Context, tx *sql.Tx, sessio
 	if binding.RoomID != roomID || binding.WorkID != workID {
 		return fmt.Errorf("%w: session %q does not match the delivery room/work scope", ErrConflict, sessionRef)
 	}
-	if binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionMissing {
+	if !acceptsCollaborationSessionDelivery(binding.State) {
 		return fmt.Errorf("%w: session %q is unavailable", ErrConflict, sessionRef)
 	}
 	return nil
@@ -371,7 +418,7 @@ func validateCollaborationSessionWriteTx(
 	if binding.RoomID != roomID {
 		return fmt.Errorf("%w: session %q does not belong to room %q", ErrConflict, sessionRef, roomID)
 	}
-	if binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionMissing {
+	if !availableCollaborationSessionState(binding.State) {
 		return fmt.Errorf("%w: session %q is unavailable", ErrConflict, sessionRef)
 	}
 	if binding.WorkID == "" {
@@ -422,4 +469,46 @@ func validateCollaborationSessionWriteTx(
 		return fmt.Errorf("%w: work session %q goal revision is stale", ErrConflict, sessionRef)
 	}
 	return nil
+}
+
+func availableCollaborationSessionState(state CollaborationSessionState) bool {
+	return state == CollaborationSessionQueued || state == CollaborationSessionIdle || state == CollaborationSessionStarting || state == CollaborationSessionRunning
+}
+
+func (s *Service) requireRoomPrincipalAccess(ctx context.Context, roomID, principalID string) error {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM room_members WHERE room_id = ? AND member_type = 'agent' AND member_id = ? UNION ALL SELECT 1 FROM room_runtimes WHERE room_id = ? AND id = ? LIMIT 1`, roomID, principalID, roomID, principalID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUnauthorized
+	}
+	return err
+}
+
+// LookupCollaborationSession reads routing metadata for a trusted host caller.
+// Agent-facing callers must use GetCollaborationSession instead.
+func (s *Service) LookupCollaborationSession(ctx context.Context, sessionRef string) (CollaborationSessionBinding, error) {
+	return scanCollaborationSession(s.db.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, strings.TrimSpace(sessionRef)))
+}
+
+// ListAllCollaborationSessions provides the host with persisted execution state
+// for restart reconciliation. It never includes session transcripts.
+func (s *Service) ListAllCollaborationSessions(ctx context.Context) ([]CollaborationSessionBinding, error) {
+	rows, err := s.db.QueryContext(ctx, collaborationSessionSelect+` ORDER BY binding.created_at, binding.session_ref`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sessions := make([]CollaborationSessionBinding, 0)
+	for rows.Next() {
+		session, err := scanCollaborationSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
+func acceptsCollaborationSessionDelivery(state CollaborationSessionState) bool {
+	return availableCollaborationSessionState(state) || state == CollaborationSessionCompleted
 }
