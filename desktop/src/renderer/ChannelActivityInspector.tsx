@@ -82,13 +82,13 @@ export function ChannelActivityInspector({ roomID, agentID, name, fallbackSessio
       {sessions.slice(0, limit).map(session => <div className="channel-activity-session-row" key={session.session_ref}><button type="button" title={session.session_ref}
         className="channel-activity-session-entry" onClick={() => setSelected(session.session_ref)}>
         <span><strong>{session.title || session.objective || t("channels.sessions.untitled")}</strong>
-          {session.objective && session.objective !== session.title ? <span className="channel-activity-session-objective">{session.objective}</span> : null}
-          <small>{t(`channels.sessions.state.${session.state}`)} · {formatDate(session.updated_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</small>
+          {session.title && session.objective && session.objective !== session.title ? <span className="channel-activity-session-objective">{session.objective}</span> : null}
+          <small><span className={`channel-session-state ${session.state}`}>{t(`channels.sessions.state.${session.state}`)}</span><time dateTime={session.updated_at}>{formatDate(session.updated_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></small>
         </span><ChevronRight className="icon" />
       </button>
         {session.state === "failed" || session.state === "interrupted" ? <button className="channel-activity-session-resume" type="button" disabled={!!resuming} onClick={() => void resume(session.session_ref)}>{t(session.state === "failed" ? "channels.sessions.retry" : "channels.sessions.resume")}</button> : null}
       </div>)}
-      {sessions.length > limit ? <button type="button" onClick={() => setLimit(n => n + 20)}>{t("channels.sessions.earlier")}</button> : null}
+      {sessions.length > limit ? <button className="channel-activity-session-more" type="button" onClick={() => setLimit(n => n + 20)}>{t("channels.sessions.earlier")}</button> : null}
     </div>
   </aside>;
 }

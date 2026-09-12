@@ -5,30 +5,30 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 20px;
   padding: 20px;
-  border-radius: 16px;
+  border-radius: var(--radius-md);
   background: var(--paper);
 }
 .channel-agent-editor-dialog .sidebar-name-dialog-header { display: block; padding: 0; }
 .channel-agent-editor-dialog .sidebar-name-dialog-icon { display: none; }
-.channel-agent-editor-dialog .sidebar-name-dialog-title { font-size: 14px; line-height: 20px; }
-.channel-agent-editor-body { min-height: 0; overflow-y: auto; display: grid; gap: 18px; padding: 2px; }
-.channel-agent-editor-identity { display: flex; align-items: center; gap: 14px; }
+.channel-agent-editor-dialog .sidebar-name-dialog-title { font-size: var(--font-ui); line-height: var(--line-ui); }
+.channel-agent-editor-body { min-width: 0; min-height: 0; overflow-y: auto; display: grid; gap: 16px; padding: 2px; }
+.channel-agent-editor-identity { display: flex; align-items: center; gap: 12px; }
 .channel-agent-editor-identity .channel-identity-avatar-button { width: 48px; height: 48px; flex-shrink: 0; }
 .channel-agent-editor-identity .channel-identity-avatar-badge { opacity: 1; }
 .channel-agent-editor-field { display: grid; gap: 6px; min-width: 0; }
 .channel-agent-editor-field > span,
-.channel-agent-editor-setting > span { font-size: 12px; line-height: 18px; color: var(--ink-soft); }
+.channel-agent-editor-setting > span { font-size: var(--font-sm); line-height: var(--line-body); color: var(--ink-soft); }
 .channel-agent-editor-name { flex: 1; }
 .channel-agent-editor-field :is(input, textarea) {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: var(--surface-1);
   color: var(--ink);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-ui);
   line-height: 20px;
   padding: 8px 10px;
   outline: none;
@@ -41,13 +41,14 @@
   outline-offset: 2px;
   box-shadow: none;
 }
-.channel-agent-editor-runtime { display: grid; gap: 10px; }
+.channel-agent-editor-runtime { display: grid; gap: 8px; }
 .channel-agent-editor-setting { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; }
-.channel-agent-editor-setting .select-menu-trigger { min-height: 34px; border-color: var(--hairline); font-size: 13px; border-radius: 8px; }
+.channel-agent-editor-setting .select-menu-trigger { min-height: 36px; border-color: transparent; background: var(--surface-1); font-size: var(--font-ui); border-radius: var(--radius-xs); }
 .channel-agent-editor-setting .select-menu-trigger:focus-visible { border-color: var(--ink-soft); box-shadow: none; }
 .channel-agent-editor-dialog .sidebar-name-dialog-actions { padding: 0; }
-.channel-agent-editor-dialog .sidebar-name-dialog-actions button { min-width: 64px; font-size: 13px; border-radius: 8px; transform: none; }
-.channel-agent-editor-appearance { display: grid; gap: 10px; padding: 0 0 16px; border-bottom: 1px solid var(--hairline); }
+.channel-agent-editor-dialog .sidebar-name-dialog-actions button,
+.channel-settings-actions button { min-width: 64px; min-height: 36px; font-size: var(--font-ui); border-radius: var(--radius-xs); transform: none; }
+.channel-agent-editor-appearance { display: grid; gap: 12px; padding: 0; }
 .channel-agent-editor-appearance .agent-avatar-creator { gap: 10px; }
 .channel-agent-editor-appearance .agent-avatar-creator legend { margin-bottom: 5px; font-size: 12px; font-weight: 400; }
 .channel-agent-editor-appearance .channel-avatar-picker > div:not(.agent-avatar-color-control) {
@@ -63,7 +64,7 @@
 .channel-agent-editor-appearance .agent-avatar-color-control output { display: none; }
 .channel-agent-editor-upload { display: inline-flex; align-items: center; gap: 6px; justify-self: start; padding: 5px 0; border: 0; background: transparent; color: var(--ink-soft); font-size: 12px; }
 .channel-agent-editor-upload:hover { color: var(--ink); }
-.channel-agent-editor-more { border-top: 1px solid var(--hairline); padding-top: 12px; }
+.channel-agent-editor-more { min-width: 0; }
 .channel-agent-editor-more > summary { display: flex; justify-content: space-between; align-items: center; list-style: none; cursor: pointer; font-size: 12px; line-height: 20px; color: var(--ink-soft); }
 .channel-agent-editor-more > summary::-webkit-details-marker { display: none; }
 .channel-agent-editor-more > summary .icon { width: 14px; height: 14px; }
