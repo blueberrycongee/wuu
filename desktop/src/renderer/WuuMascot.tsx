@@ -247,6 +247,9 @@ type WuuMascotProps = Omit<
   model?: string;
   accessory?: WuuMascotAccessory;
   activity?: WuuMascotActivity;
+  /** Override the face while retaining the mascot's authored identity. */
+  expression?: Expression;
+  showActivityProp?: boolean;
   followPointer?: boolean;
   /** Pin hero appearances to the app icon, independent of provider identity. */
   brand?: boolean;
@@ -264,6 +267,8 @@ export function WuuMascot({
   model,
   accessory,
   activity = "idle",
+  expression,
+  showActivityProp = true,
   followPointer = false,
   brand = false,
   identityName = WUU_MASCOT_NAME,
@@ -409,7 +414,7 @@ export function WuuMascot({
         traits={identityTraits}
         perspective={WUU_MASCOT_ACTIVITY_PERSPECTIVES[activity]}
         animate={animate}
-        expression={WUU_MASCOT_ACTIVITY_EXPRESSIONS[activity]}
+        expression={expression ?? WUU_MASCOT_ACTIVITY_EXPRESSIONS[activity]}
         focusable={false}
         pointerEvents="none"
         style={mascotStyle}
@@ -438,7 +443,7 @@ export function WuuMascot({
             )}
           </>
         : null}
-      {mascotLayers && activity !== "idle" && activity !== "compact"
+      {showActivityProp && mascotLayers && activity !== "idle" && activity !== "compact"
         ? createPortal(
             <MascotActivityProp key={activity} activity={activity} />,
             mascotLayers.front,

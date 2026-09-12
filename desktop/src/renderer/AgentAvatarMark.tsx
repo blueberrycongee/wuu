@@ -1,8 +1,10 @@
 import "blobatar/motion.css";
+import { happy, idle, sad, smug, unsure, type Expression } from "blobatar/expression";
 import type { JSX } from "react";
 import { AVATAR_HUES } from "./DefaultAvatar";
-import { WuuMascot, type WuuMascotAccessory } from "./WuuMascot";
+import { WUU_MASCOT_EYES, WuuMascot, type WuuMascotAccessory } from "./WuuMascot";
 import { WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
+import "./styles/agent-avatar-feedback.css";
 
 export const AGENT_AVATAR_KEYS = [
   "abstract-1",
@@ -18,7 +20,43 @@ export const AGENT_AVATAR_KEYS = [
 
 export type AgentAvatarKey = (typeof AGENT_AVATAR_KEYS)[number];
 
-export type AgentAvatarStatus = "idle" | "thinking" | "sending";
+export type AgentAvatarStatus = "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
+
+function agentExpression(expression: Expression, eyes: Partial<Expression["p"]>): Expression {
+  return { ...expression, p: { ...expression.p, ...eyes, edx: 0 } };
+}
+
+const THINKING_EXPRESSION = agentExpression(smug, WUU_MASCOT_EYES.smug);
+const RESPONDING_EXPRESSION = agentExpression(happy, WUU_MASCOT_EYES.happy);
+const EXPRESSIONS: Partial<Record<AgentAvatarStatus, Expression>> = {
+  thinking: THINKING_EXPRESSION,
+  responding: RESPONDING_EXPRESSION,
+  sending: RESPONDING_EXPRESSION,
+  queued: agentExpression(idle, { ...WUU_MASCOT_EYES.long, esy: 0.66 }),
+  waiting: agentExpression(unsure, { esx: 1.2, esy: 0.72, esx2: 0.12, esy2: -0.3 }),
+  failed: agentExpression(sad, { esx: 1.2, esy: 0.56, tilt: 14, bdy: 1.2 }),
+  interrupted: agentExpression(idle, WUU_MASCOT_EYES.sleepy),
+};
+
+function AgentAvatarFeedback({ status, active }: { status: AgentAvatarStatus; active: boolean }): JSX.Element | null {
+  if (status === "idle") return null;
+  if (active) {
+    return (
+      <svg className="agent-avatar-feedback-orbit" data-agent-avatar-feedback="active" viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="22" strokeDasharray="25 113.2" />
+        <circle cx="24" cy="2" r="2" className="agent-avatar-feedback-dot" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="agent-avatar-feedback-marker" data-agent-avatar-feedback={status} viewBox="0 0 20 20" aria-hidden="true">
+      <circle className="agent-avatar-feedback-marker-background" cx="10" cy="10" r="8.5" />
+      {status === "failed" ? <><path d="M10 5.5v5" /><circle className="agent-avatar-feedback-dot" cx="10" cy="14" r="0.8" /></>
+        : status === "queued" ? <path d="M10 5.5V10l3 2" />
+          : <path d="M7.5 6.5v7m5-7v7" />}
+    </svg>
+  );
+}
 
 export const AGENT_AVATAR_SHAPES = [
   { id: "round", trait: 0.12 },
@@ -112,27 +150,22 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle" 
   avatarImage?: string;
   status?: AgentAvatarStatus;
 }): JSX.Element {
-  void seed;
-  if (avatarImage) {
-    return (
-      <span className="agent-avatar-mark" aria-hidden="true">
-        <img className="agent-avatar-image" src={avatarImage} alt="" draggable={false} />
-      </span>
-    );
-  }
-
+  const active = status === "thinking" || status === "responding" || status === "sending";
   const config = agentAvatarConfig(avatarKey);
   const shape = AGENT_AVATAR_SHAPES.find((item) => item.id === config.shape) ?? AGENT_AVATAR_SHAPES[0];
   return (
-    <span className="agent-avatar-mark" aria-hidden="true">
-      <WuuMascot
+    <span className="agent-avatar-mark" data-agent-avatar-id={seed} data-agent-avatar-state={status} aria-hidden="true">
+      {avatarImage ? <img className="agent-avatar-image" src={avatarImage} alt="" draggable={false} /> : <WuuMascot
         identityName={`agent-avatar:${avatarKey}`}
         identityHue={config.hue}
         identityTraits={{ ...WUU_MASCOT_TRAITS, shape: shape.trait }}
         accessory={config.accessory}
-        activity={status === "thinking" ? "thinking" : status === "sending" ? "compose" : "idle"}
-        animate={status === "idle" ? "hover" : "always"}
-      />
+        activity={status === "thinking" ? "thinking" : status === "sending" || status === "responding" ? "compose" : "idle"}
+        animate={active ? "always" : "hover"}
+        expression={EXPRESSIONS[status]}
+        showActivityProp={false}
+      />}
+      <AgentAvatarFeedback status={status} active={active} />
     </span>
   );
 }
