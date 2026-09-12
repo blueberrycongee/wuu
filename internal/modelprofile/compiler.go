@@ -55,6 +55,8 @@ const (
 	// SurfaceNamedAgent is a persistent group-chat agent. It keeps the complete
 	// main-agent surface and adds the group-chat tools.
 	SurfaceNamedAgent
+	// SurfaceRoomAgent coordinates work using read-only evidence and collaboration tools.
+	SurfaceRoomAgent
 )
 
 func (k SurfaceKind) includesSessionWorkspace() bool {
@@ -84,6 +86,17 @@ type DefaultCompiler struct{}
 func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
+	if kind == SurfaceRoomAgent {
+		addFileReadTools(b)
+		addSearchTools(b)
+		addContextWindowTools(b)
+		for _, name := range []string{"yield_turn", "chat_check", "chat_read", "chat_session", "collaboration_send", "chat_task", "chat_work", "chat_verify", "chat_roster"} {
+			b.addVisible(name, capability.CapabilityChat)
+		}
+		b.surface.SystemFragment = "You coordinate one room. Delegate execution to named member sessions. Project writes, shell execution and public messages are unavailable."
+		b.sortCaps()
+		return b.surface
+	}
 	switch key {
 	case ProfileOpenAICodex:
 		compileOpenAICodex(b, p)

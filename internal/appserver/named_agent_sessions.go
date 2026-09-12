@@ -16,7 +16,7 @@ func (s *Server) namedAgentSessionRefs(ctx context.Context, agent channels.Agent
 	refs := []string{agentRuntimeSessionID(agent)}
 	seen := map[string]struct{}{refs[0]: {}}
 	bySession := make(map[string]channels.CollaborationSessionBinding)
-	client, err := s.channelService.BindAgent(ctx, agent.ID)
+	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -94,7 +94,7 @@ type namedAgentDispatchTarget struct {
 // namedAgentMu only while sessions are selected and admitted; inference runs
 // independently after admission.
 func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channels.AgentRuntime, force bool) error {
-	client, err := s.channelService.BindAgent(ctx, agent.ID)
+	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 	conversationRooms := make(map[string]struct{})
 	var dispatchErr error
 	for _, dispatch := range dispatches {
-		if dispatch.TargetSessionRef == "" && (dispatch.WorkID == "" || collaborationDispatchIsResult(dispatch.Kind)) {
+		if dispatch.TargetSessionRef == "" && (agent.IsRoomRuntime() || dispatch.WorkID == "" || collaborationDispatchIsResult(dispatch.Kind)) {
 			conversationRooms[dispatch.RoomID] = struct{}{}
 			continue
 		}
@@ -234,7 +234,7 @@ func (s *Server) startNamedAgentConversationLocked(ctx context.Context, agent ch
 			return selectErr
 		}
 		binding, err = client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{
-			SessionRef: sessionRef, RoomID: roomID, Purpose: channels.CollaborationSessionConversation,
+			SessionRef: sessionRef, RoomID: roomID, Purpose: roomConversationPurpose(agent),
 			State: channels.CollaborationSessionIdle, RuntimeVersion: runtime.CollaborationRuntimeVersion,
 			Title: agent.Name, Provider: selection.Provider, Model: selection.Model, Effort: firstNonEmpty(selection.Effort, selection.Variant),
 		})
@@ -475,4 +475,11 @@ func (s *Server) finishNamedAgentWorkRun(ctx context.Context, agentID, sessionRe
 
 func namedAgentWorkSessionID(agent channels.AgentRuntime, workID string) string {
 	return principalSessionID(agent.ID+"\x00work\x00"+strings.TrimSpace(workID), agent.CreatedAt)
+}
+
+func roomConversationPurpose(agent channels.AgentRuntime) channels.CollaborationSessionPurpose {
+	if agent.IsRoomRuntime() {
+		return channels.CollaborationSessionCoordination
+	}
+	return channels.CollaborationSessionConversation
 }

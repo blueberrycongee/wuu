@@ -318,6 +318,12 @@ func (s *Server) drainCollaborationSessionsLocked(ctx context.Context) {
 }
 
 func (s *Server) bindCollaborationPrincipal(ctx context.Context, agent channels.AgentRuntime, ref string) (*channels.AgentClient, error) {
+	if agent.IsRoomRuntime() {
+		if ref != "" {
+			return s.channelService.BindRuntimeSession(ctx, agent.ID, ref)
+		}
+		return s.channelService.BindRuntime(ctx, agent.ID)
+	}
 	if ref != "" {
 		return s.channelService.BindAgentSession(ctx, agent.ID, ref)
 	}
@@ -369,7 +375,7 @@ func (s *Server) settleCollaborationTurn(ctx context.Context, ref, turnID string
 		// Reset interrupts one room turn while preserving the member's inbox
 		// entrypoint. Explicit session stop is fenced by the cancelled state in
 		// settlement and cannot be undone by this completion callback.
-		if binding.Purpose == channels.CollaborationSessionConversation && binding.ParentSessionRef == "" {
+		if (binding.Purpose == channels.CollaborationSessionConversation || binding.Purpose == channels.CollaborationSessionCoordination) && binding.ParentSessionRef == "" {
 			next = channels.CollaborationSessionIdle
 		}
 	}
@@ -377,7 +383,7 @@ func (s *Server) settleCollaborationTurn(ctx context.Context, ref, turnID string
 		next = channels.CollaborationSessionFailed
 		// A failed request must not disable a room member. The failed turn and
 		// its reason stay visible; new input can start a later attempt.
-		if binding.Purpose == channels.CollaborationSessionConversation && binding.ParentSessionRef == "" {
+		if (binding.Purpose == channels.CollaborationSessionConversation || binding.Purpose == channels.CollaborationSessionCoordination) && binding.ParentSessionRef == "" {
 			next = channels.CollaborationSessionIdle
 		}
 	}

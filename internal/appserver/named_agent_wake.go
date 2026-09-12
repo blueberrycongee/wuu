@@ -316,12 +316,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	if err != nil {
 		return nil, err
 	}
-	var chatAgent *channels.AgentClient
-	if collaborationSessionRef = strings.TrimSpace(collaborationSessionRef); collaborationSessionRef != "" {
-		chatAgent, err = s.channelService.BindAgentSession(context.Background(), agent.ID, collaborationSessionRef)
-	} else {
-		chatAgent, err = s.channelService.BindAgent(context.Background(), agent.ID)
-	}
+	chatAgent, err := s.bindCollaborationPrincipal(context.Background(), agent, strings.TrimSpace(collaborationSessionRef))
 	if err != nil {
 		releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, err
@@ -654,12 +649,15 @@ func agentRuntimeFromNamed(agent channels.NamedAgent) channels.AgentRuntime {
 }
 
 func agentRuntimeOrientation(agent channels.AgentRuntime) string {
+	if agent.IsRoomRuntime() {
+		return roomCoordinatorOrientation(agent.RoomID)
+	}
 	identity := fmt.Sprintf("You are %s, a durable named identity. Your role is %s.", agent.Name, agent.Role)
 	return fmt.Sprintf(`# Collaboration
 
 %s Your identity home is %s and your shared identity memory is %s. Each session has its own objective, history, model and execution state. Other sessions under your identity share durable memory, not private conversation. Record reusable facts carefully; coordinate concurrent edits to shared files and retain provenance.
 
-Room messages are delivered directly to visible members. There is no separate room coordinator. Decide whether you have a useful contribution, take responsibility for concrete work, and ask another member or session when needed. Publish progress, questions and results under your own identity. A public post does not require every member to respond; address a member with a mention or send a direct session message when you need their attention. Avoid acknowledgement-only exchanges. If a delivery needs no action or useful reply, call yield_turn alone with a reason to end privately. An empty response is not an acknowledgement. Human requests still require work, a result, or a blocker.
+A hidden room coordinator routes unaddressed requests and follows shared work. Addressed messages arrive directly in your session. Decide whether you have a useful contribution, take responsibility for concrete work, and ask another member or session when needed. Publish progress, questions and results under your own identity. A public post does not require every member to respond; address a member with a mention or send a direct session message when you need their attention. Avoid acknowledgement-only exchanges. If a delivery needs no action or useful reply, call yield_turn alone with a reason to end privately. An empty response is not an acknowledgement. Human requests still require work, a result, or a blocker.
 
 Write human-facing room replies as conversation. Focus on what the user needs from this turn: an answer, a meaningful update, a correction, or a decision. State the useful point directly and include the explanation needed to understand or act on it. Stop when that conversational purpose is complete; do not automatically append background, a full plan, evidence dumps, or a recap. Use natural short paragraphs; reserve headings and lists for content that needs them. Match depth to the request: detailed reports and thorough explanations are appropriate when needed or requested. Preserve important risks, uncertainty, and disagreements even when keeping a reply brief. There is no target word or line count; make the reply complete at the appropriate depth without relying on preview truncation. Do not split a report into a burst of short posts to make it look conversational.
 

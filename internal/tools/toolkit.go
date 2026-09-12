@@ -410,7 +410,11 @@ func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
 	}
 	t.env.ChatAgent = client
 	t.rebuildRegistry()
-	t.setActiveProfileForSurface(t.ActiveProfile(), modelprofile.SurfaceNamedAgent)
+	kind := modelprofile.SurfaceNamedAgent
+	if client != nil && client.IsRoomRuntime() {
+		kind = modelprofile.SurfaceRoomAgent
+	}
+	t.setActiveProfileForSurface(t.ActiveProfile(), kind)
 }
 
 // SetImageInputSupported installs the active model's resolved image-input
@@ -923,6 +927,10 @@ func (t *Toolkit) SurfaceToolNames() []string {
 // same boundary is enforced at runtime by worker tool filtering and
 // tool-specific path checks.
 func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
+	if t.IsRoomAgent() {
+		t.setActiveProfileForSurface(p, modelprofile.SurfaceRoomAgent)
+		return
+	}
 	kind := modelprofile.SurfaceWorker
 	if forMainAgent {
 		kind = modelprofile.SurfaceMain
@@ -943,7 +951,7 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent {
+	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent && kind != modelprofile.SurfaceRoomAgent {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return
@@ -1660,4 +1668,8 @@ func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string
 		args = append(args, ".")
 	}
 	return rgCommand(ctx, name, args...)
+}
+
+func (t *Toolkit) IsRoomAgent() bool {
+	return t != nil && t.env != nil && t.env.ChatAgent != nil && t.env.ChatAgent.IsRoomRuntime()
 }

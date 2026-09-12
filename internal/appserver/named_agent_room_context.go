@@ -51,9 +51,10 @@ func (s *Server) namedAgentRoomContextBlocks(agentID string) []wuucontext.Block 
 		agentDirectory[namedAgent.ID] = namedAgent
 	}
 
+	principal, _ := s.channelService.GetAgentRuntime(ctx, agentID)
 	memberRooms := make([]channels.Room, 0, len(rooms))
 	for _, room := range rooms {
-		if roomContainsAgent(room, agentID) {
+		if roomContainsAgent(room, agentID) || (principal.IsRoomRuntime() && principal.RoomID == room.ID) {
 			memberRooms = append(memberRooms, room)
 		}
 	}
