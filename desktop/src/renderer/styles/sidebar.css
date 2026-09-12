@@ -1091,22 +1091,36 @@
   display: grid;
   max-width: min(220px, calc(100vw - 16px));
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-md);
-  padding: 8px 8px 8px 10px;
-  background: var(--surface-3);
-  box-shadow: var(--shadow-pop);
-  color: var(--ink);
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-xs);
+  padding: 5px 5px 5px 9px;
+  background: var(--menu-bg);
+  box-shadow: var(--shadow-card);
+  color: var(--ink-soft);
   pointer-events: auto;
   animation: sidebar-clear-unread-hint-in 140ms ease-out;
 }
 
+.sidebar-clear-unread-hint::before {
+  content: "";
+  position: absolute;
+  left: var(--hint-anchor-x);
+  top: var(--hint-arrow-top);
+  width: 7px;
+  height: 7px;
+  border-top: 1px solid var(--menu-border);
+  border-left: 1px solid var(--menu-border);
+  background: var(--menu-bg);
+  transform: translateX(-50%) rotate(var(--hint-arrow-rotation));
+  pointer-events: none;
+}
+
 .sidebar-clear-unread-hint-copy {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--font-xs);
+  line-height: 16px;
 }
 
 .sidebar-clear-unread-hint-dismiss {
@@ -1124,7 +1138,7 @@
 
 .sidebar-clear-unread-hint-dismiss:hover,
 .sidebar-clear-unread-hint-dismiss:focus-visible {
-  background: var(--sidebar-glass-hover);
+  background: var(--menu-hover);
   color: var(--ink-strong);
 }
 

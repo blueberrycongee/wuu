@@ -15,7 +15,7 @@ export type AppMode = "harness" | "collaboration";
 const CLEAR_UNREAD_HOLD_MS = 600;
 export const CLEAR_UNREAD_HINT_SEEN_KEY = "wuu.desktop.clearUnreadHintSeen";
 const HINT_VIEWPORT_MARGIN = 8;
-const HINT_TRIGGER_GAP = 8;
+const HINT_TRIGGER_GAP = 6;
 
 function loadClearUnreadHintSeen(): boolean {
   try {
@@ -159,12 +159,28 @@ export function AppModeSwitch({
         ? belowTop
         : Math.max(HINT_VIEWPORT_MARGIN, aboveTop);
 
-      setHintPosition({ left, top, visibility: "visible" });
+      const anchorX = Math.min(Math.max(rect.left + rect.width / 2 - left, 12), Math.max(12, tip.width - 12));
+      setHintPosition({
+        left,
+        top,
+        visibility: "visible",
+        "--hint-anchor-x": `${anchorX}px`,
+        "--hint-arrow-top": fitsBelow ? "-4px" : "calc(100% - 4px)",
+        "--hint-arrow-rotation": fitsBelow ? "45deg" : "225deg",
+      } as CSSProperties);
     };
 
     updatePosition();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(updatePosition) : null;
+    if (bellButtonRef.current?.parentElement) observer?.observe(bellButtonRef.current.parentElement);
+    if (hintLayerRef.current) observer?.observe(hintLayerRef.current);
     window.addEventListener("resize", updatePosition);
-    return () => window.removeEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
   }, [showClearUnreadHint, t]);
 
   function handleNotificationPointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {

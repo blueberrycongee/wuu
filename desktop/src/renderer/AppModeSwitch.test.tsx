@@ -169,6 +169,24 @@ describe("AppModeSwitch clear-unread hint", () => {
     expect(hintLayer()).not.toBeNull();
   });
 
+  it("keeps the pointer centered on the bell when the viewport clamps the tip", () => {
+    renderSwitch({ unreadCount: 1 });
+    showBell(true);
+    const tip = hintLayer()!;
+    vi.spyOn(tip, "getBoundingClientRect").mockReturnValue({ width: 194, height: 32 } as DOMRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    const bellCenter = 256;
+    expect(Number.parseFloat(tip.style.left) + Number.parseFloat(tip.style.getPropertyValue("--hint-anchor-x")))
+      .toBe(bellCenter);
+    expect(Number.parseFloat(tip.style.top)).toBeGreaterThan(80);
+
+    vi.spyOn(tip, "getBoundingClientRect").mockReturnValue({ width: 280, height: 32 } as DOMRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(Number.parseFloat(tip.style.left)).toBeGreaterThanOrEqual(0);
+    expect(Number.parseFloat(tip.style.left) + Number.parseFloat(tip.style.getPropertyValue("--hint-anchor-x")))
+      .toBe(bellCenter);
+  });
+
   it("dismisses permanently when the tip close button is pressed", () => {
     renderSwitch({ unreadCount: 1 });
     showBell(true);
