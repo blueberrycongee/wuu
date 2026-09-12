@@ -53,7 +53,6 @@ describe("ToastViewport", () => {
 
     const notice = container.querySelector('[role="alert"]');
     expect(notice?.textContent).toContain("save failed");
-    expect(notice?.classList.contains("archive-tip")).toBe(true);
     expect((notice as HTMLElement | null)?.dataset.wuuComponent).toBe("notice");
     expect((notice as HTMLElement | null)?.dataset.wuuLayer).toBe("notice");
     expect((notice as HTMLElement | null)?.dataset.wuuState).toBe("open");

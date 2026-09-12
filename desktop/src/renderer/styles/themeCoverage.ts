@@ -609,18 +609,6 @@ export function listProductionSources(dir: string): string[] {
   return out;
 }
 
-/** Anchors pinned by the ProductionSemanticAnchors test's owner inventory. */
-export function parsePinnedAnchors(testSource: string): string[] {
-  const block = testSource.match(
-    /SEMANTIC_ANCHOR_OWNERS\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\s*as const\)/,
-  );
-  if (!block) return [];
-  const anchors = new Set<string>();
-  const pattern = /"([a-z0-9-]+)"\s*:\s*"/g;
-  for (const match of block[1].matchAll(pattern)) anchors.add(match[1]);
-  return [...anchors].sort();
-}
-
 export interface MatrixRow {
   anchor: string;
   state: SurfaceState;
@@ -654,7 +642,6 @@ export interface SurfaceMatrix {
 export function analyzeSurfaceMatrix(
   files: CssFile[],
   anchorSources: string[],
-  pinnedAnchors: string[],
 ): SurfaceMatrix {
   const defs = new Map<string, string[]>();
   const scopedPaint: Array<{
@@ -732,7 +719,7 @@ export function analyzeSurfaceMatrix(
       a.variable.localeCompare(b.variable),
   );
 
-  const anchorSet = new Set<string>(pinnedAnchors);
+  const anchorSet = new Set<string>();
   for (const source of anchorSources) {
     for (const anchor of extractAnchorsFromSources([source])) anchorSet.add(anchor);
   }

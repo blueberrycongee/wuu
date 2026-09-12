@@ -225,7 +225,7 @@ describe("SettingsView shell", () => {
     expect(window.wuu.getRemoteControlSnapshot).toHaveBeenCalled();
   });
 
-  it("uses the same transparent-until-hover sidebar toggle as the conversation titlebar", () => {
+  it("exposes the sidebar state and invokes the toggle action", () => {
     installBuildInfoStub({
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
@@ -237,8 +237,6 @@ describe("SettingsView shell", () => {
       ".settings-titlebar .settings-sidebar-toggle",
     );
     expect(toggle).not.toBeNull();
-    expect(toggle?.classList.contains("icon-button")).toBe(true);
-    expect(toggle?.classList.contains("side-panel-toggle-button")).toBe(true);
     expect(toggle?.getAttribute("aria-pressed")).toBe("true");
 
     act(() => {

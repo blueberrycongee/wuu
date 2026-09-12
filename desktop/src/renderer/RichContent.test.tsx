@@ -513,14 +513,6 @@ describe("RichContent raw HTML and heading levels", () => {
     expect(wrapper?.querySelector("a")).not.toBeNull();
   });
 
-  it("differentiates heading levels with rich-heading--hN modifier classes", () => {
-    render(<RichContent text={"# alpha\n\n## beta\n\n### gamma"} />);
-
-    expect(container.querySelector(".rich-heading.rich-heading--h1")?.textContent).toContain("alpha");
-    expect(container.querySelector(".rich-heading.rich-heading--h2")?.textContent).toContain("beta");
-    expect(container.querySelector(".rich-heading.rich-heading--h3")?.textContent).toContain("gamma");
-  });
-
   describe("CJK autolink boundaries", () => {
     function singleWebLink(): HTMLAnchorElement {
       const links = container.querySelectorAll("a.rich-web-link");

@@ -21,14 +21,20 @@ describe("onboarding companion", () => {
     await act(async () => root.render(<OnboardingMascotStage pluginIDs={ids} />));
   }
 
-  it("keeps the same character while arbitrary capability combinations are equipped and removed", async () => {
+  it("keeps the same character while capabilities and shared equipment are added and removed", async () => {
     await render([]);
     const face = container.querySelector("[data-wuu-mascot-activity]");
     expect(face).not.toBeNull();
-    // Exhausting seven binary choices exercises shared equipment ownership:
-    // removing memory, for example, must not also remove dream's arrangement.
-    for (let mask = 0; mask < 1 << ONBOARDING_PLUGIN_ORDER.length; mask++) {
-      const ids = ONBOARDING_PLUGIN_ORDER.filter((_, index) => mask & (1 << index));
+    // Exercise every capability entering and leaving a populated stage,
+    // including both owners of the shared memory/dream equipment. Rendering
+    // the entire power set grows exponentially without adding new boundaries.
+    const selections: readonly string[][] = [
+      [...ONBOARDING_PLUGIN_ORDER],
+      ...ONBOARDING_PLUGIN_ORDER.map((id) => ONBOARDING_PLUGIN_ORDER.filter((candidate) => candidate !== id)),
+      ...ONBOARDING_PLUGIN_ORDER.map((id) => [id]),
+      ["memory", "dream"], ["dream"], ["memory", "dream"], ["memory"], [],
+    ];
+    for (const ids of selections) {
       await render(ids);
       const rendered = [...container.querySelectorAll("[data-onboarding-capability]")]
         .map((node) => node.getAttribute("data-onboarding-capability"));

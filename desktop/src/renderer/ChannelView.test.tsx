@@ -655,10 +655,6 @@ describe("ChannelView", () => {
 
   it("inserts and focuses a mention when an agent author name is clicked", async () => {
     const api = createApi();
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      callback(0);
-      return 1;
-    });
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
     act(() => root?.render(<ChannelView />));
@@ -668,6 +664,7 @@ describe("ChannelView", () => {
     const textarea = container.querySelector<HTMLTextAreaElement>(".channel-conversation-footer textarea");
     expect(author?.querySelector("span")?.textContent).toBe("@");
     act(() => author?.click());
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea));
 
     expect(textarea?.value).toBe("@Alpha ");
     expect(document.activeElement).toBe(textarea);
@@ -681,10 +678,6 @@ describe("ChannelView", () => {
       rooms,
     }));
     api.listNamedAgents = vi.fn(async () => ({ agents: mentionAgents }));
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      callback(0);
-      return 1;
-    });
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
     act(() => root?.render(<ChannelView />));
@@ -692,6 +685,7 @@ describe("ChannelView", () => {
 
     const textarea = container.querySelector<HTMLTextAreaElement>(".channel-conversation-footer textarea");
     act(() => setInputValue(textarea!, "@"));
+    await act(async () => { await new Promise<number>(requestAnimationFrame); });
     expect(Array.from(document.querySelectorAll(".channel-mention-name")).map((name) => name.textContent)).toEqual(["Alpha", "Beta"]);
     expect(document.querySelector(".channel-mention-model")?.textContent).toBe("gpt-5.3-codex");
     expect(document.querySelector(".channel-mention-menu button.selected .channel-mention-key")?.textContent).toBe("↵");
@@ -707,6 +701,7 @@ describe("ChannelView", () => {
     expect(document.querySelector(".channel-mention-menu button.selected .channel-mention-name")?.textContent).toBe("Alpha");
 
     act(() => setInputValue(textarea!, "@Be"));
+    await act(async () => { await new Promise<number>(requestAnimationFrame); });
     expect(Array.from(document.querySelectorAll(".channel-mention-name")).map((name) => name.textContent)).toEqual(["Beta"]);
     act(() => textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(textarea?.value).toBe("@Beta ");

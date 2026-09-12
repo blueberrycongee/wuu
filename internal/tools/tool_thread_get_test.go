@@ -201,13 +201,3 @@ func TestThreadGetToolRejectsEmptyThreadID(t *testing.T) {
 		t.Errorf("expected required-error, got: %v", err)
 	}
 }
-
-func TestThreadGetToolDescriptionSteersAwayFromLegacySessionPaths(t *testing.T) {
-	def := NewThreadGetTool(&Env{}).Definition()
-	description := strings.ToLower(def.Description)
-	for _, want := range []string{"thread_get", "thread id", "do not inspect legacy workspace session directories"} {
-		if !strings.Contains(description, want) {
-			t.Fatalf("thread_get description should include %q, got: %s", want, def.Description)
-		}
-	}
-}

@@ -39,6 +39,9 @@ describe("PluginSlot", () => {
       });
     });
     expect(container.textContent).toBe("ready");
+    expect(container.querySelector(
+      '[data-wuu-component="plugin-contribution"][data-wuu-plugin="status"][data-wuu-slot="composer.above"]',
+    )?.textContent).toBe("ready");
 
     act(() => host.unload("status"));
     expect(container.textContent).toBe("");

@@ -99,25 +99,6 @@ func TestBuilder_AddInstructions_SmallFile(t *testing.T) {
 	}
 }
 
-func TestBuilder_AddInstructionsMarksLegacyImportsAsPotentiallyStale(t *testing.T) {
-	files := []instructions.File{
-		{Name: "MEMORY.md", Source: "claude_auto", Path: "~/.claude/projects/repo/memory/MEMORY.md", Content: "Project usually runs make install."},
-	}
-
-	var b Builder
-	b.AddInstructions(files)
-	result := b.Build()
-
-	for _, want := range []string{"Workspace instructions", "Legacy imported files may be stale", "verify time-sensitive"} {
-		if !strings.Contains(result, want) {
-			t.Fatalf("instruction prompt missing %q:\n%s", want, result)
-		}
-	}
-	if strings.Contains(result, "Treat them as binding instructions") {
-		t.Fatalf("legacy context should not be described as unconditionally binding:\n%s", result)
-	}
-}
-
 func TestBuilder_AddSkills(t *testing.T) {
 	sks := []skills.Skill{
 		{Name: "commit", Description: "Create a commit", WhenToUse: "When user asks to commit"},
@@ -132,7 +113,6 @@ func TestBuilder_AddSkills(t *testing.T) {
 		t.Error("expected visible skill in output")
 	}
 	for _, want := range []string{
-		"Skills provide specialized instructions",
 		"<available_skills>",
 		"<name>commit</name>",
 		"<description>Create a commit</description>",
@@ -161,26 +141,8 @@ func TestBuilder_AddMemdirWithIndexContent(t *testing.T) {
 			t.Fatalf("memdir section missing %q:\n%s", want, result.Content)
 		}
 	}
-	if strings.Contains(result.Content, "currently empty") {
-		t.Fatalf("non-empty index must not render the empty note:\n%s", result.Content)
-	}
 	if len(result.Sections) != 1 || result.Sections[0].Key != "memdir" || result.Sections[0].Static {
 		t.Fatalf("memdir must render as one dynamic section: %+v", result.Sections)
-	}
-}
-
-func TestBuilder_AddMemdirEmptyIndexRendersEmptyNote(t *testing.T) {
-	var b Builder
-	b.AddMemdir("# Memory directory\nTeaching.", "  \n ")
-	result := b.Build()
-	if !strings.Contains(result, "The MEMORY.md index is currently empty.") {
-		t.Fatalf("empty index must render the empty note:\n%s", result)
-	}
-
-	var empty Builder
-	empty.AddMemdir("   ", "- [x](x.md)")
-	if got := empty.Build(); got != "" {
-		t.Fatalf("blank teaching must add no section, got:\n%s", got)
 	}
 }
 

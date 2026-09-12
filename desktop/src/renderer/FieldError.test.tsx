@@ -23,8 +23,6 @@ describe("FieldError", () => {
 
     const alert = container.querySelector<HTMLElement>("[role=alert]");
     expect(alert?.id).toBe("avatar-error");
-    expect(alert?.classList.contains("field-error")).toBe(true);
-    expect(alert?.classList.contains("avatar-error")).toBe(true);
     expect(alert?.textContent).toBe("Choose a smaller image.");
     expect(alert?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   });

@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 
+// Avatar animation has its own frame loop; this suite exercises graph
+// movement, cooling, and selection independently of that decoration.
+vi.mock("./AgentAvatarMark", () => ({ AgentAvatarMark: () => null }));
+
 function pointerEvent(type: string, x: number, y: number): Event {
   const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
   Object.defineProperty(event, "pointerId", { value: 1 });
@@ -67,10 +71,15 @@ describe("AgentRelationshipGraph", () => {
       />,
     ));
 
+    // Frame timestamps and performance.now must share a clock: the graph's
+    // camera tween uses both, alongside the cooling simulation.
+    let now = performance.now();
+    vi.spyOn(performance, "now").mockImplementation(() => now);
     let processedFrames = 0;
     act(() => {
       while (frames.length > 0 && processedFrames < 160) {
-        frames.shift()?.(processedFrames * 16.67);
+        now += 16.67;
+        frames.shift()?.(now);
         processedFrames += 1;
       }
     });

@@ -464,15 +464,6 @@ describe("main composer focus continuity", () => {
 
   it("waits for the destination dock before focusing across projects", async () => {
     await renderApp(false, { deferProjectSelection: true });
-    // Resolve animation frames synchronously to model the race where the
-    // project action settles before React commits the destination state.
-    Object.defineProperty(window, "requestAnimationFrame", {
-      configurable: true,
-      value: (callback: FrameRequestCallback) => {
-        callback(0);
-        return 1;
-      },
-    });
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="在 Focus Project 中新建会话"]',
     );

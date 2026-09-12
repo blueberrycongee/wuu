@@ -54,7 +54,6 @@ describe("Modal", () => {
 
     const backdrop = document.querySelector(".modal-backdrop");
     expect(backdrop).toBeTruthy();
-    expect(backdrop?.classList.contains("app-modal-backdrop")).toBe(true);
     const dialog = document.querySelector(".environment-dialog");
     expect(dialog?.getAttribute("role")).toBe("dialog");
     expect(dialog?.getAttribute("aria-modal")).toBe("true");

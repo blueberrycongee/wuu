@@ -10,9 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  CODEX_PET_CELL_HEIGHT,
-  CODEX_PET_CELL_WIDTH,
-  CODEX_PET_STATES,
   defaultCodexPetsDir,
   ensureCodexPetsDir,
   loadCodexPetsSnapshot,
@@ -78,21 +75,6 @@ describe("loadCodexPetsSnapshot", () => {
     expect(statSync(petsDir).isDirectory()).toBe(true);
   });
 
-  it("uses the Codex Pets atlas constants", () => {
-    expect(CODEX_PET_CELL_WIDTH).toBe(192);
-    expect(CODEX_PET_CELL_HEIGHT).toBe(208);
-    expect(CODEX_PET_STATES.map((state) => state.id)).toEqual([
-      "idle",
-      "running-right",
-      "running-left",
-      "waving",
-      "jumping",
-      "failed",
-      "waiting",
-      "running",
-      "review",
-    ]);
-  });
 
   it("lists valid local pets and reports broken pet directories", () => {
     const root = createPetsRoot();

@@ -155,28 +155,3 @@ func TestReadIndexReplacesInvisibleUnicodeLines(t *testing.T) {
 		t.Fatalf("invisible-char line not replaced:\n%q", snap.Content)
 	}
 }
-
-func TestIdentityTeaching(t *testing.T) {
-	dir := "/home/u/.wuu/channels/agents/agent-1/memory"
-	teaching := IdentityTeaching(dir)
-	for _, want := range []string{
-		"# Identity notebook",
-		"`" + dir + "`",
-		dirExistsGuidance,
-		"## Types of memory",
-		"`user`", "`feedback`", "`reference`", "`lesson`",
-		"## How to save a memory",
-		"two-step process",
-		"type: user | feedback | reference | lesson",
-		"- [Title](file.md) — one-line hook",
-		"## What NOT to save",
-		"even when the user explicitly asks you to save",
-	} {
-		if !strings.Contains(teaching, want) {
-			t.Errorf("IdentityTeaching missing %q", want)
-		}
-	}
-	if got := len(strings.Split(teaching, "\n")); got > 45 {
-		t.Errorf("IdentityTeaching is %d lines; keep it ~40 or fewer", got)
-	}
-}

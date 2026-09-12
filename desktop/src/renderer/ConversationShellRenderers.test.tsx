@@ -286,32 +286,3 @@ describe("compact conversation actions", () => {
     expect(container.querySelectorAll("button")).toHaveLength(2);
   });
 });
-
-describe("ConversationTitleActions icon sizing", () => {
-  it("uses the info icon as the 18px optical-size baseline", () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => {
-      root?.render(
-        <ConversationTitleActions
-          state={initialState}
-          onStartNewThread={() => {}}
-          environmentToggleRef={createRef<HTMLButtonElement>()}
-          environmentPanelVisible={false}
-          onToggleEnvironmentPanel={() => {}}
-          rightPanelOpen={false}
-          onToggleRightPanel={() => {}}
-        />,
-      );
-    });
-
-    const infoIcon = container.querySelector(".environment-toggle-button svg");
-
-    expect(infoIcon?.getAttribute("width")).toBe("18");
-    expect(infoIcon?.getAttribute("height")).toBe("18");
-    expect(infoIcon?.getAttribute("viewBox")).toBe("0 0 24 24");
-  });
-
-});

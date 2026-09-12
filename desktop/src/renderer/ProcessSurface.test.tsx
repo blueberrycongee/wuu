@@ -656,9 +656,6 @@ describe("ProcessSurface", () => {
     );
     expect(svg).not.toBeNull();
     expect(svg?.getAttribute("data-wuu-mascot-activity")).toBe("thinking");
-    const face = [...svg!.querySelectorAll(".mo-eye path")]
-      .map((path) => path.getAttribute("d"))
-      .join("|");
     expect(container.querySelector(".wuu-mascot-activity-prop-thinking")).not.toBeNull();
 
     rerender({
@@ -680,11 +677,6 @@ describe("ProcessSurface", () => {
     );
     expect(next).toBe(svg);
     expect(next?.getAttribute("data-wuu-mascot-activity")).toBe("edit");
-    expect(
-      [...next!.querySelectorAll(".mo-eye path")]
-        .map((path) => path.getAttribute("d"))
-        .join("|"),
-    ).toBe(face);
     expect(container.querySelector(".wuu-mascot-activity-prop-thinking")).toBeNull();
     expect(container.querySelector(".wuu-mascot-activity-prop-edit")).not.toBeNull();
   });

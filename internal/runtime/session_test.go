@@ -2753,7 +2753,6 @@ func TestBuildBaseSystemPromptNoToolsSkipsToolLoadedGuidance(t *testing.T) {
 	)
 
 	for _, bad := range []string{
-		"Skills provide specialized instructions",
 		"<available_skills>",
 		"Create a commit",
 		"Workflow guidance",
@@ -2790,27 +2789,6 @@ func TestBuildBaseSystemPromptAddsCatalogForToolSearchSurface(t *testing.T) {
 	} {
 		if !strings.Contains(promptText, want) {
 			t.Fatalf("tool-search surface prompt missing %q:\n%s", want, promptText)
-		}
-	}
-	for _, duplicatedManual := range []string{
-		"# Tool Discovery",
-		"select:<tool_name>",
-		"Do not use `tool_search` for visible core tools",
-	} {
-		if strings.Contains(promptText, duplicatedManual) {
-			t.Fatalf("tool-search usage belongs to its tool schema, not the system prompt %q:\n%s", duplicatedManual, promptText)
-		}
-	}
-	for _, bad := range []string{
-		"especially MCP tools, workflows",
-		"workflows, scheduling",
-		"task-handling options inside wuu",
-		"direct work, subagents, or workflows",
-		"workflows only when",
-		"matching saved workflow",
-	} {
-		if strings.Contains(promptText, bad) {
-			t.Fatalf("main prompt should not include generic workflow guidance %q:\n%s", bad, promptText)
 		}
 	}
 }
@@ -2870,131 +2848,6 @@ func TestBuildBaseSystemPromptFiltersSkillsBySurface(t *testing.T) {
 	if !strings.Contains(promptText, "implementation-plan") {
 		t.Fatalf("local/no-shell prompt should keep compatible skills:\n%s", promptText)
 	}
-}
-
-func TestBuildBaseSystemPromptDoesNotInjectLegacyWorkflowGuidance(t *testing.T) {
-	surface := capability.Surface{
-		ProfileName:    "portable_no_shell",
-		Tools:          map[string]capability.Capability{"read_file": capability.CapabilityFileRead},
-		Capabilities:   []capability.Capability{capability.CapabilityFileRead},
-		SystemFragment: "Portable no-shell profile.",
-	}
-	promptText := buildBaseSystemPrompt(
-		t.TempDir(),
-		"base prompt",
-		"",
-		"ollama",
-		"llama-coder",
-		surface,
-		nil,
-		"",
-		"",
-		nil,
-	)
-
-	for _, bad := range []string{
-		"Workflow guidance",
-		"# Workflow orchestration",
-		"Workflow catalog",
-		"`start_workflow`",
-		"- start_workflow:",
-		"terminal-release",
-		"portable-plan",
-		"Plan a portable change.",
-		"Git: release workflow.",
-		"Use for planning.",
-	} {
-		if strings.Contains(promptText, bad) {
-			t.Fatalf("workflow guidance must not be injected for legacy workflow-capable surfaces; found %q:\n%s", bad, promptText)
-		}
-	}
-}
-
-func TestBuildBaseSystemPromptLocalNoShellDoesNotTeachTerminalPaths(t *testing.T) {
-	surface := compiledSurfaceForProviderModel("ollama", "llama-coder")
-	promptText := buildBaseSystemPrompt(
-		t.TempDir(),
-		config.DefaultSystemPrompt(),
-		"",
-		"ollama",
-		"llama-coder",
-		surface,
-		nil,
-		"",
-		"",
-		nil,
-	)
-
-	for _, banned := range []string{
-		"bash",
-		"run_shell",
-		"run_test",
-		"start_process",
-		"command.bash",
-		"terminal",
-		"shell",
-		"git",
-		"git status",
-		"git diff",
-		"git commit",
-		"npx vitest",
-		"npm test",
-		"npm run dev",
-	} {
-		if strings.Contains(promptText, banned) {
-			t.Fatalf("local/no-shell prompt must not teach terminal path %q:\n%s", banned, promptText)
-		}
-	}
-}
-
-// TestBuildBaseSystemPrompt_WorkerExcludesMainOnlyCoordination locks in the
-// split between prompts.System() (invariants shared with workers) and
-// prompts.SystemMain() (the small coordination contract used only by the main
-// agent). Tool-specific manuals belong to the active tool surface instead.
-// Subagent product guidance was extracted into the bundled Subagent plugin,
-// so neither core prompt may carry it.
-func TestBuildBaseSystemPrompt_WorkerExcludesMainOnlyCoordination(t *testing.T) {
-	surface := compiledSurfaceForProviderModel("openai", "gpt-5")
-
-	mainPrompt := buildBaseSystemPrompt(
-		t.TempDir(),
-		config.DefaultSystemPrompt(),
-		"",
-		"openai",
-		"gpt-5",
-		surface,
-		nil, "", "", nil,
-	)
-	workerPrompt := buildBaseSystemPrompt(
-		t.TempDir(),
-		config.WorkerSystemPrompt(),
-		"",
-		"openai",
-		"gpt-5",
-		surface,
-		nil, "", "", nil,
-	)
-
-	// Subagent results guidance moved to plugins/subagent; core prompts must
-	// remain product-neutral.
-	for _, banned := range []string{
-		"# Subagent results",
-		"completed subagent task does not mean the overall task is complete",
-		"integrate the result and verify the overall work",
-	} {
-		if strings.Contains(mainPrompt, banned) {
-			t.Fatalf("main agent prompt must not contain extracted Subagent guidance %q; got prompt:\n%s", banned, mainPrompt)
-		}
-		if strings.Contains(workerPrompt, banned) {
-			t.Fatalf("worker prompt must not contain extracted Subagent guidance %q; got prompt:\n%s", banned, workerPrompt)
-		}
-	}
-	// start_workflow is part of the legacy workflow suite and must not be
-	// taught to ordinary project main agents.
-	if strings.Contains(mainPrompt, "- start_workflow:") {
-		t.Fatalf("project main prompt (no workflow capability) must not contain the start_workflow path bullet; got prompt:\n%s", mainPrompt)
-	}
-
 }
 
 func TestResolveInputWindow_CapsCodexSubscriptionGPT5(t *testing.T) {

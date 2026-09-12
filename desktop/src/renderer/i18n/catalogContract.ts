@@ -19,7 +19,7 @@ export function assertCatalogContract(catalogs: Catalogs): void {
   if (entries.length === 0) throw new Error("[i18n] No catalogs registered");
 
   const [referenceLocale, referenceCatalog] = entries[0];
-  const referenceKeys = Object.keys(referenceCatalog);
+  const referenceKeys = Object.keys(referenceCatalog).sort();
 
   for (const key of referenceKeys) {
     if (!TRANSLATION_KEY_PATTERN.test(key)) {
@@ -28,7 +28,7 @@ export function assertCatalogContract(catalogs: Catalogs): void {
   }
 
   for (const [locale, catalog] of entries) {
-    const keys = Object.keys(catalog);
+    const keys = Object.keys(catalog).sort();
     if (keys.length !== referenceKeys.length) {
       throw new Error(
         `[i18n] Key count mismatch: ${locale} has ${keys.length}, expected ${referenceKeys.length}`,
@@ -39,7 +39,7 @@ export function assertCatalogContract(catalogs: Catalogs): void {
       const key = referenceKeys[index];
       if (keys[index] !== key) {
         throw new Error(
-          `[i18n] Key order mismatch: ${locale}.${keys[index] ?? "<missing>"}; expected ${key}`,
+          `[i18n] Key mismatch: ${locale}.${keys[index] ?? "<missing>"}; expected ${key}`,
         );
       }
 

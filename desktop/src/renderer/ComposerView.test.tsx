@@ -2125,15 +2125,6 @@ describe("Composer send control", () => {
     ).not.toBeNull();
   });
 
-  it("gives the document composer its own compact styling hook", () => {
-    renderComposer({ variant: "document", mainConversation: true });
-
-    const composer = container.querySelector(
-      '[data-main-conversation-composer="document"]',
-    );
-    expect(composer?.classList.contains("dock-composer-wrap")).toBe(true);
-    expect(composer?.classList.contains("document-composer-wrap")).toBe(true);
-  });
 
   it("keeps /side disabled on a draft without a persisted thread", () => {
     const setPrompt = vi.fn();

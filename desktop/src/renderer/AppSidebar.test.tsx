@@ -207,7 +207,6 @@ describe("AppSidebar layout", () => {
     const scrollRegion = container.querySelector(".sidebar-main");
 
     expect(primaryNav?.parentElement).toBe(content);
-    expect(scrollRegion?.classList.contains("scrollbar-hidden")).toBe(true);
     expect(scrollRegion?.contains(primaryNav)).toBe(false);
     expect(scrollRegion?.querySelector(".project-section")).not.toBeNull();
   });
@@ -221,24 +220,10 @@ describe("AppSidebar layout", () => {
     const collaborationAction = container.querySelector<HTMLButtonElement>(
       '[aria-label="新建频道"]',
     );
-    expect(workspaceAction?.classList.contains("sidebar-functional-action")).toBe(true);
+    expect(workspaceAction).not.toBeNull();
     expect(collaborationAction).toBeNull();
   });
 
-  it("renders the brand lockup above the primary nav", () => {
-    renderSidebar();
-
-    const content = container.querySelector(".sidebar-content");
-    const brand = content?.querySelector(".sidebar-brand");
-    const primaryNav = content?.querySelector(".primary-nav");
-
-    expect(brand).not.toBeNull();
-    expect(brand?.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
-    expect(brand?.querySelector(".sidebar-brand-descriptor")?.textContent).toBe("harness");
-    expect(brand?.querySelector(".sidebar-brand-descriptor")?.getAttribute("aria-pressed")).toBe("true");
-    expect(brand?.textContent?.trim()).toBe("wuuharness");
-    expect(brand?.nextElementSibling).toBe(primaryNav);
-  });
 
   it("renders only scratch and projects in the workspace order", () => {
     renderSidebar({

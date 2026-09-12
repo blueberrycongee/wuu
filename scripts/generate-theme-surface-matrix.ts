@@ -21,7 +21,6 @@ import {
   analyzeSurfaceMatrix,
   formatBaseline,
   listProductionSources,
-  parsePinnedAnchors,
   type SurfaceMatrix,
 } from "../desktop/src/renderer/styles/themeCoverage";
 
@@ -37,13 +36,9 @@ const cssFiles = readdirSync(stylesDir)
   .sort()
   .map((name) => ({ name, source: readFileSync(resolve(stylesDir, name), "utf8") }));
 const anchorSources = listProductionSources(rendererDir).map((path) => readFileSync(path, "utf8"));
-const pinnedTest = readFileSync(
-  resolve(rendererDir, "plugins/ProductionSemanticAnchors.test.ts"),
-  "utf8",
-);
 const contract = JSON.parse(readFileSync(contractPath, "utf8"));
 
-const matrix = analyzeSurfaceMatrix(cssFiles, anchorSources, parsePinnedAnchors(pinnedTest));
+const matrix = analyzeSurfaceMatrix(cssFiles, anchorSources);
 const outputs = new Map([
   [resolve(repoRoot, "config/desktop-theme-surface-matrix.json"), renderMatrixJson(matrix)],
   [

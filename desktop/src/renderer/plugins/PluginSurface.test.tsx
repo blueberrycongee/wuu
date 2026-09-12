@@ -57,6 +57,9 @@ describe("PluginSurface", () => {
     ));
 
     expect(container.textContent).toBe("High");
+    expect(container.querySelector(
+      '[data-wuu-component="plugin-contribution"][data-wuu-plugin="layout"][data-wuu-surface="conversation.timeline"]',
+    )?.textContent).toBe("High");
     expect(container.querySelector("section[data-frame=true]")).not.toBeNull();
   });
 

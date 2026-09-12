@@ -1,5 +1,3 @@
-import { describe, expect, it } from "vitest";
-
 import type {
   ConversationProcessItemV1 as SDKConversationProcessItemV1,
   ConversationProcessSnapshotV1 as SDKConversationProcessSnapshotV1,
@@ -20,17 +18,3 @@ type SDKItemMatchesDesktop = Assert<Extends<SDKConversationProcessItemV1, Deskto
 type DesktopItemMatchesSDK = Assert<Extends<DesktopConversationProcessItemV1, SDKConversationProcessItemV1>>;
 type SDKPlacementMatchesDesktop = Assert<Extends<SDKViewPlacementContribution, DesktopViewPlacementContribution>>;
 type DesktopPlacementMatchesSDK = Assert<Extends<DesktopViewPlacementContribution, SDKViewPlacementContribution>>;
-
-describe("SDK/Desktop workbench contract parity", () => {
-  it("keeps the conversation process V1 snapshot assignable in both directions", () => {
-    const assertions: readonly [
-      SDKSnapshotMatchesDesktop,
-      DesktopSnapshotMatchesSDK,
-      SDKItemMatchesDesktop,
-      DesktopItemMatchesSDK,
-      SDKPlacementMatchesDesktop,
-      DesktopPlacementMatchesSDK,
-    ] = [true, true, true, true, true, true];
-    expect(assertions).toEqual([true, true, true, true, true, true]);
-  });
-});

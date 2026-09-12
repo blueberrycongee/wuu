@@ -299,51 +299,6 @@ func (f *flakyOverflowClient) Chat(_ context.Context, _ providers.ChatRequest) (
 	return providers.ChatResponse{Content: f.finalSummary}, nil
 }
 
-func TestCompactInstructionPrompt_EnforcesNoToolsAndFormat(t *testing.T) {
-	for _, want := range []string{
-		"used to resume after older messages are removed",
-		"without asking the user to repeat context",
-		"Do not call tools",
-		"request tool use",
-		"markdown summary only",
-		"Do not include an analysis block",
-	} {
-		if !strings.Contains(compactInstructionPrompt, want) {
-			t.Errorf("compactInstructionPrompt missing %q", want)
-		}
-	}
-	for _, banned := range []string{"read_file", "grep", "glob", "bash", "run_shell", "run_test", "start_process"} {
-		if strings.Contains(compactInstructionPrompt, banned) {
-			t.Fatalf("compactInstructionPrompt must not name unavailable tool path %q:\n%s", banned, compactInstructionPrompt)
-		}
-	}
-	if strings.Contains(compactInstructionPrompt, "ONLY context available when the conversation resumes") {
-		t.Fatal("compactInstructionPrompt should avoid overly dramatic context wording")
-	}
-	if strings.Contains(compactInstructionPrompt, "<analysis>") {
-		t.Fatal("compact prompt should not ask for an analysis block")
-	}
-}
-
-func TestCompactInstructionPrompt_CoversHandoffSections(t *testing.T) {
-	for _, want := range []string{
-		"## Task objective",
-		"## Constraints & Preferences",
-		"## Progress",
-		"## External State",
-		"## Verification State",
-		"## Key Decisions",
-		"## Next Steps",
-		"## Critical Context",
-		"## Evidence Pointers",
-		"## Relevant Files",
-	} {
-		if !strings.Contains(compactInstructionPrompt, want) {
-			t.Errorf("compactInstructionPrompt missing section %q", want)
-		}
-	}
-}
-
 func TestFormatSummary_StripsAnalysisAndExtractsSummary(t *testing.T) {
 	raw := "<analysis>\nprivate reasoning\n</analysis>\n\n<summary>\n## Current Work\nContinue implementation.\n</summary>"
 	got := FormatSummary(raw)

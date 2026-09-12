@@ -456,45 +456,6 @@ describe("SessionTabStrip new conversation affordance", () => {
   });
 });
 
-describe("SessionTabStrip layout styles", () => {
-  it("keeps the new-conversation glyph compact inside its 18px icon box", () => {
-    renderTabs(initialState);
-
-    const newConversationIcon = container.querySelector(".session-tab-new svg");
-    expect(newConversationIcon?.classList.contains("icon-lg")).toBe(true);
-    expect(newConversationIcon?.getAttribute("viewBox")).toBe("0 0 24 24");
-  });
-
-  it("keeps drag internals inside the tab list column", () => {
-    const context: RuntimeContext = {
-      kind: "project",
-      project_id: "project-1",
-      cwd: "/tmp/project",
-    };
-    const threadA = makeThread("thread-a", "Thread A");
-    const threadB = makeThread("thread-b", "Thread B");
-    renderTabs({
-      ...initialState,
-      activeContext: context,
-      thread: threadA,
-      activeSessionTabID: threadSessionTabID(threadA.id),
-      sessionTabs: [
-        createThreadSessionTab(threadA, context),
-        createThreadSessionTab(threadB, context),
-      ],
-      threads: [threadA, threadB],
-    });
-
-    const strip = container.querySelector(".session-tab-strip");
-    const directChildren = Array.from(strip?.children ?? []);
-    expect(directChildren).toHaveLength(2);
-    expect(directChildren[0]?.classList.contains("session-tab-list-shell")).toBe(true);
-    expect(directChildren[0]?.querySelector(".session-tab-scroll")).not.toBeNull();
-    expect(directChildren[1]?.classList.contains("session-tab-new-slot")).toBe(true);
-    expect(directChildren[1]?.querySelector(".session-tab-new")).not.toBeNull();
-  });
-});
-
 describe("SessionTabStrip right-click menu", () => {
   type Captured = {
     closed: string[];

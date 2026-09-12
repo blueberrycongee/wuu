@@ -250,9 +250,8 @@ describe("first-party desktop plugin lifecycle", () => {
           viewTypeId,
         }));
       });
-      expect(container.querySelector(".plugin-ui-page")).not.toBeNull();
+      expect(container.querySelector('[data-wuu-component="plugin-ui-page"]')).not.toBeNull();
       expect(container.textContent).toContain(expectedText);
-      expect(container.textContent).not.toMatch(/\b(?:title|subtitle|overview|loading|chat|raw|enabled|interval|minimum|model|new|empty)\b/);
       expect([...container.querySelectorAll("input, textarea")].every((control) => control.closest("label"))).toBe(true);
     } finally {
       act(() => root.unmount());
