@@ -47,12 +47,13 @@ func (t *ChatReadTool) IsConcurrencySafe() bool { return true }
 func (t *ChatReadTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "chat_read",
-		Description: "Read group-chat message bodies either by chat_check item IDs or by a member room's sequence range. Choose exactly one mode.",
+		Description: "Read group-chat message bodies either by chat_check item IDs or by a member room's sequence range. Choose exactly one mode. For room mode, narrow by query or thread_id and page using the last returned seq as after_seq; before_seq sets an upper bound.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"item_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 50},
-				"room_id":   map[string]any{"type": "string"},
+				"item_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 50},
+				"room_id":  map[string]any{"type": "string"},
+				"query":    map[string]any{"type": "string"}, "thread_id": map[string]any{"type": "string"}, "before_seq": map[string]any{"type": "integer", "minimum": 0},
 				"after_seq": map[string]any{"type": "integer", "minimum": 0},
 				"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 			},
@@ -64,10 +65,13 @@ func (t *ChatReadTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", errors.New("chat_read is available only in a named-agent session")
 	}
 	var args struct {
-		ItemIDs  []string `json:"item_ids"`
-		RoomID   string   `json:"room_id"`
-		AfterSeq int64    `json:"after_seq"`
-		Limit    int      `json:"limit"`
+		ItemIDs   []string `json:"item_ids"`
+		RoomID    string   `json:"room_id"`
+		AfterSeq  int64    `json:"after_seq"`
+		BeforeSeq int64    `json:"before_seq"`
+		Query     string   `json:"query"`
+		ThreadID  string   `json:"thread_id"`
+		Limit     int      `json:"limit"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", err
@@ -84,7 +88,7 @@ func (t *ChatReadTool) Execute(ctx context.Context, argsJSON string) (string, er
 	if itemMode {
 		messages, err = t.env.ChatAgent.ReadInbox(ctx, args.ItemIDs)
 	} else {
-		messages, err = t.env.ChatAgent.ReadRoom(ctx, args.RoomID, args.AfterSeq, args.Limit)
+		messages, err = t.env.ChatAgent.QueryRoomHistory(ctx, channels.RoomHistoryQuery{RoomID: args.RoomID, AfterSeq: args.AfterSeq, BeforeSeq: args.BeforeSeq, Query: args.Query, ThreadID: args.ThreadID, Limit: args.Limit})
 	}
 	if err != nil {
 		return "", err

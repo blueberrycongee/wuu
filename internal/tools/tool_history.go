@@ -348,6 +348,9 @@ func resolveHistorySession(env *Env, toolName, requestedID string, cursor *sessi
 	if id == "" {
 		id = currentID
 	}
+	if env.ChatAgent != nil && id != currentID {
+		return "", "", fmt.Errorf("%s: collaboration transcripts are session-private; use chat_session results or ask the session to share evidence", toolName)
+	}
 	if cursor != nil && cursor.SessionID != id {
 		return "", "", fmt.Errorf("%s: cursor session does not match session_id", toolName)
 	}

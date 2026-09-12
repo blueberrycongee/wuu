@@ -262,6 +262,11 @@ func (s *Service) send(ctx context.Context, params sendParams) (SendResult, erro
 }
 
 func (s *Service) ListMessages(ctx context.Context, roomID string, afterSeq int64, limit int) ([]Message, error) {
+	return s.queryMessages(ctx, RoomHistoryQuery{RoomID: roomID, AfterSeq: afterSeq, Limit: limit})
+}
+
+func (s *Service) queryMessages(ctx context.Context, p RoomHistoryQuery) ([]Message, error) {
+	roomID, afterSeq, limit := p.RoomID, p.AfterSeq, p.Limit
 	roomID = strings.TrimSpace(roomID)
 	if roomID == "" {
 		return nil, errors.New("message room is required")
@@ -281,7 +286,9 @@ func (s *Service) ListMessages(ctx context.Context, roomID string, afterSeq int6
 			COALESCE(task_title, ''), COALESCE(task_state, ''), COALESCE(task_owner, ''),
 			task_verification_required, task_goal_revision, task_candidate_revision, created_at,
 			COALESCE(source_session_ref, ''), COALESCE(source_turn_id, '')
-		FROM room_messages WHERE room_id = ? AND seq > ? ORDER BY seq LIMIT ?`, roomID, afterSeq, limit)
+		FROM room_messages WHERE room_id = ? AND seq > ? AND (?=0 OR seq<?)
+   AND (?='' OR thread_id=? OR id=?) AND (?='' OR instr(lower(body),lower(?))>0)
+   ORDER BY seq LIMIT ?`, roomID, afterSeq, p.BeforeSeq, p.BeforeSeq, p.ThreadID, p.ThreadID, p.ThreadID, p.Query, p.Query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list room messages: %w", err)
 	}

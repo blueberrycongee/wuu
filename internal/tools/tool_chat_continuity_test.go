@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestCollaborationContinuityToolsRoundTrip(t *testing.T) {
@@ -80,5 +81,18 @@ func TestCollaborationContinuityToolsRoundTrip(t *testing.T) {
 				t.Fatal("coordinator gained general writes")
 			}
 		}
+	}
+}
+
+func TestCollaborationCannotReadPrivateSiblingTranscript(t *testing.T) {
+	env := &Env{SessionID: "own", SessionsDir: t.TempDir(), ChatAgent: &channels.AgentClient{}}
+	if _, _, err := resolveHistorySession(env, "history_read", "sibling", nil); err == nil {
+		t.Fatal("private sibling transcript accessible")
+	}
+	if _, _, err := resolveHistorySession(env, "history_search", "", &session.HistoryCursor{SessionID: "sibling"}); err == nil {
+		t.Fatal("cursor bypassed private transcript boundary")
+	}
+	if _, id, err := resolveHistorySession(env, "history_read", "own", nil); err != nil || id != "own" {
+		t.Fatalf("own history = %q, %v", id, err)
 	}
 }

@@ -165,6 +165,9 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 			}
 		}
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_results(session_ref,turn_id,body,state,created_at) VALUES(?,?,?,?,?)`, binding.SessionRef, params.TurnID, params.Result, params.State, now); err != nil {
+		return CollaborationSessionBinding{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_session_settlements(session_ref, turn_id, result_hash, created_at) VALUES (?, ?, ?, ?)`, binding.SessionRef, params.TurnID, resultHash, now); err != nil {
 		return CollaborationSessionBinding{}, err
 	}

@@ -106,7 +106,7 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := service.migrateFollowups(); err != nil {
+	if err := service.migrateContinuity(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

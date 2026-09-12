@@ -19,11 +19,13 @@ func (t *ChatSessionTool) Name() string            { return "chat_session" }
 func (t *ChatSessionTool) IsReadOnly() bool        { return false }
 func (t *ChatSessionTool) IsConcurrencySafe() bool { return true }
 func (t *ChatSessionTool) Definition() providers.ToolDefinition {
-	return providers.ToolDefinition{Name: t.Name(), Description: "Create and manage independent collaboration sessions under durable named identities. Sessions have separate context and pinned BYOK models. Create parallel investigations, implementation or review sessions as needed; each creation is durable and request_id makes retries idempotent. Queued sessions wait for capacity. Results wake the creating session; finish your turn while waiting to release execution capacity. List discovers room-scoped session metadata without exposing private transcripts. Use send or collaboration_send for precise asynchronous communication. Stop cancels a session and its descendants; resume explicitly restarts a stopped session.", InputSchema: map[string]any{
+	return providers.ToolDefinition{Name: t.Name(), Description: "Create and manage independent collaboration sessions under durable named identities. Sessions have separate context and pinned BYOK models. Create parallel investigations, implementation or review sessions as needed; each creation is durable and request_id makes retries idempotent. Queued sessions wait for capacity. Results wake the creating session; finish your turn while waiting to release execution capacity. List discovers room-scoped session metadata. Results lists final outcome excerpts (after cursor, limit); supply result_id and offset to read a selected outcome in pages; private transcripts remain private. Use send or collaboration_send for precise asynchronous communication. Stop cancels a session and its descendants; resume explicitly restarts a stopped session.", InputSchema: map[string]any{
 		"type": "object", "properties": map[string]any{
-			"action":   map[string]any{"type": "string", "enum": []string{"create", "list", "peers", "get", "send", "stop", "resume"}},
-			"agent_id": map[string]any{"type": "string", "description": "Durable identity; create defaults to your own identity."},
-			"room_id":  map[string]any{"type": "string"}, "session_ref": map[string]any{"type": "string"}, "title": map[string]any{"type": "string"},
+			"action":    map[string]any{"type": "string", "enum": []string{"create", "list", "peers", "get", "results", "send", "stop", "resume"}},
+			"agent_id":  map[string]any{"type": "string", "description": "Durable identity; create defaults to your own identity."},
+			"result_id": map[string]any{"type": "integer"}, "offset": map[string]any{"type": "integer", "minimum": 0},
+			"after": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+			"room_id": map[string]any{"type": "string"}, "session_ref": map[string]any{"type": "string"}, "title": map[string]any{"type": "string"},
 			"prompt":   map[string]any{"type": "string", "description": "Objective and relevant evidence for create, or follow-up message for send. Include expected result and where artifacts can be read."},
 			"provider": map[string]any{"type": "string"}, "model": map[string]any{"type": "string"}, "effort": map[string]any{"type": "string"}, "request_id": map[string]any{"type": "string", "description": "Reuse only for retries of the same creation or message."},
 		}, "required": []string{"action"}}}
@@ -33,6 +35,10 @@ func (t *ChatSessionTool) Execute(ctx context.Context, argsJSON string) (string,
 		return "", errors.New("chat_session requires a collaboration identity")
 	}
 	var args struct {
+		ResultID   int64  `json:"result_id"`
+		Offset     int    `json:"offset"`
+		After      int64  `json:"after"`
+		Limit      int    `json:"limit"`
 		Action     string `json:"action"`
 		AgentID    string `json:"agent_id"`
 		RoomID     string `json:"room_id"`
@@ -61,6 +67,19 @@ func (t *ChatSessionTool) Execute(ctx context.Context, argsJSON string) (string,
 			return "", err
 		}
 		return mustJSON(map[string]any{"sessions": result})
+	case "results":
+		if args.ResultID > 0 {
+			result, err := c.ReadSessionResultPage(ctx, args.SessionRef, args.ResultID, args.Offset)
+			if err != nil {
+				return "", err
+			}
+			return mustJSON(result)
+		}
+		result, err := c.ReadSessionResults(ctx, args.SessionRef, args.After, args.Limit)
+		if err != nil {
+			return "", err
+		}
+		return mustJSON(result)
 	case "get":
 		result, err := c.GetCollaborationSession(ctx, args.SessionRef)
 		if err != nil {

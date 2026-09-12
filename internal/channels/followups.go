@@ -56,13 +56,17 @@ type FollowupSetParams struct {
 	Refs        []string   `json:"refs,omitempty"`
 }
 
-func (s *Service) migrateFollowups() error {
+func (s *Service) migrateContinuity() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS collaboration_followups (
  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES collaboration_principals(id) ON DELETE CASCADE,
  room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, session_ref TEXT NOT NULL DEFAULT '',
  state TEXT NOT NULL, next_at INTEGER NOT NULL, spec TEXT NOT NULL, request_hash TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS idx_followups_due ON collaboration_followups(state,next_at);
- CREATE INDEX IF NOT EXISTS idx_followups_session ON collaboration_followups(session_ref,state);`)
+ CREATE INDEX IF NOT EXISTS idx_followups_session ON collaboration_followups(session_ref,state);
+ CREATE TABLE IF NOT EXISTS collaboration_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_ref TEXT NOT NULL REFERENCES collaboration_session_bindings(session_ref) ON DELETE CASCADE,
+  turn_id TEXT NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL,
+  UNIQUE(session_ref,turn_id));`)
 	return err
 }
 
