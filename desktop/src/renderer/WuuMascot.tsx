@@ -47,6 +47,10 @@ type MascotEyeStyle = {
   tilt2?: number;
 };
 
+// UI avatars need more eye area than the large app icon to read at 24–32 px.
+const MASCOT_EYE_WIDTH_SCALE = 1.22;
+const MASCOT_EYE_HEIGHT_SCALE = 1.5;
+
 /** Keep every activity on the approved icon's filled capsule eye vocabulary. */
 export function wuuMascotExpression(eyes: Partial<MascotEyeStyle> = {}): Expression {
   return {
@@ -54,10 +58,10 @@ export function wuuMascotExpression(eyes: Partial<MascotEyeStyle> = {}): Express
     p: {
       ...idleExpression.p,
       edx: 0,
-      esx: eyes.esx ?? 1,
-      esy: eyes.esy ?? 1,
-      esx2: eyes.esx2 ?? 0,
-      esy2: eyes.esy2 ?? 0,
+      esx: (eyes.esx ?? 1) * MASCOT_EYE_WIDTH_SCALE,
+      esy: (eyes.esy ?? 1) * MASCOT_EYE_HEIGHT_SCALE,
+      esx2: (eyes.esx2 ?? 0) * MASCOT_EYE_WIDTH_SCALE,
+      esy2: (eyes.esy2 ?? 0) * MASCOT_EYE_HEIGHT_SCALE,
       tilt: eyes.tilt ?? 0,
       tilt2: eyes.tilt2 ?? 0,
       lock: 1,
@@ -73,7 +77,7 @@ export const WUU_MASCOT_ACTIVITY_EXPRESSIONS: Readonly<
 > = {
   idle: wuuMascotExpression(),
   compose: wuuMascotExpression({ esy: 1.04 }),
-  thinking: wuuMascotExpression({ esy: 0.68, esy2: -0.08, tilt: 5 }),
+  thinking: wuuMascotExpression({ esy: 0.84, esy2: -0.08, tilt: 5 }),
   compact: wuuMascotExpression({ esy: 0.9 }),
   search: wuuMascotExpression({ esy: 1.08 }),
   edit: wuuMascotExpression({ esy: 0.97, tilt: 1 }),
