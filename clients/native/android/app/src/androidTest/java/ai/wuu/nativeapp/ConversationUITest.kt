@@ -1,8 +1,8 @@
 package ai.wuu.nativeapp
 
-import android.content.Intent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.lifecycle.Lifecycle
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import org.junit.Rule
@@ -12,7 +12,7 @@ class ConversationUITest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
 
     private fun await(matcher: SemanticsMatcher) {
-        ui.waitUntil(20_000) { ui.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(20_000) { ui.onAllNodes(matcher).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty() }
     }
     private fun tap(text: String) { await(hasText(text)); ui.onNodeWithText(text).performClick() }
     private fun send(text: String) {
@@ -69,8 +69,11 @@ class ConversationUITest {
         tap("停止")
         ui.waitUntil(20_000) { ui.onAllNodesWithText("停止").fetchSemanticsNodes().isEmpty() }
         device.pressHome()
+        ui.waitUntil(20_000) { ui.activity.lifecycle.currentState == Lifecycle.State.CREATED }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        context.startActivity(context.packageManager.getLaunchIntentForPackage(context.packageName)!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        // Relaunch as an external user action; the app is now subject to background launch limits.
+        val component = requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)?.component)
+        device.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${component.flattenToString()}")
         await(hasContentDescription("添加附件") and isEnabled())
         send("ui-return")
         expectText(device, "Received: ui-return")
