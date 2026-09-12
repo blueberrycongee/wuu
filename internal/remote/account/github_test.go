@@ -201,7 +201,7 @@ func TestGitHubMigrationPreservesPasswordAccounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reconstruct the released v1 schema with a real account and active device.
-	if _, err = s.db.Exec(`DROP TABLE account_identities; UPDATE schema_version SET version=1`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE conversation_copies; DROP TABLE conversation_sync; DROP TABLE account_identities; UPDATE schema_version SET version=1`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

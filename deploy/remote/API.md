@@ -1,6 +1,6 @@
 # 账号与连接服务 API
 
-此服务实现 Wuu 手机与电脑的账号、设备目录、加密连接和通知。会话、工作区与 Agent 运行在电脑；服务器没有会话消息数据库。手机通过 `/v1/connect` 转发现有 app-server RPC。
+此服务实现 Wuu 手机与电脑的账号、设备目录、会话历史存储、加密连接和通知。用户开启同步后，电脑把会话文字保存到服务器 PostgreSQL；手机可通过 HTTPS 在电脑离线时读取。Agent 和工作区执行仍在电脑，手机通过 `/v1/connect` 中转执行请求和实时回复。
 
 ## 代码入口
 
@@ -34,6 +34,11 @@
 | `GET /v1/account/push` | Bearer | 返回 `enabled` 与 `platform`。 |
 | `POST /v1/account/push` | Bearer，手机设备 | `platform` 为 `ios` 或 `android`，`token` 为平台原生推送令牌。服务端必须已配置对应平台。 |
 | `DELETE /v1/account/push` | Bearer，手机设备 | 删除推送登记。 |
+| `GET /v1/account/history/settings?host={pub}` | Bearer，同账号 | 返回该电脑的 `host`、`enabled`、`generation`，默认关闭。 |
+| `POST /v1/account/history/settings` | Bearer，同账号 | 输入 `host`、`enabled`；开启或关闭会更新 generation，关闭会删除该电脑的服务器副本。 |
+| `GET /v1/account/history?host={pub}&generation={generation}&after={cursor}` | Bearer，同账号 | 返回设置、最多 100 条 `entries`、`cursor` 和 `more`。 |
+| `POST /v1/account/history/thread` | Bearer，电脑设备 | 上传自身的 `generation`、`expected`、`deleted` 和 `thread`；返回新的目录条目。 |
+| `GET /v1/account/history/thread?host={pub}&generation={generation}&id={id}` | Bearer，同账号 | 返回 `thread` 和 `revision`；不要求电脑在线。 |
 
 注册和登录请求均包含：
 
@@ -54,6 +59,16 @@
 
 错误体为 `{"error":"说明"}`。无效输入返回 400，凭据无效或越权返回 401，注册或推送未启用返回 403，未知接口返回 404，账号或设备冲突返回 409，认证限速或繁忙返回 429，身份查询时数据库不可用返回 503。客户端仅对明确的身份失效清除登录，不把网络故障解释为设备撤销。
 
+## 会话历史同步
+
+数据库 schema 3 增加 `conversation_sync` 和 `conversation_copies`。每台电脑有独立的同步开关、generation 和递增 revision；只有该电脑的身份可以上传自己的会话。`thread` 保存 `id`、`title`、`updated_at`、`status` 和 `messages`，每条消息包含 `id`、`turn_id`、`role`（`user` 或 `assistant`）、`text`。服务器运营方可以读取文字副本；工具输出、隐藏提示、附件和工作区文件不在该接口范围内，文字副本不能用于恢复 Agent 执行。
+
+电脑保持手机访问功能运行时，每轮同步完成后等待 10 秒再检查变化；同步不依赖手机连接。每次上传带前一 revision（`expected`，首次为 `"0"`）和当前 generation，过期上传返回 409。相同内容不会增加 revision。归档保留历史，电脑删除会话后上传删除标记；读取正文返回 404，增量目录中的 `deleted: true` 通知手机清理缓存。单个会话快照上限为 4 MiB，超过时拒绝同步并记录主机错误，不截断正文；先前已同步的副本继续保留。
+
+客户端把目录和 cursor 一起持久化，按 `more` 继续翻页；正文 revision 与目录不一致时重新获取正文。generation 变化时丢弃旧目录及缓存并从新一代开始。关闭同步或移除电脑会删除在线数据库中的副本，备份副本由部署者管理。移除手机仅撤销其读取权限，不删除电脑在服务器上的历史。
+
+历史接口的 401 也可能表示目标电脑被移除。客户端应复核 `/devices`：该接口仍成功时保留登录并清理被移除电脑的缓存；该接口也返回 401 时清理账号凭据及全部历史缓存。临时网络错误保留有效缓存，离线设备在下一次联网时才会获知撤销。
+
 ## 设备连接
 
 `/v1/connect` 是 WebSocket 入口。客户端发送协议版本 1 的 `hello`，包括设备 `pub`、`role`；手机还提供所选电脑的 `to`。服务端发送随机 challenge，设备使用私钥签名后发送 `auth`。服务端检查设备属于已登记账号，且目标电脑属于同一账号，才返回 `auth_ok`。
@@ -68,10 +83,12 @@
 
 ```sh
 export WUU_TEST_DATABASE_URL='postgres://wuu:TEST_PASSWORD@127.0.0.1:5432/wuu_test?sslmode=disable'
-go test -race ./internal/remote/account ./internal/remote/relay ./internal/remote/server ./internal/remote/secure
+go test -race ./internal/remote/account ./internal/remote/host ./internal/remote/relay ./internal/remote/server ./internal/remote/secure
 ```
 
 测试为每个用例创建独立 schema 并在结束时删除，测试账号需要 CREATE SCHEMA 权限；仅使用专门的测试数据库。未设置 `WUU_TEST_DATABASE_URL` 时数据库集成用例明确跳过；CI 的 Go 检查提供 PostgreSQL 并执行这些用例。
+
+`TestConversationPublisherPersistsHistoryWithoutAnOnlineHost` 使用真实电脑会话存储、app-server 快照、上传器、HTTP 和 PostgreSQL，验证开启同步、服务端重启后的离线读取、电脑恢复后的追加、归档、删除和权限撤销，不调用模型服务。
 
 中继测试包括跨账号帧拒绝、设备撤销后的重连拒绝，以及服务停止时关闭已登录和未完成握手的连接。系统推送配置和真实平台验收要求见 [PUSH.md](PUSH.md)。
 

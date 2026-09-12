@@ -215,6 +215,10 @@ func (h *Host) StartPairing(cfg PairingConfig) (string, error) {
 func (h *Host) Run(ctx context.Context) error {
 	h.baseCtx = ctx
 	defer h.shutdownSessions()
+	syncCtx, stopSync := context.WithCancel(ctx)
+	syncDone := make(chan struct{})
+	go func() { defer close(syncDone); h.publishConversations(syncCtx) }()
+	defer func() { stopSync(); <-syncDone }()
 
 	attempt := 0
 	for {

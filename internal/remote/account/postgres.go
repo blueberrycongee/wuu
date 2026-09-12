@@ -61,7 +61,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && version != 1 && version != 2 {
+	if err == nil && (version < 1 || version > 3) {
 		return fmt.Errorf("unsupported account database version %d", version)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -82,6 +82,16 @@ INSERT INTO schema_version VALUES(1,1);
 		if _, err = tx.ExecContext(ctx, `
 CREATE TABLE account_identities(provider TEXT NOT NULL,subject TEXT NOT NULL,account TEXT NOT NULL UNIQUE REFERENCES accounts(username) ON DELETE CASCADE,display_name TEXT NOT NULL DEFAULT '',PRIMARY KEY(provider,subject));
 UPDATE schema_version SET version=2 WHERE id=1;
+`); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err = tx.ExecContext(ctx, `
+CREATE TABLE conversation_sync(host TEXT PRIMARY KEY REFERENCES devices(pub) ON DELETE CASCADE,enabled BOOLEAN NOT NULL DEFAULT false,generation TEXT NOT NULL,revision BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE conversation_copies(host TEXT NOT NULL REFERENCES conversation_sync(host) ON DELETE CASCADE,id TEXT NOT NULL,revision BIGINT NOT NULL,title TEXT NOT NULL,updated_at TEXT NOT NULL,digest TEXT NOT NULL,body JSONB,PRIMARY KEY(host,id));
+CREATE INDEX conversation_changes ON conversation_copies(host,revision);
+UPDATE schema_version SET version=3 WHERE id=1;
 `); err != nil {
 			return err
 		}

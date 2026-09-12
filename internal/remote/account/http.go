@@ -165,6 +165,10 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"devices": devices, "username": d.Account, "auth_method": h.Store.AuthMethod(d.Account), "display_name": h.Store.DisplayName(d.Account)})
 		return
 	}
+	if path == "/history" || strings.HasPrefix(path, "/history/") {
+		h.conversationsHTTP(w, r, d, path)
+		return
+	}
 	if path == "/push" {
 		if r.Method == "GET" {
 			registration, ok := h.Store.Push(d.Account, d.Pub)

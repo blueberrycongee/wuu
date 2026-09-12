@@ -1,5 +1,5 @@
-// Package account owns self-hosted identities and device membership. The account
-// operator is a trusted identity authority; application content stays on hosts.
+// Package account owns self-hosted identities, device membership and opt-in
+// conversation text copies. The operator is a trusted identity and storage authority.
 package account
 
 import (
