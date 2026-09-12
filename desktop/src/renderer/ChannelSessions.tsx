@@ -170,6 +170,9 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized, o
     return grouped;
   }, [agents, query, sessions]);
   const activeCount = sessions.filter(isRunning).length;
+  const launcherLabel = activeCount > 0
+    ? `${t("channels.sessions.title")} · ${t("channels.sessions.runningCount", { count: activeCount })}`
+    : t("channels.sessions.title");
   const createAgent = agents.find((agent) => agent.id === createAgentId);
   const requiresByokSetup = Boolean(createAgent?.engine_override && createAgent.engine_override !== "wuu");
   const candidateRooms = rooms.filter((room) => room.members.some((member) => member.member_type === "agent" && member.member_id === createAgentId));
@@ -247,10 +250,17 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized, o
 
   if (!available) return null;
   return <>
-    <button className="channel-sessions-launcher" type="button" onClick={() => { setOpen(true); void refresh(); }} aria-haspopup="dialog" aria-label={t("channels.sessions.title")}>
-      <Layers3 className="icon" />
-      <span>{t("channels.sessions.title")}</span>
-      {activeCount > 0 ? <span className="channel-sessions-count" role="status">{t("channels.sessions.runningCount", { count: activeCount })}</span> : <span>{sessions.length}</span>}
+    <button
+      className="icon-button channel-sessions-launcher"
+      type="button"
+      onClick={() => { setOpen(true); void refresh(); }}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-label={launcherLabel}
+      title={launcherLabel}
+    >
+      <Layers3 className="icon" aria-hidden="true" />
+      {activeCount > 0 ? <span className="channel-sessions-count" aria-hidden="true">{activeCount > 99 ? "99+" : activeCount}</span> : null}
     </button>
     <SidebarNameDialog
       open={open} title="" onTitleChange={() => undefined} onSubmit={submit} onClose={() => setOpen(false)}

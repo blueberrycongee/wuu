@@ -100,6 +100,11 @@
   background: var(--bg-primary);
 }
 
+.conversation-pane.collaboration-room-pane,
+.app-shell.compact-navigation .conversation-pane.collaboration-room-pane {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .channel-title-block {
   display: grid;
   overflow: hidden;
@@ -1346,6 +1351,13 @@
      subtract the session gutters twice when the room pane gets narrow. */
   width: 100%;
   padding: 0 0 12px;
+}
+
+.channel-composer .composer-stack { --composer-collapsed-min-height: 80px; }
+.channel-composer .composer-stack:not(.is-expanded) textarea {
+  height: 40px;
+  min-height: 40px;
+  padding-top: 8px;
 }
 
 .channel-composer .dock-composer-wrap {
@@ -3168,20 +3180,25 @@
 /* Room canvas header (rooms section chrome; agents/tasks canvases keep their
    own headers). The rooms canvas is single-column like tasks — .channel-view
    defaults to one column and only the agents canvas sets two columns inline. */
-.channel-room-header {
+.titlebar.channel-room-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-height: 48px;
-  padding: 0 12px 0 20px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 max(16px, var(--window-controls-inset-right)) 0 16px;
+  border-bottom: 0;
   flex-shrink: 0;
+}
+
+.sidebar-collapsed .titlebar.channel-room-header {
+  padding-left: max(12px, calc(var(--window-controls-inset-left) + 10px));
 }
 
 .channel-room-header-title {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
   min-width: 0;
 }
 
@@ -3198,19 +3215,20 @@
 .channel-room-members-button {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 6px;
   min-height: 32px;
-  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
   padding: 0 4px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font: inherit;
-  font-size: 12px;
 }
+.channel-room-members-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-room-members-button:hover { background: var(--ink-overlay-4); color: var(--text-primary); }
-.channel-room-members-button svg { width: 12px; height: 12px; }
+.channel-room-members-button svg { width: 12px; height: 12px; flex-shrink: 0; color: var(--text-secondary); }
 
 .channel-room-main-empty {
   display: flex;
@@ -3231,20 +3249,30 @@
 }
 
 .channel-sessions-launcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 36px;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
   flex-shrink: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  padding: 0;
+  border: 0;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
 }
-.channel-sessions-launcher > span:last-child { color: var(--text-tertiary); }
-.channel-sessions-launcher .channel-sessions-count { color: var(--wuu-accent); }
+.channel-sessions-launcher .channel-sessions-count {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  min-width: 12px;
+  padding: 0 2px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  text-align: center;
+}
 .sidebar-name-dialog.channel-sessions-dialog { width: min(640px, 100vw); max-width: 100vw; }
 .channel-sessions-dialog .sidebar-name-dialog-header { padding-right: 40px; flex-shrink: 0; }
 .channel-sessions-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 4px 20px; }
@@ -3327,8 +3355,8 @@
 .channel-sessions-body .channel-error { overflow-wrap: anywhere; }
 .channel-sessions-body .channel-error button { display: block; margin-top: 6px; }
 @media (max-width: 760px) {
-  .channel-sessions-launcher { min-height: 44px; padding: 8px; }
-  .channel-sessions-launcher > span:first-of-type { display: none; }
+  .channel-sessions-launcher { width: 44px; height: 44px; min-height: 44px; padding: 0; }
+  .channel-sessions-launcher .channel-sessions-count { top: 3px; right: 2px; }
   .sidebar-name-dialog.channel-sessions-dialog { width: 100%; }
   .channel-sessions-body button, .channel-sessions-body select { min-height: 44px; }
   .channel-session-create input, .channel-session-create textarea, .channel-session-create select, .channel-session-followup textarea, .channel-sessions-search input { font-size: 16px; }
@@ -3407,7 +3435,7 @@
 .channel-attachment-button svg { width: 16px; height: 16px; }
 @media (max-width: 760px) {
   .channel-view { --channel-horizontal-gutter: 12px; --channel-avatar-size: 28px; --channel-message-column-gap: 8px; }
-  .channel-room-header { gap: 8px; padding: 0 8px 0 12px; }
+  .titlebar.channel-room-header { gap: 8px; min-height: calc(48px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); padding-right: max(8px, var(--window-controls-inset-right)); }
   .channel-room-header-title { gap: 4px; flex: 1; }
   .channel-room-header-title h2 { font-size: 14px; }
   .channel-room-members-button { min-height: 44px; }

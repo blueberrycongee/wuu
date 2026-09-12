@@ -5034,6 +5034,30 @@ export function App(): JSX.Element {
     );
   }
 
+  const collaborationNavigation = sidebarToggleVisible ? (
+    <button
+      className="icon-button side-panel-toggle-button sidebar-toggle-button"
+      data-wuu-component="sidebar-toggle"
+      type="button"
+      aria-label={t(
+        sidebarDrawerMode && !sidebarDrawerVisible
+          ? "app.expandLeftSidebar"
+          : "app.collapseLeftSidebar",
+      )}
+      aria-pressed={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
+      onClick={toggleSessionSwitcher}
+      onPointerEnter={scheduleSidebarDrawerOpen}
+      onPointerLeave={(event) =>
+        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+      }
+    >
+      <SidePanelToggleIcon
+        side="left"
+        open={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
+      />
+    </button>
+  ) : null;
+
   return (
     <WuuMascotRuntimeProvider
       provider={mascotRuntimePreview?.provider ?? sessionRuntime?.provider}
@@ -5296,7 +5320,7 @@ export function App(): JSX.Element {
         inert={rightPanelOpen && rightPanelGlobalized}
         data-wuu-component="conversation-pane"
         data-composer-navigation={composerNavigation || undefined}
-        className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
+        className={`conversation-pane${ENABLE_GROUP_CHAT && appMode === "collaboration" && collaborationSection === "rooms" ? " collaboration-room-pane" : ""}${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
@@ -5309,31 +5333,9 @@ export function App(): JSX.Element {
       >
         {ENABLE_GROUP_CHAT && appMode === "collaboration" ? (
           <>
-            <header className="titlebar" data-wuu-component="conversation-titlebar">
+            {collaborationSection !== "rooms" ? <header className="titlebar" data-wuu-component="conversation-titlebar">
               <div className="title-block channel-title-block">
-                {sidebarToggleVisible ? (
-                  <button
-                    className="icon-button side-panel-toggle-button sidebar-toggle-button"
-                    data-wuu-component="sidebar-toggle"
-                    type="button"
-                    aria-label={t(
-                      sidebarDrawerMode && !sidebarDrawerVisible
-                        ? "app.expandLeftSidebar"
-                        : "app.collapseLeftSidebar",
-                    )}
-                    aria-pressed={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
-                    onClick={toggleSessionSwitcher}
-                    onPointerEnter={scheduleSidebarDrawerOpen}
-                    onPointerLeave={(event) =>
-                      scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-                    }
-                  >
-                    <SidePanelToggleIcon
-                      side="left"
-                      open={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
-                    />
-                  </button>
-                ) : null}
+                {collaborationNavigation}
                 <span className="collaboration-titlebar-label">
                   {t(collaborationSection === "agents" ? "channels.manageAgents" : "sidebar.collaboration")}
                 </span>
@@ -5342,8 +5344,9 @@ export function App(): JSX.Element {
                 className="title-actions channel-title-actions-placeholder"
                 aria-hidden="true"
               />
-            </header>
+            </header> : null}
             <ChannelView
+              navigation={collaborationNavigation}
               initialized={sessionRuntime ?? state.initialized}
               engines={engineInventory?.engines}
               section={collaborationSection}

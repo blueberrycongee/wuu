@@ -513,7 +513,8 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-empty-action")?.textContent).toBe("新建频道");
     expect(container.querySelector(".channel-conversation-footer")).toBeNull();
     expect(container.querySelector(".channel-composer")).toBeNull();
-    expect(container.querySelector(".channel-room-header")).toBeNull();
+    expect(container.querySelector(".channel-room-members-button")).toBeNull();
+    expect(container.querySelector(".channel-sessions-launcher")).toBeNull();
   });
 
   it("marks the selected room as read", async () => {

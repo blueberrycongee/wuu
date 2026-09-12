@@ -1,6 +1,6 @@
 import { hostSupports } from "./HostCapabilities";
 import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChannelAgentInsight, ChannelMessage, ChannelMessageListResult, ChannelResponse, ChannelRoom, EngineInfo, InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
 import { AgentAvatarCreator } from "./AgentAvatarCreator";
@@ -603,10 +603,11 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, newAgentRequest, onNewAgentRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, newAgentRequest, onNewAgentRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
+  navigation?: ReactNode;
   archivedRoomIDs?: string[];
   onSectionChange?: (section: ChannelSection) => void;
   // Optional controlled room selection. App.tsx drives this so the unified
@@ -1687,15 +1688,13 @@ export function ChannelView({ initialized, section = "rooms", archivedRoomIDs = 
         className="channel-conversation"
       >
         <div className="channel-room-main">
-          {selectedRoom ? (
-            <header className="channel-room-header">
+            <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
+              {navigation}
               <div className="channel-room-header-title">
-                <h2>{selectedRoomTitle}</h2>
-                {selectedRoom.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}>{t("channels.memberCount", { count: selectedRoom.members.length })}<ChevronDown aria-hidden="true" /></button> : null}
+                <h2>{selectedRoom?.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} title={t("channels.memberCount", { count: selectedRoom.members.length })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}><span>{selectedRoomTitle}</span><ChevronDown aria-hidden="true" /></button> : selectedRoomTitle || t("channels.rooms")}</h2>
               </div>
-              <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} />
+              {selectedRoom ? <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} /> : null}
             </header>
-          ) : null}
           {!loading && rooms.length === 0 ? (
             <div className="channel-room-main-empty">
               <button className="channel-empty-action" type="button" onClick={openNewRoom}>

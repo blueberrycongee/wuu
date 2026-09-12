@@ -62,6 +62,34 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("collaboration sessions", () => {
+  it("opens execution details from an accessible icon without displaying inactive session totals", async () => {
+    sessions = [binding("first", "completed"), binding("second", "idle"), binding("queued", "queued"), binding("waiting", "waiting")];
+    await render();
+    const launcher = container.querySelector<HTMLButtonElement>("[aria-haspopup=dialog]")!;
+    expect(launcher.textContent).toBe("");
+    expect(launcher.getAttribute("aria-label")).toBeTruthy();
+    expect(launcher.title).toBe(launcher.getAttribute("aria-label"));
+    expect(launcher.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => launcher.click());
+    await settle();
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector("[role=dialog]")).not.toBeNull();
+    expect(container.querySelectorAll(".channel-session-row")).toHaveLength(4);
+  });
+
+  it("counts only running sessions at the entry and updates when they finish", async () => {
+    vi.useFakeTimers();
+    sessions = [binding("first", "running"), binding("second", "starting"), binding("queued", "queued"), binding("done", "completed")];
+    await render();
+    const launcher = container.querySelector<HTMLButtonElement>("[aria-haspopup=dialog]")!;
+    expect(launcher.textContent).toBe("2");
+    expect(launcher.title).toContain("2");
+    expect(launcher.getAttribute("aria-label")).toBe(launcher.title);
+    sessions = sessions.map((session) => ({ ...session, state: "completed" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(launcher.textContent).toBe("");
+  });
+
   it("keeps task-managed sessions readable and stoppable and routes further work to their channel", async () => {
     sessions = [{ ...binding("first"), work_id: "work-1" }];
     const onOpenRoom = vi.fn();
