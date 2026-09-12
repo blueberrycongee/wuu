@@ -286,7 +286,7 @@ export function SidebarSection({
           ) : null}
         </button>
         {newItemButton}
-        {actions}
+        {actions ? <div className="sidebar-section-actions">{actions}</div> : null}
       </div>
       <SidebarCollapseBody expanded={expanded}>
         {children ?? (emptyNote ? (

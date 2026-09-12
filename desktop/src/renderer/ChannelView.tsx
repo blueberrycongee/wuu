@@ -1,6 +1,6 @@
 import { hostSupports } from "./HostCapabilities";
 import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChannelAgentInsight, ChannelMessage, ChannelMessageListResult, ChannelResponse, ChannelRoom, EngineInfo, InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
 import { AgentAvatarCreator } from "./AgentAvatarCreator";
@@ -12,6 +12,7 @@ import { ChannelSessions } from "./ChannelSessions";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
 import { ChannelMemberPicker } from "./ChannelMemberPicker";
+import { ChannelRecipientPicker } from "./ChannelRecipientPicker";
 import { buildComposerAttachments } from "./ComposerDraftState";
 import { ComposerAttachmentStrip } from "./ComposerInputSections";
 import {
@@ -35,7 +36,6 @@ import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
 import { SelectMenu, type SelectMenuGroup } from "./SelectMenu";
 import { SidebarNameDialog } from "./SidebarNameDialog";
 import { RichContent } from "./RichContent";
-import { StreamingMarkdown } from "./StreamingMarkdown";
 import { effortLabel, providerModelEffortOptions } from "./RuntimeHelpers";
 import { showErrorToast, toastErrorMessage } from "./Toast";
 
@@ -53,6 +53,7 @@ type AgentDetailDraft = {
 };
 export type ChannelSection = "rooms" | "agents" | "tasks";
 type AgentActivityStatus = "idle" | "thinking" | "sending";
+type ChannelResponseActivity = Omit<ChannelResponse, "body">;
 
 const CHANNEL_SPLIT_WIDTH_KEY = "wuu.channels.splitPaneWidth";
 const LEGACY_CHANNEL_LIST_WIDTH_KEY = "wuu.channels.listWidth";
@@ -491,26 +492,24 @@ function ChannelMessageBubble({
   );
 }
 
-function ChannelResponseBubble({ response, agent, onMention, onResume, onFrame }: {
-  response: ChannelResponse;
+function ChannelAgentActivity({ agent, agentID, state, error, onResume }: {
   agent?: NamedAgent;
-  onMention: () => void;
-  onResume: () => Promise<void>;
-  onFrame: () => void;
+  agentID: string;
+  state: ChannelResponse["state"];
+  error?: string;
+  onResume?: () => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState("");
-  const failed = response.state === "failed" || response.state === "interrupted";
-  const status = response.state === "thinking" ? t("channels.agentStatus.thinking")
-    : response.state === "responding" ? t("channels.replyStreaming")
-      : t(`channels.sessions.state.${response.state}`);
-  const author = agent?.name ?? response.agent_id;
+  const failed = state === "failed" || state === "interrupted";
+  const status = state === "thinking" || state === "responding"
+    ? t("channels.agentWorking") : t(`channels.sessions.state.${state}`);
   const resume = async (): Promise<void> => {
     setResuming(true);
     setResumeError("");
     try {
-      await onResume();
+      await onResume?.();
     } catch (reason) {
       setResumeError(toastErrorMessage(reason));
     } finally {
@@ -518,23 +517,18 @@ function ChannelResponseBubble({ response, agent, onMention, onResume, onFrame }
     }
   };
   return (
-    <MessageBubbleRow
-      outgoing={false}
-      className="channel-message agent channel-response"
-      contentClassName="channel-message-content"
-      avatar={<AgentAvatarMark seed={response.agent_id} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={response.state} />}
-      meta={<div className="channel-message-meta"><ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={onMention} /></div>}
-    >
-      <MessageBubble outgoing={false} className={`channel-message-bubble channel-response-bubble${failed ? " failed" : ""}`}>
-        {response.body ? <StreamingMarkdown streamKey={`channel-response:${response.id}`} initialText={response.body} isLive={!failed && response.state === "responding"} phase="final_answer" onFrame={onFrame} /> : null}
-        <div className="channel-response-progress" role={failed ? "alert" : "status"}>
-          {!failed ? <span className="channel-typing-dots" aria-hidden="true"><i /><i /><i /></span> : null}
-          <span>{failed && response.error ? response.error : status}</span>
-          {failed ? <button type="button" disabled={resuming} onClick={() => void resume()}>{t(resuming ? "channels.sessions.starting" : response.state === "interrupted" ? "channels.sessions.resume" : "channels.sessions.retry")}</button> : null}
-        </div>
-        {resumeError ? <p className="channel-response-error" role="alert">{resumeError}</p> : null}
-      </MessageBubble>
-    </MessageBubbleRow>
+    <div className={`channel-response-status${failed ? " failed" : ""}`} role={failed ? "alert" : "status"}>
+      <span className="channel-response-status-avatar" aria-hidden="true">
+        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} />
+      </span>
+      <span className="channel-response-status-copy">
+        <strong>{agent?.name ?? agentID}</strong>
+        <span>{status}</span>
+      </span>
+      {failed && error ? <span className="channel-response-error">{error}</span> : null}
+      {failed && onResume ? <button type="button" disabled={resuming} onClick={() => void resume()}>{t(resuming ? "channels.sessions.starting" : state === "interrupted" ? "channels.sessions.resume" : "channels.sessions.retry")}</button> : null}
+      {resumeError ? <span className="channel-response-error">{resumeError}</span> : null}
+    </div>
   );
 }
 
@@ -648,7 +642,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     onSectionChange?.("rooms");
   }, [onSectionChange, onSelectRoom, selectedRoomID, setSelectedRoomID]);
   const [messagesByRoomID, setMessagesByRoomID] = useState<Record<string, ChannelMessage[]>>({});
-  const [responsesByRoomID, setResponsesByRoomID] = useState<Record<string, ChannelResponse[]>>({});
+  const [responsesByRoomID, setResponsesByRoomID] = useState<Record<string, ChannelResponseActivity[]>>({});
   const responses = useMemo(() => (responsesByRoomID[selectedRoomID] ?? []).filter(
     (response) => !messagesByRoomID[selectedRoomID]?.some((message) => message.id === response.id),
   ), [messagesByRoomID, responsesByRoomID, selectedRoomID]);
@@ -719,6 +713,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const [resolvingProposalID, setResolvingProposalID] = useState("");
   const [roomAvatarImage, setRoomAvatarImage] = useState("");
   const [editingRoomID, setEditingRoomID] = useState("");
+  const [newRoomBody, setNewRoomBody] = useState("");
+  const [newRoomImages, setNewRoomImages] = useState<ComposerImage[]>([]);
+  const [newRoomFiles, setNewRoomFiles] = useState<ComposerFile[]>([]);
+  const [newRoomCreatedID, setNewRoomCreatedID] = useState("");
+  const [newRoomError, setNewRoomError] = useState("");
+  const [creatingRoom, setCreatingRoom] = useState(false);
   const [roomMemberMode, setRoomMemberMode] = useState<RoomMemberMode>(null);
   const [roomMemberSelectionIDs, setRoomMemberSelectionIDs] = useState<string[]>([]);
   const [updatingRoomMembers, setUpdatingRoomMembers] = useState(false);
@@ -826,6 +826,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     const agentID = selectedRoom.members.find((member) => member.member_type === "agent")?.member_id;
     return agents.find((agent) => agent.id === agentID)?.name ?? selectedRoom.name;
   }, [agents, selectedRoom]);
+  const newRoomSelectedAgents = useMemo(() => roomAgentIDs
+    .map((agentID) => agents.find((agent) => agent.id === agentID))
+    .filter((agent): agent is NamedAgent => Boolean(agent)), [agents, roomAgentIDs]);
+  const newRoomName = useMemo(() => new Intl.ListFormat(locale, { style: "short", type: "conjunction" })
+    .format(newRoomSelectedAgents.map((agent) => agent.name)), [locale, newRoomSelectedAgents]);
+  const composingNewRoom = setupPanel === "room" && !editingRoomID;
   const roomIncludesCurrentUser = selectedRoom?.members.some(
     (member) => member.member_type === "human" && member.member_id === "local-user",
   ) ?? false;
@@ -881,10 +887,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         : (taskOwnerAgents[0]?.id ?? "")
     ));
   }, [setupPanel, taskOwnerAgents]);
-  const channelTimeline = useMemo(
-    () => buildChannelTimeline(messages),
-    [messages],
-  );
+  const channelTimeline = useMemo(() => buildChannelTimeline(messages), [messages]);
   const activityFor = useCallback((agent?: NamedAgent): AgentActivityStatus => {
     if (!agent) return "idle";
     if (sendingAgentIDs.has(agent.id)) return "sending";
@@ -913,11 +916,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         return !activityRoomIDs?.length || activityRoomIDs.includes(selectedRoomID);
       });
   }, [activityFor, agents, selectedRoom, selectedRoomID]);
-  const respondingAgentNames = useMemo(
-    () => new Intl.ListFormat(locale, { style: "short", type: "conjunction" })
-      .format(respondingAgents.map(({ agent }) => agent.name)),
-    [locale, respondingAgents],
-  );
+  const responseActivities = useMemo(() => {
+    const memberOrder = new Map(selectedRoom?.members.map((member, index) => [member.member_id, index]));
+    return [...responses].sort((left, right) => (memberOrder.get(left.agent_id) ?? Infinity) - (memberOrder.get(right.agent_id) ?? Infinity)
+      || left.agent_id.localeCompare(right.agent_id) || left.id.localeCompare(right.id));
+  }, [responses, selectedRoom]);
   const modelGroups = useMemo<SelectMenuGroup[]>(() => {
     const inherited = initialized ? `${initialized.provider} · ${initialized.model}` : undefined;
     const groups: SelectMenuGroup[] = [{ options: [{ value: "", label: t("channels.inheritModel"), hint: inherited }] }];
@@ -1005,7 +1008,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       const result = await readChannelMessages(roomID);
       if (messageRefreshGenerationByRoomRef.current.get(roomID) !== generation) return;
       if (result.responses !== undefined) {
-        const nextResponses = result.responses;
+        // Only committed messages belong in the transcript. Token updates must
+        // not rerender it, scroll it, or expose incomplete answers as messages.
+        const nextResponses = result.responses.map(({ body: _body, ...activity }) => activity);
         setResponsesByRoomID((current) => JSON.stringify(current[roomID]) === JSON.stringify(nextResponses) ? current : { ...current, [roomID]: nextResponses });
       }
       const nextMessages = result.messages ?? [];
@@ -1217,7 +1222,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
 
   useEffect(() => {
     messageScroll.scrollToBottom();
-  }, [messageScroll, messages.length, messages.at(-1)?.id, pendingMessage, responses]);
+  }, [messageScroll, messages.length, messages.at(-1)?.id, pendingMessage]);
 
   async function submitAgent(): Promise<void> {
     if (!window.wuu || !editingAgentID || !agentName.trim()) return;
@@ -1508,6 +1513,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setRoomName("");
     setRoomAgentIDs([]);
     setRoomAvatarImage("");
+    setNewRoomBody("");
+    setNewRoomImages([]);
+    setNewRoomFiles([]);
+    setNewRoomCreatedID("");
+    setNewRoomError("");
     closeRoomMemberMode();
     setSetupPanel("room");
   }
@@ -1526,12 +1536,69 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
 
   function closeRoomPanel(): void {
     if (editingRoomID) void persistRoomName();
+    if (!editingRoomID && newRoomCreatedID) setSelectedRoomID(newRoomCreatedID);
     setSetupPanel(null);
     setEditingRoomID("");
     setRoomName("");
     setRoomAgentIDs([]);
     setRoomAvatarImage("");
+    setNewRoomBody("");
+    setNewRoomImages([]);
+    setNewRoomFiles([]);
+    setNewRoomCreatedID("");
+    setNewRoomError("");
     closeRoomMemberMode();
+  }
+
+  async function attachNewRoomFiles(files: File[]): Promise<void> {
+    try {
+      await buildComposerAttachments(
+        files,
+        (placeholder) => setNewRoomImages((current) => [...current, placeholder]),
+        (encoded) => setNewRoomImages((current) => current.map((image) => image.id === encoded.id ? encoded : image)),
+        (file) => setNewRoomFiles((current) => [...current, file]),
+      );
+    } catch (reason) {
+      showErrorToast(reason);
+    }
+  }
+
+  async function createRoomWithFirstMessage(promptOverride?: string): Promise<void> {
+    const messageBody = (promptOverride ?? newRoomBody).trim();
+    if (!window.wuu || roomAgentIDs.length === 0 || (!messageBody && newRoomImages.length === 0 && newRoomFiles.length === 0) || creatingRoom) return;
+    setCreatingRoom(true);
+    setNewRoomError("");
+    let roomID = newRoomCreatedID;
+    try {
+      const resolvedImages = await awaitComposerImages(newRoomImages);
+      const images = inputImagesFromComposer(resolvedImages);
+      const files = inputFilesFromComposer(newRoomFiles);
+      if (!roomID) {
+        const result = await window.wuu.createChannelRoom({
+          name: newRoomName || t("channels.newGroup"),
+          agent_ids: roomAgentIDs,
+        });
+        roomID = result.room.id;
+        setNewRoomCreatedID(roomID);
+        setRooms((current) => [...current.filter((room) => room.id !== result.room.id), result.room]);
+      }
+      const result = await window.wuu.sendChannelMessage({ room_id: roomID, body: messageBody, images, files });
+      messagesByRoomIDRef.current.set(roomID, [result.message]);
+      setMessagesByRoomID((current) => ({ ...current, [roomID]: [result.message] }));
+      setLoadedRoomIDs((current) => new Set(current).add(roomID));
+      await refreshRoomsAndAgents();
+      setSelectedRoomID(roomID);
+      setSetupPanel(null);
+      setRoomAgentIDs([]);
+      setNewRoomBody("");
+      setNewRoomImages([]);
+      setNewRoomFiles([]);
+      setNewRoomCreatedID("");
+    } catch (reason) {
+      setNewRoomError(toastErrorMessage(reason));
+    } finally {
+      setCreatingRoom(false);
+    }
   }
 
   async function persistRoomName(): Promise<void> {
@@ -1658,19 +1725,60 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       {section === "rooms" ? <div
         className="channel-conversation"
       >
-        <div className="channel-room-main">
+        <div className={`channel-room-main${composingNewRoom ? " composing-new-room" : ""}`}>
             <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
               {navigation}
-              <div className="channel-room-header-title">
-                <h2>{selectedRoom?.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} title={t("channels.memberCount", { count: selectedRoom.members.length })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}><span>{selectedRoomTitle}</span><ChevronDown aria-hidden="true" /></button> : selectedRoomTitle || t("channels.rooms")}</h2>
-              </div>
-              {selectedRoom ? <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} /> : null}
+              {composingNewRoom ? <>
+                <ChannelRecipientPicker
+                  agents={agents}
+                  selectedAgentIDs={roomAgentIDs}
+                  onToggle={toggleRoomAgent}
+                  maxSelected={MAX_ROOM_AGENTS}
+                  onCancel={closeRoomPanel}
+                  disabled={creatingRoom}
+                />
+                <button className="icon-button channel-new-room-close" type="button" aria-label={t("channels.cancelNewRoom")} disabled={creatingRoom} onClick={closeRoomPanel}><X aria-hidden="true" /></button>
+              </> : <>
+                <div className="channel-room-header-title">
+                  {selectedRoom ? <span className="channel-room-header-avatar">
+                    {selectedRoom.kind === "dm" && selectedRoomAgents[0] ? <AgentAvatar
+                      id={selectedRoomAgents[0].id} name={selectedRoomAgents[0].name}
+                      avatarKey={selectedRoomAgents[0].avatar_key} avatarImage={selectedRoomAgents[0].avatar_image}
+                      status={activityFor(selectedRoomAgents[0])} statusText={activityText(activityFor(selectedRoomAgents[0]))}
+                      model={selectedRoomAgents[0].model_override || initialized?.model} modelLabel={t("channels.model")} />
+                      : <ChannelGroupAvatar room={selectedRoom} agents={agents} />}
+                  </span> : null}
+                  <h2>{selectedRoom?.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} title={t("channels.memberCount", { count: selectedRoom.members.length })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}><span>{selectedRoomTitle}</span><ChevronDown aria-hidden="true" /></button> : selectedRoomTitle || t("channels.rooms")}</h2>
+                </div>
+                {selectedRoom ? <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} /> : null}
+              </>}
             </header>
+          {composingNewRoom ? <div className="channel-new-room-surface">
+            <div className="channel-new-room-canvas" />
+            <div className="channel-conversation-footer">
+              {newRoomError ? <div className="channel-send-error" role="alert">{newRoomError}</div> : null}
+              <ChannelComposer
+                draft={newRoomBody}
+                placeholder={roomAgentIDs.length > 0 ? t("channels.firstGroupMessage") : t("channels.chooseRecipientsFirst")}
+                compact
+                disabled={roomAgentIDs.length === 0}
+                sending={creatingRoom}
+                files={newRoomFiles}
+                images={newRoomImages}
+                mentionAgents={newRoomSelectedAgents}
+                onChangeDraft={setNewRoomBody}
+                onPasteAttachmentFiles={(files) => void attachNewRoomFiles(files)}
+                onRemoveFile={(id) => setNewRoomFiles((current) => current.filter((file) => file.id !== id))}
+                onRemoveImage={(id) => setNewRoomImages((current) => current.filter((image) => image.id !== id))}
+                onSend={(promptOverride) => void createRoomWithFirstMessage(promptOverride)}
+              />
+            </div>
+          </div> : null}
           {!loading && rooms.length === 0 ? (
             <div className="channel-room-main-empty channel-start-empty">
               {agents.length === 0 ? <span className="channel-start-avatar" aria-hidden="true"><AgentAvatarMark seed="new-agent" avatarKey="abstract-3" /></span> : null}
               <button className="channel-empty-action" type="button" onClick={agents.length === 0 ? openAgentOnboarding : openNewRoom}>
-                {t(agents.length === 0 ? "channels.newAgent" : "channels.newRoom")}
+                {t(agents.length === 0 ? "channels.newAgent" : "channels.newGroup")}
               </button>
             </div>
           ) : null}
@@ -1688,7 +1796,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           />
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
         <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
-          {channelTimeline.map((item) => {
+          {channelTimeline.map((item, index) => {
             if (item.kind === "orchestration" && selectedRoom) {
               return (
                 <ChannelOrchestrationCluster
@@ -1766,16 +1874,29 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             const agent = own ? undefined : messageAgents.find((candidate) => candidate.id === message.author_id);
             const status = activityFor(agent);
             const reply = message.reply_to ? messages.find((candidate) => candidate.id === message.reply_to) : undefined;
+            const previousItem = channelTimeline[index - 1];
+            const previous = previousItem?.kind === "message" ? previousItem.message : previousItem?.tasks.at(-1);
+            const date = new Date(message.created_at);
+            const gap = previous ? date.getTime() - Date.parse(previous.created_at) : Infinity;
+            const showTimestamp = !previous || gap < 0 || gap >= 5 * 60_000 || date.toDateString() !== new Date(previous.created_at).toDateString();
+            const continued = !showTimestamp && previous?.kind === "text" && !previous.agent_creation_proposal
+              && previous.author_type === message.author_type && previous.author_id === message.author_id;
+            const direct = selectedRoom?.kind === "dm";
             return (
+              <Fragment key={message.id}>
+              {showTimestamp ? <time className="channel-timestamp" dateTime={message.created_at}>
+                {formatDate(message.created_at, date.toDateString() === new Date().toDateString()
+                  ? { hour: "2-digit", minute: "2-digit" }
+                  : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </time> : null}
               <MessageBubbleRow
-                key={message.id}
                 outgoing={own}
-                className={`channel-message ${own ? "own" : "agent"}`}
+                className={`channel-message ${own ? "own" : "agent"}${direct ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
                 contentClassName="channel-message-content"
-                avatar={!own ? (
+                avatar={!own && !direct && !continued ? (
                   <AgentAvatar id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
                 ) : undefined}
-                meta={(
+                meta={!own && !direct && !continued ? (
                   <div className="channel-message-meta">
                     {!own ? (
                       <ChannelAuthorName
@@ -1784,11 +1905,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                         onMention={() => roomComposerRef.current?.insertMention(author)}
                       />
                     ) : null}
-                    <time dateTime={message.created_at}>
-                      {formatDate(message.created_at, { hour: "2-digit", minute: "2-digit" })}
-                    </time>
                   </div>
-                )}
+                ) : undefined}
               >
                 <ChannelMessageBubble
                   message={message}
@@ -1799,6 +1917,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   beforeBody={reply ? <blockquote className="channel-message-reply"><strong>{reply.author_type === "human" ? t("channels.you") : (agentNames.get(reply.author_id) ?? reply.author_id)}</strong><span>{reply.body || reply.task_title}</span></blockquote> : undefined}
                 />
               </MessageBubbleRow>
+              </Fragment>
             );
           })}
           {pendingMessage?.room_id === selectedRoomID ? (
@@ -1807,38 +1926,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               <span className="channel-send-status" role="status">{t("channels.messageSending")}</span>
             </MessageBubbleRow>
           ) : null}
-          {responses.map((response) => (
-            <ChannelResponseBubble key={response.id} response={response} agent={agents.find((agent) => agent.id === response.agent_id)}
-              onMention={() => roomComposerRef.current?.insertMention(agentNames.get(response.agent_id) ?? response.agent_id)}
-              onFrame={messageScroll.scheduleScrollToBottom}
-              onResume={async () => { await window.wuu!.resumeChannelSession({ sessionRef: response.session_ref }); await refreshMessages(response.room_id, true); }}
-            />
-          ))}
-              {responsesByRoomID[selectedRoomID] === undefined && respondingAgents.length > 0 ? (
-                <div
-                  className="channel-response-status"
-                  role="status"
-                  aria-live="polite"
-                  aria-label={respondingAgents.map(({ agent, status }) => `${agent.name}: ${activityText(status)}`).join(", ")}
-                >
-                  <span className="channel-response-status-avatars" aria-hidden="true">
-                    {respondingAgents.slice(0, 3).map(({ agent, status }) => (
-                      <span className="channel-response-status-avatar" key={agent.id}>
-                        <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={status} />
-                        <i className={`channel-response-status-dot ${status}`} />
-                      </span>
-                    ))}
-                  </span>
-                  <span className="channel-response-status-copy">
-                    <strong>{respondingAgentNames}</strong>
-                    <span>
-                      {respondingAgents.length === 1
-                        ? activityText(respondingAgents[0].status)
-                        : t("channels.agentsResponding", { count: respondingAgents.length })}
-                    </span>
-                  </span>
-                </div>
-              ) : null}
           {!loading && loadedRoomIDs.has(selectedRoomID) && selectedRoom && channelTimeline.length === 0 && responses.length === 0 && !pendingMessage ? (
             <div className="channel-onboarding">
               <div className="channel-onboarding-members" aria-hidden="true">{selectedRoomAgents.map((agent) => <AgentAvatarMark key={agent.id} seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} />)}</div>
@@ -1853,12 +1940,23 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         />
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
+            <div className="channel-activity-region" aria-live="polite">
+              {responseActivities.map((response) => <ChannelAgentActivity key={response.id}
+                agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
+                state={response.state} error={response.error}
+                onResume={async () => { await window.wuu!.resumeChannelSession({ sessionRef: response.session_ref }); await refreshMessages(response.room_id, true); }}
+              />)}
+              {responsesByRoomID[selectedRoomID] === undefined ? respondingAgents.map(({ agent }) => (
+                <ChannelAgentActivity key={agent.id} agent={agent} agentID={agent.id} state="thinking" />
+              )) : null}
+            </div>
             {sendError?.roomID === selectedRoomID ? <div className="channel-send-error" role="alert"><span>{t("composer.sendFailed")} · {sendError.message}</span><button type="button" disabled={sending} onClick={() => void sendMessage()}>{t("channels.sessions.retry")}</button></div> : null}
             <ChannelComposer
               ref={roomComposerRef}
               draft={body}
               draftRevision={draftRevision}
-              placeholder={t("channels.messagePlaceholder")}
+              placeholder={t("channels.messageTo", { name: selectedRoomTitle })}
+              compact
               disabled={false}
               sending={sending}
               files={composerFiles}
@@ -2271,7 +2369,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         </div>}
       />
       <SidebarNameDialog
-        open={setupPanel === "room"}
+        open={setupPanel === "room" && Boolean(editingRoomID)}
         title={roomName}
         onTitleChange={setRoomName}
         onSubmit={() => void submitRoom()}

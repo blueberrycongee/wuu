@@ -1,5 +1,5 @@
-import { Paperclip } from "lucide-react";
-import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { Plus } from "lucide-react";
+import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
@@ -55,6 +55,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   files: ComposerFile[];
   images: ComposerImage[];
   hideExpandButton?: boolean;
+  compact?: boolean;
   mentionAgents?: NamedAgent[];
   queryHistorySessionID?: string;
   onChangeDraft: (draft: string) => void;
@@ -71,6 +72,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   files,
   images,
   hideExpandButton = false,
+  compact = false,
   mentionAgents = [],
   queryHistorySessionID,
   onChangeDraft,
@@ -107,6 +109,26 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
     () => composerRef.current?.querySelector<HTMLTextAreaElement>("textarea") ?? null,
     [],
   );
+
+  const resizeInput = useCallback(() => {
+    const input = textarea();
+    if (!input || !compact) return;
+    input.style.height = "0px";
+    input.style.height = `${Math.min(160, Math.max(32, input.scrollHeight))}px`;
+  }, [compact, textarea]);
+  useLayoutEffect(resizeInput, [draft, draftRevision, resizeInput]);
+  useEffect(() => {
+    const element = composerRef.current;
+    if (!element || !compact || typeof ResizeObserver === "undefined") return;
+    let width = 0;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      resizeInput();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [compact, resizeInput]);
 
   const updateMentionRange = useCallback((value: string): void => {
     const input = textarea();
@@ -156,7 +178,8 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   return (
     <div
       ref={composerRef}
-      className="channel-composer"
+      className={`channel-composer${compact ? " channel-composer-inline" : ""}`}
+      onInput={resizeInput}
       onClick={() => updateMentionRange(draft)}
       onKeyUp={(event) => {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End") {
@@ -212,11 +235,11 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
             event.currentTarget.value = "";
             if (selected.length > 0) onPasteAttachmentFiles(selected);
           }} />
-          <button type="button" className="icon-button channel-attachment-button" disabled={disabled} aria-label={t("composer.addAttachment")} title={t("composer.addAttachment")} onClick={() => attachmentInputRef.current?.click()}><Paperclip aria-hidden="true" /></button>
+          <button type="button" className="icon-button channel-attachment-button" disabled={disabled} aria-label={t("composer.addAttachment")} title={t("composer.addAttachment")} onClick={() => attachmentInputRef.current?.click()}><Plus aria-hidden="true" /></button>
         </>}
         hidePlusButton
         hidePermissionControl
-        hideExpandButton={hideExpandButton}
+        hideExpandButton={compact || hideExpandButton}
         slashCommandsEnabled={false}
         placeholder={placeholder}
         maxLength={4000}

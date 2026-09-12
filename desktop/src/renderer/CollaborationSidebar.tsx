@@ -1,106 +1,23 @@
-import { SidebarAccountMenu } from "./SidebarAccountMenu";
-import {
-  MessageSquare,
-  MessagesSquare,
-  Plus,
-  Search,
-  Settings,
-  UserRound,
-  UsersRound,
-} from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
-import {
-  closestCenter,
-  DndContext,
-  DragOverlay,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { MessagesSquare, Pin, Plus, Search, UsersRound } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { AppModeSwitch } from "./AppModeSwitch";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
-import { formatChannelUnreadCount } from "./ChannelView";
-import { SidebarSection } from "./SidebarSection";
-import {
-  reorderSidebarSections,
-  SidebarSectionDragPreview,
-  SortableSidebarSection,
-  type SidebarSectionHeaderInfo,
-} from "./SortableSidebarSection";
-import { SidebarPointerSensor } from "./SidebarPointerSensor";
+import { collaborationConversations } from "./CollaborationConversations";
+import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { useI18n } from "./i18n";
 
-const COLLABORATION_AGENTS_SECTION_ID = "collaboration-agents";
-const COLLABORATION_GROUPS_SECTION_ID = "collaboration-groups";
-const DEFAULT_COLLABORATION_SECTION_ORDER = [
-  COLLABORATION_AGENTS_SECTION_ID,
-  COLLABORATION_GROUPS_SECTION_ID,
-];
-const COLLABORATION_SECTION_ORDER_KEY = "wuu.desktop.collaborationSidebarSectionOrder";
-const COLLABORATION_COLLAPSED_SECTION_IDS_KEY = "wuu.desktop.collaborationCollapsedSectionIDs";
-
-function storedCollaborationSectionOrder(): string[] {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(COLLABORATION_SECTION_ORDER_KEY) ?? "[]");
-    const stored = Array.isArray(parsed) ? parsed.filter(
-      (id): id is string => DEFAULT_COLLABORATION_SECTION_ORDER.includes(id),
-    ) : [];
-    return [
-      ...new Set(stored),
-      ...DEFAULT_COLLABORATION_SECTION_ORDER.filter((id) => !stored.includes(id)),
-    ];
-  } catch {
-    return DEFAULT_COLLABORATION_SECTION_ORDER;
-  }
-}
-
-function storedCollaborationCollapsedSectionIDs(): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(COLLABORATION_COLLAPSED_SECTION_IDS_KEY) ?? "[]");
-    return new Set(Array.isArray(parsed) ? parsed.filter(
-      (id): id is string => DEFAULT_COLLABORATION_SECTION_ORDER.includes(id),
-    ) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function searchable(value: string): string {
-  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
-}
-
 export function CollaborationSidebar({
-  initialized,
-  agents,
-  rooms,
-  selectedAgentID,
-  selectedRoomID,
-  onSelectAgent,
-  onSelectRoom,
-  onManageAgents,
-  onCreateAgent,
-  onCreateRoom,
-  onSwitchToHarness,
-  onOpenSettings,
-  onOpenAccount,
-  onPointerEnter,
-  onPointerLeave,
+  initialized, agents, rooms, pinnedRoomIDs = [], selectedAgentID, selectedRoomID,
+  onSelectAgent, onSelectRoom, onManageAgents, onCreateAgent, onCreateRoom,
+  onSwitchToHarness, onOpenSettings, onOpenAccount, onPointerEnter, onPointerLeave,
 }: {
   initialized: boolean;
   agents: NamedAgent[];
   rooms: ChannelRoom[];
+  pinnedRoomIDs?: readonly string[];
   selectedAgentID?: string;
   selectedRoomID?: string;
   onSelectAgent: (agentID: string) => void;
@@ -114,225 +31,98 @@ export function CollaborationSidebar({
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
 }): JSX.Element {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
-  const [sectionOrder, setSectionOrder] = useState(storedCollaborationSectionOrder);
-  const [collapsedSectionIDs, setCollapsedSectionIDs] = useState(storedCollaborationCollapsedSectionIDs);
-  const [draggingSectionID, setDraggingSectionID] = useState<string>();
-  const sectionHeaderInfoByIDRef = useRef<Map<string, SidebarSectionHeaderInfo>>(new Map());
-  const sensors = useSensors(
-    useSensor(SidebarPointerSensor, { activationConstraint: { distance: 6 } }),
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const newButtonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuID = useId();
+  const conversations = useMemo(
+    () => collaborationConversations(agents, rooms, pinnedRoomIDs, query),
+    [agents, rooms, pinnedRoomIDs, query],
   );
-  const normalizedQuery = searchable(query.trim());
-  const visibleAgents = useMemo(
-    () => normalizedQuery
-      ? agents.filter((agent) => searchable(agent.name).includes(normalizedQuery))
-      : agents,
-    [agents, normalizedQuery],
-  );
-  const visibleRooms = useMemo(
-    () => normalizedQuery
-      ? rooms.filter((room) => room.kind === "channel" && searchable(room.name).includes(normalizedQuery))
-      : rooms.filter((room) => room.kind === "channel"),
-    [normalizedQuery, rooms],
-  );
-  const directMessagesByAgentID = useMemo(() => {
-    const result = new Map<string, ChannelRoom>();
-    for (const room of rooms) {
-      if (room.kind !== "dm") continue;
-      const agentID = room.members.find((member) => member.member_type === "agent")?.member_id;
-      if (agentID) result.set(agentID, room);
-    }
-    return result;
-  }, [rooms]);
+  const agentNames = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   useEffect(() => {
-    window.localStorage.setItem(COLLABORATION_SECTION_ORDER_KEY, JSON.stringify(sectionOrder));
-  }, [sectionOrder]);
-  useEffect(() => {
-    window.localStorage.setItem(
-      COLLABORATION_COLLAPSED_SECTION_IDS_KEY,
-      JSON.stringify([...collapsedSectionIDs]),
-    );
-  }, [collapsedSectionIDs]);
-  const registerSectionHeaderInfo = useCallback(
-    (id: string, info: SidebarSectionHeaderInfo | null): void => {
-      if (info) sectionHeaderInfoByIDRef.current.set(id, info);
-      else sectionHeaderInfoByIDRef.current.delete(id);
-    },
-    [],
-  );
-  function toggleSection(sectionID: string): void {
-    setCollapsedSectionIDs((current) => {
-      const next = new Set(current);
-      if (next.has(sectionID)) next.delete(sectionID);
-      else next.add(sectionID);
-      return next;
-    });
-  }
-  function handleDragStart(event: DragStartEvent): void {
-    setDraggingSectionID(String(event.active.id));
-  }
-  function handleDragEnd(event: DragEndEvent): void {
-    setSectionOrder((current) => reorderSidebarSections(
-      current,
-      String(event.active.id),
-      event.over ? String(event.over.id) : undefined,
-    ));
-    setDraggingSectionID(undefined);
-  }
-  const draggingSectionInfo = draggingSectionID
-    ? sectionHeaderInfoByIDRef.current.get(draggingSectionID)
-    : undefined;
+    if (!newMenuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node) && !newButtonRef.current?.contains(event.target as Node)) setNewMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [newMenuOpen]);
+  const closeMenu = () => { setNewMenuOpen(false); newButtonRef.current?.focus(); };
 
   return (
-    <aside
-      className="sidebar collaboration-sidebar"
-      data-wuu-component="collaboration-sidebar"
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
-    >
+    <aside className="sidebar collaboration-sidebar" data-wuu-component="collaboration-sidebar"
+      onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
       <div className="sidebar-content">
-        <div className="traffic-spacer" />
-        <AppModeSwitch
-          mode="collaboration"
-          collaborationEnabled
-          onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }}
-        />
-
+        <div className="collaboration-sidebar-topbar">
+          <button ref={newButtonRef} className="icon-button" type="button" disabled={!initialized}
+            aria-label={t("channels.newConversation")} title={t("channels.newConversation")}
+            aria-haspopup="menu" aria-expanded={newMenuOpen} aria-controls={newMenuOpen ? menuID : undefined}
+            onClick={() => setNewMenuOpen((open) => !open)}
+            onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setNewMenuOpen(true); } }}>
+            <Plus aria-hidden="true" />
+          </button>
+          {newMenuOpen ? <FloatingMenuPortal anchorRef={newButtonRef} owner="collaboration-new" placement="below" align="right" width={200}>
+            <div ref={menuRef} id={menuID} className="select-menu-panel" role="menu" aria-label={t("channels.newConversation")}
+              onBlur={(event) => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== newButtonRef.current) setNewMenuOpen(false); }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(); }
+                if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+                  event.preventDefault();
+                  const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+                  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                  const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+                  buttons[next]?.focus();
+                }
+              }}>
+              <button className="select-menu-item" role="menuitem" type="button" onClick={() => { closeMenu(); onCreateAgent(); }}><UsersRound size={16} aria-hidden="true" /><span>{t("channels.newAgent")}</span></button>
+              <button className="select-menu-item" role="menuitem" type="button" onClick={() => { closeMenu(); onCreateRoom(); }}><MessagesSquare size={16} aria-hidden="true" /><span>{t("channels.newGroup")}</span></button>
+            </div>
+          </FloatingMenuPortal> : null}
+        </div>
+        <AppModeSwitch mode="collaboration" collaborationEnabled onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }} />
         <div className="collaboration-sidebar-tools">
           <label className="collaboration-sidebar-search">
             <Search aria-hidden="true" />
-            <input
-              type="search"
-              value={query}
-              placeholder={t("channels.searchConversations")}
-              aria-label={t("channels.searchConversations")}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-            />
+            <input type="search" value={query} placeholder={t("channels.searchConversations")}
+              aria-label={t("channels.searchConversations")} onChange={(event) => setQuery(event.currentTarget.value)} />
           </label>
         </div>
-
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          modifiers={[restrictToVerticalAxis]}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-          onDragCancel={() => setDraggingSectionID(undefined)}
-        >
-          <SortableContext items={sectionOrder} strategy={verticalListSortingStrategy}>
-            <div className="collaboration-sidebar-main">
-              {sectionOrder.map((sectionID) => {
-                const isAgents = sectionID === COLLABORATION_AGENTS_SECTION_ID;
-                const label = t(isAgents ? "channels.agents" : "channels.groups");
-                const expanded = !collapsedSectionIDs.has(sectionID);
-                const toggleLabel = t(expanded ? "sidebar.collapseSection" : "sidebar.expandSection", { section: label });
-                const CollapsedIcon = isAgents ? UserRound : MessageSquare;
-                const ExpandedIcon = isAgents ? UsersRound : MessagesSquare;
-                return (
-                  <SortableSidebarSection
-                    key={sectionID}
-                    id={sectionID}
-                    className="project-section collaboration-contact-section"
-                    ariaLabel={label}
-                    headerInfo={{ label, iconKind: isAgents ? "agents" : "groups", CollapsedIcon, ExpandedIcon }}
-                    registerHeaderInfo={registerSectionHeaderInfo}
-                  >
-                    <SidebarSection
-                      expanded={expanded}
-                      iconKind={isAgents ? "agents" : "groups"}
-                      CollapsedIcon={CollapsedIcon}
-                      ExpandedIcon={ExpandedIcon}
-                      label={label}
-                      ariaLabel={toggleLabel}
-                      title={toggleLabel}
-                      onToggle={() => toggleSection(sectionID)}
-                      actions={(
-                        <>
-                        {isAgents ? <button
-                          className="sidebar-functional-action"
-                          type="button"
-                          aria-label={t("channels.manageAgents")}
-                          title={t("channels.manageAgents")}
-                          onClick={onManageAgents}
-                        >
-                          <Settings aria-hidden="true" />
-                        </button> : null}
-                        <button
-                          className="sidebar-functional-action sidebar-section-add-action"
-                          type="button"
-                          aria-label={t(isAgents ? "channels.newAgent" : "channels.newRoom")}
-                          title={t(isAgents ? "channels.newAgent" : "channels.newRoom")}
-                          onClick={isAgents ? onCreateAgent : onCreateRoom}
-                        >
-                          <Plus aria-hidden="true" />
-                        </button>
-                        </>
-                      )}
-                    >
-                      <div className="collaboration-contact-list">
-                        {isAgents ? visibleAgents.map((agent) => {
-                          const directMessage = directMessagesByAgentID.get(agent.id);
-                          const selected = selectedAgentID === agent.id
-                            || Boolean(selectedRoomID && directMessage?.id === selectedRoomID);
-                          const unread = selected ? 0 : (directMessage?.unread_count ?? 0);
-                          return (
-                            <button
-                              className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}`}
-                              type="button"
-                              aria-current={selected ? "page" : undefined}
-                              key={agent.id}
-                              onClick={() => onSelectAgent(agent.id)}
-                            >
-                              <span className="collaboration-contact-avatar" aria-hidden="true">
-                                <AgentAvatarMark
-                                  seed={agent.id}
-                                  avatarKey={agent.avatar_key}
-                                  avatarImage={agent.avatar_image}
-                                  status={agent.activity_status === "thinking" ? "thinking" : "idle"}
-                                />
-                              </span>
-                              <span className="collaboration-contact-copy"><strong>{agent.name}</strong></span>
-                              {unread > 0 ? <span className="collaboration-contact-unread">{formatChannelUnreadCount(unread)}</span> : null}
-                            </button>
-                          );
-                        }) : visibleRooms.map((room) => {
-                          const selected = selectedRoomID === room.id && !selectedAgentID;
-                          const unread = selected ? 0 : (room.unread_count ?? 0);
-                          return (
-                            <button
-                              className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}`}
-                              type="button"
-                              aria-current={selected ? "page" : undefined}
-                              key={room.id}
-                              onClick={() => onSelectRoom(room.id)}
-                            >
-                              <span className="collaboration-contact-avatar collaboration-room-avatar" aria-hidden="true">
-                                <ChannelGroupAvatar room={room} agents={agents} />
-                              </span>
-                              <span className="collaboration-contact-copy"><strong>{room.name}</strong></span>
-                              {unread > 0 ? <span className="collaboration-contact-unread">{formatChannelUnreadCount(unread)}</span> : null}
-                            </button>
-                          );
-                        })}
-                        {normalizedQuery && (isAgents ? visibleAgents.length : visibleRooms.length) === 0 ? (
-                          <div className="collaboration-contact-empty">
-                            {t(isAgents ? "channels.noMatchingAgents" : "channels.noMatchingConversations")}
-                          </div>
-                        ) : null}
-                      </div>
-                    </SidebarSection>
-                  </SortableSidebarSection>
-                );
-              })}
-            </div>
-          </SortableContext>
-          <DragOverlay dropAnimation={{ duration: 150, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}>
-            {draggingSectionInfo ? <SidebarSectionDragPreview info={draggingSectionInfo} /> : null}
-          </DragOverlay>
-        </DndContext>
-
-        <div className="sidebar-settings">
+        <nav className="collaboration-sidebar-main" aria-label={t("channels.conversations")}>
+          {conversations.map(({ id, name, agent, room, pinned }) => {
+            const selected = room ? selectedRoomID === room.id : selectedAgentID === agent?.id;
+            const unread = selected ? 0 : (room?.unread_count ?? 0);
+            const message = room?.last_message;
+            const thinking = room?.activity_status === "thinking" || (agent?.activity_status === "thinking" && (!room || agent.activity_room_ids?.includes(room.id)));
+            const text = message?.body.replace(/\s+/gu, " ").trim() || (message?.has_attachments ? t("channels.attachmentPreview") : "");
+            const author = message?.kind === "system" ? "" : message?.author_type === "human" ? t("channels.you") : room?.kind === "channel" ? agentNames.get(message?.author_id ?? "") : "";
+            const preview = thinking ? t("channels.agentStatus.thinking") : text ? `${author ? `${author}: ` : ""}${text}` : agent?.role || (room?.kind === "channel" ? t("channels.memberCount", { count: room.members.length }) : t("channels.startConversation"));
+            const date = message ? new Date(message.created_at) : undefined;
+            const timestamp = date && !Number.isNaN(date.getTime()) ? formatDate(date, date.toDateString() === new Date().toDateString()
+              ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" }) : "";
+            return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}`}
+              aria-current={selected ? "page" : undefined} disabled={!initialized}
+              onClick={() => { if (room) onSelectRoom(room.id); else if (agent) onSelectAgent(agent.id); }}>
+              <span className="collaboration-contact-avatar" aria-hidden="true">
+                {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={thinking ? "thinking" : "idle"} />
+                  : room ? <ChannelGroupAvatar room={room} agents={agents} /> : null}
+              </span>
+              <span className="collaboration-contact-copy">
+                <span className="collaboration-contact-heading"><strong>{name}</strong>{timestamp ? <time dateTime={message?.created_at}>{timestamp}</time> : null}</span>
+                <span className="collaboration-contact-detail"><span className={`collaboration-contact-preview${thinking ? " thinking" : ""}`}>{preview}</span>
+                  {unread > 0 ? <span className="collaboration-contact-unread" aria-label={t("channels.unreadMessages", { count: unread })}>{unread > 99 ? "99+" : unread}</span>
+                    : pinned ? <Pin className="collaboration-contact-pin" aria-label={t("channels.pinnedConversation")} /> : null}
+                </span>
+              </span>
+            </button>;
+          })}
+          {conversations.length === 0 ? <div className="collaboration-contact-empty">{t(query.trim() ? "channels.noMatchingConversations" : "channels.noConversations")}</div> : null}
+        </nav>
+        <div className="collaboration-sidebar-footer">
+          <button className="collaboration-sidebar-footer-action" type="button" disabled={!initialized} onClick={onManageAgents}><UsersRound aria-hidden="true" /><span>{t("channels.manageAgents")}</span></button>
           <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
         </div>
       </div>

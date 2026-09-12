@@ -53,6 +53,14 @@ function message(overrides: Partial<ChannelMessage> = {}): ChannelMessage {
 }
 
 describe("sameChannelRooms", () => {
+  it("refreshes the conversation preview even when membership and unread count are unchanged", () => {
+    const preview = { id: "m1", author_type: "agent" as const, author_id: "agent-1", kind: "text" as const, body: "First reply", has_attachments: false, created_at: "2026-09-12T10:00:00Z" };
+    const current = [room({ last_message: preview })];
+    expect(sameChannelRooms(current, [room({ last_message: { ...preview } })])).toBe(true);
+    expect(sameChannelRooms(current, [room({ last_message: { ...preview, body: "Updated reply" } })])).toBe(false);
+    expect(sameChannelRooms(current, [room({ last_message: { ...preview, id: "m2", created_at: "2026-09-12T10:10:00Z" } })])).toBe(false);
+  });
+
   it("treats equivalent poll snapshots as unchanged", () => {
     const current = [room()];
     const incoming = current.map((item) => ({

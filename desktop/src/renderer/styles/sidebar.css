@@ -1171,8 +1171,24 @@
   }
 }
 
+.collaboration-sidebar .sidebar-content {
+  padding: 0 8px 8px;
+}
+
+.collaboration-sidebar-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 0 4px 0 max(4px, var(--window-controls-inset-left));
+  -webkit-app-region: drag;
+}
+
+.collaboration-sidebar-topbar button { -webkit-app-region: no-drag; }
+
 .collaboration-sidebar-tools {
-  padding: 2px 4px 14px;
+  padding: 2px 0 12px;
 }
 
 .collaboration-sidebar-search {
@@ -1187,6 +1203,8 @@
   background: var(--surface-1);
   color: var(--ink-muted);
 }
+
+.collaboration-sidebar-search:focus-within { border-color: var(--ink-muted); }
 
 .collaboration-sidebar-search svg {
   width: 16px;
@@ -1208,44 +1226,27 @@
   min-height: 0;
   flex: 1 1 0;
   flex-direction: column;
-  gap: var(--sidebar-functional-row-gap);
-  overflow-y: auto;
-  padding: 0 4px 14px;
-}
-
-.collaboration-contact-section {
-  display: flex;
-  min-width: 0;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 0;
-}
-
-.collaboration-contact-list {
-  /* One token sizes both the avatar box and the row's avatar track so the
-   * two can't drift. */
-  --collaboration-contact-avatar-size: 34px;
-  display: flex;
-  flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 12px;
 }
 
 .collaboration-contact-row {
+  --collaboration-contact-avatar-size: 38px;
   display: grid;
+  flex: 0 0 auto;
   min-width: 0;
-  min-height: 44px;
-  /* The avatar track is sized to the avatar itself, not the 18px nav-icon
-   * column: the ball keeps the standard 8px row inset and the 8px
-   * icon→label gap, and the name sits one indent beat past the section
-   * header's label axis, reading as a child of the section. */
-  grid-template-columns: var(--collaboration-contact-avatar-size) minmax(0, 1fr) auto;
+  min-height: 62px;
+  grid-template-columns: var(--collaboration-contact-avatar-size) minmax(0, 1fr);
   align-items: center;
-  column-gap: var(--sidebar-nav-column-gap);
+  column-gap: 10px;
   border-radius: var(--radius-sm);
-  padding: 5px var(--sidebar-row-pad-x);
+  padding: 8px;
   background: transparent;
   color: var(--ink);
   text-align: left;
+  cursor: pointer;
 }
 
 .collaboration-contact-row:hover,
@@ -1255,8 +1256,10 @@
 }
 
 .collaboration-contact-row.active {
-  background: var(--surface-2);
+  background: var(--selection-surface);
 }
+
+.collaboration-contact-row:focus-visible { box-shadow: inset 0 0 0 2px var(--ink-muted); }
 
 .collaboration-contact-avatar {
   display: block;
@@ -1271,25 +1274,51 @@
   height: 100%;
 }
 
-.collaboration-room-avatar {
-  overflow: visible;
-}
-
 .collaboration-contact-copy {
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
-.collaboration-contact-copy strong {
+.collaboration-contact-heading,
+.collaboration-contact-detail {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.collaboration-contact-heading strong,
+.collaboration-contact-preview {
   display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.collaboration-contact-copy strong {
-  font-size: var(--font-sm);
+.collaboration-contact-heading strong {
+  font-size: var(--font-ui);
   font-weight: var(--weight-medium);
 }
+
+.collaboration-contact-heading time {
+  flex-shrink: 0;
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.collaboration-contact-preview {
+  font-size: var(--font-sm);
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
+.collaboration-contact-row.has-unread strong { font-weight: var(--weight-semibold); }
+.collaboration-contact-preview.thinking { color: var(--ink); }
+.collaboration-contact-pin { width: 12px; height: 12px; color: var(--ink-muted); flex-shrink: 0; }
 
 .collaboration-contact-unread {
   min-width: 18px;
@@ -1303,14 +1332,33 @@
 }
 
 .collaboration-contact-empty {
-  /* Aligns with the contact rows' name axis. */
-  padding: 10px var(--sidebar-row-pad-x) 10px
-    calc(
-      var(--sidebar-row-pad-x) + var(--collaboration-contact-avatar-size) +
-        var(--sidebar-nav-column-gap)
-    );
+  padding: 20px 12px;
   color: var(--ink-muted);
-  font-size: var(--font-xs);
+  font-size: var(--font-sm);
+  text-align: center;
+}
+
+.collaboration-sidebar-footer { flex: 0 0 auto; padding-top: 4px; }
+.collaboration-sidebar-footer-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  text-align: left;
+  cursor: pointer;
+}
+.collaboration-sidebar-footer-action svg { width: 18px; height: 18px; flex-shrink: 0; }
+.collaboration-sidebar-footer-action:hover,
+.collaboration-sidebar-footer-action:focus-visible { background: var(--ink-overlay-4); color: var(--ink); }
+
+@media (max-width: 760px) {
+  .collaboration-sidebar-topbar { padding-top: env(safe-area-inset-top, 0px); }
+  .collaboration-sidebar-footer-action { min-height: 40px; }
 }
 
 .primary-nav,
@@ -1805,21 +1853,6 @@
 .sidebar-functional-action > svg {
   width: 16px;
   height: 16px;
-}
-
-/* SidebarSection renders its add action beside the 32px header row. Center it
- * against that container instead of carrying a one-off top offset; the same
- * button box, glyph centering, and hover background are shared with the
- * workspace heading action above. */
-.sidebar-section-add-action {
-  position: absolute;
-  top: 50%;
-  right: var(--sidebar-row-pad-x, 8px);
-  transform: translateY(-50%);
-}
-
-.sidebar-section-add-action:active {
-  transform: translateY(-50%) scale(0.96);
 }
 
 .project-list {
@@ -2971,6 +3004,26 @@
   position: relative;
 }
 
+/* Keep any number of actions in the header's flow so they reserve their own
+ * width without wrapping below the toggle or overlapping long labels. */
+.sidebar-section-header-group:has(> .sidebar-section-actions) {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-section-header-group:has(> .sidebar-section-actions) > .sidebar-section-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-section-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding-right: var(--sidebar-row-pad-x);
+}
+
 /* Pinned icon: rotate the expanded-state Pin -45deg so it reads as a
  * "diagonal pin" while keeping a single glyph. */
 .project-row .project-row-icon:has([data-project-icon-kind="pinned"]) {
@@ -2993,10 +3046,9 @@
     );
 }
 
-/* Header right-edge spacing: col 3 stays an empty 24px slot when a section
- * has either kind of right-side add action. Collapse to 2 cols only when no
- * action is present so the label spans the full row width. */
-.sidebar-section-header-group:not(:has(.project-row-new-thread, .sidebar-section-add-action)) .sidebar-section-row {
+/* Only the overlaid project add button needs a reserved grid slot. Other
+ * actions occupy their own space beside the toggle. */
+.sidebar-section-header-group:not(:has(.project-row-new-thread)) .sidebar-section-row {
   grid-template-columns:
     var(--sidebar-nav-icon-col)
     minmax(0, 1fr);

@@ -5127,6 +5127,7 @@ export function App(): JSX.Element {
               initialized={Boolean(state.initialized)}
               agents={namedAgents}
               rooms={collaborationSidebarRooms}
+              pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
               selectedAgentID={collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
               selectedRoomID={collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
               onSelectAgent={(agent) => {

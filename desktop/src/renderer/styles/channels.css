@@ -75,9 +75,8 @@
   --channel-directory-row-gap: 8px;
   --channel-avatar-size: 30px;
   --channel-message-column-gap: 10px;
-  /* Match the workspace message flow and composer width. */
-  --channel-content-max-width: var(--session-composer-width);
-  --channel-horizontal-gutter: clamp(16px, 3vw, 36px);
+  --channel-content-max-width: 1120px;
+  --channel-horizontal-gutter: clamp(16px, 2vw, 24px);
   --bg-primary: var(--paper);
   --bg-secondary: var(--surface-1);
   --surface-raised: var(--surface-2);
@@ -243,62 +242,47 @@
   gap: 2px;
 }
 
-.channel-response-status {
-  min-width: 0;
+.channel-activity-region {
   display: flex;
   align-items: center;
-  gap: 9px;
-  overflow: hidden;
-  margin: 0;
-  color: var(--text-primary);
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  width: min(var(--channel-content-max-width), calc(100% - 2 * var(--channel-horizontal-gutter)));
+  min-height: 36px;
+  max-height: 108px;
+  overflow-y: auto;
+  margin: 0 auto;
+  padding: 2px 0 6px;
 }
 
-.channel-response-status-avatars {
-  flex: 0 0 auto;
+.channel-response-status {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
-  padding-right: 2px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .channel-response-status-avatar {
-  position: relative;
+  flex: 0 0 24px;
   width: 24px;
   height: 24px;
-  display: block;
-  overflow: visible;
-  border: 2px solid var(--bg-primary);
-  border-radius: var(--radius-circle);
-  background: var(--bg-primary);
-}
-
-.channel-response-status-avatar + .channel-response-status-avatar {
-  margin-left: -7px;
 }
 
 .channel-response-status-avatar .agent-avatar-mark {
   width: 100%;
   height: 100%;
-  display: block;
-  border-radius: var(--radius-circle);
 }
-
-.channel-response-status-dot {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid var(--bg-primary);
-  border-radius: var(--radius-circle);
-}
-
-.channel-response-status-dot.thinking { background: var(--warning); }
-.channel-response-status-dot.sending { background: var(--info); }
 
 .channel-response-status-copy {
   min-width: 0;
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   line-height: 1.25;
 }
 
@@ -311,10 +295,12 @@
 
 .channel-response-status-copy strong {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
 .channel-response-status-copy span {
+  flex-shrink: 0;
   color: var(--text-tertiary);
   font-size: 11px;
 }
@@ -560,8 +546,16 @@
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px var(--channel-horizontal-gutter) 16px;
+  gap: 6px;
+  padding: 12px var(--channel-horizontal-gutter) 20px;
+}
+
+.channel-timestamp {
+  align-self: center;
+  padding: 14px 0 10px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .channel-system-message {
@@ -725,9 +719,14 @@
   justify-items: end;
 }
 
+.channel-message.channel-direct-message { grid-template-columns: minmax(0, 1fr); }
+.channel-message.agent:not(.channel-direct-message) > .channel-message-content { grid-column: 2; }
+.channel-message:not(.channel-message-continuation) { margin-top: 12px; }
+.channel-timestamp + .channel-message { margin-top: 0; }
+
 .channel-message.chat-row > .channel-message-content {
   /* Reserve a readable column before the bubble sizes to its actual text. */
-  width: min(var(--conversation-message-max-width, 720px), 90%);
+  width: min(var(--conversation-message-max-width, 720px), 88%);
   max-width: 100%;
   min-width: 0;
   display: flex;
@@ -797,9 +796,9 @@
   width: fit-content;
   max-width: 100%;
   margin: 0;
-  border-radius: var(--radius-md);
-  padding: 8px 12px;
-  background: var(--ink-overlay-4);
+  border-radius: 18px;
+  padding: 9px 14px;
+  background: var(--ink-overlay-6);
   color: var(--text-primary);
   font-size: var(--conversation-message-font-size, 14px);
   line-height: var(--conversation-reading-line-height, 1.5);
@@ -854,9 +853,17 @@
 }
 
 .channel-message.own .channel-message-bubble {
-  border-radius: var(--radius-sm) var(--radius-sm) 3px var(--radius-sm);
-  background: var(--chat-user-message-bg);
+  border-radius: 18px;
+  background: var(--ink-strong);
+  color: var(--paper);
 }
+
+.channel-message.own .channel-message-bubble :is(.rich-link, .rich-heading, .rich-blockquote, .channel-message-expand-toggle) { color: inherit; }
+.channel-message.own .channel-message-bubble .rich-content :not(pre) > code {
+  color: inherit;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.channel-message.own .channel-message-bubble .rich-code-block { color: var(--ink); }
 
 .channel-orchestration-message.chat-row > .channel-message-content {
   width: 100%;
@@ -1346,11 +1353,9 @@
 }
 
 .channel-conversation-footer .channel-composer {
-  /* Leave the available width intact and let the shared .composer-stack apply
-     the session's responsive width formula. Constraining both layers would
-     subtract the session gutters twice when the room pane gets narrow. */
   width: 100%;
-  padding: 0 0 12px;
+  max-width: calc(var(--channel-content-max-width) + 2 * var(--channel-horizontal-gutter));
+  padding: 0 var(--channel-horizontal-gutter) 12px;
 }
 
 .channel-composer .composer-stack { --composer-collapsed-min-height: 80px; }
@@ -1365,6 +1370,40 @@
   margin: 0;
   padding: 0;
 }
+
+.channel-composer-inline .composer-stack {
+  --composer-collapsed-min-height: 46px;
+  width: 100%;
+}
+.channel-composer-inline .composer-frame { border-radius: 24px; }
+.channel-composer-inline .composer {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-areas: "attachments attachments attachments" "collapsed collapsed collapsed" "leading input trailing";
+  align-items: end;
+  column-gap: 6px;
+  padding: 7px;
+  min-height: 46px;
+}
+.channel-composer-inline .composer > .composer-attachments {
+  grid-area: attachments;
+  /* The attachment row and the circular add button share the composer's
+     leading edge; text starts in the next grid column. */
+  padding: 5px 2px 5px 0;
+}
+.channel-composer-inline .composer-collapsed-prompt-list { grid-area: collapsed; }
+.channel-composer-inline .composer-stack:not(.is-expanded) textarea {
+  grid-area: input;
+  height: 32px;
+  min-height: 32px;
+  max-height: 160px;
+  padding: 4px 2px;
+  overflow-y: auto;
+}
+.channel-composer-inline .composer-bar { display: contents; }
+.channel-composer-inline .composer-bar-left { grid-area: leading; overflow: visible; }
+.channel-composer-inline .composer-bar-right { grid-area: trailing; gap: 4px; }
+.channel-composer-inline .channel-attachment-button { width: 32px; height: 32px; border-radius: 50%; background: var(--ink-overlay-4); }
 
 .channel-mention-menu {
   /* Positioned by the floating-menu layer (fixed, viewport coordinates);
@@ -3186,7 +3225,7 @@
   gap: 8px;
   min-height: 48px;
   padding: 0 max(16px, var(--window-controls-inset-right)) 0 16px;
-  border-bottom: 0;
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -3197,10 +3236,13 @@
 .channel-room-header-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 }
+
+.channel-room-header-avatar { display: block; width: 26px; height: 26px; flex: 0 0 auto; }
+.channel-room-header-avatar > * { width: 100%; height: 100%; }
 
 .channel-room-header-title h2 {
   margin: 0;
@@ -3212,6 +3254,137 @@
 }
 
 .channel-room-header > .channel-sessions-launcher { margin-left: auto; flex-shrink: 0; }
+
+.channel-room-main.composing-new-room > :not(.channel-room-header):not(.channel-new-room-surface) { display: none; }
+
+.channel-room-main.composing-new-room .channel-room-header {
+  position: relative;
+  z-index: 4;
+  overflow: visible;
+}
+
+.channel-recipient-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.channel-recipient-label {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.channel-recipient-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.channel-recipient-control::-webkit-scrollbar { display: none; }
+
+.channel-recipient-control > input {
+  min-width: 120px;
+  height: 32px;
+  flex: 1 0 120px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.channel-recipient-control > input::placeholder { color: var(--text-tertiary); }
+
+.channel-recipient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  max-width: 180px;
+  flex: 0 0 auto;
+  padding: 2px 4px 2px 3px;
+  border-radius: var(--radius-pill);
+  background: var(--ink-overlay-6);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.channel-recipient-chip > span:first-child { width: 24px; height: 24px; flex: 0 0 auto; }
+.channel-recipient-chip .agent-avatar-mark { width: 100%; height: 100%; }
+.channel-recipient-chip > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-recipient-chip > button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+.channel-recipient-chip > button:hover { background: var(--ink-overlay-6); color: var(--text-primary); }
+.channel-recipient-chip > button svg { width: 12px; height: 12px; }
+
+.channel-recipient-options {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  width: min(640px, 100%);
+  max-height: min(480px, calc(100vh - 140px));
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.channel-recipient-options > button {
+  display: grid;
+  width: 100%;
+  min-height: 46px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.channel-recipient-options > button:hover,
+.channel-recipient-options > button.active { background: var(--selection-surface); }
+.channel-recipient-option-avatar { width: 28px; height: 28px; }
+.channel-recipient-option-avatar .agent-avatar-mark { width: 100%; height: 100%; }
+.channel-recipient-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.channel-recipient-options kbd { display: inline-flex; gap: 4px; color: var(--text-tertiary); font-family: inherit; font-size: 11px; }
+.channel-recipient-options kbd span { padding-right: 4px; border-right: 1px solid var(--hairline); }
+.channel-recipient-empty { padding: 16px; color: var(--text-tertiary); font-size: 13px; text-align: center; }
+.channel-new-room-close { flex: 0 0 auto; }
+
+.channel-new-room-surface {
+  grid-row: 2 / -1;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+.channel-new-room-canvas { min-height: 0; flex: 1; }
+.channel-new-room-surface .channel-conversation-footer { flex: 0 0 auto; }
+
 .channel-room-members-button {
   display: inline-flex;
   align-items: center;
@@ -3396,29 +3569,11 @@
 .channel-message-bubble .rich-content table { display: block; max-width: 100%; overflow-x: auto; }
 .channel-message-pending .channel-message-bubble { opacity: 0.65; }
 .channel-send-status { color: var(--text-secondary); font-size: 11px; }
-.channel-message-stream > .channel-response-status {
-  width: min(100%, var(--channel-content-max-width));
-  margin: 0 auto;
-  flex-shrink: 0;
-  padding: 4px 0;
-}
-.channel-response > .chat-avatar-slot > .agent-avatar-mark { width: var(--channel-avatar-size); height: var(--channel-avatar-size); }
-.channel-response-progress {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.channel-response-progress > span:not(.channel-typing-dots) { flex: 1; min-width: 0; }
-.channel-response-bubble > .rich-content + .channel-response-progress { margin-top: 8px; }
-.channel-response-bubble.failed .channel-response-progress,
+.channel-response-status.failed,
 .channel-response-error,
 .channel-send-error { color: var(--danger); }
-.channel-response-error { margin: 6px 0 0; font-size: 12px; }
-.channel-response-progress button,
+.channel-response-error { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.channel-response-status button,
 .channel-send-error button {
   min-height: 30px;
   padding: 2px 6px;
@@ -3429,13 +3584,8 @@
   font: inherit;
   cursor: pointer;
 }
-.channel-response-progress button:hover,
+.channel-response-status button:hover,
 .channel-send-error button:hover { background: var(--ink-overlay-8); }
-.channel-typing-dots { display: inline-flex; align-items: center; gap: 3px; padding: 4px 0; }
-.channel-typing-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: channel-typing 1.2s ease-in-out infinite; }
-.channel-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
-.channel-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes channel-typing { 0%, 60%, 100% { opacity: 0.4; } 30% { opacity: 1; } }
 .channel-send-error {
   display: flex;
   align-items: center;
@@ -3452,10 +3602,13 @@
 @media (max-width: 760px) {
   .channel-view { --channel-horizontal-gutter: 12px; --channel-avatar-size: 28px; --channel-message-column-gap: 8px; }
   .titlebar.channel-room-header { gap: 8px; min-height: calc(48px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); padding-right: max(8px, var(--window-controls-inset-right)); }
+  .channel-recipient-label { display: none; }
+  .channel-recipient-options { top: calc(100% + 8px); width: 100%; }
+  .channel-recipient-chip { max-width: 130px; }
   .channel-room-header-title { gap: 4px; flex: 1; }
   .channel-room-header-title h2 { font-size: 14px; }
   .channel-room-members-button { min-height: 44px; }
-  .channel-message-stream { padding-top: 16px; gap: 14px; }
+  .channel-message-stream { padding-top: 12px; gap: 6px; }
   .channel-message.chat-row > .channel-message-content { width: 100%; }
   .channel-message.own.chat-row > .channel-message-content { width: 88%; }
   .channel-message-bubble { padding: 8px 10px; }
