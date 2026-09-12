@@ -787,13 +787,24 @@ function windowBackgroundColor(): string {
 
 // The window-chrome contract per platform: macOS hides the titlebar and
 // leaves the traffic lights over the renderer's drag strip (top-left);
-// Windows hides it and lets Chromium draw min/max/close as a controls
-// overlay (top-right — the renderer reserves that corner through the
-// --window-controls-inset-* variables). Anything else keeps the native
-// frame, which needs no in-page reservation at all.
+// Windows and Linux hide it and let Chromium draw min/max/close as a
+// controls overlay (top-right — the renderer reserves that corner through
+// the --window-controls-inset-* variables). Other platforms keep the
+// native frame, which needs no in-page reservation at all.
+//
+// Linux WCO has had DE/Wayland regressions in Electron; set
+// WUU_LINUX_NATIVE_CHROME=1 to force the previous native-frame path.
+function usesWindowControlsOverlay(): boolean {
+  if (process.platform === "win32") return true;
+  if (process.platform === "linux") {
+    return process.env.WUU_LINUX_NATIVE_CHROME !== "1";
+  }
+  return false;
+}
+
 function windowFrameOptions(): Pick<
   BrowserWindowConstructorOptions,
-  "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay"
+  "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay" | "autoHideMenuBar"
 > {
   if (process.platform === "darwin") {
     return {
@@ -801,16 +812,19 @@ function windowFrameOptions(): Pick<
       trafficLightPosition: { x: 18, y: 15 },
     };
   }
-  if (process.platform === "win32") {
+  if (usesWindowControlsOverlay()) {
     return {
       titleBarStyle: "hidden",
-      titleBarOverlay: windowsTitleBarOverlay(),
+      titleBarOverlay: nonMacTitleBarOverlay(),
+      // Linux otherwise shows an always-visible in-window menu strip under
+      // the (now hidden) system titlebar; Alt still reveals the menu.
+      ...(process.platform === "linux" ? { autoHideMenuBar: true } : {}),
     };
   }
   return {};
 }
 
-function windowsTitleBarOverlay(): Electron.TitleBarOverlay {
+function nonMacTitleBarOverlay(): Electron.TitleBarOverlay {
   const dark = resolvedThemeIsDark();
   return {
     // Track the themed window fill so the button strip reads as part of
@@ -824,7 +838,7 @@ function windowsTitleBarOverlay(): Electron.TitleBarOverlay {
 // The theme preference is app-global state owned by the main process.
 // Every themed content window (main + pop-outs) registers here; a theme
 // change — explicit preference or an OS dark-mode flip while on
-// "system" — re-pushes the native chrome (Windows controls overlay,
+// "system" — re-pushes the native chrome (Win/Linux controls overlay,
 // non-macOS window background fill) to all of them, and the new
 // preference is broadcast so each renderer re-applies data-theme.
 // macOS skips both: its vibrancy material and transparent fill are
@@ -841,7 +855,7 @@ function registerThemedChromeWindow(win: BrowserWindow): void {
 function syncThemedWindowChrome(): void {
   if (process.platform === "darwin") return;
   const background = windowBackgroundColor();
-  const overlay = process.platform === "win32" ? windowsTitleBarOverlay() : undefined;
+  const overlay = usesWindowControlsOverlay() ? nonMacTitleBarOverlay() : undefined;
   for (const win of themedChromeWindows) {
     if (win.isDestroyed()) continue;
     // Windows redraws the controls overlay only when told to, and every
