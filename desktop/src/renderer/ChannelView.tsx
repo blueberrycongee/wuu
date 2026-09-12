@@ -6,6 +6,7 @@ import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
 import { AgentAvatarCreator } from "./AgentAvatarCreator";
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import { ChannelSessions } from "./ChannelSessions";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
 import { ChannelMemberPicker } from "./ChannelMemberPicker";
@@ -541,7 +542,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, engines = [], section = "rooms", archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, newAgentRequest, onNewAgentRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, newAgentRequest, onNewAgentRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -874,42 +875,7 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
       .format(respondingAgents.map(({ agent }) => agent.name)),
     [locale, respondingAgents],
   );
-  const selectableEngines = useMemo(
-    () => engines.filter((engine) => engine.enabled && engine.binary_ok),
-    [engines],
-  );
-  const engineGroups = useMemo<SelectMenuGroup[]>(() => {
-    const options = [
-      { value: "wuu", label: "Wuu" },
-      ...selectableEngines
-        .filter((engine) => engine.id !== "wuu")
-        .map((engine) => ({
-          value: engine.id,
-          label: engine.id === "codex" ? "Codex" : engine.id === "claude" ? "Claude Code" : engine.id,
-        })),
-    ];
-    if (agentEngine !== "wuu" && !options.some((option) => option.value === agentEngine)) {
-      options.push({ value: agentEngine, label: agentEngine });
-    }
-    return [{ options }];
-  }, [agentEngine, selectableEngines]);
   const modelGroups = useMemo<SelectMenuGroup[]>(() => {
-    if (agentEngine !== "wuu") {
-      const engine = selectableEngines.find((candidate) => candidate.id === agentEngine);
-      const groups: SelectMenuGroup[] = [{
-        label: engine?.id,
-        options: (engine?.models ?? []).map((model) => ({
-          value: `\u0000${model.id}`,
-          label: model.display_name || model.id,
-          hint: model.id,
-        })),
-      }];
-      if (agentModel && !groups.some((group) => group.options.some((option) => option.value === agentModel))) {
-        const modelID = agentModel.split("\u0000")[1] || agentModel;
-        groups.push({ options: [{ value: agentModel, label: modelID, hint: t("channels.providerMissing") }] });
-      }
-      return groups;
-    }
     const inherited = initialized ? `${initialized.provider} · ${initialized.model}` : undefined;
     const groups: SelectMenuGroup[] = [{ options: [{ value: "", label: t("channels.inheritModel"), hint: inherited }] }];
     for (const provider of initialized?.providers ?? []) {
@@ -931,34 +897,19 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
       const [providerName, modelID] = agentModel.split("\u0000");
       groups.push({
         label: providerName || undefined,
-        options: [{ value: agentModel, label: modelID || agentModel, hint: t("channels.providerMissing") }],
+        options: [{ value: agentModel, label: modelID || agentModel, hint: t("channels.providerMissing"), disabled: agentEngine !== "wuu" }],
       });
     }
     return groups;
-  }, [agentEngine, initialized, agentModel, selectableEngines, t]);
+  }, [initialized, agentModel, agentEngine, t]);
   const [agentProviderName, agentModelID] = agentModel.split("\u0000");
   const agentProvider = initialized?.providers?.find((provider) => provider.name === agentProviderName);
-  const externalAgentModel = selectableEngines
-    .find((engine) => engine.id === agentEngine)
-    ?.models?.find((model) => model.id === agentModelID);
   const agentEffortOptions = agentEngine === "wuu"
     ? providerModelEffortOptions(agentProvider, agentModelID ?? "", agentEffort)
-    : Array.from(new Set([...(externalAgentModel?.supported_efforts ?? []), agentEffort].filter(Boolean)));
-
-  function selectAgentEngine(value: string): void {
-    setAgentEngine(value);
-    setAgentEffort("");
-    if (value === "wuu") {
-      setAgentModel("");
-      return;
-    }
-    const engine = selectableEngines.find((candidate) => candidate.id === value);
-    const model = engine?.models?.find((candidate) => candidate.is_default) ?? engine?.models?.[0];
-    setAgentModel(model ? `\u0000${model.id}` : "");
-    setAgentEffort(model?.default_effort ?? "");
-  }
+    : [];
 
   function selectAgentModel(value: string): void {
+    setAgentEngine("wuu");
     setAgentModel(value);
     setAgentEffort("");
   }
@@ -1639,6 +1590,7 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
                   </span>
                 </div>
               ) : null}
+              <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} />
               {selectedRoom.kind === "channel" ? <div className="channel-room-header-actions">
                 <button
                   className="icon-button"
@@ -1935,6 +1887,7 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
                     <p>{activityText(activityFor(selectedAgent))}</p>
                   </div>
                   <div className="channel-agent-detail-actions">
+                    <ChannelSessions key={selectedAgent.id} agents={[selectedAgent]} rooms={rooms} agentId={selectedAgent.id} initialized={initialized} />
                     <button type="button" disabled={Boolean(resettingAgentID || savingAgentID)} onClick={() => void resetAgent(selectedAgent.id)}>
                       {t(resettingAgentID === selectedAgent.id ? "channels.resettingAgent" : "channels.resetAgent")}
                     </button>
@@ -1965,10 +1918,7 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
                             setAgentAvatarError("");
                           }}
                         />
-                        <label className="channel-form-field">
-                          <span>{t("channels.engine")}</span>
-                          <SelectMenu value={agentEngine} onChange={selectAgentEngine} groups={engineGroups} ariaLabel={t("channels.engine")} />
-                        </label>
+                        {agentEngine !== "wuu" ? <p className="channel-error">{t("channels.sessions.byokRequired")}</p> : null}
                         <label className="channel-form-field">
                           <span>{t("channels.model")}</span>
                           <SelectMenu value={agentModel} onChange={selectAgentModel} groups={modelGroups} ariaLabel={t("channels.model")} />
@@ -2128,7 +2078,7 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
         icon={Bot}
         submitLabel={editingAgentID ? t("channels.save") : t("channels.create")}
         cancelLabel={t("channels.cancel")}
-        submitDisabled={!agentName.trim() || Boolean(resettingAgentID) || (agentEngine !== "wuu" && !agentModel)}
+        submitDisabled={!agentName.trim() || Boolean(resettingAgentID) || agentEngine !== "wuu"}
         content={<div className="channel-setup-form">
           {agentResetStatus ? <div className="channel-agent-reset-status" role="status">{agentResetStatus}</div> : null}
           <div className="channel-identity-row">
@@ -2180,10 +2130,7 @@ export function ChannelView({ initialized, engines = [], section = "rooms", arch
             }}
           />
           <div className="channel-form-section">
-            <label className="channel-form-field">
-              <span>{t("channels.engine")}</span>
-              <SelectMenu value={agentEngine} onChange={selectAgentEngine} groups={engineGroups} ariaLabel={t("channels.engine")} flip />
-            </label>
+            {agentEngine !== "wuu" ? <p className="channel-error">{t("channels.sessions.byokRequired")}</p> : null}
             <label className="channel-form-field">
               <span>{t("channels.model")}</span>
               <SelectMenu value={agentModel} onChange={selectAgentModel} groups={modelGroups} ariaLabel={t("channels.model")} flip />

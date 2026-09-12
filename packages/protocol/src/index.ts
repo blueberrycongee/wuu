@@ -1006,6 +1006,45 @@ export type ChannelWork = {
   verification?: ChannelTaskVerification;
 };
 
+export type CollaborationSessionBinding = {
+  turn_id?: string;
+  session_ref: string;
+  principal_id: string;
+  named_agent_id?: string;
+  room_id?: string;
+  work_id?: string;
+  run_id?: string;
+  title?: string;
+  objective?: string;
+  parent_session_ref?: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+  runtime_version?: string;
+  failure_reason?: string;
+  purpose: "conversation" | "coordination" | "work" | "verification";
+  state: "queued" | "waiting" | "idle" | "starting" | "running" | "interrupted" | "missing" | "completed" | "cancelled" | "failed";
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChannelSessionListParams = { agentId?: string; roomId?: string };
+export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[] };
+export type ChannelSessionCreateParams = {
+  agentId: string;
+  roomId: string;
+  requestId?: string;
+  title?: string;
+  prompt: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+};
+export type ChannelSessionRefParams = { sessionRef: string };
+export type ChannelSessionSendParams = ChannelSessionRefParams & { prompt: string; requestId?: string };
+export type ChannelSessionResult = { session: CollaborationSessionBinding };
+export type ChannelSessionReadResult = ChannelSessionResult & { thread: Thread };
+
 export type ChannelAgentListResult = { agents: NamedAgent[] };
 export type ChannelAgentLanguageUsage = { name: string; lines: number; share: number };
 export type ChannelAgentInsight = {
@@ -1640,6 +1679,8 @@ export type ToolCallDisplay = {
   // Short user-facing name. The raw tool name remains the stable dispatch
   // identity used by the model and runtime.
   label?: string;
+  // Optional overrides by exact locale, then language; label is the fallback.
+  label_translations?: Record<string, string>;
   text?: string;
   // Capability is the stable dotted identifier the runtime surface
   // maps this tool to (e.g. "command.bash"). Optional: legacy
@@ -2821,6 +2862,12 @@ export type WuuDesktopApi = {
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   listSkills: () => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
+  listChannelSessions: (params?: ChannelSessionListParams) => Promise<ChannelSessionListResult>;
+  createChannelSession: (params: ChannelSessionCreateParams) => Promise<ChannelSessionResult>;
+  readChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionReadResult>;
+  sendChannelSession: (params: ChannelSessionSendParams) => Promise<ChannelSessionResult>;
+  stopChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
+  resumeChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionResult>;
   listNamedAgents: () => Promise<ChannelAgentListResult>;
   getNamedAgentInsights: () => Promise<ChannelAgentInsightsResult>;
   bootstrapChannels: () => Promise<ChannelBootstrapResult>;

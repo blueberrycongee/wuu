@@ -738,6 +738,12 @@ export class RemoteDesktopBridge {
       compactThread: (threadId: string) => this.call("thread/compact/start", { thread_id: threadId }),
 
       listChannelRooms: () => this.call("channel/room/list"),
+      listChannelSessions: (params) => this.call("channel/session/list", params),
+      createChannelSession: (params) => this.call("channel/session/create", params),
+      readChannelSession: (params) => this.call("channel/session/read", params),
+      sendChannelSession: (params) => this.call("channel/session/send", params),
+      stopChannelSession: (params) => this.call("channel/session/stop", params),
+      resumeChannelSession: (params) => this.call("channel/session/resume", params),
       listNamedAgents: () => this.call("channel/agent/list"),
 
       startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts) =>

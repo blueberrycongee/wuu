@@ -3290,3 +3290,109 @@
   font-size: var(--font-md);
   font-weight: var(--weight-semibold);
 }
+
+.channel-sessions-launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.channel-sessions-launcher > span:last-child { color: var(--text-tertiary); }
+.channel-sessions-launcher .channel-sessions-count { color: var(--wuu-accent); }
+.sidebar-name-dialog.channel-sessions-dialog { width: min(640px, 100vw); max-width: 100vw; }
+.channel-sessions-dialog .sidebar-name-dialog-header { padding-right: 40px; flex-shrink: 0; }
+.channel-sessions-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 4px 20px; }
+.channel-sessions-close { position: absolute; top: 16px; right: 16px; }
+.channel-sessions-toolbar, .channel-session-group > header, .channel-session-row > div, .channel-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.channel-sessions-toolbar { justify-content: space-between; margin-bottom: 16px; }
+.channel-sessions-toolbar > span { color: var(--text-tertiary); font-size: 12px; }
+.channel-sessions-toolbar button, .channel-session-actions button, .channel-session-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+}
+.channel-sessions-body button:disabled { opacity: 0.5; cursor: default; }
+.channel-sessions-body button:not(:disabled):hover { background: var(--ink-overlay-4); }
+.channel-session-group { margin-top: 20px; }
+.channel-session-group > header { padding: 4px 0 10px; font-size: 12px; }
+.channel-session-group > header > :first-child:not(strong) { width: 24px; height: 24px; }
+.channel-session-group > header > span { color: var(--text-tertiary); }
+.channel-session-row {
+  display: block;
+  width: 100%;
+  padding: 12px 8px;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+.channel-session-row > div { justify-content: space-between; }
+.channel-session-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.channel-session-row p { margin: 5px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 12px; }
+.channel-session-state { flex-shrink: 0; color: var(--text-tertiary); font-size: 11px; }
+.channel-session-state.running, .channel-session-state.starting { color: var(--wuu-accent); }
+.channel-session-state.failed, .channel-session-state.missing { color: var(--danger); }
+.channel-session-state.completed { color: var(--success); }
+.channel-session-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; color: var(--text-tertiary); font-size: 11px; }
+.channel-session-meta > span { overflow-wrap: anywhere; }
+.channel-session-meta time { flex-shrink: 0; }
+.channel-session-empty { margin: 20px 0; color: var(--text-tertiary); line-height: 1.6; }
+.channel-session-create, .channel-session-detail { display: grid; gap: 14px; }
+.channel-session-create h3, .channel-session-detail h3 { margin: 0; overflow-wrap: anywhere; }
+.channel-session-back { width: fit-content; border: 0; padding-left: 0; color: var(--text-secondary); }
+.channel-session-create label, .channel-session-followup label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.channel-session-create input, .channel-session-create textarea, .channel-session-create select, .channel-session-followup textarea, .channel-sessions-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: inherit;
+}
+.channel-session-create textarea, .channel-session-followup textarea { resize: vertical; line-height: 1.5; }
+.channel-sessions-search { display: flex; align-items: center; gap: 8px; color: var(--text-tertiary); }
+.channel-session-primary { justify-self: end; min-height: 36px; padding: 8px 14px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--ink-overlay-4); }
+.channel-session-turn { padding: 16px 0; border-top: 1px solid var(--border-subtle); }
+.channel-session-message > strong { color: var(--text-tertiary); font-size: 11px; }
+.channel-session-message + .channel-session-message { margin-top: 12px; }
+.channel-session-message .rich-content { font-size: 13px; overflow-wrap: anywhere; }
+.channel-session-history { min-width: 0; }
+.channel-session-history pre { max-width: 100%; overflow-x: auto; }
+.channel-session-activity { margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
+.channel-session-activity summary { cursor: pointer; padding: 6px 0; }
+.channel-session-activity > div { padding: 10px 0; }
+.channel-session-followup { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.channel-sessions-body .channel-error { overflow-wrap: anywhere; }
+.channel-sessions-body .channel-error button { display: block; margin-top: 6px; }
+@media (max-width: 760px) {
+  .channel-sessions-launcher { min-height: 44px; padding: 8px; }
+  .channel-sessions-launcher > span:first-of-type { display: none; }
+  .sidebar-name-dialog.channel-sessions-dialog { width: 100%; }
+  .channel-sessions-body button, .channel-sessions-body select { min-height: 44px; }
+  .channel-session-create input, .channel-session-create textarea, .channel-session-create select, .channel-session-followup textarea, .channel-sessions-search input { font-size: 16px; }
+  .channel-sessions-toolbar { flex-wrap: wrap; }
+  .channel-session-actions { flex-wrap: wrap; }
+}

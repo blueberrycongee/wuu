@@ -50,6 +50,13 @@ import type {
   ChannelAgentUpdateResult,
   ChannelAgentDeleteParams,
   ChannelAgentDeleteResult,
+  ChannelSessionListParams,
+  ChannelSessionListResult,
+  ChannelSessionCreateParams,
+  ChannelSessionRefParams,
+  ChannelSessionSendParams,
+  ChannelSessionResult,
+  ChannelSessionReadResult,
   ChannelBootstrapResult,
   ChannelAgentListResult,
   ChannelAgentInsightsResult,
@@ -1763,6 +1770,24 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
+  ipcMain.handle("wuu:channel-session-list", (event, params: ChannelSessionListParams) =>
+    appServerRequest<ChannelSessionListResult>(event, "channel/session/list", params),
+  );
+  ipcMain.handle("wuu:channel-session-create", (event, params: ChannelSessionCreateParams) =>
+    appServerRequest<ChannelSessionResult>(event, "channel/session/create", params),
+  );
+  ipcMain.handle("wuu:channel-session-read", (event, params: ChannelSessionRefParams) =>
+    appServerRequest<ChannelSessionReadResult>(event, "channel/session/read", params),
+  );
+  ipcMain.handle("wuu:channel-session-send", (event, params: ChannelSessionSendParams) =>
+    appServerRequest<ChannelSessionResult>(event, "channel/session/send", params),
+  );
+  ipcMain.handle("wuu:channel-session-stop", (event, params: ChannelSessionRefParams) =>
+    appServerRequest<ChannelSessionResult>(event, "channel/session/stop", params),
+  );
+  ipcMain.handle("wuu:channel-session-resume", (event, params: ChannelSessionRefParams) =>
+    appServerRequest<ChannelSessionResult>(event, "channel/session/resume", params),
+  );
   ipcMain.handle("wuu:channel-agent-list", (event) =>
     appServerRequest<ChannelAgentListResult>(event, "channel/agent/list"),
   );
