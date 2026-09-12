@@ -122,6 +122,10 @@ type StartOptions struct {
 	Command       string
 	CommandPrefix string
 	CWD           string
+	// WorkspaceRoot is the host-owned root of the calling session. Shared
+	// managers use it to resolve this launch without moving another session's
+	// default directory or confinement boundary.
+	WorkspaceRoot string
 	OwnerKind     OwnerKind
 	OwnerID       string
 	// RootThreadID is host-supplied. Callers pass the conversation the command
@@ -342,6 +346,9 @@ func (m *Manager) Start(ctx context.Context, opt StartOptions) (*Process, error)
 	m.mu.Lock()
 	rootDir := m.rootDir
 	m.mu.Unlock()
+	if root := strings.TrimSpace(opt.WorkspaceRoot); root != "" {
+		rootDir = root
+	}
 	cwd, err := resolveStartCWD(rootDir, opt.CWD, opt.AllowOutsideWorkspace)
 	if err != nil {
 		return nil, err

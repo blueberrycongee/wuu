@@ -313,9 +313,6 @@ func (e *Env) prepareSessionWorkspaceChange(root string) (func(), error) {
 	return func() {
 		e.RootDir = root
 		e.FileScopeRoots = fileScopeRoots
-		if e.ProcessMgr != nil {
-			e.ProcessMgr.SetRootDir(root)
-		}
 		commitAgentControl()
 	}, nil
 }

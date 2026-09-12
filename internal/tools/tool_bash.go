@@ -435,7 +435,7 @@ func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (s
 	if sandboxTempDir != "" {
 		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
 	}
-	p, startErr := m.Start(context.WithoutCancel(ctx), proc.StartOptions{Command: args.Command, CommandPrefix: commandPrefix, CWD: args.CWD, OwnerKind: proc.OwnerKind(args.OwnerKind), OwnerID: args.OwnerID, RootThreadID: rootThreadID, Lifecycle: proc.Lifecycle(args.Lifecycle), CompletionMode: proc.CompletionMode(args.CompletionMode), TTY: tty, AllowOutsideWorkspace: t.env.BypassToolHardProtections(), RecheckMinutes: args.RecheckMinutes, SandboxPolicy: sandboxPolicy, SandboxProvider: t.env.ProcessSandboxProvider, Env: commandEnv})
+	p, startErr := m.Start(context.WithoutCancel(ctx), proc.StartOptions{Command: args.Command, CommandPrefix: commandPrefix, CWD: args.CWD, WorkspaceRoot: t.env.RootDir, OwnerKind: proc.OwnerKind(args.OwnerKind), OwnerID: args.OwnerID, RootThreadID: rootThreadID, Lifecycle: proc.Lifecycle(args.Lifecycle), CompletionMode: proc.CompletionMode(args.CompletionMode), TTY: tty, AllowOutsideWorkspace: t.env.BypassToolHardProtections(), RecheckMinutes: args.RecheckMinutes, SandboxPolicy: sandboxPolicy, SandboxProvider: t.env.ProcessSandboxProvider, Env: commandEnv})
 	response := startProcessResponse{}
 	if p != nil {
 		response.Process = redactProcess(t.env, *p)

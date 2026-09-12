@@ -74,6 +74,7 @@ func (s *Session) newCollaborationSession(rootDir, orientation string, selected 
 		SessionDate:                 s.SessionDate,
 		Toolkit:                     kit,
 		ProcessManager:              processManager,
+		threadProcesses:             s.threadProcessManagerPool(),
 		ActivityRegistry:            s.ActivityRegistry,
 		InferenceJournalRuntime:     s.InferenceJournalRuntime,
 		HookDispatcher:              hooks.NewDispatcher(nil),
@@ -124,7 +125,7 @@ func (s *Session) collaborationModel(selected ThreadModelSelection) (modelroles.
 	}
 	// Reusing a transport is safe: it carries credentials and wire behavior,
 	// not prompts, tools, hooks, drivers, or mutable conversation history.
-	if provider == s.ProviderName && model == s.Model && variant == strings.TrimSpace(s.StreamRunner.Variant) && effort == strings.TrimSpace(s.StreamRunner.Effort) {
+	if provider == s.ProviderName && model == s.StreamRunner.Model && (s.ModelRoles.Empty() || s.ModelRoles.Main.Model == model) && variant == strings.TrimSpace(s.StreamRunner.Variant) && effort == strings.TrimSpace(s.StreamRunner.Effort) {
 		selection := s.ModelRoles.Main
 		if s.ModelRoles.Empty() {
 			// Embedded callers may supply a transport without a model catalog.

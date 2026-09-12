@@ -2,11 +2,14 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/process"
 )
 
 func TestSetSessionWorkspaceUpdatesSubsequentToolRoot(t *testing.T) {
@@ -51,6 +54,40 @@ func TestSetSessionWorkspaceUpdatesSubsequentToolRoot(t *testing.T) {
 	}
 	if result != `{"root":`+quoteJSONForTest(want)+`}` {
 		t.Fatalf("result = %s", result)
+	}
+}
+
+func TestSharedProcessManagerKeepsEachSessionWorkspaceAfterRebind(t *testing.T) {
+	oldRoot, newRoot := t.TempDir(), t.TempDir()
+	manager, err := process.NewManager(oldRoot, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.CleanupSession() })
+	first := &Env{RootDir: oldRoot, ProcessMgr: manager, SessionID: "first", Unconfined: true, AllowMutations: true, OnSessionWorkspaceChanged: func(string) error { return nil }}
+	second := &Env{RootDir: oldRoot, ProcessMgr: manager, SessionID: "second", Unconfined: true, AllowMutations: true}
+	if _, err := NewSetSessionWorkspaceTool(first).Execute(context.Background(), `{"root":`+quoteJSONForTest(newRoot)+`}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []*Env{first, second} {
+		result, err := NewBashTool(env).Execute(context.Background(), `{"action":"start_background","command":"pwd -P","tty":false,"wait_ms":2000}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var launched startProcessResponse
+		if err := json.Unmarshal([]byte(result), &launched); err != nil {
+			t.Fatal(err)
+		}
+		if !sameRuntimeFileScopePath(launched.CWD, env.RootDir) || !sameRuntimeFileScopePath(strings.TrimSpace(launched.InitialOutput), env.RootDir) {
+			t.Fatalf("session %q launched outside its workspace: cwd=%q output=%q want=%q", env.SessionID, launched.CWD, launched.InitialOutput, env.RootDir)
+		}
+		stored, err := manager.Get(launched.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.RootThreadID != env.SessionID {
+			t.Fatalf("process ownership = %q, want %q", stored.RootThreadID, env.SessionID)
+		}
 	}
 }
 

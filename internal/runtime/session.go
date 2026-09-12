@@ -187,6 +187,8 @@ type Session struct {
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
 	workerOrientation  string
+	threadProcessMu    sync.Mutex
+	threadProcesses    *threadProcessManagers
 }
 
 // MaxParallel returns the worker concurrency configured for this session.
@@ -230,6 +232,7 @@ func (s *Session) cloneForThreadModel() *Session {
 		InstructionFiles:            s.InstructionFiles,
 		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
+		threadProcesses:             s.threadProcessManagerPool(),
 		Toolkit:                     s.Toolkit,
 		CodeMode:                    s.CodeMode,
 		ActivityRegistry:            s.ActivityRegistry,
@@ -1718,11 +1721,42 @@ func (s *Session) processManagerForThread(threadRoot, stateDir string) (*process
 		}
 		return s.ProcessManager, nil
 	}
-	return process.NewManagerWithHostGeneration(
+	pool := s.threadProcessManagerPool()
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	key := threadProcessManagerKey{root: cleanRuntimeRoot(threadRoot), state: cleanRuntimeRoot(stateDir)}
+	if manager := pool.managers[key]; manager != nil {
+		return manager, nil
+	}
+	manager, err := process.NewManagerWithHostGeneration(
 		threadRoot,
 		s.ProcessManager.HostGenerationID(),
 		statepath.RuntimeDir(stateDir),
 	)
+	if err != nil {
+		return nil, err
+	}
+	pool.managers[key] = manager
+	return manager, nil
+}
+
+type threadProcessManagerKey struct{ root, state string }
+
+// A process registry needs one in-process authority for handles, writes and
+// recheck timers. Model runtimes remain per-session; process ownership is
+// recorded independently on every launch through RootThreadID.
+type threadProcessManagers struct {
+	mu       sync.Mutex
+	managers map[threadProcessManagerKey]*process.Manager
+}
+
+func (s *Session) threadProcessManagerPool() *threadProcessManagers {
+	s.threadProcessMu.Lock()
+	defer s.threadProcessMu.Unlock()
+	if s.threadProcesses == nil {
+		s.threadProcesses = &threadProcessManagers{managers: make(map[threadProcessManagerKey]*process.Manager)}
+	}
+	return s.threadProcesses
 }
 
 // sessionParticipantStore adapts the session store to
@@ -1744,8 +1778,19 @@ func cleanRuntimeRoot(root string) string {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
-	if ev, err := filepath.EvalSymlinks(root); err == nil {
-		root = ev
+	// State directories may not exist before the first manager is created.
+	// Resolve the nearest existing ancestor so their cache key stays stable
+	// after creation (including macOS /var -> /private/var).
+	for ancestor, suffix := root, ""; ; {
+		if resolved, err := filepath.EvalSymlinks(ancestor); err == nil {
+			return filepath.Clean(filepath.Join(resolved, suffix))
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			break
+		}
+		suffix = filepath.Join(filepath.Base(ancestor), suffix)
+		ancestor = parent
 	}
 	return filepath.Clean(root)
 }
@@ -1950,11 +1995,23 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		cancel()
 		s.PluginHost = nil
 	}
-	if s.ProcessManager == nil {
-		return process.CleanupResult{}, cleanupErr
+	managers := map[*process.Manager]struct{}{}
+	if s.ProcessManager != nil {
+		managers[s.ProcessManager] = struct{}{}
 	}
-	result, err := s.ProcessManager.CleanupSessionWithResult()
-	return result, errors.Join(cleanupErr, err)
+	pool := s.threadProcessManagerPool()
+	pool.mu.Lock()
+	for _, manager := range pool.managers {
+		managers[manager] = struct{}{}
+	}
+	pool.mu.Unlock()
+	result := process.CleanupResult{}
+	for manager := range managers {
+		cleaned, err := manager.CleanupSessionWithResult()
+		result.Cleaned = append(result.Cleaned, cleaned.Cleaned...)
+		cleanupErr = errors.Join(cleanupErr, err)
+	}
+	return result, cleanupErr
 }
 
 func ResolveModelBudget(model string, provider config.ProviderConfig, agentOverride int) modelbudget.Budget {
