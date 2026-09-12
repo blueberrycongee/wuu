@@ -1,3 +1,4 @@
+import { Paperclip } from "lucide-react";
 import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
@@ -47,6 +48,7 @@ export function draftWithMention(draft: string, name: string, start: number, end
 
 export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   draft: string;
+  draftRevision?: number;
   placeholder: string;
   disabled: boolean;
   sending: boolean;
@@ -62,6 +64,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   onSend: (promptOverride?: string) => void;
 }>(function ChannelComposer({
   draft,
+  draftRevision = 0,
   placeholder,
   disabled,
   sending,
@@ -81,6 +84,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   const menuRef = useRef<HTMLDivElement>(null);
   const accessMenuRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   // The mention picker is portaled to the protected layer host (fixed,
   // viewport coordinates), so it anchors to the composer dock's rendered
   // box instead of sitting inside the relatively-positioned composer root.
@@ -129,7 +133,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   }), [insertMention, textarea]);
 
   function handleKeyDownCapture(event: KeyboardEvent<HTMLDivElement>): void {
-    if (!mentionRange) return;
+    if (!mentionRange || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -202,6 +206,14 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
       <Composer
         variant="dock"
         hideRuntimeControls
+        leadingActions={<>
+          <input ref={attachmentInputRef} className="channel-attachment-input" type="file" accept="image/*,application/pdf" multiple onChange={(event) => {
+            const selected = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            if (selected.length > 0) onPasteAttachmentFiles(selected);
+          }} />
+          <button type="button" className="icon-button channel-attachment-button" disabled={disabled} aria-label={t("composer.addAttachment")} title={t("composer.addAttachment")} onClick={() => attachmentInputRef.current?.click()}><Paperclip aria-hidden="true" /></button>
+        </>}
         hidePlusButton
         hidePermissionControl
         hideExpandButton={hideExpandButton}
@@ -210,6 +222,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         maxLength={4000}
         queryHistorySessionID={queryHistorySessionID}
         prompt={draft}
+        promptRevision={draftRevision}
         setPrompt={(value) => {
           onChangeDraft(value);
           window.requestAnimationFrame(() => updateMentionRange(value));

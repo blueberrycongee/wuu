@@ -77,7 +77,7 @@
   --channel-message-column-gap: 10px;
   /* Match the workspace message flow and composer width. */
   --channel-content-max-width: var(--session-composer-width);
-  --channel-horizontal-gutter: var(--session-outer-padding-inline);
+  --channel-horizontal-gutter: clamp(16px, 3vw, 36px);
   --bg-primary: var(--paper);
   --bg-secondary: var(--surface-1);
   --surface-raised: var(--surface-2);
@@ -555,13 +555,13 @@
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  padding: 28px max(30px, var(--channel-horizontal-gutter)) 8px;
+  gap: 16px;
+  padding: 20px var(--channel-horizontal-gutter) 16px;
 }
 
 .channel-system-message {
   align-self: center;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.5;
   padding: 4px 12px;
@@ -720,20 +720,19 @@
   justify-items: end;
 }
 
-.channel-message-content {
-  /* `fit-content` can collapse this grid column to the narrowest intrinsic
-     token, causing long CJK/path-heavy messages to render one character wide. */
-  width: min(var(--conversation-message-max-width, 720px), 84%);
-  max-width: min(var(--conversation-message-max-width, 720px), 84%);
+.channel-message.chat-row > .channel-message-content {
+  /* Reserve a readable column before the bubble sizes to its actual text. */
+  width: min(var(--conversation-message-max-width, 720px), 90%);
+  max-width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
 }
 
-.channel-message.own .channel-message-content {
-  width: min(var(--conversation-message-max-width, 720px), 72%);
-  max-width: min(var(--conversation-message-max-width, 720px), 72%);
+.channel-message.own.chat-row > .channel-message-content {
+  width: min(var(--conversation-message-max-width, 720px), 78%);
+  max-width: 100%;
   align-items: flex-end;
 }
 
@@ -742,13 +741,13 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-width: 0;
+  font-size: 12px;
 }
 
 .channel-message.own .channel-message-meta {
-  height: 0;
-  min-height: 0;
+  min-height: 16px;
   justify-content: flex-end;
-  transform: translateY(-17px);
 }
 
 .channel-author-mention {
@@ -783,16 +782,9 @@
 }
 
 .channel-message-meta time {
+  flex-shrink: 0;
   color: var(--text-tertiary);
   font-size: 11px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-
-.channel-message:hover .channel-message-meta time,
-.channel-message:focus-within .channel-message-meta time {
-  opacity: 1;
 }
 
 .channel-message-bubble {
@@ -861,7 +853,7 @@
   background: var(--chat-user-message-bg);
 }
 
-.channel-orchestration-message .channel-message-content {
+.channel-orchestration-message.chat-row > .channel-message-content {
   width: 100%;
   max-width: 100%;
 }
@@ -1270,7 +1262,7 @@
 }
 
 @media (max-width: 720px) {
-  .channel-orchestration-message .channel-message-content {
+  .channel-orchestration-message.chat-row > .channel-message-content {
     width: 100%;
     max-width: 100%;
   }
@@ -1312,19 +1304,6 @@
   justify-content: flex-end;
 }
 
-@media (hover: none) {
-  .channel-message.own .channel-message-meta {
-    height: auto;
-    min-height: 19px;
-    transform: none;
-  }
-
-  .channel-message .channel-message-meta time {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-
 .channel-stream-empty {
   display: grid;
   min-height: 100%;
@@ -1335,51 +1314,18 @@
 
 .channel-onboarding {
   display: flex;
-  min-height: 100%;
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 48px 24px 36px;
+  flex: 1;
+  min-height: 120px;
   align-items: center;
   justify-content: center;
   flex-direction: column;
+  gap: 12px;
+  padding: 24px 0;
   text-align: center;
 }
-
-.channel-onboarding-avatar {
-  width: 64px;
-  height: 64px;
-  margin-bottom: 18px;
-}
-
-.channel-onboarding h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.channel-onboarding p {
-  margin: 10px 0 20px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.channel-onboarding button {
-  min-height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-xs);
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.channel-onboarding button:hover {
-  background: var(--surface-hover);
-}
+.channel-onboarding-members { display: flex; gap: 6px; }
+.channel-onboarding-members .agent-avatar-mark { width: 32px; height: 32px; }
+.channel-onboarding p { margin: 0; color: var(--text-secondary); font-size: 13px; }
 
 .channel-conversation-footer {
   grid-row: 4;
@@ -1399,7 +1345,7 @@
      the session's responsive width formula. Constraining both layers would
      subtract the session gutters twice when the room pane gets narrow. */
   width: 100%;
-  padding: 0 0 24px;
+  padding: 0 0 12px;
 }
 
 .channel-composer .dock-composer-wrap {
@@ -3225,10 +3171,10 @@
 .channel-room-header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   min-height: 48px;
   padding: 0 12px 0 20px;
-  border-bottom: 1px solid var(--border-weak);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -3248,30 +3194,23 @@
   text-overflow: ellipsis;
 }
 
-/* The status widget pushes to the header's trailing edge and shrinks freely
-   on narrow canvases. */
-.channel-room-header .channel-response-status {
-  margin-left: auto;
-  min-width: 0;
-}
-
-/* Only one element may hold the auto margin: two auto margins split the free
-   space and strand the status widget in the middle. When the status is
-   present it absorbs the space, so the actions following it drop theirs. */
-.channel-room-header .channel-response-status + .channel-room-header-actions {
-  margin-left: 0;
-}
-
-.channel-room-header-actions {
-  display: flex;
+.channel-room-header > .channel-sessions-launcher { margin-left: auto; flex-shrink: 0; }
+.channel-room-members-button {
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  min-height: 32px;
   flex-shrink: 0;
-  /* Right-anchor the actions even when the response status is hidden: the
-     status widget carries its own margin-left:auto, so without this the gear
-     collapses against the room title in the common idle case. */
-  margin-left: auto;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
 }
+.channel-room-members-button:hover { background: var(--ink-overlay-4); color: var(--text-primary); }
+.channel-room-members-button svg { width: 12px; height: 12px; }
 
 .channel-room-main-empty {
   display: flex;
@@ -3395,4 +3334,93 @@
   .channel-session-create input, .channel-session-create textarea, .channel-session-create select, .channel-session-followup textarea, .channel-sessions-search input { font-size: 16px; }
   .channel-sessions-toolbar { flex-wrap: wrap; }
   .channel-session-actions { flex-wrap: wrap; }
+}
+
+.channel-message-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 8px;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.channel-message-reply span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.channel-message-bubble pre { max-width: 100%; overflow-x: auto; }
+.channel-message-bubble .rich-content table { display: block; max-width: 100%; overflow-x: auto; }
+.channel-message-pending .channel-message-bubble { opacity: 0.65; }
+.channel-send-status { color: var(--text-secondary); font-size: 11px; }
+.channel-message-stream > .channel-response-status {
+  width: min(100%, var(--channel-content-max-width));
+  margin: 0 auto;
+  flex-shrink: 0;
+  padding: 4px 0;
+}
+.channel-response > .chat-avatar-slot > .agent-avatar-mark { width: var(--channel-avatar-size); height: var(--channel-avatar-size); }
+.channel-response-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.channel-response-progress > span:not(.channel-typing-dots) { flex: 1; min-width: 0; }
+.channel-response-bubble > .rich-content + .channel-response-progress { margin-top: 8px; }
+.channel-response-bubble.failed .channel-response-progress,
+.channel-response-error,
+.channel-send-error { color: var(--danger); }
+.channel-response-error { margin: 6px 0 0; font-size: 12px; }
+.channel-response-progress button,
+.channel-send-error button {
+  min-height: 30px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.channel-response-progress button:hover,
+.channel-send-error button:hover { background: var(--ink-overlay-8); }
+.channel-typing-dots { display: inline-flex; align-items: center; gap: 3px; padding: 4px 0; }
+.channel-typing-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: channel-typing 1.2s ease-in-out infinite; }
+.channel-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.channel-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes channel-typing { 0%, 60%, 100% { opacity: 0.4; } 30% { opacity: 1; } }
+.channel-send-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: min(var(--channel-content-max-width), calc(100% - 2 * var(--channel-horizontal-gutter)));
+  margin: 0 auto 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.channel-attachment-input { display: none; }
+.channel-attachment-button { width: 30px; height: 30px; }
+.channel-attachment-button svg { width: 16px; height: 16px; }
+@media (max-width: 760px) {
+  .channel-view { --channel-horizontal-gutter: 12px; --channel-avatar-size: 28px; --channel-message-column-gap: 8px; }
+  .channel-room-header { gap: 8px; padding: 0 8px 0 12px; }
+  .channel-room-header-title { gap: 4px; flex: 1; }
+  .channel-room-header-title h2 { font-size: 14px; }
+  .channel-room-members-button { min-height: 44px; }
+  .channel-message-stream { padding-top: 16px; gap: 14px; }
+  .channel-message.chat-row > .channel-message-content { width: 100%; }
+  .channel-message.own.chat-row > .channel-message-content { width: 88%; }
+  .channel-message-bubble { padding: 8px 10px; }
+  .channel-message-expand-toggle { min-height: 36px; }
+  .channel-response-progress button, .channel-send-error button, .channel-attachment-button { min-width: 40px; min-height: 40px; }
+  .channel-conversation-footer .channel-composer { --session-outer-padding-inline: 12px; padding-bottom: 8px; }
+  .channel-mention-menu button { min-height: 44px; }
+  .channel-agent-proposal { padding: 12px; gap: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .channel-typing-dots i { animation: none; opacity: 0.7; }
 }

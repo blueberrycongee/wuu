@@ -365,6 +365,8 @@ export const enUS = {
   "channels.onboardingReady": "{name}",
   "channels.onboardingIntro": "I'm your default Bot. Share something you want to move forward, and I'll understand the goal and start helping.",
   "channels.onboardingStart": "Start your first conversation",
+  "channels.replyStreaming": "Replying",
+  "channels.messageSending": "Sending…",
   "channels.messagePlaceholder": "Send a message",
   "channels.chooseRoom": "Choose a channel",
   "channels.send": "Send",

@@ -363,6 +363,8 @@ export const zhCN = {
   "channels.onboardingReady": "{name}",
   "channels.onboardingIntro": "我是你的默认 Bot。把你现在想推进的事情直接发给我，我会先理解目标，再开始处理。",
   "channels.onboardingStart": "开始第一次对话",
+  "channels.replyStreaming": "正在回复",
+  "channels.messageSending": "发送中…",
   "channels.messagePlaceholder": "发送消息",
   "channels.chooseRoom": "选择一个频道",
   "channels.send": "发送",

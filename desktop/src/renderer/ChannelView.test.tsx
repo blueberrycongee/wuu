@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChannelRoom, CollaborationSessionBinding, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
+import type { ChannelMessage, ChannelResponse, ChannelRoom, CollaborationSessionBinding, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
 import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
 import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
@@ -995,7 +995,7 @@ describe("ChannelView", () => {
     expect(renderedMessages[3].querySelector(".channel-human-avatar")).toBeNull();
   });
 
-  it("keeps legacy thread replies out of the public timeline without reply controls", async () => {
+  it("shows public thread replies with their original message context", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async ({ room_id }) => ({
       messages: [{
@@ -1077,17 +1077,14 @@ describe("ChannelView", () => {
     await settle();
 
     const renderedMessages = container.querySelectorAll<HTMLElement>(".channel-message-stream > .channel-message");
-    expect(renderedMessages).toHaveLength(3);
-    expect(renderedMessages[0].classList.contains("grouped")).toBe(false);
-    expect(renderedMessages[1].classList.contains("grouped")).toBe(false);
-    expect(container.textContent).not.toContain("Thread reply 1");
-    expect(container.textContent).not.toContain("Thread reply 2");
-    expect(container.querySelector(".channel-message-actions")).toBeNull();
-    expect(container.querySelector(".channel-thread-panel")).toBeNull();
-    expect(renderedMessages[2].classList.contains("grouped")).toBe(false);
+    expect(renderedMessages).toHaveLength(7);
+    expect(container.textContent).toContain("Thread reply 1");
+    expect(container.textContent).toContain("Thread reply 4");
+    expect(renderedMessages[2].querySelector("blockquote")?.textContent).toBe("AlphaThread root");
+    expect(renderedMessages[6].textContent).toContain("After the thread");
   });
 
-  it("collapses long agent messages and restores rich content on demand", async () => {
+  it("collapses long human messages and restores rich content on demand", async () => {
     const api = createApi();
     const longBody = `**First detail**\n${Array.from({ length: 16 }, (_, index) => `Line ${index + 1}`).join("\n")}\n**Final detail**`;
     api.listChannelMessages = vi.fn(async () => ({
@@ -1095,8 +1092,8 @@ describe("ChannelView", () => {
         id: "long-message",
         room_id: "room-1",
         seq: 1,
-        author_type: "agent" as const,
-        author_id: "agent-1",
+        author_type: "human" as const,
+        author_id: "human",
         kind: "text" as const,
         body: longBody,
         created_at: "2026-07-23T00:00:00Z",
@@ -1693,4 +1690,176 @@ describe("ChannelView", () => {
       owner_id: "agent-2",
     });
   });
+  it("updates response text when saved messages are unchanged and replaces it with one final bubble", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      let messages: ChannelMessage[] = [];
+      let responses: ChannelResponse[] = [{ id: "reply-live", room_id: "room-1", agent_id: "agent-1", session_ref: "room-session", turn_id: "turn-live", state: "thinking", body: "", created_at: "2026-07-23T00:02:00Z" }];
+      api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: room_id === "room-1" ? messages : [], responses: room_id === "room-1" ? responses : [] }));
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      expect(container.querySelector(".channel-response")?.textContent).toContain("Alpha");
+      expect(container.querySelector(".channel-room-header [role=status]")).toBeNull();
+      responses = [{ ...responses[0], state: "responding", body: "Here is **the answer**" }];
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelector(".channel-response strong")?.textContent).toBe("the answer");
+      messages = [{ id: "reply-live", room_id: "room-1", seq: 1, author_type: "agent", author_id: "agent-1", kind: "text", body: responses[0].body, created_at: responses[0].created_at }];
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelector(".channel-response")).toBeNull();
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
+      expect(container.querySelector(".channel-message-bubble")?.textContent).toContain("the answer");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["failed", "interrupted"] as const)("offers session recovery for a %s reply and scopes it to that response", async (state) => {
+    const api = createApi();
+    api.resumeChannelSession = vi.fn().mockResolvedValue({});
+    api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: [], responses: room_id === "room-1" ? [{ id: "failed-reply", room_id, agent_id: "agent-2", session_ref: "beta-room-session", turn_id: "turn-failed", state, body: "Partial answer", error: "Provider unavailable", created_at: "2026-07-23T00:03:00Z" }] : [] }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    const alert = container.querySelector(".channel-response [role=alert]");
+    expect(alert?.textContent).toContain("Provider unavailable");
+    expect(container.querySelector(".channel-response")?.textContent).toContain("Partial answer");
+    await act(async () => alert?.querySelector<HTMLButtonElement>("button")?.click());
+    expect(api.resumeChannelSession).toHaveBeenCalledWith({ sessionRef: "beta-room-session" });
+    expect(api.sendChannelMessage).not.toHaveBeenCalled();
+    act(() => root?.render(<ChannelView selectedRoomID="room-2" />));
+    await settle();
+    expect(container.querySelector(".channel-response")).toBeNull();
+  });
+
+  it("keeps replies beyond the first history page visible after refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      const messages: ChannelMessage[] = Array.from({ length: 501 }, (_, index) => ({
+        id: `history-${index + 1}`, room_id: "room-1", seq: index + 1,
+        author_type: "human", author_id: "local-user", kind: "text",
+        body: `Message ${index + 1}`, created_at: "2026-07-23T00:03:00Z",
+      }));
+      messages.push({ ...messages[0], id: "latest-answer", seq: 502, author_type: "agent", author_id: "agent-1", body: "The complete answer after a long conversation" });
+      api.listChannelMessages = vi.fn(async ({ room_id, after_seq = 0, limit = 500 }) => ({
+        messages: room_id === "room-1" ? messages.filter((message) => message.seq > after_seq).slice(0, limit) : [], responses: [],
+      }));
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(502);
+      expect(container.querySelector(".channel-message.agent")?.textContent).toContain("The complete answer after a long conversation");
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(502);
+      expect(container.querySelector(".channel-message.agent")?.textContent).toContain("The complete answer after a long conversation");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the acknowledged bubble before a slow refresh and preserves the next draft", async () => {
+    const api = createApi();
+    let resolveSend!: (value: { message: ChannelMessage }) => void;
+    let refreshStarted = false;
+    api.listChannelMessages = vi.fn(() => refreshStarted ? new Promise<{ messages: ChannelMessage[]; responses: ChannelResponse[] }>(() => {}) : Promise.resolve({ messages: [], responses: [] }));
+    api.sendChannelMessage = vi.fn(() => new Promise<{ message: ChannelMessage }>((resolve) => { resolveSend = resolve; }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    const textarea = container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")!;
+    act(() => setInputValue(textarea, "Please investigate"));
+    act(() => container.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
+    await settle();
+    expect(container.querySelector(".channel-message-pending")?.textContent).toContain("Please investigate");
+    act(() => setInputValue(textarea, "And check the logs"));
+    refreshStarted = true;
+    await act(async () => resolveSend({ message: { id: "sent", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user", kind: "text", body: "Please investigate", created_at: "2026-07-23T00:03:00Z" } }));
+    expect(container.querySelector(".channel-message-pending")).toBeNull();
+    expect(container.querySelector(".channel-message-bubble")?.textContent).toBe("Please investigate");
+    expect(textarea.value).toBe("And check the logs");
+  });
+
+  it("keeps a failed send in the composer with a retry action", async () => {
+    const api = createApi();
+    api.sendChannelMessage = vi.fn().mockRejectedValue(new Error("Network disconnected"));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    const textarea = container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")!;
+    act(() => setInputValue(textarea, "Keep this message"));
+    await act(async () => container.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
+    await settle();
+    expect(textarea.value).toBe("Keep this message");
+    expect(container.querySelector(".channel-send-error")?.textContent).toContain("Network disconnected");
+    expect(container.querySelector(".channel-message-pending")).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".channel-send-error button")?.click());
+    expect(api.sendChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets touch users choose channel attachments without a workspace menu", async () => {
+    const api = createApi();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    const input = container.querySelector<HTMLInputElement>(".channel-attachment-input")!;
+    const click = vi.spyOn(input, "click");
+    act(() => container.querySelector<HTMLButtonElement>(".channel-attachment-button")?.click());
+    expect(click).toHaveBeenCalledOnce();
+    expect(container.querySelector(".composer-plus-menu")).toBeNull();
+  });
+
+  it("coalesces live events and accepts a slow room snapshot without overlapping polls", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      let listener: Parameters<WuuDesktopApi["onServerEvent"]>[0] | undefined;
+      api.onServerEvent = vi.fn((handler) => { listener = handler; return () => {}; });
+      const response: ChannelResponse = { id: "live", room_id: "room-1", agent_id: "agent-1", session_ref: "visible-session", turn_id: "turn", state: "responding", body: "Beginning", created_at: "2026-07-23T00:03:00Z" };
+      let resolveSnapshot!: (value: { messages: ChannelMessage[]; responses: ChannelResponse[] }) => void;
+      api.listChannelMessages = vi.fn().mockResolvedValueOnce({ messages: [], responses: [response] }).mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      const emit = (threadID: string): void => listener?.({ workdir: "/workspace", kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: threadID, delta: "PRIVATE EVENT CONTENT" } } });
+      act(() => emit("private-child-session"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(api.listChannelMessages).toHaveBeenCalledTimes(1);
+      act(() => { emit("visible-session"); emit("visible-session"); emit("visible-session"); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(api.listChannelMessages).toHaveBeenCalledTimes(2);
+      act(() => emit("visible-session"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+      expect(api.listChannelMessages).toHaveBeenCalledTimes(2);
+      await act(async () => resolveSnapshot({ messages: [], responses: [{ ...response, body: "Public streamed result" }] }));
+      expect(container.querySelector(".channel-response")?.textContent).toContain("Public streamed result");
+      expect(container.textContent).not.toContain("PRIVATE EVENT CONTENT");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the full agent answer visible including its table and code", async () => {
+    const api = createApi();
+    const longBody = `${"Analysis with useful context. ".repeat(60)}\n\n| Check | Result |\n| --- | --- |\n| Runtime | Passed |\n\n\`\`\`go\nfunc main() {}\n\`\`\`\n\nFinal recommendation`;
+    api.listChannelMessages = vi.fn(async () => ({ messages: [{ id: "long-answer", room_id: "room-1", seq: 1, author_type: "agent" as const, author_id: "agent-1", kind: "text" as const, body: longBody, created_at: "2026-07-23T00:02:00Z" }] }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    const answer = container.querySelector(".channel-message.agent .channel-message-bubble");
+    expect(answer?.querySelector("table")?.textContent).toContain("Passed");
+    expect(answer?.querySelector("pre")?.textContent).toContain("func main");
+    expect(answer?.textContent).toContain("Final recommendation");
+    expect(answer?.querySelector(".channel-message-expand-toggle")).toBeNull();
+  });
+
 });
