@@ -114,6 +114,40 @@ reply as a draft; `chat_draft` lets the member reread and publish or discard it.
 control messages and session terminal results use durable delivery rather than public
 acknowledgement messages.
 
+## Long-term plans and memory
+
+Open **Plans and memory** in the room header to inspect, pause, resume, or cancel plans,
+and to inspect, edit, or delete shared room memory and member identity memory. Models
+save plans with `chat_wake`: one-time triggers, timezone-aware recurring schedules,
+or continuation after another session finishes. Simple reminders can post directly
+without another model invocation.
+
+Session plans return to the original session and are cancelled when that session or
+its parent is stopped. Identity and room plans survive the execution that created them.
+Waiting uses no execution slot; due work uses existing admission queues. Changes withdraw
+unconsumed deliveries without undoing work already started. Ended tasks, changed goal
+revisions, and removed room access block stale plans.
+
+Each occurrence and its delivery are persisted together. Restart recovery does not
+recreate an occurrence; missed recurring intervals are coalesced, as are pending wakes
+for the same plan. **The execution host must be running.** Shutdown, sleep, or quitting
+Wuu delays delivery until recovery. This mechanism does not provide always-on cloud
+execution or offline push notifications.
+
+`chat_memory` supports progressive discovery through indexes and search, followed by
+selected topic reads. Identity memory is private to the named identity's sessions;
+room memory is shared with this room's members and coordinator. Markdown directories
+remain the source of truth. Updates require the observed revision to prevent lost edits.
+Topic corrections and deletion update the index, which is refreshed before each model
+request. Memory is correctable evidence, not additional authorization; deleting a
+persistent memory does not erase existing conversation transcripts.
+
+`chat_read` narrows history by query, thread, and sequence range. `chat_session` results
+lists outcome excerpts and retrieves selected results in pages, without exposing another
+session's private reasoning or tool trace. Older independent-session outcomes are not
+backfilled; users can still inspect their existing session history. Models choose useful
+context, memories, and next steps without a mandatory workflow for each exchange.
+
 ## Related documentation
 
 - [Agent collaboration and subagents](subagents.md)
