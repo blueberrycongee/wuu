@@ -200,37 +200,25 @@ func (s *Server) StopSession(ctx context.Context, params channels.CollaborationS
 	if err != nil {
 		return binding, err
 	}
-	all, err := s.channelService.ListAllCollaborationSessions(ctx)
+	stopped, err := s.channelService.CancelCollaborationSessions(ctx, binding.SessionRef)
 	if err != nil {
 		return binding, err
 	}
-	stopped := map[string]bool{binding.SessionRef: true}
-	for changed := true; changed; {
-		changed = false
-		for _, child := range all {
-			if stopped[child.ParentSessionRef] && !stopped[child.SessionRef] {
-				stopped[child.SessionRef] = true
-				changed = true
-			}
-		}
-	}
-	for _, target := range all {
-		if !stopped[target.SessionRef] {
-			continue
-		}
-		if err = s.setCollaborationSessionState(ctx, target, channels.CollaborationSessionCancelled, ""); err != nil {
-			return binding, err
-		}
+	// Persist cancellation and parent notifications before interrupting execution.
+	// Retry every target even when one lease reset fails; the durable fence keeps
+	// late callbacks from reviving any member of the cancelled subtree.
+	var interruptErr error
+	for _, target := range stopped {
 		if th := s.thread(target.SessionRef); th != nil {
-			if _, err = s.interruptThreadExecution(th.ID, "", ""); err != nil {
-				return binding, err
-			}
-		} else if _, err = session.RequestThreadExecutionReset(s.rt.SessionDir, target.SessionRef); err != nil {
-			return binding, err
+			_, err = s.interruptThreadExecution(th.ID, "", "")
+		} else {
+			_, err = session.RequestThreadExecutionReset(s.rt.SessionDir, target.SessionRef)
 		}
+		interruptErr = errors.Join(interruptErr, err)
 	}
 	s.drainCollaborationSessionsLocked(ctx)
-	return s.channelService.LookupCollaborationSession(ctx, binding.SessionRef)
+	updated, lookupErr := s.channelService.LookupCollaborationSession(ctx, binding.SessionRef)
+	return updated, errors.Join(interruptErr, lookupErr)
 }
 
 func (s *Server) ResumeSession(ctx context.Context, params channels.CollaborationSessionControlParams) (channels.CollaborationSessionBinding, error) {

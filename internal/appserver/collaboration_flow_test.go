@@ -210,3 +210,33 @@ func TestCollaborationRestartDeliversCompletedChildWithoutRerunningIt(t *testing
 	default:
 	}
 }
+
+func TestCollaborationStoppedChildWakesWaitingParent(t *testing.T) {
+	fixture, provider := newCollaborationFlowFixture(t)
+	parent, child, _ := startCollaborationFlow(t, fixture, provider)
+	var stopped ChannelSessionResult
+	fixture.rpc(t, MethodChannelSessionStop, ChannelSessionRefParams{SessionRef: child.SessionRef}, &stopped)
+	if stopped.Session.State != channels.CollaborationSessionCancelled {
+		t.Fatalf("stopped child = %+v", stopped.Session)
+	}
+	fixture.waitForCompletion(t)
+	continuation := provider.next(t)
+	prompt := collaborationRequestText(continuation.request)
+	if !strings.Contains(prompt, child.SessionRef) || !strings.Contains(prompt, `"terminal_state":"cancelled"`) {
+		t.Fatalf("waiting parent did not receive the child cancellation: %s", prompt)
+	}
+	// Retrying the control operation must not enqueue another parent turn.
+	fixture.rpc(t, MethodChannelSessionStop, ChannelSessionRefParams{SessionRef: child.SessionRef}, &stopped)
+	continuation.response <- providers.ChatResponse{Content: "The experiment was stopped. I will report the available evidence and the remaining uncertainty."}
+	fixture.waitForCompletion(t)
+	for ref, state := range map[string]channels.CollaborationSessionState{parent.SessionRef: channels.CollaborationSessionCompleted, child.SessionRef: channels.CollaborationSessionCancelled} {
+		binding, err := fixture.server.channelService.LookupCollaborationSession(context.Background(), ref)
+		if err != nil || binding.State != state {
+			t.Fatalf("session after cancellation = %+v, %v", binding, err)
+		}
+	}
+	pending, err := fixture.server.channelService.PendingCollaborationDispatches(context.Background(), fixture.identity.ID)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("cancellation left duplicate deliveries: %+v, %v", pending, err)
+	}
+}
