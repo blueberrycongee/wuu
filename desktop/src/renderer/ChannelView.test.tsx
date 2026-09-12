@@ -874,9 +874,10 @@ describe("ChannelView", () => {
     const roomHeader = container.querySelector(".channel-room-header");
     expect(roomHeader?.textContent).toContain("general");
     expect(roomHeader?.querySelector(".channel-room-scope")).toBeNull();
-    const detailsToggle = roomHeader?.querySelector<HTMLButtonElement>('button[aria-label="管理 general"]');
+    const detailsToggle = roomHeader?.querySelector<HTMLButtonElement>(".channel-room-settings-trigger");
     expect(detailsToggle).not.toBeNull();
     act(() => detailsToggle?.click());
+    act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
     const detailsDialog = document.querySelector(".sidebar-name-dialog");
     expect(detailsDialog?.textContent).toContain("群聊详情");
     expect(detailsDialog?.textContent).toContain("群成员");
@@ -1094,6 +1095,61 @@ describe("ChannelView", () => {
     expect(renderedMessages[4].querySelector(".channel-author-mention")?.textContent).toBe("@Beta");
   });
 
+  it("opens the DM agent settings without replacing the chat and keeps a failed draft for retry", async () => {
+    const api = createApi();
+    const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[1]] };
+    const update = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ agent: agents[1] });
+    api.updateNamedAgent = update;
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id} />));
+    await settle();
+    const stream = container.querySelector('[role="log"]');
+    const composer = container.querySelector(".channel-composer");
+    act(() => container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")!.click());
+    const panel = container.querySelector("aside.channel-settings-panel")!;
+    expect(panel).not.toBeNull();
+    expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    expect(container.querySelector(".channel-composer")).toBe(composer);
+    expect(stream?.closest("[inert]")).toBeNull();
+    const name = panel.querySelector<HTMLInputElement>(".channel-agent-editor-name input")!;
+    expect(name.value).toBe("Beta");
+    const role = panel.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => { setInputValue(name, "Researcher"); setInputValue(role, "Check primary sources"); });
+    act(() => panel.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await settle();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "agent-2", name: "Researcher", role: "Check primary sources", avatar_key: agents[1].avatar_key }));
+    expect(panel.querySelector('[role="alert"]')).not.toBeNull();
+    expect(name.value).toBe("Researcher");
+    act(() => panel.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await settle();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(container.querySelector(".channel-settings-panel")).toBeNull();
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+  });
+
+  it("selects the exact group member, returns to members, and clears settings when switching rooms", async () => {
+    const api = createApi();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    const renderRoom = (id: string) => root?.render(<ChannelView directoryAgents={agents} directoryRooms={rooms} selectedRoomID={id} />);
+    act(() => renderRoom("room-1"));
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")!.click());
+    expect(container.querySelectorAll(".channel-settings-member")).toHaveLength(2);
+    act(() => container.querySelectorAll<HTMLButtonElement>(".channel-settings-member")[1].click());
+    expect(container.querySelector<HTMLInputElement>(".channel-agent-editor-name input")?.value).toBe("Beta");
+    act(() => container.querySelector<HTMLButtonElement>('.channel-settings-header [aria-label="返回"]')!.click());
+    act(() => container.querySelectorAll<HTMLButtonElement>(".channel-settings-member")[0].click());
+    expect(container.querySelector<HTMLInputElement>(".channel-agent-editor-name input")?.value).toBe("Alpha");
+    act(() => renderRoom("room-2"));
+    await settle();
+    expect(container.querySelector(".channel-settings-panel")).toBeNull();
+    expect(document.querySelector(".channel-agent-editor-dialog")).toBeNull();
+    expect(api.updateNamedAgent).not.toHaveBeenCalled();
+  });
+
   it("identifies a DM in the header and keeps its message stream free of repeated sender chrome", async () => {
     const api = createApi();
     const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[0]] };
@@ -1105,7 +1161,7 @@ describe("ChannelView", () => {
     root = createRoot(container);
     act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id} />));
     await settle();
-    expect(container.querySelector(".channel-room-header h2")?.textContent).toBe("Alpha");
+    expect(container.querySelector(".channel-room-settings-name")?.textContent).toBe("Alpha");
     expect(container.querySelector(".channel-room-header .channel-agent-avatar")).not.toBeNull();
     const stream = container.querySelector(".channel-message-stream")!;
     expect(stream.querySelectorAll("article")).toHaveLength(2);
@@ -1644,9 +1700,10 @@ describe("ChannelView", () => {
     root = createRoot(container);
     act(() => root?.render(<ChannelView selectedRoomID="room-2" />));
     await settle();
-    const manageResearch = container.querySelector<HTMLButtonElement>('button[aria-label="管理 research"]');
+    const manageResearch = container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger");
     expect(manageResearch).not.toBeNull();
     act(() => manageResearch?.click());
+    act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
     const detailsDialog = document.querySelector(".sidebar-name-dialog");
     expect(detailsDialog?.textContent).toContain("群聊详情");
     expect(document.querySelector(".sidebar-name-dialog-overlay-drawer")).not.toBeNull();
@@ -1701,7 +1758,8 @@ describe("ChannelView", () => {
       .find((button) => button.textContent?.includes("general"));
     act(() => general?.click());
     await settle();
-    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="管理 general"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")?.click());
+    act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
 
     const detailsDialog = document.querySelector(".sidebar-name-dialog");
     expect(detailsDialog?.querySelectorAll(".channel-room-member-row")).toHaveLength(2);
@@ -1865,7 +1923,7 @@ describe("ChannelView", () => {
     expect(card.querySelector('[aria-label="推理强度"]')?.textContent).toBe(expectedEffort);
     await act(async () => card.querySelector<HTMLButtonElement>(".channel-agent-hover-edit")!.click());
     expect(document.querySelector(".channel-agent-hover-card")).toBeNull();
-    const editor = document.querySelector(".channel-agent-editor-dialog")!;
+    const editor = container.querySelector(".channel-settings-panel")!;
     expect(editor).not.toBeNull();
     expect(editor.querySelector<HTMLInputElement>("input")?.value).toBe(bot.name);
     expect(api.readChannelSession).not.toHaveBeenCalled();

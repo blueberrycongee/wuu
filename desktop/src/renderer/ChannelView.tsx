@@ -12,6 +12,7 @@ import { ChannelContinuity } from "./ChannelContinuity";
 import { ChannelSessions } from "./ChannelSessions";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
+import { ChannelAgentSettings } from "./ChannelAgentSettings";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
@@ -77,7 +78,7 @@ export function formatChannelUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(Math.max(0, count));
 }
 
-function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, expressive = false }: {
+function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, expressive = false, focusable = true }: {
   id: string;
   name: string;
   avatarKey: string;
@@ -88,10 +89,11 @@ function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, mod
   modelLabel: string;
   compact?: boolean;
   expressive?: boolean;
+  focusable?: boolean;
 }): JSX.Element {
   const accessibleDescription = model ? `${name}: ${statusText}, ${modelLabel}: ${model}` : `${name}: ${statusText}`;
   return (
-    <span className={`channel-agent-avatar${compact ? " compact" : ""}`} tabIndex={0} aria-label={accessibleDescription}>
+    <span className={`channel-agent-avatar${compact ? " compact" : ""}`} tabIndex={focusable ? 0 : undefined} aria-label={accessibleDescription}>
       <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={expressive ? status : "idle"} motion={expressive ? "expressive" : "subtle"} />
       <span className="channel-agent-status-card" role="tooltip">
         <span>{statusText}</span>
@@ -610,6 +612,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     return () => window.clearTimeout(timer);
   }, [inspectorClosing, finishClosingInspector]);
   const inspectSession = (sessionRef: string, turnID: string | undefined, name: string) => {
+    if (savingAgent) return;
+    if (settingsOpen) closeAgentPanel();
     if (!inspectorClosing && inspectedSession?.sessionRef === sessionRef && inspectedSession.turnID === turnID) {
       closeInspector();
       return;
@@ -648,6 +652,30 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const messages = messagesByRoomID[selectedRoomID] ?? [];
   const [trackedTasks, setTrackedTasks] = useState<ChannelMessage[]>([]);
   const [setupPanel, setSetupPanel] = useState<SetupPanel>(null);
+  const [settingsRoomID, setSettingsRoomID] = useState("");
+  const [showSettingsMembers, setShowSettingsMembers] = useState(false);
+  const [savingAgent, setSavingAgent] = useState(false);
+  const [agentSaveError, setAgentSaveError] = useState("");
+  const agentEditorGeneration = useRef(0);
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const settingsOpen = section === "rooms" && settingsRoomID === selectedRoomID && Boolean(settingsRoomID);
+  useEffect(() => {
+    agentEditorGeneration.current += 1;
+    setSettingsRoomID("");
+    setShowSettingsMembers(false);
+    setSetupPanel((panel) => panel === "agent" ? null : panel);
+  }, [selectedRoomID, section]);
+  useEffect(() => {
+    if (!settingsOpen || !showSettingsMembers) return;
+    document.querySelector<HTMLButtonElement>(".channel-settings-member, .channel-settings-manage")?.focus({ preventScroll: true });
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      closeAgentPanel();
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [settingsOpen, showSettingsMembers]);
   const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [splitWidth, setSplitWidth] = useState(initialChannelSplitWidth);
   const [listCollapsed, setListCollapsed] = useState(initialChannelListCollapsed);
@@ -793,8 +821,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     if (!editAgentRequestID) return;
     const agent = agents.find((candidate) => candidate.id === editAgentRequestID);
     if (!agent) return;
-    loadAgentDraft(agent);
-    setSetupPanel("agent");
+    if (section === "rooms") openConversationAgent(agent);
+    else { loadAgentDraft(agent); setSetupPanel("agent"); }
     onEditAgentRequestHandled?.();
   }, [agents, editAgentRequestID]);
 
@@ -1229,7 +1257,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   }, [messageScroll, messages.length, messages.at(-1)?.id, pendingMessage]);
 
   async function submitAgent(): Promise<void> {
-    if (!window.wuu || !editingAgentID || !agentName.trim()) return;
+    if (!window.wuu || !editingAgentID || !agentName.trim() || savingAgent) return;
+    const savedAgentID = editingAgentID;
+    const generation = agentEditorGeneration.current;
+    setSavingAgent(true);
+    setAgentSaveError("");
     try {
       const [providerOverride, modelOverride] = agentModel.split("\u0000");
       const params = {
@@ -1242,11 +1274,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         model_override: modelOverride || undefined,
         effort_override: modelOverride && agentEffort ? agentEffort : undefined,
       };
-      await window.wuu.updateNamedAgent({ agent_id: editingAgentID, ...params });
-      closeAgentPanel();
+      await window.wuu.updateNamedAgent({ agent_id: savedAgentID, ...params });
       await refreshRoomsAndAgents();
+      if (generation === agentEditorGeneration.current) closeAgentPanel();
     } catch (reason) {
+      if (generation === agentEditorGeneration.current) setAgentSaveError(toastErrorMessage(reason));
       showErrorToast(reason);
+    } finally {
+      setSavingAgent(false);
     }
   }
 
@@ -1419,6 +1454,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   }
 
   function loadAgentDraft(agent: NamedAgent): void {
+    agentEditorGeneration.current += 1;
+    setAgentSaveError("");
     setAgentAppearanceOpen(false);
     setEditingAgentID(agent.id);
     setAgentName(agent.name);
@@ -1476,6 +1513,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   }
 
   function closeAgentPanel(): void {
+    agentEditorGeneration.current += 1;
+    if (settingsOpen) requestAnimationFrame(() => settingsTriggerRef.current?.focus({ preventScroll: true }));
+    setSettingsRoomID("");
+    setShowSettingsMembers(false);
     setSetupPanel(null);
     setEditingAgentID("");
     setAgentName("");
@@ -1487,6 +1528,30 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setAgentModel("");
     setAgentEffort("");
     setAgentResetStatus("");
+  }
+
+  function openConversationAgent(agent: NamedAgent): void {
+    if (savingAgent) return;
+    setInspectedSession(null);
+    setInspectorClosing(false);
+    loadAgentDraft(agent);
+    setSettingsRoomID(selectedRoomID);
+    setShowSettingsMembers(false);
+    setSetupPanel("agent");
+  }
+
+  function openConversationSettings(): void {
+    if (!selectedRoom || savingAgent) return;
+    if (settingsOpen) { closeAgentPanel(); return; }
+    if (selectedRoom.kind === "dm" && selectedRoomAgents[0]) {
+      openConversationAgent(selectedRoomAgents[0]);
+    } else {
+      setInspectedSession(null);
+      setInspectorClosing(false);
+      setSetupPanel(null);
+      setSettingsRoomID(selectedRoomID);
+      setShowSettingsMembers(true);
+    }
   }
 
   function toggleRoomAgent(agentID: string): void {
@@ -1760,7 +1825,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
 
   return (
     <section
-      className={`channel-view channel-mode-${section}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
+      className={`channel-view channel-mode-${section}${settingsOpen ? " has-agent-settings" : ""}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
       aria-label={t("channels.title")}
       data-wuu-component="channel-view"
       data-wuu-variant={section}
@@ -1790,17 +1855,17 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 />
                 <button className="icon-button channel-new-room-close" type="button" aria-label={t("channels.cancelNewRoom")} disabled={creatingRoom} onClick={closeRoomPanel}><X aria-hidden="true" /></button>
               </> : <>
-                <div className="channel-room-header-title">
+                <button ref={settingsTriggerRef} type="button" className="channel-room-header-title channel-room-settings-trigger" disabled={!selectedRoom || savingAgent} aria-expanded={settingsOpen} aria-controls={settingsOpen ? "channel-conversation-settings" : undefined} onClick={openConversationSettings}>
                   {selectedRoom ? <span className="channel-room-header-avatar">
                     {selectedRoom.kind === "dm" && selectedRoomAgents[0] ? <AgentAvatar
-                      id={selectedRoomAgents[0].id} name={selectedRoomAgents[0].name}
+                      id={selectedRoomAgents[0].id} name={selectedRoomAgents[0].name} focusable={false}
                       avatarKey={selectedRoomAgents[0].avatar_key} avatarImage={selectedRoomAgents[0].avatar_image}
                       status={activityFor(selectedRoomAgents[0])} statusText={activityText(activityFor(selectedRoomAgents[0]))}
                       model={selectedRoomAgents[0].model_override || initialized?.model} modelLabel={t("channels.model")} />
                       : <ChannelGroupAvatar room={selectedRoom} agents={agents} />}
                   </span> : null}
-                  <h2>{selectedRoom?.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} title={t("channels.memberCount", { count: selectedRoom.members.length })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}><span>{selectedRoomTitle}</span><ChevronDown aria-hidden="true" /></button> : selectedRoomTitle || t("channels.rooms")}</h2>
-                </div>
+                  <span className="channel-room-settings-name" role="heading" aria-level={2}>{selectedRoomTitle || t("channels.rooms")}</span><ChevronDown className="icon" aria-hidden="true" />
+                </button>
                 {selectedRoom ? <ChannelContinuity key={selectedRoom.id} roomId={selectedRoom.id} agents={selectedRoomAgents} /> : null}
               </>}
             </header>
@@ -1944,7 +2009,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               id: agent?.id ?? message.author_id, name: author,
               avatarKey: agent?.avatar_key ?? "abstract-1", avatarImage: agent?.avatar_image,
               model, effort,
-              onEdit: agent ? () => { loadAgentDraft(agent); setSetupPanel("agent"); } : undefined,
+              onEdit: agent ? () => openConversationAgent(agent) : undefined,
               onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author),
             } : undefined;
             return (
@@ -2323,7 +2388,21 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       )}
 
 
-      <SidebarNameDialog
+      {settingsOpen && showSettingsMembers ? <aside id="channel-conversation-settings" className="channel-settings-panel" aria-label={t("channels.memberCount", { count: selectedRoomAgents.length })}>
+        <header className="channel-settings-header"><h2>{t("channels.memberCount", { count: selectedRoomAgents.length })}</h2><button className="icon-button" type="button" aria-label={t("common.close")} onClick={closeAgentPanel}><X /></button></header>
+        <div className="channel-settings-members">
+          {selectedRoomAgents.map((agent) => <button className="channel-settings-member" type="button" key={agent.id} onClick={() => openConversationAgent(agent)}>
+            <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} />
+            <span><strong>{agent.name}</strong>{agent.role ? <span>{agent.role}</span> : null}</span><Settings2 className="icon" aria-hidden="true" />
+          </button>)}
+          {selectedRoom ? <button className="channel-settings-manage" type="button" onClick={() => { closeAgentPanel(); editRoom(selectedRoom); }}>{t("channels.manageRoom", { name: selectedRoom.name })}</button> : null}
+        </div>
+      </aside> : null}
+      <ChannelAgentSettings
+        inline={settingsOpen}
+        busy={savingAgent}
+        error={agentSaveError}
+        onBack={settingsOpen && selectedRoom?.kind === "channel" ? () => { setSetupPanel(null); setShowSettingsMembers(true); } : undefined}
         open={setupPanel === "agent" && Boolean(editingAgentID)}
         title={agentName}
         onTitleChange={setAgentName}
@@ -2374,9 +2453,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               const file = input.files?.[0];
               if (!file) return;
               setAgentAvatarError("");
+              const generation = agentEditorGeneration.current;
               void squareAvatarImageFromFile(file)
-                .then(setAgentAvatarImage)
-                .catch(() => setAgentAvatarError(t("channels.invalidAvatarImage")))
+                .then((image) => { if (generation === agentEditorGeneration.current) setAgentAvatarImage(image); })
+                .catch(() => { if (generation === agentEditorGeneration.current) setAgentAvatarError(t("channels.invalidAvatarImage")); })
                 .finally(() => { input.value = ""; });
             }} />
           <label className="channel-agent-editor-field">
