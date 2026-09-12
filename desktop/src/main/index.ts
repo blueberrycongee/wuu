@@ -782,7 +782,11 @@ function syncNativeThemeSource(): void {
 // it follows the stored theme.
 function windowBackgroundColor(): string {
   if (process.platform === "darwin") return DEFAULT_WINDOW_BACKGROUND;
-  return resolvedThemeIsDark() ? DARK_WINDOW_BACKGROUND : DEFAULT_WINDOW_BACKGROUND;
+  if (resolvedThemeIsDark()) return DARK_WINDOW_BACKGROUND;
+  // Linux WCO paints over the page fill; match renderer --paper (#ffffff)
+  // so the control strip does not sit on the warmer #f6f6f4 window fill.
+  if (process.platform === "linux") return "#ffffff";
+  return DEFAULT_WINDOW_BACKGROUND;
 }
 
 // The window-chrome contract per platform: macOS hides the titlebar and
@@ -829,7 +833,8 @@ function nonMacTitleBarOverlay(): Electron.TitleBarOverlay {
   return {
     // Track the themed window fill so the button strip reads as part of
     // the titlebar; symbol colors mirror the --ink text tokens.
-    color: dark ? DARK_WINDOW_BACKGROUND : DEFAULT_WINDOW_BACKGROUND,
+    // On Linux this is --paper white in light theme (see windowBackgroundColor).
+    color: windowBackgroundColor(),
     symbolColor: dark ? "#e4e6e8" : "#1f2328",
     height: WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
   };
