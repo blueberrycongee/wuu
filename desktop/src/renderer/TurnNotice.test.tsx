@@ -311,7 +311,7 @@ describe("TurnNotice process row", () => {
     expect(aside?.classList.contains("auth")).toBe(false);
   });
 
-  it("shows retry progress and counts down in one live process row", () => {
+  it("advances retry progress and switches to retrying at the deadline", () => {
     const retryAtMs = Date.now() + 2_000;
     const host = mount(
       <StreamReconnectNotice
@@ -329,9 +329,9 @@ describe("TurnNotice process row", () => {
     );
 
     const notice = host.querySelector("aside.stream-reconnect-notice");
-    expect(notice?.querySelectorAll(".process-surface-row")).toHaveLength(1);
+    expect(notice?.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("0");
     expect(notice?.textContent).toContain("429 触发限流");
-    expect(notice?.textContent).toContain("第 2 次重试");
+
     expect(notice?.textContent).toContain("2 秒后重试");
     // The redacted provider cause stays out of the row; the structured
     // category maps to a localized title instead.
@@ -341,12 +341,53 @@ describe("TurnNotice process row", () => {
       vi.advanceTimersByTime(1_000);
     });
     expect(notice?.textContent).toContain("1 秒后重试");
+    expect(notice?.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("50");
 
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
     expect(notice?.textContent).toContain("正在重试");
-    expect(notice?.querySelector(".process-surface-chevron")).toBeNull();
+    expect(notice?.querySelector("[role=progressbar]")).toBeNull();
+  });
+
+  it("resets progress for the next attempt and removes a recovered card", () => {
+    const item = { id: "retry", type: "stream_reconnect", status: "in_progress", retry_at_ms: Date.now() + 2000 } as const;
+    const host = mount(<StreamReconnectNotice item={item} />);
+    const card = host.querySelector("aside");
+    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => { root?.render(<StreamReconnectNotice item={{ ...item, retry_at_ms: Date.now() + 4000 }} />); });
+    expect(host.querySelector("aside")).toBe(card);
+    expect(host.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("0");
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(host.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("50");
+    act(() => { root?.render(<StreamReconnectNotice item={{ ...item, status: "completed" }} />); });
+    expect(host.querySelector("aside")).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("offers an actionable retry only after automatic recovery fails", async () => {
+    const retry = vi.fn();
+    const item = { id: "retry", type: "stream_reconnect", status: "in_progress" } as const;
+    const host = mount(<StreamReconnectNotice item={item} onRetry={retry} />);
+    expect(host.querySelector("button")).toBeNull();
+    expect(host.textContent).toContain(t("appState.retryNow"));
+    act(() => { root?.render(<StreamReconnectNotice item={{ ...item, status: "failed" }} onRetry={retry} />); });
+    await act(async () => { host.querySelector("button")?.click(); });
+    expect(retry).toHaveBeenCalledOnce();
+    expect(host.querySelector("[role=progressbar]")).toBeNull();
+  });
+
+  it("disables manual retry until submission settles", async () => {
+    let finish!: () => void;
+    const retry = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const host = mount(<StreamReconnectNotice item={{ id: "retry", type: "stream_reconnect", status: "failed" }} onRetry={retry} />);
+    const button = host.querySelector("button")!;
+    act(() => { button.click(); });
+    expect(button.disabled).toBe(true);
+    act(() => { button.click(); });
+    expect(retry).toHaveBeenCalledOnce();
+    await act(async () => { finish(); });
+    expect(button.disabled).toBe(false);
   });
 
   it("marks a failed stream reconnect row as stopped without retry counts", () => {

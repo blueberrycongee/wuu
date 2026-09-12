@@ -1,3 +1,5 @@
+import { showErrorToast } from "./Toast";
+import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ThreadItem, ThreadItemStatus } from "../shared/protocol";
 import { isUnchangedContextCompaction, type TurnEventDisplay } from "./TurnEvents";
@@ -132,37 +134,64 @@ export function StreamStatusNotice({
 
 export function StreamReconnectNotice({
   item,
+  onRetry,
 }: {
   item: ThreadItem;
-}): JSX.Element {
+  onRetry?: () => void | Promise<void>;
+}): JSX.Element | null {
   const inProgress = item.status === "in_progress";
-  const failed = item.status === "failed";
-  const waitText = useRetryCountdown(inProgress ? item.retry_at_ms : undefined);
-  // Settled failure rows must read as over ("已停止 · cause"), never as a
-  // frozen snapshot of the retry loop ("第 n/m 次重试").
-  const detail = failed
-    ? streamReconnectTitle(item)
-    : [streamReconnectRetryText(item), waitText].filter(Boolean).join(" · ") ||
-      undefined;
-  return (
-    <SystemEventNotice
-      event={{
-        label: failed ? t("error.cancelledTitle") : streamReconnectTitle(item),
-        detail,
-        tone: failed ? "error" : undefined,
-        state: inProgress ? "in_progress" : "settled",
-      }}
-      className="stream-reconnect-notice"
-    />
-  );
-}
-
-function streamReconnectRetryText(item: ThreadItem): string | undefined {
-  const retryCount = item.retry_count ?? 0;
-  if (retryCount <= 0) {
-    return undefined;
+  const retryAtMs = inProgress ? item.retry_at_ms : undefined;
+  const countdown = useRetryCountdown(retryAtMs);
+  const [retrying, setRetrying] = useState(false);
+  async function retry(): Promise<void> {
+    if (!onRetry || retrying) return;
+    setRetrying(true);
+    try {
+      await onRetry();
+    } catch (error) {
+      showErrorToast(error);
+    } finally {
+      setRetrying(false);
+    }
   }
-  return t("appState.retryOrdinal", { count: formatCurrentNumber(retryCount) });
+  if (item.status !== "in_progress" && item.status !== "failed") return null;
+  const title = streamReconnectTitle(item);
+  return (
+    <aside
+      className="stream-reconnect-notice"
+      role={inProgress ? "status" : "alert"}
+      aria-label={title}
+    >
+      <CircleAlert size={16} aria-hidden="true" className="stream-reconnect-icon" />
+      <span className="stream-reconnect-title">{title}</span>
+      {inProgress ? (
+        <span
+          className="stream-reconnect-status"
+          role={countdown.waiting ? "progressbar" : undefined}
+          aria-label={countdown.text}
+          aria-valuemin={countdown.waiting ? 0 : undefined}
+          aria-valuemax={countdown.waiting ? 100 : undefined}
+          aria-valuenow={countdown.waiting ? Math.round(countdown.progress * 100) : undefined}
+        >
+          {countdown.waiting ? (
+            <span
+              key={retryAtMs}
+              className="stream-reconnect-progress"
+              aria-hidden="true"
+              style={{ transform: `scaleX(${countdown.progress})` }}
+            />
+          ) : null}
+          <span className="stream-reconnect-status-text">{countdown.text}</span>
+        </span>
+      ) : onRetry ? (
+        <button type="button" className="stream-reconnect-retry" disabled={retrying} onClick={() => void retry()}>
+          {t(retrying ? "appState.retryNow" : "appState.retryAction")}
+        </button>
+      ) : (
+        <span className="stream-reconnect-stopped">{t("error.cancelledTitle")}</span>
+      )}
+    </aside>
+  );
 }
 
 /**
@@ -219,12 +248,17 @@ function streamReconnectCategoryTitle(
   }
 }
 
-function useRetryCountdown(retryAtMs: number | undefined): string | undefined {
+function useRetryCountdown(retryAtMs: number | undefined) {
   const [, setTick] = useState(0);
+  // The event exposes only the deadline. Measure the visible wait from
+  // first receipt, and reset only when a new retry deadline arrives.
+  const [schedule, setSchedule] = useState(() => ({ deadline: retryAtMs, start: Date.now() }));
+  if (schedule.deadline !== retryAtMs) {
+    setSchedule({ deadline: retryAtMs, start: Date.now() });
+  }
 
   useEffect(() => {
     if (retryAtMs === undefined || retryAtMs <= Date.now()) return;
-
     let timer: number | undefined;
     const update = (): void => {
       setTick((value) => value + 1);
@@ -233,7 +267,7 @@ function useRetryCountdown(retryAtMs: number | undefined): string | undefined {
         timer = undefined;
       }
     };
-    timer = window.setInterval(update, 1_000);
+    timer = window.setInterval(update, 100);
     document.addEventListener("visibilitychange", update);
     return () => {
       if (timer !== undefined) window.clearInterval(timer);
@@ -241,19 +275,19 @@ function useRetryCountdown(retryAtMs: number | undefined): string | undefined {
     };
   }, [retryAtMs]);
 
-  if (retryAtMs === undefined) return undefined;
-  const remainingMs = retryAtMs - Date.now();
-  if (remainingMs <= 0) return t("appState.retryNow");
-  if (remainingMs < 60_000) {
+  const now = Date.now();
+  const remainingMs = Math.max(0, (retryAtMs ?? now) - now);
+  const duration = Math.max(1, (retryAtMs ?? now) - schedule.start);
+  const elapsed = Math.min(duration, Math.max(0, now - schedule.start));
+  let text = t("appState.retryNow");
+  if (remainingMs > 0) {
     const seconds = Math.max(1, Math.ceil(remainingMs / 1_000));
-    return t(seconds === 1 ? "appState.retrySecond" : "appState.retrySeconds", {
-      count: formatCurrentNumber(seconds),
-    });
+    const minutes = Math.ceil(remainingMs / 60_000);
+    text = remainingMs < 60_000
+      ? t(seconds === 1 ? "appState.retrySecond" : "appState.retrySeconds", { count: formatCurrentNumber(seconds) })
+      : t(minutes === 1 ? "appState.retryMinute" : "appState.retryMinutes", { count: formatCurrentNumber(minutes) });
   }
-  const minutes = Math.ceil(remainingMs / 60_000);
-  return t(minutes === 1 ? "appState.retryMinute" : "appState.retryMinutes", {
-    count: formatCurrentNumber(minutes),
-  });
+  return { text, waiting: remainingMs > 0, progress: elapsed / duration };
 }
 
 export function ContextCompactionNotice({

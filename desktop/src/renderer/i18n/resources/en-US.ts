@@ -1376,6 +1376,7 @@ export const enUS = {
   "appState.retrySeconds": "Retrying in {count} seconds",
   "appState.retryMinute": "Retrying in {count} minute",
   "appState.retryMinutes": "Retrying in {count} minutes",
+  "appState.retryAction": "Retry",
   "appState.retryNow": "Retrying now",
   "appState.namedMessageStream": "{transport} message stream",
   "appState.messageStream": "Message stream",

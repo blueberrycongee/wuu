@@ -14,7 +14,7 @@ import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
-import { TurnEventNotice, StreamStatusNotice } from "./TurnNotice";
+import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
@@ -48,7 +48,7 @@ export type TurnViewProps = {
     images: InputImage[],
     files: InputFile[],
     contentParts?: MessageContentPart[],
-  ) => void;
+  ) => void | Promise<void>;
   onCollapseComplete?: () => void;
   onOpenFileDiff?: (selection: TurnFileDiffSelection) => void;
   streamStatus?: TurnStreamStatus;
@@ -187,6 +187,8 @@ function TurnContent({
     turn.id,
     rawAssistantDisplay,
   );
+  const reconnectItems = turn.items.filter((item) => item.type === "stream_reconnect");
+  const retryMessage = userItems.at(-1);
   const event = turnEventForTurn(turn);
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = (
@@ -230,7 +232,19 @@ function TurnContent({
           }
         />
       ) : null}
-      {isLatestTurn && turn.status === "in_progress" && streamStatus ? (
+      {reconnectItems.map((item) => (
+        <StreamReconnectNotice
+          key={item.id}
+          item={item}
+          onRetry={isLatestTurn && turn.status === "failed" && retryMessage && onEditMessage && onSubmitEditMessage
+            ? () => onSubmitEditMessage(
+                turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
+                retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
+              )
+            : undefined}
+        />
+      ))}
+      {isLatestTurn && turn.status === "in_progress" && streamStatus && reconnectItems.length === 0 ? (
         <StreamStatusNotice status={streamStatus} />
       ) : null}
       {/*

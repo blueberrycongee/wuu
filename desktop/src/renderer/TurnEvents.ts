@@ -55,8 +55,8 @@ export function turnEventForTurn(turn: Turn): TurnEventDisplay | undefined {
   if (turn.kind === "compact" && hasContextCompactionOutcome(turn)) {
     return undefined;
   }
-  // A settled stream_reconnect row already names the cause and the final
-  // retry count in place; the generic turn-level notice would repeat it.
+  // A failed reconnect card already explains the cause; a generic
+  // turn-level notice would repeat it.
   if (hasSettledStreamReconnect(turn)) {
     return undefined;
   }

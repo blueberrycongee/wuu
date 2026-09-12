@@ -2665,6 +2665,78 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
+.stream-reconnect-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.stream-reconnect-icon { flex: 0 0 auto; }
+.stream-reconnect-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.stream-reconnect-status,
+.stream-reconnect-retry {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stream-reconnect-status {
+  min-width: 84px;
+  text-align: center;
+}
+
+.stream-reconnect-progress {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  transform-origin: left center;
+  transition: transform 100ms linear;
+}
+
+.stream-reconnect-status-text { position: relative; }
+.stream-reconnect-retry { cursor: pointer; }
+.stream-reconnect-retry:disabled { cursor: default; }
+.stream-reconnect-retry:hover:not(:disabled) { background: var(--surface-3); }
+.stream-reconnect-retry:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.stream-reconnect-stopped {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-reconnect-progress { transition: none; }
+}
+
 /*
  * Subspace that stands in for the streaming status chip once the live turn
  * settles. The chip is an in-flow block; unmounting it on the completion

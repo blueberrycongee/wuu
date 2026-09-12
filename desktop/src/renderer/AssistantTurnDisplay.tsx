@@ -114,7 +114,7 @@ export function buildAssistantTurnDisplay(
     const item = turn.items[index];
     if (seenItemIDs.has(item.id)) continue;
     seenItemIDs.add(item.id);
-    if (item.type === "user_message") {
+    if (item.type === "user_message" || item.type === "stream_reconnect") {
       continue;
     }
     // A no-op completion exists only to settle the transient progress item.

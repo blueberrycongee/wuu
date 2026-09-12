@@ -6,6 +6,7 @@ import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresent
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
+import { ImagePreviewProvider } from "./ImagePreview";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -586,7 +587,7 @@ describe("TurnView", () => {
     expect(view.querySelectorAll(".agent-message-actions button")).toHaveLength(2);
   });
 
-  it("settles the reconnect row inside the stream when retries are exhausted", () => {
+  it("keeps the failed reconnect card outside the collapsible process", () => {
     vi.useFakeTimers();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -620,18 +621,52 @@ describe("TurnView", () => {
       vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS);
     });
 
-    // The failure row renders as a trailing row of the process stream,
-    // announcing the stopped state and the cause without retry counts.
+    // Failures remain visible even when the process fold is closed.
     const notice = container!.querySelector("aside.stream-reconnect-notice");
     expect(notice?.textContent).toContain("已停止");
     expect(notice?.textContent).toContain("网络异常");
     expect(notice?.textContent).not.toContain("次重试");
-    expect(notice?.closest(".assistant-turn-shell")).not.toBeNull();
+    expect(notice?.closest(".assistant-turn-shell")).toBeNull();
     // It stands in for the generic turn error notice.
     expect(
       container!.querySelectorAll("aside:not(.stream-reconnect-notice)"),
     ).toHaveLength(0);
   });
+});
+
+it("removes the recovery card immediately on item removal without duplicating stream status", () => {
+  const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "in_progress", reason: "network", retry_at_ms: Date.now() + 5000 };
+  const turn = makeTurn("in_progress", [makeCommentary("Working"), item]);
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => { root!.render(<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} streamStatus={{ text: "reconnecting", liveProgress: true }} />); });
+  expect(container.querySelectorAll(".stream-reconnect-notice")).toHaveLength(1);
+  expect(container.querySelector(".stream-status-notice")).toBeNull();
+  act(() => { root!.render(<TurnView turn={{ ...turn, items: [turn.items[0]] }} isLatestTurn onStreamFrame={() => {}} />); });
+  expect(container.querySelector(".stream-reconnect-notice")).toBeNull();
+});
+
+it("routes a failed turn retry through the existing history retry action", async () => {
+  const user: ThreadItem = {
+    id: "user", type: "user_message", status: "completed", text: "Display text", input_text: "Check this",
+    images: [{ media_type: "image/png", data: "image-bytes" }],
+    files: [{ media_type: "text/plain", data: "file-bytes", filename: "log.txt" }],
+    content_parts: [{ type: "text", text: "Check this" }],
+  };
+  const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "failed", reason: "network" };
+  const onEditMessage = vi.fn();
+  const onSubmitEditMessage = vi.fn();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  const turn = makeTurn("failed", [user, item]);
+  act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
+  await act(async () => { container!.querySelector<HTMLButtonElement>(".stream-reconnect-retry")?.click(); });
+  expect(onSubmitEditMessage).toHaveBeenCalledWith(turn.id, user, user.input_text, user.images, user.files, user.content_parts);
+  expect(onEditMessage).not.toHaveBeenCalled();
+  act(() => { root!.render(<ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider>); });
+  expect(container.querySelector(".stream-reconnect-retry")).toBeNull();
 });
 
 describe("TurnView optimistic placeholder", () => {

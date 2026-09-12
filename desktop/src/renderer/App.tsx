@@ -2440,7 +2440,7 @@ export function App(): JSX.Element {
       files: InputFile[],
       contentParts?: MessageContentPart[],
     ) => {
-      void submitEditedThreadMessageFromHistory(
+      return submitEditedThreadMessageFromHistory(
         thread,
         turnID,
         item,
@@ -5629,7 +5629,7 @@ export function App(): JSX.Element {
                       contentParts,
                       pane,
                     ) =>
-                      void submitEditedThreadMessageFromHistory(
+                      submitEditedThreadMessageFromHistory(
                         thread,
                         turnID,
                         item,

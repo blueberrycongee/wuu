@@ -1374,6 +1374,7 @@ export const zhCN = {
   "appState.retrySeconds": "{count} 秒后重试",
   "appState.retryMinute": "{count} 分钟后重试",
   "appState.retryMinutes": "{count} 分钟后重试",
+  "appState.retryAction": "重试",
   "appState.retryNow": "正在重试",
   "appState.namedMessageStream": "{transport} 消息流",
   "appState.messageStream": "消息流",

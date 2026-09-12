@@ -88,7 +88,7 @@ export function ConversationSplitPane({
     images: InputImage[],
     files: InputFile[],
     contentParts?: MessageContentPart[],
-  ) => void;
+  ) => void | Promise<void>;
   onStreamFrame: () => void;
   onOpenFileDiff?: (selection: TurnFileDiffSelection) => void;
   pendingUserQuestion?: UserQuestionRequest;

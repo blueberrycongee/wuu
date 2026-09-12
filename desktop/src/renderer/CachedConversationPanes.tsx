@@ -68,7 +68,7 @@ export type CachedConversationPanesProps = {
     images: InputImage[],
     files: InputFile[],
     contentParts?: MessageContentPart[],
-  ) => void;
+  ) => void | Promise<void>;
   onOpenFileDiff: (thread: Thread, selection: TurnFileDiffSelection) => void;
   turnStreamStatus: Record<string, TurnStreamStatus>;
   pendingUserQuestion?: UserQuestionRequest;
@@ -479,7 +479,7 @@ type PaneTurnViewProps = {
     images: InputImage[],
     files: InputFile[],
     contentParts?: MessageContentPart[],
-  ) => void;
+  ) => void | Promise<void>;
   onOpenFileDiff: (selection: TurnFileDiffSelection) => void;
 };
 

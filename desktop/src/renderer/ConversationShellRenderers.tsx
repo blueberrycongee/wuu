@@ -109,7 +109,7 @@ export type ConversationSplitPaneRendererProps = {
     files: InputFile[],
     contentParts: MessageContentPart[] | undefined,
     pane: ConversationPaneID,
-  ) => void;
+  ) => void | Promise<void>;
   onStreamFrame: () => void;
   onOpenFileDiff: (threadID: string, selection: TurnFileDiffSelection) => void;
   pendingUserQuestion?: UserQuestionRequest;
