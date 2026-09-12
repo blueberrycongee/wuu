@@ -112,7 +112,17 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 		}
 	}
 	if params.TargetKind == CollaborationTargetRoomRuntime {
-		return CollaborationMessage{}, fmt.Errorf("%w: room runtimes have been retired", ErrUnauthorized)
+		var runtimeID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ? AND autostart = 1`, params.RoomID).Scan(&runtimeID); err != nil {
+			return CollaborationMessage{}, err
+		}
+		if params.ToAgentID != "" && params.ToAgentID != runtimeID {
+			return CollaborationMessage{}, ErrUnauthorized
+		}
+		if params.TargetID != "" && params.TargetID != runtimeID {
+			return CollaborationMessage{}, ErrUnauthorized
+		}
+		params.ToAgentID, params.TargetID = runtimeID, runtimeID
 	}
 	if params.TargetID == "" {
 		params.TargetID = params.ToAgentID
@@ -139,6 +149,15 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 			params.TargetKind, params.TargetID = CollaborationTargetSession, params.TargetSessionRef
 		}
 		params.Visibility = CollaborationVisibilitySystem
+	}
+	if params.TargetSessionRef == "" && params.ToAgentID != "" {
+		var roomCoordinator bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room_runtimes WHERE id = ? AND room_id = ? AND autostart = 1)`, params.ToAgentID, params.RoomID).Scan(&roomCoordinator); err != nil {
+			return CollaborationMessage{}, err
+		}
+		if roomCoordinator {
+			params.TargetKind, params.TargetID = CollaborationTargetRoomRuntime, params.ToAgentID
+		}
 	}
 	if params.Kind == CollaborationControl && params.ToAgentID == params.AgentID &&
 		(params.FromSessionRef == "" || params.TargetSessionRef == "" || params.FromSessionRef == params.TargetSessionRef) {
@@ -265,7 +284,7 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 		if err != nil {
 			return CollaborationMessage{}, err
 		}
-		if params.ToAgentID != work.OwnerNamedAgentID && params.ToAgentID != work.LeadNamedAgentID {
+		if params.ToAgentID != work.OwnerNamedAgentID && params.ToAgentID != work.LeadNamedAgentID && params.TargetKind != CollaborationTargetRoomRuntime {
 			return CollaborationMessage{}, fmt.Errorf("%w: result recipient must own or lead the work", ErrUnauthorized)
 		}
 		goalRevision = task.TaskGoalRevision

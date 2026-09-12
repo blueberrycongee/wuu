@@ -258,7 +258,7 @@ func (s *Server) setCollaborationSessionState(ctx context.Context, binding chann
 	if err != nil {
 		return err
 	}
-	client, err = s.channelService.BindAgent(ctx, agent.ID)
+	client, err = s.bindCollaborationPrincipal(ctx, agent, "")
 	if err != nil {
 		return err
 	}

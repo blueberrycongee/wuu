@@ -121,25 +121,7 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return CollaborationSessionBinding{}, err
 		}
-		if err == nil && parent.NamedAgentID == "" && parent.RoomID == binding.RoomID {
-			var recipientID, recipientSession string
-			var routeErr error
-			if binding.WorkID != "" {
-				work, loadErr := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id = ?`, binding.WorkID))
-				if loadErr != nil {
-					return CollaborationSessionBinding{}, loadErr
-				}
-				recipientID, recipientSession, routeErr = workResultRecipientTx(ctx, tx, work, binding.SessionRef)
-			} else {
-				recipientID, recipientSession, routeErr = roomResultRecipientTx(ctx, tx, binding.RoomID)
-			}
-			if routeErr != nil && !errors.Is(routeErr, sql.ErrNoRows) {
-				return CollaborationSessionBinding{}, routeErr
-			}
-			if routeErr == nil {
-				parent.PrincipalID, parent.NamedAgentID, parent.SessionRef, parent.State = recipientID, recipientID, recipientSession, CollaborationSessionIdle
-			}
-		}
+
 		if err == nil && parent.RoomID == binding.RoomID && parent.SessionRef != binding.SessionRef {
 			// Leaving a room removes access to its private deliveries. Still settle
 			// the child so an unreachable parent cannot occupy execution capacity.

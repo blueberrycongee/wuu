@@ -1374,7 +1374,7 @@ func (s *Service) UpdateWorkEvidence(ctx context.Context, params WorkEvidenceUpd
 }
 
 func authorizeWorkActorTx(ctx context.Context, tx *sql.Tx, work Work, actor AgentRuntime) error {
-	if actor.ID == work.OwnerNamedAgentID || actor.ID == work.LeadNamedAgentID {
+	if actor.ID == work.OwnerNamedAgentID || actor.ID == work.LeadNamedAgentID || (actor.IsRoomRuntime() && actor.RoomID == work.RoomID) {
 		return requireRoomPrincipalAccessTx(ctx, tx, work.RoomID, actor.ID)
 	}
 	return ErrUnauthorized

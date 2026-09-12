@@ -106,7 +106,7 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := service.retireRoomRuntimes(context.Background()); err != nil {
+	if err := service.initializeRoomCoordinators(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -1578,7 +1578,22 @@ func (s *Service) CreateRoom(ctx context.Context, params CreateRoomParams) (Room
 			return Room{}, fmt.Errorf("initialize room cursor: %w", err)
 		}
 	}
+	var credential roomRuntimeCredential
+	if room.Kind == RoomChannel {
+		credential, err = s.prepareRoomRuntime(room.ID, room.Name)
+		if err != nil {
+			return Room{}, err
+		}
+		if err := insertRoomRuntimeTx(ctx, tx, credential); err != nil {
+			_ = os.RemoveAll(filepath.Dir(credential.Runtime.MemoryDir))
+			return Room{}, err
+		}
+		room.RuntimeID, room.AgentID = credential.Runtime.ID, credential.Runtime.ID
+	}
 	if err := tx.Commit(); err != nil {
+		if room.RuntimeID != "" {
+			_ = os.RemoveAll(filepath.Dir(credential.Runtime.MemoryDir))
+		}
 		return Room{}, fmt.Errorf("commit room create: %w", err)
 	}
 	return room, nil
@@ -1995,7 +2010,18 @@ func recordMembershipChangeTx(ctx context.Context, tx *sql.Tx, roomID, authorID 
 		VALUES (?, ?, ?, 'human', ?, 'system', ?, '[]', ?)`, messageID, roomID, seq, authorID, strings.Join(parts, "；"), now); err != nil {
 		return fmt.Errorf("insert room membership event: %w", err)
 	}
-	return nil
+	var coordinator string
+	if err := tx.QueryRowContext(ctx, `SELECT runtime.id FROM room_runtimes runtime WHERE runtime.room_id = ? AND runtime.autostart = 1 AND EXISTS (SELECT 1 FROM collaboration_session_bindings binding WHERE binding.principal_id = runtime.id AND binding.purpose = 'coordination')`, roomID).Scan(&coordinator); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{RoomID: roomID, ToAgentID: coordinator, FromType: MemberHuman, FromID: authorID, SourceMessageID: messageID, Body: "Room membership changed. Reread the roster and current assignments before continuing. " + strings.Join(parts, "; "), CreatedAt: fromMillis(now)}); err != nil {
+		return err
+	}
+	_, err = requestWakeTx(ctx, tx, coordinator, now)
+	return err
 }
 
 // EnsureBootstrap returns the existing collaboration directory. Identities and
@@ -2003,7 +2029,7 @@ func recordMembershipChangeTx(ctx context.Context, tx *sql.Tx, roomID, authorID 
 func (s *Service) EnsureBootstrap(ctx context.Context, _ string) (BootstrapResult, error) {
 	s.bootstrapMu.Lock()
 	defer s.bootstrapMu.Unlock()
-	if err := s.retireRoomRuntimes(ctx); err != nil {
+	if err := s.initializeRoomCoordinators(ctx); err != nil {
 		return BootstrapResult{}, err
 	}
 	agents, err := s.ListNamedAgents(ctx)

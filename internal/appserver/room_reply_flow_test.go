@@ -144,7 +144,7 @@ func TestRoomReplyConcurrentMembersBothPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.room = createPeerRoom(t, fixture, "Parallel answers", fixture.identity, peer.Agent)
-	sendRoomReplyObjective(t, fixture, "Give your independent observations")
+	sendRoomReplyObjective(t, fixture, "@all Give your independent observations")
 	first, second := provider.next(t), provider.next(t)
 	first.response <- providers.ChatResponse{Content: "The callback retains a stale socket."}
 	second.response <- providers.ChatResponse{Content: "The subscription also needs to be replaced."}

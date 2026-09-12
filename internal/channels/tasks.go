@@ -11,12 +11,15 @@ import (
 )
 
 func (s *Service) CreateTask(ctx context.Context, params TaskCreateParams) (Message, error) {
-	_, err := s.AuthenticatePrincipal(ctx, params.AgentID, params.Token)
+	actor, err := s.AuthenticatePrincipal(ctx, params.AgentID, params.Token)
 	if err != nil {
 		return Message{}, err
 	}
 	if params.LeadNamedAgentID == "" {
 		params.LeadNamedAgentID = params.AgentID
+		if actor.IsRoomRuntime() {
+			params.LeadNamedAgentID = params.OwnerID
+		}
 	}
 	return s.createTask(ctx, params)
 }
@@ -202,7 +205,11 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(lead_named_agent_id, '') FROM works WHERE id = ?`, message.ID).Scan(&leadID); err != nil {
 		return Message{}, err
 	}
-	callerOk := params.AgentID != "" && (message.TaskOwner == params.AgentID || leadID == params.AgentID)
+	var coordinator bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM room_runtimes WHERE id = ? AND room_id = ? AND autostart = 1)`, params.AgentID, message.RoomID).Scan(&coordinator); err != nil {
+		return Message{}, err
+	}
+	callerOk := params.AgentID != "" && (message.TaskOwner == params.AgentID || leadID == params.AgentID || coordinator)
 	correctionOk := params.GoalCorrection == "" || callerOk
 	if params.HumanID != "" {
 		if err := requireMemberTx(ctx, tx, message.RoomID, MemberHuman, params.HumanID); err == nil {
@@ -576,6 +583,15 @@ func (s *Service) insertTaskMessageTx(ctx context.Context, tx *sql.Tx, params Ta
 		TaskVerificationRequired: params.VerificationRequired,
 		TaskGoalRevision:         1,
 		CreatedAt:                now,
+	}
+	if params.AgentID != "" {
+		var isCoordinator bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room_runtimes WHERE id = ? AND room_id = ? AND autostart = 1)`, params.AgentID, params.RoomID).Scan(&isCoordinator); err != nil {
+			return Message{}, err
+		}
+		if isCoordinator {
+			message.AuthorID = params.OwnerID
+		}
 	}
 	if params.AgentID == "" && params.HumanID != "" {
 		message.AuthorType = MemberHuman

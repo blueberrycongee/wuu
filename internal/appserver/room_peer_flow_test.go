@@ -80,7 +80,7 @@ func TestRoomMembersStartConcurrentlyWithoutAnExtraModelCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	room := createPeerRoom(t, fixture, "Review", fixture.identity, peer.Agent)
-	if _, err := fixture.server.channelService.SendHuman(context.Background(), channels.HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "Review this from your own perspective"}); err != nil {
+	if _, err := fixture.server.channelService.SendHuman(context.Background(), channels.HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "@all Review this from your own perspective"}); err != nil {
 		t.Fatal(err)
 	}
 	first, second := provider.next(t), provider.next(t)

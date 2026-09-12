@@ -377,7 +377,7 @@ func TestM3ThreadLoopBudgetSixAgentOnlySuppressedAndHumanReset(t *testing.T) {
 	root, err := service.SendHuman(ctx, HumanSendParams{
 		RoomID:  humanRoom.ID,
 		HumanID: "local-user",
-		Body:    "discuss",
+		Body:    "@all discuss",
 	})
 	if err != nil {
 		t.Fatalf("SendHuman() error = %v", err)
@@ -451,7 +451,7 @@ func TestM3ThreadLoopBudgetSixAgentOnlySuppressedAndHumanReset(t *testing.T) {
 	reset, err := service.SendHuman(ctx, HumanSendParams{
 		RoomID:  humanRoom.ID,
 		HumanID: "local-user",
-		Body:    "reset",
+		Body:    "@all reset",
 		ReplyTo: root.Message.ID,
 	})
 	if err != nil {

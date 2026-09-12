@@ -587,8 +587,34 @@ func evaluateTriggersTx(ctx context.Context, tx *sql.Tx, message Message, mentio
 		if err := insertInboxTx(ctx, tx, MemberAgent, agentID, message.RoomID, message.ID, kind, now); err != nil {
 			return nil, err
 		}
-		if message.AuthorType == MemberHuman && !suppressed && !explicitAgentMention {
-			wake[agentID] = struct{}{}
+
+	}
+
+	if message.AuthorType == MemberHuman && !suppressed && !explicitAgentMention && len(wake) == 0 {
+		// A reply in an established task stays with its accountable owner.
+		var owner string
+		if message.ThreadID != "" {
+			err := tx.QueryRowContext(ctx, `SELECT owner_named_agent_id FROM works WHERE id = ? AND room_id = ?`, message.ThreadID, message.RoomID).Scan(&owner)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		}
+		if _, member := agentSignals[owner]; owner != "" && member {
+			wake[owner] = struct{}{}
+		} else if len(agentSignals) == 1 {
+			// A single member needs no routing inference, including in a DM.
+			for id := range agentSignals {
+				wake[id] = struct{}{}
+			}
+		} else {
+			var coordinator string
+			err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ? AND autostart = 1`, message.RoomID).Scan(&coordinator)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			if coordinator != "" {
+				wake[coordinator] = struct{}{}
+			}
 		}
 	}
 
