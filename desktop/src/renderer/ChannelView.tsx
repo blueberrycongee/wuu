@@ -4,7 +4,9 @@ import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPoint
 import type { ChannelAgentInsight, ChannelMessage, ChannelMessageListResult, ChannelResponse, ChannelRoom, EngineInfo, InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
 import { AgentAvatarCreator } from "./AgentAvatarCreator";
+import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
+import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ChannelSessions } from "./ChannelSessions";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
@@ -61,31 +63,9 @@ const CHANNEL_SPLIT_DEFAULT_WIDTH = 208;
 const CHANNEL_SPLIT_COLLAPSED_WIDTH = 44;
 const CHANNEL_SPLIT_WIDTH_STEP = 16;
 const MAX_ROOM_AGENTS = 6;
-const AGENT_AVATAR_SOURCE_MAX_BYTES = 10 * 1024 * 1024;
-const AGENT_AVATAR_SIZE = 256;
-const AGENT_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export function formatChannelUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(Math.max(0, count));
-}
-
-async function squareAvatarImageFromFile(file: File): Promise<string> {
-  if (!AGENT_AVATAR_TYPES.has(file.type) || file.size === 0 || file.size > AGENT_AVATAR_SOURCE_MAX_BYTES) throw new Error("invalid-avatar-image");
-  const bitmap = await createImageBitmap(file);
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = AGENT_AVATAR_SIZE;
-    canvas.height = AGENT_AVATAR_SIZE;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("invalid-avatar-image");
-    const scale = Math.max(AGENT_AVATAR_SIZE / bitmap.width, AGENT_AVATAR_SIZE / bitmap.height);
-    const width = bitmap.width * scale;
-    const height = bitmap.height * scale;
-    context.drawImage(bitmap, (AGENT_AVATAR_SIZE - width) / 2, (AGENT_AVATAR_SIZE - height) / 2, width, height);
-    return canvas.toDataURL("image/webp", 0.86);
-  } finally {
-    bitmap.close();
-  }
 }
 
 function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, expressive = false }: {
@@ -542,7 +522,7 @@ function ChannelResponseBubble({ response, agent, onMention, onResume, onFrame }
       outgoing={false}
       className="channel-message agent channel-response"
       contentClassName="channel-message-content"
-      avatar={<AgentAvatarMark seed={response.agent_id} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} />}
+      avatar={<AgentAvatarMark seed={response.agent_id} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={response.state} />}
       meta={<div className="channel-message-meta"><ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={onMention} /></div>}
     >
       <MessageBubble outgoing={false} className={`channel-message-bubble channel-response-bubble${failed ? " failed" : ""}`}>
@@ -603,7 +583,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, newAgentRequest, onNewAgentRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -618,6 +598,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onRoomRead?: (roomID: string) => void;
   onOpenMemoryDirectory?: (path: string) => void;
   onOpenSession?: (sessionID: string) => void;
+  onCreateAgent?: () => void;
+  onManageProviders?: () => void;
   composerDraft?: {
     prompt: string;
     images: ComposerImage[];
@@ -632,8 +614,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   // dialog; the dialog itself stays inside this view.
   newRoomRequest?: number;
   onNewRoomRequestHandled?: () => void;
-  newAgentRequest?: number;
-  onNewAgentRequestHandled?: () => void;
   editAgentRequestID?: string;
   onEditAgentRequestHandled?: () => void;
   // App.tsx owns these arrays in the full desktop shell. Standalone tests and
@@ -678,6 +658,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const messages = messagesByRoomID[selectedRoomID] ?? [];
   const [trackedTasks, setTrackedTasks] = useState<ChannelMessage[]>([]);
   const [setupPanel, setSetupPanel] = useState<SetupPanel>(null);
+  const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [splitWidth, setSplitWidth] = useState(initialChannelSplitWidth);
   const [listCollapsed, setListCollapsed] = useState(initialChannelListCollapsed);
   const [resizingSplit, setResizingSplit] = useState(false);
@@ -804,21 +785,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     openNewRoom();
     onNewRoomRequestHandled?.();
   }, [newRoomRequest]);
-
-  useEffect(() => {
-    if (!newAgentRequest) return;
-    setEditingAgentID("");
-    setAgentName("");
-    setAgentRole("");
-    setAgentAvatarKey(randomAgentAvatarKey());
-    setAgentAvatarImage("");
-    setAgentAvatarError("");
-    setAgentEngine("wuu");
-    setAgentModel("");
-    setAgentEffort("");
-    setSetupPanel("agent");
-    onNewAgentRequestHandled?.();
-  }, [newAgentRequest]);
 
   useEffect(() => {
     if (!editAgentRequestID) return;
@@ -1254,7 +1220,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   }, [messageScroll, messages.length, messages.at(-1)?.id, pendingMessage, responses]);
 
   async function submitAgent(): Promise<void> {
-    if (!window.wuu || !agentName.trim()) return;
+    if (!window.wuu || !editingAgentID || !agentName.trim()) return;
     try {
       const [providerOverride, modelOverride] = agentModel.split("\u0000");
       const params = {
@@ -1267,13 +1233,18 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         model_override: modelOverride || undefined,
         effort_override: modelOverride && agentEffort ? agentEffort : undefined,
       };
-      if (editingAgentID) await window.wuu.updateNamedAgent({ agent_id: editingAgentID, ...params });
-      else await window.wuu.createNamedAgent(params);
+      await window.wuu.updateNamedAgent({ agent_id: editingAgentID, ...params });
       closeAgentPanel();
       await refreshRoomsAndAgents();
     } catch (reason) {
       showErrorToast(reason);
     }
+  }
+
+  function openAgentOnboarding(): void {
+    if (selectedAgentID) void saveAgentDetails(selectedAgentID, agentDetailDraftRef.current);
+    if (onCreateAgent) onCreateAgent();
+    else setOnboardingDraft((current) => current ?? createAgentOnboardingDraft(initialized));
   }
 
   async function submitRoom(): Promise<void> {
@@ -1696,9 +1667,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               {selectedRoom ? <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} /> : null}
             </header>
           {!loading && rooms.length === 0 ? (
-            <div className="channel-room-main-empty">
-              <button className="channel-empty-action" type="button" onClick={openNewRoom}>
-                {t("channels.newRoom")}
+            <div className="channel-room-main-empty channel-start-empty">
+              {agents.length === 0 ? <span className="channel-start-avatar" aria-hidden="true"><AgentAvatarMark seed="new-agent" avatarKey="abstract-3" /></span> : null}
+              <button className="channel-empty-action" type="button" onClick={agents.length === 0 ? openAgentOnboarding : openNewRoom}>
+                {t(agents.length === 0 ? "channels.newAgent" : "channels.newRoom")}
               </button>
             </div>
           ) : null}
@@ -1915,19 +1887,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   className="icon-button"
                   type="button"
                   aria-label={t("channels.newAgent")}
-                  onClick={() => {
-                    if (selectedAgentID) void saveAgentDetails(selectedAgentID, agentDetailDraftRef.current);
-                    setEditingAgentID("");
-                    setAgentName("");
-                    setAgentRole("");
-                    setAgentAvatarKey(randomAgentAvatarKey());
-                    setAgentAvatarImage("");
-                    setAgentAvatarError("");
-                    setAgentEngine("wuu");
-                    setAgentModel("");
-                    setAgentEffort("");
-                    setSetupPanel("agent");
-                  }}
+                  onClick={openAgentOnboarding}
                 >
                   <Plus className="icon" />
                 </button> : null}
@@ -1962,7 +1922,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 </div>
               );
             })}
-            {!loading && agents.length === 0 ? <div className="channel-management-empty">{t("channels.newAgent")}</div> : null}
             </div> : null}
             {!listCollapsed ? <button
               className="channel-split-resizer"
@@ -2107,6 +2066,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   </div>
                 </div>
               </article>
+            ) : !loading && agents.length === 0 ? (
+              <div className="channel-start-empty">
+                <span className="channel-start-avatar" aria-hidden="true"><AgentAvatarMark seed="new-agent" avatarKey="abstract-3" /></span>
+                <button className="channel-empty-action" type="button" onClick={openAgentOnboarding}>{t("channels.newAgent")}</button>
+              </div>
             ) : (
               <AgentRelationshipGraph
                 agents={agents}
@@ -2183,20 +2147,38 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         </div>
       )}
 
+      {onboardingDraft ? <AgentOnboarding
+        draft={onboardingDraft}
+        onDraftChange={setOnboardingDraft}
+        initialized={initialized}
+        onCreate={async (params) => {
+          const { agent } = await window.wuu!.createNamedAgent(params);
+          setAgents((current) => [...current.filter((entry) => entry.id !== agent.id), agent]);
+          return agent;
+        }}
+        onOpenConversation={async (agent) => {
+          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id });
+          setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
+          setSelectedAgentID("");
+          openSessionRoom(room.id);
+        }}
+        onManageProviders={onManageProviders}
+        onClose={() => setOnboardingDraft(null)}
+      /> : null}
       <SidebarNameDialog
-        open={setupPanel === "agent"}
+        open={setupPanel === "agent" && Boolean(editingAgentID)}
         title={agentName}
         onTitleChange={setAgentName}
         onSubmit={() => void submitAgent()}
         onClose={closeAgentPanel}
-        dialogTitle={editingAgentID ? t("channels.editAgent") : t("channels.newAgent")}
+        dialogTitle={t("channels.editAgent")}
         dialogTitleId="channel-agent-dialog-title"
         dialogClassName="channel-agent-editor-dialog"
         fieldLabel={t("channels.name")}
         fieldAriaLabel={t("channels.name")}
         placeholder="Andy"
         icon={Bot}
-        submitLabel={editingAgentID ? t("channels.save") : t("channels.create")}
+        submitLabel={t("channels.save")}
         cancelLabel={t("channels.cancel")}
         submitDisabled={!agentName.trim() || Boolean(resettingAgentID) || agentEngine !== "wuu"}
         content={<div className="channel-setup-form">
@@ -2210,7 +2192,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               aria-describedby={agentAvatarError ? "channel-agent-avatar-error" : undefined}
               onClick={() => agentAvatarInputRef.current?.click()}
             >
-              <AgentAvatarMark seed={editingAgentID || "new-agent"} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage} />
+              <AgentAvatarMark seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage} />
               <span className="channel-identity-avatar-badge" aria-hidden="true"><ImagePlus className="icon" /></span>
             </button>
             <label className="channel-form-field">
@@ -2240,7 +2222,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             }}
           />
           <AgentAvatarCreator
-            seed={editingAgentID || "new-agent"}
+            seed={editingAgentID}
             avatarKey={agentAvatarKey}
             avatarImage={agentAvatarImage}
             onChange={(nextAvatarKey) => {

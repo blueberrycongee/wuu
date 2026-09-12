@@ -3237,6 +3237,22 @@
   padding: 48px 20px;
 }
 
+.channel-start-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 200px;
+  padding: 40px 20px;
+}
+
+.channel-start-avatar {
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+
 .channel-section-label {
   font-size: 13px;
   font-weight: 600;

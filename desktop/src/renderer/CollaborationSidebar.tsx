@@ -90,6 +90,7 @@ export function CollaborationSidebar({
   onSelectAgent,
   onSelectRoom,
   onManageAgents,
+  onCreateAgent,
   onCreateRoom,
   onSwitchToHarness,
   onOpenSettings,
@@ -105,6 +106,7 @@ export function CollaborationSidebar({
   onSelectAgent: (agentID: string) => void;
   onSelectRoom: (roomID: string) => void;
   onManageAgents: () => void;
+  onCreateAgent: () => void;
   onCreateRoom: () => void;
   onSwitchToHarness: () => void;
   onOpenSettings: (page?: "providers" | "usage") => void;
@@ -246,15 +248,26 @@ export function CollaborationSidebar({
                       title={toggleLabel}
                       onToggle={() => toggleSection(sectionID)}
                       actions={(
+                        <>
+                        {isAgents ? <button
+                          className="sidebar-functional-action"
+                          type="button"
+                          aria-label={t("channels.manageAgents")}
+                          title={t("channels.manageAgents")}
+                          onClick={onManageAgents}
+                        >
+                          <Settings aria-hidden="true" />
+                        </button> : null}
                         <button
                           className="sidebar-functional-action sidebar-section-add-action"
                           type="button"
-                          aria-label={t(isAgents ? "channels.manageAgents" : "channels.newRoom")}
-                          title={t(isAgents ? "channels.manageAgents" : "channels.newRoom")}
-                          onClick={isAgents ? onManageAgents : onCreateRoom}
+                          aria-label={t(isAgents ? "channels.newAgent" : "channels.newRoom")}
+                          title={t(isAgents ? "channels.newAgent" : "channels.newRoom")}
+                          onClick={isAgents ? onCreateAgent : onCreateRoom}
                         >
-                          {isAgents ? <Settings aria-hidden="true" /> : <Plus aria-hidden="true" />}
+                          <Plus aria-hidden="true" />
                         </button>
+                        </>
                       )}
                     >
                       <div className="collaboration-contact-list">

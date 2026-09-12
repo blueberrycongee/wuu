@@ -48,11 +48,13 @@ export function AgentAvatarCreator({
   seed,
   avatarKey,
   avatarImage,
+  showShapes = true,
   onChange,
 }: {
   seed: string;
   avatarKey: string;
   avatarImage?: string;
+  showShapes?: boolean;
   onChange: (avatarKey: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -64,7 +66,7 @@ export function AgentAvatarCreator({
 
   return (
     <div className="agent-avatar-creator">
-      <fieldset className="channel-avatar-picker agent-avatar-shape-picker">
+      {showShapes ? <fieldset className="channel-avatar-picker agent-avatar-shape-picker">
         <legend>{t("channels.avatarShape")}</legend>
         <div>
           {AGENT_AVATAR_SHAPES.map((shape) => {
@@ -85,7 +87,7 @@ export function AgentAvatarCreator({
             );
           })}
         </div>
-      </fieldset>
+      </fieldset> : null}
 
       <fieldset className="channel-avatar-picker agent-avatar-color-picker">
         <legend>{t("channels.avatarColor")}</legend>
