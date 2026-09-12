@@ -140,7 +140,6 @@ export const enUS = {
   "slash.compact.externalEngineUnavailable": "Compaction is managed by the active external engine",
   "settings.language": "Language",
   "settings.languageGroup": "Interface language",
-  "settings.theme": "Theme",
   "settings.themeGroup": "Appearance theme",
   "settings.themeLight": "Light",
   "settings.themeDark": "Dark",

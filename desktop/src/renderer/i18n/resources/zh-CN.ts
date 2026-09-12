@@ -138,7 +138,6 @@ export const zhCN = {
   "slash.compact.externalEngineUnavailable": "上下文压缩由当前外部引擎管理",
   "settings.language": "语言",
   "settings.languageGroup": "界面语言",
-  "settings.theme": "主题",
   "settings.themeGroup": "外观主题",
   "settings.themeLight": "亮色",
   "settings.themeDark": "暗色",
