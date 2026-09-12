@@ -466,7 +466,8 @@ func (s *Service) readInboxMessages(ctx context.Context, agentID string, itemIDs
 				message.author_type, message.author_id, message.kind, message.body, message.images_json, message.files_json, message.mentions_json,
 				COALESCE(message.reply_to, ''), COALESCE(message.task_title, ''), COALESCE(message.task_state, ''),
 				COALESCE(message.task_owner, ''), message.task_verification_required,
-				message.task_goal_revision, message.task_candidate_revision, message.created_at
+				message.task_goal_revision, message.task_candidate_revision, message.created_at,
+				COALESCE(message.source_session_ref, ''), COALESCE(message.source_turn_id, '')
 			FROM inbox_items inbox
 			JOIN room_messages message ON message.id = inbox.message_id
 			WHERE inbox.id = ? AND inbox.member_type = 'agent' AND inbox.member_id = ?`, itemID, strings.TrimSpace(agentID)))

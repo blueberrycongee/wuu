@@ -834,6 +834,8 @@ func (s *Service) ensureLegacyColumns() error {
 		definition string
 	}{
 		{table: "room_messages", name: "task_title", definition: "TEXT"},
+		{table: "room_messages", name: "source_session_ref", definition: "TEXT"},
+		{table: "room_messages", name: "source_turn_id", definition: "TEXT"},
 		{table: "room_messages", name: "task_verification_required", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{table: "room_messages", name: "task_goal_revision", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{table: "room_messages", name: "task_candidate_revision", definition: "INTEGER NOT NULL DEFAULT 0"},
@@ -908,7 +910,7 @@ func (s *Service) ensureLegacyColumns() error {
 			return fmt.Errorf("add %s.%s column: %w", column.table, column.name, err)
 		}
 	}
-	return nil
+	return s.backfillConversationReplySources()
 }
 
 func (s *Service) ensureNamedAgentAvatars() error {

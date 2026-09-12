@@ -56,13 +56,55 @@ func insertConversationReplyTx(ctx context.Context, tx *sql.Tx, binding Collabor
 	message := Message{
 		ID: ConversationReplyID(binding.SessionRef, turnID), RoomID: binding.RoomID, Seq: seq,
 		AuthorType: MemberAgent, AuthorID: binding.NamedAgentID, Kind: MessageText,
+		SourceSessionRef: binding.SessionRef, SourceTurnID: turnID,
 		Body: body, Mentions: mentionIDs, CreatedAt: fromMillis(now),
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO room_messages (id, room_id, seq, author_type, author_id, kind, body, mentions_json, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, message.ID, message.RoomID, message.Seq,
-		message.AuthorType, message.AuthorID, message.Kind, message.Body, mentionsJSON, now); err != nil {
+		INSERT INTO room_messages (id, room_id, seq, author_type, author_id, kind, body, mentions_json, created_at, source_session_ref, source_turn_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, message.ID, message.RoomID, message.Seq,
+		message.AuthorType, message.AuthorID, message.Kind, message.Body, mentionsJSON, now, message.SourceSessionRef, message.SourceTurnID); err != nil {
 		return nil, fmt.Errorf("insert conversation reply: %w", err)
 	}
 	return evaluateTriggersTx(ctx, tx, message, mentions, nil, now)
+}
+
+// Old automatic replies have deterministic addresses. Restore their execution
+// source from durable settlements without guessing from the agent's latest turn.
+func (s *Service) backfillConversationReplySources() error {
+	var needed bool
+	if err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM room_messages WHERE id LIKE 'msg-reply-%' AND source_session_ref IS NULL)`).Scan(&needed); err != nil || !needed {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT session_ref, turn_id FROM collaboration_session_settlements`)
+	if err != nil {
+		return err
+	}
+	type source struct{ session, turn string }
+	var sources []source
+	for rows.Next() {
+		var item source
+		if err := rows.Scan(&item.session, &item.turn); err != nil {
+			rows.Close()
+			return err
+		}
+		sources = append(sources, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range sources {
+		if _, err := tx.Exec(`UPDATE room_messages SET source_session_ref = ?, source_turn_id = ? WHERE id = ? AND source_session_ref IS NULL`, item.session, item.turn, ConversationReplyID(item.session, item.turn)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

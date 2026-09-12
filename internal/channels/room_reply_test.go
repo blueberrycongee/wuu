@@ -32,6 +32,10 @@ func TestConversationReplyPreservesFullAnswerAcrossRestartAndReplay(t *testing.T
 	if err != nil || settled.State != CollaborationSessionIdle {
 		t.Fatalf("settlement = %#v, %v", settled, err)
 	}
+	// Simulate a reply written before execution sources were persisted.
+	if _, err := service.db.Exec(`UPDATE room_messages SET source_session_ref = NULL, source_turn_id = NULL`); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +62,9 @@ func TestConversationReplyPreservesFullAnswerAcrossRestartAndReplay(t *testing.T
 		t.Fatalf("public replies = %#v, %v", messages, err)
 	}
 	message := messages[0]
+	if message.SourceSessionRef != session.SessionRef() || message.SourceTurnID != "turn-1" {
+		t.Fatalf("reply lost its execution source across restart and later turn: %#v", message)
+	}
 	if message.ID != ConversationReplyID(session.SessionRef(), params.TurnID) || message.Kind != MessageText || message.AuthorType != MemberAgent || message.AuthorID != owner.Agent.ID || message.Body != body {
 		t.Fatalf("public answer lost its stable address, author or full body: %#v", message)
 	}
@@ -254,5 +261,30 @@ func TestSessionSettlementReplaysFingerprintFromBeforePublicReplies(t *testing.T
 	}
 	if _, err := service.SettleCollaborationSession(ctx, CollaborationSessionSettleParams{SessionRef: oldParams.SessionRef, State: oldParams.State, Result: oldParams.Result, TurnID: oldParams.TurnID}); err != nil {
 		t.Fatalf("old persisted settlement no longer replays = %v", err)
+	}
+}
+
+func TestExplicitRoomSendRetainsExecutionSource(t *testing.T) {
+	ctx := context.Background()
+	service := openTestService(t, &recordingWakeSink{})
+	owner, peer := createTestAgent(t, service, "Owner"), createTestAgent(t, service, "Peer")
+	room := createTestRoom(t, service, owner, peer)
+	session := flexibleTestSession(t, service, owner.Agent.ID, room.ID, "conversation")
+	if _, err := session.UpdateCollaborationSessionState(ctx, CollaborationSessionStateParams{SessionRef: session.SessionRef(), State: CollaborationSessionRunning, TurnID: "turn-original"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.Send(ctx, AgentSendParams{RoomID: room.ID, Body: "Published through chat_send"})
+	if err != nil || result.Status != SendCommitted {
+		t.Fatalf("send = %#v, %v", result, err)
+	}
+	if _, err := session.UpdateCollaborationSessionState(ctx, CollaborationSessionStateParams{SessionRef: session.SessionRef(), State: CollaborationSessionRunning, TurnID: "turn-later"}); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := service.ListMessages(ctx, room.ID, 0, 100)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("messages = %#v, %v", messages, err)
+	}
+	if messages[0].SourceSessionRef != session.SessionRef() || messages[0].SourceTurnID != "turn-original" {
+		t.Fatalf("message points to a later execution: %#v", messages[0])
 	}
 }

@@ -842,6 +842,8 @@ export type ChannelAgentCreationProposal = {
 };
 
 export type ChannelMessage = {
+  source_session_ref?: string;
+  source_turn_id?: string;
   id: string;
   room_id: string;
   seq: number;

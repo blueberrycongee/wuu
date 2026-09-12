@@ -515,7 +515,8 @@ func (s *Service) ListTasks(ctx context.Context, params TaskListParams) ([]Messa
 		SELECT id, room_id, seq, COALESCE(thread_id, ''), author_type, author_id,
 			kind, body, images_json, files_json, mentions_json, COALESCE(reply_to, ''),
 			COALESCE(task_title, ''), COALESCE(task_state, ''), COALESCE(task_owner, ''),
-			task_verification_required, task_goal_revision, task_candidate_revision, created_at
+			task_verification_required, task_goal_revision, task_candidate_revision, created_at,
+			COALESCE(source_session_ref, ''), COALESCE(source_turn_id, '')
 		FROM room_messages WHERE room_id = ? AND kind = 'task'`
 	args := []any{params.RoomID}
 	if params.OwnerID != "" {

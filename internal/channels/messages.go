@@ -209,17 +209,26 @@ func (s *Service) send(ctx context.Context, params sendParams) (SendResult, erro
 		ReplyTo:    params.ReplyTo,
 		CreatedAt:  now,
 	}
+	if params.AuthorType == MemberAgent && params.SessionRef != "" {
+		binding, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.SessionRef))
+		if err != nil {
+			return SendResult{}, err
+		}
+		message.SourceSessionRef = binding.SessionRef
+		message.SourceTurnID = binding.TurnID
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO room_messages (
 			id, room_id, seq, thread_id, author_type, author_id, kind, body,
 			images_json, files_json, mentions_json, reply_to, task_title, task_state, task_owner,
-			task_verification_required, task_goal_revision, task_candidate_revision, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			task_verification_required, task_goal_revision, task_candidate_revision, created_at, source_session_ref, source_turn_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		message.ID, message.RoomID, message.Seq, nullableString(message.ThreadID),
 		message.AuthorType, message.AuthorID, message.Kind, message.Body,
 		string(imagesJSON), string(filesJSON), mentionsJSON, nullableString(message.ReplyTo), nullableString(message.TaskTitle),
 		nullableString(message.TaskState), nullableString(message.TaskOwner), boolInt(message.TaskVerificationRequired),
 		message.TaskGoalRevision, message.TaskCandidateRevision, toMillis(message.CreatedAt),
+		nullableString(message.SourceSessionRef), nullableString(message.SourceTurnID),
 	); err != nil {
 		return SendResult{}, fmt.Errorf("insert room message: %w", err)
 	}
@@ -270,7 +279,8 @@ func (s *Service) ListMessages(ctx context.Context, roomID string, afterSeq int6
 		SELECT id, room_id, seq, COALESCE(thread_id, ''), author_type, author_id,
 			kind, body, images_json, files_json, mentions_json, COALESCE(reply_to, ''),
 			COALESCE(task_title, ''), COALESCE(task_state, ''), COALESCE(task_owner, ''),
-			task_verification_required, task_goal_revision, task_candidate_revision, created_at
+			task_verification_required, task_goal_revision, task_candidate_revision, created_at,
+			COALESCE(source_session_ref, ''), COALESCE(source_turn_id, '')
 		FROM room_messages WHERE room_id = ? AND seq > ? ORDER BY seq LIMIT ?`, roomID, afterSeq, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list room messages: %w", err)
@@ -406,7 +416,8 @@ func loadMessageTx(ctx context.Context, tx *sql.Tx, id string) (Message, error) 
 		SELECT id, room_id, seq, COALESCE(thread_id, ''), author_type, author_id,
 			kind, body, images_json, files_json, mentions_json, COALESCE(reply_to, ''),
 			COALESCE(task_title, ''), COALESCE(task_state, ''), COALESCE(task_owner, ''),
-			task_verification_required, task_goal_revision, task_candidate_revision, created_at
+			task_verification_required, task_goal_revision, task_candidate_revision, created_at,
+			COALESCE(source_session_ref, ''), COALESCE(source_turn_id, '')
 		FROM room_messages WHERE id = ?`, id))
 	if errors.Is(err, ErrNotFound) {
 		return Message{}, fmt.Errorf("%w: message %q", ErrNotFound, id)
@@ -428,6 +439,7 @@ func scanMessage(row scanner) (Message, error) {
 		&message.AuthorType, &message.AuthorID, &message.Kind, &message.Body,
 		&imagesJSON, &filesJSON, &mentionsJSON, &message.ReplyTo, &message.TaskTitle, &message.TaskState, &message.TaskOwner,
 		&taskVerificationRequired, &taskGoalRevision, &taskCandidateRevision, &createdAt,
+		&message.SourceSessionRef, &message.SourceTurnID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Message{}, ErrNotFound

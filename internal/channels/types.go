@@ -307,6 +307,9 @@ type ResolveAgentCreationProposalParams struct {
 }
 
 type Message struct {
+	// Execution source is distinct from ThreadID, which addresses a room reply thread.
+	SourceSessionRef         string                 `json:"source_session_ref,omitempty"`
+	SourceTurnID             string                 `json:"source_turn_id,omitempty"`
 	ID                       string                 `json:"id"`
 	RoomID                   string                 `json:"room_id"`
 	Seq                      int64                  `json:"seq"`
