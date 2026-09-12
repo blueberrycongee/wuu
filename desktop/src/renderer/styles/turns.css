@@ -2545,11 +2545,9 @@
   display: none;
 }
 
-.process-surface-fold > .process-surface-row:hover,
-.process-surface-fold > .process-surface-row:focus-visible {
-  text-decoration: underline;
-  text-decoration-color: var(--ink-overlay-18);
-  text-underline-offset: 3px;
+.process-surface-fold.has-details > .process-surface-row:hover,
+.process-surface-fold.has-details > .process-surface-row:focus-visible {
+  color: var(--activity-toggle-hover-color);
   outline: 0;
 }
 
@@ -2835,6 +2833,22 @@
 .process-surface-fold[open] > .process-surface-row .process-surface-chevron {
   transform: rotate(90deg);
   opacity: 1;
+}
+
+@supports (interpolate-size: allow-keywords) and selector(::details-content) {
+  .process-surface-fold::details-content {
+    interpolate-size: allow-keywords;
+    height: 0;
+    overflow: clip;
+    /* Keep native details content visible until the closing transition ends. */
+    transition:
+      height var(--motion-base) var(--collapse-motion-easing),
+      content-visibility var(--motion-base) allow-discrete;
+  }
+
+  .process-surface-fold[open]::details-content {
+    height: auto;
+  }
 }
 
 .process-surface-body {

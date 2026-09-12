@@ -32,8 +32,8 @@ import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 
 /**
  * How long to wait after the fold opens before snapping the reasoning
- * scroll container to the bottom. The fold body animates via
- * `grid-template-rows 0fr → 1fr` (~220ms); waiting a touch longer
+ * scroll container to the bottom. The fold content animates its height;
+ * waiting a touch longer than the default transition duration
  * gives the body height time to settle before we read `scrollHeight`,
  * so the first snap lands on the actual final extent instead of a
  * mid-transition value.
