@@ -352,14 +352,16 @@ func (s *Service) SendCollaboration(ctx context.Context, params CollaborationSen
 	if err := recordCollaborationRequestTx(ctx, tx, originalParams, requestHash, message.ID); err != nil {
 		return CollaborationMessage{}, err
 	}
-	shouldDeliver, err := requestWakeTx(ctx, tx, params.ToAgentID, toMillis(now))
+	_, err = requestWakeTx(ctx, tx, params.ToAgentID, toMillis(now))
 	if err != nil {
 		return CollaborationMessage{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return CollaborationMessage{}, fmt.Errorf("commit collaboration send: %w", err)
 	}
-	if (shouldDeliver || message.TargetSessionRef != "") && s.wake != nil {
+	// An identity-level wake may belong to another session or an abandoned
+	// attempt. Always notify the router; session admission coalesces execution.
+	if s.wake != nil {
 		s.wake.Deliver(params.ToAgentID)
 	}
 	return message, nil
