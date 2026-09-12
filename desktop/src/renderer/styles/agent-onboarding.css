@@ -52,7 +52,10 @@
 .agent-onboarding-shapes button:hover { background: var(--surface-2); }
 .agent-onboarding-shapes button[aria-pressed="true"] { border-color: var(--hairline-strong); background: var(--surface-1); }
 .agent-onboarding-colors { display: flex; gap: 12px; align-items: center; justify-content: center; }
-.agent-onboarding-colors button { width: 24px; height: 24px; padding: 0; border: 4px solid var(--paper); border-radius: var(--radius-circle); background: hsl(var(--agent-onboarding-hue) 65% 66%); }
+.agent-onboarding-colors button {
+  --agent-onboarding-swatch: hsl(var(--agent-onboarding-hue) 65% 66%);
+  width: 24px; height: 24px; padding: 0; border: 4px solid var(--paper); border-radius: var(--radius-circle); background: var(--agent-onboarding-swatch);
+}
 .agent-onboarding-colors button[aria-pressed="true"] { outline: 1px solid var(--ink-soft); }
 .agent-onboarding-customize > summary { display: flex; justify-content: center; gap: 6px; align-items: center; list-style: none; padding: 4px 0; color: var(--ink-soft); cursor: pointer; font-size: 12px; }
 .agent-onboarding-customize > summary::-webkit-details-marker { display: none; }

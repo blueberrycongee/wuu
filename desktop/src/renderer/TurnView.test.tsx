@@ -497,7 +497,10 @@ describe("TurnView", () => {
     expect(view.textContent).toContain("partial progress");
     expect(view.querySelectorAll(".turn-notice")).toHaveLength(1);
     expect(view.textContent).toContain("网络异常");
-    expect(view.textContent).not.toContain("previous_response_not_found");
+    const notice = view.querySelector(".turn-notice")!;
+    expect(notice.querySelector("summary")?.textContent).not.toContain("previous_response_not_found");
+    expect(notice.querySelector("details")?.open).toBe(false);
+    expect(notice.querySelector(".system-event-expanded-detail")?.textContent).toContain("previous_response_not_found");
     expect(view.querySelectorAll(".turn-notice button, .turn-notice a")).toHaveLength(0);
   });
 

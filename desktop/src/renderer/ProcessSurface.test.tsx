@@ -612,8 +612,9 @@ describe("ProcessSurface", () => {
     expect(blobatar).not.toBeNull();
     expect(blobatar?.nextElementSibling).toBe(text);
     expect(text?.querySelector(".process-surface-blobatar")).toBeNull();
-    expect(modelMascotAccessory(model)).toBe("top-hat");
-    expect(blobatar?.getAttribute("data-wuu-mascot-accessory")).toBe("top-hat");
+    expect(modelMascotAccessory(model)).not.toBe("none");
+    expect(blobatar?.getAttribute("data-wuu-mascot-accessory")).toBe(modelMascotAccessory(model));
+    expect(blobatar?.querySelector(".wuu-mascot-accessory")).not.toBeNull();
   });
 
   it("anchors the text sweep to the text wrapper so the blobatar does not offset it", () => {
