@@ -14,7 +14,7 @@ host.emitSession = (thread_id: string) => listeners.forEach(listener => listener
 document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") || "light";
 document.documentElement.dataset.platform = "mac";
 const created_at = "2026-09-12T14:00:00Z";
-const agents = ["Andy", "Andy2"].map((name, index) => ({ id: `a${index}`, name, memory_dir: "/preview", avatar_key: `abstract-${index + 1}`, autostart: true, created_at, activity_status: "thinking", activity_room_ids: ["room"] }));
+const agents = ["Andy", "Andy2"].map((name, index) => ({ id: `a${index}`, name, memory_dir: "/preview", avatar_key: `abstract-${index + 1}`, model_override: "gpt-5.5", effort_override: "xhigh", autostart: true, created_at, activity_status: "thinking", activity_room_ids: ["room"] }));
 const room = { id: "room", name: "General", kind: "channel", created_by: "human", created_at, members: agents.map(a => ({ room_id: "room", member_type: "agent", member_id: a.id, joined_at: created_at })) };
 const human = { id: "human", room_id: "room", seq: 1, author_type: "human", author_id: "user", kind: "text", body: "请检查群聊的消息顺序。", created_at };
 const replies = agents.map(a => ({ id: `reply-${a.id}`, room_id: "room", agent_id: a.id, session_ref: a.id, turn_id: "turn-23", state: "thinking", body: "", created_at }));

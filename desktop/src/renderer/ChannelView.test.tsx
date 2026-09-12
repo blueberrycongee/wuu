@@ -1791,6 +1791,42 @@ describe("ChannelView", () => {
     }
   });
 
+  it.each([
+    { model: "selected-model", effort: "high", expectedModel: "selected-model", expectedEffort: "High" },
+    { model: "selected-model", effort: "", expectedModel: "selected-model", expectedEffort: "Low" },
+    { model: "", effort: "", expectedModel: "workspace-model", expectedEffort: "Ultra" },
+  ])("shows the bot runtime in its avatar card and edits that bot: $expectedModel / $expectedEffort", async ({ model, effort, expectedModel, expectedEffort }) => {
+    const api = createApi();
+    api.readChannelSession = vi.fn();
+    const bot = { ...agents[1], provider_override: "openai", model_override: model, effort_override: effort };
+    api.listChannelMessages = vi.fn(async () => ({ messages: [{
+      id: "reply", room_id: "room-1", seq: 1, author_type: "agent" as const, author_id: bot.id,
+      kind: "text" as const, body: "Published answer", created_at: "2026-09-12T00:00:00Z",
+      source_session_ref: "original-session", source_turn_id: "original-turn",
+    }], responses: [] }));
+    const initialized = {
+      protocol_version: "1", provider: "openai", model: "workspace-model", effort: "ultra", workspace_root: "/workspace",
+      providers: [{ name: "openai", type: "openai", model: "workspace-model", models: [{ id: "selected-model", default_effort: "low", supported_efforts: ["low", "high"] }] }],
+    } as InitializeResult;
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" directoryAgents={[bot]} initialized={initialized} />));
+    await settle();
+    const name = container.querySelector<HTMLButtonElement>(".channel-author-mention")!;
+    await act(async () => { name.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); name.focus(); });
+    expect(document.querySelector(".channel-agent-hover-card")).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".channel-agent-hover-trigger")!.focus());
+    const card = document.querySelector(".channel-agent-hover-card")!;
+    expect(card.querySelector('[aria-label="模型"]')?.textContent).toBe(expectedModel);
+    expect(card.querySelector('[aria-label="推理强度"]')?.textContent).toBe(expectedEffort);
+    await act(async () => card.querySelector<HTMLButtonElement>(".channel-agent-hover-edit")!.click());
+    expect(document.querySelector(".channel-agent-hover-card")).toBeNull();
+    const editor = document.querySelector(".channel-agent-editor-dialog")!;
+    expect(editor).not.toBeNull();
+    expect(editor.querySelector<HTMLInputElement>("input")?.value).toBe(bot.name);
+    expect(api.readChannelSession).not.toHaveBeenCalled();
+  });
+
   it("reopens a published reply's original execution after the active response has disappeared", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async () => ({ messages: [{

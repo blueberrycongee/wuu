@@ -1940,9 +1940,17 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               && previous.author_type === message.author_type && previous.author_id === message.author_id
               && previous.source_session_ref === message.source_session_ref && previous.source_turn_id === message.source_turn_id;
             const direct = selectedRoom?.kind === "dm";
+            const model = agent?.model_override || initialized?.model;
+            const provider = agent?.model_override ? agent.provider_override || agent.engine_override : initialized?.provider;
+            const modelInfo = initialized?.providers?.find((item) => item.name === provider)?.models?.find((item) => item.id === model);
+            const effort = agent?.effort_override || (agent?.model_override
+              ? modelInfo?.default_effort
+              : initialized?.effort || modelInfo?.default_effort);
             const traceCard = !own && message.source_session_ref ? {
               id: agent?.id ?? message.author_id, name: author,
               avatarKey: agent?.avatar_key ?? "abstract-1", avatarImage: agent?.avatar_image,
+              model, effort,
+              onEdit: agent ? () => { loadAgentDraft(agent); setSetupPanel("agent"); } : undefined,
               onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author),
             } : undefined;
             return (
@@ -1962,9 +1970,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 meta={!own && !direct && !continued ? (
                   <div className="channel-message-meta">
                     {!own ? (
-                      traceCard ? <ChannelAgentHoverCard {...traceCard}>
-                        <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author)} />
-                      </ChannelAgentHoverCard> : <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author)} />
+                      <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author)} />
                     ) : null}
                   </div>
                 ) : undefined}

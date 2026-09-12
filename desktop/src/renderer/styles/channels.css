@@ -3609,29 +3609,40 @@
   border-radius: var(--radius-pill);
 }
 .channel-agent-hover-card {
-  width: min(240px, calc(100vw - 16px));
-  padding: 12px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 14px;
+  width: min(264px, calc(100vw - 16px));
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
   background: var(--paper);
   color: var(--ink);
   box-shadow: var(--shadow-card);
 }
-.channel-agent-hover-identity { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.channel-agent-hover-identity > span { display: flex; width: 36px; height: 36px; flex-shrink: 0; }
-.channel-agent-hover-identity > strong { font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
-.channel-agent-view-trace {
-  width: 100%;
-  min-height: 32px;
-  padding: 6px 12px;
+.channel-agent-hover-identity { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.channel-agent-hover-avatar { display: flex; width: 32px; height: 32px; flex-shrink: 0; }
+.channel-agent-hover-info { min-width: 0; flex: 1; }
+.channel-agent-hover-info > strong { display: block; font-size: 13px; font-weight: 600; line-height: 18px; overflow-wrap: anywhere; }
+.channel-agent-hover-runtime { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; font-size: 11px; line-height: 16px; color: var(--ink-soft); }
+.channel-agent-hover-runtime > span { overflow-wrap: anywhere; min-width: 0; }
+.channel-agent-hover-effort { white-space: nowrap; }
+.channel-agent-hover-effort::before { content: "·"; margin-right: 6px; color: var(--ink-muted); }
+.channel-agent-hover-actions { display: flex; gap: 6px; }
+.channel-agent-hover-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 8px;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: 7px;
   background: var(--surface-1);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
-.channel-agent-view-trace:hover { background: var(--surface-2); }
+.channel-agent-hover-actions > button > svg { width: 14px; height: 14px; color: var(--ink-soft); }
+.channel-agent-hover-actions > button:hover { background: var(--surface-2); }
 
 .session-inspector-header > strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-inspector-header .channel-sessions-close { position: static; }
