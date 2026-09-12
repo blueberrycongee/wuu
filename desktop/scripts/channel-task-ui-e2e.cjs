@@ -40,15 +40,19 @@ app.whenReady().then(async () => {
         await win.webContents.executeJavaScript(`window.setScene('waiting', ['thinking'])`);
         await waitFor(win, `!!document.querySelector('.channel-response-status-avatar') && !document.querySelector('.channel-coordinator-mascot')`);
       }
-      const edges = await win.webContents.executeJavaScript(`(() => {
-        const icon = document.querySelector('.channel-attachment-button svg');
-        const glyph = icon.querySelector('path[d^="M5"]');
-        const stroke = Number.parseFloat(getComputedStyle(glyph).strokeWidth) * icon.getBoundingClientRect().width / icon.viewBox.baseVal.width;
-        const glyphLeft = glyph.getBoundingClientRect().left - stroke / 2;
+      const centers = await win.webContents.executeJavaScript(`(() => {
+        const icon = document.querySelector('.channel-attachment-button svg').getBoundingClientRect();
         const avatar = document.querySelector('${member ? '.channel-response-status-avatar' : '.channel-coordinator-mascot'} .mo-bob > g:not(.mo-eyes) > path').getBoundingClientRect();
-        return { input: glyphLeft, avatar: avatar.left };
+        return { input: icon.left + icon.width / 2, avatar: avatar.left + avatar.width / 2 };
       })()`);
-      assert(Math.abs(edges.input - edges.avatar) < 1, JSON.stringify({ theme, width, member, ...edges }));
+      assert(Math.abs(centers.input - centers.avatar) < 1, JSON.stringify({ theme, width, member, ...centers }));
+      if (theme === "light" && width === 1100 && !member) {
+        const footer = await win.webContents.executeJavaScript(`(() => {
+          const r = document.querySelector('.channel-conversation-footer').getBoundingClientRect();
+          return { x: 0, y: Math.floor(r.top), width: 240, height: Math.floor(innerHeight - r.top) };
+        })()`);
+        fs.writeFileSync(path.join(output, 'coordinator-alignment.png'), (await win.webContents.capturePage(footer)).toPNG());
+      }
     }
     fs.writeFileSync(path.join(output, `${theme}-${width}-collapsed.png`), (await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`document.querySelector('.channel-assignment-heading').click()`);
@@ -66,15 +70,12 @@ app.whenReady().then(async () => {
   for (const shape of ["round", "rounded-square", "capsule", "triangle", "diamond"]) {
     await win.loadURL(`${baseURL}/dev/room-coordinator/index.html?state=waiting&avatar=mascot-v1:${shape}:none:140`);
     await waitFor(win, `!!document.querySelector('.channel-coordinator-member')`);
-    const edges = await win.webContents.executeJavaScript(`(() => {
-      const icon = document.querySelector('.channel-attachment-button svg');
-      const glyph = icon.querySelector('path[d^="M5"]');
-      const stroke = Number.parseFloat(getComputedStyle(glyph).strokeWidth) * icon.getBoundingClientRect().width / icon.viewBox.baseVal.width;
-      const glyphLeft = glyph.getBoundingClientRect().left - stroke / 2;
+    const centers = await win.webContents.executeJavaScript(`(() => {
+      const icon = document.querySelector('.channel-attachment-button svg').getBoundingClientRect();
       const body = document.querySelector('.channel-coordinator-member .mo-bob > g:not(.mo-eyes) > path').getBoundingClientRect();
-      return { input: glyphLeft, body: body.left };
+      return { input: icon.left + icon.width / 2, body: body.left + body.width / 2 };
     })()`);
-    assert(Math.abs(edges.input - edges.body) < 1, JSON.stringify({ shape, ...edges }));
+    assert(Math.abs(centers.input - centers.body) < 1, JSON.stringify({ shape, ...centers }));
     if (shape === "capsule") {
       const footer = await win.webContents.executeJavaScript(`(() => {
         const r = document.querySelector('.channel-conversation-footer').getBoundingClientRect();
@@ -83,7 +84,7 @@ app.whenReady().then(async () => {
       fs.writeFileSync(path.join(output, 'capsule-alignment.png'), (await win.webContents.capturePage(footer)).toPNG());
     }
   }
-  console.log("PASS: avatar/title summaries, expandable details, painted-body alignment with the attachment plus glyph for coordinator and all five avatar shapes, light/dark at 390/1100/1600px");
+  console.log("PASS: avatar/title summaries, expandable details, shared centerline with the attachment button for coordinator and all five avatar shapes, light/dark at 390/1100/1600px");
   win.destroy();
   app.quit();
 }).catch(error => { console.error(error); app.exit(1); });

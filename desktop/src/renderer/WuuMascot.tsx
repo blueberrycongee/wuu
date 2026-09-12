@@ -326,7 +326,6 @@ export function WuuMascot({
   const mascotStyle = {
     "--wuu-mascot-exit": `${MASCOT_EXIT_MS}ms`,
     "--wuu-mascot-size": size === undefined ? "0px" : `${size}px`,
-    "--wuu-mascot-inset-inline": `${accessoryBody.cx - accessoryBody.rx}%`,
     "--mo-head": colors.head ?? WUU_MASCOT_LAYOUT.palette.head,
     "--mo-eye": colors.eye ?? WUU_MASCOT_LAYOUT.palette.eye,
     ...(followPointer ? { "--mo-look-x": 0, "--mo-look-y": 0 } : {}),

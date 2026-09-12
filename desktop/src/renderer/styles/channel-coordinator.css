@@ -34,8 +34,8 @@
 .channel-activity-region.channel-activity-motion {
   gap: 0;
   min-height: 40px;
-  /* Composer padding + centered attachment glyph, including its SVG inset. */
-  padding-inline-start: 18px;
+  /* The 32px avatar and attachment button share the composer padding. */
+  padding-inline-start: 7px;
   align-items: center;
 }
 
@@ -101,13 +101,6 @@
   height: 32px;
 }
 .channel-coordinator-member .agent-avatar-mark { width: 32px; height: 32px; }
-/* Align the painted body, whose SVG frame reserves space for motion. */
-.channel-activity-motion [data-wuu-mascot-activity] {
-  translate: calc(-1 * var(--wuu-mascot-inset-inline)) 0;
-}
-.channel-activity-motion .channel-response-status-avatar,
-.channel-coordinator-mascot { transform-origin: left center; }
-
 /* The room keeps one monochrome identity across providers and themes. */
 .channel-coordinator-mascot {
   --channel-coordinator-body: #353637;
@@ -144,6 +137,6 @@
 }
 
 @media (max-width: 760px) {
-  /* The attachment button grows from 32px to 40px in compact layouts. */
-  .channel-activity-region.channel-activity-motion { padding-inline-start: 22px; }
+  /* Center the 32px avatar above the compact layout's 40px attachment button. */
+  .channel-activity-region.channel-activity-motion { padding-inline-start: 11px; }
 }
