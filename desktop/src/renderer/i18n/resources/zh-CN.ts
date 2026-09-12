@@ -226,6 +226,8 @@ export const zhCN = {
   "sidebar.workspace": "工作区",
   "channels.sessions.byokRequired": "请选择 BYOK 模型，让这个身份使用协作能力。",
   "channels.sessions.resumeBeforeSend": "请先继续这个会话，再追加工作。",
+  "channels.sessions.workManaged": "此会话由关联任务管理。",
+  "channels.sessions.openWorkRoom": "返回频道处理任务",
   "channels.sessions.more": "显示更多（还有 {count} 个）",
   "channels.sessions.identitySetupRequired": "请先在身份设置中选择 BYOK 模型，再启动协作会话。",
   "channels.sessions.title": "执行会话",

@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChannelRoom, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
+import type { ChannelRoom, CollaborationSessionBinding, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
 import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
 import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
@@ -435,6 +435,36 @@ describe("ChannelView", () => {
     // for the selected room and no room directory of its own.
     expect(container.querySelector(".channel-room-header")?.textContent).toContain("research");
     expect(container.querySelector(".channel-room-row")).toBeNull();
+  });
+
+  it("returns from an identity's task session to a room that is already selected in the app shell", async () => {
+    const api = createApi();
+    const session: CollaborationSessionBinding = {
+      session_ref: "work-session", principal_id: agents[0].id, named_agent_id: agents[0].id,
+      room_id: "room-1", work_id: "work-1", purpose: "work", state: "cancelled", title: "Review evidence",
+      created_at: agents[0].created_at, updated_at: agents[0].created_at,
+    };
+    api.listChannelSessions = vi.fn(async () => ({ sessions: [session] }));
+    api.readChannelSession = vi.fn(async () => ({ session, thread: {
+      id: session.session_ref, created_at: session.created_at, updated_at: session.updated_at,
+      preview: "", cwd: "", model: "", model_provider: "", status: "idle" as const, turns: [],
+    } }));
+    const onSelectRoom = vi.fn();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<WuuUIRoot><ChannelView section="agents" selectedRoomID="room-1" onSelectRoom={onSelectRoom} /></WuuUIRoot>));
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>(".channel-agent-directory-identity")!.click());
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>(".channel-sessions-launcher")!.click());
+    await settle();
+    act(() => container.querySelector<HTMLButtonElement>(".channel-session-row")!.click());
+    await settle();
+    const returnButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "返回频道处理任务");
+    expect(returnButton).toBeTruthy();
+    act(() => returnButton!.click());
+    expect(onSelectRoom).toHaveBeenCalledExactlyOnceWith("room-1");
+    expect(container.querySelector("[role=dialog]")).toBeNull();
   });
 
   it("uses WeChat-style centered rows for one through nine members", () => {

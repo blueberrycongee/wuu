@@ -228,6 +228,8 @@ export const enUS = {
   "sidebar.workspace": "Workspace",
   "channels.sessions.byokRequired": "Choose a BYOK model for this identity to use collaboration.",
   "channels.sessions.resumeBeforeSend": "Resume this session before sending more work.",
+  "channels.sessions.workManaged": "This session is managed by its associated task.",
+  "channels.sessions.openWorkRoom": "Return to channel to manage task",
   "channels.sessions.more": "Show more ({count} remaining)",
   "channels.sessions.identitySetupRequired": "Select a BYOK model in this identity’s settings before starting a session.",
   "channels.sessions.title": "Sessions",

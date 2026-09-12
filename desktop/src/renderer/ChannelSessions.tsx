@@ -39,12 +39,13 @@ function SessionHistory({ result }: { result: ChannelSessionReadResult }): JSX.E
   </div>;
 }
 
-export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }: {
+export function ChannelSessions({ agents, rooms, roomId, agentId, initialized, onOpenRoom }: {
   agents: NamedAgent[];
   rooms: ChannelRoom[];
   roomId?: string;
   agentId?: string;
   initialized?: InitializeResult;
+  onOpenRoom?: (roomId: string) => void;
 }): JSX.Element | null {
   const { t, formatDate } = useI18n();
   const [open, setOpen] = useState(false);
@@ -66,6 +67,13 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
   const [followups, setFollowups] = useState<Record<string, string>>({});
   const requestGeneration = useRef(0);
   const detailGeneration = useRef(0);
+  const listInFlight = useRef<Promise<void> | null>(null);
+  const detailInFlight = useRef<Promise<void> | null>(null);
+  const listScope = JSON.stringify([agentId, roomId]);
+  const activeScope = useRef(listScope);
+  const activeSession = useRef(selectedRef);
+  activeScope.current = listScope;
+  activeSession.current = selectedRef;
   const mutationPending = useRef(false);
   const deliveryRequests = useRef(new Map<string, string>());
   const mounted = useRef(true);
@@ -73,23 +81,32 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; requestGeneration.current++; detailGeneration.current++; };
+    return () => { mounted.current = false; requestGeneration.current++; detailGeneration.current++; listInFlight.current = null; detailInFlight.current = null; };
   }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!available) return;
+    if (!available || !mounted.current || activeScope.current !== listScope) return;
+    if (listInFlight.current) return listInFlight.current;
     const generation = ++requestGeneration.current;
+    const request = (async (): Promise<void> => {
+      try {
+        const result = await window.wuu!.listChannelSessions({ ...(roomId ? { roomId } : {}), ...(agentId ? { agentId } : {}) });
+        if (!mounted.current || generation !== requestGeneration.current) return;
+        setSessions(result.sessions ?? []);
+        setError("");
+      } catch (reason) {
+        if (mounted.current && generation === requestGeneration.current) setError(toastErrorMessage(reason));
+      } finally {
+        if (mounted.current && generation === requestGeneration.current) setLoading(false);
+      }
+    })();
+    listInFlight.current = request;
     try {
-      const result = await window.wuu!.listChannelSessions({ ...(roomId ? { roomId } : {}), ...(agentId ? { agentId } : {}) });
-      if (!mounted.current || generation !== requestGeneration.current) return;
-      setSessions(result.sessions ?? []);
-      setError("");
-    } catch (reason) {
-      if (mounted.current && generation === requestGeneration.current) setError(toastErrorMessage(reason));
+      await request;
     } finally {
-      if (mounted.current && generation === requestGeneration.current) setLoading(false);
+      if (listInFlight.current === request) listInFlight.current = null;
     }
-  }, [agentId, available, roomId]);
+  }, [agentId, available, listScope, roomId]);
 
   useEffect(() => {
     setSessions([]);
@@ -99,7 +116,7 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
     setCreateAgentId(agentId || agents[0]?.id || "");
     setCreateRoomId(roomId || "");
     void refresh();
-    return () => { requestGeneration.current++; };
+    return () => { requestGeneration.current++; listInFlight.current = null; };
   }, [agentId, roomId, refresh]);
 
   useEffect(() => {
@@ -111,15 +128,24 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
   }, [available, open, refresh]);
 
   const read = useCallback(async (): Promise<void> => {
-    if (!selectedRef) return;
+    if (!selectedRef || !mounted.current || activeSession.current !== selectedRef) return;
+    if (detailInFlight.current) return detailInFlight.current;
     const generation = ++detailGeneration.current;
+    const request = (async (): Promise<void> => {
+      try {
+        const result = await window.wuu!.readChannelSession({ sessionRef: selectedRef });
+        if (!mounted.current || generation !== detailGeneration.current) return;
+        setDetail(result);
+        setDetailError("");
+      } catch (reason) {
+        if (mounted.current && generation === detailGeneration.current) setDetailError(toastErrorMessage(reason));
+      }
+    })();
+    detailInFlight.current = request;
     try {
-      const result = await window.wuu!.readChannelSession({ sessionRef: selectedRef });
-      if (!mounted.current || generation !== detailGeneration.current) return;
-      setDetail(result);
-      setDetailError("");
-    } catch (reason) {
-      if (mounted.current && generation === detailGeneration.current) setDetailError(toastErrorMessage(reason));
+      await request;
+    } finally {
+      if (detailInFlight.current === request) detailInFlight.current = null;
     }
   }, [selectedRef]);
 
@@ -129,7 +155,7 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
     if (!open || !selectedRef) return;
     void read();
     const timer = window.setInterval(() => { if (!mutationPending.current) void read(); }, 3_000);
-    return () => { detailGeneration.current++; window.clearInterval(timer); };
+    return () => { detailGeneration.current++; detailInFlight.current = null; window.clearInterval(timer); };
   }, [open, read, selectedRef]);
 
   const selectedSession = sessions.find((session) => session.session_ref === selectedRef) ?? detail?.session;
@@ -153,6 +179,8 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
     mutationPending.current = true;
     requestGeneration.current++;
     detailGeneration.current++;
+    listInFlight.current = null;
+    detailInFlight.current = null;
     setBusy(true);
     setError("");
     try {
@@ -206,7 +234,7 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
         setPrompt("");
         setSelectedRef(result.session.session_ref);
       });
-    } else if (selectedRef && followups[selectedRef]?.trim()) {
+    } else if (selectedRef && !selectedSession?.work_id && followups[selectedRef]?.trim()) {
       const sentPrompt = followups[selectedRef].trim();
       const deliveryKey = JSON.stringify(["send", selectedRef, sentPrompt]);
       void mutate(async () => {
@@ -258,15 +286,20 @@ export function ChannelSessions({ agents, rooms, roomId, agentId, initialized }:
             <div className="channel-session-meta"><span>{agents.find((agent) => agent.id === selectedSession.named_agent_id)?.name || selectedSession.principal_id}</span><span>{t(`channels.sessions.state.${selectedSession.state}`)}</span><span>{[selectedSession.provider, selectedSession.model].filter(Boolean).join(" · ")}</span></div>
             {selectedSession.failure_reason ? <p className="channel-error" role="alert">{selectedSession.failure_reason}</p> : null}
             <div className="channel-session-actions">
-              {isRunning(selectedSession) || selectedSession.state === "idle" || selectedSession.state === "queued" || selectedSession.state === "waiting" ? <button type="button" disabled={busy} onClick={() => void mutate(async () => { await window.wuu!.stopChannelSession({ sessionRef: selectedRef }); })}>{t("channels.sessions.stop")}</button> : isResumable(selectedSession) ? <button type="button" disabled={busy} onClick={() => void mutate(async () => { await window.wuu!.resumeChannelSession({ sessionRef: selectedRef }); })}>{t("channels.sessions.resume")}</button> : null}
+              {isRunning(selectedSession) || selectedSession.state === "idle" || selectedSession.state === "queued" || selectedSession.state === "waiting" ? <button type="button" disabled={busy} onClick={() => void mutate(async () => { await window.wuu!.stopChannelSession({ sessionRef: selectedRef }); })}>{t("channels.sessions.stop")}</button> : !selectedSession.work_id && isResumable(selectedSession) ? <button type="button" disabled={busy} onClick={() => void mutate(async () => { await window.wuu!.resumeChannelSession({ sessionRef: selectedRef }); })}>{t("channels.sessions.resume")}</button> : null}
             </div>
           </> : null}
           {detailError ? <div className="channel-error" role="alert">{detailError}<button type="button" onClick={() => void read()}>{t("channels.sessions.retry")}</button></div> : null}
           {detail ? <SessionHistory key={selectedRef} result={detail} /> : !detailError ? <p role="status">{t("channels.sessions.loading")}</p> : null}
           <div className="channel-session-followup">
+            {selectedSession?.work_id ? <>
+              <p className="channel-session-empty">{t("channels.sessions.workManaged")}</p>
+              {selectedSession.room_id && onOpenRoom ? <button className="channel-session-primary" type="button" onClick={() => { setOpen(false); onOpenRoom(selectedSession.room_id!); }}>{t("channels.sessions.openWorkRoom")}</button> : null}
+            </> : <>
             {selectedSession && isResumable(selectedSession) ? <p className="channel-session-empty">{t("channels.sessions.resumeBeforeSend")}</p> : null}
             <label><span>{t("channels.sessions.followup")}</span><textarea rows={3} value={followups[selectedRef] ?? ""} disabled={busy} onChange={(event) => { const value = event.currentTarget.value; setFollowups((current) => ({ ...current, [selectedRef]: value })); }} /></label>
             <button className="channel-session-primary" type="submit" disabled={busy || !followups[selectedRef]?.trim() || Boolean(selectedSession && isResumable(selectedSession))}>{t("channels.sessions.send")}</button>
+            </>}
           </div>
         </div> : <>
           <div className="channel-sessions-toolbar"><span>{t("channels.sessions.count", { count: sessions.length, running: activeCount })}</span><button type="button" onClick={beginCreate} disabled={agents.length === 0}><Plus className="icon" />{t("channels.sessions.new")}</button></div>

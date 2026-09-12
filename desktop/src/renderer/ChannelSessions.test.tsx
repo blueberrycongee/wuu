@@ -36,7 +36,7 @@ async function fill(selector: string, value: string): Promise<void> {
     input.dispatchEvent(new Event(input instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   });
 }
-async function render(props: { roomId?: string; agentId?: string; initialized?: InitializeResult } = { roomId: room.id }): Promise<void> {
+async function render(props: { roomId?: string; agentId?: string; initialized?: InitializeResult; onOpenRoom?: (roomId: string) => void } = { roomId: room.id }): Promise<void> {
   await act(async () => root.render(<WuuUIRoot><ChannelSessions agents={[agent]} rooms={[room]} {...props} /></WuuUIRoot>));
   await settle();
 }
@@ -62,6 +62,26 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("collaboration sessions", () => {
+  it("keeps task-managed sessions readable and stoppable and routes further work to their channel", async () => {
+    sessions = [{ ...binding("first"), work_id: "work-1" }];
+    const onOpenRoom = vi.fn();
+    await render({ agentId: agent.id, onOpenRoom }); await open();
+    await act(async () => container.querySelector<HTMLButtonElement>(".channel-session-row")!.click()); await settle();
+    expect(container.textContent).toContain("Evidence for first");
+    expect(container.querySelector("textarea")).toBeNull();
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "发送")).toBe(false);
+    await click("停止");
+    expect(api.stopChannelSession).toHaveBeenCalledWith({ sessionRef: "first" });
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "继续")).toBe(false);
+    expect(container.querySelector("textarea")).toBeNull();
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(api.resumeChannelSession).not.toHaveBeenCalled();
+    expect(api.sendChannelSession).not.toHaveBeenCalled();
+    await click("返回频道处理任务");
+    expect(onOpenRoom).toHaveBeenCalledExactlyOnceWith(room.id);
+    expect(container.querySelector("[role=dialog]")).toBeNull();
+  });
+
   it("keeps two sessions under one identity and targets stop, resume, and follow-up to the selected session", async () => {
     await render(); await open();
     expect(container.querySelectorAll(".channel-session-group")).toHaveLength(1);
@@ -143,6 +163,67 @@ describe("collaboration sessions", () => {
     expect(container.textContent).not.toContain("recovery test output");
     await act(async () => { const details = container.querySelector("details")!; details.open = true; details.dispatchEvent(new Event("toggle")); });
     expect(container.textContent).toContain("recovery test output");
+  });
+
+  it("accepts a slow session list without starting overlapping polls", async () => {
+    vi.useFakeTimers();
+    let resolveList!: (result: { sessions: CollaborationSessionBinding[] }) => void;
+    api.listChannelSessions = vi.fn().mockReturnValueOnce(new Promise((resolve) => { resolveList = resolve; })).mockImplementation(async () => ({ sessions: [...sessions] }));
+    await render(); await open();
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(api.listChannelSessions).toHaveBeenCalledTimes(1);
+    await act(async () => resolveList({ sessions: [...sessions] })); await settle();
+    expect(container.querySelectorAll(".channel-session-row")).toHaveLength(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(api.listChannelSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts history that takes longer than the polling interval and then keeps refreshing", async () => {
+    vi.useFakeTimers();
+    let resolveRead!: (result: ChannelSessionReadResult) => void;
+    api.readChannelSession = vi.fn().mockReturnValueOnce(new Promise((resolve) => { resolveRead = resolve; })).mockImplementation(async ({ sessionRef }) => readResult(sessions.find((session) => session.session_ref === sessionRef)!));
+    await render(); await open();
+    await act(async () => container.querySelector<HTMLButtonElement>(".channel-session-row")!.click()); await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(api.readChannelSession).toHaveBeenCalledTimes(1);
+    await act(async () => resolveRead(readResult(sessions[0]))); await settle();
+    expect(container.textContent).toContain("Evidence for first");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(api.readChannelSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates a pending history read when stopping the session", async () => {
+    let resolveOldRead!: (result: ChannelSessionReadResult) => void;
+    api.readChannelSession = vi.fn().mockReturnValueOnce(new Promise((resolve) => { resolveOldRead = resolve; })).mockImplementation(async ({ sessionRef }) => readResult(sessions.find((session) => session.session_ref === sessionRef)!));
+    await render(); await open();
+    await act(async () => container.querySelector<HTMLButtonElement>(".channel-session-row")!.click()); await settle();
+    await click("停止");
+    expect(api.readChannelSession).toHaveBeenCalledTimes(2);
+    const old = readResult(binding("first"));
+    old.thread.turns[0].items[0].text = "Stale result before stop";
+    await act(async () => resolveOldRead(old)); await settle();
+    expect(container.textContent).not.toContain("Stale result before stop");
+    expect(container.textContent).toContain("Evidence for first");
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "继续")).toBe(true);
+  });
+
+  it("keeps a new session's pending read when the previous session responds late", async () => {
+    vi.useFakeTimers();
+    let resolveFirst!: (result: ChannelSessionReadResult) => void;
+    let resolveSecond!: (result: ChannelSessionReadResult) => void;
+    api.readChannelSession = vi.fn()
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+    await render(); await open();
+    await act(async () => container.querySelector<HTMLButtonElement>(".channel-session-row")!.click()); await settle();
+    await click("全部会话");
+    await act(async () => container.querySelectorAll<HTMLButtonElement>(".channel-session-row")[1].click()); await settle();
+    await act(async () => resolveFirst(readResult(sessions[0]))); await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(api.readChannelSession).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("Evidence for first");
+    await act(async () => resolveSecond(readResult(sessions[1]))); await settle();
+    expect(container.textContent).toContain("Evidence for second");
   });
 
   it("ignores a delayed list response from the previous room", async () => {

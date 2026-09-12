@@ -599,6 +599,12 @@ export function ChannelView({ initialized, section = "rooms", archivedRoomIDs = 
     setInternalSelectedRoomID(next);
     if (next !== base) onSelectRoom?.(next);
   }, [controlledRoomID, internalSelectedRoomID, onSelectRoom]);
+  const openSessionRoom = useCallback((roomID: string): void => {
+    setSelectedRoomID(roomID);
+    // Selecting the current room must still leave the identity page in the app shell.
+    if (roomID === selectedRoomID) onSelectRoom?.(roomID);
+    onSectionChange?.("rooms");
+  }, [onSectionChange, onSelectRoom, selectedRoomID, setSelectedRoomID]);
   const [messagesByRoomID, setMessagesByRoomID] = useState<Record<string, ChannelMessage[]>>({});
   const [loadedRoomIDs, setLoadedRoomIDs] = useState<Set<string>>(() => new Set());
   const messages = messagesByRoomID[selectedRoomID] ?? [];
@@ -1590,7 +1596,7 @@ export function ChannelView({ initialized, section = "rooms", archivedRoomIDs = 
                   </span>
                 </div>
               ) : null}
-              <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} />
+              <ChannelSessions key={selectedRoom.id} agents={selectedRoomAgents} rooms={rooms} roomId={selectedRoom.id} initialized={initialized} onOpenRoom={openSessionRoom} />
               {selectedRoom.kind === "channel" ? <div className="channel-room-header-actions">
                 <button
                   className="icon-button"
@@ -1887,7 +1893,7 @@ export function ChannelView({ initialized, section = "rooms", archivedRoomIDs = 
                     <p>{activityText(activityFor(selectedAgent))}</p>
                   </div>
                   <div className="channel-agent-detail-actions">
-                    <ChannelSessions key={selectedAgent.id} agents={[selectedAgent]} rooms={rooms} agentId={selectedAgent.id} initialized={initialized} />
+                    <ChannelSessions key={selectedAgent.id} agents={[selectedAgent]} rooms={rooms} agentId={selectedAgent.id} initialized={initialized} onOpenRoom={openSessionRoom} />
                     <button type="button" disabled={Boolean(resettingAgentID || savingAgentID)} onClick={() => void resetAgent(selectedAgent.id)}>
                       {t(resettingAgentID === selectedAgent.id ? "channels.resettingAgent" : "channels.resetAgent")}
                     </button>
