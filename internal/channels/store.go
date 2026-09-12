@@ -2076,6 +2076,9 @@ func (s *Service) DeleteRoom(ctx context.Context, id string) error {
 			return fmt.Errorf("delete room runtime state: %w", err)
 		}
 	}
+	if err := os.RemoveAll(filepath.Join(s.dir, "rooms", id)); err != nil {
+		return err
+	}
 	return nil
 }
 

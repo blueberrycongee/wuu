@@ -90,7 +90,7 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 		addFileReadTools(b)
 		addSearchTools(b)
 		addContextWindowTools(b)
-		for _, name := range []string{"yield_turn", "chat_check", "chat_read", "chat_session", "collaboration_send", "chat_task", "chat_work", "chat_verify", "chat_roster"} {
+		for _, name := range []string{"yield_turn", "chat_check", "chat_read", "chat_session", "collaboration_send", "chat_task", "chat_work", "chat_verify", "chat_roster", "chat_wake", "chat_memory"} {
 			b.addVisible(name, capability.CapabilityChat)
 		}
 		b.surface.SystemFragment = "You coordinate one room. Delegate execution to named member sessions. Project writes, shell execution and public messages are unavailable."
@@ -325,6 +325,8 @@ func addChatTools(b *surfaceBuilder) {
 	b.addVisible("chat_work", capability.CapabilityChat)
 	b.addVisible("chat_verify", capability.CapabilityChat)
 	b.addVisible("chat_remind", capability.CapabilityChat)
+	b.addVisible("chat_wake", capability.CapabilityChat)
+	b.addVisible("chat_memory", capability.CapabilityChat)
 	b.addVisible("chat_roster", capability.CapabilityChat)
 }
 

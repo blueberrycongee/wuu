@@ -207,7 +207,7 @@ func classifyToolKind(name string) ToolKind {
 		return ToolKindSkill
 	case "list_agent_profiles", "create_agent_profile":
 		return ToolKindAgent
-	case "chat_check", "chat_read", "chat_session", "chat_roster", "chat_send", "collaboration_send", "chat_draft", "chat_task", "chat_work", "chat_verify", "chat_remind":
+	case "chat_check", "chat_read", "chat_session", "chat_roster", "chat_send", "collaboration_send", "chat_draft", "chat_task", "chat_work", "chat_verify", "chat_remind", "chat_wake", "chat_memory":
 		return ToolKindChat
 	case "browser", browserToolName:
 		return ToolKindBrowser

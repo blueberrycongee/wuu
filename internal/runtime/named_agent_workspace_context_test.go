@@ -43,3 +43,27 @@ func TestNamedAgentWorkspaceContextTracksRegisteredProjects(t *testing.T) {
 		t.Fatalf("typed block identity changed: %q != %q", initial[0].Source, updated[0].Source)
 	}
 }
+
+func TestCollaborationNotebookContextRefreshesAndForgets(t *testing.T) {
+	dir := t.TempDir()
+	provider := namedAgentNotebookContextProvider(dir)
+	path := filepath.Join(dir, "MEMORY.md")
+	if err := os.WriteFile(path, []byte("- [Preference](preference.md) - Friday digest"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider(); len(got) != 1 || !strings.Contains(got[0].Content, "Friday") {
+		t.Fatalf("initial memory = %+v", got)
+	}
+	if err := os.WriteFile(path, []byte("- [Preference](preference.md) - Monday digest"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider(); len(got) != 1 || strings.Contains(got[0].Content, "Friday") || !strings.Contains(got[0].Content, "Monday") {
+		t.Fatalf("corrected memory = %+v", got)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider(); len(got) != 1 || got[0].Content != "" {
+		t.Fatalf("forgotten memory = %+v", got)
+	}
+}

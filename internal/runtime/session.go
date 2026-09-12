@@ -1218,16 +1218,9 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 	}
 	teaching := memdir.IdentityTeaching(memoryDir)
 	index := ""
-	if snap, err := memdir.ReadIndex(memoryDir); err == nil {
-		index = snap.Content
-	} else {
-		providers.DebugLogf("read named agent memory index: %v", err)
-	}
 	toolkit := threadRuntime.Toolkit
 	if toolkit != nil && toolkit.IsRoomAgent() {
-		// Coordination state lives in room tasks and the durable session. Do not
-		// teach an execution-restricted coordinator to edit an identity notebook.
-		teaching, index = "", ""
+		teaching = "Use chat_memory with scope=room for durable shared knowledge. Keep MEMORY.md as a compact index; read relevant topics as needed."
 	}
 	if toolkit != nil {
 		toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(rootDir, s.WuuHome, memoryDir))
@@ -1247,6 +1240,7 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 		rootDir,
 		toolkitContextBlockProvider(toolkit),
 		namedAgentWorkspaceContextProvider(s.WuuHome, rootDir, memoryDir, toolkit),
+		namedAgentNotebookContextProvider(memoryDir),
 	)
 	userPrompt := strings.TrimSpace(orientation)
 	promptResult := buildBaseSystemPromptResult(
@@ -2071,6 +2065,17 @@ func toolkitContextBlockProvider(toolkit *tools.Toolkit) func() []wuucontext.Blo
 		return nil
 	}
 	return toolkit.ContextBlocks
+}
+
+func namedAgentNotebookContextProvider(memoryDir string) func() []wuucontext.Block {
+	return func() []wuucontext.Block {
+		snapshot, err := memdir.ReadIndex(memoryDir)
+		if err != nil {
+			providers.DebugLogf("refresh collaboration memory: %v", err)
+			return nil
+		}
+		return []wuucontext.Block{{Kind: wuucontext.BlockMemory, Title: "Current collaboration memory index", Source: "runtime.collaboration_memory", Content: snapshot.Content}}
+	}
 }
 
 func namedAgentWorkspaceContextProvider(wuuHome, agentHome, memoryDir string, toolkit *tools.Toolkit) func() []wuucontext.Block {

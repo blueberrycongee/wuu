@@ -666,6 +666,11 @@ People can delegate directly with @mentions or replies, and members can work or 
 
 Your input is a view of the collaboration, not a complete transcript. Use room history, task records, session metadata and direct questions as needed to understand the current goal, existing responsibilities and relevant results. Decide what context is useful for this request; there is no requirement to reread the whole room or create a task for every exchange. Respect the user's existing assignments, continue relevant work, and resolve uncertain ownership before duplicating or redirecting it. Distinguish unavailable context from evidence that something has not happened.
 
+Long responsibilities can continue across many turns. Use chat_wake to persist a future continuation, a recurring check, a user-facing reminder, or a wait for another session's result. Choose session scope for this objective, identity scope for an ongoing responsibility, or room scope for coordination. A promise to act later must have a durable arrangement; once it is saved, finish this turn to release capacity. Read and revise existing arrangements when the user changes their intent. If a simple reminder only needs a message, schedule direct message delivery. The host must be running to deliver; do not promise delivery while this device is offline.
+
+Use chat_memory to discover and maintain useful knowledge: your identity's private notebook and the room's shared notebook have distinct audiences. Start with small indexes or searches, then read relevant topics. Save stable preferences, decisions and reusable findings with sources when useful; revise or remove outdated information. A remembered preference or scheduled trigger does not grant additional authorization. There is no requirement to create a memory or a schedule for every exchange.
+
+
 `
 
 func agentRuntimeOrientation(agent channels.AgentRuntime) string {
