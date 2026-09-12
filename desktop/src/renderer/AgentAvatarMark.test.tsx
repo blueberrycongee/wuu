@@ -1,4 +1,6 @@
 import { act } from "react";
+import { _layout } from "blobatar";
+import approvedIcon from "../../../assets/app-icon-source.json";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -122,5 +124,20 @@ describe("AgentAvatarMark", () => {
       faces.push(face.expression);
     }
     expect(new Set(faces).size).toBe(3);
+  });
+
+  it("retains the icon's filled portrait-eye proportions across reply and recovery states", () => {
+    const aspect = approvedIcon.eyeHeight / approvedIcon.eyeWidth;
+    for (const status of ["idle", "thinking", "responding", "sending", "queued", "waiting", "failed", "interrupted"] as const) {
+      renderToStaticMarkup(<AgentAvatarMark seed="agent" avatarKey="abstract-1" status={status} />);
+      const face = blobatarProps.mock.calls.at(-1)![0];
+      const authored = _layout(face.name, { traits: face.traits });
+      const posed = face.expression.bake(authored, face.expression.p).l;
+      for (const eye of posed.eyes) {
+        expect(eye.ry / eye.rx, status).toBeGreaterThan(aspect * 0.85);
+        expect(eye.ry / eye.rx, status).toBeLessThan(aspect * 1.12);
+        expect(Math.abs(eye.rot), status).toBeLessThan(5);
+      }
+    }
   });
 });

@@ -1,12 +1,5 @@
 import { _layout, palette, type Animate } from "blobatar";
-import {
-  happy,
-  idle as idleExpression,
-  scared,
-  smug,
-  surprised,
-  type Expression,
-} from "blobatar/expression";
+import { idle as idleExpression, type Expression } from "blobatar/expression";
 import { Blobatar } from "blobatar/react";
 import "blobatar/motion.css";
 import {
@@ -36,13 +29,6 @@ const WUU_MASCOT_LAYOUT = _layout(WUU_MASCOT_NAME, {
   traits: WUU_MASCOT_TRAITS,
 });
 
-// The mascot's authored eyes are portrait capsules: `WUU_MASCOT_TRAITS` pins
-// `eye.ratio` to the top of the vendored 1.9–2.8 range, so the drawn height is
-// 2.8 × the drawn width. Eye styles below reshape that capsule with the pose's
-// scale and tilt channels; nothing here adds a mouth or brows, only moves the
-// pair of capsule eyes the mascot already has.
-const WUU_MASCOT_EYE_ASPECT = 2.8;
-
 type MascotEyeStyle = {
   /** Shared eye width, about each eye's own centre. */
   esx: number;
@@ -58,50 +44,23 @@ type MascotEyeStyle = {
   tilt2?: number;
 };
 
-function withMascotEyes(
-  expression: Expression,
-  eyes: MascotEyeStyle,
-): Expression {
+/** Keep every activity on the approved icon's filled capsule eye vocabulary. */
+export function wuuMascotExpression(eyes: Partial<MascotEyeStyle> = {}): Expression {
   return {
-    ...expression,
+    ...idleExpression,
     p: {
-      ...expression.p,
-      // Keep the mascot's eye spacing as part of its identity. Stock
-      // expressions push the pair apart by different amounts; on this narrow,
-      // long-eyed face that makes the empty space between the eyes dominate and
-      // causes the spacing to drift as activities change.
+      ...idleExpression.p,
       edx: 0,
-      esx: eyes.esx,
-      esy: eyes.esy,
+      esx: eyes.esx ?? 1,
+      esy: eyes.esy ?? 1,
       esx2: eyes.esx2 ?? 0,
       esy2: eyes.esy2 ?? 0,
       tilt: eyes.tilt ?? 0,
       tilt2: eyes.tilt2 ?? 0,
+      lock: 1,
     },
   };
 }
-
-export const WUU_MASCOT_EYES = {
-  // The authored long portrait capsules — widened just enough to stay delicate
-  // while reading less like two thin strokes at greeting size.
-  long: { esx: 1.12, esy: 1 },
-  // A circle: growing the width and shrinking the height by the authored aspect
-  // ratio leaves `rx === ry`. 1.6 keeps the dot a touch larger than the long
-  // capsule reads, without crowding the pair.
-  round: { esx: 1.6, esy: 1.6 / WUU_MASCOT_EYE_ASPECT },
-  // Wide flat arcs — the smiling squint.
-  happy: { esx: 1.7, esy: 0.3, tilt: 8 },
-  // Half-lidded and leaning together — smug.
-  smug: { esx: 1.35, esy: 0.34, tilt: 18, tilt2: -36 },
-  // Level flat bars — sleepy / watching.
-  sleepy: { esx: 1.2, esy: 0.22 },
-  // One round eye, the other closed to a flat bar — a wink.
-  wink: { esx: 1.4, esy: 0.5, esx2: 0.2, esy2: -0.38 },
-  // Manga panic: the left eye goes almost round while the right stays taller
-  // and slightly pinched. The uneven pair and inward lean read as startled
-  // rather than sharing search's clean, symmetrical round-eye surprise.
-  panic: { esx: 1.72, esy: 0.69, tilt: -11, esx2: -0.25, esy2: 0.18, tilt2: 7 },
-} as const satisfies Readonly<Record<string, MascotEyeStyle>>;
 
 export type WuuMascotAccessory =
   | "none"
@@ -134,18 +93,15 @@ import type { WuuMascotActivity } from "./wuu-mascot-spec";
 export const WUU_MASCOT_ACTIVITY_EXPRESSIONS: Readonly<
   Record<WuuMascotActivity, Expression | undefined>
 > = {
-  idle: withMascotEyes(idleExpression, WUU_MASCOT_EYES.long),
-  // Most activities keep the long-eye identity. Search uses a clean round
-  // surprise, while compact deliberately breaks symmetry with the manga panic
-  // pair so the two busy states cannot be mistaken for each other.
-  compose: withMascotEyes(happy, WUU_MASCOT_EYES.long),
-  thinking: withMascotEyes(smug, WUU_MASCOT_EYES.long),
-  compact: withMascotEyes(scared, WUU_MASCOT_EYES.panic),
-  search: withMascotEyes(surprised, WUU_MASCOT_EYES.round),
-  edit: withMascotEyes(happy, WUU_MASCOT_EYES.long),
-  command: withMascotEyes(happy, WUU_MASCOT_EYES.long),
-  read: withMascotEyes(smug, WUU_MASCOT_EYES.long),
-  tool: withMascotEyes(happy, WUU_MASCOT_EYES.long),
+  idle: wuuMascotExpression(),
+  compose: wuuMascotExpression({ esy: 1.04 }),
+  thinking: wuuMascotExpression({ esy: 0.94, tilt: 2 }),
+  compact: wuuMascotExpression({ esy: 0.9 }),
+  search: wuuMascotExpression({ esy: 1.08 }),
+  edit: wuuMascotExpression({ esy: 0.97, tilt: 1 }),
+  command: wuuMascotExpression({ esy: 0.94 }),
+  read: wuuMascotExpression({ esy: 0.94, tilt: -1 }),
+  tool: wuuMascotExpression({ esy: 1.02 }),
 };
 
 type WuuMascotRuntime = {

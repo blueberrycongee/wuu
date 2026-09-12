@@ -71,19 +71,6 @@
   --wuu-mascot-mix-white: white;
 }
 
-/* Manga-style panic leaves the eyes blank instead of merely enlarging the
- * normal dark capsules. The outline keeps them legible at the 28–32px product
- * sizes; the uneven geometry comes from the compact expression itself. */
-[data-wuu-mascot-activity="compact"] .mo-eye {
-  fill: color-mix(in oklab, var(--mo-head) 8%, var(--wuu-mascot-mix-white));
-  stroke: var(--mo-eye);
-  stroke-width: 1.8;
-  paint-order: stroke fill;
-  transition:
-    fill var(--mo-morph, 400ms) var(--mo-morph-ease, ease-in-out),
-    stroke var(--mo-morph, 400ms) var(--mo-morph-ease, ease-in-out);
-}
-
 [data-wuu-mascot-activity="search"] {
   --mo-rate: 0.86;
 }

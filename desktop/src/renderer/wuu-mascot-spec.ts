@@ -12,15 +12,20 @@ export const WUU_MASCOT_BRAND_COLORS = {
  */
 export const WUU_MASCOT_NAME = "wuu";
 export const WUU_MASCOT_DEFAULT_HUE = 14;
-// Keep the mascot's *authored* eyes as long portrait capsules, symmetric and
-// upright. `WuuMascot` can reshape that pair on top (round, squint, wink, and
-// so on) without adding new marks, but the identity geometry stays anchored
-// here.
+export const WUU_MASCOT_EYE_ASPECT = approvedIcon.eyeHeight / approvedIcon.eyeWidth;
+const eyeRadiusRatio = approvedIcon.eyeWidth / (approvedIcon.radius * 2);
+// Blobatar measures clearance beyond an eye radius plus a 0.04-body-radius
+// safety margin. Keep its minimum clearance when the icon's pair is tighter.
+const eyeClearance = (approvedIcon.eyeGap - approvedIcon.eyeWidth) / (approvedIcon.radius * 2) - 0.04;
 export const WUU_MASCOT_TRAITS = {
   shape: 0.2,
   "body.ratio": 0.5,
   "body.n": 1 / 6,
-  "eye.ratio": 1,
+  "eye.rx": (eyeRadiusRatio - 0.075) / (0.11 - 0.075),
+  "eye.ratio": (WUU_MASCOT_EYE_ASPECT - 1.9) / (2.8 - 1.9),
+  "eye.gap": (Math.max(0.1, eyeClearance) - 0.1) / (0.24 - 0.1),
+  "eye.n": 0,
+  "eye.lean": 0.5,
   // These normalized trait positions resolve both second-eye multipliers to 1.
   "eye.scale": 0.4782608695652174,
   "eye.stretch": 0.45454545454545453,

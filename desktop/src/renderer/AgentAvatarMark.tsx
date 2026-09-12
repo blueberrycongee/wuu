@@ -1,8 +1,8 @@
 import "blobatar/motion.css";
-import { happy, idle, sad, smug, unsure, type Expression } from "blobatar/expression";
+import type { Expression } from "blobatar/expression";
 import type { JSX } from "react";
 import { AVATAR_HUES } from "./DefaultAvatar";
-import { WUU_MASCOT_EYES, WuuMascot, type WuuMascotAccessory } from "./WuuMascot";
+import { WuuMascot, wuuMascotExpression, type WuuMascotAccessory } from "./WuuMascot";
 import { WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
 import "./styles/agent-avatar-feedback.css";
 
@@ -22,20 +22,15 @@ export type AgentAvatarKey = (typeof AGENT_AVATAR_KEYS)[number];
 
 export type AgentAvatarStatus = "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
 
-function agentExpression(expression: Expression, eyes: Partial<Expression["p"]>): Expression {
-  return { ...expression, p: { ...expression.p, ...eyes, edx: 0 } };
-}
-
-const THINKING_EXPRESSION = agentExpression(smug, WUU_MASCOT_EYES.smug);
-const RESPONDING_EXPRESSION = agentExpression(happy, WUU_MASCOT_EYES.happy);
-const EXPRESSIONS: Partial<Record<AgentAvatarStatus, Expression>> = {
-  thinking: THINKING_EXPRESSION,
-  responding: RESPONDING_EXPRESSION,
-  sending: RESPONDING_EXPRESSION,
-  queued: agentExpression(idle, { ...WUU_MASCOT_EYES.long, esy: 0.66 }),
-  waiting: agentExpression(unsure, { esx: 1.2, esy: 0.72, esx2: 0.12, esy2: -0.3 }),
-  failed: agentExpression(sad, { esx: 1.2, esy: 0.56, tilt: 14, bdy: 1.2 }),
-  interrupted: agentExpression(idle, WUU_MASCOT_EYES.sleepy),
+const EXPRESSIONS: Record<AgentAvatarStatus, Expression> = {
+  idle: wuuMascotExpression(),
+  thinking: wuuMascotExpression({ esy: 0.94, tilt: 2 }),
+  responding: wuuMascotExpression({ esy: 1.04, tilt: -1 }),
+  sending: wuuMascotExpression({ esy: 1.04, tilt: -1 }),
+  queued: wuuMascotExpression({ esy: 0.96 }),
+  waiting: wuuMascotExpression({ esy: 0.92, esy2: -0.03 }),
+  failed: wuuMascotExpression({ esy: 0.9, tilt: 2 }),
+  interrupted: wuuMascotExpression({ esy: 0.92 }),
 };
 
 function AgentAvatarFeedback({ status, active }: { status: AgentAvatarStatus; active: boolean }): JSX.Element | null {
