@@ -16,7 +16,7 @@ import {
 import { createPortal } from "react-dom";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMascotMotion";
-import { MascotAccessory, type WuuMascotAccessory } from "./WuuMascotAccessories";
+import { MascotAccessory, measureAccessoryFit, WUU_MASCOT_ACCESSORIES, type AccessoryFit, type WuuMascotAccessory } from "./WuuMascotAccessories";
 export { WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascotAccessories";
 import "./styles/wuu-mascot.css";
 
@@ -102,40 +102,7 @@ const PROVIDER_HUES = [
   14, 202, 96, 288, 52, 222, 150, 322, 33, 250, 182, 350,
 ] as const satisfies readonly (typeof AVATAR_HUES[number])[];
 
-const MODEL_ACCESSORY_BUCKETS: readonly WuuMascotAccessory[] = [
-  "sprout",
-  "cap",
-  "beanie",
-  "crown",
-  "top-hat",
-  "none",
-  "headphones",
-  "scarf",
-  "beret",
-  "party-hat",
-  "flower",
-  "halo",
-  "bow-tie",
-  "wizard-hat",
-  "chef-hat",
-  "headphones",
-  "graduation-cap",
-  "cowboy-hat",
-  "bunny-ears",
-  "cat-ears",
-  "propeller-cap",
-  "mushroom-cap",
-  "ribbon",
-  "necktie",
-  "beret",
-  "party-hat",
-  "flower",
-  "halo",
-  "bow-tie",
-  "wizard-hat",
-  "chef-hat",
-  "headphones",
-];
+const MODEL_ACCESSORY_BUCKETS = WUU_MASCOT_ACCESSORIES.filter(accessory => accessory !== "none");
 
 export function WuuMascotRuntimeProvider({
   provider,
@@ -236,7 +203,8 @@ export function WuuMascot({
   const effectiveProvider = provider ?? runtime.provider;
   const effectiveModel = model ?? runtime.model;
   const hue = identityHue ?? providerMascotHue(effectiveProvider, runtime.providers);
-  const colors = brand || (identityHue === undefined && !normalizedProviderIdentity(effectiveProvider))
+  const usesBrandColors = brand || (identityHue === undefined && !normalizedProviderIdentity(effectiveProvider));
+  const colors = usesBrandColors
     ? WUU_MASCOT_BRAND_COLORS
     : palette(hue);
   const selectedAccessory = accessory ?? (brand ? "none" : modelMascotAccessory(effectiveModel));
@@ -252,6 +220,7 @@ export function WuuMascot({
   const [mascotLayers, setMascotLayers] = useState<{
     rear: SVGGElement;
     front: SVGGElement;
+    fit: AccessoryFit;
   } | null>(null);
 
   useLayoutEffect(() => {
@@ -273,7 +242,7 @@ export function WuuMascot({
     front.classList.add("wuu-mascot-layer", "wuu-mascot-layer-front");
     bodyLayer.insertBefore(rear, bodyLayer.firstChild);
     eyesLayer.parentElement?.insertBefore(front, eyesLayer.nextSibling);
-    setMascotLayers({ rear, front });
+    setMascotLayers({ rear, front, fit: measureAccessoryFit(bodyLayer, accessoryBody) });
 
     return () => {
       rear.remove();
@@ -392,7 +361,9 @@ export function WuuMascot({
             {createPortal(
               <MascotAccessory
                 key={`${selectedAccessory}-rear`}
+                fit={mascotLayers.fit}
                 body={accessoryBody}
+                bodyHue={usesBrandColors ? WUU_MASCOT_DEFAULT_HUE : hue}
                 accessory={selectedAccessory}
                 layer="rear"
               />,
@@ -401,7 +372,9 @@ export function WuuMascot({
             {createPortal(
               <MascotAccessory
                 key={`${selectedAccessory}-front`}
+                fit={mascotLayers.fit}
                 body={accessoryBody}
+                bodyHue={usesBrandColors ? WUU_MASCOT_DEFAULT_HUE : hue}
                 accessory={selectedAccessory}
                 layer="front"
               />,

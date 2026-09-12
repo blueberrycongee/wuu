@@ -59,7 +59,7 @@ function facePaths(svg: Element): string {
 
 describe("WuuMascot activity morph", () => {
   it("keeps brand scenes independent of the surrounding runtime while allowing explicit accessories", () => {
-    const scene = (model: string, accessory?: "crown") => (
+    const scene = (model: string, accessory?: "beanie") => (
       <WuuMascotRuntimeProvider provider="openai" model={model}>
         <WuuMascot brand accessory={accessory} />
       </WuuMascotRuntimeProvider>
@@ -71,7 +71,7 @@ describe("WuuMascot activity morph", () => {
     rerender(scene("claude-sonnet-4"));
     expect(svg.style.getPropertyValue("--mo-head")).toBe(colour);
     expect(svg.querySelector(".wuu-mascot-accessory")).toBeNull();
-    rerender(scene("claude-sonnet-4", "crown"));
+    rerender(scene("claude-sonnet-4", "beanie"));
     expect(svg.querySelector(".wuu-mascot-accessory")).not.toBeNull();
   });
 
@@ -120,30 +120,37 @@ describe("WuuMascot activity morph", () => {
 
   it("cancels an exit on reactivation, then removes and restores the complete mascot", () => {
     vi.useFakeTimers();
-    const host = render(<WuuMascot visible activity="thinking" accessory="cap" />);
+    const host = render(<WuuMascot visible activity="thinking" accessory="beanie" />);
     const svg = host.querySelector("svg");
-    rerender(<WuuMascot visible={false} accessory="cap" />);
+    rerender(<WuuMascot visible={false} accessory="beanie" />);
     act(() => vi.advanceTimersByTime(80));
-    rerender(<WuuMascot visible activity="read" accessory="cap" />);
+    rerender(<WuuMascot visible activity="read" accessory="beanie" />);
     act(() => vi.advanceTimersByTime(1_000));
     expect(host.querySelector("svg")).toBe(svg);
     expect(host.querySelector(".wuu-mascot-accessory")).not.toBeNull();
-    rerender(<WuuMascot visible={false} accessory="cap" />);
+    rerender(<WuuMascot visible={false} accessory="beanie" />);
     act(() => vi.advanceTimersByTime(1_000));
     expect(host.querySelector("svg")).toBeNull();
-    rerender(<WuuMascot visible accessory="headphones" />);
+    rerender(<WuuMascot visible accessory="headset" />);
     expect(host.querySelector(".wuu-mascot-layer-rear path")).not.toBeNull();
     expect(host.querySelector(".wuu-mascot-layer-front rect")).not.toBeNull();
   });
 
   it("changes an explicit colour without replacing the body, eyes or worn accessory", () => {
-    const host = render(<WuuMascot identityHue={14} accessory="sprout" />);
+    const host = render(<WuuMascot identityHue={14} accessory="beanie" />);
     const svg = host.querySelector("svg")!;
     const body = svg.querySelector(".mo-root");
     const art = svg.querySelector(".wuu-mascot-accessory");
     const paths = facePaths(svg);
     const colour = svg.style.getPropertyValue("--mo-head");
-    rerender(<WuuMascot identityHue={202} accessory="sprout" />);
+    const accessoryColour = (art as SVGGElement).style.getPropertyValue("--wuu-accessory-color");
+    rerender(<WuuMascot identityHue={52} accessory="beanie" />);
+    expect((art as SVGGElement).style.getPropertyValue("--wuu-accessory-color")).toBe(accessoryColour);
+    rerender(<WuuMascot identityHue={202} accessory="beanie" />);
+    const paintPlanes = [...svg.querySelectorAll<SVGGElement>(".wuu-mascot-accessory")];
+    const nextAccessoryColour = paintPlanes[0].style.getPropertyValue("--wuu-accessory-color");
+    expect(nextAccessoryColour).not.toBe(accessoryColour);
+    expect(paintPlanes.every(plane => plane.style.getPropertyValue("--wuu-accessory-color") === nextAccessoryColour)).toBe(true);
     expect(svg.style.getPropertyValue("--mo-head")).not.toBe(colour);
     expect(svg.querySelector(".mo-root")).toBe(body);
     expect(svg.querySelector(".wuu-mascot-accessory")).toBe(art);

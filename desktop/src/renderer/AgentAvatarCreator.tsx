@@ -20,28 +20,11 @@ const SHAPE_LABEL_KEYS = {
 
 const ACCESSORY_LABEL_KEYS = {
   none: "channels.avatarAccessoryNone",
-  cap: "channels.avatarAccessoryCap",
   beanie: "channels.avatarAccessoryBeanie",
-  "top-hat": "channels.avatarAccessoryTopHat",
-  sprout: "channels.avatarAccessorySprout",
-  crown: "channels.avatarAccessoryCrown",
-  headphones: "channels.avatarAccessoryHeadphones",
-  scarf: "channels.avatarAccessoryScarf",
-  beret: "channels.avatarAccessoryBeret",
-  "party-hat": "channels.avatarAccessoryPartyHat",
-  "wizard-hat": "channels.avatarAccessoryWizardHat",
-  "chef-hat": "channels.avatarAccessoryChefHat",
-  flower: "channels.avatarAccessoryFlower",
-  halo: "channels.avatarAccessoryHalo",
-  "bow-tie": "channels.avatarAccessoryBowTie",
-  "graduation-cap": "channels.avatarAccessoryGraduationCap",
-  "cowboy-hat": "channels.avatarAccessoryCowboyHat",
-  "propeller-cap": "channels.avatarAccessoryPropellerCap",
-  "mushroom-cap": "channels.avatarAccessoryMushroomCap",
-  "bunny-ears": "channels.avatarAccessoryBunnyEars",
-  "cat-ears": "channels.avatarAccessoryCatEars",
-  ribbon: "channels.avatarAccessoryRibbon",
-  necktie: "channels.avatarAccessoryNecktie",
+  "hard-hat": "channels.avatarAccessoryHardHat",
+  headset: "channels.avatarAccessoryHeadset",
+  bandana: "channels.avatarAccessoryBandana",
+  leaf: "channels.avatarAccessoryLeaf",
 } as const;
 
 export function AgentAvatarCreator({

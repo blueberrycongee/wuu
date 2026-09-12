@@ -8,6 +8,7 @@ import { ONBOARDING_PLUGIN_ORDER } from "../../src/renderer/onboardingCatalog";
 import "../../src/renderer/styles/onboarding.css";
 import { AgentAvatarMark, AGENT_AVATAR_SHAPES, serializeAgentAvatarConfig } from "../../src/renderer/AgentAvatarMark";
 import "./preview.css";
+import { AccessoryStudy } from "./AccessoryStudy";
 
 function Preview(): JSX.Element {
   const [activity, setActivity] = useState<WuuMascotActivity>("idle");
@@ -37,7 +38,7 @@ function Preview(): JSX.Element {
         </figure>)}
       </section>
       <section className="shapes" aria-label="Agent shapes">
-        {AGENT_AVATAR_SHAPES.map(shape => <figure key={shape.id}><AgentAvatarMark seed={shape.id} avatarKey={serializeAgentAvatarConfig({ shape: shape.id, accessory: "headphones", hue: 202 })} /><figcaption>{shape.id}</figcaption></figure>)}
+        {AGENT_AVATAR_SHAPES.map(shape => <figure key={shape.id}><AgentAvatarMark seed={shape.id} avatarKey={serializeAgentAvatarConfig({ shape: shape.id, accessory: "headset", hue: 202 })} /><figcaption>{shape.id}</figcaption></figure>)}
       </section>
       <section aria-label="Onboarding equipment">
         <OnboardingMascotStage pluginIDs={ONBOARDING_PLUGIN_ORDER} engineID="claude" />
@@ -46,4 +47,6 @@ function Preview(): JSX.Element {
   </main>;
 }
 
-createRoot(document.getElementById("root")!).render(<Preview />);
+createRoot(document.getElementById("root")!).render(
+  ["beanie", "accessories"].includes(new URLSearchParams(location.search).get("study") ?? "") ? <AccessoryStudy /> : <Preview />,
+);

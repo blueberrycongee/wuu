@@ -37,7 +37,7 @@
   animation: wuu-mascot-accessory-arrive 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.wuu-mascot-line {
+.wuu-accessory-line {
   fill: none;
   stroke: var(--mo-eye);
   stroke-linecap: round;
@@ -45,35 +45,33 @@
   stroke-width: 1.8;
 }
 
-.wuu-mascot-fill {
-  fill: color-mix(in oklab, var(--mo-head) 48%, var(--wuu-mascot-mix-white));
+.wuu-accessory-fill,
+.wuu-accessory-trim {
+  fill: var(--wuu-accessory-color);
   stroke: var(--mo-eye);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
 }
 
-.wuu-mascot-band {
-  fill: color-mix(in oklab, var(--mo-head) 58%, var(--mo-eye));
+.wuu-accessory-trim {
+  fill: color-mix(in oklab, var(--wuu-accessory-color) 76%, var(--wuu-mascot-mix-white));
 }
 
-.wuu-mascot-detail {
-  fill: none;
-  stroke: color-mix(in oklab, var(--mo-head) 45%, var(--mo-eye));
-  stroke-width: 1.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.wuu-accessory-headband {
+  stroke-width: 2.4;
 }
 
-.wuu-mascot-headphone-band {
-  stroke-width: 3.6;
+.wuu-accessory-motion {
+  /* Small-angle fit: keep the opening on the rim while the face turns.
+   * Inherited camera values share the face's interpolation; no extra clock. */
+  transform: translateY(calc((var(--mo-pitch, 0) + var(--mo-pointer-pitch, 0)) * -.25px))
+    rotate(calc((var(--mo-yaw, 0) + var(--mo-pointer-yaw, 0)) * -.12deg));
+  transform-origin: 0 0;
 }
 
-.wuu-mascot-halo {
-  fill: none;
-  stroke: color-mix(in oklab, var(--mo-head) 42%, var(--wuu-mascot-mix-white));
-  stroke-linecap: round;
-  stroke-width: 3.4;
+@media (prefers-reduced-motion: reduce) {
+  .wuu-accessory-motion { transform: none; }
 }
 
 .wuu-mascot-accessory,
@@ -155,10 +153,12 @@
   margin-right: 0;
 }
 
-[data-wuu-mascot-activity="compact"] .mo-bob > g {
+/* One transform keeps the body, eyes and both accessory planes in phase. */
+[data-wuu-mascot-activity="compact"] .mo-bob {
   transform-box: view-box;
   transform-origin: center;
   animation: wuu-mascot-compact var(--wuu-compact-cycle, 5.4s) ease-in-out infinite;
+  animation-play-state: running !important;
 }
 
 /* Cached conversations stay mounted, and the Desktop window can be hidden.
@@ -336,7 +336,7 @@
   .wuu-mascot-accessory,
   .wuu-mascot-activity-prop,
   .wuu-mascot-activity-motion,
-  [data-wuu-mascot-activity="compact"] .mo-bob > g {
+  [data-wuu-mascot-activity="compact"] .mo-bob {
     animation: none;
   }
 }

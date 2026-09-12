@@ -1,0 +1,24 @@
+.beanie-study { max-width: none; padding: 28px max(24px, calc((100vw - 880px) / 2)); }
+.beanie-study header { gap: 20px; }
+.beanie-study h1 { margin: 0 auto 0 0; font-size: 17px; font-weight: 600; }
+.beanie-study a { color: inherit; text-underline-offset: 3px; }
+.beanie-hero { display: flex; justify-content: center; gap: 80px; padding: 48px 0 24px; }
+.beanie-study figcaption { color: color-mix(in oklab, CanvasText 65%, Canvas); }
+.beanie-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px 24px; padding: 24px 0; }
+.beanie-controls input[type="range"] { width: 110px; }
+.beanie-sizes { display: flex; justify-content: center; align-items: end; gap: 48px; padding: 36px 0; }
+.beanie-sizes figure > div { height: 100px; display: flex; align-items: center; }
+.beanie-colors { display: flex; flex-wrap: wrap; justify-content: center; gap: 32px; padding: 28px 0; }
+.accessory-collection { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding-top: 32px; }
+.accessory-collection button { display: grid; justify-items: center; gap: 12px; padding: 20px 4px 12px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.accessory-collection button[aria-pressed="true"] { background: color-mix(in oklab, CanvasText 7%, Canvas); }
+.accessory-collection button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.beanie-study .shapes { justify-content: center; padding-bottom: 32px; }
+@media (max-width: 600px) {
+  .beanie-study { padding: 20px; }
+  .beanie-hero { gap: 12px; padding-top: 60px; }
+  .beanie-hero svg { width: 145px; height: 145px; }
+  .beanie-sizes { gap: 22px; }
+  .beanie-colors { flex-wrap: wrap; gap: 20px; }
+  .accessory-collection { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

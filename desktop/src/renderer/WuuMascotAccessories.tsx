@@ -1,101 +1,123 @@
-import type { ReactNode } from "react";
+import { palette } from "blobatar";
+import type { CSSProperties } from "react";
 
 /** These IDs also appear in saved agent identities. */
-export const WUU_MASCOT_ACCESSORIES = [
-  "none", "cap", "beanie", "top-hat", "sprout", "crown", "headphones",
-  "scarf", "beret", "party-hat", "wizard-hat", "chef-hat", "flower", "halo",
-  "bow-tie", "graduation-cap", "cowboy-hat", "propeller-cap", "mushroom-cap",
-  "bunny-ears", "cat-ears", "ribbon", "necktie",
-] as const;
-
+export const WUU_MASCOT_ACCESSORIES = ["none", "beanie", "hard-hat", "headset", "bandana", "leaf"] as const;
 export type WuuMascotAccessory = typeof WUU_MASCOT_ACCESSORIES[number];
+type WornAccessory = Exclude<WuuMascotAccessory, "none">;
 
-function Bow(): JSX.Element {
-  return <>
-    <path className="wuu-mascot-fill" d="M-2 0Q-16-11-16-2Q-16 9-2 3ZM2 0Q16-11 16-2Q16 9 2 3Z" />
-    <rect className="wuu-mascot-band" x="-3" y="-3" width="6" height="8" rx="2" />
-  </>;
+type Body = { cx: number; cy: number; rx: number; ry: number };
+export type AccessoryFit = { top: number; leafTop: number; bottom: number; left: number; right: number; crownX: number; crownWidth: number; neckX: number; neckWidth: number };
+const ROUND_FIT: AccessoryFit = { top: -32, leafTop: -32, bottom: 32, left: -32, right: 32, crownX: 0, crownWidth: 1, neckX: 0, neckWidth: 1 };
+
+// Read the rendered core and petals once per identity. Reusing their fill avoids
+// a second implementation of the avatar generator's organic contour geometry.
+export function measureAccessoryFit(layer: SVGGElement, body: Body): AccessoryFit {
+  const shapes = [...layer.children].filter((node): node is SVGGeometryElement =>
+    (node.tagName === "path" || node.tagName === "circle") && "isPointInFill" in node);
+  // Non-rendering environments (including SSR tests) have no SVG geometry API.
+  if (!shapes.length) return ROUND_FIT;
+  const point = layer.ownerSVGElement!.createSVGPoint();
+  const inside = (x: number, y: number) => {
+    point.x = body.cx + x * body.rx / 32;
+    point.y = body.cy + y * body.ry / 32;
+    return shapes.some(shape => shape.isPointInFill(point));
+  };
+  const edge = (horizontal: boolean, fixed: number, reverse: boolean) => {
+    for (let d = 64; d >= -64; d -= 0.5) {
+      const moving = reverse ? -d : d;
+      if (inside(horizontal ? moving : fixed, horizontal ? fixed : moving)) return moving;
+    }
+    return 0;
+  };
+  // A cap bridges the forehead; a dip between two lobes is not its support.
+  const top = Math.min(...[-16, -8, 0, 8, 16].map(x => edge(false, x, true)));
+  const bottom = edge(false, 0, false);
+  const span = (y: number) => {
+    const left = edge(true, y, true);
+    const right = edge(true, y, false);
+    return { x: (left + right) / 2, width: Math.max(0.65, Math.min(1.5, (right - left) / (2 * Math.sqrt(32 ** 2 - 20 ** 2)))) };
+  };
+  const crown = span(top + 12);
+  const neck = span(bottom - 12);
+  return { top, leafTop: edge(false, 4, true), bottom, left: Math.min(...[-8, 0, 8].map(y => edge(true, y, true))), right: Math.max(...[-8, 0, 8].map(y => edge(true, y, false))), crownX: crown.x, crownWidth: crown.width, neckX: neck.x, neckWidth: neck.width };
 }
 
-function Hat({ children }: { children: ReactNode }): JSX.Element {
-  return <g transform="translate(0 -32)">{children}</g>;
+function fitTransform(accessory: WornAccessory, fit: AccessoryFit): string {
+  switch (accessory) {
+    case "beanie":
+    case "hard-hat": return `translate(${fit.crownX} ${fit.top + 32}) scale(${fit.crownWidth} 1)`;
+    case "leaf": return `translate(0 ${fit.leafTop + 32})`;
+    case "bandana": return `translate(${fit.neckX} ${fit.bottom - 32}) scale(${fit.neckWidth} 1)`;
+    case "headset": return `translate(${(fit.left + fit.right) / 2} 0) scale(${(fit.right - fit.left) / 64} 1)`;
+  }
 }
 
-function AccessoryArt({ accessory, rear }: { accessory: Exclude<WuuMascotAccessory, "none">; rear: boolean }): JSX.Element | null {
+// Authored pairs, not generated complementary colours. Keep each piece's
+// signature colour unless it sits in the same hue family as the body.
+const ACCESSORY_COLORS = {
+  beanie: [222, 52],
+  "hard-hat": [52, 222],
+  headset: [14, 222],
+  bandana: [150, 288],
+  leaf: [96, 14],
+} as const satisfies Record<WornAccessory, readonly [number, number]>;
+const SWATCHES = Object.fromEntries([14, 52, 96, 150, 222, 288].map(hue => [hue, palette(hue).head]));
+
+export function mascotAccessoryColor(accessory: WornAccessory, bodyHue: number): string {
+  const [primary, alternate] = ACCESSORY_COLORS[accessory];
+  const hue = Number.isFinite(bodyHue) ? ((bodyHue % 360) + 360) % 360 : 14;
+  const distance = Math.abs(hue - primary);
+  return SWATCHES[Math.min(distance, 360 - distance) < 35 ? alternate : primary]!;
+}
+
+function AccessoryArt({ accessory, rear }: { accessory: WornAccessory; rear: boolean }): JSX.Element | null {
   if (rear) {
     switch (accessory) {
-      case "headphones": return <path className="wuu-mascot-line wuu-mascot-headphone-band" d="M-31 5V-6C-31-44 31-44 31-6V5" />;
-      case "scarf": return <path className="wuu-mascot-fill" d="M9 23Q22 28 17 43L8 40Q14 30 5 27Z" />;
-      case "bunny-ears": return <Hat><path className="wuu-mascot-fill" d="M-18 8C-27-10-22-23-15-21C-8-19-9-4-8 8M8 8C9-4 8-19 15-21C22-23 27-10 18 8" /><path className="wuu-mascot-detail" d="M-17-14L-14 0M17-14L14 0" /></Hat>;
-      case "cat-ears": return <Hat><path className="wuu-mascot-fill" d="M-25 12L-23-9Q-22-13-18-9L-5 5M5 5L18-9Q22-13 23-9L25 12" /><path className="wuu-mascot-detail" d="M-20-3L-13 4M20-3L13 4" /></Hat>;
+      case "beanie": return <path className="wuu-accessory-trim" transform="translate(0 -3) rotate(8)" d="M-27-17C-30-29-18-36 0-36C18-36 30-29 27-17Q0-26-27-17Z" />;
+      case "headset": return <path className="wuu-accessory-line wuu-accessory-headband" d="M-30-8L-31-25Q-31-37-20-36L23-31Q34-30 33-19L32 1" />;
+      case "bandana": return <path className="wuu-accessory-fill" d="M-23 18Q-38 13-36 25L-28 25L-33 34Q-20 35-19 24Z" />;
       default: return null;
     }
   }
   switch (accessory) {
-    case "cap": return <Hat>
-      <path className="wuu-mascot-fill" d="M-21 7Q-20-10-3-12Q15-13 19 6Z" />
-      <path className="wuu-mascot-detail" d="M-3-11Q4-5 3 5" />
-      <path className="wuu-mascot-fill" d="M-22 6Q0 2 27 9Q26 14 13 13L-22 11Z" />
-    </Hat>;
-    case "beanie": return <Hat>
-      <circle className="wuu-mascot-fill" cy="-14" r="4" />
-      <path className="wuu-mascot-fill" d="M-21 7Q-22-11 0-12Q22-11 21 7Z" />
-      <path className="wuu-mascot-detail" d="M-11-5L-12 3M0-8V2M11-5L12 3" />
-      <rect className="wuu-mascot-fill" x="-23" y="4" width="46" height="8" rx="3" />
-      <rect className="wuu-mascot-band" x="10" y="5" width="5" height="6" rx="1" />
-    </Hat>;
-    case "top-hat": return <Hat>
-      <path className="wuu-mascot-fill" d="M-15 9L-17-13Q0-18 17-13L15 9Z" />
-      <path className="wuu-mascot-band" d="M-16 1Q0 4 16 1L15 7H-15Z" />
-      <ellipse className="wuu-mascot-fill" cy="10" rx="25" ry="4" />
-    </Hat>;
-    case "sprout": return <Hat>
-      <path className="wuu-mascot-line" d="M0 4Q-2-7 3-13" />
-      <path className="wuu-mascot-fill" d="M0-6C-13-3-18-11-16-15C-7-16-1-13 0-6ZM2-10C5-20 15-20 18-17C15-8 8-7 2-10Z" />
-    </Hat>;
-    case "crown": return <Hat>
-      <path className="wuu-mascot-fill" d="M-22-5L-12 1L0-12L12 1L22-5L19 11Q0 15-19 11Z" />
-      <path className="wuu-mascot-detail" d="M-16 7Q0 10 16 7" />
-      <circle className="wuu-mascot-band" cy="2" r="2.5" />
-    </Hat>;
-    case "headphones": return <>
-      <rect className="wuu-mascot-fill" x="-36" y="-9" width="10" height="23" rx="5" />
-      <rect className="wuu-mascot-fill" x="26" y="-9" width="10" height="23" rx="5" />
-      <path className="wuu-mascot-detail" d="M-30-3V8M30-3V8" />
+    case "beanie": return <g transform="translate(0 -3) rotate(8)">
+      <path className="wuu-accessory-fill" d="M-27-23C-28-34-22-44-11-46C-5-47 0-44 6-43C20-42 27-35 27-23L25-19H-25Z" />
+      <path className="wuu-accessory-trim" d="M-27-25Q0-33 27-25Q30-24 29-21L27-15Q0-23-27-15L-29-21Q-30-24-27-25Z" />
+    </g>;
+    case "hard-hat": return <g transform="translate(0 -3) rotate(-6)">
+      <path className="wuu-accessory-fill" d="M-26-22C-26-35-17-43-3-43C12-43 24-34 25-21L22-18H-23Z" />
+      <path className="wuu-accessory-trim" d="M-5-42Q-5-46-1-46H3Q6-46 6-42L5-27H-5Z" />
+      <path className="wuu-accessory-fill" d="M-27-24Q0-29 27-22L31-17Q32-14 28-14Q0-22-29-17Q-33-17-32-20Z" />
+    </g>;
+    case "headset": return <>
+      <path className="wuu-accessory-line" d="M32 10Q32 28 9 29" />
+      <rect className="wuu-accessory-fill" x="30" y="-12" width="12" height="26" rx="6" transform="rotate(8 36 1)" />
+      <rect className="wuu-accessory-trim" x="3" y="26" width="9" height="6" rx="3" />
     </>;
-    case "scarf": return <>
-      <path className="wuu-mascot-fill" d="M-25 18Q0 27 25 18L22 27Q0 35-22 27Z" />
-      <path className="wuu-mascot-detail" d="M-18 24Q-5 29 6 27" />
-      <path className="wuu-mascot-band" d="M10 22L17 20L15 29L9 30Z" />
+    case "bandana": return <>
+      <path className="wuu-accessory-fill" d="M-26 18Q0 28 26 18Q18 30 5 38Q2 40-1 38Q-17 30-26 18Z" />
+      <path className="wuu-accessory-trim" d="M-25 17Q0 26 25 17L23 23Q0 32-23 23Z" />
     </>;
-    case "beret": return <Hat><path className="wuu-mascot-fill" d="M-24 6C-28-3-10-15 8-13C20-12 29-5 22 3L15 10L-19 11Z" /><path className="wuu-mascot-line" d="M2-13L4-17M-19 8Q0 6 17 7" /></Hat>;
-    case "party-hat": return <Hat><path className="wuu-mascot-fill" d="M-18 10L2-18L19 10Q0 15-18 10Z" /><path className="wuu-mascot-detail" d="M-9-2L11 2M-14 5L15 8" /><circle className="wuu-mascot-band" cx="2" cy="-18" r="3" /></Hat>;
-    case "wizard-hat": return <Hat><path className="wuu-mascot-fill" d="M-17 8Q-6-5 0-19Q9-22 16-15L7-14L19 8Z" /><ellipse className="wuu-mascot-fill" cy="10" rx="25" ry="4" /><path className="wuu-mascot-band" d="M1-8L3-4L7-3L3-1L2 3L0-1L-4-2L0-4Z" /></Hat>;
-    case "chef-hat": return <Hat><path className="wuu-mascot-fill" d="M-19 3C-32-8-21-20-10-15C-8-24 9-24 11-15C24-21 32-7 19 3V12H-19Z" /><path className="wuu-mascot-detail" d="M-18 5H18M-9-5L-7 0M9-5L7 0" /></Hat>;
-    case "flower": return <g transform="translate(-23 -28) rotate(-12)"><path className="wuu-mascot-fill" d="M0-5C-8-15-15-3-6 1C-16 7-5 17 0 7C6 17 17 7 6 1C15-3 8-15 0-5Z" /><circle className="wuu-mascot-band" cy="2" r="3.5" /></g>;
-    case "halo": return <Hat><ellipse className="wuu-mascot-halo" cy="-9" rx="21" ry="5" /></Hat>;
-    case "bow-tie": return <g transform="translate(0 25)"><Bow /></g>;
-    case "graduation-cap": return <Hat><path className="wuu-mascot-fill" d="M-15 0V10Q0 16 15 10V0M-27-2L0-14L27-2L0 9Z" /><path className="wuu-mascot-line" d="M0-2L22 2V15" /><path className="wuu-mascot-band" d="M22 12L25 19H19Z" /></Hat>;
-    case "cowboy-hat": return <Hat><path className="wuu-mascot-fill" d="M-17 8L-13-10Q-10-14 0-9Q10-14 13-10L17 8Z" /><path className="wuu-mascot-band" d="M-16 1Q0 5 16 1L17 7H-17Z" /><path className="wuu-mascot-fill" d="M-29 3Q-19 13 0 8Q19 13 29 3Q27 18 0 14Q-27 18-29 3Z" /></Hat>;
-    case "propeller-cap": return <Hat><path className="wuu-mascot-fill" d="M-21 10Q-21-9 0-10Q21-9 21 10Z" /><path className="wuu-mascot-detail" d="M0-9V8" /><path className="wuu-mascot-line" d="M0-10V-17" /><ellipse className="wuu-mascot-fill" cy="-18" rx="16" ry="3" /><circle className="wuu-mascot-band" cy="-18" r="2" /></Hat>;
-    case "mushroom-cap": return <Hat><path className="wuu-mascot-fill" d="M-27 8Q-25-15 0-16Q25-15 27 8Q0 17-27 8Z" /><ellipse className="wuu-mascot-band" cx="-10" cy="-4" rx="5" ry="3" /><ellipse className="wuu-mascot-band" cx="11" cy="1" rx="6" ry="4" /></Hat>;
-    case "ribbon": return <g transform="translate(23 -27) rotate(25) scale(.8)"><Bow /></g>;
-    case "necktie": return <g transform="translate(0 24)"><path className="wuu-mascot-fill" d="M0 1L-6 14L0 19L6 14ZM-5-4H5L3 2H-3Z" /></g>;
-    case "bunny-ears":
-    case "cat-ears": return null;
+    case "leaf": return <>
+      <path className="wuu-accessory-fill" d="M-2-33C-17-32-24-40-20-48C-7-50 7-46 5-37Q3-33-2-33Z" />
+      <path className="wuu-accessory-line" d="M-14-43Q0-39 4-30" />
+    </>;
   }
 }
 
-export function MascotAccessory({ accessory, layer, body }: {
-  accessory: Exclude<WuuMascotAccessory, "none">;
+export function MascotAccessory({ accessory, layer, body, bodyHue, fit }: {
+  accessory: WornAccessory;
   layer: "rear" | "front";
-  body: { cx: number; cy: number; rx: number; ry: number };
+  body: Body;
+  bodyHue: number;
+  fit: AccessoryFit;
 }): JSX.Element {
-  // Artwork uses a radius of 32; fit both paint planes to the actual identity,
-  // including non-round agent shapes, rather than the default Wuu body.
-  return <g className={`wuu-mascot-accessory wuu-mascot-accessory-${accessory}`} aria-hidden="true">
+  // Both paint planes share a radius-32 chart, fitted to the actual identity.
+  const style = { "--wuu-accessory-color": mascotAccessoryColor(accessory, bodyHue) } as CSSProperties;
+  return <g className={`wuu-mascot-accessory wuu-mascot-accessory-${accessory}`} style={style} aria-hidden="true">
     <g transform={`translate(${body.cx} ${body.cy}) scale(${body.rx / 32} ${body.ry / 32})`}>
-      <AccessoryArt accessory={accessory} rear={layer === "rear"} />
+      <g className={accessory === "leaf" ? undefined : "wuu-accessory-motion"}><g transform={fitTransform(accessory, fit)}><AccessoryArt accessory={accessory} rear={layer === "rear"} /></g></g>
     </g>
   </g>;
 }

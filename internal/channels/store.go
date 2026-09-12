@@ -2174,9 +2174,14 @@ func normalizeNamedAgentAvatarKey(value string) (string, error) {
 		}
 	}
 	parts := strings.Split(value, ":")
-	if len(parts) == 4 && parts[0] == "mascot-v1" && validNamedAgentAvatarShape(parts[1]) && validNamedAgentAvatarAccessory(parts[2]) {
+	if len(parts) == 4 && parts[0] == "mascot-v1" && validNamedAgentAvatarShape(parts[1]) && parts[2] != "" {
 		hue, err := strconv.Atoi(parts[3])
 		if err == nil && hue >= 0 && hue <= 359 && parts[3] == strconv.Itoa(hue) {
+			// Removed or newer accessories must not prevent editing an identity.
+			if !validNamedAgentAvatarAccessory(parts[2]) {
+				parts[2] = "none"
+				return strings.Join(parts, ":"), nil
+			}
 			return value, nil
 		}
 	}
@@ -2194,7 +2199,7 @@ func validNamedAgentAvatarShape(value string) bool {
 
 func validNamedAgentAvatarAccessory(value string) bool {
 	switch value {
-	case "none", "cap", "beanie", "top-hat", "sprout", "crown", "headphones", "scarf", "beret", "party-hat", "wizard-hat", "chef-hat", "flower", "halo", "bow-tie", "graduation-cap", "cowboy-hat", "propeller-cap", "mushroom-cap", "bunny-ears", "cat-ears", "ribbon", "necktie":
+	case "none", "beanie", "hard-hat", "headset", "bandana", "leaf":
 		return true
 	default:
 		return false

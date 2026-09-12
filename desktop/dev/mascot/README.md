@@ -10,6 +10,13 @@ at 24, 32, and 48 pixels. The preview uses the production `AgentAvatarMark`.
 The state sheet compares eyes and abstract accents. The turn button replays the
 brief ribbon gesture used when entering work; it is not a progress indicator.
 
+Open `/?study=accessories` for the accessory study: body comparison, curated colour
+pairs, six body shapes, pointer following, camera angles and actual display sizes.
+Run `node_modules/.bin/electron dev/mascot/capture-accessories.cjs` for optional rendered
+checks and screenshots in `artifacts/mascot-accessories`. If the default port is busy,
+use `npm run lab:mascot -- --port 5189 --strictPort` and set
+`MASCOT_PREVIEW_URL=http://127.0.0.1:5189` for the capture command.
+
 Callers render `WuuMascot` and pass `activity`; the component owns expression,
 gaze, props and state transitions. `visible` retains the character during exit,
 so keep the component mounted while changing that prop. `ambient` enables
@@ -38,5 +45,5 @@ Blobatar geometry in a page. Equipment can cover the face, so keep it around the
 rim and check it at the actual display sizes.
 
 ```tsx
-<WuuMascot identityHue={202} accessory="sprout" activity="thinking" visible={busy} />
+<WuuMascot identityHue={202} accessory="leaf" activity="thinking" visible={busy} />
 ```

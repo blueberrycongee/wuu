@@ -116,10 +116,12 @@ export function parseAgentAvatarConfig(value: string): AgentAvatarConfig | null 
   const [prefix, shape, accessory, rawHue, ...rest] = value.split(":");
   if (prefix !== AGENT_AVATAR_CONFIG_PREFIX || rest.length > 0) return null;
   if (!AGENT_AVATAR_SHAPES.some((item) => item.id === shape)) return null;
-  if (!AGENT_AVATAR_ACCESSORIES.some((item) => item === accessory)) return null;
+  if (!accessory) return null;
   const hue = Number(rawHue);
   if (!Number.isInteger(hue) || hue < 0 || hue > 359) return null;
-  return { shape: shape as AgentAvatarShape, accessory: accessory as WuuMascotAccessory, hue };
+  // Removed or newer accessories do not erase the rest of a saved identity.
+  const selected = AGENT_AVATAR_ACCESSORIES.find(item => item === accessory) ?? "none";
+  return { shape: shape as AgentAvatarShape, accessory: selected, hue };
 }
 
 export function serializeAgentAvatarConfig(config: AgentAvatarConfig): string {
