@@ -18,12 +18,12 @@ final class ConversationUITests: XCTestCase {
         app.textFields["用户名"].tap(); app.textFields["用户名"].typeText("native-test")
         app.secureTextFields["密码"].tap(); app.secureTextFields["密码"].typeText("native-test-password")
         app.buttons["登录"].tap()
-        // iOS may offer to save the disposable fixture password in a remote sheet.
-        let later = app.buttons["以后"]
+        // The system password sheet uses the simulator language, not the app's launch language.
+        let later = app.buttons.matching(NSPredicate(format: "label IN %@", ["以后", "Not Now"])).firstMatch
         if later.waitForExistence(timeout: 3) {
-            // Remote AuthenticationServices views can report a stale hit point.
-            let center = later.frame
-            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: center.midX, dy: center.midY)).tap()
+            expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: later)
+            waitForExpectations(timeout: 5)
+            later.tap()
             XCTAssertTrue(later.waitForNonExistence(timeout: 5))
         }
         let computer = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "UI test computer")).firstMatch
