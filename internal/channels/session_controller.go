@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -315,8 +316,8 @@ func (s *Service) AdmitCollaborationSession(ctx context.Context, sessionRef stri
 	if binding.State != CollaborationSessionIdle && binding.State != CollaborationSessionQueued && binding.State != CollaborationSessionCompleted && binding.State != CollaborationSessionWaiting {
 		return CollaborationSessionBinding{}, fmt.Errorf("%w: session must be idle, queued, waiting or completed before admission", ErrConflict)
 	}
-	var identityCount, roomCount, globalCount int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN principal_id = ? THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN room_id = ? THEN 1 ELSE 0 END), 0), COUNT(*) FROM collaboration_session_bindings WHERE state IN ('starting', 'running')`, binding.PrincipalID, binding.RoomID).Scan(&identityCount, &roomCount, &globalCount); err != nil {
+	identityCount, roomCount, globalCount, err := activeCollaborationCountsTx(ctx, tx, binding.PrincipalID, binding.RoomID, binding.SessionRef)
+	if err != nil {
 		return CollaborationSessionBinding{}, err
 	}
 	state := CollaborationSessionStarting
@@ -351,4 +352,40 @@ func (s *Service) ListQueuedCollaborationSessions(ctx context.Context) ([]Collab
 		result = append(result, binding)
 	}
 	return result, rows.Err()
+}
+
+// A Work run and its session are one reservation. Include runs without a
+// binding and independent sessions without double-counting attached work.
+func activeCollaborationCountsTx(ctx context.Context, tx *sql.Tx, principalID, roomID, excludeSession string) (identity, room, global int, err error) {
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN principal_id = ? THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN room_id = ? THEN 1 ELSE 0 END),0),COUNT(*) FROM (
+ SELECT COALESCE(run.named_agent_id,'') AS principal_id,work.room_id FROM work_runs run JOIN works work ON work.id=run.work_id WHERE run.state='running'
+ UNION ALL
+ SELECT binding.principal_id,binding.room_id FROM collaboration_session_bindings binding WHERE binding.state IN ('starting','running') AND binding.session_ref != ? AND NOT EXISTS(SELECT 1 FROM work_runs run WHERE run.id=binding.run_id AND run.state='running')
+ )`, principalID, roomID, excludeSession).Scan(&identity, &room, &global)
+	return
+}
+
+// AdmitQueuedWorkRuns lets any released collaboration slot advance Work
+// reservations as well as independent sessions. Dispatch happens after commit.
+func (s *Service) AdmitQueuedWorkRuns(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	wakeIDs, err := s.admitQueuedWorkRunsTx(ctx, tx, s.now())
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if s.wake != nil {
+		for _, id := range wakeIDs {
+			s.wake.Deliver(id)
+		}
+	}
+	return nil
 }

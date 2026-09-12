@@ -428,3 +428,55 @@ func TestCompletedSessionAcceptsFollowupWhileCancelledSessionStaysStopped(t *tes
 		t.Fatalf("cancelled delivery = %v", err)
 	}
 }
+
+func TestIndependentSessionsAndWorkShareAdmissionCapacity(t *testing.T) {
+	ctx := context.Background()
+	service := openTestService(t, nil)
+	service.agentRunLimit, service.roomRunLimit, service.globalRunLimit = 1, 1, 1
+	owner := createTestAgent(t, service, "Owner")
+	room := createTestRoom(t, service, owner)
+	independent := flexibleTestSession(t, service, owner.Agent.ID, room.ID, "independent")
+	if _, err := service.AdmitCollaborationSession(ctx, independent.SessionRef()); err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := service.BindRuntime(ctx, room.RuntimeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: room.CreatedBy, Body: "Implement the change"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := coordinator.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Implementation", Body: "Implement the change", SourceMessageID: source.Message.ID, OwnerID: owner.Agent.ID, VerificationRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := coordinator.StartWorkRun(ctx, WorkRunStartParams{WorkID: task.ID, Kind: WorkRunProducer, NamedAgentID: owner.Agent.ID, Profile: "implementation", RequestID: "mixed-capacity"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != WorkRunQueued {
+		t.Fatalf("work bypassed independent session capacity: %+v", run)
+	}
+	if _, err := independent.UpdateCollaborationSessionState(ctx, CollaborationSessionStateParams{SessionRef: independent.SessionRef(), State: CollaborationSessionCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AdmitQueuedWorkRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	work, err := coordinator.GetWork(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findRunState(work.Runs, run.ID) != WorkRunRunning {
+		t.Fatalf("released session did not admit queued work: %+v", work.Runs)
+	}
+	another := flexibleTestSession(t, service, owner.Agent.ID, room.ID, "another")
+	admitted, err := service.AdmitCollaborationSession(ctx, another.SessionRef())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admitted.State != CollaborationSessionQueued {
+		t.Fatalf("independent session bypassed active Work capacity: %+v", admitted)
+	}
+}

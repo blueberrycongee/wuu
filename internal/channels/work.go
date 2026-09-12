@@ -555,7 +555,7 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 	if !work.DeadlineAt.IsZero() && work.DeadlineAt.Before(deadline) {
 		deadline = work.DeadlineAt
 	}
-	state, queueReason, err := s.workRunAdmissionTx(ctx, tx, work.RoomID, namedAgentID)
+	state, queueReason, err := s.workRunAdmissionTx(ctx, tx, work.RoomID, namedAgentID, params.SessionRef)
 	if err != nil {
 		return WorkRun{}, err
 	}
@@ -1484,7 +1484,7 @@ func (s *Service) admitQueuedWorkRunsTx(ctx context.Context, tx *sql.Tx, now tim
 		if err != nil {
 			return nil, err
 		}
-		state, _, err := s.workRunAdmissionTx(ctx, tx, work.RoomID, run.NamedAgentID)
+		state, _, err := s.workRunAdmissionTx(ctx, tx, work.RoomID, run.NamedAgentID, run.SessionRef)
 		if err != nil {
 			return nil, err
 		}
@@ -1541,18 +1541,10 @@ func collaborationSessionStateForRun(state WorkRunState) CollaborationSessionSta
 	return CollaborationSessionIdle
 }
 
-func (s *Service) workRunAdmissionTx(ctx context.Context, tx *sql.Tx, roomID, namedAgentID string) (WorkRunState, string, error) {
-	var globalActive, roomActive, agentActive int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_runs WHERE state = 'running'`).Scan(&globalActive); err != nil {
-		return "", "", fmt.Errorf("count global active work runs: %w", err)
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_runs run JOIN works work ON work.id = run.work_id WHERE run.state = 'running' AND work.room_id = ?`, roomID).Scan(&roomActive); err != nil {
-		return "", "", fmt.Errorf("count room active work runs: %w", err)
-	}
-	if namedAgentID != "" {
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_runs WHERE state = 'running' AND named_agent_id = ?`, namedAgentID).Scan(&agentActive); err != nil {
-			return "", "", fmt.Errorf("count agent active work runs: %w", err)
-		}
+func (s *Service) workRunAdmissionTx(ctx context.Context, tx *sql.Tx, roomID, namedAgentID, sessionRef string) (WorkRunState, string, error) {
+	agentActive, roomActive, globalActive, err := activeCollaborationCountsTx(ctx, tx, namedAgentID, roomID, sessionRef)
+	if err != nil {
+		return "", "", err
 	}
 	if namedAgentID != "" && agentActive >= s.agentRunLimit {
 		return WorkRunQueued, "named_agent_capacity", nil
