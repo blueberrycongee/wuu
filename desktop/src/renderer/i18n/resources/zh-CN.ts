@@ -449,6 +449,8 @@ export const zhCN = {
   "channels.agentRole": "能力与职责",
   "channels.agentRolePlaceholder": "例如：负责界面设计、交互评审和视觉验收",
   "channels.avatar": "头像",
+  "channels.editAppearance": "编辑头像",
+  "channels.moreAgentActions": "更多操作",
   "channels.customAvatar": "选择自定义头像图片",
   "channels.invalidAvatarImage": "请选择不超过 10 MB 的 PNG、JPEG 或 WebP 图片。",
   "channels.chooseAvatar": "选择头像 {index}",

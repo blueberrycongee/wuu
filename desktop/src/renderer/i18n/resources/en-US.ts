@@ -451,6 +451,8 @@ export const enUS = {
   "channels.agentRole": "Capabilities and role",
   "channels.agentRolePlaceholder": "For example: UI design, interaction review, and visual verification",
   "channels.avatar": "Avatar",
+  "channels.editAppearance": "Edit avatar",
+  "channels.moreAgentActions": "More actions",
   "channels.customAvatar": "Choose custom avatar image",
   "channels.invalidAvatarImage": "Choose a PNG, JPEG, or WebP image up to 10 MB.",
   "channels.chooseAvatar": "Choose avatar {index}",

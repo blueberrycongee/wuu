@@ -1522,13 +1522,23 @@ describe("ChannelView", () => {
     act(() => root?.render(<ChannelView section="agents" initialized={initialized} editAgentRequestID="agent-1" />));
     await settle();
 
-    const nameInput = document.querySelector<HTMLInputElement>(".channel-setup-form input:not([type])");
+    const editor = document.querySelector(".channel-agent-editor-dialog")!;
+    expect(editor.querySelector(".agent-avatar-creator")).toBeNull();
+    expect(editor.querySelector<HTMLDetailsElement>("details")?.open).toBe(false);
+    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
+    expect(editor.querySelector(".agent-avatar-creator")).not.toBeNull();
+    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="云朵"]')?.click());
+    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
+    expect(editor.querySelector(".agent-avatar-creator")).toBeNull();
+    act(() => setInputValue(editor.querySelector<HTMLTextAreaElement>("textarea")!, "Reviews the interface"));
+    const nameInput = document.querySelector<HTMLInputElement>(".channel-agent-editor-name input");
     act(() => setInputValue(nameInput!, "Reasoner"));
     act(() => document.querySelector<HTMLButtonElement>('button[aria-label="模型"]')?.click());
     const modelOption = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
       .find((button) => button.textContent?.includes("GPT Reasoner"));
     act(() => modelOption?.click());
-    const highOption = Array.from(document.querySelectorAll<HTMLButtonElement>('.channel-effort-chip[role="radio"]'))
+    act(() => document.querySelector<HTMLButtonElement>('.channel-agent-editor-dialog button[aria-label="推理强度"]')?.click());
+    const highOption = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
       .find((button) => button.textContent?.trim() === "High");
     expect(highOption).not.toBeNull();
     act(() => highOption?.click());
@@ -1537,6 +1547,9 @@ describe("ChannelView", () => {
     expect(api.updateNamedAgent).toHaveBeenCalledWith(expect.objectContaining({
       agent_id: "agent-1",
       name: "Reasoner",
+      role: "Reviews the interface",
+      avatar_key: expect.stringContaining(":cloud:"),
+      avatar_image: "",
       provider_override: "openai",
       model_override: "gpt-reasoner",
       effort_override: "high",
@@ -1558,7 +1571,7 @@ describe("ChannelView", () => {
 
     const dialog = document.querySelector(".sidebar-name-dialog");
     const alert = dialog?.querySelector<HTMLElement>("#channel-agent-avatar-error");
-    const avatarButton = dialog?.querySelector<HTMLButtonElement>('button[aria-label="选择自定义头像图片"]');
+    const avatarButton = dialog?.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]');
     expect(alert?.textContent).toBe("请选择不超过 10 MB 的 PNG、JPEG 或 WebP 图片。");
     expect(avatarButton?.getAttribute("aria-invalid")).toBe("true");
     expect(avatarButton?.getAttribute("aria-describedby")).toBe(alert?.id);

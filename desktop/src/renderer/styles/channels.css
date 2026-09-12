@@ -2286,16 +2286,6 @@
   gap: 20px;
 }
 
-.sidebar-name-dialog.channel-agent-editor-dialog {
-  grid-template-rows: auto minmax(0, 1fr) auto;
-}
-
-.channel-agent-editor-dialog > .channel-setup-form {
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 3px;
-}
-
 .channel-form-field {
   display: grid;
   gap: 6px;

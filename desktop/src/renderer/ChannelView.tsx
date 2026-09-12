@@ -764,6 +764,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const [savingAgentID, setSavingAgentID] = useState("");
   const [resettingAgentID, setResettingAgentID] = useState("");
   const [agentResetStatus, setAgentResetStatus] = useState("");
+  const [agentAppearanceOpen, setAgentAppearanceOpen] = useState(false);
   const [roomName, setRoomName] = useState("");
   const [roomAgentIDs, setRoomAgentIDs] = useState<string[]>([]);
   const [proposalModels, setProposalModels] = useState<Record<string, string>>({});
@@ -1476,6 +1477,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   }
 
   function loadAgentDraft(agent: NamedAgent): void {
+    setAgentAppearanceOpen(false);
     setEditingAgentID(agent.id);
     setAgentName(agent.name);
     setAgentRole(agent.role ?? "");
@@ -2365,35 +2367,36 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         submitLabel={t("channels.save")}
         cancelLabel={t("channels.cancel")}
         submitDisabled={!agentName.trim() || Boolean(resettingAgentID) || agentEngine !== "wuu"}
-        content={<div className="channel-setup-form">
+        content={<div className="channel-agent-editor-body">
           {agentResetStatus ? <div className="channel-agent-reset-status" role="status">{agentResetStatus}</div> : null}
-          <div className="channel-identity-row">
-            <button
-              className="channel-identity-avatar-button"
-              type="button"
-              aria-label={t("channels.customAvatar")}
-              aria-invalid={Boolean(agentAvatarError)}
-              aria-describedby={agentAvatarError ? "channel-agent-avatar-error" : undefined}
-              onClick={() => agentAvatarInputRef.current?.click()}
-            >
+          <div className="channel-agent-editor-identity">
+            <button className="channel-identity-avatar-button" type="button"
+              aria-label={t("channels.editAppearance")} title={t("channels.editAppearance")}
+              aria-expanded={agentAppearanceOpen} aria-controls="channel-agent-appearance"
+              aria-invalid={Boolean(agentAvatarError)} aria-describedby={agentAvatarError ? "channel-agent-avatar-error" : undefined}
+              onClick={() => setAgentAppearanceOpen((open) => !open)}>
               <AgentAvatarMark seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage} />
-              <span className="channel-identity-avatar-badge" aria-hidden="true"><ImagePlus className="icon" /></span>
+              <span className="channel-identity-avatar-badge" aria-hidden="true"><Settings2 className="icon" /></span>
             </button>
-            <label className="channel-form-field">
+            <label className="channel-agent-editor-field channel-agent-editor-name">
               <span>{t("channels.name")}</span>
-              <input value={agentName} onChange={(event) => setAgentName(event.currentTarget.value)} autoFocus placeholder="Andy" />
-            </label>
-            <label className="channel-form-field">
-              <span>{t("channels.agentRole")}</span>
-              <textarea value={agentRole} onChange={(event) => setAgentRole(event.currentTarget.value)} maxLength={280} placeholder={t("channels.agentRolePlaceholder")} />
+              <input value={agentName} onChange={(event) => setAgentName(event.currentTarget.value)} autoFocus autoComplete="off" />
             </label>
           </div>
           <FieldError id="channel-agent-avatar-error">{agentAvatarError}</FieldError>
-          <input
-            ref={agentAvatarInputRef}
-            className="channel-avatar-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
+          {agentAppearanceOpen ? <div className="channel-agent-editor-appearance" id="channel-agent-appearance">
+            <AgentAvatarCreator seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage}
+              onChange={(nextAvatarKey) => {
+                setAgentAvatarKey(nextAvatarKey);
+                setAgentAvatarImage("");
+                setAgentAvatarError("");
+              }} />
+            <button className="channel-agent-editor-upload" type="button" aria-label={t("channels.customAvatar")}
+              onClick={() => agentAvatarInputRef.current?.click()}>
+              <ImagePlus className="icon" />{t("participant.avatar.upload")}
+            </button>
+          </div> : null}
+          <input ref={agentAvatarInputRef} className="channel-avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp"
             onChange={(event) => {
               const input = event.currentTarget;
               const file = input.files?.[0];
@@ -2403,47 +2406,27 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 .then(setAgentAvatarImage)
                 .catch(() => setAgentAvatarError(t("channels.invalidAvatarImage")))
                 .finally(() => { input.value = ""; });
-            }}
-          />
-          <AgentAvatarCreator
-            seed={editingAgentID}
-            avatarKey={agentAvatarKey}
-            avatarImage={agentAvatarImage}
-            onChange={(nextAvatarKey) => {
-              setAgentAvatarKey(nextAvatarKey);
-              setAgentAvatarImage("");
-              setAgentAvatarError("");
-            }}
-          />
-          <div className="channel-form-section">
+            }} />
+          <label className="channel-agent-editor-field">
+            <span>{t("channels.agentRole")}</span>
+            <textarea value={agentRole} onChange={(event) => setAgentRole(event.currentTarget.value)} maxLength={280} rows={2} />
+          </label>
+          <div className="channel-agent-editor-runtime">
             {agentEngine !== "wuu" ? <p className="channel-error">{t("channels.sessions.byokRequired")}</p> : null}
-            <label className="channel-form-field">
+            <div className="channel-agent-editor-setting">
               <span>{t("channels.model")}</span>
               <SelectMenu value={agentModel} onChange={selectAgentModel} groups={modelGroups} ariaLabel={t("channels.model")} flip />
-            </label>
-            {agentModel && agentEffortOptions.length > 1 ? (
-              <div className="channel-form-field">
-                <span id="channel-agent-effort-label">{t("channels.effort")}</span>
-                <div className="channel-effort-picker" role="radiogroup" aria-labelledby="channel-agent-effort-label">
-                  {agentEffortOptions.map((effort) => (
-                    <button
-                      className="channel-effort-chip"
-                      type="button"
-                      role="radio"
-                      key={effort}
-                      aria-checked={agentEffort === effort}
-                      aria-pressed={agentEffort === effort}
-                      onClick={() => setAgentEffort(effort)}
-                    >
-                      {effortLabel(effort)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+            </div>
+            {agentModel && agentEffortOptions.length > 1 ? <div className="channel-agent-editor-setting">
+              <span>{t("channels.effort")}</span>
+              <SelectMenu value={agentEffort} onChange={setAgentEffort}
+                options={agentEffortOptions.map((effort) => ({ value: effort, label: effortLabel(effort) }))}
+                ariaLabel={t("channels.effort")} flip />
+            </div> : null}
           </div>
-          {editingAgentID ? (
-            <div className="channel-form-danger-row">
+          <details className="channel-agent-editor-more">
+            <summary>{t("channels.moreAgentActions")}<ChevronDown className="icon" aria-hidden="true" /></summary>
+            <div className="channel-agent-editor-maintenance">
               <button type="button" disabled={Boolean(resettingAgentID)} onClick={() => void resetAgent(editingAgentID)}>
                 {t(resettingAgentID === editingAgentID ? "channels.resettingAgent" : "channels.resetAgent")}
               </button>
@@ -2451,7 +2434,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 {t("channels.deleteAgent")}
               </button>
             </div>
-          ) : null}
+          </details>
         </div>}
       />
       <SidebarNameDialog

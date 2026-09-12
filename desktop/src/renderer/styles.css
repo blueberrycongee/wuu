@@ -9,6 +9,7 @@
 @import "./styles/default-avatar.css";
 @import "./styles/chat.css";
 @import "./styles/channels.css";
+@import "./styles/channel-agent-editor.css";
 @import "./styles/task-cards.css";
 @import "./styles/task-board.css";
 @import "./styles/side-thread.css";
