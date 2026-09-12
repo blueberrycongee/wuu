@@ -384,6 +384,13 @@ func (s *Server) settleCollaborationTurn(ctx context.Context, ref, turnID string
 	if outcome.Error != nil {
 		failure = outcome.Error.Message
 	}
+	publicReply := ""
+	if outcome.Status == TurnStatusCompleted {
+		agent, agentErr := s.channelService.GetAgentRuntime(ctx, binding.PrincipalID)
+		if agentErr == nil && isRoomConversation(binding, agent) && !roomReplySent(*outcome, binding.RoomID) {
+			publicReply = roomReplyText(*outcome, false)
+		}
+	}
 	result = strings.TrimSpace(result)
 	if result == "" {
 		result = fmt.Sprintf("Session %s ended with status %s. %s", ref, outcome.Status, failure)
@@ -392,6 +399,6 @@ func (s *Server) settleCollaborationTurn(ctx context.Context, ref, turnID string
 	if len(runes) > 12000 {
 		result = string(runes[:12000]) + "\n[Result excerpt; inspect the session and shared artifacts for the remainder.]"
 	}
-	_, err = s.channelService.SettleCollaborationSession(ctx, channels.CollaborationSessionSettleParams{SessionRef: ref, TurnID: turnID, State: next, Result: result, FailureReason: failure})
+	_, err = s.channelService.SettleCollaborationSession(ctx, channels.CollaborationSessionSettleParams{SessionRef: ref, TurnID: turnID, State: next, Result: result, FailureReason: failure, PublicReply: publicReply})
 	return err
 }

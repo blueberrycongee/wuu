@@ -286,6 +286,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	if agentengine.NormalizeEngineID(agent.EngineOverride) != agentengine.EngineWuu {
 		return nil, errors.New("collaboration requires a BYOK model on the Wuu execution runtime")
 	}
+	orientation := agentRuntimeOrientation(agent)
 	if collaborationSessionRef != "" {
 		binding, err := s.channelService.LookupCollaborationSession(context.Background(), collaborationSessionRef)
 		if err != nil {
@@ -294,11 +295,14 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 		if binding.RuntimeVersion != "" && binding.RuntimeVersion != runtime.CollaborationRuntimeVersion {
 			return nil, fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
 		}
+		if isRoomConversation(binding, agent) {
+			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Your normal final answer is automatically delivered to this room under your identity. Answer human messages directly; do not require a separate send tool to make your answer visible. Use chat_send only for an additional targeted post or another room, and avoid repeating an already delivered message in your final answer. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
+		}
 	}
 
 	agentHome := filepath.Dir(agent.MemoryDir)
 	threadRuntime, err := s.rt.NewNamedAgentThreadRuntime(
-		threadID, agentHome, agent.MemoryDir, agentRuntimeOrientation(agent), selection,
+		threadID, agentHome, agent.MemoryDir, orientation, selection,
 	)
 	if err != nil {
 		return nil, err
@@ -320,7 +324,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	threadRuntime.Toolkit.SetChatAgent(chatAgent)
 	if err := s.rt.ConfigureNamedAgentThreadRuntime(
 		threadRuntime, agentHome, agent.MemoryDir,
-		agentRuntimeOrientation(agent),
+		orientation,
 	); err != nil {
 		releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, err

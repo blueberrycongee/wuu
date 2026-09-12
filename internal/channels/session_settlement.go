@@ -17,14 +17,20 @@ type CollaborationSessionSettleParams struct {
 	Result        string
 	TurnID        string
 	FailureReason string
+	// PublicReply projects a room conversation's final answer into its public
+	// timeline. Omitting it preserves settlement fingerprints from older hosts.
+	PublicReply string `json:",omitempty"`
 }
 
-// SettleCollaborationSession atomically records a turn's outcome and its
-// parent notification. A repeated outcome never changes a newer turn's state.
+// SettleCollaborationSession atomically records a turn's outcome, parent
+// notification and optional public reply. A replay never changes a newer turn.
 // This is a trusted host API; agents submit results through their normal turn.
 func (s *Service) SettleCollaborationSession(ctx context.Context, params CollaborationSessionSettleParams) (CollaborationSessionBinding, error) {
 	params.SessionRef, params.TurnID = strings.TrimSpace(params.SessionRef), strings.TrimSpace(params.TurnID)
 	params.Result, params.FailureReason = strings.TrimSpace(params.Result), strings.TrimSpace(params.FailureReason)
+	if strings.TrimSpace(params.PublicReply) == "" {
+		params.PublicReply = ""
+	}
 	terminal := CollaborationTerminalCompleted
 	switch params.State {
 	case CollaborationSessionCompleted, CollaborationSessionIdle:
@@ -103,7 +109,13 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state = ?, run_id = NULL, turn_id = ?, failure_reason = ?, updated_at = ? WHERE session_ref = ?`, effectiveState, params.TurnID, params.FailureReason, now, binding.SessionRef); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
-	wakePrincipal := ""
+	wakePrincipals := make([]string, 0)
+	if params.PublicReply != "" {
+		wakePrincipals, err = insertConversationReplyTx(ctx, tx, binding, params.TurnID, params.PublicReply, now)
+		if err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+	}
 	if binding.ParentSessionRef != "" && effectiveState != CollaborationSessionWaiting && effectiveState != CollaborationSessionIdle {
 		parent, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.ParentSessionRef))
 		if err != nil && !errors.Is(err, ErrNotFound) {
@@ -162,7 +174,7 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 					if err != nil {
 						return CollaborationSessionBinding{}, err
 					}
-					wakePrincipal = parent.PrincipalID
+					wakePrincipals = append(wakePrincipals, parent.PrincipalID)
 				}
 			}
 		}
@@ -177,8 +189,10 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	if err := tx.Commit(); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
-	if wakePrincipal != "" && s.wake != nil {
-		s.wake.Deliver(wakePrincipal)
+	if s.wake != nil {
+		for _, principalID := range wakePrincipals {
+			s.wake.Deliver(principalID)
+		}
 	}
 	return updated, nil
 }

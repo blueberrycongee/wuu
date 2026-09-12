@@ -54,13 +54,17 @@ func TestRoomMessageDelegatesAndPublishesThroughVisibleMember(t *testing.T) {
 	if !strings.Contains(collaborationRequestText(continuation.request), evidence) {
 		t.Fatal("the room member did not receive its child's evidence")
 	}
-	args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": evidence, "basis_seq": 1})
+	beforePublish, err := fixture.server.channelService.ListMessages(ctx, fixture.room.ID, 0, 50)
+	if err != nil || len(beforePublish) == 0 {
+		t.Fatalf("read current room before publishing: %+v, %v", beforePublish, err)
+	}
+	args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": evidence, "basis_seq": beforePublish[len(beforePublish)-1].Seq})
 	continuation.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "publish", Name: "chat_send", Arguments: string(args)}}}
 	published := provider.next(t)
 	published.response <- providers.ChatResponse{Content: "The findings have been posted to the room."}
 	fixture.waitForCompletion(t)
 	messages, err := fixture.server.channelService.ListMessages(ctx, fixture.room.ID, 0, 50)
-	if err != nil || len(messages) != 2 || messages[1].Body != evidence || messages[1].AuthorID != fixture.identity.ID {
+	if err != nil || len(messages) != 3 || messages[2].Body != evidence || messages[2].AuthorID != fixture.identity.ID {
 		t.Fatalf("member did not publish its result: %+v, %v", messages, err)
 	}
 	parent, err = fixture.server.channelService.LookupCollaborationSession(ctx, parent.SessionRef)
@@ -96,7 +100,7 @@ func TestRoomMembersStartConcurrentlyWithoutAnExtraModelCall(t *testing.T) {
 		select {
 		case identity := <-fixture.completed:
 			completed[identity] = true
-		case <-time.After(5 * time.Second):
+		case <-time.After(collaborationTestWaitTimeout):
 			t.Fatal("member completion was not persisted")
 		}
 	}

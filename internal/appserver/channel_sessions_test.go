@@ -13,6 +13,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+// Real session reconstruction and persistence take longer under the race
+// detector; events still determine completion, not the timeout duration.
+const collaborationTestWaitTimeout = 30 * time.Second
+
 type collaborationRPCCall struct {
 	request providers.ChatRequest
 	ctx     context.Context
@@ -128,7 +132,7 @@ func (fixture *collaborationRPCFixture) nextCall(t *testing.T) *collaborationRPC
 	select {
 	case call := <-fixture.provider.started:
 		return call
-	case <-time.After(5 * time.Second):
+	case <-time.After(collaborationTestWaitTimeout):
 		t.Fatal("session did not reach the provider")
 		return nil
 	}
@@ -141,7 +145,7 @@ func (fixture *collaborationRPCFixture) waitForCompletion(t *testing.T) {
 		if identity != fixture.identity.ID {
 			t.Fatalf("completed identity = %q", identity)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(collaborationTestWaitTimeout):
 		t.Fatal("session completion was not persisted")
 	}
 }
@@ -221,7 +225,7 @@ func TestChannelSessionRPCTargetedFollowupStopAndResumePreserveSibling(t *testin
 	fixture.rpc(t, MethodChannelSessionStop, ChannelSessionRefParams{SessionRef: first.SessionRef}, &result)
 	select {
 	case <-continued.ctx.Done():
-	case <-time.After(5 * time.Second):
+	case <-time.After(collaborationTestWaitTimeout):
 		t.Fatal("stop did not cancel the target provider call")
 	}
 	fixture.waitForCompletion(t)

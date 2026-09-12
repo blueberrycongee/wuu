@@ -364,8 +364,14 @@ func (s *Server) handleChannelMessageList(ctx context.Context, req Request) erro
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Read previews first: a concurrently settled reply is then either still a
+	// preview or present in the durable list, without an empty transition.
+	responses, err := s.channelResponses(ctx, params.RoomID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	messages, err := s.channelService.ListMessages(ctx, params.RoomID, params.AfterSeq, params.Limit)
-	return s.writeResponse(req.ID, ChannelMessageListResult{Messages: messages}, err)
+	return s.writeResponse(req.ID, ChannelMessageListResult{Messages: messages, Responses: responses}, err)
 }
 
 func (s *Server) handleChannelMessageSend(ctx context.Context, req Request) error {

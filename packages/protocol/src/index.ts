@@ -1124,7 +1124,18 @@ export type ChannelMessageListParams = {
   after_seq?: number;
   limit?: number;
 };
-export type ChannelMessageListResult = { messages: ChannelMessage[] };
+export type ChannelResponse = {
+  id: string;
+  room_id: string;
+  agent_id: string;
+  session_ref: string;
+  turn_id: string;
+  state: "queued" | "thinking" | "responding" | "waiting" | "failed" | "interrupted";
+  body: string;
+  error?: string;
+  created_at: string;
+};
+export type ChannelMessageListResult = { messages: ChannelMessage[]; responses?: ChannelResponse[] };
 export type ChannelMessageSendParams = {
   room_id: string;
   body: string;

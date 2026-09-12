@@ -42,7 +42,7 @@ func (provider *collaborationFlowProvider) next(t *testing.T) *collaborationFlow
 	select {
 	case call := <-provider.calls:
 		return call
-	case <-time.After(5 * time.Second):
+	case <-time.After(collaborationTestWaitTimeout):
 		t.Fatal("collaboration did not reach the next model call")
 		return nil
 	}
@@ -205,7 +205,7 @@ func TestCollaborationRestartDeliversCompletedChildWithoutRerunningIt(t *testing
 	continuation.response <- providers.ChatResponse{Content: "Recovered evidence confirms the stale callback; the investigation is complete."}
 	select {
 	case <-completed:
-	case <-time.After(5 * time.Second):
+	case <-time.After(collaborationTestWaitTimeout):
 		t.Fatal("recovered parent did not complete")
 	}
 	final, err := restarted.channelService.LookupCollaborationSession(context.Background(), parent.SessionRef)
