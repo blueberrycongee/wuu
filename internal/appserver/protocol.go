@@ -2612,7 +2612,7 @@ type ChannelMessageListParams struct {
 
 type ChannelMessageListResult struct {
 	Messages  []channels.Message `json:"messages"`
-	Responses []ChannelResponse  `json:"responses,omitempty"`
+	Responses []ChannelResponse  `json:"responses"`
 }
 
 type ChannelMessageSendParams struct {

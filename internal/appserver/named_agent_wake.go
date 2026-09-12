@@ -296,7 +296,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 			return nil, fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
 		}
 		if isRoomConversation(binding, agent) {
-			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Your normal final answer is automatically delivered to this room under your identity. Answer human messages directly; do not require a separate send tool to make your answer visible. Use chat_send only for an additional targeted post or another room, and avoid repeating an already delivered message in your final answer. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
+			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Your normal final answer is automatically delivered to this room under your identity. Answer human messages directly; do not require a separate send tool to make your answer visible. Use chat_send only for an additional targeted post or another room. Explicit messages are already delivered; do not repeat them or add a separate delivery acknowledgement. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
 		}
 	}
 

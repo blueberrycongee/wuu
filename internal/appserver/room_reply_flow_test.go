@@ -176,7 +176,7 @@ func TestRoomReplyConcurrentMembersBothPublish(t *testing.T) {
 	}
 }
 
-func TestRoomReplyExplicitSendSuppressesOnlyDeliveredFinal(t *testing.T) {
+func TestRoomReplyExplicitSendSuppressesOnlyDuplicateFinal(t *testing.T) {
 	for _, delivered := range []bool{true, false} {
 		name := "held draft"
 		if delivered {
@@ -191,7 +191,8 @@ func TestRoomReplyExplicitSendSuppressesOnlyDeliveredFinal(t *testing.T) {
 			if !delivered {
 				basis = 0
 			}
-			args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": "Explicit public result", "basis_seq": basis})
+			const final = "The callback retains the old socket."
+			args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": final, "basis_seq": basis})
 			call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "send-result", Name: "chat_send", Arguments: string(args)}}}
 			continuation := provider.next(t)
 			ref := namedAgentRoomSessionID(agentRuntimeFromNamed(fixture.identity), fixture.room.ID)
@@ -199,22 +200,35 @@ func TestRoomReplyExplicitSendSuppressesOnlyDeliveredFinal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			turn := fixture.server.roomResponseTurn(ref, binding.TurnID)
-			if turn == nil || roomReplySent(*turn, fixture.room.ID) != delivered {
-				t.Fatalf("actual tool result was not recognized as delivered=%t: %+v", delivered, turn)
-			}
-			const final = "The callback retains the old socket."
 			continuation.response <- providers.ChatResponse{Content: final}
 			fixture.waitForCompletion(t)
-			result := readRoomReplies(t, fixture, fixture.room.ID)
-			want := final
-			if delivered {
-				want = "Explicit public result"
+			turn := fixture.server.roomResponseTurn(ref, binding.TurnID)
+			if turn == nil || roomReplySent(*turn, fixture.room.ID) != delivered {
+				t.Fatalf("duplicate answer was not recognized as delivered=%t: %+v", delivered, turn)
 			}
-			if len(result.Messages) != 2 || result.Messages[1].Body != want || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
+			result := readRoomReplies(t, fixture, fixture.room.ID)
+			if len(result.Messages) != 2 || result.Messages[1].Body != final || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
 				t.Fatalf("send result did not govern final publication: delivered=%t result=%+v", delivered, result)
 			}
 		})
+	}
+}
+
+func TestRoomReplyPublishesFinalAfterExplicitProgress(t *testing.T) {
+	fixture, provider := newCollaborationFlowFixture(t)
+	fixture.room = createPeerRoom(t, fixture, "Progress and answer", fixture.identity)
+	sendRoomReplyObjective(t, fixture, "Find the reconnect failure")
+	call := provider.next(t)
+	const progress = "I am checking which callback owns the reconnect socket."
+	args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": progress, "basis_seq": 1})
+	call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "send-progress", Name: "chat_send", Arguments: string(args)}}}
+	continuation := provider.next(t)
+	const final = "The callback retains the old socket; rebuild it when the connection changes."
+	continuation.response <- providers.ChatResponse{Content: final}
+	fixture.waitForCompletion(t)
+	result := readRoomReplies(t, fixture, fixture.room.ID)
+	if len(result.Messages) != 3 || result.Messages[1].Body != progress || result.Messages[2].Body != final || result.Messages[2].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
+		t.Fatalf("public progress swallowed the final answer: %+v", result)
 	}
 }
 
@@ -298,9 +312,12 @@ func TestRoomReplyFailureIsVisibleAndRecoverable(t *testing.T) {
 			}
 			call.response <- providers.ChatResponse{Content: "Recovered: the reconnect callback retains the old socket."}
 			fixture.waitForCompletion(t)
-			result := readRoomReplies(t, fixture, fixture.room.ID)
+			// A client retains the failed preview until the wire response explicitly
+			// replaces it with an empty array; an omitted field leaves it visible.
+			result := ChannelMessageListResult{Responses: []ChannelResponse{failed}}
+			fixture.rpc(t, MethodChannelMessageList, ChannelMessageListParams{RoomID: fixture.room.ID, Limit: 100}, &result)
 			last := result.Messages[len(result.Messages)-1]
-			if last.AuthorID != fixture.identity.ID || !strings.HasPrefix(last.Body, "Recovered:") || len(result.Responses) != 0 {
+			if last.AuthorID != fixture.identity.ID || !strings.HasPrefix(last.Body, "Recovered:") || result.Responses == nil || len(result.Responses) != 0 {
 				t.Fatalf("recovered final did not replace the failed response: %+v", result)
 			}
 		})

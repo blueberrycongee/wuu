@@ -34,7 +34,7 @@ func (s *Server) channelResponses(ctx context.Context, roomID string) ([]Channel
 	if err != nil {
 		return nil, err
 	}
-	var responses []ChannelResponse
+	responses := make([]ChannelResponse, 0)
 	for _, member := range room.Members {
 		if member.MemberType != channels.MemberAgent {
 			continue
@@ -146,9 +146,13 @@ func roomReplyText(turn Turn, preview bool) string {
 	return ""
 }
 
-// Explicitly delivered room messages already have public bubbles. Do not add
-// a second final acknowledgement; a held draft or private send is not delivery.
+// Suppress only an answer already delivered to this room. Earlier progress or
+// targeted requests must not swallow a later answer; held drafts are not delivery.
 func roomReplySent(turn Turn, roomID string) bool {
+	body := strings.TrimSpace(roomReplyText(turn, true))
+	if body == "" {
+		return false
+	}
 	for _, item := range turn.Items {
 		if item.Type != ThreadItemToolCall || item.Status != ThreadItemStatusCompleted ||
 			(item.Name != "chat_send" && item.Name != "collaboration_send" && item.Name != "chat_draft") {
@@ -158,9 +162,10 @@ func roomReplySent(turn Turn, roomID string) bool {
 			Status  string `json:"status"`
 			Message struct {
 				RoomID string `json:"room_id"`
+				Body   string `json:"body"`
 			} `json:"message"`
 		}
-		if json.Unmarshal([]byte(item.Result), &result) == nil && result.Status == string(channels.SendCommitted) && result.Message.RoomID == roomID {
+		if json.Unmarshal([]byte(item.Result), &result) == nil && result.Status == string(channels.SendCommitted) && result.Message.RoomID == roomID && strings.TrimSpace(result.Message.Body) == body {
 			return true
 		}
 	}

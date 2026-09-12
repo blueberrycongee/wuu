@@ -61,7 +61,7 @@ func TestRoomMessageDelegatesAndPublishesThroughVisibleMember(t *testing.T) {
 	args, _ := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": evidence, "basis_seq": beforePublish[len(beforePublish)-1].Seq})
 	continuation.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "publish", Name: "chat_send", Arguments: string(args)}}}
 	published := provider.next(t)
-	published.response <- providers.ChatResponse{Content: "The findings have been posted to the room."}
+	published.response <- providers.ChatResponse{Content: evidence}
 	fixture.waitForCompletion(t)
 	messages, err := fixture.server.channelService.ListMessages(ctx, fixture.room.ID, 0, 50)
 	if err != nil || len(messages) != 3 || messages[2].Body != evidence || messages[2].AuthorID != fixture.identity.ID {
