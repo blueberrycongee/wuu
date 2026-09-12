@@ -346,10 +346,11 @@
   --turn-warning-text-strong: #7a4e0d;
 
   /* Top corners the OS window chrome owns: macOS puts the traffic lights
-   * on the left, Windows draws its controls overlay on the right. Strips
-   * that run along the window top consume these through max(<neutral
-   * padding>, var(...)), so each platform only reserves the corner it
-   * actually loses and the other side collapses to the neutral value. */
+   * on the left, Windows/Linux draw the controls overlay on the right.
+   * Strips that run along the window top consume these through
+   * max(<neutral padding>, var(...)), so each platform only reserves the
+   * corner it actually loses and the other side collapses to the neutral
+   * value. */
   --window-controls-inset-left: 86px;
   --window-controls-inset-right: 0px;
   font-feature-settings: "kern", "liga", "calt", "palt";
@@ -372,10 +373,17 @@
   );
 }
 
-/* Linux keeps the native frame — the OS titlebar sits above the page, so
- * neither corner needs an in-page reservation. */
+/* Linux uses the same Window Controls Overlay as Windows when WCO is
+ * enabled (titleBarStyle hidden + titleBarOverlay). Reserve the top-right
+ * overlay; titlebar-area-width is what Chromium leaves of the top strip.
+ * If WUU_LINUX_NATIVE_CHROME=1 forces the native frame, these insets stay
+ * harmless because the OS titlebar sits above the page. */
 :root[data-platform="linux"] {
   --window-controls-inset-left: 0px;
+  --window-controls-inset-right: max(
+    138px,
+    calc(100vw - env(titlebar-area-width, 100vw))
+  );
 }
 
 * {
