@@ -659,31 +659,17 @@ func TestDeleteRoomCascadesRoomDataAndPreservesNamedAgent(t *testing.T) {
 	}
 }
 
-func TestBootstrapCreatesDeletableAndyAndGeneralOnlyOnce(t *testing.T) {
+func TestBootstrapLeavesFirstUseEmptyUntilUserCreatesIdentity(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
-	first, err := service.EnsureBootstrap(ctx, "local-user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first.Agents) != 1 || first.Agents[0].Name != "Andy" || first.Agents[0].ModelOverride != "" {
-		t.Fatalf("bootstrap agents = %#v", first.Agents)
-	}
-	if len(first.Rooms) != 1 || first.Rooms[0].Name != "General" || first.Rooms[0].Kind != RoomChannel || len(first.Rooms[0].Members) != 2 {
-		t.Fatalf("bootstrap rooms = %#v", first.Rooms)
-	}
-	if err := service.DeleteRoom(ctx, first.Rooms[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.DeleteNamedAgent(ctx, first.Agents[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	second, err := service.EnsureBootstrap(ctx, "local-user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(second.Agents) != 0 || len(second.Rooms) != 0 {
-		t.Fatalf("deleted bootstrap records were recreated: %#v", second)
+	for range 2 {
+		result, err := service.EnsureBootstrap(ctx, "local-user")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Agents) != 0 || len(result.Rooms) != 0 {
+			t.Fatalf("opening collaboration created unconfigured records: %#v", result)
+		}
 	}
 }
 
@@ -722,7 +708,7 @@ func TestDeleteNamedAgentPreservesTaskHistoryAndUpdatesRoomMembership(t *testing
 	}
 }
 
-func TestBootstrapRecoversAndyCreatedBeforeGeneral(t *testing.T) {
+func TestBootstrapPreservesExistingIdentityAndRoomWithoutCreatingDefaults(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
 	andy, err := service.CreateNamedAgent(ctx, CreateNamedAgentParams{Name: "Andy", Autostart: true})
@@ -737,11 +723,34 @@ func TestBootstrapRecoversAndyCreatedBeforeGeneral(t *testing.T) {
 	if len(result.Agents) != 1 || result.Agents[0].ID != andy.Agent.ID {
 		t.Fatalf("bootstrap agents = %#v, want existing Andy", result.Agents)
 	}
-	if len(result.Rooms) != 1 || result.Rooms[0].Name != "General" {
-		t.Fatalf("bootstrap rooms = %#v, want General", result.Rooms)
+	if len(result.Rooms) != 0 {
+		t.Fatalf("bootstrap created a room for an existing identity: %#v", result.Rooms)
 	}
-	if len(result.Rooms[0].Members) != 2 {
-		t.Fatalf("General members = %#v, want human and Andy", result.Rooms[0].Members)
+	room, err := service.CreateRoom(ctx, CreateRoomParams{Name: "General", Kind: RoomChannel, CreatedBy: "local-user", Members: []RoomMember{{MemberType: MemberAgent, MemberID: andy.Agent.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := service.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: "local-user", Body: "Keep our existing conversation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = service.EnsureBootstrap(ctx, "local-user")
+	if err != nil || len(result.Agents) != 1 || result.Agents[0].ID != andy.Agent.ID || len(result.Rooms) != 1 || result.Rooms[0].ID != room.ID || len(result.Rooms[0].Members) != 2 {
+		t.Fatalf("bootstrap changed existing records: %#v, %v", result, err)
+	}
+	messages, err := service.ListMessages(ctx, room.ID, 0, 100)
+	if err != nil || len(messages) != 1 || messages[0].ID != message.Message.ID {
+		t.Fatalf("bootstrap changed conversation history: %#v, %v", messages, err)
+	}
+	if err := service.DeleteRoom(ctx, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteNamedAgent(ctx, andy.Agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err = service.EnsureBootstrap(ctx, "local-user")
+	if err != nil || len(result.Agents) != 0 || len(result.Rooms) != 0 {
+		t.Fatalf("bootstrap recreated deleted records: %#v, %v", result, err)
 	}
 }
 

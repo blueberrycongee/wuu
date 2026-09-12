@@ -1945,14 +1945,11 @@ func recordMembershipChangeTx(ctx context.Context, tx *sql.Tx, roomID, authorID 
 	return nil
 }
 
-func (s *Service) EnsureBootstrap(ctx context.Context, humanID string) (BootstrapResult, error) {
+// EnsureBootstrap returns the existing collaboration directory. Identities and
+// rooms are created only through an explicit user flow, including on first use.
+func (s *Service) EnsureBootstrap(ctx context.Context, _ string) (BootstrapResult, error) {
 	s.bootstrapMu.Lock()
 	defer s.bootstrapMu.Unlock()
-	var completed string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM channel_metadata WHERE key = 'bootstrap_completed'`).Scan(&completed)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return BootstrapResult{}, fmt.Errorf("read channel bootstrap state: %w", err)
-	}
 	if err := s.retireRoomRuntimes(ctx); err != nil {
 		return BootstrapResult{}, err
 	}
@@ -1963,37 +1960,6 @@ func (s *Service) EnsureBootstrap(ctx context.Context, humanID string) (Bootstra
 	rooms, err := s.ListRooms(ctx)
 	if err != nil {
 		return BootstrapResult{}, err
-	}
-	if completed == "1" {
-		return BootstrapResult{Agents: agents, Rooms: rooms}, nil
-	}
-	if len(agents) == 0 && len(rooms) == 0 {
-		credential, err := s.CreateNamedAgent(ctx, CreateNamedAgentParams{Name: "Andy", Autostart: true})
-		if err != nil {
-			return BootstrapResult{}, err
-		}
-		room, err := s.CreateRoom(ctx, CreateRoomParams{
-			Kind: RoomChannel, Name: "General", CreatedBy: humanID,
-			Members: []RoomMember{{MemberType: MemberAgent, MemberID: credential.Agent.ID}},
-		})
-		if err != nil {
-			_ = s.DeleteNamedAgent(ctx, credential.Agent.ID)
-			return BootstrapResult{}, err
-		}
-		agents = []NamedAgent{credential.Agent}
-		rooms = []Room{room}
-	} else if len(agents) == 1 && agents[0].Name == "Andy" && len(rooms) == 0 {
-		room, err := s.CreateRoom(ctx, CreateRoomParams{
-			Kind: RoomChannel, Name: "General", CreatedBy: humanID,
-			Members: []RoomMember{{MemberType: MemberAgent, MemberID: agents[0].ID}},
-		})
-		if err != nil {
-			return BootstrapResult{}, err
-		}
-		rooms = []Room{room}
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO channel_metadata (key, value) VALUES ('bootstrap_completed', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value`); err != nil {
-		return BootstrapResult{}, fmt.Errorf("persist channel bootstrap state: %w", err)
 	}
 	return BootstrapResult{Agents: agents, Rooms: rooms}, nil
 }
