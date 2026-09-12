@@ -103,6 +103,9 @@ function renderComposer(props: {
   accessMenuOpen?: boolean;
   variant?: ComposerVariant;
   canSelectProject?: boolean;
+  gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
+  gitBusy?: boolean;
+  onToggleBranchMenu?: () => void;
   onToggleMenu?: () => void;
   mainConversation?: boolean;
   prompt?: string;
@@ -170,6 +173,8 @@ function renderComposer(props: {
           statusLiveProgress={props.statusLiveProgress}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
+          gitStatus={props.gitStatus}
+          gitBusy={props.gitBusy}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
           activeProject={props.activeProject}
@@ -190,7 +195,7 @@ function renderComposer(props: {
           onSelectRuntimeModel={() => {}}
           onSelectRuntimeEffort={() => {}}
           onSelectPermissionMode={onSelectPermissionMode}
-          onToggleBranchMenu={() => {}}
+          onToggleBranchMenu={props.onToggleBranchMenu ?? (() => {})}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
           onSelectProject={() => {}}
@@ -1710,6 +1715,19 @@ describe("Composer send control", () => {
     expect(container.querySelector(".hero-project-pill")).not.toBeNull();
     expect(container.querySelector(".hero-project-pill")?.textContent).toContain("选择项目");
     expect(container.querySelector<HTMLButtonElement>("button[aria-label=\"打开项目\"]")).toBeNull();
+  });
+
+  it("opens branch selection independently of the draft project picker", () => {
+    const onToggleMenu = vi.fn();
+    const onToggleBranchMenu = vi.fn();
+    renderComposer({ variant: "dock", canSelectProject: true,
+      gitStatus: { is_repo: true, branch: "main", dirty_count: 0 },
+      onToggleMenu, onToggleBranchMenu });
+    const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]');
+    expect(branch).not.toBeNull();
+    act(() => branch?.click());
+    expect(onToggleBranchMenu).toHaveBeenCalledOnce();
+    expect(onToggleMenu).not.toHaveBeenCalled();
   });
 
   it("opens project selection from a new session's bottom composer", () => {

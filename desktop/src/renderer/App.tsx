@@ -3031,6 +3031,7 @@ export function App(): JSX.Element {
           }
         }}
         gitStatus={state.gitStatus}
+        gitBusy={environmentGitBusy}
         projects={state.projects}
         activeContext={state.activeContext}
         activeProject={activeProject}
@@ -3074,6 +3075,7 @@ export function App(): JSX.Element {
           setAccessMenuOpen((open) => !open);
         }}
         onToggleBranchMenu={() => {
+          if (!branchMenuOpen) scheduleGitStatusRefresh(0);
           setRuntimeMenuOpen(false);
           setAccessMenuOpen(false);
           setCodexRuntimeMenu(null);
@@ -3114,7 +3116,17 @@ export function App(): JSX.Element {
         onOpenSkillsCatalog={openSkillsTab}
         onSelectProject={(id) => void selectProjectForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
-        onSelectGitBranch={(branch) => void checkoutBranch(branch)}
+        onSelectGitBranch={async (branch) => {
+          try {
+            await checkoutBranch(branch);
+          } catch (error) {
+            setCheckoutErrorTip(error instanceof Error ? error.message : t("git.checkoutFailed"));
+          }
+        }}
+        onCreateGitBranch={async (branch) => {
+          await createAndCheckoutBranch(branch);
+          setBranchMenuOpen(false);
+        }}
         onCreateProject={() => void createBlankProject()}
         onOpenProject={() => void chooseProjectFolder()}
         onStartNewThread={startNewThreadWithComposerFocus}

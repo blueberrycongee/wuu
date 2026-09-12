@@ -2601,3 +2601,101 @@
   :root[data-host-kind="web"] .composer-camera-flash { display: none; }
   :root[data-host-kind="web"] .composer-camera-controls button { transition: none; }
 }
+
+.composer-workspace-bar > .composer-project-control {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.composer-branch-control {
+  min-width: 0;
+  max-width: 50%;
+  margin-left: 2px;
+}
+
+.composer-branch-control .hero-project-pill {
+  max-width: 100%;
+}
+
+.composer-branch-menu {
+  width: 280px;
+  max-height: min(280px, calc(100vh - 120px));
+  padding: 4px;
+}
+
+.composer-branch-menu .project-picker-list button {
+  width: 100%;
+  height: auto;
+  min-height: 30px;
+  padding: 4px 7px;
+}
+
+.composer-branch-menu small {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-weight: 400;
+}
+
+.composer-branch-menu button:disabled {
+  cursor: default;
+}
+
+.composer-branch-create {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+}
+
+.composer-branch-create input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  padding: 6px 8px;
+}
+
+.composer-branch-menu button[aria-checked="true"] {
+  opacity: 1;
+}
+
+@media (pointer: fine) {
+  .composer-workspace-bar {
+    min-height: 40px;
+    padding: 2px 6px 10px;
+  }
+
+  .composer-workspace-bar .hero-project-pill {
+    height: 28px;
+    gap: 5px;
+    padding-inline: 6px;
+    font-size: var(--font-sm);
+  }
+
+  .composer-workspace-bar .hero-project-pill-icon,
+  .composer-workspace-bar .hero-project-pill-icon svg {
+    width: 14px;
+    height: 14px;
+    flex-basis: 14px;
+  }
+
+  .composer-branch-menu button,
+  .composer-branch-menu input {
+    font-size: var(--font-sm);
+  }
+
+  .composer-branch-menu .menu-search {
+    height: 30px;
+    min-height: 30px;
+    margin: 0 0 3px;
+    padding: 4px 7px;
+  }
+
+  .composer-branch-menu svg {
+    width: 14px;
+    height: 14px;
+  }
+}

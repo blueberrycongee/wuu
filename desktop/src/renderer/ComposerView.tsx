@@ -72,6 +72,7 @@ import {
   type QueuedComposerMessage
 } from "./ComposerMessages";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
 import { ComposerAttachmentStrip, ComposerQueueStrip } from "./ComposerInputSections";
 import { ComposerCameraPanel } from "./ComposerCamera";
@@ -148,6 +149,12 @@ export function Composer({
   readOnly,
   initialized,
   projects,
+  gitStatus,
+  gitBusy = running,
+  branchMenuOpen,
+  onToggleBranchMenu,
+  onSelectGitBranch,
+  onCreateGitBranch,
   activeContext,
   activeProject,
   compactDisabledReason,
@@ -246,6 +253,8 @@ export function Composer({
   readOnly: boolean;
   initialized?: InitializeResult;
   gitStatus?: GitStatusResult;
+  gitBusy?: boolean;
+  onCreateGitBranch?: (branch: string) => Promise<void>;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProject?: DesktopProject;
@@ -281,7 +290,7 @@ export function Composer({
   onOpenSkillsCatalog: () => void;
   onSelectProject: (id: string) => void;
   onSelectNoProject: () => void;
-  onSelectGitBranch: (branch: string) => void;
+  onSelectGitBranch: (branch: string) => void | Promise<void>;
   onCreateProject: () => void;
   onOpenProject: () => void;
   onStartNewThread: () => void;
@@ -1182,8 +1191,8 @@ export function Composer({
         />
         <div className="composer-frame-shell">
           {canSelectProject ? (
-            <div className="composer-workspace-bar">
-              <div className="hero-project-pill-anchor composer-project-control" ref={menuRef}>
+            <div className="composer-workspace-bar" ref={menuRef}>
+              <div className="hero-project-pill-anchor composer-project-control">
                 <Tooltip
                   content={projectPillTitle}
                   disabled={projectPillTitle === projectPillLabel}
@@ -1226,6 +1235,17 @@ export function Composer({
                   </FloatingMenuPortal>
                 ) : null}
               </div>
+              {gitStatus?.is_repo ? (
+                <ComposerBranchPicker
+                  key={activeContext?.cwd}
+                  gitStatus={gitStatus}
+                  disabled={gitBusy || readOnly}
+                  open={branchMenuOpen}
+                  onToggle={onToggleBranchMenu}
+                  onSelect={onSelectGitBranch}
+                  onCreate={onCreateGitBranch}
+                />
+              ) : null}
             </div>
           ) : null}
           {cameraOpen && !textOnly && !readOnly ? (
