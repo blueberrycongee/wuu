@@ -759,6 +759,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const [taskRoomID, setTaskRoomID] = useState("");
   const [taskOwnerID, setTaskOwnerID] = useState("");
   const [composerFooterNode, setComposerFooterNode] = useState<HTMLDivElement | null>(null);
+  const [composerAnchor, setComposerAnchor] = useState<HTMLElement | null>(null);
   const agentDetailDraftRef = useRef<AgentDetailDraft>({ name: "", role: "", avatarKey: "", avatarImage: "", engine: "wuu", model: "", effort: "" });
   const selectedAgentIDRef = useRef("");
   const previousSectionRef = useRef(section);
@@ -784,6 +785,25 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     open: section === "rooms" && Boolean(selectedRoomID),
     observeKey: selectedRoomID,
   });
+  useLayoutEffect(() => {
+    const stream = messageScroll.scrollRef.current;
+    if (!composerFooterNode || !stream) return;
+    setComposerAnchor(composerFooterNode.querySelector<HTMLElement>(".channel-composer"));
+    // The stream extends behind the floating footer. Reserve its actual height
+    // at the end so the latest message stays visible as the input grows.
+    const measure = (): void => {
+      stream.style.setProperty("--channel-footer-height", `${composerFooterNode.getBoundingClientRect().height}px`);
+      messageScroll.scrollToBottom();
+    };
+    measure();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : undefined;
+    observer?.observe(composerFooterNode);
+    return () => {
+      observer?.disconnect();
+      stream.style.removeProperty("--channel-footer-height");
+      setComposerAnchor(null);
+    };
+  }, [composerFooterNode, messageScroll]);
   const acknowledgeMessageMotion = useChannelMessageMotion(
     messageScroll.scrollRef, section === "rooms" ? selectedRoomID : "",
     loadedRoomIDs.has(selectedRoomID), messages,
@@ -2069,7 +2089,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         </div>
         {!(inspectedSession && inspectorOverlay) ? <JumpToLatestPill
           containerRef={messageScroll.scrollRef}
-          bottomAnchor={composerFooterNode}
+          bottomAnchor={composerAnchor}
           threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
         /> : null}
         {selectedRoom ? (

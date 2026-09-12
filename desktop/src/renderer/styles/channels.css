@@ -464,8 +464,7 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  /* Keep the composer in normal flow so its current rendered height and the
-     message viewport are resolved in the same layout pass during resizing. */
+  /* The footer sizes the last row while the stream paints behind it. */
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
@@ -524,7 +523,8 @@
 }
 
 .channel-message-stream {
-  grid-row: 3;
+  grid-column: 1;
+  grid-row: 3 / 5;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -532,7 +532,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 12px var(--channel-horizontal-gutter) 20px;
+  padding: 12px var(--channel-horizontal-gutter) calc(var(--channel-footer-height, 0px) + 20px);
 }
 
 .channel-timestamp {
@@ -1288,8 +1288,34 @@
 .channel-onboarding p { margin: 0; color: var(--text-secondary); font-size: 13px; }
 
 .channel-conversation-footer {
+  --channel-composer-bottom-space: 12px;
+  --channel-composer-radius: 24px;
+  position: relative;
+  z-index: 1;
+  grid-column: 1;
   grid-row: 4;
   min-width: 0;
+  pointer-events: none;
+}
+
+.channel-conversation-footer::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: calc(var(--channel-composer-bottom-space) + var(--channel-composer-radius));
+  background: var(--paper);
+}
+
+.channel-conversation-footer .channel-activity-region:empty {
+  display: none;
+}
+
+.channel-conversation-footer .channel-activity-slot-content,
+.channel-conversation-footer .channel-send-error {
+  position: relative;
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  pointer-events: auto;
 }
 
 .channel-composer {
@@ -1303,7 +1329,20 @@
 .channel-conversation-footer .channel-composer {
   width: 100%;
   max-width: calc(var(--channel-content-max-width) + 2 * var(--channel-horizontal-gutter));
-  padding: 0 var(--channel-horizontal-gutter) 12px;
+  padding: 0 var(--channel-horizontal-gutter) var(--channel-composer-bottom-space);
+}
+
+.channel-conversation-footer .dock-composer-wrap::before {
+  content: none;
+}
+
+.channel-conversation-footer .dock-composer-wrap .composer-stack,
+.channel-conversation-footer .composer-frame-shell {
+  pointer-events: none;
+}
+
+.channel-conversation-footer .composer-frame {
+  pointer-events: auto;
 }
 
 .channel-composer .composer-stack { --composer-collapsed-min-height: 80px; }
@@ -1323,7 +1362,7 @@
   --composer-collapsed-min-height: 46px;
   width: 100%;
 }
-.channel-composer-inline .composer-frame { border-radius: 24px; }
+.channel-composer-inline .composer-frame { border-radius: var(--channel-composer-radius, 24px); }
 .channel-composer-inline .composer {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto;
@@ -3703,7 +3742,8 @@
   .channel-message-bubble { padding: 8px 10px; }
   .channel-message-expand-toggle { min-height: 36px; }
   .channel-response-progress button, .channel-send-error button, .channel-attachment-button { min-width: 40px; min-height: 40px; }
-  .channel-conversation-footer .channel-composer { --session-outer-padding-inline: 12px; padding-bottom: 8px; }
+  .channel-conversation-footer { --channel-composer-bottom-space: 8px; }
+  .channel-conversation-footer .channel-composer { --session-outer-padding-inline: 12px; }
   .channel-mention-menu button { min-height: 44px; }
   .channel-agent-proposal { padding: 12px; gap: 10px; }
 }
