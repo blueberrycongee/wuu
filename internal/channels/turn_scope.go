@@ -7,20 +7,22 @@ import (
 	"fmt"
 )
 
-// CollaborationTurnScope is immutable provenance for a single admitted turn.
+// CollaborationTurnScope records immutable provenance and settled turn usage.
 // A conversation may move between rooms; its previous turns never do.
 type CollaborationTurnScope struct {
 	RoomID, WorkID, RunID string
 	OwnerNamedAgentID     string
 	GoalRevision          int
+	InputTokens           int64
+	OutputTokens          int64
 }
 
 // LookupCollaborationTurnScope reads historical scope for a trusted host caller.
 // It never infers a missing turn's scope from the conversation's current room.
 func (s *Service) LookupCollaborationTurnScope(ctx context.Context, sessionRef, turnID string) (CollaborationTurnScope, error) {
 	var scope CollaborationTurnScope
-	err := s.db.QueryRowContext(ctx, `SELECT room_id,work_id,run_id,goal_revision,work_owner_id FROM collaboration_turn_scopes WHERE session_ref=? AND turn_id=?`, sessionRef, turnID).
-		Scan(&scope.RoomID, &scope.WorkID, &scope.RunID, &scope.GoalRevision, &scope.OwnerNamedAgentID)
+	err := s.db.QueryRowContext(ctx, `SELECT room_id,work_id,run_id,goal_revision,work_owner_id,input_tokens,output_tokens FROM collaboration_turn_scopes WHERE session_ref=? AND turn_id=?`, sessionRef, turnID).
+		Scan(&scope.RoomID, &scope.WorkID, &scope.RunID, &scope.GoalRevision, &scope.OwnerNamedAgentID, &scope.InputTokens, &scope.OutputTokens)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -33,6 +35,7 @@ func (s *Service) migrateCollaborationTurnScopes() error {
 		turn_id TEXT NOT NULL, room_id TEXT NOT NULL, work_id TEXT NOT NULL DEFAULT '',
 		run_id TEXT NOT NULL DEFAULT '', goal_revision INTEGER NOT NULL DEFAULT 0,
 		work_owner_id TEXT NOT NULL DEFAULT '',
+		input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY(session_ref, turn_id));
 		INSERT OR IGNORE INTO collaboration_turn_scopes(session_ref,turn_id,room_id,work_id,run_id,goal_revision)
 		SELECT run.session_ref,run.turn_id,work.room_id,work.id,run.id,run.goal_revision
@@ -48,12 +51,22 @@ func (s *Service) migrateCollaborationTurnScopes() error {
 	if err != nil {
 		return err
 	}
-	hasOwner, err := s.tableHasColumn("collaboration_turn_scopes", "work_owner_id")
-	if err != nil || hasOwner {
-		return err
+	for _, column := range []struct{ name, definition string }{
+		{"work_owner_id", "TEXT NOT NULL DEFAULT ''"},
+		{"input_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"output_tokens", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		hasColumn, err := s.tableHasColumn("collaboration_turn_scopes", column.name)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := s.db.Exec(`ALTER TABLE collaboration_turn_scopes ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return err
+			}
+		}
 	}
-	_, err = s.db.Exec(`ALTER TABLE collaboration_turn_scopes ADD COLUMN work_owner_id TEXT NOT NULL DEFAULT ''`)
-	return err
+	return nil
 }
 
 func recordCollaborationTurnScopeTx(ctx context.Context, tx *sql.Tx, binding CollaborationSessionBinding, turnID string) (CollaborationTurnScope, error) {

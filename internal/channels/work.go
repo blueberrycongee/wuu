@@ -537,22 +537,8 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 	if !work.DeadlineAt.IsZero() && !s.now().Before(work.DeadlineAt) {
 		return WorkRun{}, fmt.Errorf("%w: work deadline expired", ErrConflict)
 	}
-	var usedInputTokens, usedOutputTokens int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM work_runs WHERE work_id = ?`, work.ID).Scan(&usedInputTokens, &usedOutputTokens); err != nil {
-		return WorkRun{}, fmt.Errorf("read work usage budget: %w", err)
-	}
-	if work.MaxInputTokens > 0 && usedInputTokens >= work.MaxInputTokens || work.MaxOutputTokens > 0 && usedOutputTokens >= work.MaxOutputTokens {
-		return WorkRun{}, fmt.Errorf("%w: work token budget exhausted", ErrConflict)
-	}
-	var roomInputTokens, roomOutputTokens int64
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(run.input_tokens), 0), COALESCE(SUM(run.output_tokens), 0)
-		FROM work_runs run JOIN works room_work ON room_work.id = run.work_id
-		WHERE room_work.room_id = ?`, work.RoomID).Scan(&roomInputTokens, &roomOutputTokens); err != nil {
-		return WorkRun{}, fmt.Errorf("read room usage budget: %w", err)
-	}
-	if s.roomInputTokenLimit > 0 && roomInputTokens >= s.roomInputTokenLimit || s.roomOutputTokenLimit > 0 && roomOutputTokens >= s.roomOutputTokenLimit {
-		return WorkRun{}, fmt.Errorf("%w: room token budget exhausted", ErrConflict)
+	if err := s.checkCollaborationTokenBudgetTx(ctx, tx, work.RoomID, &work); err != nil {
+		return WorkRun{}, err
 	}
 	id, err := randomID("workrun", 12)
 	if err != nil {

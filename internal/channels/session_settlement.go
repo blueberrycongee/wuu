@@ -95,6 +95,9 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	if err := validateCollaborationTurnScopeTx(ctx, tx, binding, binding.WorkID, true); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_turn_scopes SET input_tokens=?,output_tokens=? WHERE session_ref=? AND turn_id=?`, params.InputTokens, params.OutputTokens, binding.SessionRef, params.TurnID); err != nil {
+		return CollaborationSessionBinding{}, err
+	}
 	binding.RoomID, binding.WorkID = scope.RoomID, scope.WorkID
 	if binding.WorkID != "" && !binding.Primary {
 		if err := validateCollaborationSessionWriteTx(ctx, tx, binding.SessionRef, binding.PrincipalID, binding.RoomID, binding.WorkID, 0); err != nil && !binding.Primary {

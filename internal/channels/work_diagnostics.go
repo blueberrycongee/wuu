@@ -55,19 +55,23 @@ func (s *Service) GetWorkDiagnostics(ctx context.Context, roomID string) (WorkDi
 			COALESCE(SUM(CASE WHEN run.outcome = 'block' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN run.outcome = 'unknown' THEN 1 ELSE 0 END), 0),
 			SUM(CASE WHEN run.ended_at IS NOT NULL AND run.started_at IS NOT NULL THEN run.ended_at - run.started_at ELSE 0 END),
-			COALESCE(SUM(run.input_tokens), 0), COALESCE(SUM(run.output_tokens), 0),
 			COALESCE(SUM(run.checks_rerun), 0), COALESCE(SUM(run.findings_count), 0),
 			COALESCE(SUM(CASE WHEN run.repair_outcome IN ('pass', 'fixed', 'completed') THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN run.state = 'interrupted' AND run.outcome LIKE '%recovery%' THEN 1 ELSE 0 END), 0)
 		FROM work_runs run JOIN works work ON work.id = run.work_id
 		WHERE run.kind = 'verifier'`+runWhere, runArgs...).Scan(
 		&diagnostics.VerifierRunCount, &diagnostics.VerifierBlockCount,
-		&diagnostics.VerifierUnknownCount, &latency, &diagnostics.InputTokens,
-		&diagnostics.OutputTokens, &diagnostics.ChecksRerun, &diagnostics.FindingsCount,
+		&diagnostics.VerifierUnknownCount, &latency,
+		&diagnostics.ChecksRerun, &diagnostics.FindingsCount,
 		&diagnostics.RepairSuccessCount, &diagnostics.RecoveryFailureCount,
 	); err != nil {
 		return WorkDiagnostics{}, fmt.Errorf("summarize verifier runs: %w", err)
 	}
+	input, output, err := collaborationTokenUsage(ctx, s.db, roomID, "")
+	if err != nil {
+		return WorkDiagnostics{}, fmt.Errorf("summarize collaboration usage: %w", err)
+	}
+	diagnostics.InputTokens, diagnostics.OutputTokens = input, output
 	if latency.Valid {
 		diagnostics.VerifierExtraLatencyMillis = latency.Int64
 	}
