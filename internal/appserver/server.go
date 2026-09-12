@@ -1154,6 +1154,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleSkillList(req)
 	case MethodChannelBootstrap:
 		return s.handleChannelBootstrap(ctx, req)
+	case MethodChannelContinuity:
+		return s.handleChannelContinuity(ctx, req)
 	case MethodChannelSessionList, MethodChannelSessionCreate, MethodChannelSessionRead, MethodChannelSessionSend, MethodChannelSessionStop, MethodChannelSessionResume:
 		return s.handleChannelSession(ctx, req)
 	case MethodChannelAgentList:

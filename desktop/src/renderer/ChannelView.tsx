@@ -8,6 +8,7 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import { ChannelContinuity } from "./ChannelContinuity";
 import { ChannelSessions } from "./ChannelSessions";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
@@ -1822,6 +1823,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   </span> : null}
                   <h2>{selectedRoom?.kind === "channel" ? <button type="button" className="channel-room-members-button" aria-label={t("channels.manageRoom", { name: selectedRoom.name })} title={t("channels.memberCount", { count: selectedRoom.members.length })} aria-haspopup="dialog" onClick={() => editRoom(selectedRoom)}><span>{selectedRoomTitle}</span><ChevronDown aria-hidden="true" /></button> : selectedRoomTitle || t("channels.rooms")}</h2>
                 </div>
+                {selectedRoom ? <ChannelContinuity key={selectedRoom.id} roomId={selectedRoom.id} agents={selectedRoomAgents} /> : null}
               </>}
             </header>
           {composingNewRoom ? <div className="channel-new-room-surface">

@@ -17,8 +17,8 @@ func (t *ChatWakeTool) IsReadOnly() bool        { return false }
 func (t *ChatWakeTool) IsConcurrencySafe() bool { return false }
 func (t *ChatWakeTool) Definition() providers.ToolDefinition {
 	str := func() map[string]any { return map[string]any{"type": "string"} }
-	return providers.ToolDefinition{Name: t.Name(), Description: "Persist future work or a user reminder. Set/update with exactly one trigger: after (at least 1m), RFC3339 fire_at, five-field cron schedule plus IANA timezone, or when_session (another room session becomes idle or terminal). scope=session resumes this exact session; agent/room survives this session and routes to the identity/coordinator. mode=wake invokes the model; message posts the note directly without a model. Finish your turn while waiting; the host queues execution when capacity is full. The host must be running; overdue occurrences recover once, without replaying every missed interval. List before updating, pausing or cancelling; revision prevents overwriting another change. Use stable request_id for creation retries. A schedule carries existing authorization, never expands it.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{
-		"action": map[string]any{"type": "string", "enum": []string{"set", "list", "pause", "resume", "cancel"}}, "id": str(), "revision": map[string]any{"type": "integer"}, "request_id": str(), "room_id": str(), "scope": map[string]any{"type": "string", "enum": []string{"session", "agent", "room"}}, "mode": map[string]any{"type": "string", "enum": []string{"wake", "message"}}, "note": str(), "after": str(), "fire_at": str(), "schedule": str(), "timezone": str(), "when_session": str(), "work_id": str(), "refs": map[string]any{"type": "array", "items": str()}}, "required": []string{"action"}}}
+	return providers.ToolDefinition{Name: t.Name(), Description: "Persist future work or a user reminder. Set/update with exactly one trigger: after (at least 1m), RFC3339 fire_at, five-field cron schedule plus IANA timezone, or when_session (another room session becomes idle or terminal). scope=session resumes this exact session; agent/room survives this session and routes to the identity/coordinator. mode=wake invokes the model; message posts the note directly without a model. Finish your turn while waiting; the host queues execution when capacity is full. The host must be running; overdue occurrences recover once, without replaying every missed interval. List returns a next cursor; pass it as after_id to continue. List before updating, pausing or cancelling; revision prevents overwriting another change. Use stable request_id for creation retries. A schedule carries existing authorization, never expands it.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+		"action": map[string]any{"type": "string", "enum": []string{"set", "list", "pause", "resume", "cancel"}}, "after_id": str(), "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}, "id": str(), "revision": map[string]any{"type": "integer"}, "request_id": str(), "room_id": str(), "scope": map[string]any{"type": "string", "enum": []string{"session", "agent", "room"}}, "mode": map[string]any{"type": "string", "enum": []string{"wake", "message"}}, "note": str(), "after": str(), "fire_at": str(), "schedule": str(), "timezone": str(), "when_session": str(), "work_id": str(), "refs": map[string]any{"type": "array", "items": str()}}, "required": []string{"action"}}}
 }
 func (t *ChatWakeTool) Execute(ctx context.Context, args string) (string, error) {
 	if t.env == nil || t.env.ChatAgent == nil {
@@ -26,18 +26,20 @@ func (t *ChatWakeTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	var p struct {
 		channels.FollowupSetParams
-		Action string `json:"action"`
+		Action  string `json:"action"`
+		AfterID string `json:"after_id"`
+		Limit   int    `json:"limit"`
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
 		return "", err
 	}
 	c := t.env.ChatAgent
 	if p.Action == "list" {
-		f, e := c.ListFollowups(ctx, p.RoomID)
+		f, e := c.QueryFollowups(ctx, p.RoomID, p.AfterID, p.Limit)
 		if e != nil {
 			return "", e
 		}
-		return mustJSON(map[string]any{"arrangements": f})
+		return mustJSON(f)
 	}
 	var f channels.Followup
 	var err error

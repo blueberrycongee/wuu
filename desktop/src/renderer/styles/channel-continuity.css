@@ -1,0 +1,21 @@
+.sidebar-name-dialog.channel-sessions-dialog.channel-continuity-dialog { width: min(480px, 100vw); background: var(--paper); }
+.channel-continuity-body { font-size: 13px; }
+.channel-continuity-body button { border: 0; background: transparent; font: inherit; color: var(--ink-soft); }
+.channel-continuity-launcher { margin-left: auto; flex-shrink: 0; }
+.channel-continuity-tabs, .channel-continuity-actions { display: flex; align-items: center; gap: 8px; }
+.channel-continuity-tabs { margin-bottom: 18px; }
+.channel-continuity-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; }
+.channel-continuity-tabs button[aria-pressed="true"] { background: var(--ink-overlay-4); color: var(--ink); }
+.channel-continuity-tabs .icon-button { margin-left: auto; }
+.channel-continuity-note, .channel-continuity-meta, .channel-continuity-loading { color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
+.channel-continuity-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.channel-continuity-item { padding: 16px 0; border-bottom: 1px solid var(--hairline); }
+.channel-continuity-note-body { margin: 6px 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.channel-continuity-actions { margin-top: 8px; flex-wrap: wrap; }
+.channel-continuity-actions button { padding: 4px 8px; color: var(--ink-soft); border-radius: 5px; }
+.channel-continuity-owner { width: 100%; padding: 6px 8px; margin-bottom: 12px; background: var(--paper); color: var(--ink); border: 1px solid var(--hairline); border-radius: 6px; }
+.channel-continuity-topic { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; padding: 12px 4px; }
+.channel-continuity-topic strong { font-size: 13px; font-weight: 500; }
+.channel-continuity-topic span { font-size: 12px; line-height: 1.5; color: var(--ink-muted); white-space: pre-line; overflow-wrap: anywhere; }
+.channel-continuity-memory { overflow-wrap: anywhere; }
+.channel-continuity-memory textarea { width: 100%; min-height: 240px; padding: 10px; margin-top: 12px; background: var(--paper); color: var(--ink); border: 1px solid var(--hairline); border-radius: 6px; line-height: 1.6; resize: vertical; }

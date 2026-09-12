@@ -204,13 +204,7 @@ func operateNotebook(dir string, p NotebookParams) (NotebookResult, error) {
 		if p.Revision == "" || p.Revision != item.Revision {
 			return result, fmt.Errorf("%w: read the memory first and supply its revision (missing for a new topic)", ErrConflict)
 		}
-		if p.Action == "delete" {
-			if item.Revision != "missing" {
-				err = root.Remove(p.Name)
-			}
-			item.Content = ""
-			item.Revision = "missing"
-		} else {
+		if p.Action == "write" {
 			if len(p.Content) > notebookTopicLimit {
 				return result, errors.New("memory topic must be at most 64 KiB")
 			}
@@ -219,6 +213,35 @@ func operateNotebook(dir string, p NotebookParams) (NotebookResult, error) {
 			if info, e := root.Lstat(p.Name); e == nil && !info.Mode().IsRegular() {
 				return result, errors.New("memory topic must be a regular file")
 			}
+		}
+		if p.Name != "MEMORY.md" {
+			index, e := read("MEMORY.md")
+			if e != nil {
+				return result, e
+			}
+			lines := strings.Split(index.Content, "\n")
+			kept := make([]string, 0, len(lines)+1)
+			target := "(" + p.Name + ")"
+			for _, line := range lines {
+				if !strings.Contains(line, target) {
+					kept = append(kept, line)
+				}
+			}
+			if p.Action == "write" {
+				kept = append(kept, "- ["+p.Name+"]("+p.Name+")")
+			}
+			// Topic corrections must not leave an obsolete preference in the injected index.
+			if e = securefs.WriteFileAtomic(filepath.Join(dir, "MEMORY.md"), []byte(strings.TrimSpace(strings.Join(kept, "\n"))+"\n")); e != nil {
+				return result, e
+			}
+		}
+		if p.Action == "delete" {
+			if item.Revision != "missing" {
+				err = root.Remove(p.Name)
+			}
+			item.Content = ""
+			item.Revision = "missing"
+		} else {
 			err = securefs.WriteFileAtomic(filepath.Join(dir, p.Name), []byte(p.Content))
 			item.Content = p.Content
 			item.Revision = fmt.Sprintf("%x", sha256.Sum256([]byte(p.Content)))

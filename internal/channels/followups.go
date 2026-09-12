@@ -361,3 +361,54 @@ func (s *Service) controlFollowup(ctx context.Context, id, state string, revisio
 	}
 	return f, tx.Commit()
 }
+
+type FollowupPage struct {
+	Arrangements []Followup `json:"arrangements"`
+	Next         string     `json:"next,omitempty"`
+}
+
+func (s *Service) QueryRoomFollowups(ctx context.Context, roomID, after string, limit int) (FollowupPage, error) {
+	result := FollowupPage{Arrangements: []Followup{}}
+	if _, err := s.GetRoom(ctx, roomID); err != nil {
+		return result, err
+	}
+	if limit <= 0 {
+		limit = 30
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT spec FROM collaboration_followups WHERE room_id=? AND id>? ORDER BY id LIMIT ?`, roomID, after, limit+1)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if len(result.Arrangements) == limit {
+			result.Next = result.Arrangements[len(result.Arrangements)-1].ID
+			break
+		}
+		f, e := scanFollowup(rows)
+		if e != nil {
+			return result, e
+		}
+		result.Arrangements = append(result.Arrangements, f)
+	}
+	return result, rows.Err()
+}
+func (c *AgentClient) QueryFollowups(ctx context.Context, roomID, after string, limit int) (FollowupPage, error) {
+	if _, err := c.service.AuthenticatePrincipal(ctx, c.agentID, c.token); err != nil {
+		return FollowupPage{}, err
+	}
+	if roomID == "" {
+		b, e := c.GetCollaborationSession(ctx, c.sessionRef)
+		if e != nil {
+			return FollowupPage{}, e
+		}
+		roomID = b.RoomID
+	}
+	if err := c.service.requireRoomPrincipalAccess(ctx, roomID, c.agentID); err != nil {
+		return FollowupPage{}, err
+	}
+	return c.service.QueryRoomFollowups(ctx, roomID, after, limit)
+}

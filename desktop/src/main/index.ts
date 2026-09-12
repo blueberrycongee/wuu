@@ -1770,6 +1770,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
+  ipcMain.handle("wuu:channel-continuity", (event, params) => appServerRequest(event, "channel/continuity", params));
   ipcMain.handle("wuu:channel-session-list", (event, params: ChannelSessionListParams) =>
     appServerRequest<ChannelSessionListResult>(event, "channel/session/list", params),
   );

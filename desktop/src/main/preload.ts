@@ -307,6 +307,7 @@ const api: WuuDesktopApi = {
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
   listSkills: () => ipcRenderer.invoke("wuu:skill-list"),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
+  channelContinuity: (params) => ipcRenderer.invoke("wuu:channel-continuity", params),
   listChannelSessions: (params) => ipcRenderer.invoke("wuu:channel-session-list", params),
   createChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-create", params),
   readChannelSession: (params) => ipcRenderer.invoke("wuu:channel-session-read", params),

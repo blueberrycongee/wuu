@@ -1040,6 +1040,21 @@ export type CollaborationSessionBinding = {
   updated_at: string;
 };
 
+export type CollaborationArrangement = {
+  id: string; owner_id: string; room_id: string; scope: "session" | "agent" | "room";
+  mode: "wake" | "message"; note: string; state: "active" | "paused" | "done" | "cancelled" | "blocked";
+  next_at: string; last_at?: string; schedule?: string; timezone?: string; when_session?: string;
+  session_ref?: string; reason?: string; revision: number;
+};
+export type CollaborationMemoryEntry = { name: string; revision: string; content?: string };
+export type ChannelContinuityParams = {
+  action: "list" | "control" | "memory"; roomId: string; ownerId?: string; id?: string;
+  state?: "active" | "paused" | "cancelled"; revision?: number; after?: string; limit?: number;
+  memory?: { action: "list" | "search" | "read" | "write" | "delete"; name?: string; query?: string;
+    after?: string; limit?: number; content?: string; revision?: string };
+};
+export type ChannelContinuityResult = { arrangements?: CollaborationArrangement[]; entries?: CollaborationMemoryEntry[]; next?: string };
+
 export type ChannelSessionListParams = { agentId?: string; roomId?: string };
 export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[] };
 export type ChannelSessionCreateParams = {
@@ -2891,6 +2906,7 @@ export type WuuDesktopApi = {
   stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
   listSkills: () => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
+  channelContinuity: (params: ChannelContinuityParams) => Promise<ChannelContinuityResult>;
   listChannelSessions: (params?: ChannelSessionListParams) => Promise<ChannelSessionListResult>;
   createChannelSession: (params: ChannelSessionCreateParams) => Promise<ChannelSessionResult>;
   readChannelSession: (params: ChannelSessionRefParams) => Promise<ChannelSessionReadResult>;
