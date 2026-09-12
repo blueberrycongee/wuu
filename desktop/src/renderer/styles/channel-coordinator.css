@@ -99,6 +99,13 @@
   height: 32px;
 }
 .channel-coordinator-member .agent-avatar-mark { width: 32px; height: 32px; }
+/* Align the painted body, whose SVG frame reserves space for motion. */
+.channel-activity-motion [data-wuu-mascot-activity] {
+  translate: calc(-1 * var(--wuu-mascot-inset-inline)) 0;
+}
+.channel-activity-motion .channel-response-status-avatar,
+.channel-coordinator-mascot { transform-origin: left center; }
+
 /* The room keeps one monochrome identity across providers and themes. */
 .channel-coordinator-mascot {
   --channel-coordinator-body: #353637;

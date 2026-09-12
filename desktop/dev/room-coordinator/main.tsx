@@ -12,7 +12,7 @@ document.documentElement.dataset.theme = query.get("theme") || "light";
 document.documentElement.dataset.platform = "mac";
 const created_at = "2026-09-12T14:00:00Z";
 const agents = ["Alice", "Bob"].map((name, index) => ({
-  id: `a${index}`, name, memory_dir: "/preview", avatar_key: `abstract-${index + 1}`,
+  id: `a${index}`, name, memory_dir: "/preview", avatar_key: query.get("avatar") || `abstract-${index + 1}`,
   autostart: true, created_at, activity_status: "idle", activity_room_ids: [],
 }));
 const tasks = query.has("tasks") ? [{

@@ -42,7 +42,7 @@ app.whenReady().then(async () => {
       }
       const edges = await win.webContents.executeJavaScript(`(() => {
         const frame = document.querySelector('.composer-frame').getBoundingClientRect();
-        const avatar = document.querySelector('${member ? '.channel-response-status-avatar' : '.channel-coordinator-mascot'}').getBoundingClientRect();
+        const avatar = document.querySelector('${member ? '.channel-response-status-avatar' : '.channel-coordinator-mascot'} .mo-bob > g:not(.mo-eyes) > path').getBoundingClientRect();
         return { input: frame.left, avatar: avatar.left };
       })()`);
       assert(Math.abs(edges.input - edges.avatar) < 1, JSON.stringify({ theme, width, member, ...edges }));
@@ -60,7 +60,24 @@ app.whenReady().then(async () => {
     assert.equal(expanded.overflow, false);
     fs.writeFileSync(path.join(output, `${theme}-${width}-expanded.png`), (await win.webContents.capturePage()).toPNG());
   }
-  console.log("PASS: avatar/title summaries, expandable details, composer alignment for coordinator and member, light/dark at 390/1100/1600px");
+  for (const shape of ["round", "rounded-square", "capsule", "triangle", "diamond"]) {
+    await win.loadURL(`${baseURL}/dev/room-coordinator/index.html?state=waiting&avatar=mascot-v1:${shape}:none:140`);
+    await waitFor(win, `!!document.querySelector('.channel-coordinator-member')`);
+    const edges = await win.webContents.executeJavaScript(`(() => {
+      const frame = document.querySelector('.composer-frame').getBoundingClientRect();
+      const body = document.querySelector('.channel-coordinator-member .mo-bob > g:not(.mo-eyes) > path').getBoundingClientRect();
+      return { input: frame.left, body: body.left };
+    })()`);
+    assert(Math.abs(edges.input - edges.body) < 1, JSON.stringify({ shape, ...edges }));
+    if (shape === "capsule") {
+      const footer = await win.webContents.executeJavaScript(`(() => {
+        const r = document.querySelector('.channel-conversation-footer').getBoundingClientRect();
+        return { x: 0, y: Math.floor(r.top), width: innerWidth, height: Math.floor(innerHeight - r.top) };
+      })()`);
+      fs.writeFileSync(path.join(output, 'capsule-alignment.png'), (await win.webContents.capturePage(footer)).toPNG());
+    }
+  }
+  console.log("PASS: avatar/title summaries, expandable details, painted-body alignment for coordinator and all five avatar shapes, light/dark at 390/1100/1600px");
   win.destroy();
   app.quit();
 }).catch(error => { console.error(error); app.exit(1); });
