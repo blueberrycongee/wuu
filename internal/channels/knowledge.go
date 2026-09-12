@@ -47,7 +47,8 @@ type SessionResults struct {
 
 func (c *AgentClient) ReadSessionResults(ctx context.Context, ref string, after int64, limit int) (SessionResults, error) {
 	result := SessionResults{Results: []SessionResult{}}
-	if _, err := c.GetCollaborationSession(ctx, ref); err != nil {
+	roomID, own, err := c.sessionResultAccess(ctx, ref)
+	if err != nil {
 		return result, err
 	}
 	if after < 0 {
@@ -59,7 +60,9 @@ func (c *AgentClient) ReadSessionResults(ctx context.Context, ref string, after 
 	if limit > 50 {
 		limit = 50
 	}
-	rows, err := c.service.db.QueryContext(ctx, `SELECT id,session_ref,turn_id,body,state,created_at FROM collaboration_results WHERE session_ref=? AND id>? ORDER BY id LIMIT ?`, ref, after, limit+1)
+	rows, err := c.service.db.QueryContext(ctx, `SELECT result.id,result.session_ref,result.turn_id,result.body,result.state,result.created_at
+		FROM collaboration_results result LEFT JOIN collaboration_turn_scopes scope ON scope.session_ref=result.session_ref AND scope.turn_id=result.turn_id
+		WHERE result.session_ref=? AND result.id>? AND (? OR scope.room_id=?) ORDER BY result.id LIMIT ?`, ref, after, own, roomID, limit+1)
 	if err != nil {
 		return result, err
 	}
@@ -86,14 +89,17 @@ func (c *AgentClient) ReadSessionResults(ctx context.Context, ref string, after 
 
 // ReadSessionResultPage retrieves a selected result without loading a private transcript.
 func (c *AgentClient) ReadSessionResultPage(ctx context.Context, ref string, id int64, offset int) (map[string]any, error) {
-	if _, err := c.GetCollaborationSession(ctx, ref); err != nil {
+	roomID, own, err := c.sessionResultAccess(ctx, ref)
+	if err != nil {
 		return nil, err
 	}
 	if offset < 0 {
 		return nil, errors.New("offset must be non-negative")
 	}
 	var body string
-	if err := c.service.db.QueryRowContext(ctx, `SELECT body FROM collaboration_results WHERE session_ref=? AND id=?`, ref, id).Scan(&body); err != nil {
+	if err := c.service.db.QueryRowContext(ctx, `SELECT result.body FROM collaboration_results result
+		LEFT JOIN collaboration_turn_scopes scope ON scope.session_ref=result.session_ref AND scope.turn_id=result.turn_id
+		WHERE result.session_ref=? AND result.id=? AND (? OR scope.room_id=?)`, ref, id, own, roomID).Scan(&body); err != nil {
 		return nil, err
 	}
 	chars := []rune(body)
@@ -106,4 +112,33 @@ func (c *AgentClient) ReadSessionResultPage(ctx context.Context, ref string, id 
 		next = end
 	}
 	return map[string]any{"id": id, "session_ref": ref, "body": string(chars[offset:end]), "next_offset": next}, nil
+}
+
+func (c *AgentClient) sessionResultAccess(ctx context.Context, ref string) (string, bool, error) {
+	actor, err := c.service.AuthenticatePrincipal(ctx, c.agentID, c.token)
+	if err != nil {
+		return "", false, err
+	}
+	target, err := c.service.LookupCollaborationSession(ctx, ref)
+	if err != nil {
+		return "", false, err
+	}
+	if actor.ID == target.PrincipalID {
+		return "", true, nil
+	}
+	roomID := target.RoomID
+	if c.sessionRef != "" {
+		source, err := c.GetCollaborationSession(ctx, c.sessionRef)
+		if err != nil {
+			return "", false, err
+		}
+		roomID = source.RoomID
+	}
+	if err := c.service.requireRoomPrincipalAccess(ctx, roomID, actor.ID); err != nil {
+		return "", false, err
+	}
+	if err := c.service.requireRoomPrincipalAccess(ctx, roomID, target.PrincipalID); err != nil {
+		return "", false, err
+	}
+	return roomID, false, nil
 }

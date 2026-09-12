@@ -36,21 +36,28 @@ func (s *Service) EnqueueSessionInput(ctx context.Context, params CollaborationS
 	if err != nil {
 		return CollaborationMessage{}, err
 	}
+	roomID := strings.TrimSpace(params.RoomID)
+	if roomID == "" {
+		roomID = target.RoomID
+	}
+	if !target.Primary && roomID != target.RoomID {
+		return CollaborationMessage{}, ErrUnauthorized
+	}
 	senderID, senderType := params.ActorID, MemberAgent
 	if senderID == "" {
 		if params.SourceSessionRef != "" {
 			return CollaborationMessage{}, ErrUnauthorized
 		}
 		senderType = MemberHuman
-		if err := tx.QueryRowContext(ctx, `SELECT created_by FROM rooms WHERE id = ?`, target.RoomID).Scan(&senderID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT created_by FROM rooms WHERE id = ?`, roomID).Scan(&senderID); err != nil {
 			return CollaborationMessage{}, err
 		}
 	} else {
-		if err := requireRoomPrincipalAccessTx(ctx, tx, target.RoomID, senderID); err != nil {
+		if err := requireRoomPrincipalAccessTx(ctx, tx, roomID, senderID); err != nil {
 			return CollaborationMessage{}, err
 		}
 	}
-	send := CollaborationSendParams{AgentID: senderID, RoomID: target.RoomID, FromSessionRef: params.SourceSessionRef, ToAgentID: target.PrincipalID, TargetSessionRef: target.SessionRef, Body: params.Body, Kind: CollaborationControl, TargetKind: CollaborationTargetSession, TargetID: target.SessionRef, Visibility: CollaborationVisibilityPrivate, RequestID: params.RequestID}
+	send := CollaborationSendParams{AgentID: senderID, RoomID: roomID, FromSessionRef: params.SourceSessionRef, ToAgentID: target.PrincipalID, TargetSessionRef: target.SessionRef, Body: params.Body, Kind: CollaborationControl, TargetKind: CollaborationTargetSession, TargetID: target.SessionRef, Visibility: CollaborationVisibilityPrivate, RequestID: params.RequestID}
 	requestHash := collaborationRequestHash(send)
 	if message, found, err := findCollaborationRequestTx(ctx, tx, send, requestHash); found || err != nil {
 		return message, err
@@ -58,16 +65,16 @@ func (s *Service) EnqueueSessionInput(ctx context.Context, params CollaborationS
 	if !acceptsCollaborationSessionDelivery(target.State) {
 		return CollaborationMessage{}, fmt.Errorf("%w: target session is %s", ErrConflict, target.State)
 	}
-	if err := requireRoomPrincipalAccessTx(ctx, tx, target.RoomID, target.PrincipalID); err != nil {
+	if err := requireRoomPrincipalAccessTx(ctx, tx, roomID, target.PrincipalID); err != nil {
 		return CollaborationMessage{}, err
 	}
 	if params.SourceSessionRef != "" {
-		if err := validateCollaborationSessionWriteTx(ctx, tx, params.SourceSessionRef, params.ActorID, target.RoomID, "", 0); err != nil {
+		if err := validateCollaborationSessionWriteTx(ctx, tx, params.SourceSessionRef, params.ActorID, roomID, "", 0); err != nil {
 			return CollaborationMessage{}, err
 		}
 	}
 	now := fromMillis(toMillis(s.now()))
-	message, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{RoomID: target.RoomID, FromType: senderType, FromID: senderID, FromSessionRef: params.SourceSessionRef, ToAgentID: target.PrincipalID, TargetSessionRef: target.SessionRef, WorkID: target.WorkID, Kind: CollaborationControl, Body: params.Body, TargetKind: CollaborationTargetSession, TargetID: target.SessionRef, Visibility: CollaborationVisibilityPrivate, RequestID: params.RequestID, CreatedAt: now})
+	message, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{RoomID: roomID, FromType: senderType, FromID: senderID, FromSessionRef: params.SourceSessionRef, ToAgentID: target.PrincipalID, TargetSessionRef: target.SessionRef, WorkID: "", Kind: CollaborationControl, Body: params.Body, TargetKind: CollaborationTargetSession, TargetID: target.SessionRef, Visibility: CollaborationVisibilityPrivate, RequestID: params.RequestID, CreatedAt: now})
 	if err != nil {
 		return CollaborationMessage{}, err
 	}

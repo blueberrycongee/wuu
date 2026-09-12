@@ -157,7 +157,7 @@ func followupBlockReasonTx(ctx context.Context, tx *sql.Tx, f Followup) (string,
 		if err != nil {
 			return "", err
 		}
-		if b.PrincipalID != f.OwnerID || b.RoomID != f.RoomID {
+		if b.PrincipalID != f.OwnerID || !b.Primary && b.RoomID != f.RoomID {
 			return "The session ownership changed", nil
 		}
 		switch b.State {

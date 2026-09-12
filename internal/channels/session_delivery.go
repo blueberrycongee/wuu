@@ -44,9 +44,9 @@ func (s *Service) ReceiveCollaboration(ctx context.Context, agentID, token, sess
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, collaborationMessageSelect+`
-  WHERE delivery.to_agent_id = ? AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
+  WHERE delivery.to_agent_id = ? AND (NOT ? OR delivery.room_id = ?) AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
    AND (delivery.target_session_ref = ? OR (delivery.target_session_ref IS NULL AND delivery.room_id = ? AND (COALESCE(delivery.work_id, '') = ? AND ? OR ? AND delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion'))))
-  ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, actor.ID, sessionRef, binding.RoomID, binding.WorkID, binding.WorkID != "" || binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination, (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination), limit)
+  ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, actor.ID, binding.Primary, binding.RoomID, sessionRef, binding.RoomID, binding.WorkID, binding.WorkID != "" || binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination, (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination), limit)
 	if err != nil {
 		return nil, err
 	}

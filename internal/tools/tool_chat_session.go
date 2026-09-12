@@ -19,10 +19,10 @@ func (t *ChatSessionTool) Name() string            { return "chat_session" }
 func (t *ChatSessionTool) IsReadOnly() bool        { return false }
 func (t *ChatSessionTool) IsConcurrencySafe() bool { return true }
 func (t *ChatSessionTool) Definition() providers.ToolDefinition {
-	return providers.ToolDefinition{Name: t.Name(), Description: "Create and manage independent collaboration sessions under durable named identities. Sessions have separate context and pinned BYOK models. Create parallel investigations, implementation or review sessions as needed; each creation is durable and request_id makes retries idempotent. Queued sessions wait for capacity. Results wake the creating session; finish your turn while waiting to release execution capacity. List discovers room-scoped session metadata. Results lists final outcome excerpts (after cursor, limit); supply result_id and offset to read a selected outcome in pages; private transcripts remain private. Use send or collaboration_send for precise asynchronous communication. Stop cancels a session and its descendants; resume explicitly restarts a stopped session.", InputSchema: map[string]any{
+	return providers.ToolDefinition{Name: t.Name(), Description: "Discover named agents' continuing conversations and read prior execution results. Each name has one continuing session. Use send for asynchronous peer messages with room_id and request_id; use collaboration_send or chat_task to delegate to another identity. Work directly in your own session. List/get include archived execution metadata; prior sessions must not be restarted as parallel copies. Stop pauses a conversation and resume continues it. Private transcripts remain private.", InputSchema: map[string]any{
 		"type": "object", "properties": map[string]any{
-			"action":    map[string]any{"type": "string", "enum": []string{"create", "list", "peers", "get", "results", "send", "stop", "resume"}},
-			"agent_id":  map[string]any{"type": "string", "description": "Durable identity; create defaults to your own identity."},
+			"action":    map[string]any{"type": "string", "enum": []string{"list", "peers", "get", "results", "send", "stop", "resume"}},
+			"agent_id":  map[string]any{"type": "string", "description": "Durable named identity to discover."},
 			"result_id": map[string]any{"type": "integer"}, "offset": map[string]any{"type": "integer", "minimum": 0},
 			"after": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
 			"room_id": map[string]any{"type": "string"}, "session_ref": map[string]any{"type": "string"}, "title": map[string]any{"type": "string"},
@@ -99,7 +99,7 @@ func (t *ChatSessionTool) Execute(ctx context.Context, argsJSON string) (string,
 		if strings.TrimSpace(args.RequestID) == "" {
 			return "", errors.New("send requires a stable request_id")
 		}
-		result, err := c.SendSession(ctx, channels.CollaborationSessionSendParams{SessionRef: args.SessionRef, Body: args.Prompt, RequestID: args.RequestID})
+		result, err := c.SendSession(ctx, channels.CollaborationSessionSendParams{SessionRef: args.SessionRef, RoomID: args.RoomID, Body: args.Prompt, RequestID: args.RequestID})
 		if err != nil {
 			return "", err
 		}

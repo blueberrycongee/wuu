@@ -15,6 +15,10 @@ func (s *Service) migrateCollaborationSessions() error {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS named_agent_conversations (
+            agent_id TEXT PRIMARY KEY REFERENCES named_agents(id) ON DELETE CASCADE,
+            session_ref TEXT NOT NULL UNIQUE
+        )`,
 		`DROP INDEX IF EXISTS idx_work_runs_session`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_work_runs_active_session
 			ON work_runs(session_ref)

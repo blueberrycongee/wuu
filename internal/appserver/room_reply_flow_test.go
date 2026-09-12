@@ -232,56 +232,6 @@ func TestRoomReplyPublishesFinalAfterExplicitProgress(t *testing.T) {
 	}
 }
 
-func TestRoomReplyChildStaysPrivateUntilParentIntegrates(t *testing.T) {
-	fixture, provider := newCollaborationFlowFixture(t)
-	fixture.room = createPeerRoom(t, fixture, "Private investigation", fixture.identity)
-	sendRoomReplyObjective(t, fixture, "Investigate and explain the verified result")
-	call := provider.next(t)
-	parentRef := namedAgentRoomSessionID(agentRuntimeFromNamed(fixture.identity), fixture.room.ID)
-	parent, err := fixture.server.channelService.LookupCollaborationSession(context.Background(), parentRef)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, child, childCall := startCollaborationChild(t, fixture, provider, parent, call)
-	assertChildHidden := func() {
-		t.Helper()
-		result := readRoomReplies(t, fixture, fixture.room.ID)
-		for _, response := range result.Responses {
-			if response.SessionRef == child.SessionRef {
-				t.Fatalf("private child execution appeared in the room: %+v", response)
-			}
-		}
-		for _, message := range result.Messages {
-			if strings.Contains(message.Body, "PRIVATE CHILD EVIDENCE") {
-				t.Fatalf("raw child evidence was published: %+v", message)
-			}
-		}
-	}
-	assertChildHidden()
-	const evidence = "PRIVATE CHILD EVIDENCE: the captured pointer refers to the old socket"
-	childCall.response <- providers.ChatResponse{Content: evidence}
-	fixture.waitForCompletion(t)
-	continuation := provider.next(t)
-	if !strings.Contains(collaborationRequestText(continuation.request), evidence) {
-		t.Fatal("child result did not reach its parent for integration")
-	}
-	assertChildHidden()
-	const integrated = "The experiment confirms that reconnect retains the previous socket."
-	continuation.response <- providers.ChatResponse{Content: integrated}
-	fixture.waitForCompletion(t)
-	assertChildHidden()
-	result := readRoomReplies(t, fixture, fixture.room.ID)
-	var found bool
-	for _, message := range result.Messages {
-		if message.Body == integrated && message.AuthorID == fixture.identity.ID {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("parent's integrated final did not reach the room: %+v", result)
-	}
-}
-
 func TestRoomReplyFailureIsVisibleAndRecoverable(t *testing.T) {
 	for _, resume := range []bool{true, false} {
 		name := "new input"
@@ -321,26 +271,6 @@ func TestRoomReplyFailureIsVisibleAndRecoverable(t *testing.T) {
 				t.Fatalf("recovered final did not replace the failed response: %+v", result)
 			}
 		})
-	}
-}
-
-func TestRoomReplyIndependentSessionDoesNotPublish(t *testing.T) {
-	fixture, provider := newCollaborationFlowFixture(t)
-	fixture.room = createPeerRoom(t, fixture, "Independent work", fixture.identity)
-	var created ChannelSessionResult
-	fixture.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{
-		AgentID: fixture.identity.ID, RoomID: fixture.room.ID,
-		Prompt: "Investigate this privately", RequestID: "private-independent",
-	}, &created)
-	call := provider.next(t)
-	if result := readRoomReplies(t, fixture, fixture.room.ID); len(result.Responses) != 0 {
-		t.Fatalf("independent work was projected as a room response: %+v", result.Responses)
-	}
-	call.response <- providers.ChatResponse{Content: "PRIVATE INDEPENDENT RESULT"}
-	fixture.waitForCompletion(t)
-	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 0 || len(result.Responses) != 0 {
-		t.Fatalf("independent final leaked into the public room: %+v", result)
 	}
 }
 

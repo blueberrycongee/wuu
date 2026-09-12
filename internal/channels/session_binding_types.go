@@ -27,8 +27,9 @@ const (
 )
 
 // CollaborationSessionBinding is the durable execution identity behind a
-// collaboration principal. Named Agents may own any number of bindings.
+// collaboration principal. Each named identity has one primary conversation; older bindings remain history.
 type CollaborationSessionBinding struct {
+	Primary          bool                        `json:"primary,omitempty"`
 	TurnID           string                      `json:"turn_id,omitempty"`
 	SessionRef       string                      `json:"session_ref"`
 	Title            string                      `json:"title,omitempty"`
