@@ -176,3 +176,72 @@ func TestFollowupEventAlreadyFinishedAndWeeklyTimezone(t *testing.T) {
 		t.Fatalf("weekly = %v, %v; want %v", next, err, want)
 	}
 }
+
+func TestRecurringFollowupCoalescesBacklogAndDirectMessageSkipsModel(t *testing.T) {
+	ctx := context.Background()
+	s := openTestService(t, nil)
+	owner := createTestAgent(t, s, "Owner")
+	room := createTestRoom(t, s, owner)
+	a := flexibleTestSession(t, s, owner.Agent.ID, room.ID, "monitor")
+	f, err := a.SetFollowup(ctx, FollowupSetParams{RequestID: "monitor", Cron: "* * * * *", Timezone: "UTC", Note: "Check changes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceFollowupClock(s, f.NextAt.Add(time.Second))
+	if _, err = s.FireDueFollowups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	advanceFollowupClock(s, f.NextAt.Add(time.Hour))
+	if _, err = s.FireDueFollowups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := a.ReceiveCollaboration(ctx, 10)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("backlog = %+v, %v", messages, err)
+	}
+	if err = a.AcknowledgeCollaboration(ctx, []string{messages[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	due := s.now().Add(time.Hour)
+	p := FollowupSetParams{RequestID: "remind-human", Scope: "agent", Mode: "message", FireAt: &due, Note: "Time for the weekly review"}
+	direct, err := a.SetFollowup(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceFollowupClock(s, direct.NextAt.Add(time.Second))
+	if _, err = s.FireDueFollowups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.FireDueFollowups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := a.SetFollowup(ctx, p)
+	if err != nil || retry.ID != direct.ID {
+		t.Fatalf("retry after due = %+v, %v", retry, err)
+	}
+	timeline, err := s.ListMessages(ctx, room.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range timeline {
+		if m.Body == p.Note {
+			count++
+			if m.AuthorID != owner.Agent.ID {
+				t.Fatal("reminder lost sender")
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("direct reminders = %d", count)
+	}
+	deliveries, err := s.PendingCollaborationDispatches(ctx, owner.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, delivery := range deliveries {
+		if delivery.CorrelationID == direct.ID {
+			t.Fatal("direct message invoked a model")
+		}
+	}
+}

@@ -67,6 +67,10 @@ func (s *Service) FireDueFollowups(ctx context.Context) ([]string, error) {
 			switch watched.State {
 			case CollaborationSessionStarting, CollaborationSessionRunning, CollaborationSessionQueued, CollaborationSessionWaiting:
 				continue
+			case CollaborationSessionIdle:
+				if watched.TurnID == "" {
+					continue
+				}
 			}
 		}
 		occurrence := fmt.Sprintf("%s:%d:%d", f.ID, f.Revision, toMillis(f.NextAt))
@@ -81,6 +85,21 @@ func (s *Service) FireDueFollowups(ctx context.Context) ([]string, error) {
 				return nil, err
 			}
 		} else {
+			var pending int
+			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_messages WHERE correlation_id=? AND consumed_at IS NULL AND invalidated_at IS NULL`, f.ID).Scan(&pending); err != nil {
+				return nil, err
+			}
+			if pending > 0 && f.Cron != "" {
+				f.NextAt, err = nextFollowupTime(f.Cron, f.Timezone, now)
+				if err != nil {
+					return nil, err
+				}
+				f.Revision++
+				if err = saveFollowupTx(ctx, tx, f); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			targetKind, targetID := CollaborationTargetNamedAgent, f.OwnerID
 			if f.SessionRef != "" {
 				targetKind, targetID = CollaborationTargetSession, f.SessionRef

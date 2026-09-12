@@ -152,6 +152,24 @@ func (c *AgentClient) SetFollowup(ctx context.Context, p FollowupSetParams) (Fol
 	if p.Note == "" || utf8.RuneCountInString(p.Note) > MaxMessageRunes || len(p.Refs) > 30 {
 		return Followup{}, errors.New("follow-up requires a bounded note and at most 30 references")
 	}
+	encoded, _ := json.Marshal(p)
+	hash := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	if p.ID == "" && strings.TrimSpace(p.RequestID) != "" {
+		id := fmt.Sprintf("followup-%x", sha256.Sum256([]byte(actor.ID+"\x00"+c.sessionRef+"\x00"+p.RequestID)))
+		var previousHash, raw string
+		e := s.db.QueryRowContext(ctx, `SELECT request_hash,spec FROM collaboration_followups WHERE id=?`, id).Scan(&previousHash, &raw)
+		if e == nil {
+			if previousHash != hash {
+				return Followup{}, fmt.Errorf("%w: request_id was used with different instructions", ErrConflict)
+			}
+			var previous Followup
+			e = json.Unmarshal([]byte(raw), &previous)
+			return previous, e
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return Followup{}, e
+		}
+	}
 	triggers := 0
 	if p.After != "" {
 		triggers++
@@ -218,8 +236,6 @@ func (c *AgentClient) SetFollowup(ctx context.Context, p FollowupSetParams) (Fol
 		}
 		f.GoalRevision = work.GoalRevision
 	}
-	encoded, _ := json.Marshal(p)
-	hash := fmt.Sprintf("%x", sha256.Sum256(encoded))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -337,6 +353,12 @@ func (s *Service) controlFollowup(ctx context.Context, id, state string, revisio
 		if f.OwnerID != actor || f.Scope == "session" && f.SessionRef != ref {
 			return f, ErrUnauthorized
 		}
+		if ref == "" {
+			return f, ErrUnauthorized
+		}
+		if err = validateCollaborationSessionWriteTx(ctx, tx, ref, actor, f.RoomID, "", 0); err != nil {
+			return f, err
+		}
 		if err = requireRoomPrincipalAccessTx(ctx, tx, f.RoomID, actor); err != nil {
 			return f, err
 		}
@@ -349,6 +371,9 @@ func (s *Service) controlFollowup(ctx context.Context, id, state string, revisio
 	if state == "active" && f.State != "paused" {
 		return f, errors.New("only a paused follow-up can resume; create a new arrangement after completion or cancellation")
 	}
+	if state == "paused" && f.State != "active" {
+		return f, errors.New("only an active follow-up can pause")
+	}
 	f.State = state
 	f.Revision++
 	if state != "active" {
@@ -358,6 +383,14 @@ func (s *Service) controlFollowup(ctx context.Context, id, state string, revisio
 	}
 	if err = saveFollowupTx(ctx, tx, f); err != nil {
 		return f, err
+	}
+	if f.SessionRef != "" && state != "active" {
+		_, err = tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state='completed',updated_at=? WHERE session_ref=? AND state='waiting'
+   AND NOT EXISTS(SELECT 1 FROM collaboration_followups WHERE session_ref=? AND state='active')
+   AND NOT EXISTS(SELECT 1 FROM collaboration_session_bindings WHERE parent_session_ref=? AND state IN ('starting','running','queued','waiting'))`, toMillis(s.now()), f.SessionRef, f.SessionRef, f.SessionRef)
+		if err != nil {
+			return f, err
+		}
 	}
 	return f, tx.Commit()
 }
