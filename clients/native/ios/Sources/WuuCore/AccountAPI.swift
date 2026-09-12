@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public struct AccountSession: Codable, Equatable, Sendable {
     public let server: String
@@ -17,8 +18,34 @@ public struct AccountDevice: Codable, Identifiable, Sendable {
     public var id: String { pub }
 }
 
-public struct DeviceDirectory: Decodable {
+public struct DeviceDirectory: Codable, Sendable {
     public let devices: [AccountDevice]
+    public let auth_method: String
+}
+
+/// Last authorized directory, usable only by the same login. Presence is never restored as live.
+public struct RememberedDirectory: Codable {
+    private let login: String
+    private let directory: DeviceDirectory
+    private static func key(_ account: AccountSession) throws -> String {
+        let data = try JSONEncoder().encode([account.server, account.username, account.pub, account.token])
+        return Data(SHA256.hash(data: data)).base64URL
+    }
+    public init(account: AccountSession, directory: DeviceDirectory) throws {
+        login = try Self.key(account); self.directory = directory
+    }
+    public func restore(account: AccountSession) throws -> DeviceDirectory? {
+        guard login == (try Self.key(account)) else { return nil }
+        return DeviceDirectory(devices: directory.devices.map {
+            AccountDevice(pub: $0.pub, name: $0.name, role: $0.role, online: false)
+        }, auth_method: directory.auth_method)
+    }
+}
+
+public struct AccountConfiguration: Decodable, Sendable {
+    public let registration: Bool
+    public let github: Bool
+    public let push_platforms: [String]?
 }
 
 final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -81,5 +108,18 @@ public final class AccountAPI: @unchecked Sendable {
         guard result.pub == identity.publicKey.base64URL, result.username == user else { throw NativeError.invalid("Server returned a different device identity") }
         return AccountSession(server: origin.absoluteString, token: result.token, username: result.username,
                               pub: result.pub, deviceSeed: identity.seed.base64URL, recovery: result.recovery)
+    }
+
+    /// Changes the password and rotates the recovery key. The server revokes every device.
+    public func resetPassword(username: String, secret: String, password: String, token: String? = nil) async throws -> String {
+        struct Result: Decodable { let recovery: String }
+        let result: Result = try await request(token == nil ? "/recover" : "/password", token: token,
+            body: ["username": username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), "secret": secret, "password": password])
+        return result.recovery
+    }
+
+    public func logout(token: String) async throws {
+        do { let _: JSONValue = try await request("/logout", token: token, body: [:]) }
+        catch NativeError.http(401, _) { /* Already revoked. */ }
     }
 }

@@ -154,7 +154,7 @@ public actor RemoteConnection {
                 guard envelope["t"].string == "hs2" else { throw NativeError.invalid("Unexpected handshake reply") }
                 channel = try handshake.finish(JSONDecoder().decode(HandshakeReply.self, from: body))
                 self.handshake = nil
-                try await sealed(["t": "attach", "client_profile": "mobile_chat"])
+                try await sealed(["t": "attach", "client_profile": "mobile_activity"])
             } else if kind == 2, let channel {
                 let message = try JSONDecoder().decode(JSONValue.self, from: channel.open(Data(payload.dropFirst())))
                 try await handleSealed(message, epoch: stamp)

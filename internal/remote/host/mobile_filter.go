@@ -10,14 +10,23 @@ import (
 
 func normalizeClientProfile(profile string) string {
 	switch strings.TrimSpace(profile) {
-	case wire.ClientProfileMobileChat:
-		return wire.ClientProfileMobileChat
+	case wire.ClientProfileMobileChat, wire.ClientProfileMobileActivity:
+		return strings.TrimSpace(profile)
 	default:
 		return ""
 	}
 }
 
 func filterMobileChatLine(line []byte) ([]byte, bool) {
+	return (mobileChatFilter{}).line(line)
+}
+
+type mobileChatFilter struct {
+	tools    bool
+	threadID string
+}
+
+func (f mobileChatFilter) line(line []byte) ([]byte, bool) {
 	var env map[string]json.RawMessage
 	if err := json.Unmarshal(line, &env); err != nil {
 		return line, true
@@ -26,9 +35,9 @@ func filterMobileChatLine(line []byte) ([]byte, bool) {
 	_, hasID := env["id"]
 	switch {
 	case method != "" && !hasID:
-		return filterMobileChatNotification(env, method)
+		return f.notification(env, method)
 	case method == "":
-		if slimMobileChatResponse(env) {
+		if f.response(env) {
 			out, err := json.Marshal(env)
 			if err == nil {
 				return out, true
@@ -38,25 +47,31 @@ func filterMobileChatLine(line []byte) ([]byte, bool) {
 	return line, true
 }
 
-func filterMobileChatNotification(env map[string]json.RawMessage, method string) ([]byte, bool) {
+func (f mobileChatFilter) notification(env map[string]json.RawMessage, method string) ([]byte, bool) {
 	switch method {
 	case appserver.NotificationThreadStarted,
 		appserver.NotificationThreadResumed,
 		appserver.NotificationThreadUpdated:
-		if !slimMobileChatThreadParam(env) {
+		if !f.threadParam(env) {
 			return nil, false
 		}
 	case appserver.NotificationTurnStarted,
 		appserver.NotificationTurnCompleted,
 		appserver.NotificationTurnError:
-		slimMobileChatTurnParam(env)
+		f.turnParam(env)
 	case appserver.NotificationItemStarted,
 		appserver.NotificationItemCompleted:
-		if !slimMobileChatItemParam(env) {
+		if !f.itemParam(env) {
 			return nil, false
 		}
 	case appserver.NotificationTurnQueued,
 		appserver.NotificationTurnDequeued,
+		appserver.NotificationTurnHeld,
+		appserver.NotificationTurnSteered,
+		appserver.NotificationTurnUnsteered,
+		appserver.NotificationAgentMessageDelta,
+		appserver.NotificationAgentMessageReplace,
+		appserver.NotificationItemRemoved,
 		appserver.NotificationUserQuestionRequested,
 		appserver.NotificationUserQuestionResolved:
 		// Direct chat state.
@@ -70,7 +85,7 @@ func filterMobileChatNotification(env map[string]json.RawMessage, method string)
 	return out, true
 }
 
-func slimMobileChatResponse(env map[string]json.RawMessage) bool {
+func (f mobileChatFilter) response(env map[string]json.RawMessage) bool {
 	raw, ok := env["result"]
 	if !ok || len(raw) == 0 || string(raw) == "null" {
 		return false
@@ -79,7 +94,8 @@ func slimMobileChatResponse(env map[string]json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return false
 	}
-	changed := slimMobileChatResult(result)
+	f.threadID = jsonString(result["thread_id"])
+	changed := f.result(result)
 	if !changed {
 		return false
 	}
@@ -91,30 +107,36 @@ func slimMobileChatResponse(env map[string]json.RawMessage) bool {
 	return true
 }
 
-func slimMobileChatResult(result map[string]json.RawMessage) bool {
+func (f mobileChatFilter) result(result map[string]json.RawMessage) bool {
 	changed := false
 	if raw, ok := result["thread"]; ok {
-		if slim, keep := slimMobileChatThread(raw); keep {
+		if slim, keep := f.thread(raw); keep {
 			result["thread"] = slim
 			changed = true
 		}
 	}
 	if raw, ok := result["threads"]; ok {
-		if slim, keep := slimMobileChatThreads(raw); keep {
+		if slim, keep := f.threads(raw); keep {
 			result["threads"] = slim
 			changed = true
 		}
 	}
 	if raw, ok := result["turn"]; ok {
-		if slim, keep := slimMobileChatTurn(raw); keep {
+		if slim, keep := f.turn(raw); keep {
 			result["turn"] = slim
+			changed = true
+		}
+	}
+	if raw, ok := result["turns"]; ok {
+		if slim, keep := f.turns(raw); keep {
+			result["turns"] = slim
 			changed = true
 		}
 	}
 	return changed
 }
 
-func slimMobileChatThreadParam(env map[string]json.RawMessage) bool {
+func (f mobileChatFilter) threadParam(env map[string]json.RawMessage) bool {
 	raw := env["params"]
 	var params map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -124,10 +146,7 @@ func slimMobileChatThreadParam(env map[string]json.RawMessage) bool {
 	if !ok {
 		return true
 	}
-	if !isMobileChatThread(thread) {
-		return false
-	}
-	slim, keep := slimMobileChatThread(thread)
+	slim, keep := f.thread(thread)
 	if !keep {
 		return false
 	}
@@ -139,7 +158,7 @@ func slimMobileChatThreadParam(env map[string]json.RawMessage) bool {
 	return true
 }
 
-func slimMobileChatTurnParam(env map[string]json.RawMessage) {
+func (f mobileChatFilter) turnParam(env map[string]json.RawMessage) {
 	raw := env["params"]
 	var params map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -149,7 +168,8 @@ func slimMobileChatTurnParam(env map[string]json.RawMessage) {
 	if !ok {
 		return
 	}
-	slim, keep := slimMobileChatTurn(turn)
+	f.threadID = jsonString(params["thread_id"])
+	slim, keep := f.turn(turn)
 	if !keep {
 		return
 	}
@@ -160,7 +180,7 @@ func slimMobileChatTurnParam(env map[string]json.RawMessage) {
 	}
 }
 
-func slimMobileChatItemParam(env map[string]json.RawMessage) bool {
+func (f mobileChatFilter) itemParam(env map[string]json.RawMessage) bool {
 	raw := env["params"]
 	var params map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -170,23 +190,27 @@ func slimMobileChatItemParam(env map[string]json.RawMessage) bool {
 	if !ok {
 		return true
 	}
-	if !isMobileChatItem(item) {
+	f.threadID = jsonString(params["thread_id"])
+	slim, keep := f.item(item, jsonString(params["turn_id"]))
+	if !keep {
 		return false
+	}
+	params["item"] = slim
+	if out, err := json.Marshal(params); err == nil {
+		env["params"] = out
 	}
 	return true
 }
 
-func slimMobileChatThreads(raw json.RawMessage) (json.RawMessage, bool) {
+func (f mobileChatFilter) threads(raw json.RawMessage) (json.RawMessage, bool) {
 	var threads []json.RawMessage
 	if err := json.Unmarshal(raw, &threads); err != nil {
 		return raw, false
 	}
 	out := make([]json.RawMessage, 0, len(threads))
 	for _, thread := range threads {
-		if !isMobileChatThread(thread) {
-			continue
-		}
-		slim, keep := slimMobileChatThread(thread)
+		// The app-server owns list visibility. This profile only trims heavy content.
+		slim, keep := f.thread(thread)
 		if keep {
 			out = append(out, slim)
 		}
@@ -198,25 +222,17 @@ func slimMobileChatThreads(raw json.RawMessage) (json.RawMessage, bool) {
 	return data, true
 }
 
-func slimMobileChatThread(raw json.RawMessage) (json.RawMessage, bool) {
+func (f mobileChatFilter) thread(raw json.RawMessage) (json.RawMessage, bool) {
 	var thread map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &thread); err != nil {
 		return raw, true
 	}
 	delete(thread, "child_agents")
 	delete(thread, "browser_state")
+	f.threadID = jsonString(thread["id"])
 	if turnsRaw, ok := thread["turns"]; ok {
-		var turns []json.RawMessage
-		if err := json.Unmarshal(turnsRaw, &turns); err == nil {
-			slimTurns := make([]json.RawMessage, 0, len(turns))
-			for _, turn := range turns {
-				if slim, keep := slimMobileChatTurn(turn); keep {
-					slimTurns = append(slimTurns, slim)
-				}
-			}
-			if data, err := json.Marshal(slimTurns); err == nil {
-				thread["turns"] = data
-			}
+		if slim, keep := f.turns(turnsRaw); keep {
+			thread["turns"] = slim
 		}
 	}
 	data, err := json.Marshal(thread)
@@ -226,7 +242,22 @@ func slimMobileChatThread(raw json.RawMessage) (json.RawMessage, bool) {
 	return data, true
 }
 
-func slimMobileChatTurn(raw json.RawMessage) (json.RawMessage, bool) {
+func (f mobileChatFilter) turns(raw json.RawMessage) (json.RawMessage, bool) {
+	var turns []json.RawMessage
+	if err := json.Unmarshal(raw, &turns); err != nil {
+		return raw, false
+	}
+	result := make([]json.RawMessage, 0, len(turns))
+	for _, turn := range turns {
+		if slim, keep := f.turn(turn); keep {
+			result = append(result, slim)
+		}
+	}
+	data, err := json.Marshal(result)
+	return data, err == nil
+}
+
+func (f mobileChatFilter) turn(raw json.RawMessage) (json.RawMessage, bool) {
 	var turn map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &turn); err != nil {
 		return raw, true
@@ -236,8 +267,8 @@ func slimMobileChatTurn(raw json.RawMessage) (json.RawMessage, bool) {
 		if err := json.Unmarshal(itemsRaw, &items); err == nil {
 			slimItems := make([]json.RawMessage, 0, len(items))
 			for _, item := range items {
-				if isMobileChatItem(item) {
-					slimItems = append(slimItems, item)
+				if slim, keep := f.item(item, jsonString(turn["id"])); keep {
+					slimItems = append(slimItems, slim)
 				}
 			}
 			if data, err := json.Marshal(slimItems); err == nil {
@@ -252,21 +283,27 @@ func slimMobileChatTurn(raw json.RawMessage) (json.RawMessage, bool) {
 	return data, true
 }
 
-func isMobileChatThread(raw json.RawMessage) bool {
-	return false
-}
-
-func isMobileChatItem(raw json.RawMessage) bool {
+func (f mobileChatFilter) item(raw json.RawMessage, turnID string) (json.RawMessage, bool) {
 	var item map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &item); err != nil {
-		return true
+		return raw, true
 	}
 	switch appserver.ThreadItemType(jsonString(item["type"])) {
 	case appserver.ThreadItemUserMessage,
 		appserver.ThreadItemAgentMessage:
-		return true
+		return raw, true
+	case appserver.ThreadItemToolCall:
+		if !f.tools {
+			return nil, false
+		}
+		var tool appserver.ThreadItem
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			return nil, false
+		}
+		out, err := json.Marshal(appserver.RemoteThreadItem(f.threadID, turnID, tool))
+		return out, err == nil
 	default:
-		return false
+		return nil, false
 	}
 }
 

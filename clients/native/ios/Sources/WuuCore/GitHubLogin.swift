@@ -33,6 +33,11 @@ extension AccountAPI {
         try validate(pending)
         return try await request("/github/poll", body: ["request_id": pending.requestID, "verifier": pending.verifier])
     }
+    public func cancelGitHub(_ pending: GitHubPending) async throws {
+        guard pending.server == origin.absoluteString else { throw NativeError.invalid("Wrong login server") }
+        do { let _: JSONValue = try await request("/github/cancel", body: ["request_id": pending.requestID, "verifier": pending.verifier]) }
+        catch NativeError.http(401, _) {}
+    }
     public func completeGitHub(_ pending: GitHubPending, username: String, name: String,
                                identity: DeviceIdentity) async throws -> AccountSession {
         try validate(pending)

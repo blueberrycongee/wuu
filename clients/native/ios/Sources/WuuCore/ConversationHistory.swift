@@ -90,24 +90,37 @@ public actor ConversationHistory {
     private let file: URL
     private var epoch: UInt64 = 0
     private var active = true
-    private var syncing = false
+    private var pending: (id: UUID, task: Task<HistorySnapshot, Error>)?
     private var snapshot = HistorySnapshot()
 
     public init(account: AccountSession, host: String, directory: URL) throws {
         self.account = account
         self.host = host
         api = try AccountAPI(server: account.server)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        file = try Self.cacheFile(account: account, host: host, directory: directory)
+        if let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 20 * 1024 * 1024,
+           let raw = try? Data(contentsOf: file),
+           let cached = try? JSONDecoder().decode(HistorySnapshot.self, from: raw) { snapshot = cached }
+    }
+    private static func cacheFile(account: AccountSession, host: String, directory: URL) throws -> URL {
         let partition = try JSONEncoder().encode([account.server, account.username, account.pub, host])
         let name = SHA256.hash(data: partition).map { String(format: "%02x", $0) }.joined()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        file = directory.appendingPathComponent(name + ".json")
-        if let raw = try? Data(contentsOf: file), raw.count <= 20 * 1024 * 1024,
-           let cached = try? JSONDecoder().decode(HistorySnapshot.self, from: raw) { snapshot = cached }
+        return directory.appendingPathComponent(name + ".json")
+    }
+    /// Call after invalidating the selected store if its host was revoked. Also removes cold caches.
+    public static func prune(account: AccountSession, hosts: [String], directory: URL) throws {
+        let allowed = try Set(hosts.map { try cacheFile(account: account, host: $0, directory: directory).lastPathComponent })
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where !allowed.contains(url.lastPathComponent) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
     public func current() -> HistorySnapshot { snapshot }
     public func invalidate(removeCache: Bool) throws {
         active = false
         epoch &+= 1
+        pending?.task.cancel()
         snapshot = HistorySnapshot()
         if removeCache, FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
     }
@@ -128,9 +141,28 @@ public actor ConversationHistory {
         try url.setResourceValues(values)
     }
     public func sync() async throws -> HistorySnapshot {
-        guard !syncing else { return snapshot }
-        syncing = true
-        defer { syncing = false }
+        try await serialized(.sync)
+    }
+    private enum Operation { case sync, setting(Bool) }
+    // Actor isolation alone does not serialize requests across network awaits.
+    // Settings and pages must commit in order; callers must not receive an unfinished page set.
+    private func serialized(_ operation: Operation) async throws -> HistorySnapshot {
+        let previous = pending?.task, id = UUID()
+        let task = Task {
+            if let previous { _ = try? await previous.value }
+            try check(epoch)
+            switch operation {
+            case .sync: return try await fetchPages()
+            case .setting(let enabled): try await changeSetting(enabled); return snapshot
+            }
+        }
+        pending = (id, task)
+        defer { if pending?.id == id { pending = nil } }
+        let result = try await task.value
+        try Task.checkCancellation()
+        return result
+    }
+    private func fetchPages() async throws -> HistorySnapshot {
         let stamp = epoch
         try check(stamp)
         var conflicts = 0
@@ -167,7 +199,11 @@ public actor ConversationHistory {
         return body.thread
     }
     public func setEnabled(_ enabled: Bool) async throws {
+        _ = try await serialized(.setting(enabled))
+    }
+    private func changeSetting(_ enabled: Bool) async throws {
         let stamp = epoch
+        try check(stamp)
         let _: HistorySettings = try await api.request("/history/settings", token: account.token,
                                                       body: ["host": host, "enabled": enabled])
         try check(stamp)

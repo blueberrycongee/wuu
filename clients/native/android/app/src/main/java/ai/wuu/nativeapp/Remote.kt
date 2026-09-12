@@ -107,7 +107,7 @@ class Remote(private val account: AccountSession, private val host: String) {
                     1 -> {
                         val reply = JSONObject(String(body, Charsets.UTF_8)); require(reply.getString("t") == "hs2")
                         channel = checkNotNull(handshake).finish(reply); handshake = null
-                        sealed(json("t" to "attach", "client_profile" to "mobile_chat"))
+                        sealed(json("t" to "attach", "client_profile" to "mobile_activity"))
                     }
                     2 -> handleSealed(JSONObject(String(checkNotNull(channel).open(body), Charsets.UTF_8)))
                     else -> error("Unknown encrypted frame")

@@ -169,8 +169,8 @@ func (s *deviceSession) onAppLine(app *appConn, line []byte) {
 	}
 	stateChanged := app.observeLine(line)
 	outLine := line
-	if app.profile == wire.ClientProfileMobileChat {
-		filtered, keep := filterMobileChatLine(line)
+	if app.profile == wire.ClientProfileMobileChat || app.profile == wire.ClientProfileMobileActivity {
+		filtered, keep := (mobileChatFilter{tools: app.profile == wire.ClientProfileMobileActivity}).line(line)
 		if !keep {
 			attached := s.attached && s.channel != nil
 			if attached && stateChanged {

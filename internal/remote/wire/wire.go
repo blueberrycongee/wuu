@@ -158,6 +158,8 @@ const (
 // Client profiles tune the app-server event stream for a controller.
 const (
 	ClientProfileMobileChat = "mobile_chat"
+	// MobileActivity adds bounded tool start/completion items, without output deltas.
+	ClientProfileMobileActivity = "mobile_activity"
 )
 
 // HostInfo describes the host to an attached phone.

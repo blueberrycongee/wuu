@@ -26,13 +26,14 @@ import kotlin.math.roundToInt
     var offset by remember(row.id) { mutableFloatStateOf(0f) }
     LaunchedEffect(enabled) { if (!enabled) offset = 0f }
     val pinLabel = if (row.pinned) "取消置顶" else "置顶"
+    val archiveLabel = if (row.archived) "恢复" else "归档"
     Box(Modifier.fillMaxWidth().clipToBounds()) {
         if (offset < 0f) Row(Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceContainer), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { offset = 0f; pin() }, enabled = enabled, modifier = Modifier.width(68.dp)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.PushPin, null); Text(pinLabel, style = MaterialTheme.typography.labelSmall) }
             }
             TextButton(onClick = { offset = 0f; archive() }, enabled = enabled, modifier = Modifier.width(68.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Archive, null); Text("归档", style = MaterialTheme.typography.labelSmall) }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Archive, null); Text(archiveLabel, style = MaterialTheme.typography.labelSmall) }
             }
         }
         ListItem(headlineContent = { Text(row.title.ifBlank { "新会话" }, maxLines = 2) },
@@ -47,7 +48,7 @@ import kotlin.math.roundToInt
                         onHorizontalDrag = { change, amount -> change.consume(); offset = (offset + amount).coerceIn(-width, 0f) })
                 }.clickable { if (offset != 0f) offset = 0f else open() }
                 .semantics {
-                    if (enabled) customActions = listOf(CustomAccessibilityAction(pinLabel) { pin(); true }, CustomAccessibilityAction("归档") { archive(); true })
+                    if (enabled) customActions = listOf(CustomAccessibilityAction(pinLabel) { pin(); true }, CustomAccessibilityAction(archiveLabel) { archive(); true })
                 })
     }
 }

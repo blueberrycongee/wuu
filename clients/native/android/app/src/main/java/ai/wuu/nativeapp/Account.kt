@@ -34,6 +34,18 @@ data class AccountSession(val server: String, val token: String, val username: S
 }
 class HttpFailure(val status: Int, message: String) : IOException("HTTP $status: $message")
 
+/** A directory belongs to one login; cached presence must never imply a live computer. */
+object RememberedDirectory {
+    private fun key(account: AccountSession) = sha256(org.json.JSONArray(listOf(account.server, account.username, account.pub, account.token)).toString().toByteArray()).b64()
+    fun encode(account: AccountSession, directory: JSONObject) = json("login" to key(account), "directory" to JSONObject(directory.toString()))
+    fun restore(account: AccountSession, cache: JSONObject): JSONObject? {
+        if (cache.optString("login") != key(account)) return null
+        return JSONObject(cache.getJSONObject("directory").toString()).also { directory ->
+            directory.getJSONArray("devices").objects().forEach { it.put("online", false) }
+        }
+    }
+}
+
 /** Only ciphertext goes into preferences. Keys cannot leave Android Keystore; backups are disabled. */
 class Vault(context: Context) {
     private val prefs = context.getSharedPreferences("wuu-private", Context.MODE_PRIVATE)
@@ -111,10 +123,19 @@ class AccountAPI(server: String) {
         }
     }
     suspend fun login(username: String, password: String, identity: Identity, name: String, register: Boolean = false): AccountSession {
-        val result = request(if (register) "/register" else "/login", body = enrollment(username, identity, name).put("password", password))
-        return session(result, username, identity)
+        val user = username.trim().lowercase(java.util.Locale.ROOT)
+        val result = request(if (register) "/register" else "/login", body = enrollment(user, identity, name).put("username", user).put("password", password))
+        return session(result, user, identity)
     }
-    private fun enrollment(user: String, identity: Identity, name: String) = json("username" to user, "name" to name,
+    /** Rotates the recovery key and revokes every device, including the caller. */
+    suspend fun resetPassword(username: String, secret: String, password: String, token: String? = null): String =
+        request(if (token == null) "/recover" else "/password", token,
+            json("username" to username.trim().lowercase(java.util.Locale.ROOT), "secret" to secret, "password" to password)).getString("recovery")
+    suspend fun logout(token: String) {
+        try { request("/logout", token, JSONObject()) }
+        catch (e: HttpFailure) { if (e.status != 401) throw e }
+    }
+    private fun enrollment(user: String, identity: Identity, name: String) = json("name" to name,
         "role" to "phone", "pub" to identity.pub.b64(), "proof" to identity.enrollment(user))
     private fun session(result: JSONObject, user: String, identity: Identity): AccountSession {
         require(result.getString("pub") == identity.pub.b64() && result.getString("username") == user) { "Account identity mismatch" }
@@ -125,12 +146,26 @@ class AccountAPI(server: String) {
         val result = request("/github/start", body = json("challenge" to sha256(verifier.toByteArray()).b64(), "native" to true))
         val url = result.getString("authorize_url").toHttpUrl()
         require(url.scheme == origin.scheme && url.host == origin.host && url.port == origin.port && url.username.isEmpty() && url.password.isEmpty() &&
-            url.encodedPath == "/v1/account/github/authorize" && url.queryParameter("state") == result.getString("request_id")) { "Invalid authorization URL" }
+            url.fragment == null && url.encodedPath == "/v1/account/github/authorize" &&
+            result.getString("request_id").matches(Regex("[A-Za-z0-9_-]{43}")) &&
+            url.queryParameterValues("state") == listOf(result.getString("request_id")) && result.getLong("expires_in") > 0) { "Invalid authorization URL" }
         return result.put("server", origin.toString()).put("verifier", verifier)
-            .put("expires", System.currentTimeMillis() + result.getLong("expires_in") * 1000)
+            .put("expires", System.currentTimeMillis() + result.getLong("expires_in").coerceAtMost(600) * 1000)
     }
-    suspend fun pollGitHub(pending: JSONObject) = request("/github/poll", body = json("request_id" to pending.getString("request_id"), "verifier" to pending.getString("verifier")))
+    private fun validate(pending: JSONObject) {
+        require(pending.getString("server") == origin.toString() && pending.getLong("expires") > System.currentTimeMillis()) { "GitHub 登录已过期，请重试" }
+    }
+    suspend fun pollGitHub(pending: JSONObject): JSONObject {
+        validate(pending)
+        return request("/github/poll", body = json("request_id" to pending.getString("request_id"), "verifier" to pending.getString("verifier")))
+    }
+    suspend fun cancelGitHub(pending: JSONObject) {
+        require(pending.getString("server") == origin.toString()) { "Wrong login server" }
+        try { request("/github/cancel", body = json("request_id" to pending.getString("request_id"), "verifier" to pending.getString("verifier"))) }
+        catch (e: HttpFailure) { if (e.status != 401) throw e }
+    }
     suspend fun completeGitHub(pending: JSONObject, user: String, identity: Identity, name: String): AccountSession {
+        validate(pending)
         val result = request("/github/complete", body = enrollment(user, identity, name)
             .put("request_id", pending.getString("request_id")).put("verifier", pending.getString("verifier")))
         return session(result, user, identity)

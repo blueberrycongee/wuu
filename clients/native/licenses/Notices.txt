@@ -1,0 +1,126 @@
+Wuu native mobile — open-source notices
+
+iOS
+MarkdownUI 2.4.1 — https://github.com/gonzalezreal/swift-markdown-ui
+Copyright (c) 2020 Guillermo Gonzalez — MIT
+NetworkImage 6.0.1 — https://github.com/gonzalezreal/NetworkImage
+Copyright (c) 2020 Guille Gonzalez — MIT
+swift-cmark 0.8.0 — https://github.com/swiftlang/swift-cmark
+Copyright (c) 2014, John MacFarlane — BSD-2-Clause
+Included cmark components under MIT:
+houdini: Copyright (C) 2012 Vicent Martí
+buffer and chunk: (C) 2012 Github, Inc.
+utf8proc: (C) 2009 Public Software Group e. V., Berlin, Germany.
+
+Android
+AndroidX, Jetpack Compose and Material icons — The Android Open Source Project
+https://android.googlesource.com/platform/frameworks/support — Apache-2.0
+Kotlin 2.2.20 and annotations — JetBrains and contributors — Apache-2.0
+https://github.com/JetBrains/kotlin
+kotlinx.coroutines 1.10.2 — Apache-2.0
+Copyright 2000-2020 JetBrains s.r.o. and Kotlin Programming Language contributors.
+https://github.com/Kotlin/kotlinx.coroutines
+kotlinx.serialization 1.7.3 — JetBrains and contributors — Apache-2.0
+https://github.com/Kotlin/kotlinx.serialization
+OkHttp 4.12.0 and Okio 3.6.0 — Square, Inc. and contributors — Apache-2.0
+https://github.com/square/okhttp — https://github.com/square/okio
+Markwon 4.6.2 (core, strikethrough, tables, tasklist) — Apache-2.0
+https://github.com/noties/Markwon
+Guava ListenableFuture 1.0 — Google Inc. — Apache-2.0
+https://github.com/google/guava
+JSpecify 1.0.0 — The JSpecify Authors — Apache-2.0
+https://github.com/jspecify/jspecify
+Firebase Messaging 25.0.1 and Firebase Android components — Google LLC — Apache-2.0
+https://github.com/firebase/firebase-android-sdk
+Android Data Transport 3.1.x — Google LLC — Apache-2.0
+https://github.com/firebase/firebase-android-sdk/tree/main/transport
+javax.inject 1 — Apache-2.0 — https://github.com/javax-inject/javax-inject
+Error Prone annotations 2.26.0 — Google Inc. — Apache-2.0
+https://github.com/google/error-prone
+Google Play services (base, basement, tasks, cloud messaging, stats)
+https://developers.google.com/android/guides/overview
+The Android build includes Google's unmodified third-party notices from the
+resolved SDK artifacts in Google-Notices.txt, readable in the Android license screen.
+CommonMark Java 0.13.0 (core, GFM strikethrough and tables) — BSD-2-Clause
+https://github.com/commonmark/commonmark-java
+Copyright (c) 2015-2016, Atlassian Pty Ltd
+Bouncy Castle bcprov-jdk18on 1.79 — MIT
+https://github.com/bcgit/bc-java
+Copyright (c) 2000-2023 The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org)
+
+The Apache License, Version 2.0 is reproduced in Apache-2.0.txt.
+
+MIT license (for the components identified above)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+swift-cmark
+
+Copyright (c) 2014, John MacFarlane
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+CommonMark Java
+
+Copyright (c) 2015-2016, Atlassian Pty Ltd
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

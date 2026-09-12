@@ -55,7 +55,16 @@ class HistorySnapshot(private var data: JSONObject = JSONObject()) {
 /** Main-confined. Invalidation prevents a late network response from recreating logged-out data. */
 class History(private val account: AccountSession, private val host: String, directory: File) {
     private val api = AccountAPI(account.server)
-    private val file = AtomicFile(File(directory, sha256(JSONArray(listOf(account.server, account.username, account.pub, host)).toString().toByteArray()).b64() + ".json"))
+    private val file = AtomicFile(cacheFile(account, host, directory))
+    companion object {
+        private fun cacheFile(account: AccountSession, host: String, directory: File) =
+            File(directory, sha256(JSONArray(listOf(account.server, account.username, account.pub, host)).toString().toByteArray()).b64() + ".json")
+        /** Invalidate a revoked selected store first; cold caches are checked too. */
+        fun prune(account: AccountSession, hosts: List<String>, directory: File) {
+            val allowed = hosts.flatMap { val name = cacheFile(account, it, directory).name; listOf(name, "$name.bak", "$name.new") }.toSet()
+            directory.listFiles()?.filter { it.name !in allowed }?.forEach { check(it.delete()) { "无法清除已撤销电脑的缓存" } }
+        }
+    }
     private val writes = Mutex()
     private val syncLock = Mutex()
     private var epoch = 0L

@@ -75,6 +75,15 @@ func (th *threadState) resumeSnapshotLocked(paged bool) Thread {
 	return pageThreadSnapshot(thread)
 }
 
+// RemoteThreadItem projects an item for a bandwidth-limited controller. Oversized
+// content retains an address readable through thread/content/read.
+func RemoteThreadItem(threadID, turnID string, item ThreadItem) ThreadItem {
+	if item.RemoteContentRef != "" {
+		return item
+	}
+	return historyItem(threadID, turnID, item)
+}
+
 func historyItem(threadID, turnID string, item ThreadItem) ThreadItem {
 	source := item
 	item = cloneThreadItem(item)
