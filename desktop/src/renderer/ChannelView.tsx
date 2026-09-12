@@ -447,6 +447,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
   const { t } = useI18n();
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState("");
+  const [avatarTurn, setAvatarTurn] = useState(0);
   const failed = state === "failed" || state === "interrupted";
   const errorDisplay = failed && error ? userFacingErrorForMessage(error, "turn") : undefined;
   const status = state === "thinking" || state === "responding"
@@ -465,11 +466,12 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
   return (
     <div className={`channel-response-status channel-animated-activity${failed ? " failed" : ""}`} data-activity-state={state} role={failed ? "alert" : "status"}>
       <button className={`channel-activity-inspect${selected ? " selected" : ""}`} type="button" disabled={!onInspect} onClick={onInspect}
+        onPointerEnter={(event) => { if (onInspect && event.pointerType !== "touch") setAvatarTurn(value => value + 1); }}
         aria-expanded={onInspect ? selected : undefined}
         title={`${agent?.name ?? agentID} · ${status}`}
         aria-label={`${agent?.name ?? agentID} · ${status} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
-        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} />
+        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} />
       </span>
       <span className="channel-response-status-copy channel-activity-accessible">
         <strong>{agent?.name ?? agentID}</strong>
@@ -2137,9 +2139,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         ) : null}
         </div>
         {inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
+          agents={agents}
           roomID={inspectedSession.roomID} agentID={inspectedSession.agentID} name={inspectedSession.name}
           fallbackSessionRef={inspectedSession.sessionRef} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
         /> : inspectedSession?.sessionRef ? <ChannelSessionInspector
+          agents={agents}
           key={`${inspectedSession.sessionRef}:${inspectedSession.turnID ?? "latest"}`}
           sessionRef={inspectedSession.sessionRef}
           name={inspectedSession.name}

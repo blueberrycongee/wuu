@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
+import type { NamedAgent } from "../shared/protocol";
 
-export function ChannelActivityInspector({ roomID, agentID, name, fallbackSessionRef, overlay, closing, onClose }: {
+export function ChannelActivityInspector({ roomID, agentID, name, agents, fallbackSessionRef, overlay, closing, onClose }: {
   roomID: string;
   agentID: string;
   name: string;
+  agents?: NamedAgent[];
   fallbackSessionRef?: string;
   overlay: boolean;
   closing: boolean;
@@ -44,7 +46,7 @@ export function ChannelActivityInspector({ roomID, agentID, name, fallbackSessio
     return () => { active = false; window.clearInterval(timer); };
   }, [roomID, agentID, fallbackSessionRef, retry]);
   if (sessionRef) return <ChannelSessionInspector key={sessionRef} sessionRef={sessionRef} name={name}
-    overlay={overlay} closing={closing} onClose={onClose} />;
+    agents={agents} overlay={overlay} closing={closing} onClose={onClose} />;
   return <aside inert={closing} className={`conversation-pane session-inspector-extension${closing ? " closing" : ""}`}
     aria-label={`${name} · ${t("channels.executionTrace")}`} onKeyDown={event => {
       if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); onClose(); }
