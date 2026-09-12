@@ -350,7 +350,8 @@ export function useAppLayoutState({
   // same sidebar width/collapse state. Live drag writes must land on
   // whichever root is currently mounted, so both refs are consulted.
   settingsLayoutRootRef?: RefObject<HTMLElement | null>;
-  // A native right-hand extension must not change the existing workspace layout.
+  // Callers with a virtual or embedded viewport can provide the width that
+  // owns layout decisions instead of the outer browser window.
   viewportWidth?: number;
   onCloseProjectMenu: () => void;
 }): {

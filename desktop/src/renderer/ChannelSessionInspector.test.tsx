@@ -21,7 +21,7 @@ const snapshot = (ref: string, text: string): ChannelSessionReadResult => ({
   },
 });
 async function render(ref = "session-a") {
-  await act(async () => root.render(<WuuUIRoot><ChannelSessionInspector sessionRef={ref} name="Andy2" left={900} width={480} onClose={() => {}} /></WuuUIRoot>));
+  await act(async () => root.render(<WuuUIRoot><ChannelSessionInspector sessionRef={ref} name="Andy2" onClose={() => {}} /></WuuUIRoot>));
 }
 beforeEach(() => {
   vi.useFakeTimers(); off.mockClear();

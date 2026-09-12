@@ -111,3 +111,19 @@ it("preserves the agent draft across provider settings and returns to the model 
   await click(t("agentOnboarding.create"));
   expect(window.wuu.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Research", provider_override: "byok", model_override: "reasoner" }));
 });
+
+
+it("keeps Harness environment reservations out of Collaboration and restores the open panel on return", async () => {
+  const matchMedia = window.matchMedia;
+  vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+    ...matchMedia(query), matches: query.includes("min-width: 1320px"),
+  }));
+  await act(async () => { root.render(<App />); });
+  await click(t("shell.showEnvironmentInfo"));
+  expect(container.querySelector("main.environment-panel-reserved")).toBeTruthy();
+  expect(container.querySelector("main.environment-panel-visible")).toBeTruthy();
+  await click("collaboration");
+  expect(container.querySelector("main.environment-panel-visible, main.environment-panel-reserved, main.side-thread-panel-visible")).toBeNull();
+  await click("harness");
+  expect(container.querySelector("main.environment-panel-visible")).toBeTruthy();
+});

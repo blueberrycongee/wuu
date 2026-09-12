@@ -441,15 +441,26 @@
 }
 
 .channel-conversation {
+  --channel-header-height: 48px;
+  --channel-inspector-width: clamp(420px, 44%, 600px);
   position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 0px;
+  overflow: hidden;
+  transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
 }
+
+.channel-conversation.has-session-inspector:not(.inspector-closing) {
+  grid-template-columns: minmax(0, 1fr) var(--channel-inspector-width);
+}
+
+.channel-conversation.inspector-closing { transition-duration: var(--environment-panel-exit-duration); }
 
 .channel-room-main {
   position: relative;
+  isolation: isolate;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -3197,7 +3208,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 48px;
+  height: var(--channel-header-height);
+  min-height: var(--channel-header-height);
   padding: 0 max(16px, var(--window-controls-inset-right)) 0 16px;
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
@@ -3519,24 +3531,129 @@
 }
 .channel-response-status .channel-activity-inspect:disabled { cursor: default; }
 .channel-response-status .channel-activity-inspect:disabled:hover { background: transparent; }
-.session-inspector-expanded .channel-view { --channel-horizontal-gutter: var(--inspector-original-gutter); }
+.channel-response-status .channel-activity-inspect.selected { background: var(--ink-overlay-6); }
 .session-inspector-extension {
-  position: fixed;
+  position: absolute;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
   top: 0;
+  right: 0;
   bottom: 0;
-  z-index: 110;
+  width: var(--channel-inspector-width);
+  z-index: 4;
+  transform-origin: top right;
+  animation: environment-panel-enter var(--environment-panel-motion-duration) var(--environment-panel-motion-easing) both;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  background: var(--bg-primary);
   border-left: 1px solid var(--border-default);
   overflow: hidden;
 }
-.session-inspector-header { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 16px; border-bottom: 1px solid var(--border-default); }
+.session-inspector-extension.closing {
+  pointer-events: none;
+  animation-name: environment-panel-exit;
+  animation-duration: var(--environment-panel-exit-duration);
+  animation-timing-function: var(--ease-in);
+}
+.session-inspector-header {
+  display: flex;
+  align-items: center;
+  flex: 0 0 var(--channel-header-height);
+  height: var(--channel-header-height);
+  min-height: var(--channel-header-height);
+  gap: 8px;
+  padding: 0 max(16px, var(--window-controls-inset-right)) 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  -webkit-app-region: drag;
+}
+.session-inspector-header button { -webkit-app-region: no-drag; }
+.session-inspector-header > strong { font-size: 14px; }
+.session-inspector-header .channel-session-meta { flex: 0 0 auto; }
+.session-inspector-extension .session-inspector-history { padding: 0; }
+.session-inspector-extension .scroll-region.session-inspector-history > .conversation-width.session-flow {
+  --session-outer-padding-inline: 16px;
+  --session-outer-width: 100%;
+  --conversation-message-max-inline: 100%;
+  --conversation-flow-bottom-space: 24px;
+  max-width: none;
+  padding-block: 16px max(24px, env(safe-area-inset-bottom, 0px));
+}
+.session-inspector-latest {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card);
+  white-space: nowrap;
+  font-size: 12px;
+}
+/* Keep trace actions with the bot identity, outside the reading flow. */
+.channel-agent-hover-anchor { display: inline-flex; }
+.channel-agent-hover-trigger {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius-pill);
+}
+.channel-agent-hover-card {
+  width: min(240px, calc(100vw - 16px));
+  padding: 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+}
+.channel-agent-hover-identity { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.channel-agent-hover-identity > span { display: flex; width: 36px; height: 36px; flex-shrink: 0; }
+.channel-agent-hover-identity > strong { font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+.channel-agent-view-trace {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.channel-agent-view-trace:hover { background: var(--surface-2); }
+
 .session-inspector-header > strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-inspector-header .channel-sessions-close { position: static; }
 .session-inspector-extension > .channel-error,
 .session-inspector-extension > p { padding: 12px 16px; }
 .session-inspector-history { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+
+.channel-conversation[data-inspector-overlay="true"].has-session-inspector { grid-template-columns: minmax(0, 1fr) 0px; }
+.channel-conversation[data-inspector-overlay="true"].has-session-inspector:not(.inspector-closing) > .channel-room-main { visibility: hidden; }
+.sidebar-collapsed .channel-conversation[data-inspector-overlay="true"] .session-inspector-header {
+  padding-left: max(12px, calc(var(--window-controls-inset-left) + 10px));
+}
+.channel-conversation[data-inspector-overlay="true"] > .session-inspector-extension {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border-left: 0;
+}
+@media (max-width: 760px) {
+  .channel-conversation { --channel-header-height: calc(48px + env(safe-area-inset-top, 0px)); }
+  .session-inspector-header { padding-top: env(safe-area-inset-top, 0px); }
+}
 .channel-session-history pre { max-width: 100%; overflow-x: auto; }
 .channel-session-activity { margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
 .channel-session-activity summary { cursor: pointer; padding: 6px 0; }

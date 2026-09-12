@@ -9,7 +9,8 @@ import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ChannelSessions } from "./ChannelSessions";
-import type { SessionInspectionTarget } from "./SessionInspectorWindow";
+import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
+import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
 import { ChannelMemberPicker } from "./ChannelMemberPicker";
@@ -30,6 +31,7 @@ import {
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { useI18n } from "./i18n";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { useLongTextCollapse } from "./LongTextCollapse";
@@ -493,11 +495,12 @@ function ChannelMessageBubble({
   );
 }
 
-function ChannelAgentActivity({ agent, agentID, state, error, onResume, onInspect }: {
+function ChannelAgentActivity({ agent, agentID, state, error, selected = false, onResume, onInspect }: {
   agent?: NamedAgent;
   agentID: string;
   state: ChannelResponse["state"];
   error?: string;
+  selected?: boolean;
   onResume?: () => Promise<void>;
   onInspect?: () => void;
 }): JSX.Element {
@@ -521,7 +524,8 @@ function ChannelAgentActivity({ agent, agentID, state, error, onResume, onInspec
   };
   return (
     <div className={`channel-response-status${failed ? " failed" : ""}`} role={failed ? "alert" : "status"}>
-      <button className="channel-activity-inspect" type="button" disabled={!onInspect} onClick={onInspect}
+      <button className={`channel-activity-inspect${selected ? " selected" : ""}`} type="button" disabled={!onInspect} onClick={onInspect}
+        aria-expanded={onInspect ? selected : undefined}
         aria-label={`${agent?.name ?? agentID} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
         <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} />
@@ -583,7 +587,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onInspectSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -597,7 +601,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onSelectRoom?: (roomID: string) => void;
   onRoomRead?: (roomID: string) => void;
   onOpenMemoryDirectory?: (path: string) => void;
-  onInspectSession?: (target: SessionInspectionTarget) => void;
   onOpenSession?: (sessionID: string) => void;
   onCreateAgent?: () => void;
   onManageProviders?: () => void;
@@ -636,6 +639,46 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     directoryAgents !== undefined && directoryRooms !== undefined;
   const [internalSelectedRoomID, setInternalSelectedRoomID] = useState("");
   const selectedRoomID = controlledRoomID ?? internalSelectedRoomID;
+  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef: string; turnID?: string; name: string } | null>(null);
+  const [inspectorClosing, setInspectorClosing] = useState(false);
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const inspectionTrigger = useRef<HTMLElement | null>(null);
+  const [inspectorOverlay, setInspectorOverlay] = useState(false);
+  useLayoutEffect(() => {
+    const node = conversationRef.current;
+    if (!node) return;
+    const update = () => setInspectorOverlay(node.getBoundingClientRect().width < 1040);
+    update();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
+    observer?.observe(node);
+    return () => observer?.disconnect();
+  }, [section]);
+  const finishClosingInspector = useCallback(() => {
+    setInspectedSession(null);
+    setInspectorClosing(false);
+    requestAnimationFrame(() => {
+      if (inspectionTrigger.current?.isConnected) inspectionTrigger.current.focus({ preventScroll: true });
+      else roomComposerRef.current?.focus();
+    });
+  }, []);
+  const closeInspector = useCallback(() => {
+    if (prefersReducedMotion() || motionDurationMs("--environment-panel-exit-duration", 220) === 0) finishClosingInspector();
+    else setInspectorClosing(true);
+  }, [finishClosingInspector]);
+  useEffect(() => {
+    if (!inspectorClosing) return;
+    const timer = window.setTimeout(finishClosingInspector, motionDurationMs("--environment-panel-exit-duration", 220));
+    return () => window.clearTimeout(timer);
+  }, [inspectorClosing, finishClosingInspector]);
+  const inspectSession = (sessionRef: string, turnID: string | undefined, name: string) => {
+    if (!inspectorClosing && inspectedSession?.sessionRef === sessionRef && inspectedSession.turnID === turnID) {
+      closeInspector();
+      return;
+    }
+    setInspectorClosing(false);
+    inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setInspectedSession({ roomID: selectedRoomID, sessionRef, turnID, name });
+  };
   const setSelectedRoomID = useCallback((value: string | ((current: string) => string)): void => {
     const base = controlledRoomID ?? internalSelectedRoomID;
     const next = typeof value === "function" ? value(base) : value;
@@ -648,6 +691,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     if (roomID === selectedRoomID) onSelectRoom?.(roomID);
     onSectionChange?.("rooms");
   }, [onSectionChange, onSelectRoom, selectedRoomID, setSelectedRoomID]);
+  useEffect(() => {
+    if (inspectedSession && (section !== "rooms" || inspectedSession.roomID !== selectedRoomID)) {
+      setInspectedSession(null);
+      setInspectorClosing(false);
+    }
+  }, [inspectedSession, section, selectedRoomID]);
   const [messagesByRoomID, setMessagesByRoomID] = useState<Record<string, ChannelMessage[]>>({});
   const [responsesByRoomID, setResponsesByRoomID] = useState<Record<string, ChannelResponseActivity[]>>({});
   const responses = useMemo(() => (responsesByRoomID[selectedRoomID] ?? []).filter(
@@ -1730,9 +1779,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : undefined}
     >
       {section === "rooms" ? <div
-        className="channel-conversation"
+        ref={conversationRef}
+        data-inspector-overlay={inspectorOverlay || undefined}
+        className={`channel-conversation${inspectedSession ? " has-session-inspector" : ""}${inspectorClosing ? " inspector-closing" : ""}`}
       >
-        <div className={`channel-room-main${composingNewRoom ? " composing-new-room" : ""}`}>
+        <div inert={Boolean(inspectedSession && inspectorOverlay)} className={`channel-room-main${composingNewRoom ? " composing-new-room" : ""}`}>
             <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
               {navigation}
               {composingNewRoom ? <>
@@ -1886,8 +1937,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             const gap = previous ? date.getTime() - Date.parse(previous.created_at) : Infinity;
             const showTimestamp = !previous || gap < 0 || gap >= 5 * 60_000 || date.toDateString() !== new Date(previous.created_at).toDateString();
             const continued = !showTimestamp && previous?.kind === "text" && !previous.agent_creation_proposal
-              && previous.author_type === message.author_type && previous.author_id === message.author_id;
+              && previous.author_type === message.author_type && previous.author_id === message.author_id
+              && previous.source_session_ref === message.source_session_ref && previous.source_turn_id === message.source_turn_id;
             const direct = selectedRoom?.kind === "dm";
+            const traceCard = !own && message.source_session_ref ? {
+              id: agent?.id ?? message.author_id, name: author,
+              avatarKey: agent?.avatar_key ?? "abstract-1", avatarImage: agent?.avatar_image,
+              onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author),
+            } : undefined;
             return (
               <Fragment key={message.id}>
               {showTimestamp ? <time className="channel-timestamp" dateTime={message.created_at}>
@@ -1897,19 +1954,17 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               </time> : null}
               <MessageBubbleRow
                 outgoing={own}
-                className={`channel-message ${own ? "own" : "agent"}${direct ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
+                className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
                 contentClassName="channel-message-content"
-                avatar={!own && !direct && !continued ? (
+                avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
                   <AgentAvatar id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
                 ) : undefined}
                 meta={!own && !direct && !continued ? (
                   <div className="channel-message-meta">
                     {!own ? (
-                      <ChannelAuthorName
-                        name={author}
-                        mentionLabel={t("channels.mentionAgent", { name: author })}
-                        onMention={() => roomComposerRef.current?.insertMention(author)}
-                      />
+                      traceCard ? <ChannelAgentHoverCard {...traceCard}>
+                        <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author)} />
+                      </ChannelAgentHoverCard> : <ChannelAuthorName name={author} mentionLabel={t("channels.mentionAgent", { name: author })} onMention={() => roomComposerRef.current?.insertMention(author)} />
                     ) : null}
                   </div>
                 ) : undefined}
@@ -1939,18 +1994,19 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             </div>
           ) : null}
         </div>
-        <JumpToLatestPill
+        {!(inspectedSession && inspectorOverlay) ? <JumpToLatestPill
           containerRef={messageScroll.scrollRef}
           bottomAnchor={composerFooterNode}
           threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
-        />
+        /> : null}
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
             <div className="channel-activity-region" aria-live="polite">
               {responseActivities.map((response) => <ChannelAgentActivity key={response.id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}
-                onInspect={onInspectSession ? () => onInspectSession({ roomID: selectedRoomID, sessionRef: response.session_ref, name: agentNames.get(response.agent_id) ?? response.agent_id }) : undefined}
+                selected={!inspectorClosing && inspectedSession?.sessionRef === response.session_ref && inspectedSession.turnID === (response.turn_id || undefined)}
+                onInspect={() => inspectSession(response.session_ref, response.turn_id || undefined, agentNames.get(response.agent_id) ?? response.agent_id)}
                 onResume={async () => { await window.wuu!.resumeChannelSession({ sessionRef: response.session_ref }); await refreshMessages(response.room_id, true); }}
               />)}
               {responsesByRoomID[selectedRoomID] === undefined ? respondingAgents.map(({ agent }) => (
@@ -1979,6 +2035,15 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           </div>
         ) : null}
         </div>
+        {inspectedSession ? <ChannelSessionInspector
+          key={`${inspectedSession.sessionRef}:${inspectedSession.turnID ?? "latest"}`}
+          sessionRef={inspectedSession.sessionRef}
+          name={inspectedSession.name}
+          turnID={inspectedSession.turnID}
+          overlay={inspectorOverlay}
+          closing={inspectorClosing}
+          onClose={closeInspector}
+        /> : null}
       </div> : section === "agents" ? (
         <div className="channel-agent-workspace">
           <aside className={`channel-list-pane channel-agent-directory${listCollapsed ? " collapsed" : ""}`}>

@@ -72,6 +72,8 @@ function sameChannelMessage(
     current.room_id === incoming.room_id &&
     current.seq === incoming.seq &&
     (current.thread_id ?? "") === (incoming.thread_id ?? "") &&
+    current.source_session_ref === incoming.source_session_ref &&
+    current.source_turn_id === incoming.source_turn_id &&
     current.author_type === incoming.author_type &&
     current.author_id === incoming.author_id &&
     current.kind === incoming.kind &&

@@ -30,6 +30,7 @@ export type FloatingMenuOwner =
   | "codex-runtime"
   | "composer-query-history"
   | "minute-clock"
+  | "channel-agent"
   | "channel-mention"
   | "collaboration-new"
   | "select-menu";

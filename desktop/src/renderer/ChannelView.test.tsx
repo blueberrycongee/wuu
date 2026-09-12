@@ -1758,20 +1758,75 @@ describe("ChannelView", () => {
   });
   it("opens the working agent's exact session without a header launcher or partial text in the room", async () => {
     const api = createApi();
-    const onInspectSession = vi.fn();
     api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [{ id: "reply-beta", room_id: "room-1", agent_id: "agent-2", session_ref: "beta-session", turn_id: "turn", state: "responding" as const, body: "Private live text", created_at: "2026-09-12T00:00:00Z" }] }));
-    api.readChannelSession = vi.fn().mockResolvedValue({ session: { state: "running" }, thread: { id: "beta-session", turns: [{ id: "turn", items: [{ id: "text", type: "agent_message", text: "Private live text" }] }] } });
+    api.readChannelSession = vi.fn().mockResolvedValue({ session: { state: "running" }, thread: { id: "beta-session", turns: [{ id: "turn", status: "in_progress", items: [{ id: "text", type: "agent_message", text: "Private live text" }] }] } });
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
-    act(() => root?.render(<ChannelView selectedRoomID="room-1" onInspectSession={onInspectSession} />));
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
     await settle();
     expect(container.querySelector(".channel-room-header .channel-sessions-launcher")).toBeNull();
     expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Private live text");
     const trigger = container.querySelector<HTMLButtonElement>(".channel-activity-inspect")!;
     expect(trigger.textContent).toContain("Beta");
     await act(async () => trigger.click());
-    expect(onInspectSession).toHaveBeenCalledWith({ roomID: "room-1", sessionRef: "beta-session", name: "Beta" });
+    await settle();
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(".channel-conversation")?.classList.contains("has-session-inspector")).toBe(true);
+    expect(container.querySelector(".session-inspector-extension")?.textContent).toContain("Private live text");
+    expect(api.readChannelSession).toHaveBeenCalledWith({ sessionRef: "beta-session" });
     expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Private live text");
+    vi.useFakeTimers();
+    try {
+      await act(async () => trigger.click());
+      expect(container.querySelector<HTMLElement>(".session-inspector-extension")?.hasAttribute("inert")).toBe(true);
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); trigger.click(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      expect(container.querySelector<HTMLElement>(".session-inspector-extension")?.hasAttribute("inert")).toBe(false);
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      await act(async () => trigger.click());
+      await act(async () => { await vi.advanceTimersByTimeAsync(220); });
+      expect(container.querySelector(".session-inspector-extension")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reopens a published reply's original execution after the active response has disappeared", async () => {
+    const api = createApi();
+    api.listChannelMessages = vi.fn(async () => ({ messages: [{
+      id: "reply-old", room_id: "room-1", seq: 1, author_type: "agent" as const, author_id: "agent-2",
+      kind: "text" as const, body: "Published answer", created_at: "2026-09-12T00:00:00Z",
+      source_session_ref: "original-session", source_turn_id: "original-turn",
+    }], responses: [] }));
+    api.readChannelSession = vi.fn().mockResolvedValue({ session: { state: "running" }, thread: { id: "original-session", turns: [
+      { id: "original-turn", status: "completed", items: [{ id: "old", type: "agent_message", text: "Original evidence" }] },
+      { id: "later-turn", status: "in_progress", items: [{ id: "new", type: "agent_message", text: "Later work" }] },
+    ] } });
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    expect(container.querySelector(".channel-activity-inspect")).toBeNull();
+    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("查看轨迹");
+    const avatar = container.querySelector<HTMLButtonElement>(".channel-agent-hover-trigger")!;
+    await act(async () => { avatar.focus(); });
+    const trace = document.querySelector<HTMLButtonElement>(".channel-agent-view-trace")!;
+    expect(trace.textContent).toBe("查看轨迹");
+    await act(async () => { trace.click(); });
+    expect(document.querySelector(".channel-agent-hover-card")).toBeNull();
+    await settle();
+    expect(api.readChannelSession).toHaveBeenCalledWith({ sessionRef: "original-session" });
+    const panel = container.querySelector<HTMLElement>(".session-inspector-extension")!;
+    expect(panel.textContent).toContain("Original evidence");
+    expect(panel.querySelector(".channel-session-meta")?.textContent).toBe("完成");
+    vi.useFakeTimers();
+    try {
+      await act(async () => { panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(220); });
+      expect(container.querySelector(".session-inspector-extension")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps partial answers out of the transcript and shows one bubble only after publication", async () => {

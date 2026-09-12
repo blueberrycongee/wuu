@@ -98,8 +98,6 @@ import {
 } from "./AppSidebar";
 import { ChannelView, type ChannelSection } from "./ChannelView";
 import { CollaborationSidebar } from "./CollaborationSidebar";
-import { ChannelSessionInspector } from "./ChannelSessionInspector";
-import { useSessionInspectorWindow } from "./SessionInspectorWindow";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import type { AppMode } from "./AppModeSwitch";
 import {
@@ -451,7 +449,6 @@ export function App(): JSX.Element {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
-  const sessionInspector = useSessionInspectorWindow(appShellRef);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
@@ -485,7 +482,6 @@ export function App(): JSX.Element {
     resetSplitPercent,
   } = useAppLayoutState({
     layoutRootRef: appShellRef,
-    viewportWidth: sessionInspector.extension?.baseWidth,
     settingsLayoutRootRef: settingsShellRef,
     onCloseProjectMenu: closeProjectMenu,
   });
@@ -2715,7 +2711,7 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(activeThreadID && sideThread.entry?.open);
+  const sideThreadPanelVisible = Boolean(appMode === "harness" && activeThreadID && sideThread.entry?.open);
   useEffect(() => {
     if (!sideThreadPanelVisible || isTouchWebShell()) {
       return undefined;
@@ -2730,6 +2726,7 @@ export function App(): JSX.Element {
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
+    appMode === "harness" &&
     state.initialized &&
     !poppedOutMode &&
     !rightPanelGlobalized &&
@@ -2756,11 +2753,7 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  useEffect(() => {
-    const target = sessionInspector.extension?.target;
-    if (target && (appMode !== "collaboration" || collaborationSection !== "rooms" || settingsOpen || selectedChannelRoomID !== target.roomID)) void sessionInspector.close();
-  }, [appMode, collaborationSection, selectedChannelRoomID, settingsOpen, sessionInspector.extension, sessionInspector.close]);
-  const shellClassName = `app-shell${sessionInspector.extension ? " session-inspector-expanded" : ""}${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${collaborationRail ? " collaboration-rail" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${collaborationRail ? " collaboration-rail" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -2778,7 +2771,6 @@ export function App(): JSX.Element {
     resizingRightPanel ? " resizing-right-panel" : ""
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
-    ...(sessionInspector.extension ? { width: `${sessionInspector.extension.baseWidth}px`, "--inspector-original-gutter": sessionInspector.extension.gutter } : {}),
     "--sidebar-width": `${collaborationRail ? 88 : effectiveSidebarWidth}px`,
     "--sidebar-open-width": `${collaborationRail ? 88 : sidebarWidth}px`,
     "--workspace-sheet-left": `${collaborationRail ? 88 : sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
@@ -3434,7 +3426,7 @@ export function App(): JSX.Element {
     setProjectMenuOpen(false);
     setRuntimeMenuOpen(false);
     setCodexRuntimeMenu(null);
-    setEnvironmentPanelOpen(false);
+    setEnvironmentPanelMenu(null);
     setRightPanelOpenWithMotion(false);
   }
 
@@ -5094,10 +5086,6 @@ export function App(): JSX.Element {
       {checkoutErrorTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
-        {sessionInspector.extension?.target ? <ChannelSessionInspector key={sessionInspector.extension.target.sessionRef}
-          sessionRef={sessionInspector.extension.target.sessionRef} name={sessionInspector.extension.target.name}
-          left={sessionInspector.extension.baseWidth} width={sessionInspector.extension.panelWidth}
-          onClose={() => void sessionInspector.close()} /> : null}
         <div
           ref={appShellRef}
           className={shellClassName}
@@ -5355,7 +5343,7 @@ export function App(): JSX.Element {
         data-wuu-component="conversation-pane"
         data-composer-navigation={composerNavigation || undefined}
         className={`conversation-pane${ENABLE_GROUP_CHAT && appMode === "collaboration" && collaborationSection === "rooms" ? " collaboration-room-pane" : ""}${environmentPanelVisible ? " environment-panel-visible" : ""}${
-          environmentPanelReserved ? " environment-panel-reserved" : ""
+          appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
         }${sessionTabsVisible && appMode === "harness" ? " session-tabs-visible" : ""}${
@@ -5390,7 +5378,6 @@ export function App(): JSX.Element {
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
               onOpenSession={handleOpenThreadInSplit}
-              onInspectSession={(target) => { void sessionInspector.open(target); }}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}

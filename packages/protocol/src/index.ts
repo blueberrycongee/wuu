@@ -2739,18 +2739,7 @@ export type SpeechRecognitionStartResult =
   | { ok: true; session_id: string }
   | { ok: false; error: string };
 
-export type SessionInspectorExpansionResult = {
-  expanded: boolean;
-  /** Actual added width in renderer CSS pixels (including native rounding). */
-  panelWidth: number;
-  reason?: "insufficient-space" | "unsupported-window";
-};
-
 export type WuuDesktopApi = {
-  /** Desktop-only right-edge extension. Repeated opens do not add width;
-   * closing preserves the user's current position and removes the extension.
-   * Hosts without native window control omit this method. */
-  setSessionInspectorExpansion?: (params: { open: boolean; width?: number }) => Promise<SessionInspectorExpansionResult>;
   /** Host operations that this adapter cannot perform. Omitted means the
    * desktop contract; renderers must hide or disable unavailable actions. */
   unsupportedMethods?: readonly (keyof WuuDesktopApi)[];

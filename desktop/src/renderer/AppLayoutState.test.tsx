@@ -94,7 +94,7 @@ function setInnerWidth(value: number): void {
   window.innerWidth = value;
 }
 
-it("keeps the original sidebar layout while a native right-hand extension grows the viewport", () => {
+it("can use an explicit embedded viewport without reacting to the outer window", () => {
   setInnerWidth(900);
   window.localStorage.setItem("wuu.desktop.sidebarWidth", "500");
   let view!: ReturnType<typeof useAppLayoutState>;
