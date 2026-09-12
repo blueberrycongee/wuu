@@ -18,16 +18,17 @@ final class ConversationUITests: XCTestCase {
         app.textFields["用户名"].tap(); app.textFields["用户名"].typeText("native-test")
         app.secureTextFields["密码"].tap(); app.secureTextFields["密码"].typeText("native-test-password")
         app.buttons["登录"].tap()
+        let computer = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "UI test computer")).firstMatch
+        XCTAssertTrue(computer.waitForExistence(timeout: 15))
         // The system password sheet uses the simulator language, not the app's launch language.
+        // Its service can launch after the account response on a cold simulator.
         let later = app.buttons.matching(NSPredicate(format: "label IN %@", ["以后", "Not Now"])).firstMatch
-        if later.waitForExistence(timeout: 3) {
+        if later.waitForExistence(timeout: 15) {
             expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: later)
             waitForExpectations(timeout: 5)
             later.tap()
             XCTAssertTrue(later.waitForNonExistence(timeout: 5))
         }
-        let computer = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "UI test computer")).firstMatch
-        XCTAssertTrue(computer.waitForExistence(timeout: 15))
         // XCTest occasionally reports (-1, -1) for the iOS 26 toolbar hit point.
         // Tap its rendered center and verify the resulting sheet.
         app.navigationBars["你的电脑"].buttons["账号设置"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
