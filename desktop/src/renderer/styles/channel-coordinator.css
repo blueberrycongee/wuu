@@ -34,6 +34,8 @@
 .channel-activity-region.channel-activity-motion {
   gap: 0;
   min-height: 40px;
+  /* Composer padding + centered attachment glyph, including its SVG inset. */
+  padding-inline-start: 18px;
   align-items: center;
 }
 
@@ -139,4 +141,9 @@
   .channel-activity-motion .channel-animated-activity .channel-response-status-avatar,
   .channel-activity-motion .channel-animated-activity .channel-coordinator-mascot { animation: none; }
   .channel-activity-motion .channel-activity-inspect:enabled:hover { transform: none; }
+}
+
+@media (max-width: 760px) {
+  /* The attachment button grows from 32px to 40px in compact layouts. */
+  .channel-activity-region.channel-activity-motion { padding-inline-start: 22px; }
 }
