@@ -20,7 +20,7 @@ app.whenReady().then(async () => {
   for (const theme of ["light", "dark"]) for (const width of [1600, 1100, 390]) {
     console.log(theme, width);
     win.setSize(width, 760);
-    await win.loadURL(`${baseURL}/dev/room-coordinator/index.html?tasks=1&theme=${theme}`);
+    await win.loadURL(`${baseURL}/dev/room-coordinator/index.html?tasks=1&messages=1&theme=${theme}`);
     await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
     await waitFor(win, `!!document.querySelector('.channel-assignment-heading')`);
     const collapsed = await win.webContents.executeJavaScript(`(() => {
@@ -35,6 +35,18 @@ app.whenReady().then(async () => {
     assert.equal(collapsed.text, "把群成员头像/名称做成资料与配置入口");
     assert(Math.abs(collapsed.height - collapsed.summaryHeight) < 1 && collapsed.height <= 36);
     assert.equal(collapsed.overflow, false);
+    const messageAlignment = await win.webContents.executeJavaScript(`(() => {
+      const icon = document.querySelector('.channel-attachment-button svg').getBoundingClientRect();
+      const centers = Array.from(document.querySelectorAll('.chat-avatar-slot .mo-bob > g:not(.mo-eyes) > path'), node => {
+        const r = node.getBoundingClientRect(); return r.left + r.width / 2;
+      });
+      const contentLeft = id => document.querySelector('[data-message-id="' + id + '"] .channel-message-content').getBoundingClientRect().left;
+      return { target: icon.left + icon.width / 2, centers, reply: contentLeft('reply'), continued: contentLeft('continued') };
+    })()`);
+    assert.equal(messageAlignment.centers.length, 2);
+    assert(messageAlignment.centers.every(center => Math.abs(center - messageAlignment.target) < 1), JSON.stringify({ theme, width, ...messageAlignment }));
+    assert.equal(messageAlignment.reply, messageAlignment.continued);
+
     for (const member of [false, true]) {
       if (member) {
         await win.webContents.executeJavaScript(`window.setScene('waiting', ['thinking'])`);

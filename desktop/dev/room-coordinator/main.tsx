@@ -15,8 +15,13 @@ const agents = ["Alice", "Bob"].map((name, index) => ({
   id: `a${index}`, name, memory_dir: "/preview", avatar_key: query.get("avatar") || `abstract-${index + 1}`,
   autostart: true, created_at, activity_status: "idle", activity_room_ids: [],
 }));
+const messages = query.has("messages") ? [
+  { id: "reply", room_id: "room", seq: 2, author_type: "agent", author_id: "a0", kind: "text", body: "我会检查登录恢复流程，完成后把结果发在这里。", source_session_ref: "member-session-0", created_at },
+  { id: "continued", room_id: "room", seq: 3, author_type: "agent", author_id: "a0", kind: "text", body: "也会覆盖重连后的状态恢复。", source_session_ref: "member-session-0", created_at },
+  { id: "plain-reply", room_id: "room", seq: 4, author_type: "agent", author_id: "a1", kind: "text", body: "我来检查界面的提示与交互。", created_at },
+] : [];
 const tasks = query.has("tasks") ? [{
-  id: "assignment", room_id: "room", seq: 2, author_type: "agent", author_id: "a0",
+  id: "assignment", room_id: "room", seq: 5, author_type: "agent", author_id: "a0",
   kind: "task", task_title: "把群成员头像/名称做成资料与配置入口", task_owner: "a0", task_state: "doing",
   body: "请在群聊中将成员头像和名称作为资料入口。点击后，在右侧打开名称、头像、角色说明和模型配置。中间聊天继续保留，完成后汇报结果并提交改动。", created_at,
 }] : [];
@@ -57,7 +62,7 @@ host.wuu = {
   onEvent: () => () => {},
   onServerEvent: () => () => {},
   listChannelMessages: async () => ({
-    messages: [{ id: "human", room_id: "room", seq: 1, author_type: "human", author_id: "user", kind: "text", body: "检查登录恢复的问题，安排合适的成员处理。", created_at }, ...tasks],
+    messages: [{ id: "human", room_id: "room", seq: 1, author_type: "human", author_id: "user", kind: "text", body: "检查登录恢复的问题，安排合适的成员处理。", created_at }, ...messages, ...tasks],
     responses: host.responses, coordinator: host.coordination,
   }),
   readChannelSession: async ({ sessionRef }: { sessionRef: string }) => {

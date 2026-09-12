@@ -706,6 +706,10 @@
 
 .channel-message.channel-direct-message { grid-template-columns: minmax(0, 1fr); }
 .channel-message.agent:not(.channel-direct-message) > .channel-message-content { grid-column: 2; }
+.channel-message.agent:not(.channel-direct-message) {
+  /* Match the attachment button's center while retaining the avatar/content gap. */
+  padding-inline-start: calc(23px - var(--channel-avatar-size) / 2);
+}
 .channel-message:not(.channel-message-continuation) { margin-top: 12px; }
 .channel-timestamp + .channel-message { margin-top: 0; }
 
@@ -3693,6 +3697,7 @@
   .channel-room-header-title h2 { font-size: 14px; }
   .channel-room-members-button { min-height: 44px; }
   .channel-message-stream { padding-top: 12px; gap: 6px; }
+  .channel-message.agent:not(.channel-direct-message) { padding-inline-start: calc(27px - var(--channel-avatar-size) / 2); }
   .channel-message.chat-row > .channel-message-content { width: 100%; }
   .channel-message.own.chat-row > .channel-message-content { width: 88%; }
   .channel-message-bubble { padding: 8px 10px; }
