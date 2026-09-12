@@ -304,6 +304,17 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 		if binding.RuntimeVersion != "" && binding.RuntimeVersion != runtime.CollaborationRuntimeVersion {
 			return nil, fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
 		}
+		orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
+		if !agent.IsRoomRuntime() {
+			switch binding.Purpose {
+			case channels.CollaborationSessionWork:
+				orientation += " This is an execution session. Advance the assigned objective and return usable results, evidence and remaining blockers to the requester. Your normal final answer is a private execution result; the responsible room conversation handles public delivery. Publish directly only when your assignment calls for it."
+			case channels.CollaborationSessionVerification:
+				orientation += " This is an independent verification session. Assess the assigned candidate against the current goal and acceptance criteria, and return a verdict supported by evidence. Keep checking separate from repairing the candidate; the responsible executor handles revisions and public delivery."
+			case channels.CollaborationSessionCoordination:
+				orientation += " This is a coordination session under your named identity. Organize the assigned scope, connect relevant sessions and return results to the requester. Your coordination assignment does not make you the owner of all work in the room."
+			}
+		}
 		if isRoomConversation(binding, agent) {
 			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Your normal final answer is automatically delivered to this room under your identity. Answer human messages directly; do not require a separate send tool to make your answer visible. Use chat_send only for an additional targeted post or another room. Explicit messages are already delivered; do not repeat them or add a separate delivery acknowledgement. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
 		}
@@ -648,12 +659,21 @@ func agentRuntimeFromNamed(agent channels.NamedAgent) channels.AgentRuntime {
 	}
 }
 
+const collaborationEnvironmentOrientation = `# Shared room environment
+A room is a continuing collaboration between people and named agents. Public messages, replies, tasks and shared artifacts are the team's common record. Each named identity may have several independent sessions; a name or role describes the participant, not a single ongoing job. Session history and private identity memory are not shared room knowledge.
+
+People can delegate directly with @mentions or replies, and members can work or hand off to other sessions without involving the room coordinator. The hidden coordinator handles unaddressed shared requests in multi-agent channels; direct recipients and existing task owners can receive follow-ups directly. DMs and single-agent rooms go directly to their member. The coordinator may first join the work after a long sequence of direct assignments. Being newly awakened, or having no assignment in your own history, does not mean the room has no existing work.
+
+Your input is a view of the collaboration, not a complete transcript. Use room history, task records, session metadata and direct questions as needed to understand the current goal, existing responsibilities and relevant results. Decide what context is useful for this request; there is no requirement to reread the whole room or create a task for every exchange. Respect the user's existing assignments, continue relevant work, and resolve uncertain ownership before duplicating or redirecting it. Distinguish unavailable context from evidence that something has not happened.
+
+`
+
 func agentRuntimeOrientation(agent channels.AgentRuntime) string {
 	if agent.IsRoomRuntime() {
 		return roomCoordinatorOrientation(agent.RoomID)
 	}
 	identity := fmt.Sprintf("You are %s, a durable named identity. Your role is %s.", agent.Name, agent.Role)
-	return fmt.Sprintf(`# Collaboration
+	return collaborationEnvironmentOrientation + fmt.Sprintf(`# Collaboration
 
 %s Your identity home is %s and your shared identity memory is %s. Each session has its own objective, history, model and execution state. Other sessions under your identity share durable memory, not private conversation. Record reusable facts carefully; coordinate concurrent edits to shared files and retain provenance.
 
