@@ -387,6 +387,20 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 	if err := authorizeWorkActorTx(ctx, tx, work, actor); err != nil {
 		return WorkRun{}, err
 	}
+	if params.SourceSessionRef != "" {
+		source, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.SourceSessionRef))
+		if err != nil {
+			return WorkRun{}, err
+		}
+		// A reserved Work session may establish its first run; other sources
+		// must still own a live execution before spawning additional work.
+		establishingRun := source.SessionRef == params.SessionRef && source.PrincipalID == actor.ID && source.RoomID == work.RoomID && source.WorkID == work.ID && source.RunID == "" && availableCollaborationSessionState(source.State)
+		if !establishingRun {
+			if err := validateCollaborationSessionWriteTx(ctx, tx, params.SourceSessionRef, actor.ID, work.RoomID, "", 0); err != nil {
+				return WorkRun{}, err
+			}
+		}
+	}
 	if params.RequestID != "" {
 		existing, findErr := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.work_id = ? AND run.request_id = ?`, work.ID, params.RequestID))
 		if findErr == nil {
@@ -400,24 +414,21 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		}
 	}
 	namedAgentID := params.NamedAgentID
-	if !actor.IsRoomRuntime() {
-		if namedAgentID != "" && namedAgentID != actor.ID {
-			return WorkRun{}, fmt.Errorf("%w: named agents may only start their own sessions", ErrUnauthorized)
-		}
-		namedAgentID = actor.ID
-	} else if params.Kind == WorkRunVerifier && params.Profile != "" && params.Profile != WorkVerifierProfileIndependent {
+	if params.Kind == WorkRunVerifier && params.Profile != "" && params.Profile != WorkVerifierProfileIndependent {
 		if namedAgentID != "" && namedAgentID != params.Profile {
 			return WorkRun{}, fmt.Errorf("%w: verifier profile and named session owner must match", ErrConflict)
 		}
 		namedAgentID = params.Profile
+	} else if namedAgentID == "" && params.Kind != WorkRunVerifier {
+		namedAgentID = actor.ID
+	}
+	if namedAgentID == "" {
+		return WorkRun{}, fmt.Errorf("%w: a verifier run requires a visible named agent distinct from the task owner", ErrUnauthorized)
 	}
 	if namedAgentID != "" {
 		if err := s.requireRoomAgentMemberTx(ctx, tx, work.RoomID, namedAgentID); err != nil {
 			return WorkRun{}, err
 		}
-	}
-	if (params.Kind == WorkRunSelector || params.Kind == WorkRunIntegration) && namedAgentID == "" {
-		return WorkRun{}, fmt.Errorf("%w: selector and integration runs require a visible named agent", ErrUnauthorized)
 	}
 	freshNamedSession := false
 	if params.SessionRef == "" && namedAgentID != "" {
@@ -428,9 +439,9 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		freshNamedSession = true
 	}
 	allowFreshNamedSession := freshNamedSession ||
-		(actor.IsRoomRuntime() && params.Kind == WorkRunVerifier && namedAgentID != "")
+		(params.Kind == WorkRunVerifier && namedAgentID != "")
 	bindRunSession := params.SessionRef != "" && namedAgentID != ""
-	if bindRunSession && (actor.IsRoomRuntime() || params.Kind != WorkRunVerifier) {
+	if bindRunSession {
 		if err := validateCollaborationSessionRouteTx(ctx, tx, params.SessionRef, namedAgentID, work.RoomID, work.ID); err != nil {
 			if allowFreshNamedSession && errors.Is(err, ErrNotFound) {
 				// The binding is inserted atomically with the run below.
@@ -456,12 +467,12 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		if work.State != WorkChecking || work.CandidateRevision == 0 || work.CandidateArtifactRef == "" {
 			return WorkRun{}, fmt.Errorf("%w: verifier run requires a checking candidate", ErrConflict)
 		}
-		if !actor.IsRoomRuntime() || actor.RoomID != work.RoomID {
-			return WorkRun{}, fmt.Errorf("%w: only the room runtime may start verification", ErrUnauthorized)
-		}
 		verifierID := strings.TrimSpace(params.Profile)
 		if verifierID == "" {
-			verifierID = WorkVerifierProfileIndependent
+			verifierID = namedAgentID
+			if verifierID == "" {
+				verifierID = WorkVerifierProfileIndependent
+			}
 			params.Profile = verifierID
 		}
 		if namedAgentID != "" && verifierID != namedAgentID {
@@ -607,7 +618,7 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 		}
 	}
 	shouldWakeNamedAgent := false
-	if actor.IsRoomRuntime() && run.State == WorkRunRunning && run.NamedAgentID != "" && run.Kind != WorkRunVerifier {
+	if run.State == WorkRunRunning && run.NamedAgentID != "" && (run.SessionRef != params.SourceSessionRef || run.NamedAgentID != actor.ID) {
 		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
 			RoomID: work.RoomID, ToAgentID: run.NamedAgentID, TargetKind: CollaborationTargetSession,
 			TargetID: run.SessionRef, TargetSessionRef: run.SessionRef, Visibility: CollaborationVisibilitySystem,
@@ -654,12 +665,15 @@ func (s *Service) FinishWorkRun(ctx context.Context, params WorkRunFinishParams)
 	if err != nil {
 		return WorkRun{}, err
 	}
-	if err := authorizeWorkActorTx(ctx, tx, work, actor); err != nil {
-		return WorkRun{}, err
-	}
 	run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ? AND run.work_id = ?`, params.RunID, work.ID))
 	if err != nil {
 		return WorkRun{}, err
+	}
+	if err := requireRoomPrincipalAccessTx(ctx, tx, work.RoomID, actor.ID); err != nil {
+		return WorkRun{}, err
+	}
+	if authorizeWorkActorTx(ctx, tx, work, actor) != nil && run.NamedAgentID != actor.ID {
+		return WorkRun{}, ErrUnauthorized
 	}
 	if run.State != WorkRunRunning && run.State != WorkRunQueued {
 		if params.RequestID != "" && run.FinishRequestID == params.RequestID {
@@ -885,13 +899,20 @@ func (s *Service) AddWorkArtifact(ctx context.Context, params WorkArtifactAddPar
 	if err != nil {
 		return WorkArtifact{}, err
 	}
-	if err := authorizeWorkActorTx(ctx, tx, work, actor); err != nil {
+	if err := requireRoomPrincipalAccessTx(ctx, tx, work.RoomID, actor.ID); err != nil {
 		return WorkArtifact{}, err
+	}
+	canManage := authorizeWorkActorTx(ctx, tx, work, actor) == nil
+	if !canManage && strings.TrimSpace(params.RunID) == "" {
+		return WorkArtifact{}, ErrUnauthorized
 	}
 	if runID := strings.TrimSpace(params.RunID); runID != "" {
 		run, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ? AND run.work_id = ?`, runID, work.ID))
 		if err != nil {
 			return WorkArtifact{}, err
+		}
+		if !canManage && run.NamedAgentID != actor.ID {
+			return WorkArtifact{}, ErrUnauthorized
 		}
 		if run.GoalRevision != work.GoalRevision || run.CandidateRevision != work.CandidateRevision {
 			return WorkArtifact{}, fmt.Errorf("%w: artifact run revisions are stale", ErrConflict)
@@ -1034,20 +1055,20 @@ func (s *Service) PromoteWorkCandidate(ctx context.Context, params WorkCandidate
 	}); err != nil {
 		return Work{}, err
 	}
-	var runtimeID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, work.RoomID).Scan(&runtimeID); err != nil {
+	recipientID, recipientSession, err := workResultRecipientTx(ctx, tx, work, run.SessionRef)
+	if err != nil {
 		return Work{}, err
 	}
 	if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
-		RoomID: work.RoomID, ToAgentID: runtimeID, TargetKind: CollaborationTargetRoomRuntime,
-		TargetID: runtimeID, Visibility: CollaborationVisibilitySystem, Kind: CollaborationCandidateReady,
+		RoomID: work.RoomID, ToAgentID: recipientID, TargetSessionRef: recipientSession,
+		Visibility: CollaborationVisibilitySystem, Kind: CollaborationCandidateReady,
 		Body: "Canonical candidate promoted", WorkID: work.ID, SourceMessageID: work.ID,
 		ArtifactRefs: []string{artifact.ID}, GoalRevision: work.GoalRevision,
 		CandidateRevision: nextCandidateRevision, CorrelationID: run.ID, RequestID: params.RequestID, CreatedAt: now,
 	}); err != nil {
 		return Work{}, err
 	}
-	shouldWake, err := requestWakeTx(ctx, tx, runtimeID, toMillis(now))
+	shouldWake, err := requestWakeTx(ctx, tx, recipientID, toMillis(now))
 	if err != nil {
 		return Work{}, err
 	}
@@ -1055,7 +1076,7 @@ func (s *Service) PromoteWorkCandidate(ctx context.Context, params WorkCandidate
 		return Work{}, err
 	}
 	if shouldWake && s.wake != nil {
-		s.wake.Deliver(runtimeID)
+		s.wake.Deliver(recipientID)
 	}
 	return s.GetWork(ctx, work.ID)
 }
@@ -1289,6 +1310,9 @@ func (s *Service) UpdateWorkPolicy(ctx context.Context, params WorkPolicyUpdateP
 	if err := authorizeWorkActorTx(ctx, tx, work, actor); err != nil {
 		return Work{}, err
 	}
+	if params.LeadNamedAgentID == "" {
+		params.LeadNamedAgentID = work.LeadNamedAgentID
+	}
 	if params.LeadNamedAgentID != "" {
 		if err := requireMemberTx(ctx, tx, work.RoomID, MemberAgent, params.LeadNamedAgentID); err != nil {
 			return Work{}, err
@@ -1351,10 +1375,7 @@ func (s *Service) UpdateWorkEvidence(ctx context.Context, params WorkEvidenceUpd
 
 func authorizeWorkActorTx(ctx context.Context, tx *sql.Tx, work Work, actor AgentRuntime) error {
 	if actor.ID == work.OwnerNamedAgentID || actor.ID == work.LeadNamedAgentID {
-		return nil
-	}
-	if actor.IsRoomRuntime() && actor.RoomID == work.RoomID {
-		return nil
+		return requireRoomPrincipalAccessTx(ctx, tx, work.RoomID, actor.ID)
 	}
 	return ErrUnauthorized
 }
@@ -1372,14 +1393,9 @@ func refreshWorkCurrentRunRefTx(ctx context.Context, tx *sql.Tx, workID string, 
 }
 
 func (s *Service) enqueueWorkRunTerminalTx(ctx context.Context, tx *sql.Tx, work Work, run WorkRun, now time.Time) ([]string, error) {
-	var runtimeID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, work.RoomID).Scan(&runtimeID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Legacy/test fixtures can predate room runtimes. Production startup
-			// backfills them; recovery must still settle the run if none exists.
-			return nil, nil
-		}
-		return nil, fmt.Errorf("resolve work terminal room runtime: %w", err)
+	recipientID, recipientSession, err := workResultRecipientTx(ctx, tx, work, run.SessionRef)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM work_artifacts WHERE work_id = ? AND run_id = ? ORDER BY created_at, id`, work.ID, run.ID)
 	if err != nil {
@@ -1406,20 +1422,20 @@ func (s *Service) enqueueWorkRunTerminalTx(ctx context.Context, tx *sql.Tx, work
 		return nil, err
 	}
 	if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
-		RoomID: work.RoomID, ToAgentID: runtimeID, TargetKind: CollaborationTargetRoomRuntime,
-		TargetID: runtimeID, Visibility: CollaborationVisibilitySystem, Kind: CollaborationWorkRunTerminal,
+		RoomID: work.RoomID, ToAgentID: recipientID, TargetSessionRef: recipientSession,
+		Visibility: CollaborationVisibilitySystem, Kind: CollaborationWorkRunTerminal,
 		Body: string(body), WorkID: work.ID, ArtifactRefs: artifactRefs, GoalRevision: run.GoalRevision,
 		CandidateRevision: run.CandidateRevision, CorrelationID: run.ID,
 		TerminalState: collaborationTerminalStateForRun(run.State), CreatedAt: now,
 	}); err != nil {
 		return nil, fmt.Errorf("enqueue work run terminal: %w", err)
 	}
-	shouldWake, err := requestWakeTx(ctx, tx, runtimeID, toMillis(now))
+	shouldWake, err := requestWakeTx(ctx, tx, recipientID, toMillis(now))
 	if err != nil {
 		return nil, err
 	}
 	if shouldWake {
-		return []string{runtimeID}, nil
+		return []string{recipientID}, nil
 	}
 	return nil, nil
 }
@@ -1502,9 +1518,10 @@ func (s *Service) admitQueuedWorkRunsTx(ctx context.Context, tx *sql.Tx, now tim
 		recipientID := run.NamedAgentID
 		targetKind := CollaborationTargetNamedAgent
 		if recipientID == "" {
-			targetKind = CollaborationTargetRoomRuntime
-			if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, work.RoomID).Scan(&recipientID); err != nil {
-				return nil, err
+			var resolveErr error
+			recipientID, _, resolveErr = workResultRecipientTx(ctx, tx, work, run.SessionRef)
+			if resolveErr != nil {
+				return nil, resolveErr
 			}
 		}
 		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{

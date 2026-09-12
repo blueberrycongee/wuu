@@ -115,17 +115,12 @@ func bindCollaborationSessionTx(ctx context.Context, tx *sql.Tx, actor AgentRunt
 		}
 		return CollaborationSessionBinding{}, fmt.Errorf("load collaboration session principal: %w", err)
 	}
-	if actor.ID != params.PrincipalID {
-		if !actor.IsRoomRuntime() || params.RoomID == "" || actor.RoomID != params.RoomID {
-			return CollaborationSessionBinding{}, ErrUnauthorized
-		}
+	if principalKind != PrincipalNamedAgent || actor.ID != params.PrincipalID {
+		return CollaborationSessionBinding{}, ErrUnauthorized
 	}
 	if params.RoomID != "" {
 		if err := requireRoomPrincipalAccessTx(ctx, tx, params.RoomID, params.PrincipalID); err != nil {
 			return CollaborationSessionBinding{}, err
-		}
-		if actor.IsRoomRuntime() && actor.RoomID != params.RoomID {
-			return CollaborationSessionBinding{}, ErrUnauthorized
 		}
 	} else if params.WorkID != "" || params.RunID != "" || actor.ID != params.PrincipalID {
 		return CollaborationSessionBinding{}, errors.New("scoped collaboration session requires a room")
@@ -256,14 +251,7 @@ func (s *Service) ListCollaborationSessions(ctx context.Context, params Collabor
 	}
 	params.PrincipalID = strings.TrimSpace(params.PrincipalID)
 	params.RoomID = strings.TrimSpace(params.RoomID)
-	if actor.IsRoomRuntime() {
-		if params.RoomID == "" {
-			params.RoomID = actor.RoomID
-		}
-		if params.RoomID != actor.RoomID {
-			return nil, ErrUnauthorized
-		}
-	} else if params.RoomID != "" {
+	if params.RoomID != "" {
 		if err := s.requireRoomPrincipalAccess(ctx, params.RoomID, actor.ID); err != nil {
 			return nil, err
 		}
@@ -276,7 +264,7 @@ func (s *Service) ListCollaborationSessions(ctx context.Context, params Collabor
 		}
 	}
 	query := collaborationSessionSelect + ` WHERE 1 = 1`
-	if params.RoomID != "" && !actor.IsRoomRuntime() {
+	if params.RoomID != "" {
 		query += ` AND EXISTS (SELECT 1 FROM room_members member WHERE member.room_id = binding.room_id AND member.member_type = 'agent' AND member.member_id = binding.principal_id)`
 	}
 	args := make([]any, 0, 2)
@@ -371,7 +359,7 @@ func canAccessCollaborationSession(actor AgentRuntime, binding CollaborationSess
 	if actor.ID == binding.PrincipalID {
 		return true
 	}
-	return actor.IsRoomRuntime() && binding.RoomID != "" && actor.RoomID == binding.RoomID
+	return false
 }
 
 func validateCollaborationSessionRouteTx(ctx context.Context, tx *sql.Tx, sessionRef, principalID, roomID, workID string) error {
@@ -477,7 +465,7 @@ func availableCollaborationSessionState(state CollaborationSessionState) bool {
 
 func (s *Service) requireRoomPrincipalAccess(ctx context.Context, roomID, principalID string) error {
 	var exists int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM room_members WHERE room_id = ? AND member_type = 'agent' AND member_id = ? UNION ALL SELECT 1 FROM room_runtimes WHERE room_id = ? AND id = ? LIMIT 1`, roomID, principalID, roomID, principalID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM room_members WHERE room_id = ? AND member_type = 'agent' AND member_id = ? LIMIT 1`, roomID, principalID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthorized
 	}

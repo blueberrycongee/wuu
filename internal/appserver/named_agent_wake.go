@@ -139,32 +139,7 @@ func (s *Server) deliverNamedAgentWake(ctx context.Context, agentID string) erro
 	if err != nil {
 		return err
 	}
-	if !agent.IsRoomRuntime() {
-		return s.dispatchNamedAgentWakeLocked(ctx, agent, false)
-	}
-	threadID := agentRuntimeSessionID(agent)
-	th := s.thread(threadID)
-	if th == nil && !agent.Autostart {
-		_, found, err := session.Find(s.rt.SessionDir, threadID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return nil
-		}
-	}
-	th, err = s.ensureAgentRuntimeThreadLocked(agent)
-	if err != nil {
-		return err
-	}
-	if threadIsRunning(th) {
-		if err := s.channelService.MarkWakePending(ctx, agent.ID); err != nil {
-			return err
-		}
-		return nil
-	}
-	_, _, _, _ = s.removeHeldUserTurn(th.ID, namedAgentWakeID(agent.ID))
-	return s.startAgentRuntimeWakeLocked(agent, th)
+	return s.dispatchNamedAgentWakeLocked(ctx, agent, false)
 }
 
 func (s *Server) ensureNamedAgentThreadLocked(agent channels.NamedAgent) (*threadState, error) {
@@ -172,20 +147,6 @@ func (s *Server) ensureNamedAgentThreadLocked(agent channels.NamedAgent) (*threa
 }
 
 func (s *Server) ensureAgentRuntimeThreadLocked(agent channels.AgentRuntime) (*threadState, error) {
-	if agent.IsRoomRuntime() {
-		client, err := s.channelService.BindRuntime(context.Background(), agent.ID)
-		if err != nil {
-			return nil, err
-		}
-		ref := agentRuntimeSessionID(agent)
-		if _, err = client.GetCollaborationSession(context.Background(), ref); errors.Is(err, channels.ErrNotFound) {
-			_, err = client.BindCollaborationSession(context.Background(), channels.CollaborationSessionBindParams{SessionRef: ref, RoomID: agent.RoomID, Purpose: channels.CollaborationSessionCoordination, State: channels.CollaborationSessionIdle, RuntimeVersion: runtime.CollaborationRuntimeVersion})
-		}
-		if err != nil {
-			return nil, err
-		}
-		return s.ensureAgentRuntimeThreadWithSessionLocked(agent, ref, ref)
-	}
 	return s.ensureAgentRuntimeThreadWithSessionLocked(agent, agentRuntimeSessionID(agent), "")
 }
 
@@ -270,7 +231,7 @@ func (s *Server) namedAgentPinnedSelection(agent channels.AgentRuntime, threadID
 		}
 		return runtimeSelectionFromSession(metadata), nil
 	}
-	selection := s.collaborationRuntimeSelection(s.currentSessionRuntimeSelection(), agent)
+	selection := s.currentSessionRuntimeSelection()
 	selection.Provider, selection.Model, selection.Effort = agentRuntimeModelSelection(selection.Provider, selection.Model, selection.Effort, agent)
 	if sessionRef != "" {
 		client, err := s.bindCollaborationPrincipal(context.Background(), agent, "")
@@ -313,18 +274,6 @@ func agentRuntimeModelSelection(provider, model, effort string, agent channels.A
 	return provider, model, effort
 }
 
-func (s *Server) collaborationRuntimeSelection(selection session.RuntimeSelection, agent channels.AgentRuntime) session.RuntimeSelection {
-	if s == nil || s.rt == nil || !agent.IsRoomRuntime() {
-		return selection
-	}
-	role := s.rt.ModelRoles.Coordination
-	selection.Provider = role.Provider
-	selection.Model = role.Model
-	selection.Variant = role.Variant
-	selection.Effort = role.LegacyEffort
-	return selection
-}
-
 func (s *Server) newNamedAgentRuntime(threadID string, agent channels.NamedAgent, selection runtime.ThreadModelSelection) (*runtime.ThreadRuntime, error) {
 	return s.newAgentExecutionRuntime(threadID, agentRuntimeFromNamed(agent), selection)
 }
@@ -355,13 +304,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 		return nil, err
 	}
 	var chatAgent *channels.AgentClient
-	if agent.IsRoomRuntime() {
-		if collaborationSessionRef != "" {
-			chatAgent, err = s.channelService.BindRuntimeSession(context.Background(), agent.ID, collaborationSessionRef)
-		} else {
-			chatAgent, err = s.channelService.BindRuntime(context.Background(), agent.ID)
-		}
-	} else if collaborationSessionRef = strings.TrimSpace(collaborationSessionRef); collaborationSessionRef != "" {
+	if collaborationSessionRef = strings.TrimSpace(collaborationSessionRef); collaborationSessionRef != "" {
 		chatAgent, err = s.channelService.BindAgentSession(context.Background(), agent.ID, collaborationSessionRef)
 	} else {
 		chatAgent, err = s.channelService.BindAgent(context.Background(), agent.ID)
@@ -592,15 +535,7 @@ func (s *Server) completeNamedAgentSessionTurn(agentID, sessionRef, workID, runI
 	}
 	if agent, getErr := s.channelService.GetAgentRuntime(context.Background(), agentID); getErr == nil {
 		var dispatchErr error
-		if agent.IsRoomRuntime() && followup {
-			{
-				th, ensureErr := s.ensureAgentRuntimeThreadLocked(agent)
-				if ensureErr == nil {
-					ensureErr = s.startAgentRuntimeWakeLocked(agent, th)
-				}
-				dispatchErr = ensureErr
-			}
-		} else if !agent.IsRoomRuntime() && followup {
+		if followup {
 			dispatchErr = s.dispatchNamedAgentWakeLocked(context.Background(), agent, false)
 		}
 		if dispatchErr != nil {
@@ -707,12 +642,11 @@ func agentRuntimeFromNamed(agent channels.NamedAgent) channels.AgentRuntime {
 
 func agentRuntimeOrientation(agent channels.AgentRuntime) string {
 	identity := fmt.Sprintf("You are %s, a durable named identity. Your role is %s.", agent.Name, agent.Role)
-	if agent.IsRoomRuntime() {
-		identity = "You coordinate this room. You are an internal session, so visible named identities publish room-facing answers. Choose existing room identities according to their capabilities and current evidence."
-	}
 	return fmt.Sprintf(`# Collaboration
 
 %s Your identity home is %s and your shared identity memory is %s. Each session has its own objective, history, model and execution state. Other sessions under your identity share durable memory, not private conversation. Record reusable facts carefully; coordinate concurrent edits to shared files and retain provenance.
+
+Room messages are delivered directly to visible members. There is no separate room coordinator. Decide whether you have a useful contribution, take responsibility for concrete work, and ask another member or session when needed. Publish progress, questions and results under your own identity. A public post does not require every member to respond; address a member with a mention or send a direct session message when you need their attention. Avoid acknowledgement-only exchanges.
 
 Use the current room membership and registered project workspaces supplied in request context. Work in those projects with absolute paths or explicit command cwd. Your identity home is not a restriction on project work. Never read another identity's private memory or conversation. Share the evidence, assumptions, artifacts and conclusions needed for cooperation through room-scoped messages and references.
 

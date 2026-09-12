@@ -53,14 +53,10 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	}
 	checkedAt := fromMillis(toMillis(s.now()))
 	items := make([]CheckItem, 0, 1)
+	inboxScope := ""
+	var inboxArgs []any
 	if binding.WorkID != "" {
-		rows, err := tx.QueryContext(ctx, `
-			SELECT inbox.id, inbox.room_id, inbox.message_id, inbox.kind, inbox.created_at,
-				COALESCE(message.thread_id, ''), message.author_type, message.author_id,
-				message.body, message.seq
-			FROM inbox_items inbox
-			JOIN room_messages message ON message.id = inbox.message_id
-			WHERE inbox.member_type = 'agent' AND inbox.member_id = ?
+		inboxScope = `
 				AND inbox.message_id = ? AND inbox.kind = 'task' AND inbox.pulled_at IS NULL
 				AND EXISTS (
 					SELECT 1 FROM collaboration_messages assignment
@@ -69,8 +65,23 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 						AND assignment.invalidated_at IS NULL
 						AND (assignment.target_session_ref = ? OR
 							(assignment.target_session_ref IS NULL AND assignment.pulled_at IS NULL))
-				)
-			ORDER BY inbox.created_at, inbox.rowid`, actor.ID, binding.WorkID, binding.SessionRef)
+				)`
+		inboxArgs = []any{actor.ID, binding.WorkID, binding.SessionRef}
+	} else if binding.Purpose == CollaborationSessionConversation && binding.RoomID != "" {
+		inboxScope = ` AND inbox.room_id = ? AND inbox.kind IN ('mention', 'reply', 'thread_update') AND inbox.pulled_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM works work WHERE work.id = message.id OR work.id = message.thread_id)
+			AND NOT EXISTS (SELECT 1 FROM collaboration_messages delivery WHERE delivery.to_agent_id = inbox.member_id AND delivery.source_message_id = inbox.message_id AND delivery.target_session_ref IS NOT NULL AND delivery.target_session_ref != ? AND delivery.invalidated_at IS NULL)`
+		inboxArgs = []any{actor.ID, binding.RoomID, binding.SessionRef}
+	}
+	if inboxScope != "" {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT inbox.id, inbox.room_id, inbox.message_id, inbox.kind, inbox.created_at,
+				COALESCE(message.thread_id, ''), message.author_type, message.author_id,
+				message.body, message.seq
+			FROM inbox_items inbox
+			JOIN room_messages message ON message.id = inbox.message_id
+			WHERE inbox.member_type = 'agent' AND inbox.member_id = ?`+inboxScope+`
+			ORDER BY inbox.created_at, inbox.rowid`, inboxArgs...)
 		if err != nil {
 			return CheckResult{}, fmt.Errorf("query collaboration session task inbox: %w", err)
 		}
@@ -112,12 +123,12 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		scopeSQL = "delivery.room_id = ? AND delivery.work_id = ?"
 		scopeArgs = append(scopeArgs, binding.RoomID, binding.WorkID)
 	} else if binding.RoomID != "" && (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination) {
-		scopeSQL = "delivery.room_id = ? AND delivery.work_id IS NULL"
+		scopeSQL = "delivery.room_id = ? AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion'))"
 		scopeArgs = append(scopeArgs, binding.RoomID)
 	}
 	query := `
 		SELECT delivery.id, delivery.room_id, delivery.from_type,
-			CASE WHEN sender.kind = 'named_agent' THEN delivery.from_id ELSE '' END,
+			CASE WHEN delivery.from_type = 'human' OR sender.kind = 'named_agent' THEN delivery.from_id ELSE '' END,
 			COALESCE(delivery.from_session_ref, ''), delivery.to_agent_id,
 			COALESCE(delivery.target_session_ref, ''),
 			CASE WHEN principal.kind = 'named_agent' THEN delivery.to_agent_id ELSE '' END,
@@ -317,7 +328,7 @@ func (s *Service) checkAgent(ctx context.Context, agentID string) (CheckResult, 
 	collaborationIDs := make([]string, 0, checkLimit)
 	rows, err = tx.QueryContext(ctx, `
 		SELECT delivery.id, delivery.room_id, delivery.from_type,
-			CASE WHEN sender.kind = 'named_agent' THEN delivery.from_id ELSE '' END,
+			CASE WHEN delivery.from_type = 'human' OR sender.kind = 'named_agent' THEN delivery.from_id ELSE '' END,
 			COALESCE(delivery.from_session_ref, ''),
 			delivery.to_agent_id,
 			COALESCE(delivery.target_session_ref, ''),
@@ -331,7 +342,7 @@ func (s *Service) checkAgent(ctx context.Context, agentID string) (CheckResult, 
 		JOIN collaboration_principals principal ON principal.id = delivery.to_agent_id
 		LEFT JOIN collaboration_principals sender ON sender.id = delivery.from_id
 		WHERE delivery.to_agent_id = ? AND delivery.target_session_ref IS NULL
-			AND (principal.kind != 'named_agent' OR delivery.work_id IS NULL)
+			AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion'))
 			AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
 		ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, agentID, checkLimit+1)
 	if err != nil {
@@ -410,7 +421,7 @@ func recomputeAgentWakeTx(ctx context.Context, tx *sql.Tx, agentID string, now i
 			(SELECT COUNT(*) FROM collaboration_messages
 			 WHERE to_agent_id = ? AND pulled_at IS NULL AND invalidated_at IS NULL) +
 			(SELECT COUNT(*) FROM inbox_items
-			 WHERE member_type = 'agent' AND member_id = ? AND pulled_at IS NULL)`,
+			 WHERE member_type = 'agent' AND member_id = ? AND pulled_at IS NULL AND kind IN ('task', 'reminder'))`,
 		agentID, agentID).Scan(&pending); err != nil {
 		return fmt.Errorf("count pending agent deliveries: %w", err)
 	}

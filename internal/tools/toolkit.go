@@ -346,11 +346,7 @@ func (t *Toolkit) rebuildRegistry() {
 	}
 	if e.ChatAgent != nil {
 		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewChatSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e))
-		if e.ChatAgent.IsRoomRuntime() {
-			registered = append(registered, NewChatVerifyTool(e), NewChatRosterTool(e))
-		} else {
-			registered = append(registered, NewChatSendTool(e))
-		}
+		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
 	}
 	// Code-mode entry tools appear only when a host service is attached to the
 	// session. They stay out of the registry otherwise, so Direct mode never
@@ -413,16 +409,7 @@ func (t *Toolkit) SetChatAgent(client *channels.AgentClient) {
 	}
 	t.env.ChatAgent = client
 	t.rebuildRegistry()
-	kind := modelprofile.SurfaceNamedAgent
-	if client != nil && client.IsRoomRuntime() {
-		kind = modelprofile.SurfaceRoomAgent
-	}
-	t.setActiveProfileForSurface(t.ActiveProfile(), kind)
-}
-
-// IsRoomAgent reports whether this toolkit is bound to a hidden room runtime.
-func (t *Toolkit) IsRoomAgent() bool {
-	return t != nil && t.env != nil && t.env.ChatAgent != nil && t.env.ChatAgent.IsRoomRuntime()
+	t.setActiveProfileForSurface(t.ActiveProfile(), modelprofile.SurfaceNamedAgent)
 }
 
 // SetImageInputSupported installs the active model's resolved image-input
@@ -955,7 +942,7 @@ func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelp
 	t.activeProfileMu.Lock()
 	defer t.activeProfileMu.Unlock()
 	t.activeProfile = p
-	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent && kind != modelprofile.SurfaceRoomAgent {
+	if (p == modelprofile.Profile{}) && kind != modelprofile.SurfaceNamedAgent {
 		t.activeSurface = capability.Surface{}
 		t.publishActiveSurfaceLocked()
 		return

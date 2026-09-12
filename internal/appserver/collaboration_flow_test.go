@@ -15,12 +15,13 @@ import (
 type collaborationFlowCall struct {
 	request  providers.ChatRequest
 	response chan providers.ChatResponse
+	failure  chan error
 }
 
 type collaborationFlowProvider struct{ calls chan *collaborationFlowCall }
 
 func (provider *collaborationFlowProvider) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
-	call := &collaborationFlowCall{request: request, response: make(chan providers.ChatResponse, 1)}
+	call := &collaborationFlowCall{request: request, response: make(chan providers.ChatResponse, 1), failure: make(chan error, 1)}
 	select {
 	case provider.calls <- call:
 	case <-ctx.Done():
@@ -29,6 +30,8 @@ func (provider *collaborationFlowProvider) Chat(ctx context.Context, request pro
 	select {
 	case response := <-call.response:
 		return response, nil
+	case err := <-call.failure:
+		return providers.ChatResponse{}, err
 	case <-ctx.Done():
 		return providers.ChatResponse{}, ctx.Err()
 	}
@@ -58,7 +61,6 @@ func newCollaborationFlowFixture(t *testing.T) (*collaborationRPCFixture, *colla
 // child. Both calls stay under test control until their durable state is checked.
 func startCollaborationFlow(t *testing.T, fixture *collaborationRPCFixture, provider *collaborationFlowProvider) (channels.CollaborationSessionBinding, channels.CollaborationSessionBinding, *collaborationFlowCall) {
 	t.Helper()
-	ctx := context.Background()
 	const objective = "Identify the reconnect defect using an independent experiment"
 	var result ChannelSessionResult
 	fixture.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: fixture.identity.ID, RoomID: fixture.room.ID, Prompt: objective, Title: "Reconnect investigation", RequestID: "flow-parent"}, &result)
@@ -67,6 +69,12 @@ func startCollaborationFlow(t *testing.T, fixture *collaborationRPCFixture, prov
 	if !strings.Contains(collaborationRequestText(parentCall.request), objective) {
 		t.Fatal("the user objective did not reach the parent model")
 	}
+	return startCollaborationChild(t, fixture, provider, parent, parentCall)
+}
+
+func startCollaborationChild(t *testing.T, fixture *collaborationRPCFixture, provider *collaborationFlowProvider, parent channels.CollaborationSessionBinding, parentCall *collaborationFlowCall) (channels.CollaborationSessionBinding, channels.CollaborationSessionBinding, *collaborationFlowCall) {
+	t.Helper()
+	ctx := context.Background()
 	args, err := json.Marshal(map[string]string{"action": "create", "room_id": fixture.room.ID, "prompt": "Run an independent reconnect experiment and report concrete evidence", "title": "Independent experiment", "request_id": "model-created-child"})
 	if err != nil {
 		t.Fatal(err)

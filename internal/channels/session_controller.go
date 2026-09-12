@@ -110,11 +110,9 @@ func (s *Service) CreateSession(ctx context.Context, params CollaborationSession
 			return CollaborationSessionBinding{}, ErrUnauthorized
 		}
 		if params.ActorID != "" && parent.PrincipalID != params.ActorID {
-			actor, err := s.AuthenticatePrincipal(ctx, params.ActorID, params.Token)
-			if err != nil || !actor.IsRoomRuntime() || actor.RoomID != params.RoomID {
-				return CollaborationSessionBinding{}, ErrUnauthorized
-			}
+			return CollaborationSessionBinding{}, ErrUnauthorized
 		}
+
 	}
 	if params.RequestID == "" {
 		params.RequestID, err = randomID("session-request", 12)
@@ -190,13 +188,6 @@ func (s *Service) authorizeSessionTarget(ctx context.Context, params Collaborati
 		return CollaborationSessionBinding{}, err
 	}
 	if !control || params.ActorID == binding.PrincipalID {
-		return binding, nil
-	}
-	actor, err := s.AuthenticatePrincipal(ctx, params.ActorID, params.Token)
-	if err != nil {
-		return CollaborationSessionBinding{}, err
-	}
-	if actor.IsRoomRuntime() && actor.RoomID == binding.RoomID {
 		return binding, nil
 	}
 	if binding.ParentSessionRef != "" {

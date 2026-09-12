@@ -85,7 +85,7 @@ func TestNamedAgentSurfaceAddsChatToolsToCompleteMainSurface(t *testing.T) {
 		profile := Resolve(tt.provider, tt.model)
 		main := c.Compile(profile, SurfaceMain)
 		named := c.Compile(profile, SurfaceNamedAgent)
-		chatTools := []string{"chat_check", "chat_draft", "chat_read", "chat_remind", "chat_send", "chat_session", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
+		chatTools := []string{"chat_check", "chat_draft", "chat_read", "chat_remind", "chat_roster", "chat_send", "chat_session", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
 		for name, capabilityName := range main.Tools {
 			if named.Tools[name] != capabilityName {
 				t.Errorf("%s/%s named-agent surface lost main tool %s", tt.provider, tt.model, name)
@@ -104,36 +104,6 @@ func TestNamedAgentSurfaceAddsChatToolsToCompleteMainSurface(t *testing.T) {
 		if !slices.Equal(sortedKeys(named.DeferredTools), sortedKeys(main.DeferredTools)) ||
 			!slices.Equal(sortedKeys(named.HiddenTools), sortedKeys(main.HiddenTools)) {
 			t.Errorf("%s/%s named-agent surface did not retain the main deferred/hidden tools", tt.provider, tt.model)
-		}
-	}
-}
-
-func TestRoomAgentSurfaceKeepsMainToolsWithoutPublicChatSend(t *testing.T) {
-	coordinationTools := []string{"chat_check", "chat_read", "chat_remind", "chat_roster", "chat_session", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
-	for _, profile := range []Profile{
-		Resolve("openai", "gpt-5-codex"),
-		Resolve("anthropic", "claude-sonnet-4-5"),
-		Resolve("ollama", "llama-coder"),
-	} {
-		main := DefaultCompiler{}.Compile(profile, SurfaceMain)
-		surface := DefaultCompiler{}.Compile(profile, SurfaceRoomAgent)
-		for name, capabilityName := range main.Tools {
-			if surface.Tools[name] != capabilityName {
-				t.Errorf("%s room surface lost main tool %s", profile.Model, name)
-			}
-		}
-		for _, name := range coordinationTools {
-			if surface.Tools[name] != capability.CapabilityChat {
-				t.Errorf("%s room surface must expose %s as chat capability", profile.Model, name)
-			}
-		}
-		if _, ok := surface.Tools["chat_send"]; ok {
-			t.Errorf("%s room surface exposes public chat_send", profile.Model)
-		}
-		if !slices.Equal(sortedKeys(surface.DeferredTools), sortedKeys(main.DeferredTools)) ||
-			!slices.Equal(sortedKeys(surface.HiddenTools), sortedKeys(main.HiddenTools)) ||
-			!slices.Equal(toCapabilityStrings(surface.DeferredCapabilities), toCapabilityStrings(main.DeferredCapabilities)) {
-			t.Errorf("%s room surface did not retain the main deferred/hidden surface", profile.Model)
 		}
 	}
 }

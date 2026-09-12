@@ -55,14 +55,10 @@ const (
 	// SurfaceNamedAgent is a persistent group-chat agent. It keeps the complete
 	// main-agent surface and adds the group-chat tools.
 	SurfaceNamedAgent
-	// SurfaceRoomAgent is the hidden room coordinator. It can inspect and
-	// coordinate collaboration state with the ordinary project tool surface,
-	// but it cannot publish user-facing messages itself.
-	SurfaceRoomAgent
 )
 
 func (k SurfaceKind) includesSessionWorkspace() bool {
-	return k == SurfaceMain || k == SurfaceNamedAgent || k == SurfaceRoomAgent
+	return k == SurfaceMain || k == SurfaceNamedAgent
 }
 
 func (k SurfaceKind) includesChat() bool {
@@ -70,7 +66,7 @@ func (k SurfaceKind) includesChat() bool {
 }
 
 func (k SurfaceKind) includesContextWindows() bool {
-	return k == SurfaceMain || k == SurfaceNamedAgent || k == SurfaceRoomAgent
+	return k == SurfaceMain || k == SurfaceNamedAgent
 }
 
 // Compiler compiles a model profile into a built-in tool surface. Plugin-owned
@@ -106,10 +102,6 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	}
 	if kind.includesChat() {
 		addChatTools(b)
-	}
-	if kind == SurfaceRoomAgent {
-		addRoomChatTools(b)
-		b.surface.SystemFragment = strings.TrimSpace(b.surface.SystemFragment + "\n[Runtime role: hidden room coordinator; public chat_send unavailable.]")
 	}
 	b.sortCaps()
 	return b.surface
@@ -315,17 +307,6 @@ func addChatTools(b *surfaceBuilder) {
 	b.addVisible("chat_send", capability.CapabilityChat)
 	b.addVisible("collaboration_send", capability.CapabilityChat)
 	b.addVisible("chat_draft", capability.CapabilityChat)
-	b.addVisible("chat_task", capability.CapabilityChat)
-	b.addVisible("chat_work", capability.CapabilityChat)
-	b.addVisible("chat_verify", capability.CapabilityChat)
-	b.addVisible("chat_remind", capability.CapabilityChat)
-}
-
-func addRoomChatTools(b *surfaceBuilder) {
-	b.addVisible("chat_check", capability.CapabilityChat)
-	b.addVisible("chat_read", capability.CapabilityChat)
-	b.addVisible("chat_session", capability.CapabilityChat)
-	b.addVisible("collaboration_send", capability.CapabilityChat)
 	b.addVisible("chat_task", capability.CapabilityChat)
 	b.addVisible("chat_work", capability.CapabilityChat)
 	b.addVisible("chat_verify", capability.CapabilityChat)

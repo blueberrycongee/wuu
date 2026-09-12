@@ -624,6 +624,7 @@ type Reminder struct {
 }
 
 type TaskCreateParams struct {
+	SourceSessionRef     string
 	RoomID               string
 	ThreadID             string
 	SourceMessageID      string

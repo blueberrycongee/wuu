@@ -45,8 +45,8 @@ func (s *Service) ReceiveCollaboration(ctx context.Context, agentID, token, sess
 	}
 	rows, err := tx.QueryContext(ctx, collaborationMessageSelect+`
   WHERE delivery.to_agent_id = ? AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
-   AND (delivery.target_session_ref = ? OR (delivery.target_session_ref IS NULL AND delivery.room_id = ? AND COALESCE(delivery.work_id, '') = ? AND ?))
-  ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, actor.ID, sessionRef, binding.RoomID, binding.WorkID, binding.WorkID != "" || binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination, limit)
+   AND (delivery.target_session_ref = ? OR (delivery.target_session_ref IS NULL AND delivery.room_id = ? AND (COALESCE(delivery.work_id, '') = ? AND ? OR ? AND delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion'))))
+  ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, actor.ID, sessionRef, binding.RoomID, binding.WorkID, binding.WorkID != "" || binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination, binding.Purpose == CollaborationSessionConversation, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +123,12 @@ func (s *Service) AcknowledgeCollaboration(ctx context.Context, agentID, token, 
 				return err
 			}
 		}
+		if message.SourceMessageID != "" && message.WorkID == "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE inbox_items SET pulled_at = COALESCE(pulled_at, ?) WHERE member_type = 'agent' AND member_id = ? AND room_id = ? AND message_id = ? AND kind IN ('mention', 'reply', 'thread_update')`, now, actor.ID, message.RoomID, message.SourceMessageID); err != nil {
+				return err
+			}
+		}
+
 	}
 	if err := recomputeAgentWakeTx(ctx, tx, actor.ID, now); err != nil {
 		return err

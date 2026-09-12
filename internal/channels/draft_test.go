@@ -107,7 +107,7 @@ func TestWorkSessionDraftsAreIsolatedAndRevalidated(t *testing.T) {
 		service := openTestService(t, nil)
 		owner := createTestAgent(t, service, "Owner")
 		room := createTestRoom(t, service, owner)
-		runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+		runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 		if err != nil {
 			t.Fatalf("BindRuntime() error = %v", err)
 		}

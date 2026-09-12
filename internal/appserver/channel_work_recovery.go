@@ -66,7 +66,7 @@ func channelWorkRunRecoveryState(run channels.WorkRun, active bool, stored sessi
 		return terminalState
 	}
 	// Hidden verifier/selector sessions are fresh per run, so their completion
-	// marker belongs to this run and can be handed back to the room runtime even
+	// marker belongs to this run and can be handed back to its owner even
 	// when an older session has no explicit terminal history record.
 	if strings.TrimSpace(stored.LatestCompletedTurnID) != "" {
 		return channels.WorkRunRecoveryCompleted

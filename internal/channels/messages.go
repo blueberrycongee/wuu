@@ -471,7 +471,7 @@ func resolveMentionsTx(ctx context.Context, tx *sql.Tx, roomID, body string) ([]
 		if memberType == MemberHuman {
 			needle = id
 		}
-		if mentionPresent(body, needle) {
+		if mentionPresent(body, needle) || (memberType == MemberAgent && (mentionPresent(body, "all") || mentionPresent(body, "everyone"))) {
 			mentions = append(mentions, RoomMember{MemberType: memberType, MemberID: id})
 		}
 	}
@@ -520,54 +520,6 @@ func evaluateTriggersTx(ctx context.Context, tx *sql.Tx, message Message, mentio
 	if err != nil {
 		return nil, err
 	}
-	var roomKind RoomKind
-	var roomRuntimeID string
-	if err := tx.QueryRowContext(ctx, `
-		SELECT room.kind, COALESCE(runtime.id, '')
-		FROM rooms room
-		LEFT JOIN room_runtimes runtime ON runtime.room_id = room.id
-		WHERE room.id = ?`, message.RoomID).Scan(&roomKind, &roomRuntimeID); err != nil {
-		return nil, fmt.Errorf("resolve room orchestration: %w", err)
-	}
-	if roomKind == RoomChannel && roomRuntimeID != "" {
-		for _, mention := range mentions {
-			if mention.MemberType != MemberHuman {
-				continue
-			}
-			if err := insertInboxTx(ctx, tx, MemberHuman, mention.MemberID, message.RoomID, message.ID, InboxMention, now); err != nil {
-				return nil, err
-			}
-		}
-		if suppressed {
-			return nil, nil
-		}
-		workID := ""
-		goalRevision := 0
-		threadRoot := strings.TrimSpace(message.ThreadID)
-		if threadRoot != "" {
-			var kind MessageKind
-			if err := tx.QueryRowContext(ctx, `
-				SELECT kind, task_goal_revision FROM room_messages WHERE id = ? AND room_id = ?`,
-				threadRoot, message.RoomID).Scan(&kind, &goalRevision); err == nil && kind == MessageTask {
-				workID = threadRoot
-			}
-		}
-		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
-			RoomID: message.RoomID, FromType: message.AuthorType, FromID: message.AuthorID,
-			ToAgentID: roomRuntimeID, WorkID: workID, Body: message.Body,
-			SourceMessageID: message.ID, GoalRevision: goalRevision, CreatedAt: fromMillis(now),
-		}); err != nil {
-			return nil, err
-		}
-		requested, err := requestWakeTx(ctx, tx, roomRuntimeID, now)
-		if err != nil {
-			return nil, fmt.Errorf("request room agent wake: %w", err)
-		}
-		if requested {
-			return []string{roomRuntimeID}, nil
-		}
-		return nil, nil
-	}
 	agentSignals := make(map[string]InboxKind)
 	rows, err := tx.QueryContext(ctx, `SELECT member_id FROM room_members WHERE room_id = ? AND member_type = 'agent'`, message.RoomID)
 	if err != nil {
@@ -587,6 +539,12 @@ func evaluateTriggersTx(ctx context.Context, tx *sql.Tx, message Message, mentio
 		return nil, fmt.Errorf("close room agent signals: %w", err)
 	}
 
+	explicitAgentMention := false
+	for _, mention := range mentions {
+		if mention.MemberType == MemberAgent {
+			explicitAgentMention = true
+		}
+	}
 	wake := make(map[string]struct{})
 	for _, mention := range mentions {
 		if mention.MemberType == MemberAgent && message.AuthorType == MemberAgent && message.AuthorID == mention.MemberID {
@@ -603,16 +561,21 @@ func evaluateTriggersTx(ctx context.Context, tx *sql.Tx, message Message, mentio
 			}
 		}
 	}
-	if reply != nil && reply.AuthorType == MemberAgent && !(message.AuthorType == MemberAgent && message.AuthorID == reply.AuthorID) {
-		if agentSignals[reply.AuthorID] != InboxMention {
-			agentSignals[reply.AuthorID] = InboxReply
+	if reply != nil && reply.AuthorType == MemberAgent && !(message.AuthorType == MemberAgent && message.AuthorID == reply.AuthorID) && !(message.AuthorType == MemberHuman && explicitAgentMention) {
+		if _, member := agentSignals[reply.AuthorID]; member {
+			if agentSignals[reply.AuthorID] != InboxMention {
+				agentSignals[reply.AuthorID] = InboxReply
+			}
+			if !suppressed {
+				wake[reply.AuthorID] = struct{}{}
+			}
 		}
 	}
 	for agentID, kind := range agentSignals {
 		if err := insertInboxTx(ctx, tx, MemberAgent, agentID, message.RoomID, message.ID, kind, now); err != nil {
 			return nil, err
 		}
-		if message.AuthorType == MemberHuman && !suppressed {
+		if message.AuthorType == MemberHuman && !suppressed && !explicitAgentMention {
 			wake[agentID] = struct{}{}
 		}
 	}
@@ -621,6 +584,12 @@ func evaluateTriggersTx(ctx context.Context, tx *sql.Tx, message Message, mentio
 	for agentID := range wake {
 		if message.AuthorType == MemberAgent && message.AuthorID == agentID {
 			continue
+		}
+		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
+			RoomID: message.RoomID, FromType: message.AuthorType, FromID: message.AuthorID,
+			ToAgentID: agentID, Body: message.Body, SourceMessageID: message.ID, CreatedAt: fromMillis(now),
+		}); err != nil {
+			return nil, err
 		}
 		requested, err := requestWakeTx(ctx, tx, agentID, now)
 		if err != nil {

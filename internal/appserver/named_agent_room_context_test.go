@@ -44,11 +44,7 @@ func TestNamedAgentRoomContextChangesOnlyWithRoomStructure(t *testing.T) {
 			t.Fatalf("room context missing %q:\n%s", want, before[0].Content)
 		}
 	}
-	for _, internalID := range []string{room.ID, alpha.Agent.ID, beta.Agent.ID, localChannelHumanID} {
-		if strings.Contains(before[0].Content, internalID) {
-			t.Fatalf("room context exposed internal ID %q:\n%s", internalID, before[0].Content)
-		}
-	}
+
 	if _, err := server.channelService.SendHuman(ctx, channels.HumanSendParams{
 		RoomID: room.ID, HumanID: localChannelHumanID, Body: "message content must not alter room structure",
 	}); err != nil {
@@ -79,7 +75,7 @@ func TestNamedAgentRoomContextChangesOnlyWithRoomStructure(t *testing.T) {
 		t.Fatalf("CreateRoom(Delivery) error = %v", err)
 	}
 	afterMembershipChange := server.namedAgentRoomContextBlocks(alpha.Agent.ID)
-	if afterMembershipChange[0].Content == before[0].Content || !strings.Contains(afterMembershipChange[0].Content, joined.Name) || strings.Contains(afterMembershipChange[0].Content, joined.ID) {
+	if afterMembershipChange[0].Content == before[0].Content || !strings.Contains(afterMembershipChange[0].Content, joined.Name) {
 		t.Fatalf("membership change did not update room context: %q", afterMembershipChange[0].Content)
 	}
 }

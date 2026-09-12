@@ -32,7 +32,7 @@ func (t *ChatWorkTool) Definition() providers.ToolDefinition {
 				"run_state":             map[string]any{"type": "string", "enum": []string{"completed", "failed", "cancelled", "interrupted"}},
 				"profile":               map[string]any{"type": "string"},
 				"session_ref":           map[string]any{"type": "string"},
-				"named_agent_id":        map[string]any{"type": "string", "description": "Room Runtime only: visible Named Agent that owns the run."},
+				"named_agent_id":        map[string]any{"type": "string", "description": "Named identity that owns the run. Required for verifier runs and must differ from the task owner. Work owners and leads can assign runs to another room member."},
 				"request_id":            map[string]any{"type": "string", "description": "Stable idempotency key for run and promotion mutations."},
 				"deadline_seconds":      map[string]any{"type": "integer", "minimum": 1},
 				"round":                 map[string]any{"type": "integer", "minimum": 1},

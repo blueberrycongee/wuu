@@ -86,44 +86,37 @@ func (s *Service) reconcileWorkRun(ctx context.Context, recovery WorkRunRecovery
 	outcome := "session completed; result receipt pending"
 	workState := work.State
 	verificationState := work.VerificationState
-	recipientID := ""
+	recipientID, recipientSession, err := workResultRecipientTx(ctx, tx, work, run.SessionRef)
+	if err != nil {
+		return err
+	}
 	deliveryBody := fmt.Sprintf("Background %s run %s completed during restart recovery. Read session %s, then submit its revision-safe result.", run.Kind, run.ID, run.SessionRef)
 	bindingState := CollaborationSessionIdle
 	switch recovery.State {
 	case WorkRunRecoveryFailed:
 		runState = WorkRunFailed
 		outcome = "session turn failed during restart recovery"
-		recipientID = work.OwnerNamedAgentID
 		deliveryBody = fmt.Sprintf("Background %s run %s failed before restart recovery completed. Inspect session %s and decide whether to retry.", run.Kind, run.ID, run.SessionRef)
-		var runtimeID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, work.RoomID).Scan(&runtimeID); err == nil {
-			recipientID = runtimeID
-		}
+
 		if recipientID == "" {
-			recipientID = work.OwnerNamedAgentID
 		}
 	case WorkRunRecoveryInterrupted:
 		runState = WorkRunInterrupted
 		outcome = "session turn was interrupted during restart recovery"
 		bindingState = CollaborationSessionInterrupted
-		recipientID = work.OwnerNamedAgentID
 		deliveryBody = fmt.Sprintf("Work %s %s run was interrupted before restart recovery completed. No completion or rollback is being claimed. Review session %s and decide whether to retry.", work.ID, run.Kind, run.SessionRef)
 	case WorkRunRecoveryMissing:
 		runState = WorkRunInterrupted
 		outcome = "session handle missing during restart recovery"
 		workState = WorkInterrupted
 		bindingState = CollaborationSessionMissing
-		recipientID = work.OwnerNamedAgentID
 		deliveryBody = fmt.Sprintf("Work %s %s run was interrupted during restart recovery because session %s could not be found. No completion or rollback is being claimed. Review existing artifacts and decide whether to retry.", work.ID, run.Kind, run.SessionRef)
 		if run.Kind == WorkRunVerifier {
 			workState = WorkNeedsHuman
 			verificationState = WorkVerificationUnknown
 		}
 	default:
-		var runtimeID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, work.RoomID).Scan(&runtimeID); err == nil {
-			recipientID = runtimeID
-		}
+
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE work_runs SET state = ?, outcome = ?, ended_at = ?, updated_at = ? WHERE id = ?`,
@@ -172,7 +165,7 @@ func (s *Service) reconcileWorkRun(ctx context.Context, recovery WorkRunRecovery
 			kind = CollaborationVerificationFeedback
 		}
 		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
-			RoomID: work.RoomID, ToAgentID: recipientID, WorkID: work.ID, Kind: kind,
+			RoomID: work.RoomID, ToAgentID: recipientID, TargetSessionRef: recipientSession, WorkID: work.ID, Kind: kind,
 			Body: deliveryBody, GoalRevision: run.GoalRevision, CandidateRevision: run.CandidateRevision,
 			CreatedAt: now,
 		}); err != nil {

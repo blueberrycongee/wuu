@@ -156,7 +156,7 @@ func (s *Session) collaborationModel(selected ThreadModelSelection) (modelroles.
 	if err != nil {
 		return modelroles.Selection{}, nil, fmt.Errorf("%w: %v", ErrThreadProviderUnavailable, err)
 	}
-	// Resolve only this session's model. Ordinary worker/coordination role
+	// Resolve only this session's model. Ordinary worker role
 	// overrides must not silently replace the identity's selected BYOK model.
 	cfg.Agent = config.Default().Agent
 	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{

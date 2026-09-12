@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -120,11 +121,11 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 		return err
 	}
 	targets := make(map[string]namedAgentDispatchTarget)
-	conversationPending := false
+	conversationRooms := make(map[string]struct{})
 	var dispatchErr error
 	for _, dispatch := range dispatches {
-		if dispatch.TargetSessionRef == "" && dispatch.WorkID == "" {
-			conversationPending = true
+		if dispatch.TargetSessionRef == "" && (dispatch.WorkID == "" || collaborationDispatchIsResult(dispatch.Kind)) {
+			conversationRooms[dispatch.RoomID] = struct{}{}
 			continue
 		}
 		binding, found := bySession[dispatch.TargetSessionRef]
@@ -152,11 +153,11 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 			dispatchErr = errors.Join(dispatchErr, fmt.Errorf("target collaboration session %q is unavailable", dispatch.TargetSessionRef))
 			continue
 		}
-		if binding.PrincipalID != agent.ID || binding.RoomID != dispatch.RoomID || binding.WorkID != dispatch.WorkID {
+		if binding.PrincipalID != agent.ID || binding.RoomID != dispatch.RoomID || (dispatch.TargetSessionRef == "" && binding.WorkID != dispatch.WorkID) {
 			dispatchErr = errors.Join(dispatchErr, fmt.Errorf("target collaboration session %q has a different owner or scope", binding.SessionRef))
 			continue
 		}
-		if dispatch.WorkID != "" {
+		if dispatch.TargetSessionRef == "" && dispatch.WorkID != "" {
 			if err := s.channelService.RoutePendingCollaborationToSession(ctx, agent.ID, dispatch.WorkID, binding.SessionRef); err != nil {
 				dispatchErr = errors.Join(dispatchErr, fmt.Errorf("route work %q: %w", dispatch.WorkID, err))
 				continue
@@ -174,6 +175,11 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 		return errors.Join(dispatchErr, err)
 	}
 	for _, item := range inbox {
+		// Public messages without an addressed delivery are passive context.
+		// Processing another session's result must not turn them into new work.
+		if item.Kind != channels.InboxTask && item.Kind != channels.InboxReminder {
+			continue
+		}
 		if item.Kind == channels.InboxTask {
 			if binding, found := byWork[item.MessageID]; found {
 				target := targets[binding.SessionRef]
@@ -184,19 +190,19 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 				continue
 			}
 		}
-		conversationPending = true
+		conversationRooms[item.RoomID] = struct{}{}
 	}
 	for _, target := range targets {
 		if err := s.startNamedAgentDispatchTargetLocked(ctx, agent, client, target, force); err != nil {
 			dispatchErr = errors.Join(dispatchErr, err)
 		}
 	}
-	if conversationPending {
-		if err := s.startNamedAgentConversationLocked(ctx, agent, force); err != nil {
+	for roomID := range conversationRooms {
+		if err := s.startNamedAgentConversationLocked(ctx, agent, client, roomID, force); err != nil {
 			dispatchErr = errors.Join(dispatchErr, err)
 		}
 	}
-	if dispatchErr == nil && len(targets) == 0 && !conversationPending {
+	if dispatchErr == nil && len(targets) == 0 && len(conversationRooms) == 0 {
 		_, err := s.channelService.FinishWakeAttempt(ctx, agent.ID)
 		dispatchErr = errors.Join(dispatchErr, err)
 	}
@@ -206,24 +212,43 @@ func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channel
 	return dispatchErr
 }
 
-func (s *Server) startNamedAgentConversationLocked(ctx context.Context, agent channels.AgentRuntime, force bool) error {
-	sessionRef := agentRuntimeSessionID(agent)
-	if !force && !agent.Autostart {
-		if _, found, err := session.Find(s.rt.SessionDir, sessionRef); err != nil || !found {
-			return err
-		}
+func collaborationDispatchIsResult(kind channels.CollaborationKind) bool {
+	switch kind {
+	case channels.CollaborationPeerResult, channels.CollaborationCandidateReady,
+		channels.CollaborationVerificationFeedback, channels.CollaborationCompletion, channels.CollaborationWorkRunTerminal:
+		return true
+	default:
+		return false
 	}
-	th, err := s.ensureAgentRuntimeThreadLocked(agent)
+}
+
+// Each identity has a separate room conversation. It uses the same durable
+// admission and parent-result path as independent sessions, so direct room
+// traffic cannot bypass BYOK capacity or lose the origin of delegated work.
+func (s *Server) startNamedAgentConversationLocked(ctx context.Context, agent channels.AgentRuntime, client *channels.AgentClient, roomID string, force bool) error {
+	sessionRef := namedAgentRoomSessionID(agent, roomID)
+	binding, err := client.GetCollaborationSession(ctx, sessionRef)
+	if errors.Is(err, channels.ErrNotFound) {
+		selection, selectErr := s.namedAgentPinnedSelection(agent, sessionRef, "")
+		if selectErr != nil {
+			return selectErr
+		}
+		binding, err = client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{
+			SessionRef: sessionRef, RoomID: roomID, Purpose: channels.CollaborationSessionConversation,
+			State: channels.CollaborationSessionIdle, RuntimeVersion: runtime.CollaborationRuntimeVersion,
+			Title: agent.Name, Provider: selection.Provider, Model: selection.Model, Effort: firstNonEmpty(selection.Effort, selection.Variant),
+		})
+	}
 	if err != nil {
 		return err
 	}
-	if threadIsRunning(th) {
-		if err := s.channelService.MarkWakePending(ctx, agent.ID); err != nil {
-			return err
-		}
-		return nil
-	}
-	return s.startAgentRuntimeWakeLocked(agent, th)
+	return s.startNamedAgentDispatchTargetLocked(ctx, agent, client, namedAgentDispatchTarget{
+		binding: binding, roomIDs: []string{roomID},
+	}, force)
+}
+
+func namedAgentRoomSessionID(agent channels.AgentRuntime, roomID string) string {
+	return principalSessionID(agent.ID+"\x00room:"+roomID, agent.CreatedAt)
 }
 
 func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent channels.AgentRuntime, client *channels.AgentClient, target namedAgentDispatchTarget, force bool) (dispatchErr error) {

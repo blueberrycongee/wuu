@@ -109,6 +109,25 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return CollaborationSessionBinding{}, err
 		}
+		if err == nil && parent.NamedAgentID == "" && parent.RoomID == binding.RoomID {
+			var recipientID, recipientSession string
+			var routeErr error
+			if binding.WorkID != "" {
+				work, loadErr := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id = ?`, binding.WorkID))
+				if loadErr != nil {
+					return CollaborationSessionBinding{}, loadErr
+				}
+				recipientID, recipientSession, routeErr = workResultRecipientTx(ctx, tx, work, binding.SessionRef)
+			} else {
+				recipientID, recipientSession, routeErr = roomResultRecipientTx(ctx, tx, binding.RoomID)
+			}
+			if routeErr != nil && !errors.Is(routeErr, sql.ErrNoRows) {
+				return CollaborationSessionBinding{}, routeErr
+			}
+			if routeErr == nil {
+				parent.PrincipalID, parent.NamedAgentID, parent.SessionRef, parent.State = recipientID, recipientID, recipientSession, CollaborationSessionIdle
+			}
+		}
 		if err == nil && parent.RoomID == binding.RoomID && parent.SessionRef != binding.SessionRef {
 			// Leaving a room removes access to its private deliveries. Still settle
 			// the child so an unreachable parent cannot occupy execution capacity.
@@ -132,7 +151,7 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 				if len(runes) > MaxMessageRunes {
 					result = string(runes[:MaxMessageRunes]) + "\n\n[Read the source session for the full result.]"
 				}
-				_, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{RoomID: binding.RoomID, FromType: MemberAgent, FromID: binding.PrincipalID, FromSessionRef: binding.SessionRef, ToAgentID: parent.PrincipalID, TargetSessionRef: parent.SessionRef, WorkID: parent.WorkID, Kind: CollaborationCompletion, Body: result, TargetKind: CollaborationTargetSession, TargetID: parent.SessionRef, Visibility: CollaborationVisibilityPrivate, CorrelationID: params.TurnID, RequestID: "session-result:" + params.TurnID, TerminalState: terminal, CreatedAt: fromMillis(now)})
+				_, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{RoomID: binding.RoomID, FromType: MemberAgent, FromID: binding.PrincipalID, FromSessionRef: binding.SessionRef, ToAgentID: parent.PrincipalID, TargetSessionRef: parent.SessionRef, WorkID: parent.WorkID, Kind: CollaborationCompletion, Body: result, Visibility: CollaborationVisibilityPrivate, CorrelationID: params.TurnID, RequestID: "session-result:" + params.TurnID, TerminalState: terminal, CreatedAt: fromMillis(now)})
 				if err != nil {
 					return CollaborationSessionBinding{}, err
 				}

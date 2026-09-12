@@ -439,7 +439,7 @@ func TestIndependentSessionsAndWorkShareAdmissionCapacity(t *testing.T) {
 	if _, err := service.AdmitCollaborationSession(ctx, independent.SessionRef()); err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := service.BindRuntime(ctx, room.RuntimeID)
+	coordinator, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,10 +12,10 @@ import (
 
 // SubmitTaskVerification records the one machine-readable verifier decision
 // and delivers the natural-language report back to the visible task owner.
-// The room runtime is deliberately the only caller allowed to submit: the
-// assigned named verifier reports to it through private collaboration traffic.
+// A task owner or lead may record an independent completed check; an assigned
+// verifier may record its own completed check without an intermediary.
 func (s *Service) SubmitTaskVerification(ctx context.Context, params TaskVerificationSubmitParams) (TaskVerificationSubmitResult, error) {
-	runtime, err := s.AuthenticatePrincipal(ctx, params.AgentID, params.Token)
+	actor, err := s.AuthenticatePrincipal(ctx, params.AgentID, params.Token)
 	if err != nil {
 		return TaskVerificationSubmitResult{}, err
 	}
@@ -26,8 +26,8 @@ func (s *Service) SubmitTaskVerification(ctx context.Context, params TaskVerific
 	if params.TaskID == "" || params.RoomID == "" || params.Report == "" {
 		return TaskVerificationSubmitResult{}, errors.New("verification task, room, and report are required")
 	}
-	if !runtime.IsRoomRuntime() || runtime.RoomID != params.RoomID {
-		return TaskVerificationSubmitResult{}, fmt.Errorf("%w: only the room runtime may verify room tasks", ErrUnauthorized)
+	if err := s.requireRoomPrincipalAccess(ctx, params.RoomID, actor.ID); err != nil {
+		return TaskVerificationSubmitResult{}, err
 	}
 	if !validVerificationDecision(params.Decision) {
 		return TaskVerificationSubmitResult{}, fmt.Errorf("invalid verification decision %q", params.Decision)
@@ -74,6 +74,14 @@ func (s *Service) SubmitTaskVerification(ctx context.Context, params TaskVerific
 		verifierRun.GoalRevision != task.TaskGoalRevision || verifierRun.CandidateRevision != task.TaskCandidateRevision ||
 		strings.TrimSpace(verifierRun.SessionRef) == "" || verifierRun.Profile == task.TaskOwner {
 		return TaskVerificationSubmitResult{}, fmt.Errorf("%w: verification run is not an independent completed check of the current candidate", ErrConflict)
+	}
+
+	work, err := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id = ?`, task.ID))
+	if err != nil {
+		return TaskVerificationSubmitResult{}, err
+	}
+	if authorizeWorkActorTx(ctx, tx, work, actor) != nil && actor.ID != verifierRun.NamedAgentID {
+		return TaskVerificationSubmitResult{}, ErrUnauthorized
 	}
 
 	attempt := 1

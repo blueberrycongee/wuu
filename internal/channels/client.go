@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -32,19 +33,7 @@ func (s *Service) BindAgent(ctx context.Context, agentID string) (*AgentClient, 
 }
 
 func (s *Service) BindRuntime(ctx context.Context, runtimeID string) (*AgentClient, error) {
-	runtimeID = strings.TrimSpace(runtimeID)
-	if runtimeID == "" {
-		return nil, errors.New("room runtime id is required")
-	}
-	runtime, err := s.GetRoomRuntime(ctx, runtimeID)
-	if err != nil {
-		return nil, err
-	}
-	token, err := s.loadPrincipalToken(ctx, runtimeID)
-	if err != nil {
-		return nil, err
-	}
-	return &AgentClient{service: s, agentID: runtimeID, principalKind: runtime.Kind, token: token}, nil
+	return nil, fmt.Errorf("%w: room runtimes have been retired", ErrUnauthorized)
 }
 
 func (s *Service) BindAgentSession(ctx context.Context, agentID, sessionRef string) (*AgentClient, error) {
@@ -85,21 +74,21 @@ func (c *AgentClient) SessionRef() string {
 }
 
 func (c *AgentClient) RoomRoster(ctx context.Context, roomID string) (RoomRoster, error) {
-	if c == nil || c.service == nil || !c.IsRoomRuntime() {
+	if c == nil || c.service == nil {
 		return RoomRoster{}, ErrUnauthorized
 	}
 	return c.service.RoomRoster(ctx, c.agentID, c.token, roomID)
 }
 
 func (c *AgentClient) InviteRoomAgent(ctx context.Context, roomID, agentID string) (Room, error) {
-	if c == nil || c.service == nil || !c.IsRoomRuntime() {
+	if c == nil || c.service == nil {
 		return Room{}, ErrUnauthorized
 	}
 	return c.service.InviteRoomAgent(ctx, c.agentID, c.token, roomID, agentID)
 }
 
 func (c *AgentClient) ProposeRoomAgent(ctx context.Context, roomID, name, role string) (AgentCreationProposal, error) {
-	if c == nil || c.service == nil || !c.IsRoomRuntime() {
+	if c == nil || c.service == nil {
 		return AgentCreationProposal{}, ErrUnauthorized
 	}
 	return c.service.ProposeRoomAgent(ctx, c.agentID, c.token, roomID, name, role)
@@ -199,6 +188,7 @@ func (c *AgentClient) CreateTask(ctx context.Context, params TaskCreateParams) (
 	if c == nil || c.service == nil {
 		return Message{}, errors.New("chat agent is not bound")
 	}
+	params.SourceSessionRef = c.sessionRef
 	params.AgentID = c.agentID
 	params.Token = c.token
 	return c.service.CreateTask(ctx, params)
@@ -280,14 +270,8 @@ func (c *AgentClient) GetWork(ctx context.Context, workID string) (Work, error) 
 	if err != nil {
 		return Work{}, err
 	}
-	if work.OwnerNamedAgentID != c.agentID && work.LeadNamedAgentID != c.agentID {
-		if !c.IsRoomRuntime() {
-			return Work{}, ErrUnauthorized
-		}
-		runtime, err := c.service.GetRoomRuntime(ctx, c.agentID)
-		if err != nil || runtime.RoomID != work.RoomID {
-			return Work{}, ErrUnauthorized
-		}
+	if err := c.service.requireRoomPrincipalAccess(ctx, work.RoomID, c.agentID); err != nil {
+		return Work{}, err
 	}
 	return work, nil
 }
@@ -304,10 +288,17 @@ func (c *AgentClient) StartWorkRun(ctx context.Context, params WorkRunStartParam
 		return WorkRun{}, errors.New("chat agent is not bound")
 	}
 	params.AgentID, params.Token = c.agentID, c.token
-	if params.SessionRef == "" {
-		params.SessionRef = c.sessionRef
+	params.SourceSessionRef = c.sessionRef
+	if params.SessionRef == "" && c.sessionRef != "" {
+		binding, err := c.service.LookupCollaborationSession(ctx, c.sessionRef)
+		if err != nil {
+			return WorkRun{}, err
+		}
+		if binding.WorkID == params.WorkID && (params.NamedAgentID == "" || params.NamedAgentID == c.agentID) && params.Kind != WorkRunVerifier {
+			params.SessionRef = c.sessionRef
+		}
 	}
-	if params.NamedAgentID == "" && !c.IsRoomRuntime() {
+	if params.NamedAgentID == "" && params.Kind != WorkRunVerifier {
 		params.NamedAgentID = c.agentID
 	}
 	return c.service.StartWorkRun(ctx, params)

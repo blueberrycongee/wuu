@@ -10,8 +10,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/memdir"
 )
 
-func (s *Service) RoomRoster(ctx context.Context, runtimeID, token, roomID string) (RoomRoster, error) {
-	if _, err := s.requireRoomRuntime(ctx, runtimeID, token, roomID); err != nil {
+func (s *Service) RoomRoster(ctx context.Context, actorID, token, roomID string) (RoomRoster, error) {
+	if _, err := s.requireRoomMember(ctx, actorID, token, roomID); err != nil {
 		return RoomRoster{}, err
 	}
 	room, err := s.GetRoom(ctx, roomID)
@@ -23,7 +23,7 @@ func (s *Service) RoomRoster(ctx context.Context, runtimeID, token, roomID strin
 		return RoomRoster{}, err
 	}
 	sessions, err := s.ListCollaborationSessions(ctx, CollaborationSessionListParams{
-		RoomID: room.ID, AgentID: runtimeID, Token: token,
+		RoomID: room.ID, AgentID: actorID, Token: token,
 	})
 	if err != nil {
 		return RoomRoster{}, err
@@ -48,11 +48,13 @@ func (s *Service) RoomRoster(ctx context.Context, runtimeID, token, roomID strin
 	for _, agent := range agents {
 		summary := agentCapabilitySummary(agent)
 		if _, ok := memberIDs[agent.ID]; ok {
-			memoryIndex, readErr := memdir.ReadIndex(agent.MemoryDir)
-			if readErr != nil {
-				return RoomRoster{}, fmt.Errorf("read named agent %q memory index: %w", agent.ID, readErr)
+			if agent.ID == actorID {
+				memoryIndex, readErr := memdir.ReadIndex(agent.MemoryDir)
+				if readErr != nil {
+					return RoomRoster{}, fmt.Errorf("read named agent %q memory index: %w", agent.ID, readErr)
+				}
+				summary.MemoryIndex = memoryIndex.Content
 			}
-			summary.MemoryIndex = memoryIndex.Content
 			summary.Sessions = sessionsByAgent[agent.ID]
 			result.Members = append(result.Members, summary)
 		} else {
@@ -62,14 +64,14 @@ func (s *Service) RoomRoster(ctx context.Context, runtimeID, token, roomID strin
 	return result, nil
 }
 
-func (s *Service) InviteRoomAgent(ctx context.Context, runtimeID, token, roomID, agentID string) (Room, error) {
-	if _, err := s.requireRoomRuntime(ctx, runtimeID, token, roomID); err != nil {
+func (s *Service) InviteRoomAgent(ctx context.Context, actorID, token, roomID, agentID string) (Room, error) {
+	if _, err := s.requireRoomMember(ctx, actorID, token, roomID); err != nil {
 		return Room{}, err
 	}
-	return s.inviteRoomAgent(ctx, runtimeID, roomID, agentID)
+	return s.inviteRoomAgent(ctx, roomID, agentID)
 }
 
-func (s *Service) inviteRoomAgent(ctx context.Context, runtimeID, roomID, agentID string) (Room, error) {
+func (s *Service) inviteRoomAgent(ctx context.Context, roomID, agentID string) (Room, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return Room{}, errors.New("named agent id is required")
@@ -123,15 +125,8 @@ func (s *Service) inviteRoomAgent(ctx context.Context, runtimeID, roomID, agentI
 	if err := recordMembershipChangeTx(ctx, tx, roomID, createdBy, []string{agentName}, nil, now); err != nil {
 		return Room{}, err
 	}
-	shouldWake, err := requestWakeTx(ctx, tx, runtimeID, now)
-	if err != nil {
-		return Room{}, err
-	}
 	if err := tx.Commit(); err != nil {
 		return Room{}, fmt.Errorf("commit room agent invite: %w", err)
-	}
-	if shouldWake && s.wake != nil {
-		s.wake.Deliver(runtimeID)
 	}
 	return s.GetRoom(ctx, roomID)
 }
@@ -145,13 +140,13 @@ func agentCapabilitySummary(agent NamedAgent) AgentCapabilitySummary {
 	}
 }
 
-func (s *Service) requireRoomRuntime(ctx context.Context, runtimeID, token, roomID string) (AgentRuntime, error) {
-	runtime, err := s.AuthenticatePrincipal(ctx, strings.TrimSpace(runtimeID), strings.TrimSpace(token))
+func (s *Service) requireRoomMember(ctx context.Context, actorID, token, roomID string) (AgentRuntime, error) {
+	runtime, err := s.AuthenticatePrincipal(ctx, strings.TrimSpace(actorID), strings.TrimSpace(token))
 	if err != nil {
 		return AgentRuntime{}, err
 	}
 	roomID = strings.TrimSpace(roomID)
-	if !runtime.IsRoomRuntime() || roomID == "" || runtime.RoomID != roomID {
+	if roomID == "" || s.requireRoomPrincipalAccess(ctx, roomID, runtime.ID) != nil {
 		return AgentRuntime{}, ErrUnauthorized
 	}
 	return runtime, nil

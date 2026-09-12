@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/channels"
-	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -130,24 +129,6 @@ func TestNamedAgentRuntimeSelectionAppliesModelAndEffortOverrides(t *testing.T) 
 	}
 }
 
-func TestRoomRuntimeUsesCoordinationModel(t *testing.T) {
-	server := &Server{rt: &runtime.Session{ModelRoles: modelroles.Set{
-		Coordination: modelroles.Selection{
-			Provider: "coord-provider", Model: "coord-model", Variant: "fast", LegacyEffort: "low",
-		},
-	}}}
-	selection := server.collaborationRuntimeSelection(session.RuntimeSelection{
-		Provider: "default-provider", Model: "default-model", Effort: "medium",
-	}, channels.AgentRuntime{Kind: channels.PrincipalRoomRuntime})
-	if selection.Provider != "coord-provider" || selection.Model != "coord-model" || selection.Variant != "fast" || selection.Effort != "low" {
-		t.Fatalf("room runtime selection = %+v", selection)
-	}
-	visible := server.collaborationRuntimeSelection(selection, channels.AgentRuntime{Kind: channels.PrincipalNamedAgent})
-	if visible != selection {
-		t.Fatalf("visible named agent selection changed: %+v", visible)
-	}
-}
-
 func TestChannelHumanRPCsCreateRoomAndSendMessage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
@@ -202,17 +183,9 @@ func TestChannelHumanRPCsCreateRoomAndSendMessage(t *testing.T) {
 	if len(listed.Messages) != 1 || listed.Messages[0].Body != "@Alpha review this" || len(listed.Messages[0].Images) != 1 {
 		t.Fatalf("listed messages = %#v", listed.Messages)
 	}
-	storedRoom, err := server.channelService.GetRoom(context.Background(), createdRoom.Room.ID)
-	if err != nil {
-		t.Fatalf("GetRoom() error = %v", err)
-	}
-	state, err := server.channelService.WakeState(context.Background(), storedRoom.RuntimeID)
-	if err != nil || !state.Outstanding {
-		t.Fatalf("room-agent wake state = %#v, err %v", state, err)
-	}
 	namedState, err := server.channelService.WakeState(context.Background(), createdAgent.Agent.ID)
-	if err != nil || namedState.Outstanding || namedState.Pending {
-		t.Fatalf("shared-room message directly woke named agent: %#v, err %v", namedState, err)
+	if err != nil || !namedState.Outstanding {
+		t.Fatalf("room message did not wake its named recipient: %#v, err %v", namedState, err)
 	}
 	var createdTask ChannelTaskCreateResult
 	callChannelRPC(t, server, out, MethodChannelTaskCreate, ChannelTaskCreateParams{
@@ -278,7 +251,7 @@ func TestNamedAgentWakeAutostartCreatesIsolatedSession(t *testing.T) {
 		t.Fatalf("deliverNamedAgentWake() error = %v", err)
 	}
 
-	threadID := namedAgentSessionID(credential.Agent)
+	threadID := namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID)
 	th := server.thread(threadID)
 	if th == nil {
 		t.Fatal("named agent thread was not created")
@@ -332,7 +305,7 @@ func TestNamedAgentWakeAutostartCreatesIsolatedSession(t *testing.T) {
 	if err := server.deliverNamedAgentWake(context.Background(), offline.Agent.ID); err != nil {
 		t.Fatalf("deliverNamedAgentWake(offline) error = %v", err)
 	}
-	if server.thread(namedAgentSessionID(offline.Agent)) != nil {
+	if server.thread(namedAgentRoomSessionID(agentRuntimeFromNamed(offline.Agent), offlineRoom.ID)) != nil {
 		t.Fatal("non-autostart agent was started while offline")
 	}
 	state, err := server.channelService.WakeState(context.Background(), offline.Agent.ID)
@@ -403,7 +376,20 @@ func TestNonAutostartNamedAgentWakeLoadsExistingPersistedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNamedAgent() error = %v", err)
 	}
-	thread, err := server.ensureNamedAgentThreadLocked(credential.Agent)
+	server.channelService.SetWakeSink(nil)
+	room := createAppserverTestRoom(t, server.channelService, credential.Agent)
+	ref := namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID)
+	client, err := server.channelService.BindAgent(context.Background(), credential.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.BindCollaborationSession(context.Background(), channels.CollaborationSessionBindParams{
+		SessionRef: ref, RoomID: room.ID, Purpose: channels.CollaborationSessionConversation,
+		Provider: rt.ProviderName, Model: rt.Model,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	thread, err := server.ensureAgentRuntimeSessionThreadLocked(agentRuntimeFromNamed(credential.Agent), ref)
 	if err != nil {
 		t.Fatalf("ensureNamedAgentThreadLocked() error = %v", err)
 	}
@@ -414,8 +400,6 @@ func TestNonAutostartNamedAgentWakeLoadsExistingPersistedSession(t *testing.T) {
 	thread.execRuntime = nil
 	rt.Model = "new-global-model"
 
-	server.channelService.SetWakeSink(nil)
-	room := createAppserverTestRoom(t, server.channelService, credential.Agent)
 	if _, err := server.channelService.SendHuman(context.Background(), channels.HumanSendParams{
 		RoomID: room.ID, HumanID: "human-1", Body: "@Alpha resume",
 	}); err != nil {
@@ -571,7 +555,7 @@ func TestChannelAgentResetInterruptsCurrentWakeAndDrainsFollowup(t *testing.T) {
 	if err := server.deliverNamedAgentWake(context.Background(), credential.Agent.ID); err != nil {
 		t.Fatalf("second deliverNamedAgentWake() error = %v", err)
 	}
-	thread := server.thread(namedAgentSessionID(credential.Agent))
+	thread := server.thread(namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID))
 	thread.mu.Lock()
 	firstTurnID := thread.currentTurn
 	thread.mu.Unlock()
@@ -604,7 +588,7 @@ func TestChannelAgentResetInterruptsCurrentWakeAndDrainsFollowup(t *testing.T) {
 		state, stateErr := server.channelService.WakeState(context.Background(), credential.Agent.ID)
 		if stateErr == nil && !state.Outstanding && !state.Pending {
 			inbox, inboxErr := server.channelService.ListInbox(context.Background(), credential.Agent.ID, true)
-			if inboxErr == nil && len(inbox) == 2 {
+			if inboxErr == nil && len(inbox) == 0 {
 				return
 			}
 		}
@@ -665,7 +649,7 @@ func TestNamedAgentRunningWakeUsesDurableInboxWithoutOrdinaryQueuedTurn(t *testi
 	if err != nil || !state.Outstanding || !state.Pending {
 		t.Fatalf("running wake state = %#v, err %v", state, err)
 	}
-	held, err := server.loadHeldUserTurns(namedAgentSessionID(credential.Agent))
+	held, err := server.loadHeldUserTurns(namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID))
 	if err != nil || len(held) != 0 {
 		t.Fatalf("held named agent wake = %#v, err %v", held, err)
 	}
@@ -674,7 +658,7 @@ func TestNamedAgentRunningWakeUsesDurableInboxWithoutOrdinaryQueuedTurn(t *testi
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		state, err = server.channelService.WakeState(context.Background(), credential.Agent.ID)
-		held, _ = server.loadHeldUserTurns(namedAgentSessionID(credential.Agent))
+		held, _ = server.loadHeldUserTurns(namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID))
 		if err == nil && !state.Pending && len(held) == 0 {
 			return
 		}
@@ -1216,10 +1200,10 @@ func TestNamedAgentSequentialWakesPersistDistinctUserTurns(t *testing.T) {
 			t.Fatalf("deliverNamedAgentWake(%d) error = %v", index, err)
 		}
 		deadline := time.Now().Add(5 * time.Second)
-		for threadIsRunning(server.thread(namedAgentSessionID(credential.Agent))) && time.Now().Before(deadline) {
+		for threadIsRunning(server.thread(namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID))) && time.Now().Before(deadline) {
 			time.Sleep(10 * time.Millisecond)
 		}
-		if threadIsRunning(server.thread(namedAgentSessionID(credential.Agent))) {
+		if threadIsRunning(server.thread(namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID))) {
 			t.Fatalf("named agent wake %d did not complete", index)
 		}
 		select {
@@ -1244,7 +1228,7 @@ func TestNamedAgentSequentialWakesPersistDistinctUserTurns(t *testing.T) {
 		}
 	}
 
-	records, err := session.LoadHistoryRecords(rt.SessionDir, namedAgentSessionID(credential.Agent), false)
+	records, err := session.LoadHistoryRecords(rt.SessionDir, namedAgentRoomSessionID(agentRuntimeFromNamed(credential.Agent), room.ID), false)
 	if err != nil {
 		t.Fatalf("LoadHistoryRecords() error = %v", err)
 	}
@@ -1259,12 +1243,11 @@ func TestNamedAgentSequentialWakesPersistDistinctUserTurns(t *testing.T) {
 	}
 }
 
-func TestRoomRuntimeWakeSurvivesTurnRuntimeRebuild(t *testing.T) {
+func TestRoomMessageWakesVisibleMemberAfterTurnRuntimeRebuild(t *testing.T) {
 	client := newBlockingStreamClient("done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
-	rt.ModelRoles.Coordination = modelroles.Selection{Provider: rt.ProviderName, Model: rt.Model}
 	attachNamedAgentTestToolkit(t, rt)
 	server := NewWithCredentialStore(rt, &lockedBuffer{}, nil, nil)
 	t.Cleanup(server.Close)
@@ -1287,14 +1270,14 @@ func TestRoomRuntimeWakeSurvivesTurnRuntimeRebuild(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SendHuman() error = %v", err)
 	}
-	if err := server.deliverNamedAgentWake(context.Background(), room.RuntimeID); err != nil {
-		t.Fatalf("deliverNamedAgentWake(room runtime) error = %v", err)
+	if err := server.deliverNamedAgentWake(context.Background(), credential.Agent.ID); err != nil {
+		t.Fatalf("deliverNamedAgentWake(room member) error = %v", err)
 	}
 	select {
 	case <-client.started:
 		close(client.release)
 	case <-time.After(5 * time.Second):
-		t.Fatal("room runtime turn did not start")
+		t.Fatal("room member turn did not start")
 	}
 }
 

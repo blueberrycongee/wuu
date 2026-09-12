@@ -168,6 +168,7 @@ type WorkArtifact struct {
 }
 
 type WorkRunStartParams struct {
+	SourceSessionRef  string
 	WorkID            string
 	NamedAgentID      string
 	Kind              WorkRunKind

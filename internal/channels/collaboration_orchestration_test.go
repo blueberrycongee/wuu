@@ -61,13 +61,13 @@ func TestWorkRunAdmissionQueuesAndPromotesDurably(t *testing.T) {
 	service.SetCollaborationRunLimits(2, 8, 8)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, _ := bindTestRoomLead(t, ctx, service, room.ID)
 	task, err := runtime.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Parallel", OwnerID: owner.Agent.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runtime.UpdateWorkPolicy(ctx, WorkPolicyUpdateParams{
-		WorkID: task.ID, LeadNamedAgentID: owner.Agent.ID, MaxVerifierAttempts: 3,
+		WorkID: task.ID, LeadNamedAgentID: runtime.AgentID(), MaxVerifierAttempts: 3,
 		MaxCandidates: 4, MaxRounds: 3, FanoutReason: "four differentiated implementation routes",
 	}); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestRoomStartedNamedRunPersistsLaunchAndWakesTargetSession(t *testing.T) {
 	service := openTestService(t, sink)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, _ := bindTestRoomLead(t, ctx, service, room.ID)
 	task, _ := runtime.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Launch", OwnerID: owner.Agent.ID})
 	sink.take() // Assignment wake.
 	run, err := runtime.StartWorkRun(ctx, WorkRunStartParams{
@@ -165,7 +165,7 @@ func TestRunDeadlineExpiresAndReleasesCapacity(t *testing.T) {
 	service.now = func() time.Time { return base }
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, _ := bindTestRoomLead(t, ctx, service, room.ID)
 	task, _ := runtime.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Deadline", OwnerID: owner.Agent.ID})
 	run, err := runtime.StartWorkRun(ctx, WorkRunStartParams{
 		WorkID: task.ID, NamedAgentID: owner.Agent.ID, Kind: WorkRunProducer,
@@ -195,7 +195,7 @@ func TestWorkAndRoomTokenBudgetsStopAnotherWave(t *testing.T) {
 	service.roomInputTokenLimit = 10
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, _ := bindTestRoomLead(t, ctx, service, room.ID)
 	firstTask, _ := runtime.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "First", OwnerID: owner.Agent.ID})
 	first, err := runtime.StartWorkRun(ctx, WorkRunStartParams{WorkID: firstTask.ID, NamedAgentID: owner.Agent.ID, Kind: WorkRunProducer, RequestID: "first"})
 	if err != nil {
@@ -229,10 +229,10 @@ func TestMultiCandidatePromotionAndProducerBroadcast(t *testing.T) {
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, _ := bindTestRoomLead(t, ctx, service, room.ID)
 	task, _ := runtime.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Compare", OwnerID: owner.Agent.ID, VerificationRequired: true})
 	if _, err := runtime.UpdateWorkPolicy(ctx, WorkPolicyUpdateParams{
-		WorkID: task.ID, LeadNamedAgentID: owner.Agent.ID, MaxVerifierAttempts: 3,
+		WorkID: task.ID, LeadNamedAgentID: runtime.AgentID(), MaxVerifierAttempts: 3,
 		MaxCandidates: 2, MaxRounds: 2, FanoutReason: "compare independent risk strategies",
 	}); err != nil {
 		t.Fatal(err)

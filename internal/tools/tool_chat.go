@@ -215,13 +215,13 @@ func (t *CollaborationSendTool) IsConcurrencySafe() bool { return false }
 func (t *CollaborationSendTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "collaboration_send",
-		Description: "Send one versioned Collaboration envelope to a room, named agent, exact session, or hidden room runtime. Room-visible sends require basis_seq; private requests should use stable request_id and correlation_id.",
+		Description: "Send one versioned Collaboration envelope to a room, named agent, or exact session. Room-visible sends require basis_seq; private requests should use stable request_id and correlation_id.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"room_id":            map[string]any{"type": "string"},
 				"to_agent_id":        map[string]any{"type": "string"},
-				"target_kind":        map[string]any{"type": "string", "enum": []string{"room", "named_agent", "session", "room_runtime"}},
+				"target_kind":        map[string]any{"type": "string", "enum": []string{"room", "named_agent", "session"}},
 				"target_id":          map[string]any{"type": "string"},
 				"visibility":         map[string]any{"type": "string", "enum": []string{"room", "private", "work_private", "system"}},
 				"correlation_id":     map[string]any{"type": "string"},
@@ -264,6 +264,11 @@ func (t *CollaborationSendTool) Execute(ctx context.Context, argsJSON string) (s
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", err
+	}
+	switch channels.CollaborationTargetKind(args.TargetKind) {
+	case "", channels.CollaborationTargetRoom, channels.CollaborationTargetNamedAgent, channels.CollaborationTargetSession:
+	default:
+		return "", errors.New("collaboration_send target_kind must be room, named_agent, or session")
 	}
 	if channels.CollaborationTargetKind(args.TargetKind) == channels.CollaborationTargetRoom {
 		if args.Visibility != "" && channels.CollaborationVisibility(args.Visibility) != channels.CollaborationVisibilityRoom {
@@ -455,7 +460,7 @@ func (t *ChatVerifyTool) Definition() providers.ToolDefinition {
 		Name: "chat_verify",
 		Description: "Submit one independent verification decision for a room task. " +
 			"The host persists the three-state decision and privately delivers the natural-language report to the visible owner. " +
-			"Only the hidden room runtime may call this tool.",
+			"Work owners and leads may submit a completed independent verifier run; assigned verifiers may submit their own completed run.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

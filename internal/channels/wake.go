@@ -78,7 +78,7 @@ func (s *Service) FinishWakeAttempt(ctx context.Context, agentID string) (bool, 
 func requestWakeTx(ctx context.Context, tx *sql.Tx, agentID string, now int64) (bool, error) {
 	var outstanding int
 	err := tx.QueryRowContext(ctx, `
-		SELECT outstanding FROM agent_wake_state WHERE agent_id = ?`, agentID,
+		SELECT wake.outstanding FROM agent_wake_state wake JOIN named_agents agent ON agent.id = wake.agent_id AND agent.kind = 'named' WHERE wake.agent_id = ?`, agentID,
 	).Scan(&outstanding)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("%w: named agent %q", ErrNotFound, agentID)

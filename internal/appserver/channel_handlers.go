@@ -227,29 +227,27 @@ func (s *Server) attachLocalHumanUnreadCounts(ctx context.Context, rooms []chann
 	for _, count := range counts {
 		byRoom[count.RoomID] = count.UnreadCount
 	}
+	activityByRoom := make(map[string]bool)
+	agents, err := s.channelService.ListAgentRuntimes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, agent := range agents {
+		thinking, roomIDs, err := s.namedAgentActivity(ctx, agent)
+		if err != nil {
+			return err
+		}
+		if thinking {
+			for _, roomID := range roomIDs {
+				activityByRoom[roomID] = true
+			}
+		}
+	}
 	for index := range rooms {
 		rooms[index].UnreadCount = byRoom[rooms[index].ID]
-		if rooms[index].RuntimeID == "" {
-			continue
-		}
 		rooms[index].ActivityStatus = "idle"
-		agent, getErr := s.channelService.GetRoomRuntime(ctx, rooms[index].RuntimeID)
-		if getErr != nil {
-			return getErr
-		}
-		threadID := agentRuntimeSessionID(agent)
-		if thread := s.thread(threadID); thread != nil && threadIsRunning(thread) {
+		if activityByRoom[rooms[index].ID] {
 			rooms[index].ActivityStatus = "thinking"
-			continue
-		}
-		if s.rt != nil {
-			active, activeErr := session.ThreadExecutionActive(s.rt.SessionDir, threadID)
-			if activeErr != nil {
-				return activeErr
-			}
-			if active {
-				rooms[index].ActivityStatus = "thinking"
-			}
 		}
 	}
 	return nil

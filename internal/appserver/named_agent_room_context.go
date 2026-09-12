@@ -36,8 +36,6 @@ func (s *Server) namedAgentRoomContextBlocks(agentID string) []wuucontext.Block 
 		return nil
 	}
 	ctx := context.Background()
-	currentAgent, currentAgentErr := s.channelService.GetAgentRuntime(ctx, agentID)
-	roomAgent := currentAgentErr == nil && currentAgent.IsRoomRuntime()
 	rooms, err := s.channelService.ListRooms(ctx)
 	if err != nil {
 		providers.DebugLogf("read named agent room context for %q: %v", agentID, err)
@@ -79,11 +77,7 @@ func (s *Server) namedAgentRoomContextBlocks(agentID string) []wuucontext.Block 
 			if roomName == "" {
 				roomName = "Unnamed room"
 			}
-			if roomAgent {
-				fmt.Fprintf(&content, "- %s (%s, room_id: %s, membership_revision: %d)\n", roomName, room.Kind, room.ID, room.MembershipRevision)
-			} else {
-				fmt.Fprintf(&content, "- %s (%s)\n", roomName, room.Kind)
-			}
+			fmt.Fprintf(&content, "- %s (%s, room_id: %s, membership_revision: %d)\n", roomName, room.Kind, room.ID, room.MembershipRevision)
 			members := append([]channels.RoomMember(nil), room.Members...)
 			sort.Slice(members, func(i, j int) bool {
 				if members[i].MemberType != members[j].MemberType {
@@ -107,19 +101,11 @@ func (s *Server) namedAgentRoomContextBlocks(agentID string) []wuucontext.Block 
 				if member.MemberType == channels.MemberAgent && member.MemberID == agentID {
 					you = ", you"
 				}
-				if roomAgent {
-					fmt.Fprintf(&content, "  - %s (%s%s, member_id: %s", name, member.MemberType, you, member.MemberID)
-					if role != "" {
-						fmt.Fprintf(&content, ", role: %s", role)
-					}
-					content.WriteString(")\n")
-				} else {
-					fmt.Fprintf(&content, "  - %s (%s%s", name, member.MemberType, you)
-					if role != "" {
-						fmt.Fprintf(&content, ", role: %s", role)
-					}
-					content.WriteString(")\n")
+				fmt.Fprintf(&content, "  - %s (%s%s, member_id: %s", name, member.MemberType, you, member.MemberID)
+				if role != "" {
+					fmt.Fprintf(&content, ", role: %s", role)
 				}
+				content.WriteString(")\n")
 			}
 		}
 	}
@@ -132,9 +118,6 @@ func (s *Server) namedAgentRoomContextBlocks(agentID string) []wuucontext.Block 
 }
 
 func roomContainsAgent(room channels.Room, agentID string) bool {
-	if room.RuntimeID == agentID {
-		return true
-	}
 	for _, member := range room.Members {
 		if member.MemberType == channels.MemberAgent && member.MemberID == agentID {
 			return true

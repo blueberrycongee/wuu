@@ -121,7 +121,7 @@ func TestCancelSessionSettlesOnlyItsWorkRunsAndReleasesCapacity(t *testing.T) {
 	service.agentRunLimit = 2
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

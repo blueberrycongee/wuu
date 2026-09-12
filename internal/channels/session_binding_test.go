@@ -181,7 +181,7 @@ func TestTargetedTaskInboxIsPrivateToItsSession(t *testing.T) {
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -253,7 +253,7 @@ func TestCollaborationSessionsAtomicallyClaimUntargetedTask(t *testing.T) {
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -361,7 +361,7 @@ func TestAgentCheckCannotConsumeUntargetedWorkBeforeSessionRouting(t *testing.T)
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -425,7 +425,7 @@ func TestTaskReassignmentHandsWorkToANewOwnerSession(t *testing.T) {
 	oldOwner := createTestAgent(t, service, "Old owner")
 	newOwner := createTestAgent(t, service, "New owner")
 	room := createTestRoom(t, service, oldOwner, newOwner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -480,7 +480,7 @@ func TestTaskReassignmentHandsWorkToANewOwnerSession(t *testing.T) {
 	}) {
 		t.Fatalf("reassignment session interrupts = %#v", got)
 	}
-	if got := sink.take(); len(got) != 2 || got[0] != newOwner.Agent.ID || got[1] != room.RuntimeID {
+	if got := sink.take(); len(got) != 2 || got[0] != newOwner.Agent.ID || got[1] != runtime.AgentID() {
 		t.Fatalf("reassignment wakes = %v, want new owner and room runtime", got)
 	}
 	oldBinding, err := service.GetCollaborationSession(ctx, oldOwner.Agent.ID, oldOwner.Token, oldSession.SessionRef())
@@ -562,7 +562,7 @@ func TestGoalCorrectionReplansAfterInterruptingActiveSession(t *testing.T) {
 	service := openTestService(t, sink)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -636,14 +636,14 @@ func TestGoalCorrectionReplansAfterInterruptingActiveSession(t *testing.T) {
 	}
 }
 
-func TestStartWorkRunSeparatesHiddenAndNamedAgentSessions(t *testing.T) {
+func TestStartWorkRunRequiresOwnedNamedSession(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	other := createTestAgent(t, service, "Other")
 	workRoom := createTestRoom(t, service, owner, other)
 	otherRoom := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, workRoom.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, workRoom.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -665,8 +665,8 @@ func TestStartWorkRunSeparatesHiddenAndNamedAgentSessions(t *testing.T) {
 		Kind:       WorkRunIntegration,
 		SessionRef: "hidden-integration-session",
 	})
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("StartWorkRun(hidden integration) error = %v, want unauthorized", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("StartWorkRun(unbound integration) error = %v, want not found", err)
 	}
 
 	if _, err := ownerClient.BindCollaborationSession(ctx, CollaborationSessionBindParams{
@@ -700,8 +700,8 @@ func TestStartWorkRunSeparatesHiddenAndNamedAgentSessions(t *testing.T) {
 		NamedAgentID: other.Agent.ID,
 		Kind:         WorkRunProducer,
 		SessionRef:   "other-agent-session",
-	}); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("StartWorkRun(other agent session) error = %v, want unauthorized", err)
+	}); err != nil {
+		t.Fatalf("StartWorkRun(delegated member session) error = %v", err)
 	}
 
 	if _, err := ownerClient.BindCollaborationSession(ctx, CollaborationSessionBindParams{
@@ -745,7 +745,7 @@ func TestCollaborationSessionRunLifecycleSurvivesRestart(t *testing.T) {
 	})
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -936,7 +936,7 @@ func TestWorkRunBindingsSettleOnGoalCorrectionAndCancellation(t *testing.T) {
 			service := openTestService(t, nil)
 			owner := createTestAgent(t, service, "Owner")
 			room := createTestRoom(t, service, owner)
-			runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+			runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 			if err != nil {
 				t.Fatalf("BindRuntime() error = %v", err)
 			}
@@ -996,7 +996,7 @@ func TestCancelWorkInterruptsAllActiveNamedAgentSessions(t *testing.T) {
 	service := openTestService(t, sink)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -1047,7 +1047,7 @@ func TestCancelWorkInterruptsAllActiveNamedAgentSessions(t *testing.T) {
 	}
 }
 
-func TestGoalCorrectionAndCancellationInterruptHiddenWorkSessions(t *testing.T) {
+func TestGoalCorrectionAndCancellationInterruptNamedVerifierSessions(t *testing.T) {
 	ctx := context.Background()
 	for _, testCase := range []struct {
 		name   string
@@ -1073,7 +1073,7 @@ func TestGoalCorrectionAndCancellationInterruptHiddenWorkSessions(t *testing.T) 
 			service := openTestService(t, sink)
 			owner := createTestAgent(t, service, "Owner")
 			room := createTestRoom(t, service, owner)
-			runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+			runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 			if err != nil {
 				t.Fatalf("BindRuntime() error = %v", err)
 			}
@@ -1082,7 +1082,7 @@ func TestGoalCorrectionAndCancellationInterruptHiddenWorkSessions(t *testing.T) 
 				t.Fatalf("BindAgent(owner) error = %v", err)
 			}
 			task, err := runtime.CreateTask(ctx, TaskCreateParams{
-				RoomID: room.ID, Title: "Verify the candidate", OwnerID: owner.Agent.ID,
+				RoomID: room.ID, Title: "Verify the candidate", OwnerID: owner.Agent.ID, VerificationRequired: true,
 			})
 			if err != nil {
 				t.Fatalf("CreateTask() error = %v", err)
@@ -1090,7 +1090,7 @@ func TestGoalCorrectionAndCancellationInterruptHiddenWorkSessions(t *testing.T) 
 			_ = promoteTestCandidate(t, service, ownerClient, task.ID)
 			const sessionRef = "hidden-verifier-session"
 			if _, err := runtime.StartWorkRun(ctx, WorkRunStartParams{
-				WorkID: task.ID, Kind: WorkRunVerifier, SessionRef: sessionRef,
+				WorkID: task.ID, Kind: WorkRunVerifier, SessionRef: sessionRef, NamedAgentID: runtime.AgentID(),
 			}); err != nil {
 				t.Fatalf("StartWorkRun(verifier) error = %v", err)
 			}
@@ -1098,7 +1098,7 @@ func TestGoalCorrectionAndCancellationInterruptHiddenWorkSessions(t *testing.T) 
 				t.Fatalf("settle work error = %v", err)
 			}
 			got := sink.takeSessionInterrupts()
-			want := recordedSessionInterrupt{sessionRef: sessionRef}
+			want := recordedSessionInterrupt{agentID: runtime.AgentID(), sessionRef: sessionRef}
 			if len(got) != 1 || got[0] != want {
 				t.Fatalf("hidden session interrupts = %#v, want %#v", got, []recordedSessionInterrupt{want})
 			}
@@ -1111,7 +1111,7 @@ func TestWorkSessionRejectsWritesAfterGoalRevision(t *testing.T) {
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -1175,7 +1175,7 @@ func TestCancelledWorkRejectsSessionAndUnboundTaskWrites(t *testing.T) {
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -1259,7 +1259,7 @@ func TestConversationAndCoordinationSessionsCanStillSend(t *testing.T) {
 	}); err != nil || result.Status != SendCommitted {
 		t.Fatalf("Send(coordination session) = %#v, err = %v", result, err)
 	}
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -1271,8 +1271,8 @@ func TestConversationAndCoordinationSessionsCanStillSend(t *testing.T) {
 	}
 	if _, err := coordinationClient.UpdateTask(ctx, TaskUpdateParams{
 		TaskID: task.ID, State: TaskStateDoing,
-	}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("UpdateTask(unscoped coordination session) error = %v, want conflict", err)
+	}); err != nil {
+		t.Fatalf("UpdateTask(authorized owner conversation) error = %v", err)
 	}
 }
 
@@ -1281,7 +1281,7 @@ func TestActiveSessionStateTransitionSettlesRunAndBlocksFurtherChecks(t *testing
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}
@@ -1377,7 +1377,7 @@ func TestSettlingOneWorkRunPreservesActiveSibling(t *testing.T) {
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
+	runtime, err := bindTestRoomLead(t, ctx, service, room.ID)
 	if err != nil {
 		t.Fatalf("BindRuntime() error = %v", err)
 	}

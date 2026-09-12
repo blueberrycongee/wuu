@@ -712,11 +712,6 @@ func (s *Server) runChannelMaintenance(ctx context.Context) {
 		if !state.Outstanding {
 			continue
 		}
-		if agent.IsRoomRuntime() {
-			if th := s.thread(agentRuntimeSessionID(agent)); th != nil && threadIsRunning(th) {
-				continue
-			}
-		}
 		if err := s.deliverNamedAgentWake(ctx, agent.ID); err != nil {
 			log.Printf("wuu: channel wake recovery %q: %v", agent.ID, err)
 		}

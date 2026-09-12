@@ -11,12 +11,12 @@ import (
 )
 
 func (s *Service) CreateTask(ctx context.Context, params TaskCreateParams) (Message, error) {
-	actor, err := s.AuthenticatePrincipal(ctx, params.AgentID, params.Token)
+	_, err := s.AuthenticatePrincipal(ctx, params.AgentID, params.Token)
 	if err != nil {
 		return Message{}, err
 	}
-	if actor.IsRoomRuntime() {
-		params.VerificationRequired = true
+	if params.LeadNamedAgentID == "" {
+		params.LeadNamedAgentID = params.AgentID
 	}
 	return s.createTask(ctx, params)
 }
@@ -65,6 +65,11 @@ func (s *Service) createTask(ctx context.Context, params TaskCreateParams) (Mess
 			return Message{}, err
 		}
 	}
+	if params.SourceSessionRef != "" {
+		if err := validateCollaborationSessionWriteTx(ctx, tx, params.SourceSessionRef, params.AgentID, params.RoomID, "", 0); err != nil {
+			return Message{}, err
+		}
+	}
 	if params.TargetSessionRef != "" {
 		binding, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.TargetSessionRef))
 		if err != nil {
@@ -107,13 +112,13 @@ func (s *Service) createTask(ctx context.Context, params TaskCreateParams) (Mess
 		}
 	}
 	assignmentFromType := MemberAgent
-	assignmentFromID := ""
+	assignmentFromID := params.AgentID
 	if params.HumanID != "" {
 		assignmentFromType = MemberHuman
 		assignmentFromID = params.HumanID
 	}
 	if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
-		RoomID: message.RoomID, FromType: assignmentFromType, FromID: assignmentFromID,
+		RoomID: message.RoomID, FromType: assignmentFromType, FromID: assignmentFromID, FromSessionRef: params.SourceSessionRef,
 		ToAgentID: params.OwnerID, TargetSessionRef: params.TargetSessionRef,
 		WorkID: message.ID, Kind: CollaborationAssignment,
 		Body: params.Body, SourceMessageID: params.SourceMessageID,
@@ -193,15 +198,12 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			return Message{}, err
 		}
 	}
-	callerOk := params.AgentID != "" && message.TaskOwner == params.AgentID
-	correctionOk := params.GoalCorrection == ""
-	if params.GoalCorrection != "" && params.AgentID != "" {
-		var runtimeRoomID string
-		if err := tx.QueryRowContext(ctx, `SELECT room_id FROM room_runtimes WHERE id = ?`, params.AgentID).Scan(&runtimeRoomID); err == nil && runtimeRoomID == message.RoomID {
-			callerOk = true
-			correctionOk = true
-		}
+	var leadID string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(lead_named_agent_id, '') FROM works WHERE id = ?`, message.ID).Scan(&leadID); err != nil {
+		return Message{}, err
 	}
+	callerOk := params.AgentID != "" && (message.TaskOwner == params.AgentID || leadID == params.AgentID)
+	correctionOk := params.GoalCorrection == "" || callerOk
 	if params.HumanID != "" {
 		if err := requireMemberTx(ctx, tx, message.RoomID, MemberHuman, params.HumanID); err == nil {
 			callerOk = true
@@ -220,8 +222,12 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 		return Message{}, fmt.Errorf("%w: work is %s", ErrConflict, workState)
 	}
 	if params.AgentID != "" {
+		sourceWorkID := message.ID
+		if binding, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.SessionRef)); err == nil && binding.WorkID == "" {
+			sourceWorkID = ""
+		}
 		if err := validateCollaborationSessionWriteTx(
-			ctx, tx, params.SessionRef, params.AgentID, message.RoomID, message.ID, message.TaskGoalRevision,
+			ctx, tx, params.SessionRef, params.AgentID, message.RoomID, sourceWorkID, message.TaskGoalRevision,
 		); err != nil {
 			return Message{}, err
 		}
@@ -352,13 +358,13 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			return Message{}, fmt.Errorf("settle reassigned work run handle: %w", err)
 		}
 		assignmentFromType := MemberAgent
-		assignmentFromID := ""
+		assignmentFromID := params.AgentID
 		if params.HumanID != "" {
 			assignmentFromType = MemberHuman
 			assignmentFromID = params.HumanID
 		}
 		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
-			RoomID: message.RoomID, FromType: assignmentFromType, FromID: assignmentFromID,
+			RoomID: message.RoomID, FromType: assignmentFromType, FromID: assignmentFromID, FromSessionRef: params.SessionRef,
 			ToAgentID: newOwner, WorkID: message.ID, Kind: CollaborationAssignment,
 			Body: message.Body, SourceMessageID: message.ID,
 			GoalRevision: message.TaskGoalRevision, CandidateRevision: message.TaskCandidateRevision,
@@ -415,7 +421,11 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	if err := syncWorkFromTaskTx(ctx, tx, message, updatedAt); err != nil {
 		return Message{}, err
 	}
-	if err := s.taskEventInboxTx(ctx, tx, message, newOwner, oldOwner); err != nil {
+	if message.TaskState == string(TaskStateDone) {
+		if _, err := tx.ExecContext(ctx, `UPDATE inbox_items SET pulled_at = COALESCE(pulled_at, ?) WHERE member_type = 'agent' AND message_id = ? AND kind = 'task'`, toMillis(updatedAt), message.ID); err != nil {
+			return Message{}, err
+		}
+	} else if err := s.taskEventInboxTx(ctx, tx, message, newOwner, oldOwner); err != nil {
 		return Message{}, err
 	}
 	if ownerChanged {
@@ -430,7 +440,12 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			return Message{}, err
 		}
 	}
-	requested, err := requestWakeTx(ctx, tx, newOwner, toMillis(updatedAt))
+	requested := false
+	if message.TaskState != string(TaskStateDone) {
+		requested, err = requestWakeTx(ctx, tx, newOwner, toMillis(updatedAt))
+	} else {
+		err = recomputeAgentWakeTx(ctx, tx, newOwner, toMillis(updatedAt))
+	}
 	if err != nil {
 		return Message{}, err
 	}
@@ -560,15 +575,6 @@ func (s *Service) insertTaskMessageTx(ctx context.Context, tx *sql.Tx, params Ta
 		TaskVerificationRequired: params.VerificationRequired,
 		TaskGoalRevision:         1,
 		CreatedAt:                now,
-	}
-	var runtimeRoomID string
-	if params.AgentID != "" {
-		if err := tx.QueryRowContext(ctx, `SELECT room_id FROM room_runtimes WHERE id = ?`, params.AgentID).Scan(&runtimeRoomID); err == nil && runtimeRoomID == params.RoomID {
-			// A task is a Work/activity projection, not a hidden-runtime bubble.
-			// Attribute the card to its visible owner so no internal principal enters
-			// the room author namespace.
-			message.AuthorID = params.OwnerID
-		}
 	}
 	if params.AgentID == "" && params.HumanID != "" {
 		message.AuthorType = MemberHuman

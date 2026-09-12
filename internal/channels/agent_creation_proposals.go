@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func (s *Service) ProposeRoomAgent(ctx context.Context, runtimeID, token, roomID, name, role string) (AgentCreationProposal, error) {
-	if _, err := s.requireRoomRuntime(ctx, runtimeID, token, roomID); err != nil {
+func (s *Service) ProposeRoomAgent(ctx context.Context, actorID, token, roomID, name, role string) (AgentCreationProposal, error) {
+	if _, err := s.requireRoomMember(ctx, actorID, token, roomID); err != nil {
 		return AgentCreationProposal{}, err
 	}
 	name, role = strings.TrimSpace(name), strings.TrimSpace(role)
@@ -95,7 +95,7 @@ func (s *Service) ResolveAgentCreationProposal(ctx context.Context, params Resol
 	}
 	now := s.now()
 	if !params.Approve {
-		return s.cancelAgentCreationProposal(ctx, proposal, now)
+		return s.finishAgentCreationProposal(ctx, proposal, params.HumanID, "", now)
 	}
 	claimed, err := s.db.ExecContext(ctx, `UPDATE agent_creation_proposals SET state = 'processing', provider = ?, model = ? WHERE id = ? AND state = 'pending'`, params.Provider, params.Model, proposal.ID)
 	if err != nil {
@@ -108,11 +108,7 @@ func (s *Service) ResolveAgentCreationProposal(ctx context.Context, params Resol
 		Name: proposal.Name, Role: proposal.Role, ProviderOverride: params.Provider, ModelOverride: params.Model, Autostart: true,
 	})
 	if createErr == nil {
-		var runtimeID string
-		createErr = s.db.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, proposal.RoomID).Scan(&runtimeID)
-		if createErr == nil {
-			_, createErr = s.inviteRoomAgent(ctx, runtimeID, proposal.RoomID, credential.Agent.ID)
-		}
+		_, createErr = s.inviteRoomAgent(ctx, proposal.RoomID, credential.Agent.ID)
 	}
 	if createErr != nil {
 		_, _ = s.db.ExecContext(ctx, `UPDATE agent_creation_proposals SET state = 'pending', provider = '', model = '' WHERE id = ? AND state = 'processing'`, proposal.ID)
@@ -121,13 +117,10 @@ func (s *Service) ResolveAgentCreationProposal(ctx context.Context, params Resol
 		}
 		return AgentCreationProposal{}, createErr
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE agent_creation_proposals SET state = 'approved', created_agent_id = ?, resolved_at = ? WHERE id = ? AND state = 'processing'`, credential.Agent.ID, toMillis(now), proposal.ID); err != nil {
-		return AgentCreationProposal{}, err
-	}
-	return s.getAgentCreationProposal(ctx, proposal.ID)
+	return s.finishAgentCreationProposal(ctx, proposal, params.HumanID, credential.Agent.ID, now)
 }
 
-func (s *Service) cancelAgentCreationProposal(ctx context.Context, proposal AgentCreationProposal, now time.Time) (AgentCreationProposal, error) {
+func (s *Service) finishAgentCreationProposal(ctx context.Context, proposal AgentCreationProposal, humanID, createdAgentID string, now time.Time) (AgentCreationProposal, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -135,40 +128,88 @@ func (s *Service) cancelAgentCreationProposal(ctx context.Context, proposal Agen
 		return AgentCreationProposal{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE agent_creation_proposals SET state = 'cancelled', resolved_at = ? WHERE id = ? AND state = 'pending'`, toMillis(now), proposal.ID)
+	state, expectedState := AgentCreationCancelled, AgentCreationPending
+	body := "用户取消了创建新角色：" + proposal.Name
+	if createdAgentID != "" {
+		state, expectedState = AgentCreationApproved, AgentCreationProcessing
+		body = "用户批准了创建新角色：" + proposal.Name
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agent_creation_proposals SET state = ?, created_agent_id = ?, resolved_at = ? WHERE id = ? AND state = ?`, state, createdAgentID, toMillis(now), proposal.ID, expectedState)
 	if err != nil {
 		return AgentCreationProposal{}, err
 	}
 	if rows, _ := result.RowsAffected(); rows != 1 {
 		return AgentCreationProposal{}, fmt.Errorf("%w: agent creation proposal is already resolved", ErrConflict)
 	}
-	var runtimeID, createdBy string
-	if err := tx.QueryRowContext(ctx, `SELECT runtime.id, room.created_by FROM room_runtimes runtime JOIN rooms room ON room.id = runtime.room_id WHERE runtime.room_id = ?`, proposal.RoomID).Scan(&runtimeID, &createdBy); err != nil {
-		return AgentCreationProposal{}, err
+	if state == AgentCreationCancelled {
+		var seq int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM room_messages WHERE room_id = ?`, proposal.RoomID).Scan(&seq); err != nil {
+			return AgentCreationProposal{}, err
+		}
+		messageID, err := randomID("msg", 12)
+		if err != nil {
+			return AgentCreationProposal{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO room_messages (id, room_id, seq, author_type, author_id, kind, body, mentions_json, created_at) VALUES (?, ?, ?, 'human', ?, 'system', ?, '[]', ?)`,
+			messageID, proposal.RoomID, seq, humanID, body, toMillis(now)); err != nil {
+			return AgentCreationProposal{}, err
+		}
 	}
-	var seq int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM room_messages WHERE room_id = ?`, proposal.RoomID).Scan(&seq); err != nil {
-		return AgentCreationProposal{}, err
-	}
-	messageID, err := randomID("msg", 12)
-	if err != nil {
-		return AgentCreationProposal{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO room_messages (id, room_id, seq, author_type, author_id, kind, body, mentions_json, created_at) VALUES (?, ?, ?, 'human', ?, 'system', ?, '[]', ?)`,
-		messageID, proposal.RoomID, seq, createdBy, "用户取消了创建新角色："+proposal.Name, toMillis(now)); err != nil {
-		return AgentCreationProposal{}, err
-	}
-	shouldWake, err := requestWakeTx(ctx, tx, runtimeID, toMillis(now))
+	// A decision is actionable human input. Commit its receipts with the state
+	// change so a resolved proposal cannot lose the members' continuation.
+	wakeIDs, err := enqueueAgentCreationDecisionTx(ctx, tx, proposal, humanID, body, now)
 	if err != nil {
 		return AgentCreationProposal{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return AgentCreationProposal{}, err
 	}
-	if shouldWake && s.wake != nil {
-		s.wake.Deliver(runtimeID)
+	for _, agentID := range wakeIDs {
+		if s.wake != nil {
+			s.wake.Deliver(agentID)
+		}
 	}
 	return s.getAgentCreationProposal(ctx, proposal.ID)
+}
+
+func enqueueAgentCreationDecisionTx(ctx context.Context, tx *sql.Tx, proposal AgentCreationProposal, humanID, body string, now time.Time) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT member.member_id FROM room_members member JOIN named_agents agent ON agent.id = member.member_id AND agent.kind = 'named' WHERE member.room_id = ? AND member.member_type = 'agent' ORDER BY member.member_id`, proposal.RoomID)
+	if err != nil {
+		return nil, err
+	}
+	var members []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		members = append(members, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var wakeIDs []string
+	for _, id := range members {
+		if _, err := enqueueCollaborationTx(ctx, tx, CollaborationMessage{
+			RoomID: proposal.RoomID, FromType: MemberHuman, FromID: humanID, ToAgentID: id,
+			Kind: CollaborationControl, Body: body, SourceMessageID: proposal.MessageID,
+			CorrelationID: proposal.ID, RequestID: "agent-proposal-decision:" + proposal.ID, CreatedAt: now,
+		}); err != nil {
+			return nil, err
+		}
+		requested, err := requestWakeTx(ctx, tx, id, toMillis(now))
+		if err != nil {
+			return nil, err
+		}
+		if requested {
+			wakeIDs = append(wakeIDs, id)
+		}
+	}
+	return wakeIDs, nil
 }
 
 func (s *Service) attachAgentCreationProposals(ctx context.Context, messages []Message) error {

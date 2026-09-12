@@ -22,12 +22,11 @@ func TestChatWorkRecordsArtifactAndEvidence(t *testing.T) {
 		Kind: channels.RoomChannel, Name: "Work", CreatedBy: "local-user",
 		Members: []channels.RoomMember{{MemberType: channels.MemberAgent, MemberID: owner.Agent.ID}},
 	})
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
-	task, err := runtime.CreateTask(ctx, channels.TaskCreateParams{RoomID: room.ID, Title: "Fix", OwnerID: owner.Agent.ID})
+	ownerClient, _ := service.BindAgent(ctx, owner.Agent.ID)
+	task, err := ownerClient.CreateTask(ctx, channels.TaskCreateParams{RoomID: room.ID, Title: "Fix", OwnerID: owner.Agent.ID})
 	if err != nil {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
-	ownerClient, _ := service.BindAgent(ctx, owner.Agent.ID)
 	kit, err := New(t.TempDir())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -62,7 +61,7 @@ func TestChatWorkRecordsArtifactAndEvidence(t *testing.T) {
 	}
 }
 
-func TestChatWorkRoomRuntimeStartsAndPromotesNamedAgentRunIdempotently(t *testing.T) {
+func TestChatWorkLeadStartsAndPromotesMemberRunIdempotently(t *testing.T) {
 	ctx := context.Background()
 	service, err := channels.Open(filepath.Join(t.TempDir(), "channels"), nil)
 	if err != nil {
@@ -70,17 +69,21 @@ func TestChatWorkRoomRuntimeStartsAndPromotesNamedAgentRunIdempotently(t *testin
 	}
 	t.Cleanup(func() { _ = service.Close() })
 	owner, _ := service.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Owner"})
+	lead, _ := service.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Lead"})
 	room, _ := service.CreateRoom(ctx, channels.CreateRoomParams{
 		Kind: channels.RoomChannel, Name: "Work", CreatedBy: "local-user",
-		Members: []channels.RoomMember{{MemberType: channels.MemberAgent, MemberID: owner.Agent.ID}},
+		Members: []channels.RoomMember{{MemberType: channels.MemberAgent, MemberID: owner.Agent.ID}, {MemberType: channels.MemberAgent, MemberID: lead.Agent.ID}},
 	})
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
-	task, _ := runtime.CreateTask(ctx, channels.TaskCreateParams{RoomID: room.ID, Title: "Fix", OwnerID: owner.Agent.ID, VerificationRequired: true})
+	leadClient, _ := service.BindAgent(ctx, lead.Agent.ID)
+	task, err := leadClient.CreateTask(ctx, channels.TaskCreateParams{RoomID: room.ID, Title: "Fix", OwnerID: owner.Agent.ID, VerificationRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	kit, err := New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit.SetChatAgent(runtime)
+	kit.SetChatAgent(leadClient)
 	startArgs := `{"action":"start_run","work_id":"` + task.ID + `","run_kind":"producer","named_agent_id":"` + owner.Agent.ID + `","request_id":"producer-1","round":1}`
 	startJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_work", Arguments: startArgs})
 	if err != nil {

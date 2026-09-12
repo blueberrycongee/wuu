@@ -106,7 +106,7 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := service.ensureRoomRuntimes(context.Background()); err != nil {
+	if err := service.retireRoomRuntimes(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -1349,13 +1349,12 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 		return fmt.Errorf("%w: named agent %q has task history and cannot be deleted", ErrConflict, id)
 	}
 	type roomRemoval struct {
-		roomID, createdBy, runtimeID string
+		roomID, createdBy string
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT room.id, room.created_by, COALESCE(runtime.id, '')
+		SELECT room.id, room.created_by
 		FROM room_members member
 		JOIN rooms room ON room.id = member.room_id AND room.kind = 'channel'
-		LEFT JOIN room_runtimes runtime ON runtime.room_id = room.id
 		WHERE member.member_type = 'agent' AND member.member_id = ?
 		ORDER BY room.id`, id)
 	if err != nil {
@@ -1364,7 +1363,7 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 	var removals []roomRemoval
 	for rows.Next() {
 		var removal roomRemoval
-		if err := rows.Scan(&removal.roomID, &removal.createdBy, &removal.runtimeID); err != nil {
+		if err := rows.Scan(&removal.roomID, &removal.createdBy); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan named agent room removal: %w", err)
 		}
@@ -1383,7 +1382,6 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 		)`, id); err != nil {
 		return fmt.Errorf("delete named agent direct messages: %w", err)
 	}
-	wakeIDs := make([]string, 0, len(removals))
 	now := toMillis(s.now())
 	for _, removal := range removals {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM room_members WHERE room_id = ? AND member_type = 'agent' AND member_id = ?`, removal.roomID, id); err != nil {
@@ -1398,15 +1396,6 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 		if err := recordMembershipChangeTx(ctx, tx, removal.roomID, removal.createdBy, nil, []string{agent.Name}, now); err != nil {
 			return err
 		}
-		if removal.runtimeID != "" {
-			shouldWake, err := requestWakeTx(ctx, tx, removal.runtimeID, now)
-			if err != nil {
-				return err
-			}
-			if shouldWake {
-				wakeIDs = append(wakeIDs, removal.runtimeID)
-			}
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM named_agents WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete named agent: %w", err)
@@ -1416,11 +1405,6 @@ func (s *Service) deleteAgent(ctx context.Context, agent NamedAgent) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit named agent delete: %w", err)
-	}
-	for _, runtimeID := range wakeIDs {
-		if s.wake != nil {
-			s.wake.Deliver(runtimeID)
-		}
 	}
 	return os.RemoveAll(filepath.Dir(agent.MemoryDir))
 }
@@ -1507,24 +1491,7 @@ func (s *Service) CreateRoom(ctx context.Context, params CreateRoomParams) (Room
 		members[index].JoinedAt = now
 	}
 	room.Members = members
-	var runtimeCredential roomRuntimeCredential
-	keepRoomRuntime := true
-	if room.Kind == RoomChannel {
-		credential, err := s.prepareRoomRuntime(room.ID, room.Name)
-		if err != nil {
-			return Room{}, fmt.Errorf("prepare room runtime: %w", err)
-		}
-		runtimeCredential = credential
-		room.RuntimeID = credential.Runtime.ID
-		room.AgentID = room.RuntimeID
-		room.AvatarKey = room.ID
-		keepRoomRuntime = false
-		defer func() {
-			if !keepRoomRuntime {
-				_ = os.RemoveAll(filepath.Dir(runtimeCredential.Runtime.MemoryDir))
-			}
-		}()
-	}
+	room.AvatarKey = room.ID
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1537,11 +1504,6 @@ func (s *Service) CreateRoom(ctx context.Context, params CreateRoomParams) (Room
 		INSERT INTO rooms (id, kind, name, avatar_image, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		room.ID, room.Kind, room.Name, room.AvatarImage, room.CreatedBy, toMillis(room.CreatedAt)); err != nil {
 		return Room{}, fmt.Errorf("insert room: %w", err)
-	}
-	if room.Kind == RoomChannel {
-		if err := insertRoomRuntimeTx(ctx, tx, runtimeCredential); err != nil {
-			return Room{}, err
-		}
 	}
 	for _, member := range room.Members {
 		if member.MemberType == MemberAgent {
@@ -1566,7 +1528,6 @@ func (s *Service) CreateRoom(ctx context.Context, params CreateRoomParams) (Room
 	if err := tx.Commit(); err != nil {
 		return Room{}, fmt.Errorf("commit room create: %w", err)
 	}
-	keepRoomRuntime = true
 	return room, nil
 }
 
@@ -1938,23 +1899,8 @@ func (s *Service) UpdateRoom(ctx context.Context, params UpdateRoomParams) (Room
 			}
 		}
 	}
-	var wakeRuntimeID string
-	var shouldWake bool
-	if membershipChanged {
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ?`, id).Scan(&wakeRuntimeID); err == nil {
-			shouldWake, err = requestWakeTx(ctx, tx, wakeRuntimeID, toMillis(s.now()))
-			if err != nil {
-				return Room{}, err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return Room{}, fmt.Errorf("resolve changed room runtime: %w", err)
-		}
-	}
 	if err := tx.Commit(); err != nil {
 		return Room{}, fmt.Errorf("commit room update: %w", err)
-	}
-	if shouldWake && s.wake != nil {
-		s.wake.Deliver(wakeRuntimeID)
 	}
 	return s.GetRoom(ctx, id)
 }
@@ -2007,7 +1953,7 @@ func (s *Service) EnsureBootstrap(ctx context.Context, humanID string) (Bootstra
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return BootstrapResult{}, fmt.Errorf("read channel bootstrap state: %w", err)
 	}
-	if err := s.ensureRoomRuntimes(ctx); err != nil {
+	if err := s.retireRoomRuntimes(ctx); err != nil {
 		return BootstrapResult{}, err
 	}
 	agents, err := s.ListNamedAgents(ctx)

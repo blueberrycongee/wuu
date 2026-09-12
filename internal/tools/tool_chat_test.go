@@ -49,12 +49,11 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 		t.Fatalf("BindAgent() error = %v", err)
 	}
 	kit.SetChatAgent(client)
-	for _, name := range []string{"chat_check", "chat_read", "chat_send", "collaboration_send", "chat_draft", "chat_task", "chat_work", "chat_remind"} {
+	for _, name := range []string{"chat_check", "chat_read", "chat_send", "collaboration_send", "chat_draft", "chat_task", "chat_work", "chat_remind", "chat_verify", "chat_roster"} {
 		assertDefinitionPresent(t, kit.Definitions(), name)
 	}
 	assertDefinitionProperties(t, kit.Definitions(), "collaboration_send", "target_session_ref", "work_id")
 	assertDefinitionProperties(t, kit.Definitions(), "chat_task", "target_session_ref")
-	assertDefinitionMissing(t, kit.Definitions(), "chat_verify")
 	for _, definition := range kit.Definitions() {
 		if definition.Name != "chat_send" {
 			continue
@@ -66,6 +65,10 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 		if _, ok := properties["reply_to"]; ok {
 			t.Fatal("chat_send unexpectedly exposes reply_to")
 		}
+	}
+
+	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "collaboration_send", Arguments: `{"room_id":"` + room.ID + `","target_kind":"room_runtime","target_id":"retired-runtime","body":"review"}`}); err == nil {
+		t.Fatal("collaboration_send accepted a retired room runtime target")
 	}
 
 	sentJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","kind":"text","body":"reviewed","basis_seq":0}`})
@@ -206,7 +209,7 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	}
 }
 
-func TestChatVerifyIsAvailableOnlyToHiddenRoomRuntime(t *testing.T) {
+func TestNamedAgentToolsVerifyAssignedIndependentRun(t *testing.T) {
 	ctx := context.Background()
 	service, err := channels.Open(filepath.Join(t.TempDir(), "channels"), nil)
 	if err != nil {
@@ -227,9 +230,9 @@ func TestChatVerifyIsAvailableOnlyToHiddenRoomRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	client, err := service.BindRuntime(ctx, room.RuntimeID)
+	client, err := service.BindAgent(ctx, owner.Agent.ID)
 	if err != nil {
-		t.Fatalf("BindAgent(room runtime) error = %v", err)
+		t.Fatalf("BindAgent(owner) error = %v", err)
 	}
 	kit, err := New(t.TempDir())
 	if err != nil {
@@ -239,16 +242,29 @@ func TestChatVerifyIsAvailableOnlyToHiddenRoomRuntime(t *testing.T) {
 	kit.SetChatAgent(client)
 	assertDefinitionPresent(t, kit.Definitions(), "chat_verify")
 	assertDefinitionPresent(t, kit.Definitions(), "chat_roster")
-	assertDefinitionMissing(t, kit.Definitions(), "chat_send")
+	assertDefinitionPresent(t, kit.Definitions(), "chat_send")
 	for _, projectTool := range []string{"read_file", "apply_patch", "bash", "web_search", "load_skill", "tool_search"} {
 		assertDefinitionPresent(t, kit.Definitions(), projectTool)
 	}
 	if !kit.SupportsTool("set_session_workspace") {
-		t.Fatal("room agent surface must retain deferred session workspace support")
+		t.Fatal("named-agent surface must retain deferred session workspace support")
 	}
 	rosterJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_roster", Arguments: `{"action":"create","room_id":"` + room.ID + `","name":"Reviewer"}`})
 	if err != nil || !strings.Contains(rosterJSON, `"name":"Reviewer"`) || !strings.Contains(rosterJSON, `"state":"pending"`) {
 		t.Fatalf("chat_roster create = %s, err = %v", rosterJSON, err)
+	}
+
+	reviewer, err := service.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Independent Reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invitedJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_roster", Arguments: `{"action":"invite","room_id":"` + room.ID + `","agent_id":"` + reviewer.Agent.ID + `"}`})
+	if err != nil || !strings.Contains(invitedJSON, reviewer.Agent.ID) {
+		t.Fatalf("chat_roster invite = %s, err = %v", invitedJSON, err)
+	}
+	reviewerClient, err := service.BindAgent(ctx, reviewer.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	taskJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_task", Arguments: `{"action":"create","room_id":"` + room.ID + `","title":"Fix callback","owner_id":"` + owner.Agent.ID + `","verification_required":true}`})
@@ -285,20 +301,30 @@ func TestChatVerifyIsAvailableOnlyToHiddenRoomRuntime(t *testing.T) {
 		t.Fatalf("finish producer run: %v", err)
 	}
 	verifierRun, err := client.StartWorkRun(ctx, channels.WorkRunStartParams{
-		WorkID: taskResult.Task.ID, Kind: channels.WorkRunVerifier, SessionRef: "independent-verifier",
+		WorkID: taskResult.Task.ID, NamedAgentID: reviewer.Agent.ID, Kind: channels.WorkRunVerifier, SessionRef: "independent-verifier",
 	})
 	if err != nil {
 		t.Fatalf("start verifier run: %v", err)
 	}
-	if _, err := client.FinishWorkRun(ctx, channels.WorkRunFinishParams{
-		WorkID: taskResult.Task.ID, RunID: verifierRun.ID, State: channels.WorkRunCompleted, Outcome: "block",
-	}); err != nil {
+	kit.SetChatAgent(reviewerClient)
+	reportArgs := fmt.Sprintf(`{"action":"add_artifact","work_id":%q,"run_id":%q,"artifact_kind":"report","uri":"artifact://review-report"}`, taskResult.Task.ID, verifierRun.ID)
+	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_work", Arguments: reportArgs}); err != nil {
+		t.Fatalf("record verifier report: %v", err)
+	}
+	finishArgs := fmt.Sprintf(`{"action":"finish_run","work_id":%q,"run_id":%q,"run_state":"completed","outcome":"block"}`, taskResult.Task.ID, verifierRun.ID)
+	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_work", Arguments: finishArgs}); err != nil {
 		t.Fatalf("finish verifier run: %v", err)
 	}
 	verifyArgs := fmt.Sprintf(
 		`{"room_id":%q,"task_id":%q,"goal_revision":%d,"candidate_revision":%d,"decision":"block","report":"Replay still succeeds.","run_ref":%q}`,
 		room.ID, taskResult.Task.ID, promoted.GoalRevision, promoted.CandidateRevision, verifierRun.ID,
 	)
+	kit.SetChatAgent(ownerClient)
+	producerVerification := strings.Replace(verifyArgs, verifierRun.ID, producerRun.ID, 1)
+	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_verify", Arguments: producerVerification}); err == nil {
+		t.Fatal("chat_verify accepted the owner's producer run as independent verification")
+	}
+	kit.SetChatAgent(reviewerClient)
 	verifiedJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_verify", Arguments: verifyArgs})
 	if err != nil || !strings.Contains(verifiedJSON, `"decision":"block"`) || !strings.Contains(verifiedJSON, `"kind":"verification_feedback"`) {
 		t.Fatalf("chat_verify = %s, err = %v", verifiedJSON, err)

@@ -7,15 +7,28 @@ import (
 	"testing"
 )
 
-func completeIndependentVerifierRun(t *testing.T, ctx context.Context, runtime *AgentClient, taskID, sessionRef string) string {
+func bindTestTaskLead(t *testing.T, ctx context.Context, service *Service, roomID string) (*AgentClient, error) {
 	t.Helper()
-	run, err := runtime.StartWorkRun(ctx, WorkRunStartParams{
-		WorkID: taskID, Kind: WorkRunVerifier, SessionRef: sessionRef,
+	lead, err := bindTestRoomLead(t, ctx, service, roomID)
+	if err != nil {
+		return nil, err
+	}
+	sessionRef := "test-task-lead-" + roomID
+	if _, err := lead.BindCollaborationSession(ctx, CollaborationSessionBindParams{SessionRef: sessionRef, RoomID: roomID, Purpose: CollaborationSessionConversation}); err != nil {
+		return nil, err
+	}
+	return service.BindAgentSession(ctx, lead.AgentID(), sessionRef)
+}
+
+func completeIndependentVerifierRun(t *testing.T, ctx context.Context, leadClient *AgentClient, taskID, sessionRef string) string {
+	t.Helper()
+	run, err := leadClient.StartWorkRun(ctx, WorkRunStartParams{
+		WorkID: taskID, Kind: WorkRunVerifier, NamedAgentID: leadClient.AgentID(), SessionRef: sessionRef,
 	})
 	if err != nil {
 		t.Fatalf("StartWorkRun(independent verifier) error = %v", err)
 	}
-	if _, err := runtime.FinishWorkRun(ctx, WorkRunFinishParams{
+	if _, err := leadClient.FinishWorkRun(ctx, WorkRunFinishParams{
 		WorkID: taskID, RunID: run.ID, State: WorkRunCompleted, Outcome: "completed independent check",
 	}); err != nil {
 		t.Fatalf("FinishWorkRun(independent verifier) error = %v", err)
@@ -38,11 +51,11 @@ func TestTaskVerificationPersistsAndWakesVisibleOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	roomRuntime, err := service.BindRuntime(ctx, room.RuntimeID)
+	leadClient, err := bindTestTaskLead(t, ctx, service, room.ID)
 	if err != nil {
-		t.Fatalf("BindRuntime() error = %v", err)
+		t.Fatalf("BindAgent(lead) error = %v", err)
 	}
-	task, err := roomRuntime.CreateTask(ctx, TaskCreateParams{
+	task, err := leadClient.CreateTask(ctx, TaskCreateParams{
 		RoomID: room.ID, Title: "Fix callback", Body: "Reject replayed state", OwnerID: owner.Agent.ID,
 		VerificationRequired: true,
 	})
@@ -69,8 +82,8 @@ func TestTaskVerificationPersistsAndWakesVisibleOwner(t *testing.T) {
 	}
 	sink.take() // Candidate promotion wake is not part of the feedback assertion.
 
-	blockRunRef := completeIndependentVerifierRun(t, ctx, roomRuntime, task.ID, "block-check")
-	blocked, err := roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	blockRunRef := completeIndependentVerifierRun(t, ctx, leadClient, task.ID, "block-check")
+	blocked, err := leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationBlock,
 		Report: "The replay test still creates a second session.", GoalRevision: 1, CandidateRevision: 1, RunRef: blockRunRef,
 	})
@@ -117,8 +130,8 @@ func TestTaskVerificationPersistsAndWakesVisibleOwner(t *testing.T) {
 		t.Fatalf("repair checking task = %#v", checking)
 	}
 
-	passRunRef := completeIndependentVerifierRun(t, ctx, roomRuntime, task.ID, "pass-check")
-	passed, err := roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	passRunRef := completeIndependentVerifierRun(t, ctx, leadClient, task.ID, "pass-check")
+	passed, err := leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationPass,
 		Report: "Replay is rejected and focused tests pass.", GoalRevision: 1, CandidateRevision: 2, RunRef: passRunRef,
 	})
@@ -160,7 +173,7 @@ func TestTaskVerificationPersistsAndWakesVisibleOwner(t *testing.T) {
 	}
 }
 
-func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
+func TestNamedVerifierReturnsAuditableResultToVisibleLead(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
@@ -175,10 +188,10 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	roomRuntime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	leadClient, _ := bindTestTaskLead(t, ctx, service, room.ID)
 	ownerClient, _ := service.BindAgent(ctx, owner.Agent.ID)
 	verifierClient, _ := service.BindAgent(ctx, verifier.Agent.ID)
-	task, err := roomRuntime.CreateTask(ctx, TaskCreateParams{
+	task, err := leadClient.CreateTask(ctx, TaskCreateParams{
 		RoomID: room.ID, Title: "Fix callback", Body: "Reject replayed state",
 		OwnerID: owner.Agent.ID, VerificationRequired: true,
 	})
@@ -188,8 +201,8 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 	_, _ = ownerClient.Check(ctx)
 	_, _ = verifierClient.Check(ctx)
 	checking := promoteTestCandidate(t, service, ownerClient, task.ID)
-	_, _ = roomRuntime.Check(ctx)
-	run, err := roomRuntime.StartWorkRun(ctx, WorkRunStartParams{
+	_, _ = leadClient.Check(ctx)
+	run, err := leadClient.StartWorkRun(ctx, WorkRunStartParams{
 		WorkID: task.ID, Kind: WorkRunVerifier, Profile: verifier.Agent.ID,
 		SessionRef: "named-verifier-session",
 	})
@@ -207,8 +220,12 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 		binding.RunID != run.ID || binding.State != CollaborationSessionRunning {
 		t.Fatalf("verifier session binding = %#v", binding)
 	}
-	control, err := roomRuntime.SendCollaboration(ctx, CollaborationSendParams{
-		RoomID: room.ID, ToAgentID: verifier.Agent.ID, Kind: CollaborationControl,
+	verifierClient, err = service.BindAgentSession(ctx, verifier.Agent.ID, run.SessionRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := leadClient.SendCollaboration(ctx, CollaborationSendParams{
+		RoomID: room.ID, ToAgentID: verifier.Agent.ID, TargetSessionRef: run.SessionRef, Kind: CollaborationControl,
 		SourceMessageID: task.ID, Body: "Independently verify the current candidate.",
 	})
 	if err != nil {
@@ -222,7 +239,7 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCollaboration(peer_result) error = %v", err)
 	}
-	if result.ToAgentID != "" || result.GoalRevision != checking.TaskGoalRevision || result.CandidateRevision != checking.TaskCandidateRevision {
+	if result.ToAgentID != leadClient.AgentID() || result.GoalRevision != checking.TaskGoalRevision || result.CandidateRevision != checking.TaskCandidateRevision {
 		t.Fatalf("peer result = %#v", result)
 	}
 	if _, err := ownerClient.SendCollaboration(ctx, CollaborationSendParams{
@@ -230,9 +247,13 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 	}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("owner peer_result error = %v, want conflict", err)
 	}
-	checked, err := roomRuntime.Check(ctx)
-	if err != nil || len(checked.Collaboration) != 1 || checked.Collaboration[0].ID != result.ID {
-		t.Fatalf("room peer result = %#v, err = %v", checked.Collaboration, err)
+	pending, err := service.PendingCollaborationDispatches(ctx, leadClient.AgentID())
+	foundPending := false
+	for _, item := range pending {
+		foundPending = foundPending || item.ID == result.ID
+	}
+	if err != nil || !foundPending {
+		t.Fatalf("pending peer result = %#v, err = %v", pending, err)
 	}
 	dir := service.Dir()
 	if err := service.Close(); err != nil {
@@ -243,8 +264,8 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 		t.Fatalf("Open(peer result recovery) error = %v", err)
 	}
 	t.Cleanup(func() { _ = service.Close() })
-	roomRuntime, _ = service.BindRuntime(ctx, room.RuntimeID)
-	recovered, err := roomRuntime.Check(ctx)
+	leadClient, _ = bindTestTaskLead(t, ctx, service, room.ID)
+	recovered, err := leadClient.Check(ctx)
 	recoveredPeer := false
 	for _, delivery := range recovered.Collaboration {
 		recoveredPeer = recoveredPeer || delivery.ID == result.ID
@@ -252,20 +273,20 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 	if err != nil || !recoveredPeer {
 		t.Fatalf("recovered peer result = %#v, err = %v", recovered.Collaboration, err)
 	}
-	if _, err := roomRuntime.FinishWorkRun(ctx, WorkRunFinishParams{
+	if _, err := leadClient.FinishWorkRun(ctx, WorkRunFinishParams{
 		WorkID: task.ID, RunID: run.ID, State: WorkRunCompleted,
 		Outcome: "PASS", ChecksRerun: 1,
 	}); err != nil {
 		t.Fatalf("FinishWorkRun(verifier) error = %v", err)
 	}
-	if _, err := roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	if _, err := leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, GoalRevision: checking.TaskGoalRevision,
 		CandidateRevision: checking.TaskCandidateRevision, Decision: VerificationPass,
 		Report: "Replay is rejected and the focused checks pass.", RunRef: run.ID,
 	}); err != nil {
 		t.Fatalf("SubmitTaskVerification() error = %v", err)
 	}
-	work, err := roomRuntime.GetWork(ctx, task.ID)
+	work, err := leadClient.GetWork(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("GetWork() error = %v", err)
 	}
@@ -281,7 +302,7 @@ func TestNamedVerifierReturnsAuditableResultToRoomRuntime(t *testing.T) {
 	}
 }
 
-func TestTaskVerificationRejectsVisibleAgentAndInvalidDecision(t *testing.T) {
+func TestTaskVerificationRejectsNonMemberAndInvalidDecision(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Andy")
@@ -295,21 +316,22 @@ func TestTaskVerificationRejectsVisibleAgentAndInvalidDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	roomRuntime, _ := service.BindRuntime(ctx, room.RuntimeID)
-	task, err := roomRuntime.CreateTask(ctx, TaskCreateParams{
+	leadClient, _ := bindTestTaskLead(t, ctx, service, room.ID)
+	task, err := leadClient.CreateTask(ctx, TaskCreateParams{
 		RoomID: room.ID, Title: "Fix", OwnerID: owner.Agent.ID,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
-	ownerClient, _ := service.BindAgent(ctx, owner.Agent.ID)
-	_, err = ownerClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	outsider := createTestAgent(t, service, "Outside reviewer")
+	outsiderClient, _ := service.BindAgent(ctx, outsider.Agent.ID)
+	_, err = outsiderClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationPass, Report: "looks good",
 	})
 	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("visible owner verification error = %v, want unauthorized", err)
+		t.Fatalf("non-member verification error = %v, want unauthorized", err)
 	}
-	_, err = roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	_, err = leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: "maybe", Report: "unclear",
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid verification decision") {
@@ -332,8 +354,8 @@ func TestTaskVerificationRejectsStaleGoalAndCandidateRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	roomRuntime, _ := service.BindRuntime(ctx, room.RuntimeID)
-	task, err := roomRuntime.CreateTask(ctx, TaskCreateParams{
+	leadClient, _ := bindTestTaskLead(t, ctx, service, room.ID)
+	task, err := leadClient.CreateTask(ctx, TaskCreateParams{
 		RoomID: room.ID, Title: "Fix callback", Body: "Reject replayed state",
 		OwnerID: owner.Agent.ID, VerificationRequired: true,
 	})
@@ -347,10 +369,7 @@ func TestTaskVerificationRejectsStaleGoalAndCandidateRevisions(t *testing.T) {
 	}
 	sink.take()
 	checking := promoteTestCandidate(t, service, ownerClient, task.ID)
-	if _, err := ownerClient.UpdateTask(ctx, TaskUpdateParams{TaskID: task.ID, GoalCorrection: "owner rewrite"}); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("owner goal correction error = %v, want unauthorized", err)
-	}
-	revised, err := roomRuntime.UpdateTask(ctx, TaskUpdateParams{
+	revised, err := leadClient.UpdateTask(ctx, TaskUpdateParams{
 		TaskID: task.ID, GoalCorrection: "Reject replayed and expired state",
 	})
 	if err != nil {
@@ -373,7 +392,7 @@ func TestTaskVerificationRejectsStaleGoalAndCandidateRevisions(t *testing.T) {
 	if !foundRevisionNotice {
 		t.Fatalf("owner did not receive explicit goal revision notice: %#v", ownerInbox.Collaboration)
 	}
-	_, err = roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	_, err = leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationPass, Report: "old goal passed",
 		GoalRevision: checking.TaskGoalRevision, CandidateRevision: checking.TaskCandidateRevision,
 	})
@@ -382,8 +401,8 @@ func TestTaskVerificationRejectsStaleGoalAndCandidateRevisions(t *testing.T) {
 	}
 
 	checking = promoteTestCandidate(t, service, ownerClient, task.ID)
-	newGoalRunRef := completeIndependentVerifierRun(t, ctx, roomRuntime, task.ID, "new-goal-check")
-	if _, err := roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	newGoalRunRef := completeIndependentVerifierRun(t, ctx, leadClient, task.ID, "new-goal-check")
+	if _, err := leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationPass, Report: "new goal passed",
 		GoalRevision: checking.TaskGoalRevision, CandidateRevision: checking.TaskCandidateRevision, RunRef: newGoalRunRef,
 	}); err != nil {
@@ -415,9 +434,9 @@ func TestCandidateAndFeedbackDeliveriesRecoverAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	roomRuntime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	leadClient, _ := bindTestTaskLead(t, ctx, service, room.ID)
 	ownerClient, _ := service.BindAgent(ctx, owner.Agent.ID)
-	task, err := roomRuntime.CreateTask(ctx, TaskCreateParams{
+	task, err := leadClient.CreateTask(ctx, TaskCreateParams{
 		RoomID: room.ID, Title: "Fix callback", OwnerID: owner.Agent.ID, VerificationRequired: true,
 	})
 	if err != nil {
@@ -445,8 +464,8 @@ func TestCandidateAndFeedbackDeliveriesRecoverAfterRestart(t *testing.T) {
 	if delivery.GoalRevision != checking.TaskGoalRevision || delivery.CandidateRevision != checking.TaskCandidateRevision {
 		t.Fatalf("candidate delivery = %#v", delivery)
 	}
-	if _, err := roomRuntime.Check(ctx); err != nil {
-		t.Fatalf("Check(room candidate) error = %v", err)
+	if delivery.ToAgentID != leadClient.AgentID() || delivery.TargetSessionRef != leadClient.SessionRef() {
+		t.Fatalf("candidate did not return to the initiating session: %#v", delivery)
 	}
 	if err := service.Close(); err != nil {
 		t.Fatalf("Close(before candidate recovery) error = %v", err)
@@ -456,13 +475,17 @@ func TestCandidateAndFeedbackDeliveriesRecoverAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(candidate recovery) error = %v", err)
 	}
-	roomRuntime, _ = service.BindRuntime(ctx, room.RuntimeID)
-	recovered, err := roomRuntime.Check(ctx)
-	if err != nil || len(recovered.Collaboration) != 1 || recovered.Collaboration[0].ID != delivery.ID {
+	leadClient, _ = bindTestTaskLead(t, ctx, service, room.ID)
+	recovered, err := leadClient.Check(ctx)
+	foundCandidate := false
+	for _, item := range recovered.Collaboration {
+		foundCandidate = foundCandidate || item.ID == delivery.ID
+	}
+	if err != nil || !foundCandidate {
 		t.Fatalf("recovered candidate = %#v, err = %v", recovered.Collaboration, err)
 	}
-	recoveredRunRef := completeIndependentVerifierRun(t, ctx, roomRuntime, task.ID, "recovered-candidate-check")
-	blocked, err := roomRuntime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	recoveredRunRef := completeIndependentVerifierRun(t, ctx, leadClient, task.ID, "recovered-candidate-check")
+	blocked, err := leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationBlock, Report: "Replay still succeeds.",
 		GoalRevision: checking.TaskGoalRevision, CandidateRevision: checking.TaskCandidateRevision, RunRef: recoveredRunRef,
 	})
@@ -474,8 +497,13 @@ func TestCandidateAndFeedbackDeliveriesRecoverAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BindAgentSession(owner after candidate recovery) error = %v", err)
 	}
-	if _, err := ownerSession.Check(ctx); err != nil {
-		t.Fatalf("CheckSession(owner feedback) error = %v", err)
+	pendingFeedback, err := service.PendingCollaborationDispatches(ctx, owner.Agent.ID)
+	foundFeedback := false
+	for _, item := range pendingFeedback {
+		foundFeedback = foundFeedback || item.ID == blocked.Delivery.ID
+	}
+	if err != nil || !foundFeedback {
+		t.Fatalf("pending owner feedback = %#v, err = %v", pendingFeedback, err)
 	}
 	if err := service.Close(); err != nil {
 		t.Fatalf("Close(before feedback recovery) error = %v", err)
@@ -497,32 +525,6 @@ func TestCandidateAndFeedbackDeliveriesRecoverAfterRestart(t *testing.T) {
 	}
 }
 
-func TestRoomRuntimeTasksRequireVerificationByDefault(t *testing.T) {
-	ctx := context.Background()
-	service := openTestService(t, nil)
-	owner := createTestAgent(t, service, "Andy")
-	room, err := service.CreateRoom(ctx, CreateRoomParams{
-		Kind: RoomChannel, Name: "Build", CreatedBy: "local-user",
-		Members: []RoomMember{{MemberType: MemberAgent, MemberID: owner.Agent.ID}},
-	})
-	if err != nil {
-		t.Fatalf("CreateRoom() error = %v", err)
-	}
-	runtime, err := service.BindRuntime(ctx, room.RuntimeID)
-	if err != nil {
-		t.Fatalf("BindRuntime() error = %v", err)
-	}
-	task, err := runtime.CreateTask(ctx, TaskCreateParams{
-		RoomID: room.ID, Title: "Produce report", OwnerID: owner.Agent.ID,
-	})
-	if err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
-	}
-	if !task.TaskVerificationRequired || task.Work == nil || !task.Work.VerificationRequired {
-		t.Fatalf("room task did not require verification: %#v", task)
-	}
-}
-
 func TestVerifierAttemptExhaustionReturnsTheSameTaskToTheUser(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
@@ -534,28 +536,28 @@ func TestVerifierAttemptExhaustionReturnsTheSameTaskToTheUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRoom() error = %v", err)
 	}
-	runtime, _ := service.BindRuntime(ctx, room.RuntimeID)
+	leadClient, _ := bindTestTaskLead(t, ctx, service, room.ID)
 	ownerClient, _ := service.BindAgent(ctx, owner.Agent.ID)
-	task, err := runtime.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Deliver", OwnerID: owner.Agent.ID})
+	task, err := leadClient.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Deliver", OwnerID: owner.Agent.ID, VerificationRequired: true})
 	if err != nil {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
-	if _, err := runtime.UpdateWorkPolicy(ctx, WorkPolicyUpdateParams{
+	if _, err := leadClient.UpdateWorkPolicy(ctx, WorkPolicyUpdateParams{
 		WorkID: task.ID, MaxVerifierAttempts: 1, MaxCandidates: 1,
 	}); err != nil {
 		t.Fatalf("UpdateWorkPolicy() error = %v", err)
 	}
 	_, _ = ownerClient.Check(ctx)
 	checking := promoteTestCandidate(t, service, ownerClient, task.ID)
-	runRef := completeIndependentVerifierRun(t, ctx, runtime, task.ID, "last-check")
-	blocked, err := runtime.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
+	runRef := completeIndependentVerifierRun(t, ctx, leadClient, task.ID, "last-check")
+	blocked, err := leadClient.SubmitTaskVerification(ctx, TaskVerificationSubmitParams{
 		RoomID: room.ID, TaskID: task.ID, Decision: VerificationBlock, Report: "The result still misses the requested output.",
 		GoalRevision: checking.TaskGoalRevision, CandidateRevision: checking.TaskCandidateRevision, RunRef: runRef,
 	})
 	if err != nil {
 		t.Fatalf("SubmitTaskVerification() error = %v", err)
 	}
-	updated, err := runtime.GetWork(ctx, task.ID)
+	updated, err := leadClient.GetWork(ctx, task.ID)
 	if err != nil || updated.State != WorkNeedsHuman || updated.ID != task.ID {
 		t.Fatalf("exhausted work = %#v, err = %v", updated, err)
 	}
