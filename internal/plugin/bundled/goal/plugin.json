@@ -10,6 +10,9 @@
   "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:goal", "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
   "contributes": {
+    "slots": [
+      { "id": "goal-controls", "target": "composer.above", "order": 20, "title": "目标" }
+    ],
     "commands": [{ "id": "goal", "title": "Set a persistent goal", "description": "Keep working toward an explicit objective across turns.", "kind": "prompt_template", "prompt": "./prompts/goal.md", "keywords": ["goal", "目标", "持续执行"] }]
   },
   "interface": { "displayName": "Goal", "shortDescription": "Continue toward a persistent goal.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },

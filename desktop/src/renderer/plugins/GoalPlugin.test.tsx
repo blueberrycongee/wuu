@@ -4,93 +4,185 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { PluginHost, type PluginGenerationApi } from "./PluginHost";
+import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
+import { PluginSlot } from "./PluginSlot";
 
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
+type InvokeRuntime = NonNullable<PluginHostOptions["invokeRuntime"]>;
+type Goal = { id: string; objective: string; status: string; tokens_used: number; time_used_seconds: number };
 
-afterEach(() => vi.useRealTimers());
+const activeGoal: Goal = {
+  id: "goal-one",
+  objective: "Finish the task",
+  status: "active",
+  tokens_used: 12,
+  time_used_seconds: 2,
+};
+const cleanups: Array<() => void> = [];
 
-it("renders live goal controls, scopes actions to the session and cleans up on disable", async () => {
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0)) cleanup();
+  vi.useRealTimers();
+});
+
+async function mount(invokeRuntime: InvokeRuntime) {
   vi.useFakeTimers();
-  let goal = { id: "goal-one", objective: "Finish the task", status: "active", tokens_used: 12, time_used_seconds: 2 };
-  const invoke = vi.fn(async ({ method, input }: { method: string; input?: unknown }) => {
-    expect(input).toMatchObject({ thread_id: "thread-one" });
-    if (method === "pause") goal = { ...goal, status: "paused" };
-    if (method === "resume") goal = { ...goal, status: "active" };
-    return { goal };
+  const host = new PluginHost({ react: React, invokeRuntime });
+  await host.activateGeneration({
+    pluginId: "goal",
+    generation: "one",
+    contributions: {
+      slots: [{ id: "goal-controls", target: "composer.above", order: 20, title: "目标" }],
+      surfaces: [],
+      presenters: [],
+    },
+    register: activate,
   });
-  const host = new PluginHost({ react: React, invokeRuntime: invoke });
-  await host.activateGeneration({ pluginId: "goal", generation: "one", register: activate });
-  const container = document.createElement("div"); document.body.append(container);
+  const container = document.createElement("div");
+  document.body.append(container);
   const root = createRoot(container);
-  const Content = host.getInspectorSections()[0].render as React.ComponentType<{ snapshot: unknown }>;
-  try {
-    await act(async () => root.render(<Content snapshot={{ contractVersion: 1, session: { id: "thread-one", status: "idle" } }} />));
-    expect(container.textContent).toContain("Finish the task");
-    const click = async (text: string) => {
-      const button = [...container.querySelectorAll("button")].find((node) => node.textContent === text);
-      expect(button).toBeDefined();
-      await act(async () => button!.click());
-    };
-    await click("暂停");
-    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "pause", input: { thread_id: "thread-one" } }));
-
-    await click("继续");
-    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "resume", input: { thread_id: "thread-one" } }));
-    const status = host.getComposerStatusSources()[0].getSnapshot({ threadId: "thread-one", mainConversation: true });
-    expect(status[0].state).toBe("running");
+  cleanups.push(() => {
     act(() => root.unmount());
     host.disable("goal");
-    const calls = invoke.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(invoke).toHaveBeenCalledTimes(calls);
-    expect(host.getComposerStatusSources()).toEqual([]);
-    expect(host.getInspectorSections()).toEqual([]);
-  } finally {
-    act(() => root.unmount()); host.disable("goal"); container.remove();
-  }
+    container.remove();
+  });
+
+  const render = async (threadId = "thread-one", extra: Record<string, unknown> = {}) => {
+    await act(async () => {
+      root.render(<PluginSlot host={host} id="composer.above" context={{ threadId, mainConversation: true, ...extra }} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  const button = (label: string) => {
+    const result = [...container.querySelectorAll("button")].find((node) => node.textContent === label);
+    expect(result).toBeDefined();
+    return result!;
+  };
+  const click = async (label: string) => {
+    await act(async () => {
+      button(label).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  const expand = async () => {
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click();
+      await Promise.resolve();
+    });
+  };
+  const fill = async (value: string) => {
+    const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  await render();
+  return { host, container, render, button, click, expand, fill };
+}
+
+it("exposes live controls above the composer and removes them with the plugin", async () => {
+  let goal = activeGoal;
+  const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
+    expect(request.input).toMatchObject({ thread_id: "thread-one" });
+    if (request.method === "pause") goal = { ...goal, status: "paused" };
+    if (request.method === "resume") goal = { ...goal, status: "active" };
+    return { goal };
+  });
+  const ui = await mount(invoke);
+
+  expect(ui.container.textContent).toContain("Finish the task");
+  expect(ui.container.querySelector("textarea")).toBeNull();
+  await ui.click("暂停");
+  expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "pause", input: { thread_id: "thread-one" } }));
+  await ui.click("继续");
+  expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "resume", input: { thread_id: "thread-one" } }));
+
+  act(() => ui.host.disable("goal"));
+  expect(ui.container.textContent).toBe("");
+  const calls = invoke.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(invoke).toHaveBeenCalledTimes(calls);
 });
 
-it("refreshes completed goal usage when settlement arrives after the terminal event", async () => {
-  vi.useFakeTimers();
-  let goal = { id: "goal-one", objective: "Verify goal tools", status: "complete", tokens_used: 0, time_used_seconds: 0 };
-  const host = new PluginHost({ react: React, invokeRuntime: async () => ({ goal }) });
-  await host.activateGeneration({ pluginId: "goal", generation: "one", register: activate });
-  const source = host.getComposerStatusSources()[0];
-  const context = { threadId: "thread-one", mainConversation: true as const };
-  const dispose = source.subscribe(context, () => {});
-  try {
-    host.publishHostEvent({ kind: "notification", message: { method: "turn/completed" } });
+it("creates and clears a goal from the direct entry, restoring focus after submission", async () => {
+  let goal: Goal | null = null;
+  const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
+    const input = request.input as { objective?: string };
+    if (request.method === "create_goal") goal = { ...activeGoal, objective: input.objective! };
+    if (request.method === "clear") goal = null;
+    return { goal };
+  });
+  const ui = await mount(invoke);
+
+  expect(ui.container.querySelector("textarea")).toBeNull();
+  await ui.expand();
+  expect(document.activeElement).toBe(ui.container.querySelector("textarea"));
+  expect(ui.button("开始目标").disabled).toBe(true);
+  await ui.fill("  Ship the mobile UI  ");
+  await ui.click("开始目标");
+  expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+    method: "create_goal",
+    input: { thread_id: "thread-one", objective: "Ship the mobile UI" },
+  }));
+  expect(ui.container.textContent).toContain("Ship the mobile UI");
+  expect(ui.container.querySelector("textarea")).toBeNull();
+  expect(document.activeElement).toBe(ui.container.querySelector("button[aria-expanded]"));
+
+  await ui.expand();
+  await ui.click("清除目标");
+  expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "clear", input: { thread_id: "thread-one" } }));
+  expect(ui.container.textContent).not.toContain("Ship the mobile UI");
+});
+
+it("refreshes completed usage when settlement arrives after the terminal event", async () => {
+  let goal = { ...activeGoal, status: "complete", tokens_used: 0, time_used_seconds: 0 };
+  const ui = await mount(async () => ({ goal }));
+  await ui.expand();
+  act(() => ui.host.publishHostEvent({ kind: "notification", message: { method: "turn/completed" } }));
+  await act(async () => {
     await vi.advanceTimersByTimeAsync(0);
-    expect(source.getSnapshot(context)[0].secondaryText).toContain("0 tokens");
-    goal = { ...goal, tokens_used: 4014, time_used_seconds: 20 };
+    await Promise.resolve();
+  });
+  expect(ui.container.textContent).toContain("0 tokens");
+  goal = { ...goal, tokens_used: 4014, time_used_seconds: 20 };
+  await act(async () => {
     await vi.advanceTimersByTimeAsync(1500);
-    expect(source.getSnapshot(context)[0].secondaryText).toContain("4014 tokens");
-    expect(source.getSnapshot(context)[0].state).toBe("idle");
-  } finally { dispose(); host.disable("goal"); }
+    await Promise.resolve();
+  });
+  expect(ui.container.textContent).toContain("4014 tokens");
 });
 
-it("discards a stale response and keeps runtime errors visible", async () => {
-  vi.useFakeTimers();
+it("discards stale reads and shows runtime errors even when collapsed", async () => {
   const pending: Array<{ resolve: (value: unknown) => void; reject: (error: Error) => void }> = [];
-  const host = new PluginHost({ react: React, invokeRuntime: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) });
-  await host.activateGeneration({ pluginId: "goal", generation: "one", register: activate });
-  const source = host.getComposerStatusSources()[0];
-  const context = { threadId: "thread-one", mainConversation: true as const };
-  const dispose = source.subscribe(context, () => {});
-  try {
-    await vi.advanceTimersByTimeAsync(1500);
-    pending[1].resolve({ goal: { id: "new", objective: "Current goal", status: "paused", tokens_used: 10 } });
-    await Promise.resolve(); await Promise.resolve();
-    pending[0].resolve({ goal: { id: "old", objective: "Stale goal", status: "active", tokens_used: 0 } });
-    await Promise.resolve(); await Promise.resolve();
-    expect(source.getSnapshot(context)[0].id).toBe("new");
-    const container = document.createElement("div"); const root = createRoot(container);
-    const Content = host.getInspectorSections()[0].render as React.ComponentType<{ snapshot: unknown }>;
-    await act(async () => root.render(<Content snapshot={{ session: { id: "thread-one" } }} />));
-    await act(async () => pending.at(-1)!.reject(new Error("storage unavailable")));
-    expect(container.textContent).toContain("storage unavailable");
-    act(() => root.unmount());
-  } finally { dispose(); host.disable("goal"); }
+  const ui = await mount(() => new Promise((resolve, reject) => pending.push({ resolve, reject })));
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  await act(async () => pending[1].resolve({ goal: { ...activeGoal, objective: "Current goal" } }));
+  await act(async () => pending[0].resolve({ goal: { ...activeGoal, objective: "Stale goal" } }));
+  expect(ui.container.textContent).toContain("Current goal");
+  expect(ui.container.textContent).not.toContain("Stale goal");
+
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  await act(async () => pending.at(-1)!.reject(new Error("storage unavailable")));
+  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("storage unavailable");
+});
+
+it("scopes the direct entry to an editable main conversation", async () => {
+  const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => ({
+    goal: (request.input as { thread_id: string }).thread_id === "thread-two" ? activeGoal : null,
+  }));
+  const ui = await mount(invoke);
+  await ui.expand();
+  await ui.fill("Draft for thread one");
+
+  await ui.render("thread-two", { readOnly: true });
+  expect(ui.container.querySelector("textarea")).toBeNull();
+  expect(ui.button("暂停").disabled).toBe(true);
+  await ui.render("thread-side", { mainConversation: false });
+  expect(ui.container.textContent).toBe("");
 });
