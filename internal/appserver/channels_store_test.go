@@ -70,7 +70,7 @@ func TestChannelAgentRPCPersistsEffortOverride(t *testing.T) {
 	}
 }
 
-func TestChannelAgentUpdateDefersRunningRuntimeReset(t *testing.T) {
+func TestChannelAgentUpdatePreservesExistingSessionSelection(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
 	attachNamedAgentTestToolkit(t, rt)
@@ -103,14 +103,18 @@ func TestChannelAgentUpdateDefersRunningRuntimeReset(t *testing.T) {
 	if thread.execRuntime != originalRuntime {
 		t.Fatal("running named agent runtime was replaced before the active turn completed")
 	}
-	if !thread.pendingRuntimeReset {
-		t.Fatal("running named agent update did not defer the runtime reset")
+	if thread.pendingRuntimeReset {
+		t.Fatal("identity defaults must not schedule a reset of an existing session")
 	}
-	if thread.ModelProvider != "next-provider" || thread.Model != "next-model" || thread.ModelEffort != "high" {
+	if thread.ModelProvider != rt.ProviderName || thread.Model != rt.Model || thread.ModelEffort != rt.StreamRunner.Effort {
 		t.Fatalf("thread selection = (%q, %q, %q)", thread.ModelProvider, thread.Model, thread.ModelEffort)
 	}
-	if thread.Title != "Reasoner Next" {
-		t.Fatalf("thread title = %q, want Reasoner Next", thread.Title)
+	if thread.Title != "Reasoner" {
+		t.Fatalf("session title changed with identity defaults: %q", thread.Title)
+	}
+	selection, err := server.namedAgentPinnedSelection(agentRuntimeFromNamed(updated.Agent), session.NewID(), "")
+	if err != nil || selection.Provider != "next-provider" || selection.Model != "next-model" || selection.Effort != "high" {
+		t.Fatalf("new session must use updated defaults: %#v, %v", selection, err)
 	}
 }
 
@@ -351,7 +355,12 @@ func TestEnsureNamedAgentThreadReplacesOrdinaryRuntimeAfterLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureNamedAgentThreadLocked() error = %v", err)
 	}
-	staleRuntime := th.execRuntime
+	releaseThreadRuntime(th)
+	staleRuntime, err := rt.NewThreadRuntimeForRoot(th.ID, th.CWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.execRuntime = staleRuntime
 	th.NamedAgentID = ""
 
 	loaded, err := server.ensureNamedAgentThreadLocked(credential.Agent)
@@ -419,11 +428,11 @@ func TestNonAutostartNamedAgentWakeLoadsExistingPersistedSession(t *testing.T) {
 	if loaded == nil || loaded.NamedAgentID != credential.Agent.ID || loaded.Source != namedAgentSessionSource+credential.Agent.ID {
 		t.Fatalf("loaded persisted non-autostart thread = %#v", loaded)
 	}
-	if loaded.Model != "new-global-model" {
-		t.Fatalf("loaded named agent model = %q, want current global model", loaded.Model)
+	if loaded.Model != "fake-model" {
+		t.Fatalf("loaded named agent model = %q, want persisted session model", loaded.Model)
 	}
 	metadata, found, err := session.Find(rt.SessionDir, thread.ID)
-	if err != nil || !found || metadata.Model != "new-global-model" {
+	if err != nil || !found || metadata.Model != "fake-model" {
 		t.Fatalf("persisted named agent model = %q, found %v, err %v", metadata.Model, found, err)
 	}
 }
@@ -606,7 +615,7 @@ func TestChannelAgentResetInterruptsCurrentWakeAndDrainsFollowup(t *testing.T) {
 	t.Fatalf("reset followup did not drain: state %#v, inbox %#v", state, inbox)
 }
 
-func TestNamedAgentRunningWakeUsesPendingHeldTurn(t *testing.T) {
+func TestNamedAgentRunningWakeUsesDurableInboxWithoutOrdinaryQueuedTurn(t *testing.T) {
 	client := newBlockingStreamClient("done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
@@ -657,7 +666,7 @@ func TestNamedAgentRunningWakeUsesPendingHeldTurn(t *testing.T) {
 		t.Fatalf("running wake state = %#v, err %v", state, err)
 	}
 	held, err := server.loadHeldUserTurns(namedAgentSessionID(credential.Agent))
-	if err != nil || len(held) != 1 || held[0].id != namedAgentWakeID(credential.Agent.ID, namedAgentSessionID(credential.Agent)) {
+	if err != nil || len(held) != 0 {
 		t.Fatalf("held named agent wake = %#v, err %v", held, err)
 	}
 

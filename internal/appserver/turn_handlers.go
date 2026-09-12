@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -244,8 +245,8 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 
 func (s *Server) threadRuntimePluginGenerationMatches(th *threadState) bool {
 	return s != nil && th != nil &&
-		th.runtimePluginEpoch == s.pluginGenerationEpoch.Load() &&
-		th.runtimePluginRevision == s.pluginRuntimeRevision.Load()
+		(th.NamedAgentID != "" || (th.runtimePluginEpoch == s.pluginGenerationEpoch.Load() &&
+			th.runtimePluginRevision == s.pluginRuntimeRevision.Load()))
 }
 
 func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.ThreadRuntime, error) {
@@ -1012,11 +1013,12 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
 		pluginGenerationMismatch := !s.threadRuntimePluginGenerationMatches(th)
-		if th.pendingRuntimeReset || selectionMismatch || pluginGenerationMismatch {
+		profileMismatch := th.NamedAgentID != "" && existing.ExecutionProfile != runtime.CollaborationRuntimeVersion
+		if th.pendingRuntimeReset || selectionMismatch || pluginGenerationMismatch || profileMismatch {
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
-			} else if selectionMismatch {
+			} else if selectionMismatch || profileMismatch {
 				// The idle runtime was built for a different selection and
 				// cannot be rebuilt while background agents still depend on
 				// it. Failing admission is honest; silently running the old
@@ -1025,7 +1027,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 				// outstanding work consumes it.
 				threadID := th.ID
 				th.mu.Unlock()
-				return nil, fmt.Errorf("model selection for thread %q changed while background agents are running; retry after they settle", threadID)
+				return nil, fmt.Errorf("model selection or execution profile for thread %q changed while background agents are running; retry after they settle", threadID)
 			}
 		}
 	}
@@ -1063,11 +1065,22 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		if agentErr != nil {
 			return nil, agentErr
 		}
+		if collaborationSessionRef == "" {
+			if binding, bindErr := s.channelService.LookupCollaborationSession(context.Background(), th.ID); bindErr == nil {
+				if binding.PrincipalID != principal.ID {
+					return nil, channels.ErrUnauthorized
+				}
+				collaborationSessionRef = binding.SessionRef
+				th.mu.Lock()
+				th.CollaborationSessionRef = collaborationSessionRef
+				th.mu.Unlock()
+			}
+		}
 		threadRuntime, err = s.newAgentExecutionRuntimeForSession(th.ID, collaborationSessionRef, principal, selection)
 	} else {
 		threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
 	}
-	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// The pinned provider was removed from config after this session
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send
@@ -1099,6 +1112,9 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// Stamp the engine the thread is bound to onto the runtime. A cached
 	// runtime keeps its original stamp; threads never silently switch.
 	threadRuntime.EngineID = agentengine.NormalizeEngineID(th.EngineID)
+	if namedAgentID != "" {
+		threadRuntime.EngineID = agentengine.EngineWuu
+	}
 	if threadRuntime.Toolkit != nil {
 		// Inject the embedded-browser bridge for every thread here. The bridge
 		// closure must carry this thread's id + workdir so tab operations route
@@ -1283,7 +1299,9 @@ func (s *Server) subscribeThreadRuntime(threadID string, threadRuntime *runtime.
 		control.SetModelPinClientResolver(func(rawPin string) (string, providers.StreamClient, error) {
 			return resolveParticipantModelOverride(ref, "spawn", rawPin, control.WorkerProviderName())
 		})
-		control.SetModelAliasResolver(s.resolveSubagentModelAlias)
+		if threadRuntime.ExecutionProfile == "" {
+			control.SetModelAliasResolver(s.resolveSubagentModelAlias)
+		}
 		control.SetProviderClientResolver(s.resolveSubagentProviderClient)
 	}
 	sub := &threadRuntimeSubscription{
@@ -1685,11 +1703,13 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	// synchronous observer callback here would otherwise re-enter that ordered
 	// process and prevent the cancellation response from ever being returned.
 	cancel()
-	s.notifyPluginTurnInterruptedAsync(pluginhost.AgentTurnInterruptedInput{
-		ThreadID: threadID,
-		TurnID:   turnID,
-		Cause:    "turn_interrupted",
-	})
+	if th.NamedAgentID == "" {
+		s.notifyPluginTurnInterruptedAsync(pluginhost.AgentTurnInterruptedInput{
+			ThreadID: threadID,
+			TurnID:   turnID,
+			Cause:    "turn_interrupted",
+		})
+	}
 	// turn/interrupt means "freeze this work", not "leave background workers
 	// running": cancel the whole anonymous-worker tree, clear its queued
 	// spawns, and keep partial results as resumable state. The next
@@ -2467,7 +2487,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
-	if s.rt != nil && s.rt.HookDispatcher != nil {
+	if th.NamedAgentID == "" && s.rt != nil && s.rt.HookDispatcher != nil {
 		th.mu.Lock()
 		title := th.Title
 		th.mu.Unlock()
@@ -2752,13 +2772,15 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// Observers are advisory and must not delay terminal state publication. In
 	// particular, a plugin helper can be blocked in a host service while core
 	// is trying to report the cancellation of that same service's child turn.
-	_ = s.startBackground(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
-		defer cancel()
-		if observerErr := s.notifyPluginTurnCompleted(ctx, completedObservation); observerErr != nil {
-			providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
-		}
-	})
+	if namedAgentID == "" {
+		_ = s.startBackground(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
+			defer cancel()
+			if observerErr := s.notifyPluginTurnCompleted(ctx, completedObservation); observerErr != nil {
+				providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
+			}
+		})
+	}
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""
@@ -3316,6 +3338,11 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	now := time.Now().UTC()
 
 	th.mu.Lock()
+	if th.NamedAgentID != "" && userMsg.Phase != "channel_wake" {
+		th.mu.Unlock()
+		cancel()
+		return startedThreadTurn{}, false, errors.New("collaboration sessions accept input through channel/session/send")
+	}
 	if s.closed.Load() {
 		th.mu.Unlock()
 		cancel()
@@ -3396,7 +3423,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		abortAdmission()
 		return startedThreadTurn{}, false, nil
 	}
-	if s.rt != nil && s.rt.HookDispatcher != nil {
+	if th.NamedAgentID == "" && s.rt != nil && s.rt.HookDispatcher != nil {
 		if _, err := s.rt.HookDispatcher.Dispatch(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
 			SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
 		}); err != nil {

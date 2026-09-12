@@ -468,8 +468,10 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 				continue
 			}
 			th.mu.Lock()
-			busy := th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
-				(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
+			// Collaboration sessions own an independent execution environment and
+			// hold no references to the interactive extension generation.
+			busy := th.NamedAgentID == "" && (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
+				(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)))
 			th.mu.Unlock()
 			if busy {
 				releaseAdmission()

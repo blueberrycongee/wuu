@@ -80,66 +80,15 @@ func (s *Server) handleChannelAgentUpdate(ctx context.Context, req Request) erro
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	current, err := s.channelService.GetNamedAgent(ctx, params.AgentID)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	engineID := agentengine.NormalizeEngineID(params.EngineOverride)
 	if s.rt == nil || !s.rt.EngineAvailable(engineID) {
 		return s.writeResponse(req.ID, nil, agentengine.ErrUnknownEngine)
 	}
-	sessionRefs, _, sessionErr := s.namedAgentSessionRefs(ctx, agentRuntimeFromNamed(current))
-	if sessionErr != nil {
-		return s.writeResponse(req.ID, nil, sessionErr)
-	}
 	agent, err := s.channelService.UpdateNamedAgent(ctx, channels.UpdateNamedAgentParams{
 		ID: params.AgentID, Name: params.Name, Role: params.Role, AvatarKey: params.AvatarKey, AvatarImage: params.AvatarImage, EngineOverride: string(engineID), ProviderOverride: params.ProviderOverride, ModelOverride: params.ModelOverride, EffortOverride: params.EffortOverride,
 	})
-	if err == nil {
-		selection := s.currentSessionRuntimeSelection()
-		if agent.ModelOverride != "" {
-			selection.Provider = firstNonEmpty(agent.ProviderOverride, agent.EngineOverride)
-			selection.Model = agent.ModelOverride
-		}
-		if agent.EffortOverride != "" {
-			selection.Effort = agent.EffortOverride
-		}
-		for _, sessionRef := range sessionRefs {
-			thread := s.thread(sessionRef)
-			var detached detachedThreadRuntime
-			if thread != nil {
-				thread.mu.Lock()
-				runtimeConfigChanged := current.Name != agent.Name || current.Role != agent.Role || current.EngineOverride != agent.EngineOverride ||
-					thread.ModelProvider != strings.TrimSpace(selection.Provider) ||
-					thread.Model != strings.TrimSpace(selection.Model) ||
-					thread.ModelVariant != strings.TrimSpace(selection.Variant) ||
-					thread.ModelEffort != strings.TrimSpace(selection.Effort)
-				thread.Title = agent.Name
-				thread.EngineID = string(engineID)
-				thread.EngineRef = ""
-				applyThreadRuntimeSelection(thread, selection)
-				if runtimeConfigChanged && thread.execRuntime != nil {
-					if thread.running || threadRuntimeHasOutstandingWork(thread.ID, thread.execRuntime) {
-						thread.pendingRuntimeReset = true
-					} else {
-						detached = detachThreadRuntimeLocked(thread)
-					}
-				}
-				thread.mu.Unlock()
-			}
-			if detached.runtime != nil || detached.subscription != nil {
-				releaseDetachedThreadRuntime(detached)
-			}
-			if s.rt != nil {
-				if _, found, _ := session.Find(s.rt.SessionDir, sessionRef); found {
-					_, _ = session.UpdateTitle(s.rt.SessionDir, sessionRef, agent.Name)
-					_, _ = session.SetEngine(s.rt.SessionDir, sessionRef, string(engineID))
-					_, _ = session.SetEngineRef(s.rt.SessionDir, sessionRef, "")
-					_, _ = session.SetRuntimeSelection(s.rt.SessionDir, sessionRef, selection)
-				}
-			}
-		}
-	}
+	// Existing sessions keep their own context, title and model selection.
+	// These identity defaults are used by subsequent session creation.
 	if err == nil {
 		s.invalidateChannelAgentInsights()
 	}

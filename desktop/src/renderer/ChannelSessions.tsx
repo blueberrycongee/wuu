@@ -17,7 +17,7 @@ function SessionHistory({ result }: { result: ChannelSessionReadResult }): JSX.E
   const turns = result.thread.turns ?? [];
   const visibleTurns = showAll ? turns : turns.slice(-20);
   function itemText(item: ThreadItem): string {
-    return item.text || item.result || item.error || item.summary || "";
+    return item.text || item.result || item.error || item.summary || item.arguments || "";
   }
   return <div className="channel-session-history" aria-label={t("channels.sessions.history")}>
     {turns.length > visibleTurns.length ? <button type="button" onClick={() => setShowAll(true)}>{t("channels.sessions.earlier")}</button> : null}

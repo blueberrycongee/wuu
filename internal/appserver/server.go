@@ -400,6 +400,7 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		}
 		s.channelService = channelService
 		channelService.SetWakeSink(s)
+		channelService.SetSessionController(s)
 		s.startChannelMaintenance()
 	}
 	if bootOwner {
@@ -695,7 +696,7 @@ func (s *Server) runChannelMaintenance(ctx context.Context) {
 		return
 	}
 	for _, agent := range agents {
-		if !agent.IsRoomRuntime() {
+		{
 			s.namedAgentMu.Lock()
 			resumeErr := s.resumeNamedAgentBoundSessionsLocked(ctx, agent)
 			s.namedAgentMu.Unlock()
@@ -1158,6 +1159,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleSkillList(req)
 	case MethodChannelBootstrap:
 		return s.handleChannelBootstrap(ctx, req)
+	case MethodChannelSessionList, MethodChannelSessionCreate, MethodChannelSessionRead, MethodChannelSessionSend, MethodChannelSessionStop, MethodChannelSessionResume:
+		return s.handleChannelSession(ctx, req)
 	case MethodChannelAgentList:
 		return s.handleChannelAgentList(ctx, req)
 	case MethodChannelAgentInsights:

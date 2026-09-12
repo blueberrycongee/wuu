@@ -311,6 +311,7 @@ func addContextWindowTools(b *surfaceBuilder) {
 func addChatTools(b *surfaceBuilder) {
 	b.addVisible("chat_check", capability.CapabilityChat)
 	b.addVisible("chat_read", capability.CapabilityChat)
+	b.addVisible("chat_session", capability.CapabilityChat)
 	b.addVisible("chat_send", capability.CapabilityChat)
 	b.addVisible("collaboration_send", capability.CapabilityChat)
 	b.addVisible("chat_draft", capability.CapabilityChat)
@@ -323,6 +324,7 @@ func addChatTools(b *surfaceBuilder) {
 func addRoomChatTools(b *surfaceBuilder) {
 	b.addVisible("chat_check", capability.CapabilityChat)
 	b.addVisible("chat_read", capability.CapabilityChat)
+	b.addVisible("chat_session", capability.CapabilityChat)
 	b.addVisible("collaboration_send", capability.CapabilityChat)
 	b.addVisible("chat_task", capability.CapabilityChat)
 	b.addVisible("chat_work", capability.CapabilityChat)

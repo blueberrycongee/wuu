@@ -135,7 +135,7 @@ describe("collaboration sessions", () => {
   it("loads execution details only when the user expands them", async () => {
     api.readChannelSession = vi.fn(async ({ sessionRef }) => {
       const result = readResult(sessions.find((session) => session.session_ref === sessionRef)!);
-      result.thread.turns[0].items.push({ id: "tool", type: "tool_call", name: "exec_command", text: "recovery test output" });
+      result.thread.turns[0].items.push({ id: "tool", type: "tool_call", name: "exec_command", arguments: "recovery test output" });
       return result;
     });
     await render(); await open();

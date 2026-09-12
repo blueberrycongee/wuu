@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/channels"
@@ -244,7 +245,7 @@ func TestChannelMaintenanceRetriesRunningBindingWithoutOutstandingWake(t *testin
 	}
 	foundStableWake := false
 	for _, record := range records {
-		if record.Role == "user" && record.ClientID == namedAgentWorkWakeTurnID(run.ID) {
+		if record.Role == "user" && (record.ClientID == namedAgentWorkWakeTurnID(run.ID) || strings.HasPrefix(record.ClientID, "collaboration-delivery:")) {
 			foundStableWake = true
 			break
 		}

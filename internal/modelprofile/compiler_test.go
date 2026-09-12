@@ -85,7 +85,7 @@ func TestNamedAgentSurfaceAddsChatToolsToCompleteMainSurface(t *testing.T) {
 		profile := Resolve(tt.provider, tt.model)
 		main := c.Compile(profile, SurfaceMain)
 		named := c.Compile(profile, SurfaceNamedAgent)
-		chatTools := []string{"chat_check", "chat_draft", "chat_read", "chat_remind", "chat_send", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
+		chatTools := []string{"chat_check", "chat_draft", "chat_read", "chat_remind", "chat_send", "chat_session", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
 		for name, capabilityName := range main.Tools {
 			if named.Tools[name] != capabilityName {
 				t.Errorf("%s/%s named-agent surface lost main tool %s", tt.provider, tt.model, name)
@@ -109,7 +109,7 @@ func TestNamedAgentSurfaceAddsChatToolsToCompleteMainSurface(t *testing.T) {
 }
 
 func TestRoomAgentSurfaceKeepsMainToolsWithoutPublicChatSend(t *testing.T) {
-	coordinationTools := []string{"chat_check", "chat_read", "chat_remind", "chat_roster", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
+	coordinationTools := []string{"chat_check", "chat_read", "chat_remind", "chat_roster", "chat_session", "chat_task", "chat_verify", "chat_work", "collaboration_send"}
 	for _, profile := range []Profile{
 		Resolve("openai", "gpt-5-codex"),
 		Resolve("anthropic", "claude-sonnet-4-5"),

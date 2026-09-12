@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -410,6 +411,17 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
+	if th.NamedAgentID != "" && s.channelService != nil {
+		binding, err := s.channelService.LookupCollaborationSession(context.Background(), id)
+		if err == nil {
+			if binding.PrincipalID != th.NamedAgentID {
+				return nil, channels.ErrUnauthorized
+			}
+			th.CollaborationSessionRef = binding.SessionRef
+		} else if !errors.Is(err, channels.ErrNotFound) {
+			return nil, err
+		}
+	}
 	return th, nil
 }
 
@@ -471,6 +483,15 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	if err != nil {
 		return persistedThreadSnapshot{}, err
 	}
+	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
+		// Legacy wakes were hidden even though they establish a durable turn
+		// boundary. Project them for stable IDs without changing model history.
+		for i := range displayHistory {
+			if displayHistory[i].Phase == "channel_wake" {
+				displayHistory[i].Hidden = false
+			}
+		}
+	}
 	loaded := persistedThreadSnapshot{
 		metadata:         metadata,
 		repairedHistory:  repaired,
@@ -484,7 +505,11 @@ func (s *Server) loadPersistedThreadSnapshot(id string) (persistedThreadSnapshot
 	systemPrompt := s.rt.StreamRunner.SystemPrompt
 	// The active runtime prompt is configuration, not conversation data. Use it
 	// in memory without rewriting the thread during a read-only load.
-	loaded.history = replaceBaseSystemPrompt(repaired, systemPrompt)
+	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
+		loaded.history = repaired
+	} else {
+		loaded.history = replaceBaseSystemPrompt(repaired, systemPrompt)
+	}
 	return loaded, nil
 }
 
@@ -1331,6 +1356,9 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	}
 	th.Title = metadata.Title
 	th.Source = metadata.Source
+	if strings.HasPrefix(metadata.Source, namedAgentSessionSource) {
+		th.NamedAgentID = strings.TrimPrefix(metadata.Source, namedAgentSessionSource)
+	}
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	if selection := runtimeSelectionFromSession(metadata); selection.Provider != "" && selection.Model != "" {

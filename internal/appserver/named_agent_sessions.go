@@ -221,18 +221,37 @@ func (s *Server) startNamedAgentConversationLocked(ctx context.Context, agent ch
 		if err := s.channelService.MarkWakePending(ctx, agent.ID); err != nil {
 			return err
 		}
-		return s.holdNamedAgentWake(th.ID, agent.ID)
+		return nil
 	}
 	return s.startAgentRuntimeWakeLocked(agent, th)
 }
 
-func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent channels.AgentRuntime, client *channels.AgentClient, target namedAgentDispatchTarget, force bool) error {
+func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent channels.AgentRuntime, client *channels.AgentClient, target namedAgentDispatchTarget, force bool) (dispatchErr error) {
+	defer func() {
+		if dispatchErr != nil && target.workID == "" {
+			s.failCollaborationSession(ctx, target.binding, dispatchErr)
+		}
+	}()
 	sessionRef := target.binding.SessionRef
 	if !force && !agent.Autostart {
 		if _, found, err := session.Find(s.rt.SessionDir, sessionRef); err != nil || !found {
 			return err
 		}
 	}
+	if target.binding.State == channels.CollaborationSessionCancelled || target.binding.State == channels.CollaborationSessionInterrupted || target.binding.State == channels.CollaborationSessionFailed || target.binding.State == channels.CollaborationSessionMissing {
+		return nil
+	}
+	if target.workID == "" {
+		admitted, err := s.channelService.AdmitCollaborationSession(ctx, sessionRef)
+		if err != nil {
+			return err
+		}
+		if admitted.State == channels.CollaborationSessionQueued {
+			return nil
+		}
+		target.binding = admitted
+	}
+
 	th, err := s.ensureAgentRuntimeSessionThreadLocked(agent, sessionRef)
 	if err != nil {
 		return err
@@ -267,13 +286,13 @@ func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent 
 		if err := s.channelService.MarkWakePending(ctx, agent.ID); err != nil {
 			return err
 		}
-		return s.holdNamedAgentWake(th.ID, agent.ID)
+		return nil
 	}
 	return s.startAgentRuntimeSessionWakeLocked(agent, th, target.roomIDs, target.workID, runID)
 }
 
 func (s *Server) resumeNamedAgentBoundSessionsLocked(ctx context.Context, agent channels.AgentRuntime) error {
-	client, err := s.channelService.BindAgent(ctx, agent.ID)
+	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
 	if err != nil {
 		return err
 	}
@@ -283,13 +302,22 @@ func (s *Server) resumeNamedAgentBoundSessionsLocked(ctx context.Context, agent 
 	}
 	var resumeErr error
 	for _, binding := range bindings {
-		if binding.State != channels.CollaborationSessionRunning {
+		if binding.State != channels.CollaborationSessionRunning && binding.State != channels.CollaborationSessionStarting {
 			continue
 		}
 		if binding.RunID == "" || binding.WorkID == "" {
-			_, stateErr := client.UpdateCollaborationSessionState(ctx, channels.CollaborationSessionStateParams{
-				SessionRef: binding.SessionRef, State: channels.CollaborationSessionInterrupted,
-			})
+			if active, _ := session.ThreadExecutionActive(s.rt.SessionDir, binding.SessionRef); active {
+				continue
+			}
+			if binding.TurnID != "" {
+				if settleErr := s.settleCollaborationTurn(ctx, binding.SessionRef, binding.TurnID); settleErr == nil {
+					continue
+				}
+			}
+			_, stateErr := client.UpdateCollaborationSessionState(ctx, channels.CollaborationSessionStateParams{SessionRef: binding.SessionRef, State: channels.CollaborationSessionIdle})
+			if stateErr == nil {
+				_, stateErr = s.channelService.EnqueueSessionInput(ctx, channels.CollaborationSessionSendParams{SessionRef: binding.SessionRef, Body: "Execution was interrupted by host restart. Continue the existing objective from durable history; inspect completed effects before repeating actions.", RequestID: "recover:" + binding.SessionRef + ":" + binding.UpdatedAt.String()})
+			}
 			resumeErr = errors.Join(resumeErr, stateErr)
 			continue
 		}
