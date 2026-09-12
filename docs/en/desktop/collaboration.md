@@ -78,10 +78,13 @@ including up to 6 Named Agents. DMs are separate private rooms.
 
 ## Status and recovery
 
-The room shows coordination activity alongside member activity: coordinating, queued,
-work in progress, or the names of members processing work. A failed coordinator shows
-its error and a **Retry coordination** action. An empty room prompts you to add a member.
-The coordinator does not appear as a selectable member or as a public execution session.
+A standalone mascot above the composer expresses coordination. Member avatars take
+over as their sessions start. Routine activity has no persistent name or status text;
+hover for identity and state, or click an executing member to inspect its session.
+Queued and waiting work uses quiet expressions, active work uses gentle motion, and
+completed activity fades out. Reduced-motion preferences disable these transitions and
+loops. Failures retain their reason and retry action; empty rooms retain the prompt to
+add a member. The coordinator stays out of the member list and public session list.
 
 Default admission limits are 5 running/starting executions per identity, 12 per room,
 and 24 globally. Work runs and independent collaboration sessions share capacity;

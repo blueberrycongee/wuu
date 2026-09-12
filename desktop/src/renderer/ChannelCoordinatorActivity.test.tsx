@@ -12,7 +12,9 @@ it("shows responsible members without exposing the hidden session identity", asy
   await act(async () => root.render(<ChannelCoordinatorActivity
     status={{ state: "waiting", session_ref: "private-coordination-session", agent_ids: ["alice", "removed-member"] }}
     agents={[{ id: "alice", name: "Alice" } as NamedAgent]} onRetry={vi.fn()} />));
-  expect(container.querySelector('[role="status"]')?.textContent).toContain("Alice");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-label")).toContain("Alice");
+  expect(container.textContent).toBe("");
+  expect(container.querySelector('[data-agent-avatar-id="alice"]')).not.toBeNull();
   expect(container.textContent).not.toContain("private-coordination-session");
   expect(container.textContent).not.toContain("removed-member");
   expect(container.textContent).not.toContain("{");
@@ -38,4 +40,16 @@ it("retries the failed coordinator once and reports a retry failure", async () =
 it("removes coordination feedback when the room is idle", async () => {
   await act(async () => root.render(<ChannelCoordinatorActivity status={{ state: "idle" }} agents={[]} onRetry={vi.fn()} />));
   expect(container.childElementCount).toBe(0);
+});
+
+it("hands off to actual member activity without leaving duplicate accessible avatars", async () => {
+  const agents = [{ id: "alice", name: "Alice" } as NamedAgent];
+  await act(async () => root.render(<ChannelCoordinatorActivity
+    status={{ state: "working" }} agents={agents} onRetry={vi.fn()} />));
+  expect(container.querySelector("svg")).not.toBeNull();
+  expect(container.textContent).toBe("");
+  await act(async () => root.render(<ChannelCoordinatorActivity
+    status={{ state: "waiting", agent_ids: ["alice"] }} agents={agents} activeAgentIDs={["alice"]} onRetry={vi.fn()} />));
+  expect(container.querySelector(".channel-activity-slot:not([inert])")).toBeNull();
+  expect(container.querySelector('[data-agent-avatar-id="alice"]')).toBeNull();
 });

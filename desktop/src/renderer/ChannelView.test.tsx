@@ -748,7 +748,7 @@ describe("ChannelView", () => {
 
     // Idle rooms show no status widget at all instead of a permanent
     // "nothing happening" placeholder.
-    expect(container.querySelector(".channel-response-status")).toBeNull();
+    expect(container.querySelector(".channel-activity-slot:not([inert]) .channel-response-status")).toBeNull();
   });
 
   it("inserts and focuses a mention when an agent author name is clicked", async () => {
@@ -1900,7 +1900,7 @@ describe("ChannelView", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(container.querySelector(".channel-response")).toBeNull();
       expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
-      expect(container.querySelector(".channel-response-status")).toBeNull();
+      expect(container.querySelector(".channel-activity-slot:not([inert]) .channel-response-status")).toBeNull();
       expect(container.querySelector(".channel-message-bubble")?.textContent).toContain("the answer");
       expect(container.querySelector('.channel-message [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-state")).toBe("idle");
     } finally {
@@ -1924,7 +1924,7 @@ describe("ChannelView", () => {
       expect(container.querySelectorAll(".channel-response")).toHaveLength(0);
       expect(container.querySelectorAll(".channel-response-status")).toHaveLength(2);
       expect(container.querySelector(".channel-message-stream .channel-response-status")).toBeNull();
-      const activityNames = (): string[] => Array.from(container.querySelectorAll(".channel-activity-region strong"), (node) => node.textContent ?? "");
+      const activityNames = (): string[] => Array.from(container.querySelectorAll(".channel-activity-slot:not([inert]) strong"), (node) => node.textContent ?? "");
       expect(activityNames()).toEqual(["Alpha", "Beta"]);
       const authors = (): string[] => Array.from(container.querySelectorAll(".channel-message-stream .channel-author-mention"), (node) => (node.textContent ?? "").replace(/^@/, ""));
       const refresh = async (): Promise<void> => { await act(async () => { await vi.advanceTimersByTimeAsync(2_000); }); };

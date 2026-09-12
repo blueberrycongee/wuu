@@ -11,6 +11,7 @@ import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from ".
 import { ChannelSessions } from "./ChannelSessions";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
+import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
 import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
@@ -525,14 +526,15 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
     }
   };
   return (
-    <div className={`channel-response-status${failed ? " failed" : ""}`} role={failed ? "alert" : "status"}>
+    <div className={`channel-response-status channel-animated-activity${failed ? " failed" : ""}`} data-activity-state={state} role={failed ? "alert" : "status"}>
       <button className={`channel-activity-inspect${selected ? " selected" : ""}`} type="button" disabled={!onInspect} onClick={onInspect}
         aria-expanded={onInspect ? selected : undefined}
-        aria-label={`${agent?.name ?? agentID} · ${t("channels.sessions.history")}`}>
+        title={`${agent?.name ?? agentID} · ${status}`}
+        aria-label={`${agent?.name ?? agentID} · ${status} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
         <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} />
       </span>
-      <span className="channel-response-status-copy">
+      <span className="channel-response-status-copy channel-activity-accessible">
         <strong>{agent?.name ?? agentID}</strong>
         <span>{status}</span>
       </span>
@@ -2020,9 +2022,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         /> : null}
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
-            <div className="channel-activity-region" aria-live="polite">
-              <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={agents}
+            <div className="channel-activity-region channel-activity-motion" aria-live="polite">
+              <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={agents} activeAgentIDs={responseActivities.map(response => response.agent_id)}
                 onRetry={async (sessionRef) => { await window.wuu!.resumeChannelSession({ sessionRef }); await refreshMessages(selectedRoomID, true); }} />
+              <ChannelActivityPresence key={`members:${selectedRoomID}`}>
               {responseActivities.map((response) => <ChannelAgentActivity key={response.id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}
@@ -2033,6 +2036,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               {responsesByRoomID[selectedRoomID] === undefined ? respondingAgents.map(({ agent }) => (
                 <ChannelAgentActivity key={agent.id} agent={agent} agentID={agent.id} state="thinking" />
               )) : null}
+              </ChannelActivityPresence>
             </div>
             {sendError?.roomID === selectedRoomID ? <div className="channel-send-error" role="alert"><span>{t("composer.sendFailed")} · {sendError.message}</span><button type="button" disabled={sending} onClick={() => void sendMessage()}>{t("channels.sessions.retry")}</button></div> : null}
             <ChannelComposer
