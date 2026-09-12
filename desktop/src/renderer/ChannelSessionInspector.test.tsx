@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ChannelSessionReadResult, ThreadItem, WuuDesktopApi } from "../shared/protocol";
+import type { ChannelSessionReadResult, NamedAgent, ThreadItem, WuuDesktopApi } from "../shared/protocol";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { handleStreamingNotification, initialState } from "./AppState";
@@ -23,8 +23,8 @@ const snapshot = (ref: string, text: string): ChannelSessionReadResult => ({
     ] })),
   },
 });
-async function render(ref = "session-a", closing = false) {
-  await act(async () => root.render(<WuuUIRoot><ChannelSessionInspector sessionRef={ref} name="Andy2" closing={closing} onClose={() => {}} /></WuuUIRoot>));
+async function render(ref = "session-a", closing = false, agents?: NamedAgent[]) {
+  await act(async () => root.render(<WuuUIRoot><ChannelSessionInspector sessionRef={ref} agents={agents} name="Andy2" closing={closing} onClose={() => {}} /></WuuUIRoot>));
 }
 beforeEach(() => {
   vi.useFakeTimers(); off.mockClear();
@@ -162,4 +162,23 @@ it("stops consuming events as soon as closing begins", async () => {
     await vi.advanceTimersByTimeAsync(250);
   });
   expect(host.textContent).not.toContain("after close");
+});
+
+it("uses the session owner's avatar in the live process and updates its appearance", async () => {
+  api.readChannelSession = vi.fn(async () => {
+    const result = liveSnapshot();
+    result.thread.turns.at(-1)!.items = [
+      { id: "question", type: "user_message", text: "Check files" },
+      { id: "reading", type: "tool_call", name: "read_file", status: "in_progress" },
+    ];
+    return result;
+  });
+  const agent: NamedAgent = { id: "agent", name: "Andy2", avatar_key: "abstract-3", autostart: false, memory_dir: "", created_at: "" };
+  await render("session-a", false, [agent]);
+  const avatar = () => host.querySelector('.process-surface-blobatar [data-agent-avatar-id="agent"]');
+  expect(avatar()).not.toBeNull();
+  expect(avatar()!.querySelector('[data-wuu-mascot-activity]')).not.toBeNull();
+  await render("session-a", false, [{ ...agent, avatar_image: "data:image/png;base64,dGVzdA==" }]);
+  expect(avatar()!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,dGVzdA==");
+  expect(avatar()!.querySelector('[data-wuu-mascot-activity]')).toBeNull();
 });

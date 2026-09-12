@@ -5,11 +5,14 @@ import { ConversationTurnList } from "./ConversationTurnList";
 import { latestAgentMessageItemID, TurnView } from "./TurnView";
 import { useI18n } from "./i18n";
 import { useChannelSession } from "./useChannelSession";
+import type { NamedAgent } from "../shared/protocol";
+import { AgentIdentityContext } from "./AgentIdentityContext";
 
-export function ChannelSessionInspector({ sessionRef, turnID, name, overlay = false, closing = false, onBack, onClose }: {
+export function ChannelSessionInspector({ sessionRef, turnID, name, agents, overlay = false, closing = false, onBack, onClose }: {
   sessionRef: string;
   turnID?: string;
   name: string;
+  agents?: NamedAgent[];
   overlay?: boolean;
   closing?: boolean;
   onBack?: () => void;
@@ -107,13 +110,15 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, overlay = fa
       const node = event.currentTarget;
       setScrolledAway(node.scrollHeight - node.scrollTop - node.clientHeight >= 80);
     }}>
-      <div className="conversation-width session-flow">
-        <ConversationTurnList threadID={sessionRef} turns={turns} forcedFullTurnIDs={turnID ? [turnID] : undefined} renderTurn={(turn) => (
-          <TurnView turn={turn} threadID={sessionRef} cwd={detail?.thread.cwd}
-            latestAgentMessageID={latestAgentMessageItemID(turns)} isLatestTurn={turn.id === turns.at(-1)?.id}
-            streamStatus={streamStatus[turn.id]} onStreamFrame={followLatest} onCollapseComplete={followLatest} />
-        )} />
-      </div>
+      <AgentIdentityContext.Provider value={agents?.find(agent => agent.id === (detail?.session.named_agent_id || detail?.session.principal_id))}>
+        <div className="conversation-width session-flow">
+          <ConversationTurnList threadID={sessionRef} turns={turns} forcedFullTurnIDs={turnID ? [turnID] : undefined} renderTurn={(turn) => (
+            <TurnView turn={turn} threadID={sessionRef} cwd={detail?.thread.cwd}
+              latestAgentMessageID={latestAgentMessageItemID(turns)} isLatestTurn={turn.id === turns.at(-1)?.id}
+              streamStatus={streamStatus[turn.id]} onStreamFrame={followLatest} onCollapseComplete={followLatest} />
+          )} />
+        </div>
+      </AgentIdentityContext.Provider>
     </div>
     {scrolledAway ? <button type="button" className="session-inspector-latest" onClick={() => {
       anchorTurn.current = undefined;

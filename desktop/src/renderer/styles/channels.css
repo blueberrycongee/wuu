@@ -252,7 +252,7 @@
   max-height: 108px;
   overflow-y: auto;
   margin: 0 auto;
-  padding: 2px 0 6px;
+  padding: 12px 8px 8px;
 }
 
 .channel-response-status {
@@ -3530,7 +3530,7 @@
 }
 .channel-response-status .channel-activity-inspect:disabled { cursor: default; }
 .channel-response-status .channel-activity-inspect:disabled:hover { background: transparent; }
-.channel-response-status .channel-activity-inspect.selected { background: var(--ink-overlay-6); }
+.channel-response-status .channel-activity-inspect:is(.selected, :hover) { background: transparent; }
 .session-inspector-extension {
   position: absolute;
   grid-column: 1 / -1;

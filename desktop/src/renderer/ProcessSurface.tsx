@@ -1,4 +1,5 @@
 import {
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -29,6 +30,8 @@ import {
 } from "./ThinkingTokenCount";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
+import { AgentAvatarMark } from "./AgentAvatarMark";
+import { AgentIdentityContext } from "./AgentIdentityContext";
 
 /**
  * How long to wait after the fold opens before snapping the reasoning
@@ -51,6 +54,13 @@ export function ProcessSurfaceMascot({
   provider?: string;
   model?: string;
 }): JSX.Element | null {
+  const agent = useContext(AgentIdentityContext);
+  if (agent) return active ? (
+    <span className="process-surface-blobatar">
+      <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
+        status={activity === "responding" ? "responding" : "thinking"} />
+    </span>
+  ) : null;
   return (
     <WuuMascot
       className="process-surface-blobatar"
