@@ -110,6 +110,10 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := service.migrateCollaborationTurnScopes(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := service.initializeRoomCoordinators(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err

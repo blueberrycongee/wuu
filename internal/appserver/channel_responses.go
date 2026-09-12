@@ -25,7 +25,7 @@ type ChannelResponse struct {
 }
 
 func isRoomConversation(binding channels.CollaborationSessionBinding, agent channels.AgentRuntime) bool {
-	return binding.Purpose == channels.CollaborationSessionConversation && binding.WorkID == "" &&
+	return binding.Purpose == channels.CollaborationSessionConversation && (binding.Primary || binding.WorkID == "") &&
 		binding.ParentSessionRef == "" && binding.SessionRef == namedAgentRoomSessionID(agent, binding.RoomID)
 }
 
@@ -53,7 +53,7 @@ func (s *Server) channelResponses(ctx context.Context, roomID string) ([]Channel
 		if err != nil {
 			return nil, err
 		}
-		if !isRoomConversation(binding, agent) {
+		if binding.RoomID != roomID || !isRoomConversation(binding, agent) {
 			continue
 		}
 		response := ChannelResponse{

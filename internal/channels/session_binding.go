@@ -13,7 +13,7 @@ const collaborationSessionSelect = `
 	SELECT binding.session_ref, binding.principal_id, COALESCE(binding.named_agent_id, ''),
 		COALESCE(binding.room_id, ''), COALESCE(binding.work_id, ''), COALESCE(binding.run_id, ''),
 		binding.purpose, binding.state, binding.created_at, binding.updated_at,
-		binding.title, binding.objective, binding.parent_session_ref, binding.provider, binding.model, binding.effort, binding.runtime_version, binding.failure_reason, binding.turn_id
+		binding.title, binding.objective, binding.parent_session_ref, binding.provider, binding.model, binding.effort, binding.runtime_version, binding.failure_reason, binding.turn_id, EXISTS(SELECT 1 FROM named_agent_conversations primary_session WHERE primary_session.session_ref = binding.session_ref)
 	FROM collaboration_session_bindings binding`
 
 func validCollaborationSessionPurpose(purpose CollaborationSessionPurpose) bool {
@@ -44,7 +44,7 @@ func scanCollaborationSession(row scanner) (CollaborationSessionBinding, error) 
 		&binding.SessionRef, &binding.PrincipalID, &binding.NamedAgentID,
 		&binding.RoomID, &binding.WorkID, &binding.RunID, &binding.Purpose,
 		&binding.State, &createdAt, &updatedAt,
-		&binding.Title, &binding.Objective, &binding.ParentSessionRef, &binding.Provider, &binding.Model, &binding.Effort, &binding.RuntimeVersion, &binding.FailureReason, &binding.TurnID,
+		&binding.Title, &binding.Objective, &binding.ParentSessionRef, &binding.Provider, &binding.Model, &binding.Effort, &binding.RuntimeVersion, &binding.FailureReason, &binding.TurnID, &binding.Primary,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CollaborationSessionBinding{}, ErrNotFound
@@ -327,6 +327,9 @@ func (s *Service) UpdateCollaborationSessionState(ctx context.Context, params Co
 	if !canAccessCollaborationSession(actor, binding) {
 		return CollaborationSessionBinding{}, ErrUnauthorized
 	}
+	if params.State == CollaborationSessionRunning && (binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionCancelled || binding.State == CollaborationSessionMissing || binding.State == CollaborationSessionFailed) {
+		return CollaborationSessionBinding{}, fmt.Errorf("%w: stopped session must be admitted again before starting a turn", ErrConflict)
+	}
 	if binding.RunID != "" && params.State != CollaborationSessionRunning {
 		var runState WorkRunState
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM work_runs WHERE id = ?`, binding.RunID).Scan(&runState); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -347,6 +350,11 @@ func (s *Service) UpdateCollaborationSessionState(ctx context.Context, params Co
 			if err := refreshWorkCurrentRunRefTx(ctx, tx, binding.WorkID, now); err != nil {
 				return CollaborationSessionBinding{}, fmt.Errorf("settle collaboration session run handle: %w", err)
 			}
+		}
+	}
+	if params.State == CollaborationSessionRunning && params.TurnID != "" {
+		if _, err := recordCollaborationTurnScopeTx(ctx, tx, binding, params.TurnID); err != nil {
+			return CollaborationSessionBinding{}, err
 		}
 	}
 	clearRun := params.State != CollaborationSessionRunning
@@ -385,8 +393,13 @@ func validateCollaborationSessionRouteTx(ctx context.Context, tx *sql.Tx, sessio
 	if binding.PrincipalID != principalID {
 		return fmt.Errorf("%w: session %q belongs to another principal", ErrUnauthorized, sessionRef)
 	}
-	if binding.RoomID != roomID || binding.WorkID != workID {
+	if !binding.Primary && (binding.RoomID != roomID || binding.WorkID != workID) {
 		return fmt.Errorf("%w: session %q does not match the delivery room/work scope", ErrConflict, sessionRef)
+	}
+	if binding.Primary {
+		if err := requireRoomPrincipalAccessTx(ctx, tx, roomID, principalID); err != nil {
+			return err
+		}
 	}
 	if !acceptsCollaborationSessionDelivery(binding.State) {
 		return fmt.Errorf("%w: session %q is unavailable", ErrConflict, sessionRef)
@@ -419,6 +432,9 @@ func validateCollaborationSessionWriteTx(
 	}
 	if !availableCollaborationSessionState(binding.State) {
 		return fmt.Errorf("%w: session %q is unavailable", ErrConflict, sessionRef)
+	}
+	if binding.Primary {
+		return validateCollaborationTurnScopeTx(ctx, tx, binding, targetWorkID, false)
 	}
 	if binding.WorkID == "" {
 		if binding.RunID != "" {

@@ -213,20 +213,18 @@ func TestChannelMaintenanceRetriesRunningBindingWithoutOutstandingWake(t *testin
 		}
 		server.Close()
 	})
-	credential, task, run, sessionRef := prepareRecoverableNamedAgentWork(t, server, rt)
+	credential, task, run, legacyRef := prepareRecoverableNamedAgentWork(t, server, rt)
 	state, err := server.channelService.WakeState(ctx, credential.Agent.ID)
 	if err != nil || state.Outstanding || state.Pending {
 		t.Fatalf("wake state before maintenance = %#v, err %v", state, err)
 	}
 
 	server.runChannelMaintenance(ctx)
+	sessionRef := channels.NamedAgentConversationRef(agentRuntimeFromNamed(credential.Agent))
 	th := server.thread(sessionRef)
 	if th == nil || !threadIsRunning(th) {
 		t.Fatalf("maintenance did not resume running binding: thread %#v", th)
 	}
-	th.mu.Lock()
-	turnID := th.currentTurn
-	th.mu.Unlock()
 	sessionClient, err := server.channelService.BindAgentSession(ctx, credential.Agent.ID, sessionRef)
 	if err != nil {
 		t.Fatalf("BindAgentSession() error = %v", err)
@@ -236,8 +234,11 @@ func TestChannelMaintenanceRetriesRunningBindingWithoutOutstandingWake(t *testin
 		t.Fatalf("GetWork() error = %v", err)
 	}
 	attached := findWorkRun(work.Runs, run.ID)
-	if attached.TurnID == "" || attached.TurnID != turnID {
-		t.Fatalf("resumed run = %#v, current turn %q", attached, turnID)
+	if attached.State != channels.WorkRunRunning || attached.SessionRef != sessionRef || attached.TurnID == "" || len(work.Runs) != 1 {
+		t.Fatalf("recovery did not transfer the original run into the identity: %+v", work.Runs)
+	}
+	if threadIsRunning(server.thread(legacyRef)) {
+		t.Fatal("legacy session restarted alongside identity")
 	}
 	records, err := session.LoadHistoryRecords(rt.SessionDir, sessionRef, false)
 	if err != nil {
@@ -255,7 +256,7 @@ func TestChannelMaintenanceRetriesRunningBindingWithoutOutstandingWake(t *testin
 	}
 }
 
-func TestNamedAgentDispatchErrorKeepsWakeRetryableWithoutTarget(t *testing.T) {
+func TestNamedAgentDispatchReroutesRemovedLegacyTarget(t *testing.T) {
 	ctx := context.Background()
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
@@ -315,15 +316,13 @@ func TestNamedAgentDispatchErrorKeepsWakeRetryableWithoutTarget(t *testing.T) {
 		t.Fatalf("close channels database fixture: %v", err)
 	}
 
-	if err := server.deliverNamedAgentWake(ctx, recipient.Agent.ID); err == nil {
-		t.Fatal("deliverNamedAgentWake() succeeded without its durable target")
+	if err := server.deliverNamedAgentWake(ctx, recipient.Agent.ID); err != nil {
+		t.Fatal(err)
 	}
-	state, err := server.channelService.WakeState(ctx, recipient.Agent.ID)
-	if err != nil {
-		t.Fatalf("WakeState() error = %v", err)
-	}
-	if !state.Outstanding || !state.Pending {
-		t.Fatalf("dispatch failure cleared retry state: %#v", state)
+	ref := channels.NamedAgentConversationRef(agentRuntimeFromNamed(recipient.Agent))
+	binding, err := server.channelService.LookupCollaborationSession(ctx, ref)
+	if err != nil || !binding.Primary {
+		t.Fatalf("delivery lost its identity target: %+v %v", binding, err)
 	}
 }
 

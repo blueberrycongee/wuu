@@ -239,6 +239,15 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			return Message{}, err
 		}
 	}
+	if params.GoalCorrection != "" || (params.OwnerID != "" && params.OwnerID != message.TaskOwner) {
+		// Fence the current task turn even though it has no separate Work run.
+		// Its durable correction will continue in the same conversation.
+		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state='interrupted', updated_at=?
+            WHERE work_id=? AND session_ref IN (SELECT session_ref FROM named_agent_conversations)
+            AND state IN ('starting','running')`, toMillis(s.now()), message.ID); err != nil {
+			return Message{}, err
+		}
+	}
 	oldOwner := message.TaskOwner
 	newOwner := message.TaskOwner
 	if params.OwnerID != "" {
@@ -327,7 +336,7 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 			RoomID: message.RoomID, ToAgentID: newOwner,
 			WorkID: message.ID, Kind: CollaborationControl,
 			FromType: correctionFromType, FromID: correctionFromID, FromSessionRef: params.SessionRef,
-			Body:            "The task brief was revised. Read the complete current task, reconcile your progress with the updated requirements, and continue on this same task.",
+			Body:            "The task brief was revised. Continue this task using the updated requirements:\n\n" + message.Body,
 			SourceMessageID: message.ID, GoalRevision: message.TaskGoalRevision,
 			CandidateRevision: message.TaskCandidateRevision, CreatedAt: updatedAt,
 		}); err != nil {

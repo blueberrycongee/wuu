@@ -51,8 +51,15 @@ func TestChannelContinuityUserManagement(t *testing.T) {
 func TestContinuationEventReentersTheExactSession(t *testing.T) {
 	ctx := context.Background()
 	f := newCollaborationRPCFixture(t)
+	peer, err := f.server.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Source reviewer", Autostart: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.room = createPeerRoom(t, f, "Peer evidence", f.identity, peer.Agent)
 	a, callA := f.create(t, "Own the ongoing investigation")
-	b, callB := f.create(t, "Inspect a separate source")
+	var created ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: peer.Agent.ID, RoomID: f.room.ID, Prompt: "Inspect a separate source", RequestID: "peer-source"}, &created)
+	b, callB := created.Session, f.nextCall(t)
 	c, err := f.server.channelService.BindAgentSession(ctx, f.identity.ID, a.SessionRef)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +75,10 @@ func TestContinuationEventReentersTheExactSession(t *testing.T) {
 		t.Fatalf("waiting = %+v, %v", binding, err)
 	}
 	close(callB.release)
+	original := f.identity
+	f.identity = peer.Agent
 	f.waitForCompletion(t)
+	f.identity = original
 	if _, err = f.server.channelService.FireDueFollowups(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +87,7 @@ func TestContinuationEventReentersTheExactSession(t *testing.T) {
 	}
 	continued := f.nextCall(t)
 	text := collaborationRequestText(continued.request)
-	if !strings.Contains(text, plan.Note) || !strings.Contains(text, a.Objective) {
+	if !strings.Contains(text, plan.Note) || !strings.Contains(text, "Own the ongoing investigation") {
 		t.Fatalf("continuation lost context: %s", text)
 	}
 	close(continued.release)

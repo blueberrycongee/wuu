@@ -611,7 +611,8 @@ func (s *Service) StartWorkRun(ctx context.Context, params WorkRunStartParams) (
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(session_ref) DO UPDATE SET
 				room_id = excluded.room_id, work_id = excluded.work_id, run_id = excluded.run_id,
-				purpose = excluded.purpose, state = excluded.state, updated_at = excluded.updated_at`,
+				purpose = CASE WHEN EXISTS(SELECT 1 FROM named_agent_conversations primary_session WHERE primary_session.session_ref=excluded.session_ref) THEN 'conversation' ELSE excluded.purpose END,
+                state = excluded.state, updated_at = excluded.updated_at`,
 			run.SessionRef, namedAgentID, namedAgentID, work.RoomID, work.ID, run.ID,
 			purpose, collaborationSessionStateForRun(run.State), toMillis(now), toMillis(now)); err != nil {
 			return WorkRun{}, fmt.Errorf("bind work run session: %w", err)
@@ -889,6 +890,9 @@ func (s *Service) AttachWorkRunTurn(ctx context.Context, params WorkRunTurnParam
 		if _, err := tx.ExecContext(ctx, `UPDATE work_runs SET turn_id = ?, updated_at = ? WHERE id = ?`, params.TurnID, toMillis(s.now()), run.ID); err != nil {
 			return WorkRun{}, fmt.Errorf("attach work run turn: %w", err)
 		}
+	}
+	if _, err := recordCollaborationTurnScopeTx(ctx, tx, binding, params.TurnID); err != nil {
+		return WorkRun{}, err
 	}
 	updated, err := scanWorkRun(tx.QueryRowContext(ctx, workRunSelect+` WHERE run.id = ?`, run.ID))
 	if err != nil {
@@ -1251,7 +1255,11 @@ func activeWorkSessionInterruptTargetsTx(ctx context.Context, tx *sql.Tx, workID
 		FROM work_runs run
 		LEFT JOIN collaboration_session_bindings binding ON binding.run_id = run.id
 		WHERE run.work_id = ? AND run.state IN ('queued', 'running')
-		ORDER BY 1, 2`, workID)
+        UNION
+        SELECT binding.named_agent_id, binding.session_ref FROM collaboration_session_bindings binding
+        JOIN named_agent_conversations primary_session ON primary_session.session_ref=binding.session_ref
+        WHERE binding.work_id=? AND binding.state IN ('starting','running','interrupted')
+        ORDER BY 1, 2`, workID, workID)
 	if err != nil {
 		return nil, fmt.Errorf("list active work sessions for cancellation: %w", err)
 	}
@@ -1584,7 +1592,17 @@ func (s *Service) workRunAdmissionTx(ctx context.Context, tx *sql.Tx, roomID, na
 	if err != nil {
 		return "", "", err
 	}
-	if namedAgentID != "" && agentActive >= s.agentRunLimit {
+	identityLimit := s.agentRunLimit
+	if namedAgentID != "" {
+		var continuing bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM named_agent_conversations WHERE agent_id=?)`, namedAgentID).Scan(&continuing); err != nil {
+			return "", "", err
+		}
+		if continuing {
+			identityLimit = 1
+		}
+	}
+	if namedAgentID != "" && agentActive >= identityLimit {
 		return WorkRunQueued, "named_agent_capacity", nil
 	}
 	if roomActive >= s.roomRunLimit {

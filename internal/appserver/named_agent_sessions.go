@@ -94,6 +94,9 @@ type namedAgentDispatchTarget struct {
 // namedAgentMu only while sessions are selected and admitted; inference runs
 // independently after admission.
 func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channels.AgentRuntime, force bool) error {
+	if !agent.IsRoomRuntime() {
+		return s.dispatchIdentityConversationLocked(ctx, agent, force)
+	}
 	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
 	if err != nil {
 		return err
@@ -248,12 +251,15 @@ func (s *Server) startNamedAgentConversationLocked(ctx context.Context, agent ch
 }
 
 func namedAgentRoomSessionID(agent channels.AgentRuntime, roomID string) string {
+	if !agent.IsRoomRuntime() {
+		return channels.NamedAgentConversationRef(agent)
+	}
 	return principalSessionID(agent.ID+"\x00room:"+roomID, agent.CreatedAt)
 }
 
 func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent channels.AgentRuntime, client *channels.AgentClient, target namedAgentDispatchTarget, force bool) (dispatchErr error) {
 	defer func() {
-		if dispatchErr != nil && target.workID == "" {
+		if dispatchErr != nil && (target.workID == "" || target.binding.Primary) {
 			s.failCollaborationSession(ctx, target.binding, dispatchErr)
 		}
 	}()
@@ -266,7 +272,7 @@ func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent 
 	if target.binding.State == channels.CollaborationSessionCancelled || target.binding.State == channels.CollaborationSessionInterrupted || target.binding.State == channels.CollaborationSessionFailed || target.binding.State == channels.CollaborationSessionMissing {
 		return nil
 	}
-	if target.workID == "" {
+	if target.workID == "" || target.binding.Primary && target.binding.RunID == "" {
 		admitted, err := s.channelService.AdmitCollaborationSession(ctx, sessionRef)
 		if err != nil {
 			return err
@@ -317,6 +323,9 @@ func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent 
 }
 
 func (s *Server) resumeNamedAgentBoundSessionsLocked(ctx context.Context, agent channels.AgentRuntime) error {
+	if !agent.IsRoomRuntime() {
+		return s.recoverIdentityConversationLocked(ctx, agent)
+	}
 	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
 	if err != nil {
 		return err
@@ -402,6 +411,24 @@ func (s *Server) ensureNamedAgentProducerRun(ctx context.Context, client *channe
 	sessionClient, err := s.channelService.BindAgentSession(ctx, binding.PrincipalID, binding.SessionRef)
 	if err != nil {
 		return "", err
+	}
+	if binding.Primary {
+		// Results retain their task scope, but receiving one does not request
+		// another producer. Only an assignment or explicit continuation does.
+		messages, err := sessionClient.ReceiveCollaboration(ctx, 32)
+		if err != nil {
+			return "", err
+		}
+		requested := false
+		for _, message := range messages {
+			if message.WorkID == binding.WorkID && (message.Kind == channels.CollaborationAssignment || message.Kind == channels.CollaborationControl) {
+				requested = true
+				break
+			}
+		}
+		if !requested {
+			return "", nil
+		}
 	}
 	run, err := sessionClient.StartWorkRun(ctx, channels.WorkRunStartParams{
 		WorkID: binding.WorkID, Kind: channels.WorkRunProducer, Profile: binding.NamedAgentID,

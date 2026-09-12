@@ -63,10 +63,10 @@ func (s *Server) handleChannelSession(ctx context.Context, req Request) error {
 		all, err := s.channelService.ListAllCollaborationSessions(ctx)
 		matches := make([]channels.CollaborationSessionBinding, 0)
 		for _, binding := range all {
-			if binding.NamedAgentID == "" {
+			if binding.NamedAgentID == "" || !binding.Primary {
 				continue
 			}
-			if (params.AgentID == "" || binding.NamedAgentID == params.AgentID) && (params.RoomID == "" || binding.RoomID == params.RoomID) {
+			if (params.AgentID == "" || binding.NamedAgentID == params.AgentID) && (params.RoomID == "" || binding.RoomID == params.RoomID || s.identityIsRoomMember(ctx, binding.NamedAgentID, params.RoomID)) {
 				matches = append(matches, binding)
 			}
 		}
@@ -145,48 +145,29 @@ func (s *Server) CreateSession(ctx context.Context, params channels.Collaboratio
 	if err != nil {
 		return channels.CollaborationSessionBinding{}, err
 	}
-	binding, lookupErr := s.channelService.LookupCollaborationSession(ctx, params.SessionRef)
-	if errors.Is(lookupErr, channels.ErrNotFound) {
-		selection := s.currentSessionRuntimeSelection()
-		selection = agentRuntimeSelection(selection, agent)
-		if params.Provider != "" {
-			selection.Provider = params.Provider
+	ref := channels.NamedAgentConversationRef(agent)
+	binding, err := s.channelService.LookupCollaborationSession(ctx, ref)
+	if errors.Is(err, channels.ErrNotFound) {
+		selection, selectErr := s.namedAgentPinnedSelection(agent, ref, "")
+		if selectErr != nil {
+			return binding, selectErr
 		}
-		if params.Model != "" {
-			selection.Model = params.Model
-			selection.Variant = ""
-		}
-		if params.Effort != "" {
-			selection.Effort = params.Effort
-		}
-		binding, err = client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{SessionRef: params.SessionRef, RoomID: params.RoomID, Title: params.Title, Objective: params.Objective, ParentSessionRef: params.ParentSessionRef, Provider: selection.Provider, Model: selection.Model, Effort: firstNonEmpty(selection.Effort, selection.Variant), RuntimeVersion: runtime.CollaborationRuntimeVersion, Purpose: channels.CollaborationSessionWork, State: channels.CollaborationSessionIdle})
-	} else {
-		err = lookupErr
+		binding, err = client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{SessionRef: ref, RoomID: params.RoomID, Title: agent.Name,
+			Provider: selection.Provider, Model: selection.Model, Effort: firstNonEmpty(selection.Effort, selection.Variant), RuntimeVersion: runtime.CollaborationRuntimeVersion,
+			Purpose: channels.CollaborationSessionConversation, State: channels.CollaborationSessionIdle})
 	}
 	if err != nil {
 		return binding, err
 	}
-	th, err := s.ensureAgentRuntimeSessionThreadLocked(agent, binding.SessionRef)
-	if err != nil {
-		s.failCollaborationSession(ctx, binding, err)
-		return binding, err
-	}
-	if binding.Title != "" {
-		th.mu.Lock()
-		th.Title = binding.Title
-		th.mu.Unlock()
-		if _, err = session.UpdateTitle(s.rt.SessionDir, th.ID, binding.Title); err != nil {
-			return binding, err
-		}
-	}
-	_, err = s.channelService.EnqueueSessionInput(ctx, channels.CollaborationSessionSendParams{SessionRef: binding.SessionRef, Body: binding.Objective, RequestID: "session-initial:" + binding.SessionRef, ActorID: params.ActorID, SourceSessionRef: params.SourceSessionRef})
+	_, err = s.channelService.EnqueueSessionInput(ctx, channels.CollaborationSessionSendParams{SessionRef: ref, RoomID: params.RoomID,
+		Body: params.Objective, RequestID: "identity-request:" + params.RequestID, ActorID: params.ActorID, SourceSessionRef: params.SourceSessionRef})
 	if err != nil {
 		return binding, err
 	}
 	if err = s.dispatchNamedAgentWakeLocked(ctx, agent, true); err != nil {
 		return binding, err
 	}
-	return s.channelService.LookupCollaborationSession(ctx, binding.SessionRef)
+	return s.channelService.LookupCollaborationSession(ctx, ref)
 }
 
 func (s *Server) SendSession(ctx context.Context, params channels.CollaborationSessionSendParams) (channels.CollaborationSessionBinding, error) {
@@ -250,7 +231,7 @@ func (s *Server) ResumeSession(ctx context.Context, params channels.Collaboratio
 	if th := s.thread(binding.SessionRef); threadIsRunning(th) {
 		return binding, nil
 	}
-	if binding.WorkID != "" {
+	if binding.WorkID != "" && !binding.Primary {
 		return binding, errors.New("resume the associated work item to preserve its goal and verification state")
 	}
 	if err = s.setCollaborationSessionState(ctx, binding, channels.CollaborationSessionIdle, ""); err != nil {
@@ -285,7 +266,7 @@ func (s *Server) setCollaborationSessionState(ctx context.Context, binding chann
 	return err
 }
 func (s *Server) failCollaborationSession(ctx context.Context, binding channels.CollaborationSessionBinding, cause error) {
-	if binding.WorkID != "" {
+	if binding.WorkID != "" && !binding.Primary {
 		_ = s.setCollaborationSessionState(ctx, binding, channels.CollaborationSessionFailed, cause.Error())
 		return
 	}
@@ -311,7 +292,13 @@ func (s *Server) failCollaborationSession(ctx context.Context, binding channels.
 	if _, err = client.UpdateCollaborationSessionState(ctx, channels.CollaborationSessionStateParams{SessionRef: binding.SessionRef, State: channels.CollaborationSessionRunning, TurnID: turnID}); err != nil {
 		return
 	}
-	_, _ = s.channelService.SettleCollaborationSession(ctx, channels.CollaborationSessionSettleParams{SessionRef: binding.SessionRef, State: channels.CollaborationSessionFailed, TurnID: turnID, Result: cause.Error(), FailureReason: cause.Error()})
+	_, err = s.channelService.SettleCollaborationSession(ctx, channels.CollaborationSessionSettleParams{SessionRef: binding.SessionRef, State: channels.CollaborationSessionFailed, TurnID: turnID, Result: cause.Error(), FailureReason: cause.Error(), AdmissionFailure: true})
+	if err == nil && binding.Primary && binding.WorkID != "" {
+		_, _ = s.channelService.FinishWakeAttempt(ctx, binding.PrincipalID)
+		if pending, err := s.channelService.PendingCollaborationDispatches(ctx, binding.PrincipalID); err == nil && len(pending) > 0 {
+			s.Deliver(binding.PrincipalID)
+		}
+	}
 }
 func (s *Server) drainCollaborationSessionsLocked(ctx context.Context) {
 	if err := s.channelService.AdmitQueuedWorkRuns(ctx); err != nil {
@@ -324,6 +311,10 @@ func (s *Server) drainCollaborationSessionsLocked(ctx context.Context) {
 	for _, binding := range queued {
 		agent, err := s.channelService.GetAgentRuntime(ctx, binding.PrincipalID)
 		if err != nil {
+			continue
+		}
+		if !agent.IsRoomRuntime() {
+			_ = s.dispatchIdentityConversationLocked(ctx, agent, true)
 			continue
 		}
 		client, bindErr := s.bindCollaborationPrincipal(ctx, agent, "")
@@ -424,6 +415,15 @@ func (s *Server) settleCollaborationTurn(ctx context.Context, ref, turnID string
 	if len(runes) > 12000 {
 		result = string(runes[:12000]) + "\n[Result excerpt; inspect the session and shared artifacts for the remainder.]"
 	}
-	_, err = s.channelService.SettleCollaborationSession(ctx, channels.CollaborationSessionSettleParams{SessionRef: ref, TurnID: turnID, State: next, Result: result, FailureReason: failure, PublicReply: publicReply})
+	runState := channels.WorkRunCompleted
+	if outcome.Status == TurnStatusFailed {
+		runState = channels.WorkRunFailed
+	} else if outcome.Status == TurnStatusInterrupted {
+		runState = channels.WorkRunInterrupted
+	}
+	_, err = s.channelService.SettleCollaborationSession(ctx, channels.CollaborationSessionSettleParams{
+		SessionRef: ref, TurnID: turnID, State: next, Result: result, FailureReason: failure, PublicReply: publicReply,
+		Provider: outcome.ModelProvider, Model: outcome.Model, InputTokens: int64(outcome.InputTokens), OutputTokens: int64(outcome.OutputTokens), RunState: runState,
+	})
 	return err
 }

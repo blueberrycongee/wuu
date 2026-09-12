@@ -77,54 +77,34 @@ func TestRoomCoordinatorDelegatesStaysResponsiveAndPublishesThroughMember(t *tes
 			t.Fatalf("coordinator executed %s", name)
 		}
 	}
-	coordinatorModelTool(coordinatorCall, "assign", "chat_session", map[string]any{"action": "create", "agent_id": fixture.identity.ID, "room_id": fixture.room.ID, "prompt": "Inspect reconnect and return evidence", "request_id": "reconnect-investigation"})
+	coordinatorModelTool(coordinatorCall, "assign", "collaboration_send", map[string]any{
+		"room_id": fixture.room.ID, "to_agent_id": fixture.identity.ID,
+		"body":              "Inspect reconnect and report evidence directly in the room",
+		"source_message_id": sent.Message.ID, "request_id": "reconnect-investigation",
+	})
 	continuation, worker := splitCoordinatorCalls(t, provider, "assign")
+	if !strings.Contains(collaborationRequestText(worker.request), sent.Message.ID) {
+		t.Fatal("delegation lost the original source message")
+	}
 	continuation.response <- providers.ChatResponse{Content: "Investigation assigned"}
 	waitCoordinatorCompletion(t, fixture)
-	parent, err = fixture.server.channelService.LookupCollaborationSession(ctx, parent.SessionRef)
-	if err != nil || parent.State != channels.CollaborationSessionWaiting {
-		t.Fatalf("coordinator did not release execution: %+v %v", parent, err)
-	}
-	waitForThreadLeaseRelease(t, fixture.server.rt.SessionDir, parent.SessionRef)
-	// A running child must not prevent the room from receiving a correction.
-	if _, err := fixture.server.channelService.SendHuman(ctx, channels.HumanSendParams{RoomID: fixture.room.ID, HumanID: "human-1", Body: "Keep the investigation read-only"}); err != nil {
-		t.Fatal(err)
-	}
-	correction := provider.next(t)
-	if !strings.Contains(collaborationRequestText(correction.request), "Keep the investigation read-only") {
-		t.Fatal("coordinator missed correction")
-	}
-	correction.response <- providers.ChatResponse{Content: "The active investigation remains read-only"}
-	waitCoordinatorCompletion(t, fixture)
-	waitForThreadLeaseRelease(t, fixture.server.rt.SessionDir, parent.SessionRef)
-	status, err = fixture.server.channelCoordinatorStatus(ctx, fixture.room.ID)
-	if err != nil || status.State != "waiting" || len(status.AgentIDs) != 1 || status.AgentIDs[0] != fixture.identity.ID {
-		t.Fatalf("responsibility status: %#v %v", status, err)
-	}
 	const evidence = "The reconnect callback retained a stale cursor"
 	worker.response <- providers.ChatResponse{Content: evidence}
 	waitCoordinatorCompletion(t, fixture)
-	resultCall := provider.next(t)
-	if !strings.Contains(collaborationRequestText(resultCall.request), evidence) {
-		t.Fatal("result did not return to the room coordinator")
-	}
-	coordinatorModelTool(resultCall, "deliver", "collaboration_send", map[string]any{"room_id": fixture.room.ID, "to_agent_id": fixture.identity.ID, "body": "Publish this finding to the user: " + evidence, "source_message_id": sent.Message.ID, "request_id": "deliver-finding"})
-	finishing, member := splitCoordinatorCalls(t, provider, "deliver")
-	finishing.response <- providers.ChatResponse{Content: "Delivery assigned"}
-	waitCoordinatorCompletion(t, fixture)
-	member.response <- providers.ChatResponse{Content: evidence}
-	waitCoordinatorCompletion(t, fixture)
 	messages, err := fixture.server.channelService.ListMessages(ctx, fixture.room.ID, 0, 50)
-	if err != nil || len(messages) != 3 || messages[2].AuthorID != fixture.identity.ID || messages[2].Body != evidence {
+	if err != nil || len(messages) != 2 || messages[1].AuthorID != fixture.identity.ID || messages[1].Body != evidence {
 		t.Fatalf("public delivery: %+v %v", messages, err)
 	}
 	bindings, err = fixture.server.channelService.ListAllCollaborationSessions(ctx)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(bindings) != 2 {
+		t.Fatalf("unexpected execution branches: %+v %v", bindings, err)
 	}
 	for _, binding := range bindings {
 		if binding.NamedAgentID == peer.Agent.ID {
 			t.Fatal("unselected member was started")
+		}
+		if binding.NamedAgentID == fixture.identity.ID && (!binding.Primary || binding.ParentSessionRef != "") {
+			t.Fatalf("delegation did not use the member's conversation: %+v", binding)
 		}
 	}
 	select {

@@ -37,6 +37,7 @@ type CollaborationSessionCreateParams struct {
 }
 
 type CollaborationSessionSendParams struct {
+	RoomID           string
 	SessionRef       string
 	Body             string
 	RequestID        string
@@ -128,8 +129,15 @@ func (s *Service) CreateSession(ctx context.Context, params CollaborationSession
 	}
 	digest := sha256.Sum256(encoded)
 	requestHash := hex.EncodeToString(digest[:])
-	reserved, err := randomID("collab-session", 16)
+	agent, err := s.GetAgentRuntime(ctx, params.NamedAgentID)
 	if err != nil {
+		return CollaborationSessionBinding{}, err
+	}
+	reserved := NamedAgentConversationRef(agent)
+	if params.ActorID == params.NamedAgentID {
+		return CollaborationSessionBinding{}, errors.New("continue in your current conversation; delegate parallel work to another named agent")
+	}
+	if _, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO named_agent_conversations(agent_id,session_ref) VALUES (?,?)`, agent.ID, reserved); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO collaboration_session_requests(actor_id, source_session_ref, request_id, session_ref, request_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`, params.ActorID, params.SourceSessionRef, params.RequestID, reserved, requestHash, toMillis(s.now())); err != nil {
@@ -142,7 +150,7 @@ func (s *Service) CreateSession(ctx context.Context, params CollaborationSession
 	if storedHash != requestHash {
 		return CollaborationSessionBinding{}, fmt.Errorf("%w: session request id was reused for different content", ErrConflict)
 	}
-	params.Token = ""
+	params.SessionRef, params.Token = reserved, ""
 	return controller.CreateSession(ctx, params)
 }
 

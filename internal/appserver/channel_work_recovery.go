@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/channels"
@@ -18,6 +19,11 @@ func (s *Server) reconcileChannelWorkRuns(ctx context.Context) error {
 	}
 	recoveries := make([]channels.WorkRunRecovery, 0, len(runs))
 	for _, run := range runs {
+		// A reservation has no execution to recover yet. It may still use a
+		// temporary reference that admission will move to the identity conversation.
+		if run.NamedAgentID != "" && run.TurnID == "" {
+			continue
+		}
 		active, activeErr := session.ThreadExecutionActive(s.rt.SessionDir, run.SessionRef)
 		if activeErr != nil {
 			return activeErr
@@ -37,6 +43,21 @@ func (s *Server) reconcileChannelWorkRuns(ctx context.Context) error {
 			}
 			if findErr != nil {
 				return findErr
+			}
+		}
+		if !active && terminalState != channels.WorkRunRecoveryActive {
+			binding, err := s.channelService.LookupCollaborationSession(ctx, run.SessionRef)
+			if err != nil {
+				return err
+			}
+			if binding.Primary {
+				// Replay the persisted turn through its ordinary atomic settlement,
+				// preserving actual usage, room visibility and the initiating party.
+				if err := s.settleCollaborationTurn(ctx, run.SessionRef, run.TurnID); err == nil {
+					continue
+				} else if !errors.Is(err, channels.ErrConflict) {
+					return err
+				}
 			}
 		}
 		recoveries = append(recoveries, channels.WorkRunRecovery{

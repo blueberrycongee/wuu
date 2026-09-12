@@ -19,7 +19,13 @@ type CollaborationSessionSettleParams struct {
 	FailureReason string
 	// PublicReply projects a room conversation's final answer into its public
 	// timeline. Omitting it preserves settlement fingerprints from older hosts.
-	PublicReply string `json:",omitempty"`
+	PublicReply      string       `json:",omitempty"`
+	Provider         string       `json:",omitempty"`
+	Model            string       `json:",omitempty"`
+	InputTokens      int64        `json:",omitempty"`
+	OutputTokens     int64        `json:",omitempty"`
+	RunState         WorkRunState `json:",omitempty"`
+	AdmissionFailure bool         `json:",omitempty"`
 }
 
 // SettleCollaborationSession atomically records a turn's outcome, parent
@@ -43,6 +49,12 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	}
 	if params.SessionRef == "" || params.TurnID == "" {
 		return CollaborationSessionBinding{}, errors.New("session settlement requires session and turn ids")
+	}
+	if params.InputTokens < 0 || params.OutputTokens < 0 {
+		return CollaborationSessionBinding{}, errors.New("turn usage cannot be negative")
+	}
+	if params.AdmissionFailure && params.State != CollaborationSessionFailed {
+		return CollaborationSessionBinding{}, errors.New("admission failure requires a failed settlement")
 	}
 	encoded, _ := json.Marshal(params)
 	digest := sha256.Sum256(encoded)
@@ -75,8 +87,17 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	if binding.State == CollaborationSessionCancelled || binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionMissing || binding.State == CollaborationSessionQueued || binding.State == CollaborationSessionStarting && binding.TurnID == "" {
 		return CollaborationSessionBinding{}, fmt.Errorf("%w: session %q cannot accept a late result while %s", ErrConflict, binding.SessionRef, binding.State)
 	}
-	if binding.WorkID != "" {
-		if err := validateCollaborationSessionWriteTx(ctx, tx, binding.SessionRef, binding.PrincipalID, binding.RoomID, binding.WorkID, 0); err != nil {
+	scope, err := recordCollaborationTurnScopeTx(ctx, tx, binding, params.TurnID)
+	if err != nil {
+		return CollaborationSessionBinding{}, err
+	}
+	binding.TurnID = params.TurnID
+	if err := validateCollaborationTurnScopeTx(ctx, tx, binding, binding.WorkID, true); err != nil {
+		return CollaborationSessionBinding{}, err
+	}
+	binding.RoomID, binding.WorkID = scope.RoomID, scope.WorkID
+	if binding.WorkID != "" && !binding.Primary {
+		if err := validateCollaborationSessionWriteTx(ctx, tx, binding.SessionRef, binding.PrincipalID, binding.RoomID, binding.WorkID, 0); err != nil && !binding.Primary {
 			return CollaborationSessionBinding{}, err
 		}
 		if binding.RunID != "" {
@@ -106,15 +127,23 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 		}
 	}
 	now := toMillis(s.now())
-	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state = ?, run_id = NULL, turn_id = ?, failure_reason = ?, updated_at = ? WHERE session_ref = ?`, effectiveState, params.TurnID, params.FailureReason, now, binding.SessionRef); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_session_bindings SET state = ?, work_id = CASE WHEN ? THEN NULL ELSE work_id END, run_id = NULL, turn_id = ?, failure_reason = ?, updated_at = ? WHERE session_ref = ?`, effectiveState, binding.Primary, params.TurnID, params.FailureReason, now, binding.SessionRef); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
 	wakePrincipals := make([]string, 0)
-	if params.PublicReply != "" {
-		wakePrincipals, err = insertConversationReplyTx(ctx, tx, binding, params.TurnID, params.PublicReply, now)
+	if binding.Primary && scope.WorkID != "" {
+		ids, err := s.settleIdentityWorkTx(ctx, tx, binding, scope, params, effectiveState)
 		if err != nil {
 			return CollaborationSessionBinding{}, err
 		}
+		wakePrincipals = appendUniqueStrings(wakePrincipals, ids...)
+	}
+	if params.PublicReply != "" {
+		ids, err := insertConversationReplyTx(ctx, tx, binding, params.TurnID, params.PublicReply, now)
+		if err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+		wakePrincipals = appendUniqueStrings(wakePrincipals, ids...)
 	}
 	if binding.ParentSessionRef != "" && effectiveState != CollaborationSessionWaiting && effectiveState != CollaborationSessionIdle {
 		parent, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.ParentSessionRef))
@@ -161,11 +190,25 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_results(session_ref,turn_id,body,state,created_at) VALUES(?,?,?,?,?)`, binding.SessionRef, params.TurnID, params.Result, params.State, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_results(session_ref,turn_id,body,state,created_at) VALUES(?,?,?,?,?) ON CONFLICT(session_ref,turn_id) DO UPDATE SET body=excluded.body,state=excluded.state`, binding.SessionRef, params.TurnID, params.Result, params.State, now); err != nil {
 		return CollaborationSessionBinding{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_session_settlements(session_ref, turn_id, result_hash, created_at) VALUES (?, ?, ?, ?)`, binding.SessionRef, params.TurnID, resultHash, now); err != nil {
 		return CollaborationSessionBinding{}, err
+	}
+	if params.AdmissionFailure && binding.Primary && scope.WorkID != "" {
+		// The failed attempt is now durable. Retire its pending assignment so
+		// a budget or provider failure cannot block unrelated queued rooms.
+		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET pulled_at=COALESCE(pulled_at,?),consumed_at=COALESCE(consumed_at,?)
+			WHERE to_agent_id=? AND room_id=? AND work_id=? AND target_session_ref=?`, now, now, binding.PrincipalID, scope.RoomID, scope.WorkID, binding.SessionRef); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE inbox_items SET pulled_at=COALESCE(pulled_at,?) WHERE member_type='agent' AND member_id=? AND message_id=? AND kind='task'`, now, binding.PrincipalID, scope.WorkID); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+		if err := recomputeAgentWakeTx(ctx, tx, binding.PrincipalID, now); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
 	}
 	updated, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.SessionRef))
 	if err != nil {

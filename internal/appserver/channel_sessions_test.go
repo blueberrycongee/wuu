@@ -166,103 +166,17 @@ func collaborationRequestText(request providers.ChatRequest) string {
 	return text.String()
 }
 
-func TestChannelSessionRPCConcurrentIdentityAndReadOnlySnapshots(t *testing.T) {
-	fixture := newCollaborationRPCFixture(t)
-	first, firstCall := fixture.create(t, "Explore first independent hypothesis")
-	second, secondCall := fixture.create(t, "Explore second independent hypothesis")
-	if first.SessionRef == second.SessionRef {
-		t.Fatal("two objectives reused the same session")
-	}
-	if firstCall.ctx.Err() != nil || secondCall.ctx.Err() != nil {
-		t.Fatal("starting another session cancelled a sibling execution")
-	}
-	for _, pair := range []struct {
-		binding channels.CollaborationSessionBinding
-		call    *collaborationRPCCall
-		other   string
-	}{{first, firstCall, second.Objective}, {second, secondCall, first.Objective}} {
-		text := collaborationRequestText(pair.call.request)
-		if !strings.Contains(text, pair.binding.Objective) || strings.Contains(text, pair.other) {
-			t.Fatalf("session %q did not receive an isolated objective: %s", pair.binding.SessionRef, text)
-		}
-		var read ChannelSessionReadResult
-		fixture.rpc(t, MethodChannelSessionRead, ChannelSessionRefParams{SessionRef: pair.binding.SessionRef}, &read)
-		if !read.Thread.ReadOnly || read.Thread.ID != pair.binding.SessionRef || read.Thread.Status != ThreadStatusInProgress {
-			t.Fatalf("running session snapshot: %+v", read.Thread)
-		}
-	}
-	var listed ChannelSessionListResult
-	fixture.rpc(t, MethodChannelSessionList, ChannelSessionListParams{AgentID: fixture.identity.ID, RoomID: fixture.room.ID}, &listed)
-	if len(listed.Sessions) != 2 {
-		t.Fatalf("identity has %d sessions, want 2", len(listed.Sessions))
-	}
-	for _, binding := range listed.Sessions {
-		if binding.State != channels.CollaborationSessionRunning {
-			t.Fatalf("concurrent session %q state = %s", binding.SessionRef, binding.State)
-		}
-	}
-	close(firstCall.release)
-	fixture.waitForCompletion(t)
-	close(secondCall.release)
-	fixture.waitForCompletion(t)
-}
-
-func TestChannelSessionRPCTargetedFollowupStopAndResumePreserveSibling(t *testing.T) {
-	fixture := newCollaborationRPCFixture(t)
-	first, firstCall := fixture.create(t, "Investigate transport recovery")
-	second, secondCall := fixture.create(t, "Investigate history recovery")
-	const followup = "Only transport should inspect the stale socket callback"
-	var result ChannelSessionResult
-	fixture.rpc(t, MethodChannelSessionSend, ChannelSessionRefParams{SessionRef: first.SessionRef, Prompt: followup, RequestID: "targeted-followup"}, &result)
-	close(firstCall.release)
-	continued := fixture.nextCall(t)
-	fixture.waitForCompletion(t)
-	if !strings.Contains(collaborationRequestText(continued.request), followup) {
-		t.Fatal("targeted follow-up did not reach its session")
-	}
-	var sibling ChannelSessionReadResult
-	fixture.rpc(t, MethodChannelSessionRead, ChannelSessionRefParams{SessionRef: second.SessionRef}, &sibling)
-	for _, turn := range sibling.Thread.Turns {
-		for _, item := range turn.Items {
-			if strings.Contains(item.Text, followup) {
-				t.Fatal("targeted follow-up leaked into the sibling history")
-			}
-		}
-	}
-	fixture.rpc(t, MethodChannelSessionStop, ChannelSessionRefParams{SessionRef: first.SessionRef}, &result)
-	select {
-	case <-continued.ctx.Done():
-	case <-time.After(collaborationTestWaitTimeout):
-		t.Fatal("stop did not cancel the target provider call")
-	}
-	fixture.waitForCompletion(t)
-	if result.Session.State != channels.CollaborationSessionCancelled {
-		t.Fatalf("stopped state = %s", result.Session.State)
-	}
-	if secondCall.ctx.Err() != nil {
-		t.Fatalf("stopping a session cancelled its sibling: %v", secondCall.ctx.Err())
-	}
-	fixture.rpc(t, MethodChannelSessionRead, ChannelSessionRefParams{SessionRef: second.SessionRef}, &sibling)
-	if sibling.Thread.Status != ThreadStatusInProgress || sibling.Session.State != channels.CollaborationSessionRunning {
-		t.Fatalf("sibling stopped after unrelated cancellation: %+v", sibling.Session)
-	}
-	fixture.rpc(t, MethodChannelSessionResume, ChannelSessionRefParams{SessionRef: first.SessionRef}, &result)
-	resumed := fixture.nextCall(t)
-	if result.Session.SessionRef != first.SessionRef || !strings.Contains(collaborationRequestText(resumed.request), followup) {
-		t.Fatal("resume replaced the session or lost its previous context")
-	}
-	close(resumed.release)
-	fixture.waitForCompletion(t)
-	close(secondCall.release)
-	fixture.waitForCompletion(t)
-}
-
 func TestChannelSessionRPCDrainsDurableQueueAfterCapacityRelease(t *testing.T) {
 	t.Setenv("WUU_COLLAB_GLOBAL_RUN_LIMIT", "1")
 	fixture := newCollaborationRPCFixture(t)
 	_, firstCall := fixture.create(t, "First experiment")
 	var second ChannelSessionResult
-	fixture.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: fixture.identity.ID, RoomID: fixture.room.ID, Prompt: "Second experiment", RequestID: "queued-experiment"}, &second)
+	peer, err := fixture.server.channelService.CreateNamedAgent(context.Background(), channels.CreateNamedAgentParams{Name: "Peer", Autostart: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	room := createPeerRoom(t, fixture, "Shared capacity", fixture.identity, peer.Agent)
+	fixture.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: peer.Agent.ID, RoomID: room.ID, Prompt: "Second experiment", RequestID: "queued-experiment"}, &second)
 	if second.Session.State != channels.CollaborationSessionQueued {
 		t.Fatalf("capacity did not queue second session: %+v", second.Session)
 	}
@@ -278,9 +192,10 @@ func TestChannelSessionRPCDrainsDurableQueueAfterCapacityRelease(t *testing.T) {
 		t.Fatal("released capacity did not run the queued objective")
 	}
 	close(next.release)
+	fixture.identity = peer.Agent
 	fixture.waitForCompletion(t)
 	binding, err := fixture.server.channelService.LookupCollaborationSession(context.Background(), second.Session.SessionRef)
-	if err != nil || binding.State != channels.CollaborationSessionCompleted {
+	if err != nil || binding.State != channels.CollaborationSessionIdle {
 		t.Fatalf("queued session did not complete: %+v, %v", binding, err)
 	}
 }
@@ -311,7 +226,7 @@ func TestChannelSessionReadRefreshesIdleCacheAfterAnotherServerCompletes(t *test
 			}
 		}
 	}
-	if !found || !read.Thread.ReadOnly || read.Session.State != channels.CollaborationSessionCompleted {
+	if !found || !read.Thread.ReadOnly || read.Session.State != channels.CollaborationSessionIdle {
 		t.Fatalf("reader returned a stale session: %+v", read)
 	}
 }

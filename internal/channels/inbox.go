@@ -68,7 +68,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 				)`
 		inboxArgs = []any{actor.ID, binding.WorkID, binding.SessionRef}
 	} else if binding.Purpose == CollaborationSessionConversation && binding.RoomID != "" {
-		inboxScope = ` AND inbox.room_id = ? AND inbox.kind IN ('mention', 'reply', 'thread_update') AND inbox.pulled_at IS NULL
+		inboxScope = ` AND inbox.room_id = ? AND inbox.kind IN ('mention', 'reply', 'thread_update', 'reminder') AND inbox.pulled_at IS NULL
 			AND NOT EXISTS (SELECT 1 FROM works work WHERE work.id = message.id OR work.id = message.thread_id)
 			AND NOT EXISTS (SELECT 1 FROM collaboration_messages delivery WHERE delivery.to_agent_id = inbox.member_id AND delivery.source_message_id = inbox.message_id AND delivery.target_session_ref IS NOT NULL AND delivery.target_session_ref != ? AND delivery.invalidated_at IS NULL)`
 		inboxArgs = []any{actor.ID, binding.RoomID, binding.SessionRef}
@@ -140,10 +140,10 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		FROM collaboration_messages delivery
 		JOIN collaboration_principals principal ON principal.id = delivery.to_agent_id
 		LEFT JOIN collaboration_principals sender ON sender.id = delivery.from_id
-		WHERE delivery.to_agent_id = ? AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
+		WHERE delivery.to_agent_id = ? AND (NOT ? OR delivery.room_id = ?) AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
 			AND (delivery.target_session_ref = ? OR (delivery.target_session_ref IS NULL AND (` + scopeSQL + `)))
 		ORDER BY delivery.created_at, delivery.rowid LIMIT ?`
-	args := []any{actor.ID, binding.SessionRef}
+	args := []any{actor.ID, binding.Primary, binding.RoomID, binding.SessionRef}
 	args = append(args, scopeArgs...)
 	remaining := max(0, checkLimit-len(items))
 	args = append(args, remaining+1)

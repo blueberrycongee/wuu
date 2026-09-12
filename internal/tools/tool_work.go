@@ -24,7 +24,7 @@ func (t *ChatWorkTool) Definition() providers.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":                map[string]any{"type": "string", "enum": []string{"get", "list", "start_run", "finish_run", "add_artifact", "promote_candidate", "evidence", "policy", "cancel"}},
+				"action":                map[string]any{"type": "string", "enum": []string{"get", "list", "add_artifact", "evidence", "cancel"}},
 				"work_id":               map[string]any{"type": "string"},
 				"room_id":               map[string]any{"type": "string"},
 				"run_id":                map[string]any{"type": "string"},

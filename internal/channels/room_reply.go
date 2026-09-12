@@ -18,7 +18,7 @@ func ConversationReplyID(sessionRef, turnID string) string {
 // tool's length and draft-basis limits do not apply: splitting or truncating
 // here would corrupt Markdown and discard part of the user's answer.
 func insertConversationReplyTx(ctx context.Context, tx *sql.Tx, binding CollaborationSessionBinding, turnID, body string, now int64) ([]string, error) {
-	if binding.Purpose != CollaborationSessionConversation || binding.ParentSessionRef != "" || binding.WorkID != "" ||
+	if binding.Purpose != CollaborationSessionConversation || binding.ParentSessionRef != "" || binding.WorkID != "" && !binding.Primary ||
 		binding.RoomID == "" || binding.NamedAgentID == "" || binding.NamedAgentID != binding.PrincipalID {
 		return nil, fmt.Errorf("%w: public replies require a named room conversation", ErrUnauthorized)
 	}
