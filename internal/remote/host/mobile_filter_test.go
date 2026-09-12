@@ -22,6 +22,31 @@ func TestFilterMobileChatLineKeepsServerRequests(t *testing.T) {
 	}
 }
 
+func TestMobileChatCanObserveAndResolveConversationQuestions(t *testing.T) {
+	// Engine approvals use the question broker, not reverse JSON-RPC requests.
+	for _, line := range []string{
+		`{"method":"user-question/requested","params":{"type":"requested","request":{"request_id":"q1","thread_id":"t","questions":[{"id":"approval","question":"Allow command?","options":[{"label":"Allow"},{"label":"Decline"}]}]}}}`,
+		`{"method":"user-question/resolved","params":{"type":"resolved","request_id":"q1","thread_id":"t","outcome":"answered"}}`,
+	} {
+		got, keep := filterMobileChatLine([]byte(line))
+		if !keep {
+			t.Fatalf("phone lost question lifecycle event: %s", line)
+		}
+		var before, after map[string]any
+		if err := json.Unmarshal([]byte(line), &before); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(got, &after); err != nil {
+			t.Fatal(err)
+		}
+		want, _ := json.Marshal(before)
+		actual, _ := json.Marshal(after)
+		if string(want) != string(actual) {
+			t.Fatalf("question payload changed: %s", got)
+		}
+	}
+}
+
 func TestFilterMobileChatLineSlimsThreadListResponse(t *testing.T) {
 	line := []byte(`{
 		"id":"list-1",

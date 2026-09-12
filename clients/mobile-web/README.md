@@ -1,5 +1,7 @@
 # @wuu/mobile-web — Wuu Web
 
+> **手机路线已终止开发，不再维护（2026-09-12）。** 本目录及 `clients/mobile-app` 中基于共享 renderer / WebView 的手机实现保留作历史参考。新的 iOS、Android 手机开发转向 [原生客户端](../native/README.md)。下文保留旧架构和操作记录；不再向本实现加入手机功能或修复。
+
 Wuu Web 不再维护一套独立聊天界面。配对成功后，它直接加载
 `desktop/src/renderer` 的工作台，并通过浏览器宿主适配器把 renderer 的
 `window.wuu` 调用转发到现有加密远程通道。

@@ -1,0 +1,27 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = {};
+ objectVersion = 77;
+ objects = {
+  100000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 2620;}; buildConfigurationList = 100000000000000000000010; compatibilityVersion = "Xcode 16.0"; developmentRegion = zh-Hans; knownRegions = (en, "zh-Hans", Base); mainGroup = 100000000000000000000002; productRefGroup = 100000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (100000000000000000000004); packageReferences = (100000000000000000000020); };
+  100000000000000000000002 = {isa = PBXGroup; children = (100000000000000000000005, 100000000000000000000003); sourceTree = "<group>"; };
+  100000000000000000000003 = {isa = PBXGroup; children = (100000000000000000000006); name = Products; sourceTree = "<group>"; };
+  100000000000000000000004 = {isa = PBXNativeTarget; buildConfigurationList = 100000000000000000000011; buildPhases = (100000000000000000000007, 100000000000000000000008, 100000000000000000000009); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (100000000000000000000005); name = Wuu; packageProductDependencies = (100000000000000000000021); productName = Wuu; productReference = 100000000000000000000006; productType = "com.apple.product-type.application"; };
+  100000000000000000000005 = {isa = PBXFileSystemSynchronizedRootGroup; path = App; sourceTree = "<group>"; };
+  100000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Wuu.app; sourceTree = BUILT_PRODUCTS_DIR; };
+  100000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  100000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000022); runOnlyForDeploymentPostprocessing = 0; };
+  100000000000000000000009 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  100000000000000000000010 = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000012, 100000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+  100000000000000000000011 = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000014, 100000000000000000000015); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+  100000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = dwarf; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+  100000000000000000000013 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; }; name = Release; };
+  100000000000000000000014 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = ai.wuu.native; PRODUCT_NAME = "$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Wuu; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES; TARGETED_DEVICE_FAMILY = "1,2"; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; CODE_SIGN_STYLE = Automatic; }; name = Debug; };
+  100000000000000000000015 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = ai.wuu.native; PRODUCT_NAME = "$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Wuu; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES; TARGETED_DEVICE_FAMILY = "1,2"; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; CODE_SIGN_STYLE = Automatic; }; name = Release; };
+  100000000000000000000020 = {isa = XCLocalSwiftPackageReference; relativePath = "."; };
+  100000000000000000000021 = {isa = XCSwiftPackageProductDependency; productName = WuuCore; };
+  100000000000000000000022 = {isa = PBXBuildFile; productRef = 100000000000000000000021; };
+ };
+ rootObject = 100000000000000000000001;
+}

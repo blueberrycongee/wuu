@@ -56,7 +56,9 @@ func filterMobileChatNotification(env map[string]json.RawMessage, method string)
 			return nil, false
 		}
 	case appserver.NotificationTurnQueued,
-		appserver.NotificationTurnDequeued:
+		appserver.NotificationTurnDequeued,
+		appserver.NotificationUserQuestionRequested,
+		appserver.NotificationUserQuestionResolved:
 		// Direct chat state.
 	default:
 		return nil, false
