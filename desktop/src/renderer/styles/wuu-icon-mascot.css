@@ -1,6 +1,6 @@
 /* Small glances stay around the icon's authored upper-left gaze. */
 .wuu-icon-gaze {
-  animation: wuu-icon-glance 9s ease-in-out infinite;
+  animation: wuu-icon-glance 2.8s ease-in-out infinite;
   transition: translate 400ms ease;
 }
 
@@ -9,18 +9,18 @@
 }
 
 .wuu-icon-blink {
-  animation: wuu-icon-blink 5.7s ease-in-out infinite;
+  animation: wuu-icon-blink 2.4s ease-in-out infinite;
 }
 
 @keyframes wuu-icon-glance {
-  0%, 18%, 48%, 100% { transform: translate(0, 0); }
-  25%, 38% { transform: translate(-13px, -8px); }
-  62%, 77% { transform: translate(9px, -5px); }
+  0%, 44%, 100% { transform: translate(0, 0); }
+  12%, 26% { transform: translate(-13px, -8px); }
+  62%, 78% { transform: translate(9px, -5px); }
 }
 
 @keyframes wuu-icon-blink {
-  0%, 42%, 46%, 72%, 76%, 100% { transform: scaleY(1); }
-  44%, 74% { transform: scaleY(0.08); }
+  0%, 12%, 24%, 100% { transform: scaleY(1); }
+  18% { transform: scaleY(0.08); }
 }
 
 @media (prefers-reduced-motion: reduce) {

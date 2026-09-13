@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:name=".WuuApplication" android:label="Wuu" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+    <application android:name=".WuuApplication" android:label="Wuu" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules"
         android:usesCleartextTraffic="false" android:supportsRtl="true">
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />

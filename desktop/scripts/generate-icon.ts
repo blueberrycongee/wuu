@@ -35,6 +35,7 @@ function buildIco(sizes: readonly number[]): void {
 }
 
 function copyAsset(source: string, destination: string): void {
+  mkdirSync(path.dirname(path.join(REPO_DIR, destination)), { recursive: true });
   cpSync(path.join(WORK_DIR, source), path.join(REPO_DIR, destination));
 }
 
@@ -61,13 +62,18 @@ function main(): void {
   copyAsset("desktop-1024.png", "desktop/build/icon.png");
   copyAsset("desktop-1024.png", "assets/app-icon.png");
   copyAsset("desktop-256.png", "assets/app-icon-256.png");
+  copyAsset("desktop-1024.png", "landing/assets/app-icon.png");
+  copyAsset("desktop-32.png", "docs-site/public/favicon.png");
+  copyAsset("mobile.png", "clients/native/ios/App/Assets.xcassets/AppIcon.appiconset/icon.png");
   copyAsset("mobile.png", "clients/mobile/assets/icon.png");
   copyAsset("desktop-32.png", "clients/mobile/assets/favicon.png");
   copyAsset("adaptive.png", "clients/mobile/assets/adaptive-icon.png");
   copyAsset("mobile.png", "clients/mobile-app/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png");
   for (const density of ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"]) {
     for (const name of ["ic_launcher", "ic_launcher_round", "ic_launcher_foreground"]) {
-      copyAsset(`${density}-${name}.png`, `clients/mobile-app/android/app/src/main/res/mipmap-${density}/${name}.png`);
+      for (const client of ["mobile-app", "native"]) {
+        copyAsset(`${density}-${name}.png`, `clients/${client}/android/app/src/main/res/mipmap-${density}/${name}.png`);
+      }
     }
   }
   console.log("Desktop, shared, Expo, iOS, and Android icons updated from assets/app-icon-source.png.");

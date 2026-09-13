@@ -11,8 +11,7 @@
   "fanAngle": 228,
   "fanSpread": 18,
   "fanGap": 52,
-  "bodyDepth": 0.55,
-  "markOpacity": 0.88,
+  "markOpacity": 1,
   "marks": [
     {
       "length": 92,
@@ -34,7 +33,9 @@
     }
   ],
   "background": "#ffffff",
-  "bodyColor": "#b8f2fc",
-  "eyeColor": "#005cff",
-  "markColor": "#32b5fa"
+  "bodyColor": "#353637",
+  "eyeColor": "#ffffff",
+  "markColor": "#101112",
+  "bodyHighlight": "#454647",
+  "bodyShadow": "#242526"
 }
