@@ -2530,8 +2530,10 @@
 
 .process-surface-summary-line {
   display: flex;
-  flex: 1 1 auto;
-  width: 0;
+  /* Size to the summary content so the fold chevron follows the text
+     instead of being pushed to the row's far edge. Shrinking still goes
+     through min-width: 0, so the ellipsis on the summary text is intact. */
+  flex: 0 1 auto;
   min-width: 0;
   align-items: center;
   gap: 0;
@@ -2758,12 +2760,8 @@
 .turn-reasoning-summary-text.is-live-gray {
   display: inline-flex;
   align-items: baseline;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-}
-
-.turn-reasoning-summary-text.is-live-gray + .turn-reasoning-chevron {
-  margin-inline-start: auto;
 }
 
 :root[data-renderer-hidden] .turn-process-live-dot,
@@ -3745,7 +3743,8 @@
 }
 
 .turn-reasoning-summary-text {
-  flex: 1 1 auto;
+  /* Keep the chevron next to the label, matching the process surface row. */
+  flex: 0 1 auto;
   min-width: 0;
 }
 
