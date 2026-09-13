@@ -56,7 +56,7 @@ async function mount(invokeRuntime: InvokeRuntime) {
     });
   };
   const button = (label: string) => {
-    const result = [...container.querySelectorAll("button")].find((node) => node.textContent === label);
+    const result = [...container.querySelectorAll("button")].find((node) => (node.getAttribute("aria-label") || node.textContent) === label);
     expect(result).toBeDefined();
     return result!;
   };
@@ -110,8 +110,8 @@ it("exposes live controls above the composer and removes them with the plugin", 
   expect(invoke).toHaveBeenCalledTimes(calls);
 });
 
-it("creates and clears a goal from the direct entry, restoring focus after submission", async () => {
-  let goal: Goal | null = null;
+it("creates a new goal after completion and hides controls after ending it", async () => {
+  let goal: Goal | null = { ...activeGoal, status: "complete" };
   const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => {
     const input = request.input as { objective?: string };
     if (request.method === "create_goal") goal = { ...activeGoal, objective: input.objective! };
@@ -134,10 +134,9 @@ it("creates and clears a goal from the direct entry, restoring focus after submi
   expect(ui.container.querySelector("textarea")).toBeNull();
   expect(document.activeElement).toBe(ui.container.querySelector("button[aria-expanded]"));
 
-  await ui.expand();
-  await ui.click("清除目标");
+  await ui.click("结束目标");
   expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "clear", input: { thread_id: "thread-one" } }));
-  expect(ui.container.textContent).not.toContain("Ship the mobile UI");
+  expect(ui.container.textContent).toBe("");
 });
 
 it("refreshes completed usage when settlement arrives after the terminal event", async () => {
@@ -174,7 +173,7 @@ it("discards stale reads and shows runtime errors even when collapsed", async ()
 
 it("scopes the direct entry to an editable main conversation", async () => {
   const invoke = vi.fn(async (request: Parameters<InvokeRuntime>[0]) => ({
-    goal: (request.input as { thread_id: string }).thread_id === "thread-two" ? activeGoal : null,
+    goal: (request.input as { thread_id: string }).thread_id === "thread-two" ? activeGoal : { ...activeGoal, status: "complete" },
   }));
   const ui = await mount(invoke);
   await ui.expand();
@@ -183,6 +182,24 @@ it("scopes the direct entry to an editable main conversation", async () => {
   await ui.render("thread-two", { readOnly: true });
   expect(ui.container.querySelector("textarea")).toBeNull();
   expect(ui.button("暂停").disabled).toBe(true);
+  expect(ui.button("结束目标").disabled).toBe(true);
   await ui.render("thread-side", { mainConversation: false });
   expect(ui.container.textContent).toBe("");
+});
+
+
+it("keeps ordinary conversations empty until a goal is created", async () => {
+  let goal: Goal | null = null;
+  const ui = await mount(async () => ({ goal }));
+  expect(ui.container.textContent).toBe("");
+  expect(ui.container.querySelector("section")).toBeNull();
+
+  goal = activeGoal;
+  await act(async () => {
+    ui.host.publishHostEvent({ kind: "notification", message: { method: "turn/completed" } });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(ui.container.textContent).toContain(activeGoal.objective);
+  expect(ui.button("结束目标").disabled).toBe(false);
 });
