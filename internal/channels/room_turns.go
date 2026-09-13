@@ -166,6 +166,22 @@ func advanceRoomTurnTx(ctx context.Context, tx *sql.Tx, t roomTurn, now int64) (
 		if len(t.members) == 0 {
 			break
 		}
+		// An identity may still be working on an earlier request, in this room
+		// or another. Let an available peer speak first without removing the
+		// busy member's turn. If everyone is busy, retain the ordinary queue.
+		for index := t.next; index < len(t.members); index++ {
+			var busy bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM collaboration_session_bindings WHERE principal_id=? AND state IN ('queued','starting','running'))`, t.members[index]).Scan(&busy); err != nil {
+				return nil, err
+			}
+			if busy {
+				continue
+			}
+			member := t.members[index]
+			copy(t.members[t.next+1:index+1], t.members[t.next:index])
+			t.members[t.next] = member
+			break
+		}
 		member := t.members[t.next]
 		t.next++
 		if err := requireRoomPrincipalAccessTx(ctx, tx, t.roomID, member); errors.Is(err, ErrUnauthorized) {
@@ -229,7 +245,7 @@ func (s *Service) RoomTurnPrompt(ctx context.Context, deliveryID string) (string
 	if err != nil {
 		return "", err
 	}
-	messages, err := s.ListMessageWindow(ctx, RoomHistoryQuery{RoomID: roomID, Limit: 24})
+	messages, err := s.ListMessageWindow(ctx, RoomHistoryQuery{RoomID: roomID, Limit: 24, Latest: true})
 	if err != nil {
 		return "", err
 	}
