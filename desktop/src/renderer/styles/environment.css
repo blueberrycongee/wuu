@@ -1577,24 +1577,21 @@
   align-items: flex-start;
   gap: 12px;
   width: 100%;
-  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--paper);
+  background: transparent;
   color: var(--ink);
   text-align: left;
   padding: 14px;
   cursor: pointer;
-  transition: border-color var(--menu-enter-duration) var(--menu-enter-easing),
-    background var(--menu-enter-duration) var(--menu-enter-easing);
+  transition: background var(--menu-enter-duration) var(--menu-enter-easing);
 }
 
 .fork-dialog-option:hover:not(:disabled) {
-  border-color: var(--hairline-strong);
-  background: var(--surface-1);
+  background: var(--surface-2);
 }
 
 .fork-dialog-option:active:not(:disabled) {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .fork-dialog-option:focus-visible {
@@ -1608,7 +1605,7 @@
 }
 
 .fork-dialog-option.is-busy {
-  border-color: var(--hairline-strong);
+  background: var(--surface-2);
 }
 
 .fork-dialog-option-icon {
