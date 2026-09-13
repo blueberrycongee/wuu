@@ -28,7 +28,11 @@ export const enUS = {
   "channels.continuity.state.cancelled": "Cancelled",
   "channels.continuity.state.blocked": "Needs attention",
 
-  "agentOnboarding.selectBeforeChat": "Choose a model so we can start chatting.",
+  "agentOnboarding.selectBeforeChat": "Choose a model for me.",
+  "agentOnboarding.useModel": "Use this model",
+  "agentOnboarding.askName": "What would you like to call me?",
+  "agentOnboarding.randomName": "Pick a name",
+  "agentOnboarding.randomNames": "Mochi|Maple|Pip|Clover|Milo|Pebble|Sunny|Bean",
   "agentOnboarding.startChat": "Start chatting",
   "agentOnboarding.chooseModelFirst": "Choose a model first",
   "agentOnboarding.uploadImage": "Upload image",

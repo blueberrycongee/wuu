@@ -509,12 +509,11 @@ describe("ChannelView", () => {
     act(() => root?.render(<ChannelView />));
     await settle();
 
-    expect(container.querySelector(".channel-empty-action")?.textContent).toBe("新建对话");
     expect(container.querySelector(".channel-conversation-footer")).toBeNull();
     expect(container.querySelector(".channel-composer")).toBeNull();
     expect(container.querySelector(".channel-room-members-button")).toBeNull();
     expect(container.querySelector(".channel-sessions-launcher")).toBeNull();
-    await act(async () => container.querySelector<HTMLButtonElement>(".channel-empty-action")?.click());
+    await act(async () => root?.render(<ChannelView newRoomRequest={1} />));
     expect(container.querySelector(".channel-recipient-picker")).not.toBeNull();
     expect(container.querySelector(".channel-new-room-surface")).not.toBeNull();
     expect(container.querySelector<HTMLButtonElement>(".channel-new-room-surface .composer-send-button")?.disabled).toBe(true);
@@ -522,12 +521,12 @@ describe("ChannelView", () => {
     expect(api.createNamedAgent).not.toHaveBeenCalled();
   });
 
-  it.each(["rooms", "agents"] as const)("opens the shared Agent onboarding from an empty %s directory", async (section) => {
+  it("opens the shared Agent onboarding from an empty agent directory", async () => {
     const api = createApi();
     const onCreateAgent = vi.fn();
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
-    act(() => root?.render(<ChannelView section={section} directoryAgents={[]} directoryRooms={[]} onCreateAgent={onCreateAgent} />));
+    act(() => root?.render(<ChannelView section="agents" directoryAgents={[]} directoryRooms={[]} onCreateAgent={onCreateAgent} />));
     await settle();
     const create = container.querySelector<HTMLButtonElement>(".channel-start-empty button");
     expect(create).not.toBeNull();
@@ -548,37 +547,53 @@ describe("ChannelView", () => {
     api.listNamedAgents = vi.fn(async () => ({ agents: storedAgents }));
     api.listChannelRooms = vi.fn(async () => ({ rooms: storedRooms }));
     api.createNamedAgent = vi.fn(async () => { storedAgents = [createdAgent]; return { agent: createdAgent }; });
-    api.openChannelDirectMessage = vi.fn().mockRejectedValueOnce(new Error("Room temporarily unavailable")).mockImplementation(async () => {
+    api.openChannelDirectMessage = vi.fn().mockRejectedValueOnce(new Error("Room temporarily unavailable")).mockImplementation(async (params) => {
+      directRoom.onboarding = params.onboarding;
       storedRooms = [directRoom];
       return { room: directRoom };
     });
     const initialized = { provider: "openai", model: "gpt-reasoner", providers: [{ name: "openai", type: "openai", api_key_configured: true, model: "gpt-reasoner", models: [{ id: "gpt-reasoner", supported_efforts: ["low", "high"], default_effort: "low" }] }] } as InitializeResult;
+    const reduced = new EventTarget();
+    Object.assign(reduced, { matches: true });
+    vi.spyOn(window, "matchMedia").mockReturnValue(reduced as MediaQueryList);
     const onSelectRoom = vi.fn();
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
-    act(() => root?.render(<WuuUIRoot><ChannelView initialized={initialized} onSelectRoom={onSelectRoom} /></WuuUIRoot>));
+    act(() => root?.render(<WuuUIRoot><ChannelView section="agents" initialized={initialized} onSelectRoom={onSelectRoom} /></WuuUIRoot>));
     await settle();
     await act(async () => container.querySelector<HTMLButtonElement>(".channel-start-empty button")?.click());
     const dialog = document.querySelector('[data-wuu-component="agent-onboarding"]')!;
     expect(dialog).not.toBeNull();
-    act(() => setInputValue(dialog.querySelector<HTMLInputElement>('[name="agent-name"]')!, "Researcher"));
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[data-action="confirm-model"]')?.click());
+    act(() => setInputValue(dialog.querySelector<HTMLTextAreaElement>("textarea")!, "Researcher"));
     expect(api.createNamedAgent).not.toHaveBeenCalled();
-    await act(async () => dialog.querySelector<HTMLFormElement>("form")?.requestSubmit());
+    await act(async () => dialog.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
     await settle();
     expect(api.createNamedAgent).toHaveBeenCalledOnce();
     expect(api.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Researcher", provider_override: "openai", model_override: "gpt-reasoner", effort_override: "low", request_id: expect.any(String) }));
     expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("Room temporarily unavailable");
     expect(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")?.disabled).toBe(true);
 
-    await act(async () => dialog.querySelector<HTMLFormElement>("form")?.requestSubmit());
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[data-action="submit"]')?.click());
     await settle();
     expect(api.createNamedAgent).toHaveBeenCalledOnce();
     expect(api.openChannelDirectMessage).toHaveBeenCalledTimes(2);
-    expect(api.openChannelDirectMessage).toHaveBeenLastCalledWith({ agent_id: createdAgent.id });
+    expect(api.openChannelDirectMessage).toHaveBeenLastCalledWith({ agent_id: createdAgent.id, onboarding: expect.objectContaining({ name: createdAgent.name }) });
     expect(document.querySelector('[data-wuu-component="agent-onboarding"]')).toBeNull();
     expect(onSelectRoom).toHaveBeenCalledWith(directRoom.id);
+    await act(async () => root?.render(<WuuUIRoot><ChannelView section="rooms" initialized={initialized} onSelectRoom={onSelectRoom} /></WuuUIRoot>));
     expect(container.querySelector(".channel-room-header")?.textContent).toContain("Researcher");
+    const historyBubbles = Array.from(container.querySelectorAll(".channel-message-stream .chat-bubble"));
+    expect(historyBubbles.map(bubble => bubble.textContent)).toEqual([
+      expect.stringContaining("gpt-reasoner"), directRoom.onboarding?.name_prompt, "Researcher",
+    ]);
+    await act(async () => root?.unmount());
+    root = createRoot(container);
+    await act(async () => root?.render(<WuuUIRoot><ChannelView section="rooms" selectedRoomID={directRoom.id} initialized={initialized} /></WuuUIRoot>));
+    await settle();
+    expect(container.querySelector(".channel-message-stream")?.textContent).toContain(directRoom.onboarding!.name_prompt);
     expect(container.querySelector(".channel-conversation-footer")).not.toBeNull();
+    vi.restoreAllMocks();
   });
 
   it("marks the selected room as read", async () => {

@@ -1,3 +1,4 @@
+import type { ChannelRoomOnboarding } from "../shared/protocol";
 import { subscribeServerEvents } from "./ServerEvents";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { AccountScreen } from "./AccountScreen";
@@ -3483,7 +3484,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function openCollaborationAgentConversation(agentID: string): Promise<void> {
+  async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding): Promise<void> {
     selectedCollaborationAgentRequestRef.current = agentID;
     setSelectedCollaborationAgentID(agentID);
     setCollaborationSection("rooms");
@@ -3498,7 +3499,7 @@ export function App(): JSX.Element {
       setSelectedChannelRoomIDState(existingDirectMessage.id);
       clearChannelRoomUnread(existingDirectMessage.id);
     }
-    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID });
+    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) });
     setChannelRooms((current) => {
       const existing = current.findIndex((room) => room.id === result.room.id);
       if (existing < 0) return [...current, result.room];
@@ -5424,7 +5425,7 @@ export function App(): JSX.Element {
                     : [...current, agent]);
                   return agent;
                 }}
-                onOpenConversation={(agent) => openCollaborationAgentConversation(agent.id)}
+                onOpenConversation={(agent, onboarding) => openCollaborationAgentConversation(agent.id, onboarding)}
                 onManageProviders={openAgentProviderSettings}
                 onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
               />

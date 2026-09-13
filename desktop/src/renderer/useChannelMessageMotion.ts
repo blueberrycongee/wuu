@@ -8,7 +8,7 @@ export function useChannelMessageMotion(
   scrollRef: RefObject<HTMLDivElement | null>,
   roomID: string,
   ready: boolean,
-  messages: readonly ChannelMessage[],
+  messages: readonly Pick<ChannelMessage, "id" | "seq">[],
   pendingID?: string,
 ): (pendingID: string, messageID: string) => void {
   const previous = useRef({ roomID, ready: false, seq: 0, rows: new Map<string, Arrival>() });

@@ -1,3 +1,4 @@
+import type { MascotMorph } from "./useMascotMorph";
 import { useEffect, useId, useRef, useState, type CSSProperties, type JSX } from "react";
 import { SHAPES } from "blobatar/blob";
 import { AVATAR_HUES } from "./DefaultAvatar";
@@ -124,7 +125,8 @@ export function agentAvatarConfig(value: string): AgentAvatarConfig {
   return DEFAULT_AGENT_AVATAR_CONFIG;
 }
 
-export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "expressive", turnSignal = 0 }: {
+export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "expressive", turnSignal = 0, morph }: {
+  morph?: MascotMorph;
   seed: string;
   avatarKey: string;
   avatarImage?: string;
@@ -145,6 +147,7 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle",
       data-agent-avatar-turn={turn || undefined} style={{ "--agent-avatar-hue": config.hue, "--agent-turn-duration": `${AGENT_TURN_MS}ms` } as CSSProperties} aria-hidden="true">
       {turn ? <AgentAvatarRibbon key={`rear-${turn}`} front={false} /> : null}
       {avatarImage ? <img className="agent-avatar-image" src={avatarImage} alt="" draggable={false} /> : <WuuMascot
+        morph={morph}
         identityName={`agent-avatar:${avatarKey}`}
         identityHue={config.hue}
         identityTraits={{ ...WUU_MASCOT_TRAITS, shape: shape.trait }}

@@ -1191,21 +1191,6 @@
   font-size: 13px;
 }
 
-.channel-onboarding {
-  display: flex;
-  flex: 1;
-  min-height: 120px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 12px;
-  padding: 24px 0;
-  text-align: center;
-}
-.channel-onboarding-members { display: flex; gap: 6px; }
-.channel-onboarding-members .agent-avatar-mark { width: 32px; height: 32px; }
-.channel-onboarding p { margin: 0; color: var(--text-secondary); font-size: 13px; }
-
 .channel-conversation-footer {
   --channel-composer-bottom-space: 12px;
   --channel-composer-radius: 24px;
@@ -3305,13 +3290,6 @@
 .channel-room-members-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-room-members-button:hover { background: var(--ink-overlay-4); color: var(--text-primary); }
 .channel-room-members-button svg { width: 12px; height: 12px; flex-shrink: 0; color: var(--text-secondary); }
-
-.channel-room-main-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 48px 20px;
-}
 
 .channel-start-empty {
   display: flex;

@@ -205,10 +205,22 @@ type RoomMember struct {
 	JoinedAt   time.Time  `json:"joined_at"`
 }
 
+// RoomOnboarding preserves the completed introduction independently of later agent edits.
+type RoomOnboarding struct {
+	ModelPrompt string `json:"model_prompt"`
+	NamePrompt  string `json:"name_prompt"`
+	Name        string `json:"name"`
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort,omitempty"`
+	AvatarKey   string `json:"avatar_key"`
+}
+
 type Room struct {
-	ID   string   `json:"id"`
-	Kind RoomKind `json:"kind"`
-	Name string   `json:"name"`
+	Onboarding *RoomOnboarding `json:"onboarding,omitempty"`
+	ID         string          `json:"id"`
+	Kind       RoomKind        `json:"kind"`
+	Name       string          `json:"name"`
 	// RuntimeID is internal routing state, not a participant identity.
 	RuntimeID string `json:"-"`
 	// AgentID is a source-compatible internal alias for migrations and tests.

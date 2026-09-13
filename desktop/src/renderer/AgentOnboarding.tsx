@@ -1,15 +1,19 @@
-import { ArrowRight, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ChannelAgentCreateParams, InitializeResult, NamedAgent, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
+import { ArrowRight, Shuffle, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { ChannelRoomOnboarding, ChannelAgentCreateParams, InitializeResult, NamedAgent, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
-import { ChannelComposer } from "./ChannelComposer";
-import { effortLabel, providerModelEffortOptions, providerModelReasoningMode } from "./RuntimeHelpers";
+import { AgentOnboardingAvatar, AGENT_BUBBLE_DELAY_MS } from "./AgentOnboardingAvatar";
+import { useChannelMessageMotion } from "./useChannelMessageMotion";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
+import { providerModelVariantOptions } from "./RuntimeHelpers";
 import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
-import { SelectMenu } from "./SelectMenu";
+import { RuntimeModelMenu } from "./ComposerRuntimeMenus";
 import { useI18n } from "./i18n";
 import "./styles/agent-onboarding.css";
 
 export type AgentOnboardingDraft = {
+  step?: "model" | "name";
   name: string;
   role: string;
   avatarKey: string;
@@ -27,7 +31,7 @@ type AgentOnboardingProps = {
   initialized?: InitializeResult;
   navigation?: ReactNode;
   onCreate: (params: ChannelAgentCreateParams) => Promise<NamedAgent>;
-  onOpenConversation: (agent: NamedAgent) => Promise<void>;
+  onOpenConversation: (agent: NamedAgent, onboarding: ChannelRoomOnboarding) => Promise<void>;
   onManageProviders?: () => void;
   onClose: () => void;
 };
@@ -63,8 +67,7 @@ function modelEffort(provider: ProviderSummary | undefined, modelID: string, pre
 }
 
 function effortsFor(provider: ProviderSummary | undefined, modelID: string): string[] {
-  const options = providerModelEffortOptions(provider, modelID, "");
-  return providerModelReasoningMode(provider, modelID) === "levels" ? options.filter(Boolean) : options;
+  return providerModelVariantOptions(provider, modelID, "");
 }
 
 function initialModel(initialized?: InitializeResult): Pick<AgentOnboardingDraft, "provider" | "model" | "effort"> {
@@ -91,6 +94,26 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
   const { t } = useI18n();
   const [busy, setBusy] = useState<"creating" | "opening" | null>(null);
   const [error, setError] = useState("");
+  const [intro, setIntro] = useState(() => prefersReducedMotion() ? 2 : 1);
+  const [sentName, setSentName] = useState(draft.createdAgent?.name ?? "");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<ChannelComposerHandle>(null);
+  const step = draft.step ?? "model";
+  const arrivals = useMemo(() => [
+    ...(intro >= 2 ? [{ id: "model", seq: 1 }] : []),
+    ...(step === "name" ? [{ id: "name", seq: 2 }] : []),
+    ...(sentName ? [{ id: "answer", seq: 3 }] : []),
+  ], [intro, step, sentName]);
+  useChannelMessageMotion(scrollRef, "agent-onboarding", true, arrivals);
+  useEffect(() => {
+    if (prefersReducedMotion()) return;
+    const bubble = window.setTimeout(() => setIntro(2), AGENT_BUBBLE_DELAY_MS);
+    return () => { window.clearTimeout(bubble); };
+  }, []);
+  useEffect(() => {
+    if (step === "name") composerRef.current?.focus();
+    scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight });
+  }, [step, sentName]);
   const panelRef = useRef<HTMLElement>(null);
   const draftRef = useRef(draft);
   const pendingRef = useRef(false);
@@ -99,7 +122,6 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
   const provider = providers.find((item) => item.name === draft.provider);
   const models = modelsFor(provider);
   const model = models.find((item) => item.id === draft.model);
-  const reasoning = providerModelReasoningMode(provider, draft.model);
   const efforts = effortsFor(provider, draft.model);
   const locked = Boolean(busy || draft.createdAgent);
   const canCreate = Boolean(provider && model && efforts.includes(draft.effort));
@@ -121,7 +143,8 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
   }, [initialized, draft.provider, draft.createdAgent]);
 
   useEffect(() => {
-    panelRef.current?.focus();
+    if (step === "name") composerRef.current?.focus();
+    else panelRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -131,6 +154,8 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
   async function submit(): Promise<void> {
     if (pendingRef.current) return;
     if (!draft.createdAgent && !canCreate) return;
+    const name = draftRef.current.name.trim() || t("channels.newAgent");
+    setSentName(name);
     pendingRef.current = true;
     setError("");
     let agent = draftRef.current.createdAgent;
@@ -140,7 +165,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
         const current = draftRef.current;
         agent = await onCreate({
           request_id: current.requestId,
-          name: current.name.trim() || t("channels.newAgent"), role: current.role.trim(),
+          name, role: current.role.trim(),
           avatar_key: current.avatarKey, avatar_image: current.avatarImage || undefined,
           engine_override: "wuu", provider_override: current.provider,
           model_override: current.model, effort_override: current.effort,
@@ -151,7 +176,15 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
         onDraftChange(next);
       }
       setBusy("opening");
-      await onOpenConversation(agent);
+      // Let the shared outgoing entrance finish before replacing the setup stream.
+      if (!prefersReducedMotion()) await new Promise(resolve => window.setTimeout(resolve, motionDurationMs("--motion-slow", 280)));
+      await onOpenConversation(agent, {
+        model_prompt: t("agentOnboarding.selectBeforeChat"),
+        name_prompt: t("agentOnboarding.askName"),
+        name: agent.name, provider: draftRef.current.provider,
+        model: model?.display_name || draftRef.current.model, effort: draftRef.current.effort,
+        avatar_key: draftRef.current.avatarKey,
+      });
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("agentOnboarding.unexpectedError"));
@@ -164,47 +197,60 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
   return <section className="channel-view channel-mode-rooms agent-onboarding" data-wuu-component="agent-onboarding" aria-label={t("channels.newAgent")} tabIndex={-1} ref={panelRef}>
     <header className="titlebar channel-room-header" data-wuu-component="conversation-titlebar">
       {navigation}
-      <span className="channel-room-header-avatar"><AgentAvatarMark seed={draft.requestId} avatarKey={draft.avatarKey} /></span>
-      <input className="agent-onboarding-name" name="agent-name" aria-label={t("agentOnboarding.name")} value={draft.name} placeholder={t("channels.newAgent")} onChange={(event) => update({ name: event.currentTarget.value })} disabled={locked} />
+      <span className="agent-onboarding-name">{sentName || t("channels.newAgent")}</span>
       <button type="button" className="icon-button" data-action="close" aria-label={t("agentOnboarding.cancel")} onClick={() => { if (!pendingRef.current) onClose(); }} disabled={Boolean(busy)}><X size={18} /></button>
     </header>
-    <div className="agent-onboarding-scroll">
-      <MessageBubbleRow outgoing={false} className="channel-message agent" contentClassName="channel-message-content"
-        avatar={<AgentAvatarMark seed={draft.requestId} avatarKey={draft.avatarKey} status={busy ? "thinking" : "idle"} />}
-        meta={<div className="channel-message-meta"><strong className="agent-onboarding-author">{draft.name.trim() || t("channels.newAgent")}</strong></div>}>
+    <div className="agent-onboarding-scroll" ref={scrollRef}>
+      <div className="agent-onboarding-first-message">
+      {intro >= 1 ? <div className="agent-onboarding-intro-avatar"><AgentOnboardingAvatar avatarKey={draft.avatarKey} /></div> : null}
+      {intro >= 2 ? <MessageBubbleRow messageID="model" outgoing={false} className="channel-message agent" contentClassName="channel-message-content"
+
+        >
         <MessageBubble outgoing={false} className="agent-onboarding-bubble">
-          <form className="agent-onboarding-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+          <form className="agent-onboarding-form" onSubmit={(event) => { event.preventDefault(); if (canCreate && !locked) update({ step: "name" }); }}>
             <p className="agent-onboarding-prompt">{t(providers.length ? "agentOnboarding.selectBeforeChat" : "agentOnboarding.noProviders")}</p>
             {providers.length > 0 ? <>
-              <SelectMenu dataField="agent-model" className="agent-onboarding-model" triggerClassName="agent-onboarding-model-trigger"
-                value={`${draft.provider}\u0000${draft.model}`} ariaLabel={t("agentOnboarding.model")} placeholder={t("agentOnboarding.chooseModel")}
-                disabled={locked} searchable flip groups={providers.map((item) => ({
-                  label: item.name,
-                  options: modelsFor(item).map((candidate) => ({ value: `${item.name}\u0000${candidate.id}`, label: candidate.display_name || candidate.id, keywords: [item.name, candidate.id] })),
-                }))} onChange={(value) => {
-                  const [providerName, modelID] = value.split("\u0000");
-                  const nextProvider = providers.find((item) => item.name === providerName);
-                  update({ provider: providerName, model: modelID, effort: modelEffort(nextProvider, modelID, providerName === draft.provider && modelID === draft.model ? draft.effort : "") });
-                }} />
-              {model && reasoning !== "off" ? <div className="agent-onboarding-effort">
-                <span>{t("agentOnboarding.effort")}</span>
-                <SelectMenu dataField="agent-effort" value={draft.effort} ariaLabel={t("agentOnboarding.effort")} disabled={locked}
-                  options={efforts.map((value) => ({ value, label: reasoning === "toggle" ? t(value === "none" ? "agentOnboarding.thinkingOff" : "agentOnboarding.thinkingOn") : value ? effortLabel(value) : t("agentOnboarding.modelDefault") }))}
-                  onChange={(value) => update({ effort: value })} />
-              </div> : null}
+              <fieldset className="agent-onboarding-runtime" disabled={locked} inert={locked}>
+                <RuntimeModelMenu
+                  initialized={{ ...initialized!, providers, provider: draft.provider, model: draft.model, effort: draft.effort, variant: draft.effort }}
+                  state={{ loading: false, error: "", models: [] }}
+                  selectedProvider={draft.provider} selectedModel={draft.model} selectedVariant={draft.effort}
+                  embedded hideEngine compactSummary hideHandoff engineOptions={[]} selectedEngine="wuu" engineLocked running={locked}
+                  onSelectEngine={() => {}}
+                  onSelectModel={(providerName, modelID, effort) => {
+                    const nextProvider = providers.find(item => item.name === providerName);
+                    update({ provider: providerName, model: modelID, effort: effort ?? modelEffort(nextProvider, modelID) });
+                  }}
+                  onSelectEffort={(effort) => update({ effort })}
+                />
+              </fieldset>
               {!provider || !model || !efforts.includes(draft.effort) ? <p className="agent-onboarding-error" role="status">{t("agentOnboarding.selectionUnavailable")}</p> : null}
             </> : null}
-            {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span></div> : null}
+
             <footer className="agent-onboarding-footer">
               {onManageProviders ? <button type="button" className={providers.length ? "agent-onboarding-manage" : "agent-onboarding-submit"} data-action="manage-providers" onClick={() => { if (!pendingRef.current) onManageProviders(); }} disabled={locked}>{t(providers.length ? "agentOnboarding.manageProviders" : "agentOnboarding.addProvider")}</button> : null}
-              {providers.length > 0 || draft.createdAgent ? <button type="submit" className="agent-onboarding-submit" data-action="submit" disabled={Boolean(busy) || (!draft.createdAgent && !canCreate)}>{busy === "creating" ? t("agentOnboarding.creating") : busy === "opening" ? t("agentOnboarding.opening") : draft.createdAgent ? t("agentOnboarding.openConversation") : t("agentOnboarding.startChat")} {!busy ? <ArrowRight size={14} /> : null}</button> : null}
+              {providers.length > 0 && step === "model" ? <button type="submit" className="agent-onboarding-submit" data-action="confirm-model" disabled={locked || !canCreate}>{t("agentOnboarding.useModel")} <ArrowRight size={14} /></button> : null}
             </footer>
           </form>
         </MessageBubble>
-      </MessageBubbleRow>
+      </MessageBubbleRow> : null}
+      </div>
+      {step === "name" ? <MessageBubbleRow messageID="name" outgoing={false} className="channel-message agent" contentClassName="channel-message-content" avatar={<AgentAvatarMark seed="draft-agent" avatarKey={draft.avatarKey} />}>
+        <MessageBubble outgoing={false} className="channel-message-bubble">
+          <p className="agent-onboarding-name-prompt">{t("agentOnboarding.askName")}</p>
+          {!locked ? <button type="button" className="agent-onboarding-manage" data-action="random-name" onClick={() => {
+            const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
+            const value = crypto.getRandomValues(new Uint32Array(1))[0];
+            update({ name: names[value % names.length] });
+            composerRef.current?.focus();
+          }}><Shuffle size={14} />{t("agentOnboarding.randomName")}</button> : null}
+        </MessageBubble>
+      </MessageBubbleRow> : null}
+      {sentName ? <MessageBubbleRow messageID="answer" outgoing className="channel-message own" contentClassName="channel-message-content"><MessageBubble outgoing className="channel-message-bubble">{sentName}</MessageBubble></MessageBubbleRow> : null}
+      {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span><button type="button" className="agent-onboarding-manage" data-action="submit" onClick={() => void submit()} disabled={Boolean(busy)}>{t("agentOnboarding.openConversation")}</button></div> : null}
     </div>
-    <div className="channel-conversation-footer">
-      <ChannelComposer draft="" placeholder={t("agentOnboarding.chooseModelFirst")} compact disabled sending={false} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={() => {}} onSend={() => {}} />
-    </div>
+    {step === "name" ? <div className="channel-conversation-footer">
+      <ChannelComposer allowAttachments={false} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
+    </div> : null}
   </section>;
 }

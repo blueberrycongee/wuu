@@ -805,7 +805,18 @@ export type ChannelRoomMember = {
   joined_at: string;
 };
 
+export type ChannelRoomOnboarding = {
+  model_prompt: string;
+  name_prompt: string;
+  name: string;
+  provider: string;
+  model: string;
+  effort?: string;
+  avatar_key: string;
+};
+
 export type ChannelRoom = {
+  onboarding?: ChannelRoomOnboarding;
   id: string;
   kind: "channel" | "dm";
   name: string;
@@ -1137,7 +1148,10 @@ export type ChannelRoomCreateParams = {
   agent_ids?: string[];
 };
 export type ChannelRoomCreateResult = { room: ChannelRoom };
-export type ChannelDirectMessageOpenParams = { agent_id: string };
+export type ChannelDirectMessageOpenParams = {
+  agent_id: string;
+  onboarding?: ChannelRoomOnboarding;
+};
 export type ChannelDirectMessageOpenResult = { room: ChannelRoom };
 export type ChannelRoomUpdateParams = {
   room_id: string;

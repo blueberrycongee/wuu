@@ -127,6 +127,7 @@ function sameChannelRoom(
     (current.unread_count ?? 0) === (incoming.unread_count ?? 0) &&
     (current.activity_status ?? "idle") === (incoming.activity_status ?? "idle") &&
     sameSerialized(current.last_message, incoming.last_message) &&
+    sameSerialized(current.onboarding, incoming.onboarding) &&
     current.members.length === incoming.members.length &&
     current.members.every((member, index) =>
       sameChannelRoomMember(member, incoming.members[index]),

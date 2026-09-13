@@ -1,3 +1,4 @@
+import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { hostSupports } from "./HostCapabilities";
 import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "lucide-react";
 import { Fragment, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -1752,8 +1753,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           setAgents((current) => [...current.filter((entry) => entry.id !== agent.id), agent]);
           return agent;
         }}
-        onOpenConversation={async (agent) => {
-          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id });
+        onOpenConversation={async (agent, onboarding) => {
+          const { room } = await window.wuu!.openChannelDirectMessage({ agent_id: agent.id, onboarding });
           setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
           setSelectedAgentID("");
           openSessionRoom(room.id);
@@ -1830,14 +1831,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               />
             </div>
           </div> : null}
-          {!loading && rooms.length === 0 ? (
-            <div className="channel-room-main-empty channel-start-empty">
-              {agents.length === 0 ? <span className="channel-start-avatar" aria-hidden="true"><AgentAvatarMark seed="new-agent" avatarKey="abstract-3" /></span> : null}
-              <button className="channel-empty-action" type="button" onClick={agents.length === 0 ? openAgentOnboarding : openNewRoom}>
-                {t(agents.length === 0 ? "channels.newAgent" : "channels.newConversation")}
-              </button>
-            </div>
-          ) : null}
           <input
             ref={roomAvatarInputRef}
             className="channel-avatar-file-input"
@@ -1852,6 +1845,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           />
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
         <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
+          {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}
           {channelTimeline.map((item, index) => {
             if (item.kind === "orchestration" && selectedRoom) {
               return (
@@ -1992,12 +1986,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               <span className="channel-send-status" role="status">{t("channels.messageSending")}</span>
             </MessageBubbleRow>
           ) : null}
-          {!loading && loadedRoomIDs.has(selectedRoomID) && selectedRoom && channelTimeline.length === 0 && responses.length === 0 && !pendingMessage ? (
-            <div className="channel-onboarding">
-              <div className="channel-onboarding-members" aria-hidden="true">{selectedRoomAgents.map((agent) => <AgentAvatarMark key={agent.id} seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} />)}</div>
-              <p>{t("channels.empty")}</p>
-            </div>
-          ) : null}
+
         </div>
         {!(inspectedSession && inspectorOverlay) ? <JumpToLatestPill
           containerRef={messageScroll.scrollRef}

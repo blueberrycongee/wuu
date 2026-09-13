@@ -325,6 +325,10 @@ func (s *Service) migrate() error {
 			FOREIGN KEY (agent_id) REFERENCES named_agents(id) ON DELETE CASCADE,
 			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS room_onboarding (
+            room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+            payload_json TEXT NOT NULL
+        )`,
 		`CREATE TABLE IF NOT EXISTS room_messages (
 			id TEXT PRIMARY KEY,
 			room_id TEXT NOT NULL,
@@ -1759,6 +1763,16 @@ func (s *Service) GetRoom(ctx context.Context, id string) (Room, error) {
 	if err != nil {
 		return Room{}, fmt.Errorf("get room: %w", err)
 	}
+	var onboardingJSON string
+	onboardingErr := s.db.QueryRowContext(ctx, "SELECT payload_json FROM room_onboarding WHERE room_id = ?", id).Scan(&onboardingJSON)
+	if onboardingErr == nil {
+		room.Onboarding = &RoomOnboarding{}
+		if err := json.Unmarshal([]byte(onboardingJSON), room.Onboarding); err != nil {
+			return Room{}, fmt.Errorf("decode room onboarding: %w", err)
+		}
+	} else if !errors.Is(onboardingErr, sql.ErrNoRows) {
+		return Room{}, onboardingErr
+	}
 	room.CreatedAt = fromMillis(createdAt)
 	if preview.ID != "" {
 		preview.CreatedAt = fromMillis(messageCreatedAt)
@@ -2330,4 +2344,27 @@ func encodeMentions(mentions []string) (string, error) {
 		return "", fmt.Errorf("encode message mentions: %w", err)
 	}
 	return string(data), nil
+}
+
+// SaveRoomOnboarding retains the first completed introduction; retries cannot rewrite it.
+func (s *Service) SaveRoomOnboarding(ctx context.Context, roomID string, onboarding RoomOnboarding) (Room, error) {
+	room, err := s.GetRoom(ctx, roomID)
+	if err != nil {
+		return Room{}, err
+	}
+	if room.Kind != "dm" {
+		return Room{}, errors.New("onboarding requires a direct message")
+	}
+	payload, err := json.Marshal(onboarding)
+	if err != nil {
+		return Room{}, err
+	}
+	if len(payload) > 8192 || strings.TrimSpace(onboarding.Name) == "" {
+		return Room{}, errors.New("invalid onboarding")
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO room_onboarding (room_id, payload_json) VALUES (?, ?) ON CONFLICT(room_id) DO NOTHING", roomID, string(payload))
+	if err != nil {
+		return Room{}, fmt.Errorf("save room onboarding: %w", err)
+	}
+	return s.GetRoom(ctx, roomID)
 }

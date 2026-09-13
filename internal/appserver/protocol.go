@@ -2572,7 +2572,8 @@ type ChannelRoomCreateResult struct {
 }
 
 type ChannelDirectMessageOpenParams struct {
-	AgentID string `json:"agent_id"`
+	Onboarding *channels.RoomOnboarding `json:"onboarding,omitempty"`
+	AgentID    string                   `json:"agent_id"`
 }
 
 type ChannelDirectMessageOpenResult struct {

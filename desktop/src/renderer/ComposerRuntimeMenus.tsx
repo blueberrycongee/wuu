@@ -185,6 +185,8 @@ function RuntimePanelSummary({
   engine,
   provider,
   engineLocked,
+  hideEngine = false,
+  compactSummary = false,
   model,
   effortOptions,
   selectedEffort,
@@ -198,6 +200,8 @@ function RuntimePanelSummary({
   engine: string;
   provider?: string;
   engineLocked: boolean;
+  hideEngine?: boolean;
+  compactSummary?: boolean;
   model: string;
   effortOptions: string[];
   selectedEffort: string;
@@ -218,13 +222,13 @@ function RuntimePanelSummary({
   return (
     <div className="runtime-panel-summary">
       <div className="runtime-panel-context">
-        <button type="button" onClick={onOpenEngines}>
+        {!hideEngine ? <button type="button" onClick={onOpenEngines}>
           <span>{engineLabel(engine)}</span>
           {engineLocked ? <Lock aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-        </button>
+        </button> : null}
         {provider && onOpenProviders ? (
           <>
-            <span className="runtime-panel-context-separator" aria-hidden="true">/</span>
+            {!hideEngine ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
             <button type="button" onClick={onOpenProviders}>
               <span>{provider}</span>
               <ChevronRight aria-hidden="true" />
@@ -234,10 +238,11 @@ function RuntimePanelSummary({
       </div>
       <button type="button" className="runtime-panel-model" onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
-        <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
+        {!compactSummary ? <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span> : null}
         <ChevronRight aria-hidden="true" />
       </button>
       {effortOptions.length > 1 ? (
+        <div className={compactSummary ? "runtime-panel-effort-row" : undefined} style={compactSummary ? undefined : { display: "contents" }}>
         <EffortSelector
           options={effortOptions}
           selectedVariant={selectedEffort}
@@ -245,6 +250,8 @@ function RuntimePanelSummary({
           onPreviewEffort={setPreviewEffort}
           onSelectEffort={onSelectEffort}
         />
+        {compactSummary ? <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span> : null}
+        </div>
       ) : null}
       {onHandoff ? (
         <button type="button" className="runtime-panel-handoff" onClick={onHandoff}>
@@ -705,6 +712,8 @@ export function RuntimeModelMenu({
   forcedView,
   hideHandoff = false,
   embedded = false,
+  hideEngine = false,
+  compactSummary = false,
   onSelectProvider,
 }: {
   initialized: InitializeResult;
@@ -725,6 +734,8 @@ export function RuntimeModelMenu({
   forcedView?: RuntimePanelView;
   hideHandoff?: boolean;
   embedded?: boolean;
+  hideEngine?: boolean;
+  compactSummary?: boolean;
   onSelectProvider?: (providerId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -854,6 +865,8 @@ export function RuntimeModelMenu({
             engine={selectedEngine}
             provider={effectiveProviderName}
             engineLocked={engineLocked}
+            hideEngine={hideEngine}
+            compactSummary={compactSummary}
             model={effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveVariant}

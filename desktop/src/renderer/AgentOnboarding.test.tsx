@@ -1,9 +1,13 @@
+import { prefersReducedMotion } from "./motion";
+import { AGENT_BUBBLE_DELAY_MS } from "./AgentOnboardingAvatar";
 import { act, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import { agentAvatarConfig } from "./AgentAvatarMark";
+
+vi.mock("./motion", () => ({ prefersReducedMotion: vi.fn(() => true), motionDurationMs: () => 0 }));
 
 vi.mock("blobatar/react", () => ({ Blobatar: () => null }));
 
@@ -31,11 +35,13 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   vi.clearAllMocks();
+  vi.mocked(prefersReducedMotion).mockReturnValue(true);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 async function mount(overrides: Partial<ComponentProps<typeof AgentOnboarding>> = {}): Promise<{ create: ReturnType<typeof vi.fn>; open: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> {
@@ -57,23 +63,24 @@ function query<T extends Element = HTMLElement>(selector: string): T {
   return element!;
 }
 async function click(selector: string): Promise<void> {
-  await act(async () => query<HTMLElement>(selector).click());
+  await act(async () => query<HTMLElement>(selector === '[data-action="submit"]' && !document.querySelector(selector) ? ".composer-send-button" : selector).click());
 }
 async function type(name: string, value: string): Promise<void> {
-  const input = query<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`);
+  const input = query<HTMLInputElement | HTMLTextAreaElement>(name === "agent-name" ? ".channel-composer textarea" : `[name="${name}"]`);
   const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   await act(async () => {
     Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-async function choose(field: string, value: string): Promise<void> {
-  await click(`[data-field="${field}"]`);
-  const option = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.dataset.value === value || item.dataset.value === `${currentDraft.provider}\u0000${value}`);
+async function choose(_field: string, value: string): Promise<void> {
+  await click(".runtime-panel-model");
+  const option = [...document.querySelectorAll<HTMLButtonElement>(".codex-model-item")].find(item => item.querySelector(".codex-model-item-name")?.textContent === value);
   expect(option).toBeTruthy();
   await act(async () => option!.click());
 }
 async function next(): Promise<void> {
+  if (document.querySelector('[data-action="confirm-model"]')) await click('[data-action="confirm-model"]');
   await type("agent-name", "Ada");
 }
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
@@ -84,6 +91,31 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 }
 
 describe("AgentOnboarding", () => {
+  it("shows the avatar before the model bubble and reveals controls after the formation", async () => {
+    vi.useFakeTimers();
+    vi.mocked(prefersReducedMotion).mockReturnValue(false);
+    await mount();
+    expect(container.querySelector(".agent-onboarding-intro-avatar")).not.toBeNull();
+    expect(container.querySelector('.runtime-panel-model')).toBeNull();
+    await act(async () => vi.advanceTimersByTime(AGENT_BUBBLE_DELAY_MS));
+    expect(container.querySelector('.runtime-panel-model')).not.toBeNull();
+  });
+
+  it("lets a random name be rerolled and edited before any identity is created", async () => {
+    const { create } = await mount();
+    await click('[data-action="confirm-model"]');
+    await click('[data-action="random-name"]');
+    const first = currentDraft.name;
+    expect(first.trim()).not.toBe("");
+    await click('[data-action="random-name"]');
+    expect(currentDraft.name).not.toBe(first);
+    expect(create).not.toHaveBeenCalled();
+    await type("agent-name", "Ada");
+    await click('[data-action="submit"]');
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: "Ada" }));
+    expect(container.querySelector('[data-message-id="answer"]')?.textContent).toBe("Ada");
+  });
+
   it("can start and edit a draft in a LAN web context without randomUUID", async () => {
     vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
     const { create } = await mount();
@@ -93,10 +125,12 @@ describe("AgentOnboarding", () => {
     expect(create.mock.calls[0][0].request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
-  it("shows the model selector in the conversation and creates the selected identity without a naming step", async () => {
+  it("confirms the default model before accepting and creating a named identity", async () => {
     const { create, open, close } = await mount();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(query<HTMLTextAreaElement>(".channel-composer textarea").disabled).toBe(true);
+    expect(document.querySelector(".channel-composer textarea")).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    await next();
     const identity = { ...currentDraft };
     expect(agentAvatarConfig(identity.avatarKey).accessory).toBe("none");
     await click('[data-action="submit"]');
@@ -106,31 +140,32 @@ describe("AgentOnboarding", () => {
       provider_override: "primary", model_override: "reasoner", effort_override: "high",
     }));
     expect(create.mock.calls[0][0].name.length).toBeGreaterThan(0);
-    expect(open).toHaveBeenCalledExactlyOnceWith(agent);
+    expect(open).toHaveBeenCalledExactlyOnceWith(agent, expect.objectContaining({ name: agent.name, model: currentDraft.model }));
     expect(close).toHaveBeenCalledOnce();
   });
 
   it("switches to each model's supported effort and excludes unavailable providers", async () => {
     await mount();
     await next();
-    await click('[data-field="agent-model"]');
-    expect([...document.querySelectorAll('[role="menuitemradio"]')].some((item) => item.getAttribute("data-value")?.startsWith("not-connected"))).toBe(false);
-    await act(async () => query('[role="menu"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-
-    await choose("agent-model", "adaptive");
+    await click(".runtime-panel-context button");
+    expect(document.querySelector(".runtime-provider-options")?.textContent).not.toContain("not-connected");
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")].find(item => item.textContent === "primary")?.click());
+    await choose("model", "adaptive");
     expect(currentDraft.effort).toBe("max");
-    await click('[data-field="agent-effort"]');
-    expect([...document.querySelectorAll('[role="menuitemradio"]')].map((item) => item.getAttribute("data-value"))).toEqual(["medium", "max"]);
-    await click('[role="menuitemradio"][data-value="medium"]');
-    await choose("agent-model", "plain");
-    expect(currentDraft.effort).toBe("");
-    expect(document.querySelector('[data-field="agent-effort"]')).toBeNull();
-    await choose("agent-model", "toggle");
-    await choose("agent-effort", "none");
-    expect(currentDraft.effort).toBe("none");
-    await choose("agent-model", "secondary\u0000writer");
-    expect(currentDraft.model).toBe("writer");
+    const slider = query<HTMLInputElement>('input[type="range"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "1");
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => slider.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowLeft", bubbles: true })));
     expect(currentDraft.effort).toBe("medium");
+    await choose("model", "plain");
+    expect(currentDraft.effort).toBe("");
+    expect(document.querySelector('input[type="range"]')).toBeNull();
+    await click(".runtime-panel-context button");
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")].find(item => item.textContent === "secondary")?.click());
+    expect(currentDraft.model).toBe("writer");
+    expect(currentDraft.effort).toBe("");
   });
 
   it("blocks repeated submission and dismissal while the creation request is pending", async () => {
@@ -140,8 +175,8 @@ describe("AgentOnboarding", () => {
     await mount({ onCreate: create, onClose: close });
     await next();
     await act(async () => {
-      query("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      query("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      query<HTMLButtonElement>(".composer-send-button").click();
+      query<HTMLButtonElement>(".composer-send-button").click();
       query<HTMLButtonElement>('[data-action="close"]').click();
     });
     expect(create).toHaveBeenCalledOnce();
@@ -179,20 +214,24 @@ describe("AgentOnboarding", () => {
     expect(currentDraft.createdAgent).toEqual(agent);
     expect(query('[role="alert"]').textContent).toContain("connection lost");
     expect(document.activeElement).toBe(query('[data-action="submit"]'));
-    expect(query<HTMLButtonElement>('[data-field="agent-model"]').disabled).toBe(true);
+    expect(query<HTMLFieldSetElement>(".agent-onboarding-runtime").disabled).toBe(true);
     expect(close).not.toHaveBeenCalled();
     await click('[data-action="submit"]');
     expect(create).toHaveBeenCalledOnce();
     expect(open).toHaveBeenCalledTimes(2);
     expect(open.mock.calls.every(([value]) => value === agent)).toBe(true);
+    expect(open.mock.calls[0][1]).toEqual(expect.objectContaining({
+      name: agent.name, provider: currentDraft.provider, effort: currentDraft.effort,
+      avatar_key: currentDraft.avatarKey,
+    }));
+    expect(open.mock.calls[1][1]).toEqual(open.mock.calls[0][1]);
     expect(close).toHaveBeenCalledOnce();
   });
 
   it("resumes a draft after connecting a provider without discarding its identity", async () => {
     const disconnected = { ...initialized, providers: [] };
     const manage = vi.fn();
-    const { create } = await mount({ initialized: disconnected, onManageProviders: manage });
-    await type("agent-name", "Ada");
+    const { create } = await mount({ initialized: disconnected, onManageProviders: manage, draft: { ...createAgentOnboardingDraft(disconnected), name: "Ada" } });
     expect(document.querySelector('[data-action="submit"]')).toBeNull();
     await act(async () => query("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(create).not.toHaveBeenCalled();
@@ -206,18 +245,17 @@ describe("AgentOnboarding", () => {
     expect(currentDraft.role).toBe(saved.role);
     expect(currentDraft.avatarKey).toBe(saved.avatarKey);
     expect(currentDraft.provider).toBe("primary");
-    expect(query<HTMLButtonElement>('[data-action="submit"]').disabled).toBe(false);
+    expect(query<HTMLButtonElement>('[data-action="confirm-model"]').disabled).toBe(false);
   });
 
-  it("lets the model menu consume Escape before dismissing onboarding", async () => {
+  it("embeds the shared provider and model views without an engine switch", async () => {
     const { close } = await mount();
-    await next();
-    await click('[data-field="agent-model"]');
-    await act(async () => query('[role="menu"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(query(".runtime-panel-context").textContent).toBe("primary");
+    await click(".runtime-panel-model");
+    expect(document.querySelector('input[type="search"]')).not.toBeNull();
     expect(close).not.toHaveBeenCalled();
-    await click('[data-action="close"]');
-    expect(close).toHaveBeenCalledOnce();
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>(".codex-model-item")].find(item => item.querySelector(".codex-model-item-name")?.textContent === "plain")?.click());
+    expect(document.querySelector(".runtime-panel-summary")).not.toBeNull();
   });
 
   it("does not take focus back from the newly opened conversation on completion", async () => {
@@ -225,7 +263,7 @@ describe("AgentOnboarding", () => {
     const composer = document.createElement("textarea");
     document.body.append(previous, composer);
     previous.focus();
-    const originalDraft = { ...createAgentOnboardingDraft(initialized), name: "Ada", step: "model" as const };
+    const originalDraft = { ...createAgentOnboardingDraft(initialized), name: "Ada", step: "name" as const };
     function Harness(): JSX.Element | null {
       const [draft, setDraft] = useState<AgentOnboardingDraft>(originalDraft);
       const [visible, setVisible] = useState(true);

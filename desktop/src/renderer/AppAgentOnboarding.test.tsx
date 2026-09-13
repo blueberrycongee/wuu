@@ -29,13 +29,29 @@ async function click(label: string): Promise<void> {
   await act(async () => { button!.click(); });
 }
 
+async function confirmModel(): Promise<void> {
+  await click(t("agentOnboarding.useModel"));
+}
+
 async function enterName(value: string): Promise<void> {
-  const input = document.querySelector<HTMLInputElement>('[name="agent-name"]');
+  const input = document.querySelector<HTMLTextAreaElement>(".channel-composer textarea");
   expect(input).toBeTruthy();
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value);
     input!.dispatchEvent(new Event("input", { bubbles: true }));
   });
+}
+
+async function sendName(): Promise<void> {
+  const send = document.querySelector<HTMLButtonElement>(".composer-send-button");
+  expect(send).toBeTruthy();
+  await act(async () => { send!.click(); });
+}
+
+async function startNewAgent(): Promise<void> {
+  const create = document.querySelector<HTMLButtonElement>("#channel-recipient-create-agent");
+  expect(create).toBeTruthy();
+  await act(async () => { create!.click(); });
 }
 
 beforeEach(() => {
@@ -44,7 +60,7 @@ beforeEach(() => {
   window.localStorage.clear();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn((media: string) => ({
-    matches: false, media, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    matches: media.includes("prefers-reduced-motion"), media, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(),
     addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
   })) });
   Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
@@ -151,13 +167,14 @@ it("opens a newly created identity's conversation before the next directory refr
   await click("collaboration");
   await click(t("channels.newConversation"));
   expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
-  await click(t("channels.newAgent"));
+  await startNewAgent();
   expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")).toBeTruthy();
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
+  await confirmModel();
   await enterName("Research");
-  await click(t("agentOnboarding.startChat"));
+  await sendName();
   expect(window.wuu.createNamedAgent).toHaveBeenCalledTimes(1);
-  expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledWith({ agent_id: "new-agent" });
+  expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "new-agent" }));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(container.querySelector(".channel-room-header")?.textContent).toContain("Research");
   expect(container.querySelector(".collaboration-contact-row.active")?.textContent).toContain("Research");
@@ -179,9 +196,11 @@ it("creates independent conversations for consecutive agents with the default di
   await click("collaboration");
   for (let index = 1; index <= 2; index += 1) {
     await click(t("channels.newConversation"));
-    await act(async () => { container.querySelector<HTMLButtonElement>("#channel-recipient-create-agent")!.click(); });
-    await click(t("agentOnboarding.startChat"));
-    expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith({ agent_id: `agent-${index}` });
+    await startNewAgent();
+    await confirmModel();
+    await enterName(t("channels.newAgent"));
+    await sendName();
+    expect(window.wuu.openChannelDirectMessage).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: `agent-${index}` }));
   }
   expect(agents.map((agent) => agent.name)).toEqual([t("channels.newAgent"), t("channels.newAgent")]);
   expect(new Set(rooms.map((room) => room.id)).size).toBe(2);
@@ -194,9 +213,10 @@ it("preserves the agent draft across provider settings and returns to the model 
   await click("collaboration");
   await click(t("channels.newConversation"));
   expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
-  await click(t("channels.newAgent"));
+  await startNewAgent();
   expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")).toBeTruthy();
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
+  await confirmModel();
   await enterName("Research");
   await click(t("agentOnboarding.manageProviders"));
   await act(async () => { await vi.dynamicImportSettled(); });
@@ -205,7 +225,7 @@ it("preserves the agent draft across provider settings and returns to the model 
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
   expect(document.querySelector('[data-wuu-component="agent-onboarding"]')?.textContent).toContain("Research");
-  await click(t("agentOnboarding.startChat"));
+  await sendName();
   expect(window.wuu.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Research", provider_override: "byok", model_override: "reasoner" }));
 });
 
@@ -232,13 +252,14 @@ it("keeps the unfinished identity and avatar when navigating away and back", asy
   await act(async () => { root.render(<App />); });
   await click("collaboration");
   await click(t("channels.newConversation"));
-  await click(t("channels.newAgent"));
+  await startNewAgent();
+  await confirmModel();
   await enterName("Unfinished");
   const avatar = container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML;
   await click(t("channels.manageAgents"));
   expect(container.querySelector('[data-wuu-component="agent-onboarding"]')).toBeNull();
   await click("Unfinished");
-  expect(container.querySelector<HTMLInputElement>('[name="agent-name"]')?.value).toBe("Unfinished");
+  expect(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")?.value).toBe("Unfinished");
   expect(container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML).toBe(avatar);
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
 });

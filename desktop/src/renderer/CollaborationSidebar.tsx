@@ -1,3 +1,4 @@
+import { AgentOnboardingAvatar } from "./AgentOnboardingAvatar";
 import { Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
@@ -97,8 +98,8 @@ export function CollaborationSidebar({
         </div> : null}
         <nav className="collaboration-sidebar-main" aria-label={t("channels.conversations")}>
           {draftAgent ? <button type="button" className={`collaboration-contact-row${draftSelected ? " active" : ""}`} aria-current={draftSelected ? "page" : undefined} onClick={onSelectDraft} aria-label={draftAgent.name || t("channels.newAgent")}>
-            <span className="collaboration-contact-avatar" aria-hidden="true"><AgentAvatarMark seed="draft-agent" avatarKey={draftAgent.avatarKey} /></span>
-            <span className="collaboration-contact-copy"><span className="collaboration-contact-heading"><strong>{draftAgent.name || t("channels.newAgent")}</strong></span><span className="collaboration-contact-preview">{t("agentOnboarding.chooseModelFirst")}</span></span>
+            <span className="collaboration-contact-avatar" aria-hidden="true"><AgentOnboardingAvatar avatarKey={draftAgent.avatarKey} /></span>
+            <span className="collaboration-contact-copy"><span className="collaboration-contact-heading"><strong>{draftAgent.name || t("channels.newAgent")}</strong></span></span>
           </button> : null}
           {conversations.map(({ id, name, agent, room, pinned }) => {
             const selected = !draftSelected && (room ? selectedRoomID === room.id : selectedAgentID === agent?.id);
@@ -142,7 +143,7 @@ export function CollaborationSidebar({
               </span>
             </button>;
           })}
-          {conversations.length === 0 && !draftAgent ? <div className="collaboration-contact-empty">{t(query.trim() ? "channels.noMatchingConversations" : "channels.noConversations")}</div> : null}
+          {!collapsed && query.trim() && conversations.length === 0 && !draftAgent ? <div className="collaboration-contact-empty">{t("channels.noMatchingConversations")}</div> : null}
         </nav>
         <div className="collaboration-sidebar-footer">
           {collapsed ? <>

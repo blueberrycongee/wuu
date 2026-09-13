@@ -55,6 +55,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   sending: boolean;
   files: ComposerFile[];
   images: ComposerImage[];
+  allowAttachments?: boolean;
   hideExpandButton?: boolean;
   compact?: boolean;
   mentionAgents?: NamedAgent[];
@@ -72,6 +73,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
   sending,
   files,
   images,
+  allowAttachments = true,
   hideExpandButton = false,
   compact = false,
   mentionAgents = [],
@@ -231,14 +233,14 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
       <Composer
         variant="dock"
         hideRuntimeControls
-        leadingActions={<>
+        leadingActions={allowAttachments ? <>
           <input ref={attachmentInputRef} className="channel-attachment-input" type="file" accept={COMPOSER_ATTACHMENT_ACCEPT} multiple onChange={(event) => {
             const selected = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = "";
             if (selected.length > 0) onPasteAttachmentFiles(selected);
           }} />
           <button type="button" className="icon-button channel-attachment-button" disabled={disabled} aria-label={t("composer.addAttachment")} title={t("composer.addAttachment")} onClick={() => attachmentInputRef.current?.click()}><Plus aria-hidden="true" /></button>
-        </>}
+        </> : undefined}
         hidePlusButton
         hidePermissionControl
         hideExpandButton={compact || hideExpandButton}
@@ -291,7 +293,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         onStartNewThread={noop}
         onOpenWorkspaceTool={noop}
         onOpenInstructions={noop}
-        onPasteAttachmentFiles={onPasteAttachmentFiles}
+        onPasteAttachmentFiles={allowAttachments ? onPasteAttachmentFiles : noop}
         onRemoveFile={onRemoveFile}
         onRemoveImage={onRemoveImage}
         onRemoveQueuedMessage={noop}

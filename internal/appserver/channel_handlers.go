@@ -288,6 +288,9 @@ func (s *Server) handleChannelDirectMessageOpen(ctx context.Context, req Request
 		return s.writeResponse(req.ID, nil, err)
 	}
 	room, err := s.channelService.OpenDirectMessage(ctx, localChannelHumanID, params.AgentID)
+	if err == nil && params.Onboarding != nil {
+		room, err = s.channelService.SaveRoomOnboarding(ctx, room.ID, *params.Onboarding)
+	}
 	if err == nil {
 		rooms := []channels.Room{room}
 		err = s.attachLocalHumanUnreadCounts(ctx, rooms)

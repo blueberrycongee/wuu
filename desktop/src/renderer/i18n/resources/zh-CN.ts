@@ -26,7 +26,11 @@ export const zhCN = {
   "channels.continuity.state.cancelled": "已取消",
   "channels.continuity.state.blocked": "需要处理",
 
-  "agentOnboarding.selectBeforeChat": "先选一个模型，我们就可以开始聊了。",
+  "agentOnboarding.selectBeforeChat": "先帮我选个模型吧。",
+  "agentOnboarding.useModel": "就用这个",
+  "agentOnboarding.askName": "你希望我叫什么？",
+  "agentOnboarding.randomName": "随便揉一个",
+  "agentOnboarding.randomNames": "小麦|阿栗|团子|小满|阿墨|豆包|小葵|木木",
   "agentOnboarding.startChat": "开始对话",
   "agentOnboarding.chooseModelFirst": "先选择模型",
   "agentOnboarding.uploadImage": "上传图片",
