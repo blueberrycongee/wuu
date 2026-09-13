@@ -28,6 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,7 +85,7 @@ class MainActivity : ComponentActivity() {
     when {
         model.account == null -> LoginScreen(model)
         model.host == null -> DevicesScreen(model)
-        else -> ConversationScreen(model)
+        else -> HostScreen(model) { ConversationScreen(model) }
     }
     model.recovery?.let { secret ->
         AlertDialog(onDismissRequest = {}, title = { Text("保存账号恢复密钥") },
@@ -241,8 +242,8 @@ class MainActivity : ComponentActivity() {
     var archive by remember { mutableStateOf<ThreadRow?>(null) }
     var historyConsent by remember { mutableStateOf<Boolean?>(null) }
     var workspaceMenu by remember { mutableStateOf(false) }
-    val drafts = remember { mutableStateMapOf<String, String>() }
-    val attachmentDrafts = remember { mutableStateMapOf<String, List<InputAttachment>>() }
+    val drafts = model.conversationDrafts
+    val attachmentDrafts = model.conversationAttachments
     val draftKey = model.activeID ?: "new"
     val draft = drafts[draftKey] ?: ""
     val attachments = attachmentDrafts[draftKey] ?: emptyList()
@@ -321,7 +322,7 @@ class MainActivity : ComponentActivity() {
                     if (model.connected && model.activeID != null && !model.readOnly && !model.sending) key(draftKey) {
                         AttachmentPicker(attachments, { attachmentDrafts[draftKey] = it }, model)
                     }
-                    OutlinedTextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6, modifier = Modifier.weight(1f), enabled = model.connected && !model.readOnly)
+                    OutlinedTextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6, modifier = Modifier.weight(1f).testTag("native-composer"), enabled = model.connected && !model.readOnly)
                     IconButton(onClick = {
                         val text = draft; val key = draftKey; val files = attachments
                         model.perform {

@@ -31,7 +31,7 @@ struct RootView: View {
             if model.recovery != nil { RecoveryView(model: model) }
             else if model.account == nil { LoginView(model: model) }
             else if model.host == nil { DevicesView(model: model) }
-            else { ConversationView(model: model) }
+            else { HostView(model: model).id(model.host?.pub) }
         }
         .alert("提示", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("知道了", role: .cancel) { model.error = nil }
@@ -189,6 +189,7 @@ struct ConversationView: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawer = true
+    @FocusState private var composerFocused: Bool
     @State private var drafts: [String: String] = [:]
     @State private var attachmentDrafts: [String: [InputAttachment]] = [:]
     @State private var consent = false
@@ -248,6 +249,8 @@ struct ConversationView: View {
                     AttachmentPicker(attachments: attachments, model: model).id(draftKey)
                         .disabled(!model.connected || model.live == nil || model.sending || model.live?.readOnly == true)
                     TextField(model.connected ? "发送消息" : "连接电脑后发送", text: draft, axis: .vertical)
+                        .accessibilityIdentifier("harness-composer")
+                        .focused($composerFocused)
                         .lineLimit(1...6).padding(12).background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
                     if model.live?.running == true {
                         Button { model.perform { try await model.stop() } } label: { Image(systemName: "stop.circle.fill").font(.title) }.accessibilityLabel("停止")
@@ -266,6 +269,7 @@ struct ConversationView: View {
                         .accessibilityLabel("发送").disabled(!model.connected || model.live == nil || model.sending || model.live?.readOnly == true || model.live?.archived == true || (draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.wrappedValue.isEmpty))
                 }.padding(12)
             }.navigationTitle(model.live?.title ?? model.saved?.title ?? "Wuu").navigationBarTitleDisplayMode(.inline)
+                .modifier(KeyboardDismissToolbar { composerFocused = false })
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { Button { drawer.toggle() } label: { Image(systemName: "sidebar.left") }.accessibilityLabel(drawer ? "关闭会话列表" : "会话列表") }
                     ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread(); drawer = false } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }

@@ -373,7 +373,19 @@ func (s *Server) handleChannelMessageList(ctx context.Context, req Request) erro
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	messages, err := s.channelService.ListMessages(ctx, params.RoomID, params.AfterSeq, params.Limit)
+	messages, err := s.channelService.ListMessageWindow(ctx, channels.RoomHistoryQuery{
+		RoomID: params.RoomID, AfterSeq: params.AfterSeq, BeforeSeq: params.BeforeSeq, Limit: params.Limit, Latest: params.Latest,
+	})
+	if params.AttachmentMetadataOnly {
+		for i := range messages {
+			for j := range messages[i].Images {
+				messages[i].Images[j].Data = ""
+			}
+			for j := range messages[i].Files {
+				messages[i].Files[j].Data = ""
+			}
+		}
+	}
 	return s.writeResponse(req.ID, ChannelMessageListResult{Messages: messages, Responses: responses, Coordinator: coordinator}, err)
 }
 

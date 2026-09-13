@@ -2606,9 +2606,12 @@ type ChannelRoomReadResult struct {
 }
 
 type ChannelMessageListParams struct {
-	RoomID   string `json:"room_id"`
-	AfterSeq int64  `json:"after_seq,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	RoomID                 string `json:"room_id"`
+	AfterSeq               int64  `json:"after_seq,omitempty"`
+	Limit                  int    `json:"limit,omitempty"`
+	BeforeSeq              int64  `json:"before_seq,omitempty"`
+	Latest                 bool   `json:"latest,omitempty"`
+	AttachmentMetadataOnly bool   `json:"attachment_metadata_only,omitempty"`
 }
 
 type ChannelMessageListResult struct {

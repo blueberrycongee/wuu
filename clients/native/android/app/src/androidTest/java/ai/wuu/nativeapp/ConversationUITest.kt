@@ -14,10 +14,11 @@ class ConversationUITest {
     private fun await(matcher: SemanticsMatcher) {
         ui.waitUntil(20_000) { ui.onAllNodes(matcher).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty() }
     }
-    private fun tap(text: String) { await(hasText(text)); ui.onNodeWithText(text).performClick() }
+    private fun tap(text: String) { await(hasText(text)); ui.onNodeWithText(text).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() } }
     private fun send(text: String) {
-        ui.onNode(hasSetTextAction() and (hasText("发送消息") or hasText("添加后续消息"))).performTextInput(text)
-        ui.onNodeWithContentDescription("发送").performClick()
+        await(hasTestTag("native-composer") and isEnabled())
+        ui.onNodeWithTag("native-composer").performTextReplacement(text)
+        ui.onNodeWithContentDescription("发送").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
     }
     private fun expectText(device: UiDevice, text: String) {
         try {
@@ -38,7 +39,7 @@ class ConversationUITest {
         require(server.startsWith("http://127.0.0.1:"))
         await(hasText("HTTPS 服务器地址"))
         ui.onNode(hasSetTextAction() and hasText("HTTPS 服务器地址")).performTextInput(server)
-        tap("完成"); tap("密码登录")
+        tap("继续"); await(hasText("用户名"))
         ui.onNode(hasSetTextAction() and hasText("用户名")).performTextInput("native-test")
         ui.onNode(hasSetTextAction() and hasText("密码")).performTextInput("native-test-password")
         tap("登录"); await(hasText("UI test computer"))
@@ -61,9 +62,10 @@ class ConversationUITest {
         expectText(device, "Received: ui-hello")
         ui.onNodeWithContentDescription("添加附件").assertIsDisplayed()
         send("ui-tools"); expectText(device, "Received: ui-tools")
+        ui.onNodeWithTag("tool-process").performScrollTo().performClick()
         ui.onNodeWithTag("tool-activity").performScrollTo().performClick()
         await(hasText("Native tool output", substring = true))
-        ui.onNodeWithTag("tool-activity").performScrollTo().performClick()
+        ui.onNodeWithTag("tool-process").performScrollTo().performClick()
         send("ui-wait")
         expectText(device, "Streaming preview")
         tap("停止")
@@ -86,5 +88,61 @@ class ConversationUITest {
         await(hasContentDescription("关闭会话列表"))
         device.pressBack()
         ui.onNodeWithContentDescription("发送").assertExists()
+        ui.onRoot().performTouchInput { swipeRight(startX = width * 0.1f, endX = width * 0.75f) }
+        await(hasContentDescription("关闭会话列表"))
+        ui.onNode(hasText("ui-hello") and hasClickAction()).performClick()
+        ui.waitUntil(20_000) { !ui.onNodeWithContentDescription("关闭会话列表").isDisplayed() }
+        ui.onAllNodesWithText("提示").assertCountEquals(0)
+        ui.onNodeWithContentDescription("发送").assertExists()
+
+        val model = ui.runOnIdle { androidx.lifecycle.ViewModelProvider(ui.activity)[AppModel::class.java] }
+        val harnessID = ui.runOnIdle { model.activeID }
+        ui.onNode(hasSetTextAction() and hasText("发送消息")).performTextInput("Harness draft")
+        device.pressBack()
+        tap("协作"); tap("Native collaboration")
+        await(hasText("Collaboration ready"))
+        ui.onNode(hasSetTextAction() and hasText("发送消息")).performTextInput("Room draft")
+        device.pressBack()
+        tap("会话")
+        try { await(hasSetTextAction() and hasText("Harness draft")) }
+        catch (e: Throwable) { error("Harness restore failed: " + ui.runOnIdle { "active=${model.activeID} host=${model.host?.optString("name")} drafts=${model.conversationDrafts} mode=${model.collaboration.visible}" } + "\n" + ui.onRoot().printToString()) }
+        ui.onNode(hasSetTextAction() and hasText("Harness draft")).assertExists()
+        org.junit.Assert.assertEquals(harnessID, ui.runOnIdle { model.activeID })
+        tap("协作")
+        await(hasSetTextAction() and hasText("Room draft"))
+        ui.onNode(hasSetTextAction() and hasText("Room draft")).assertExists()
+        ui.onNodeWithContentDescription("发送").performClick()
+        await(hasText("Room draft") and !hasSetTextAction())
+        ui.onNodeWithContentDescription("成员与任务").performClick()
+        await(hasText("Native collaboration task")); await(hasText("Alpha")); await(hasText("Beta"))
+        device.pressBack()
+        ui.onNodeWithTag("room-timeline").performScrollToIndex(0)
+        tap("加载更早消息")
+        ui.waitUntil(20_000) { ui.runOnIdle { model.collaboration.messages.firstOrNull()?.optString("body")?.startsWith("Collaboration history 01") == true } }
+        ui.onNodeWithTag("room-timeline").performScrollToIndex(0)
+        await(hasText("Collaboration history 01", substring = true))
+        device.executeShellCommand("screencap -p /sdcard/Download/wuu-native-room-light.png")
+        ui.onNodeWithContentDescription("协作列表").performClick()
+        ui.onNodeWithContentDescription("新对话或群聊").performClick()
+        tap("Beta")
+        await(hasContentDescription("成员与任务"))
+        await(hasText("Beta"))
+        send("Mobile direct message")
+        await(hasText("Mobile direct message") and !hasSetTextAction())
+        device.executeShellCommand("screencap -p /sdcard/Download/wuu-native-direct-light.png")
+        ui.onNodeWithContentDescription("协作列表").performClick()
+        ui.onNodeWithContentDescription("新对话或群聊").performClick()
+        tap("建群")
+        ui.onNode(hasSetTextAction() and hasText("群名")).performTextInput("Mobile group")
+        ui.onNodeWithTag("new-agent-Alpha").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        ui.onNodeWithTag("new-agent-Beta").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        tap("创建群聊")
+        await(hasText("Mobile group"))
+        ui.onNodeWithContentDescription("成员与任务").performClick()
+        await(hasText("Alpha")); await(hasText("Beta")); device.pressBack()
+        device.executeShellCommand("cmd uimode night yes")
+        ui.waitForIdle()
+        device.executeShellCommand("screencap -p /sdcard/Download/wuu-native-group-dark.png")
+        device.executeShellCommand("cmd uimode night no")
     }
 }

@@ -44,7 +44,7 @@ final class ConversationUITests: XCTestCase {
         XCTAssertTrue(newThread.waitForExistence(timeout: 15))
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: newThread)
         waitForExpectations(timeout: 15); newThread.tap()
-        let input = app.textFields["发送消息"]
+        let input = app.descendants(matching: .any)["harness-composer"]
         XCTAssertTrue(input.waitForExistence(timeout: 10))
         input.tap(); input.typeText("ui-hello")
         app.buttons["发送"].tap()
@@ -84,6 +84,73 @@ final class ConversationUITests: XCTestCase {
         closeList.tap()
         XCTAssertTrue(app.staticTexts["Received: ui-return"].exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.lifetime = .keepAlways; add(screenshot)
+        try verifyCollaboration(app)
         app.terminate()
+    }
+
+    @MainActor private func verifyCollaboration(_ app: XCUIApplication) throws {
+        let harnessInput = app.descendants(matching: .any)["harness-composer"]
+        harnessInput.tap(); harnessInput.typeText("harness-draft")
+        dismissKeyboard(app)
+        tapCenter(app.tabBars.buttons["协作"])
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Native collaboration")).firstMatch
+        XCTAssertTrue(room.waitForExistence(timeout: 15))
+        room.tap()
+        let input = app.descendants(matching: .any)["collaboration-composer"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.tap(); input.typeText("collaboration-draft")
+        dismissKeyboard(app)
+        tapCenter(app.tabBars.buttons["会话"])
+        XCTAssertEqual(harnessInput.value as? String, "harness-draft")
+        tapCenter(app.tabBars.buttons["协作"])
+        XCTAssertEqual(input.value as? String, "collaboration-draft")
+        app.buttons["发送协作消息"].tap()
+        XCTAssertTrue(app.staticTexts["collaboration-draft"].waitForExistence(timeout: 10))
+        tapCenter(app.buttons["成员与任务"])
+        XCTAssertTrue(app.staticTexts["Alpha"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Beta"].exists)
+        capture(app, name: "collaboration-members-tasks")
+        tapCenter(app.buttons["完成"])
+        capture(app, name: "collaboration-room")
+        tapCenter(app.buttons["协作列表"])
+        tapCenter(app.buttons["新协作对话"])
+        app.buttons["Alpha"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Alpha"].exists)
+        tapCenter(app.buttons["协作列表"])
+        tapCenter(app.buttons["新协作对话"])
+        tapCenter(app.switches["创建群聊"].switches.firstMatch)
+        XCTAssertTrue(app.textFields["群聊名称"].waitForExistence(timeout: 5))
+        app.textFields["群聊名称"].tap(); app.textFields["群聊名称"].typeText("Phone team")
+        app.buttons["Alpha"].tap(); app.buttons["Beta"].tap()
+        tapCenter(app.buttons["创建"])
+        XCTAssertTrue(app.navigationBars["Phone team"].waitForExistence(timeout: 10))
+        input.tap(); input.typeText("new-room-draft")
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertEqual(input.value as? String, "new-room-draft")
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["发送协作消息"])
+        waitForExpectations(timeout: 20)
+        dismissKeyboard(app)
+        tapCenter(app.buttons["协作列表"])
+        capture(app, name: "collaboration-directory")
+    }
+
+    @MainActor private func capture(_ app: XCUIApplication, name: String) {
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = name; image.lifetime = .keepAlways; add(image)
+    }
+
+    @MainActor private func tapCenter(_ element: XCUIElement) {
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    @MainActor private func dismissKeyboard(_ app: XCUIApplication) {
+        // A fresh simulator can show the system's slide-to-type onboarding
+        // above the app keyboard. Dismiss it before touching app controls.
+        let onboarding = app.buttons.matching(NSPredicate(format: "label IN %@", ["Continue", "继续"])).firstMatch
+        if onboarding.exists { tapCenter(onboarding) }
+        tapCenter(app.buttons["收起键盘"])
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
     }
 }
