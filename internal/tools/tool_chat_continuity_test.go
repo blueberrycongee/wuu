@@ -30,27 +30,16 @@ func TestCollaborationContinuityToolsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{owner.Agent.ID, room.RuntimeID} {
+	for _, id := range []string{owner.Agent.ID, peer.Agent.ID} {
 		c, err := s.BindAgent(ctx, id)
-		if id == room.RuntimeID {
-			c, err = s.BindRuntime(ctx, id)
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
 		ref := "tool-session-" + id
-		if _, err = c.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{RoomID: room.ID, SessionRef: ref, Purpose: func() channels.CollaborationSessionPurpose {
-			if id == room.RuntimeID {
-				return channels.CollaborationSessionCoordination
-			}
-			return channels.CollaborationSessionWork
-		}()}); err != nil {
+		if _, err = c.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{RoomID: room.ID, SessionRef: ref, Purpose: channels.CollaborationSessionConversation}); err != nil {
 			t.Fatal(err)
 		}
 		c, err = s.BindAgentSession(ctx, id, ref)
-		if id == room.RuntimeID {
-			c, err = s.BindRuntimeSession(ctx, id, ref)
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,11 +65,6 @@ func TestCollaborationContinuityToolsRoundTrip(t *testing.T) {
 		execute("chat_wake", map[string]any{"action": "cancel", "id": f.ID, "revision": f.Revision})
 		execute("chat_memory", map[string]any{"action": "read", "scope": "room", "name": "MEMORY.md"})
 		execute("chat_memory", map[string]any{"action": "write", "scope": "room", "name": id + ".md", "revision": "missing", "content": "Source: room task. Review on Friday."})
-		if id == room.RuntimeID {
-			if _, err = kit.Execute(ctx, providers.ToolCall{Name: "write_file", Arguments: `{"path":"escaped.txt","content":"no"}`}); err == nil {
-				t.Fatal("coordinator gained general writes")
-			}
-		}
 	}
 }
 

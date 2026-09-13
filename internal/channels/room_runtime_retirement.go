@@ -104,8 +104,62 @@ func (s *Service) retireRoomRuntimes(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := restoreMemberInboxDeliveriesTx(ctx, tx, now); err != nil {
+	var migrated bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM channel_metadata WHERE key='room_round_robin_version')`).Scan(&migrated); err != nil {
 		return err
+	}
+	if !migrated {
+		if err := restoreMemberInboxDeliveriesTx(ctx, tx, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO channel_metadata(key,value) VALUES('room_round_robin_version','1')`); err != nil {
+			return err
+		}
+	}
+	// Unexecuted coordinator rewrites are replaced by the original human
+	// request only when that request still has no visible member response.
+	rows, err = tx.QueryContext(ctx, collaborationMessageSelect+` WHERE delivery.from_id IN (SELECT id FROM room_runtimes) AND delivery.kind='control' AND delivery.consumed_at IS NULL AND delivery.invalidated_at IS NULL AND delivery.source_message_id IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	var rewrites []CollaborationMessage
+	for rows.Next() {
+		message, err := scanCollaborationMessage(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		rewrites = append(rewrites, message)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, rewrite := range rewrites {
+		source, err := loadMessageTx(ctx, tx, rewrite.SourceMessageID)
+		if err != nil {
+			return err
+		}
+		if source.AuthorType != MemberHuman {
+			continue
+		}
+		var answered bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room_messages WHERE room_id=? AND seq>? AND author_type='agent' AND kind='text')`, source.RoomID, source.Seq).Scan(&answered); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at=? WHERE id=?`, now, rewrite.ID); err != nil {
+			return err
+		}
+		if !answered {
+			mentions, err := resolveMentionsTx(ctx, tx, source.RoomID, source.Body)
+			if err != nil {
+				return err
+			}
+			if _, err := evaluateTriggersTx(ctx, tx, source, mentions, nil, now); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }
@@ -119,7 +173,9 @@ func restoreMemberInboxDeliveriesTx(ctx context.Context, tx *sql.Tx, now int64) 
  JOIN room_members member ON member.room_id = inbox.room_id AND member.member_type = 'agent' AND member.member_id = inbox.member_id
  WHERE inbox.member_type = 'agent' AND inbox.pulled_at IS NULL AND inbox.kind IN ('mention', 'reply', 'thread_update')
  AND (message.author_type = 'human' OR inbox.kind IN ('mention', 'reply'))
+ AND NOT EXISTS (SELECT 1 FROM room_messages response WHERE response.room_id=message.room_id AND response.seq>message.seq AND response.author_type='agent' AND response.kind='text')
  AND NOT EXISTS (SELECT 1 FROM collaboration_messages delivery WHERE delivery.to_agent_id = inbox.member_id AND delivery.source_message_id = inbox.message_id)
+ AND NOT EXISTS (SELECT 1 FROM room_turns turn WHERE turn.source_message_id = inbox.message_id)
  ORDER BY inbox.created_at, inbox.id`)
 	if err != nil {
 		return err

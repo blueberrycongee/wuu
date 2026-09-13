@@ -87,6 +87,11 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 	if binding.State == CollaborationSessionCancelled || binding.State == CollaborationSessionInterrupted || binding.State == CollaborationSessionMissing || binding.State == CollaborationSessionQueued || binding.State == CollaborationSessionStarting && binding.TurnID == "" {
 		return CollaborationSessionBinding{}, fmt.Errorf("%w: session %q cannot accept a late result while %s", ErrConflict, binding.SessionRef, binding.State)
 	}
+	if params.AdmissionFailure {
+		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET pulled_at=COALESCE(pulled_at,?),consumed_at=COALESCE(consumed_at,?) WHERE target_session_ref=? AND room_id=? AND consumed_at IS NULL AND invalidated_at IS NULL AND id IN (SELECT delivery_id FROM room_turns WHERE room_id=?)`, toMillis(s.now()), toMillis(s.now()), binding.SessionRef, binding.RoomID, binding.RoomID); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+	}
 	scope, err := recordCollaborationTurnScopeTx(ctx, tx, binding, params.TurnID)
 	if err != nil {
 		return CollaborationSessionBinding{}, err
@@ -213,6 +218,11 @@ func (s *Service) SettleCollaborationSession(ctx context.Context, params Collabo
 			return CollaborationSessionBinding{}, err
 		}
 	}
+	nextMembers, err := finishRoomTurnTx(ctx, tx, binding, params.TurnID, now)
+	if err != nil {
+		return CollaborationSessionBinding{}, err
+	}
+	wakePrincipals = appendUniqueStrings(wakePrincipals, nextMembers...)
 	updated, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, binding.SessionRef))
 	if err != nil {
 		return CollaborationSessionBinding{}, err

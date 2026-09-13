@@ -123,7 +123,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		scopeSQL = "delivery.room_id = ? AND delivery.work_id = ?"
 		scopeArgs = append(scopeArgs, binding.RoomID, binding.WorkID)
 	} else if binding.RoomID != "" && (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination) {
-		scopeSQL = "delivery.room_id = ? AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion'))"
+		scopeSQL = "delivery.room_id = ? AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion') OR delivery.kind='control' AND EXISTS(SELECT 1 FROM works WHERE works.id=delivery.work_id AND works.state IN ('completed','cancelled','failed')))"
 		scopeArgs = append(scopeArgs, binding.RoomID)
 	}
 	query := `

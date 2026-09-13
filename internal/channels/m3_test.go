@@ -377,13 +377,13 @@ func TestM3ThreadLoopBudgetSixAgentOnlySuppressedAndHumanReset(t *testing.T) {
 	root, err := service.SendHuman(ctx, HumanSendParams{
 		RoomID:  humanRoom.ID,
 		HumanID: "local-user",
-		Body:    "@all discuss",
+		Body:    "@Alpha discuss",
 	})
 	if err != nil {
 		t.Fatalf("SendHuman() error = %v", err)
 	}
-	if got := sink.take(); len(got) != 2 {
-		t.Fatalf("human message should wake both members: %v", got)
+	if got := sink.take(); len(got) != 1 {
+		t.Fatalf("human message should wake the addressed member: %v", got)
 	}
 	for _, id := range []string{alpha.Agent.ID, beta.Agent.ID} {
 		if err := service.ClearWakeOnCheck(ctx, id); err != nil {
@@ -444,20 +444,20 @@ func TestM3ThreadLoopBudgetSixAgentOnlySuppressedAndHumanReset(t *testing.T) {
 	if err := service.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM collaboration_messages WHERE room_id = ?`, humanRoom.ID).Scan(&collaborationCount); err != nil {
 		t.Fatal(err)
 	}
-	if collaborationCount != ThreadStreakCap {
-		t.Fatalf("room agent collaboration messages = %d, want %d before suppression", collaborationCount, ThreadStreakCap)
+	if collaborationCount != ThreadStreakCap-1 {
+		t.Fatalf("room agent collaboration messages = %d, want %d before suppression", collaborationCount, ThreadStreakCap-1)
 	}
 
 	reset, err := service.SendHuman(ctx, HumanSendParams{
 		RoomID:  humanRoom.ID,
 		HumanID: "local-user",
-		Body:    "@all reset",
+		Body:    "@Beta reset",
 		ReplyTo: root.Message.ID,
 	})
 	if err != nil {
 		t.Fatalf("human reset send error = %v", err)
 	}
-	if got := sink.take(); len(got) != 2 {
+	if got := sink.take(); len(got) != 1 {
 		t.Fatalf("human reset should wake both members, got %v", got)
 	}
 	for _, id := range []string{alpha.Agent.ID, beta.Agent.ID} {

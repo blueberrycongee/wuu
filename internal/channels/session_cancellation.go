@@ -42,6 +42,12 @@ func (s *Service) CancelCollaborationSessions(ctx context.Context, sessionRef st
 	}
 	var wakeIDs []string
 	for i, binding := range bindings {
+		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at=? WHERE id IN (SELECT delivery_id FROM room_turns WHERE session_ref=? OR delivery_id IN (SELECT id FROM collaboration_messages WHERE target_session_ref=?)) AND consumed_at IS NULL`, toMillis(now), binding.SessionRef, binding.SessionRef); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM room_turns WHERE session_ref=? OR delivery_id IN (SELECT id FROM collaboration_messages WHERE target_session_ref=?)`, binding.SessionRef, binding.SessionRef); err != nil {
+			return nil, err
+		}
 		if err := cancelSessionFollowupsTx(ctx, tx, binding.SessionRef, now); err != nil {
 			return nil, err
 		}

@@ -30,39 +30,90 @@ func createPeerRoom(t *testing.T, fixture *collaborationRPCFixture, name string,
 	return room
 }
 
-func TestRoomMembersStartConcurrentlyWithoutAnExtraModelCall(t *testing.T) {
+func TestRoomMembersTakeTurnsWithoutACoordinatorModel(t *testing.T) {
 	fixture, provider := newCollaborationFlowFixture(t)
-	peer, err := fixture.server.channelService.CreateNamedAgent(context.Background(), channels.CreateNamedAgentParams{Name: "Reviewer", Autostart: true})
+	ctx := context.Background()
+	peer, err := fixture.server.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Reviewer", Autostart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	room := createPeerRoom(t, fixture, "Review", fixture.identity, peer.Agent)
-	if _, err := fixture.server.channelService.SendHuman(context.Background(), channels.HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "@all Review this from your own perspective"}); err != nil {
+	sent, err := fixture.server.channelService.SendHuman(ctx, channels.HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "@all Review this from your own perspective"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	first, second := provider.next(t), provider.next(t)
-	bindings, err := fixture.server.channelService.ListAllCollaborationSessions(context.Background())
-	if err != nil || len(bindings) != 2 {
-		t.Fatalf("expected exactly two member sessions: %+v, %v", bindings, err)
+	first := provider.next(t)
+	if !strings.Contains(collaborationRequestText(first.request), sent.Message.ID) {
+		t.Fatal("first member lost original source")
 	}
-	for _, binding := range bindings {
-		if binding.NamedAgentID == "" || binding.RoomID != room.ID || binding.State != channels.CollaborationSessionRunning {
-			t.Fatalf("unexpected room session: %+v", binding)
-		}
+	bindings, err := fixture.server.channelService.ListAllCollaborationSessions(ctx)
+	if err != nil || len(bindings) != 1 || bindings[0].NamedAgentID != fixture.identity.ID {
+		t.Fatalf("first speaker: %+v %v", bindings, err)
+	}
+	select {
+	case <-provider.calls:
+		t.Fatal("second member started before first completed")
+	default:
 	}
 	first.response <- providers.ChatResponse{Content: "First independent observation"}
-	second.response <- providers.ChatResponse{Content: "Second independent observation"}
-	completed := make(map[string]bool)
-	for range 2 {
+	next := provider.next(t)
+	if !strings.Contains(collaborationRequestText(next.request), "First independent observation") {
+		t.Fatal("next member cannot see the earlier answer")
+	}
+	coordinatorModelTool(next, "pass-1", "yield_turn", map[string]any{"reason": "Nothing new"})
+	// One productive round permits another. The second round rotates its order.
+	next = provider.next(t)
+	coordinatorModelTool(next, "pass-2", "yield_turn", map[string]any{"reason": "Nothing new"})
+	next = provider.next(t)
+	coordinatorModelTool(next, "pass-3", "yield_turn", map[string]any{"reason": "Nothing new"})
+	for range 4 {
 		select {
-		case identity := <-fixture.completed:
-			completed[identity] = true
+		case <-fixture.completed:
 		case <-time.After(collaborationTestWaitTimeout):
-			t.Fatal("member completion was not persisted")
+			t.Fatal("member did not settle")
 		}
 	}
-	if !completed[fixture.identity.ID] || !completed[peer.Agent.ID] {
-		t.Fatalf("member completions = %v", completed)
+	bindings, err = fixture.server.channelService.ListAllCollaborationSessions(ctx)
+	if err != nil || len(bindings) != 2 {
+		t.Fatalf("unexpected execution branches: %+v %v", bindings, err)
+	}
+	for _, binding := range bindings {
+		if binding.NamedAgentID == "" {
+			t.Fatalf("hidden model executed: %+v", binding)
+		}
+	}
+	select {
+	case <-provider.calls:
+		t.Fatal("empty round woke another model")
+	default:
+	}
+}
+
+func TestRoomDiscussionAdvancesAfterMemberProviderFailure(t *testing.T) {
+	fixture, provider := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	peer, err := fixture.server.channelService.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Reviewer", Autostart: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	room := createPeerRoom(t, fixture, "Review", fixture.identity, peer.Agent)
+	if _, err := fixture.server.channelService.SendHuman(ctx, channels.HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "Review this"}); err != nil {
+		t.Fatal(err)
+	}
+	provider.next(t).failure <- errors.New("permanent provider rejection")
+	next := provider.next(t)
+	coordinatorModelTool(next, "pass", "yield_turn", map[string]any{"reason": "No contribution"})
+	for range 2 {
+		select {
+		case <-fixture.completed:
+		case <-time.After(collaborationTestWaitTimeout):
+			t.Fatal("member did not settle")
+		}
+	}
+	select {
+	case <-provider.calls:
+		t.Fatal("failed member restarted after the empty round")
+	default:
 	}
 }
 

@@ -10,12 +10,6 @@ import (
 // Results return to the task's initiating session while it still has room
 // access. If it is unavailable, the visible lead or owner retains the result.
 func workResultRecipientTx(ctx context.Context, tx *sql.Tx, work Work, sourceSession string) (string, string, error) {
-	var coordinator string
-	if err := tx.QueryRowContext(ctx, `SELECT runtime.id FROM room_runtimes runtime JOIN collaboration_messages assignment ON assignment.from_id = runtime.id AND assignment.work_id = ? AND assignment.kind = 'assignment' WHERE runtime.room_id = ? AND runtime.autostart = 1 LIMIT 1`, work.ID, work.RoomID).Scan(&coordinator); err == nil {
-		return coordinator, "", nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return "", "", err
-	}
 	var principalID, sessionRef string
 	err := tx.QueryRowContext(ctx, `
  SELECT binding.principal_id, binding.session_ref FROM collaboration_messages assignment

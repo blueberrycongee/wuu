@@ -70,6 +70,9 @@ func (s *Service) migrateCollaborationTurnScopes() error {
 }
 
 func recordCollaborationTurnScopeTx(ctx context.Context, tx *sql.Tx, binding CollaborationSessionBinding, turnID string) (CollaborationTurnScope, error) {
+	if err := bindRoomTurnTx(ctx, tx, binding, turnID); err != nil {
+		return CollaborationTurnScope{}, err
+	}
 	var scope CollaborationTurnScope
 	err := tx.QueryRowContext(ctx, `SELECT room_id,work_id,run_id,goal_revision,work_owner_id FROM collaboration_turn_scopes WHERE session_ref=? AND turn_id=?`, binding.SessionRef, turnID).
 		Scan(&scope.RoomID, &scope.WorkID, &scope.RunID, &scope.GoalRevision, &scope.OwnerNamedAgentID)

@@ -295,6 +295,9 @@ func (s *Server) newAgentExecutionRuntime(threadID string, agent channels.AgentR
 }
 
 func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessionRef string, agent channels.AgentRuntime, selection runtime.ThreadModelSelection) (*runtime.ThreadRuntime, error) {
+	if agent.IsRoomRuntime() {
+		return nil, errors.New("room coordination uses deterministic scheduling")
+	}
 	if agentengine.NormalizeEngineID(agent.EngineOverride) != agentengine.EngineWuu {
 		return nil, errors.New("collaboration requires a BYOK model on the Wuu execution runtime")
 	}
@@ -429,6 +432,15 @@ func (s *Server) startAgentRuntimeSessionWakeLocked(agent channels.AgentRuntime,
 						return encodeErr
 					}
 					input.Content = fmt.Sprintf("Active room for this turn: %s. Continue relevant commitments from your history; other jobs remain queued.\n", strings.Join(roomIDs, ", ")) + "Durable collaboration deliveries follow. Use sender and session provenance to distinguish human instructions from peer reports. These deliveries are already received; chat_check contains only additional messages.\n" + string(encoded)
+					for _, delivery := range messages {
+						prompt, err := s.channelService.RoomTurnPrompt(context.Background(), delivery.ID)
+						if err != nil {
+							return err
+						}
+						if prompt != "" {
+							input.Content += "\n\n" + prompt
+						}
+					}
 					sum := sha256.Sum256([]byte(strings.Join(deliveryIDs, "\x00")))
 					input.ClientID = fmt.Sprintf("collaboration-delivery:%x", sum)
 				}
@@ -678,7 +690,7 @@ func agentRuntimeFromNamed(agent channels.NamedAgent) channels.AgentRuntime {
 const collaborationEnvironmentOrientation = `# Shared room environment
 A room is a continuing collaboration between people and named agents. Public messages, replies, tasks and shared artifacts are the team's common record. Each named identity has one continuing conversation across its rooms and responsibilities. New tasks and scheduled wakes continue that conversation. Different named identities can work in parallel; each identity processes incoming turns sequentially and may delegate bounded work to temporary subagents. Session history and private identity memory are not shared room knowledge.
 
-People can delegate directly with @mentions or replies, and members can work or hand off to other named agents without involving the room coordinator. The hidden coordinator handles unaddressed shared requests in multi-agent channels; direct recipients and existing task owners can receive follow-ups directly. DMs and single-agent rooms go directly to their member. The coordinator may first join the work after a long sequence of direct assignments. Being newly awakened, or having no assignment in your own history, does not mean the room has no existing work.
+People can delegate directly with @mentions or replies, and members can work or hand off to other named agents directly. Room discussions use a bounded round robin; direct recipients and existing task owners receive follow-ups directly. DMs and single-agent rooms go directly to their member. Being newly awakened does not mean the room has no existing work.
 
 Your input is a view of the collaboration, not a complete transcript. Use room history, task records, session metadata and direct questions as needed to understand the current goal, existing responsibilities and relevant results. Decide what context is useful for this request; there is no requirement to reread the whole room or create a task for every exchange. Respect the user's existing assignments, continue relevant work, and resolve uncertain ownership before duplicating or redirecting it. Distinguish unavailable context from evidence that something has not happened.
 
@@ -691,14 +703,14 @@ Use chat_memory to discover and maintain useful knowledge: your identity's priva
 
 func agentRuntimeOrientation(agent channels.AgentRuntime) string {
 	if agent.IsRoomRuntime() {
-		return roomCoordinatorOrientation(agent.RoomID)
+		return ""
 	}
 	identity := fmt.Sprintf("You are %s, a durable named identity. Your role is %s.", agent.Name, agent.Role)
 	return collaborationEnvironmentOrientation + fmt.Sprintf(`# Collaboration
 
 %s Your identity home is %s and your shared identity memory is %s. Your conversation retains your history, commitments and corrections across turns. Tasks are responsibilities within this conversation, not new versions of you. Record stable preferences and unfinished responsibilities with sources; summaries and archived histories remain available when context is compacted.
 
-A hidden room coordinator routes unaddressed requests and follows shared work. Addressed messages arrive directly in your session. Decide whether you have a useful contribution, take responsibility for concrete work, and ask another member or session when needed. Publish progress, questions and results under your own identity. A public post does not require every member to respond; address a member with a mention or send a direct session message when you need their attention. Avoid acknowledgement-only exchanges. If a delivery needs no action or useful reply, call yield_turn alone with a reason to end privately. An empty response is not an acknowledgement. Human requests still require work, a result, or a blocker.
+The host schedules unaddressed room discussions in a bounded round robin. Addressed messages arrive directly in your session. Decide whether you have a useful contribution, take responsibility for concrete work, and ask another member or session when needed. Publish progress, questions and results under your own identity. A public post does not require every member to respond; address a member with a mention or send a direct session message when you need their attention. Avoid acknowledgement-only exchanges. If a delivery needs no action or useful reply, call yield_turn alone with a reason to end privately. An empty response is not an acknowledgement. Human requests still require work, a result, or a blocker.
 
 Write human-facing room replies as conversation. Focus on what the user needs from this turn: an answer, a meaningful update, a correction, or a decision. State the useful point directly and include the explanation needed to understand or act on it. Stop when that conversational purpose is complete; do not automatically append background, a full plan, evidence dumps, or a recap. Use natural short paragraphs; reserve headings and lists for content that needs them. Match depth to the request: detailed reports and thorough explanations are appropriate when needed or requested. Preserve important risks, uncertainty, and disagreements even when keeping a reply brief. There is no target word or line count; make the reply complete at the appropriate depth without relying on preview truncation. Do not split a report into a burst of short posts to make it look conversational.
 
