@@ -2,6 +2,7 @@ package ai.wuu.nativeapp
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -148,11 +149,12 @@ import org.json.JSONObject
         item(key = "older") {
             if (state.hasOlder) TextButton(onClick = { model.perform { state.loadOlder() } }, enabled = model.connected && !state.loading) { Text("加载更早消息") }
         }
+        val group = state.selectedRoom?.optString("kind") != "dm"
         items(state.messages, key = { it.getString("id") }) { message ->
             val own = message.optString("author_type") == "human"
             RoomBubble(
                 own = own,
-                name = if (own) null else state.agentName(message.optString("author_id")),
+                mark = if (!own && group) state.agentName(message.optString("author_id")) else null,
             ) {
                 val reply = message.optString("reply_to")
                 if (reply.isNotEmpty()) Text("回复：" + (state.messages.firstOrNull { it.optString("id") == reply }?.optString("body") ?: "较早消息"),
@@ -166,7 +168,8 @@ import org.json.JSONObject
             }
         }
         items(state.responses, key = { "response:${it.getString("id")}" }) { response ->
-            RoomBubble(own = false, name = state.agentName(response.optString("agent_id")) + " · " + if (response.optString("state") == "failed") "回复失败" else "正在回复") {
+            RoomBubble(own = false, mark = if (group) state.agentName(response.optString("agent_id")) else null) {
+                Text(if (response.optString("state") == "failed") "回复失败" else "正在回复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (response.optString("body").isNotEmpty()) MessageText(response.optString("body"), true)
                 if (response.optString("error").isNotBlank()) Text(response.optString("error"), color = MaterialTheme.colorScheme.error)
             }
@@ -174,14 +177,21 @@ import org.json.JSONObject
     }
 }
 
-@Composable private fun RoomBubble(own: Boolean, name: String?, content: @Composable ColumnScope.() -> Unit) {
+@Composable private fun RoomBubble(own: Boolean, mark: String?, content: @Composable ColumnScope.() -> Unit) {
     Box(Modifier.fillMaxWidth()) {
-        Column(
-            Modifier.fillMaxWidth(0.78f).align(if (own) Alignment.CenterEnd else Alignment.CenterStart),
-            horizontalAlignment = if (own) Alignment.End else Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            Modifier.fillMaxWidth(0.82f).align(if (own) Alignment.CenterEnd else Alignment.CenterStart),
+            horizontalArrangement = if (own) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Top,
         ) {
-            if (!name.isNullOrBlank()) Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!own && !mark.isNullOrBlank()) {
+                Surface(Modifier.size(28.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(mark.take(1), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+            }
             Surface(
                 color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
                 contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
