@@ -84,7 +84,6 @@ const terminalEventHandlers: Array<(event: TerminalSessionEvent) => void> = [];
 
 beforeEach(() => {
   document.documentElement.dataset.theme = "light";
-  window.localStorage.removeItem("wuu.workspaceTerminalNavigationWidth");
   terminalConstructorOptions.length = 0;
   terminalDataHandlers.length = 0;
   terminalInstances.length = 0;
@@ -231,71 +230,24 @@ describe("WorkspaceTerminalPanel", () => {
     }],
   } as Thread;
 
-  it("starts a workspace-rooted pty only after the user creates a terminal", async () => {
+  it("starts a workspace-rooted pty as soon as the panel opens", async () => {
     await render(
       <WorkspaceTerminalPanel activeContext={worktreeContext} />,
     );
 
-    expect(startTerminalSession).not.toHaveBeenCalled();
-
-    const newTerminal = container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]');
-    await act(async () => {
-      newTerminal?.click();
-      await Promise.resolve();
-    });
-
     expect(startTerminalSession).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/worktrees/fork-1/project" }),
     );
-    expect(container.textContent).toContain("zsh");
-  });
-
-  it("keeps the new-terminal action available and preserves ptys while switching", async () => {
-    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
-    const newTerminal = container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]');
-
-    expect(newTerminal?.parentElement).toBe(container.querySelector(".workspace-terminal-navigation"));
-    expect(container.querySelector(".workspace-terminal-navigation-header")).toBeNull();
-
-    await act(async () => {
-      newTerminal?.click();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]')?.click();
-      await Promise.resolve();
-    });
-
-    await vi.waitFor(() => {
-      expect(startTerminalSession).toHaveBeenCalledTimes(2);
-      expect(container.textContent).toContain("zsh 2");
-    });
-    expect(container.querySelector('button[aria-label="新建终端"]')).not.toBeNull();
-    expect(terminalInstances).toHaveLength(2);
-
-    const resources = container.querySelectorAll<HTMLButtonElement>(".workspace-terminal-resource");
-    expect(resources[0]?.textContent).toContain("zsh");
-    expect(resources[1]?.textContent).toContain("zsh 2");
-    expect(container.querySelectorAll<HTMLElement>(".workspace-terminal-panel")[0]?.hidden).toBe(true);
-
-    act(() => resources[0]?.click());
-
-    expect(container.querySelectorAll<HTMLElement>(".workspace-terminal-panel")[0]?.hidden).toBe(false);
-    expect(container.querySelectorAll<HTMLElement>(".workspace-terminal-panel")[1]?.hidden).toBe(true);
-    expect(startTerminalSession).toHaveBeenCalledTimes(2);
-    expect(stopTerminalSession).not.toHaveBeenCalled();
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".workspace-terminal-path")?.textContent).toBe("/worktrees/fork-1/project");
+    expect(container.querySelector(".workspace-terminal-navigation")).toBeNull();
+    expect(container.querySelector('button[aria-label="新建终端"]')).toBeNull();
+    expect(container.querySelectorAll(".workspace-terminal-panel")).toHaveLength(1);
   });
 
   it("routes broadcast terminal events to the matching pty", async () => {
     await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
-
-    for (let index = 0; index < 2; index += 1) {
-      await act(async () => {
-        container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]')?.click();
-        await Promise.resolve();
-      });
-    }
-    await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(1));
 
     act(() => {
       for (const handler of terminalEventHandlers) {
@@ -306,35 +258,6 @@ describe("WorkspaceTerminalPanel", () => {
 
     expect(terminalInstances[0]?.write).toHaveBeenCalledWith("first");
     expect(terminalInstances[0]?.write).not.toHaveBeenCalledWith("second");
-    expect(terminalInstances[1]?.write).toHaveBeenCalledWith("second");
-    expect(terminalInstances[1]?.write).not.toHaveBeenCalledWith("first");
-  });
-
-  it("stops only the closed pty and selects an adjacent terminal", async () => {
-    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
-
-    for (let index = 0; index < 3; index += 1) {
-      await act(async () => {
-        container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]')?.click();
-        await Promise.resolve();
-      });
-    }
-    await vi.waitFor(() => expect(startTerminalSession).toHaveBeenCalledTimes(3));
-
-    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="关闭 zsh 3"]')?.click());
-
-    await vi.waitFor(() => expect(stopTerminalSession).toHaveBeenCalledWith("term-3"));
-    expect(stopTerminalSession).toHaveBeenCalledTimes(1);
-    expect(container.textContent).not.toContain("zsh 3");
-    expect(container.querySelector<HTMLButtonElement>(".workspace-terminal-resource.active")?.textContent).toContain("zsh 2");
-    expect(container.querySelectorAll(".workspace-terminal-panel")).toHaveLength(2);
-
-    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="关闭 zsh 2"]')?.click());
-
-    await vi.waitFor(() => expect(stopTerminalSession).toHaveBeenCalledWith("term-2"));
-    expect(stopTerminalSession).toHaveBeenCalledTimes(2);
-    expect(container.querySelector<HTMLButtonElement>(".workspace-terminal-resource.active")?.textContent).toContain("zsh");
-    expect(stopTerminalSession).not.toHaveBeenCalledWith("term-1");
   });
 
   it("does not render a terminal without a workspace context", () => {
@@ -349,11 +272,6 @@ describe("WorkspaceTerminalPanel", () => {
   it("uses the applied theme and updates an open terminal when it changes", async () => {
     await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
 
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]')?.click();
-      await Promise.resolve();
-    });
-
     expect(terminalConstructorOptions[0]?.theme?.background).toBe("#ffffff");
 
     document.documentElement.dataset.theme = "dark";
@@ -363,15 +281,16 @@ describe("WorkspaceTerminalPanel", () => {
     });
   });
 
-  it("keeps one-shot command history out of the persistent terminal list", async () => {
+  it("does not open settled command history as the interactive terminal", async () => {
     await render(
       <WorkspaceTerminalPanel activeContext={worktreeContext} thread={threadWithRuns} />,
     );
 
-    expect(container.textContent).toContain("没有运行中的终端");
+    expect(container.querySelector(".workspace-terminal-path")?.textContent).toBe("/worktrees/fork-1/project");
     expect(container.textContent).not.toContain("npm test");
     expect(container.textContent).not.toContain("npm run lint");
-    expect(terminalInstances).toHaveLength(0);
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(terminalInstances).toHaveLength(1);
   });
 
   it("uses the live process inventory without requiring matching command history", async () => {
@@ -383,15 +302,16 @@ describe("WorkspaceTerminalPanel", () => {
     );
 
     await vi.waitFor(() => {
-      const navigation = container.querySelector(".workspace-terminal-navigation");
       expect(listManagedProcesses).toHaveBeenCalledWith("thread-1");
-      expect(navigation?.textContent).toContain("npm run dev");
-      expect(navigation?.textContent).not.toContain("npm test");
-      expect(navigation?.textContent).not.toContain("npm run lint");
+      expect(container.querySelector(".workspace-agent-terminal")?.textContent).toContain("npm run dev");
+      expect(container.textContent).not.toContain("npm test");
+      expect(container.textContent).not.toContain("npm run lint");
     });
+    expect(startTerminalSession).not.toHaveBeenCalled();
+    expect(container.querySelector(".workspace-terminal-navigation")).toBeNull();
   });
 
-  it("does not list managed processes after they stop", async () => {
+  it("does not keep a stopped managed process instead of the interactive terminal", async () => {
     listManagedProcesses.mockResolvedValue({
       processes: [{ ...runningProcess, status: "stopped", stopped_at: "2026-07-18T08:01:00Z" }],
     });
@@ -401,25 +321,9 @@ describe("WorkspaceTerminalPanel", () => {
     );
 
     await vi.waitFor(() => expect(listManagedProcesses).toHaveBeenCalledWith("thread-1"));
-    expect(container.querySelector(".workspace-terminal-navigation")?.textContent).not.toContain("npm run dev");
-    expect(terminalInstances).toHaveLength(0);
-  });
-
-  it("resizes the terminal list from the separator", async () => {
-    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
-    const separator = container.querySelector<HTMLElement>('[role="separator"]');
-
-    expect(separator?.getAttribute("aria-valuenow")).toBe("212");
-    act(() => separator?.dispatchEvent(new MouseEvent("pointerdown", {
-      bubbles: true,
-      button: 0,
-      clientX: 100,
-    })));
-    act(() => window.dispatchEvent(new MouseEvent("pointermove", { clientX: 140 })));
-
-    expect(separator?.getAttribute("aria-valuenow")).toBe("252");
-    expect(container.querySelector<HTMLElement>(".workspace-terminal-workspace")?.style.getPropertyValue("--workspace-terminal-navigation-width")).toBe("252px");
-    act(() => window.dispatchEvent(new MouseEvent("pointerup")));
+    expect(container.textContent).not.toContain("npm run dev");
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(terminalInstances).toHaveLength(1);
   });
 
   it("opens a requested settled run without starting the interactive terminal", async () => {
@@ -436,8 +340,8 @@ describe("WorkspaceTerminalPanel", () => {
     );
 
     expect(startTerminalSession).not.toHaveBeenCalled();
-    expect(container.querySelector(".workspace-terminal-workspace")?.classList.contains("standalone-agent-run")).toBe(true);
-    expect(container.querySelector('button[aria-label="新建终端"]')).not.toBeNull();
+    expect(container.querySelector(".workspace-terminal-workspace")?.getAttribute("data-wuu-state")).toBe("standalone");
+    expect(container.querySelector('button[aria-label="新建终端"]')).toBeNull();
     expect(container.querySelector(".workspace-agent-terminal")?.textContent).toContain("npm run lint");
     expect(container.textContent).toContain("失败");
     expect(container.textContent).not.toContain("AI 命令");
@@ -479,10 +383,7 @@ describe("WorkspaceTerminalPanel", () => {
       />,
     );
 
-    const nativeTerminalButton = container.querySelector<HTMLButtonElement>('button[aria-label="新建终端"]');
-    expect(nativeTerminalButton?.disabled).toBe(true);
-    nativeTerminalButton?.click();
-    expect(startTerminalSession).not.toHaveBeenCalled();
+    expect(container.querySelector('button[aria-label="新建终端"]')).toBeNull();
 
     await vi.waitFor(() => {
       expect(readManagedProcess).toHaveBeenCalledWith(expect.objectContaining({
