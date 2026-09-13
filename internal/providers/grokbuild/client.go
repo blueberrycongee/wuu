@@ -121,14 +121,15 @@ func (c *Client) openAIClient(model string) (*openai.Client, error) {
 	headers["x-grok-client-mode"] = grokbuildspec.ClientMode
 	headers["x-authenticateresponse"] = grokbuildspec.AuthenticateResponseValue
 	return openai.New(openai.ClientConfig{
-		BaseURL:       c.baseURL,
-		WireAPI:       "chat",
-		APIKey:        token,
-		Headers:       headers,
-		HTTPClient:    c.httpClient,
-		StreamConfig:  c.streamConfig,
-		Coordinator:   c.coordinator,
-		ProviderScope: providers.NewProviderScope(c.baseURL, token, ""),
+		DisableVideoInput: true,
+		BaseURL:           c.baseURL,
+		WireAPI:           "chat",
+		APIKey:            token,
+		Headers:           headers,
+		HTTPClient:        c.httpClient,
+		StreamConfig:      c.streamConfig,
+		Coordinator:       c.coordinator,
+		ProviderScope:     providers.NewProviderScope(c.baseURL, token, ""),
 	})
 }
 

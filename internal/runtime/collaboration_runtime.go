@@ -139,6 +139,8 @@ func (s *Session) collaborationModel(selected ThreadModelSelection) (modelroles.
 					FileInput:       s.StreamRunner.MediaInput.File,
 					ImageInputKnown: s.StreamRunner.MediaInput.ImageKnown,
 					FileInputKnown:  s.StreamRunner.MediaInput.FileKnown,
+					VideoInput:      s.StreamRunner.MediaInput.Video,
+					VideoInputKnown: s.StreamRunner.MediaInput.VideoKnown,
 				},
 			}
 			if selection.APIModel == "" {

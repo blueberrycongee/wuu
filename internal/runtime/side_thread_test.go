@@ -186,7 +186,7 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	if runner.Model != "deepseek-v4-flash" {
 		t.Fatalf("pinned runner model = %q, want deepseek-v4-flash", runner.Model)
 	}
-	want := providers.MediaInputPolicy{ImageKnown: true, FileKnown: true}
+	want := providers.MediaInputPolicy{ImageKnown: true, FileKnown: true, VideoKnown: true}
 	if runner.MediaInput != want {
 		t.Fatalf("pinned runner media input = %+v, want %+v (text-only model must reject images)", runner.MediaInput, want)
 	}

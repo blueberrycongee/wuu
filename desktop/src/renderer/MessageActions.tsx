@@ -1,3 +1,4 @@
+import { VideoAttachment } from "./VideoAttachment";
 import {
   AlertCircle,
   Check,
@@ -294,7 +295,7 @@ export function MessageFileList({
         const kind = extension ? extension.slice(1).toUpperCase() : file.media_type.split("/").pop()?.toUpperCase();
         return (
           <div className="message-file-frame" key={`${file.media_type}-${file.filename ?? index}-${index}`}>
-            <div className="message-file" title={filename}>
+            {file.media_type.startsWith("video/") ? <VideoAttachment file={file} /> : <div className="message-file" title={filename}>
               <FileText className="icon" aria-hidden="true" />
               <span className="message-file-details">
                 <span className="message-file-name">
@@ -303,7 +304,7 @@ export function MessageFileList({
                 </span>
                 <span className="message-file-meta">{kind ? `${kind} · ` : ""}{formatFileSize(file.data)}</span>
               </span>
-            </div>
+            </div>}
             {onRemove ? (
               <button
                 type="button"

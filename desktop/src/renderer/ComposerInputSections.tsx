@@ -1,3 +1,5 @@
+import { VideoAttachment } from "./VideoAttachment";
+import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import * as React from "react";
 import { createComposerDrawer } from "../shared/ComposerDrawer";
 import { AttachmentImage } from "./AttachmentImage";
@@ -85,8 +87,10 @@ export function ComposerAttachmentStrip({
       })}
       {files.map((file, index) => (
         <div className="composer-file-attachment" key={file.id}>
-          <FileText className="icon" aria-hidden="true" />
-          <span>{file.filename?.trim() || t("composer.pdfNumber", { number: index + 1 })}</span>
+          {file.media_type.startsWith("video/") ? <VideoAttachment file={file} /> : <>
+            <FileText className="icon" aria-hidden="true" />
+            <span>{file.filename?.trim() || t("composer.pdfNumber", { number: index + 1 })}</span>
+          </>}
           {removable ? (
             <button type="button" className="composer-attachment-remove" aria-label={t("composer.removeFile", { number: index + 1 })} onClick={() => onRemoveFile?.(file.id)}>
               <X className="icon-xs" />
@@ -321,7 +325,7 @@ export function SplitPaneComposer({
                   ref={attachmentInputRef}
                   className="composer-file-input"
                   type="file"
-                  accept="image/*,application/pdf"
+                  accept={COMPOSER_ATTACHMENT_ACCEPT}
                   multiple
                   tabIndex={-1}
                   onChange={(event) => {

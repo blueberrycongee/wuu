@@ -94,6 +94,7 @@ func isFirstPartyOpenAIBaseURL(raw string) bool {
 
 // ClientConfig configures an OpenAI-compatible endpoint.
 type ClientConfig struct {
+	DisableVideoInput       bool
 	BaseURL                 string
 	WireAPI                 string
 	APIKey                  string
@@ -109,6 +110,7 @@ type ClientConfig struct {
 
 // Client sends tool-enabled chat requests to OpenAI-compatible APIs.
 type Client struct {
+	disableVideoInput  bool
 	baseURL            string
 	wireAPI            string
 	apiKey             string
@@ -154,6 +156,7 @@ func New(cfg ClientConfig) (*Client, error) {
 	}
 
 	return &Client{
+		disableVideoInput:  cfg.DisableVideoInput,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
 		wireAPI:            wireAPI,
 		apiKey:             cfg.APIKey,
@@ -197,6 +200,10 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	if c.wireAPI == wireAPIResponses {
 		return c.responsesChat(ctx, req)
 	}
+	req, err = providers.PrepareVideoInput(req, !c.disableVideoInput && providers.VideoURLTransport(c.baseURL, req.ProviderOptions))
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
 	if autoToolChoiceOnly(req.ProviderOptions) {
 		req.ForceToolName = ""
 	}
@@ -216,7 +223,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
-	req.Messages = prepared
+	req.Messages = providers.VideoMessagesForEndpoint(prepared, c.baseURL)
 	for _, msg := range req.Messages {
 		mapped := mapMessage(req.Model, msg)
 		if mapped.Role != "tool" && mapped.ToolCallID == "" {
@@ -351,6 +358,10 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	if c.wireAPI == wireAPIResponses {
 		return c.responsesStreamChat(ctx, req)
 	}
+	req, err = providers.PrepareVideoInput(req, !c.disableVideoInput && providers.VideoURLTransport(c.baseURL, req.ProviderOptions))
+	if err != nil {
+		return nil, err
+	}
 	if autoToolChoiceOnly(req.ProviderOptions) {
 		req.ForceToolName = ""
 	}
@@ -374,7 +385,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	if err != nil {
 		return nil, err
 	}
-	req.Messages = prepared
+	req.Messages = providers.VideoMessagesForEndpoint(prepared, c.baseURL)
 	for _, msg := range req.Messages {
 		mapped := mapMessage(req.Model, msg)
 		if mapped.Role != "tool" && mapped.ToolCallID == "" {
@@ -811,6 +822,10 @@ func mapMessage(model string, msg providers.ChatMessage) chatMessage {
 			if mediaType == "" {
 				mediaType = "application/octet-stream"
 			}
+			if providers.IsVideoMediaType(mediaType) {
+				parts = append(parts, chatContentPart{Type: "video_url", VideoURL: &chatImageURL{URL: "data:" + mediaType + ";base64," + data}})
+				continue
+			}
 			filename := strings.TrimSpace(file.Filename)
 			if filename == "" {
 				filename = "attachment"
@@ -1034,6 +1049,9 @@ func mergeChatProviderOptions(object map[string]any, options map[string]any, for
 		return
 	}
 	for key, value := range options {
+		if key == "video_input" {
+			continue
+		}
 		switch key {
 		case "reasoningEffort":
 			if effort, ok := value.(string); ok && strings.TrimSpace(effort) != "" {
@@ -1159,6 +1177,7 @@ type chatMessage struct {
 }
 
 type chatContentPart struct {
+	VideoURL *chatImageURL `json:"video_url,omitempty"`
 	Type     string        `json:"type"`
 	Text     string        `json:"text,omitempty"`
 	ImageURL *chatImageURL `json:"image_url,omitempty"`

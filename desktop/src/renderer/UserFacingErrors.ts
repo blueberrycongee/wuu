@@ -238,6 +238,10 @@ export function userFacingErrorForMessage(
     structured?.message ?? (typeof input === "string" ? input : "") ?? ""
   ).trim();
 
+  if (message.includes("video input is not supported by the selected model and connection")) {
+    return { category: "invalid_request", tone: "warning", title: t("composer.attachment.videoUnavailable"), detail: "", diagnostic: message };
+  }
+
   // Category: prefer the wire value, fall back to the legacy classifier.
   // A wire value we do not recognize (a newer Go core added a category
   // before this renderer learned it) degrades to the internal-error

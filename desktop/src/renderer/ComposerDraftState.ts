@@ -18,7 +18,7 @@ import {
   composerFileFromFile,
   composerImagePlaceholder,
   isComposerImageFile,
-  isPDFFile,
+  isComposerDocumentFile,
   revokeComposerImagePreview,
   type ComposerFile,
   type ComposerImage,
@@ -78,7 +78,7 @@ export async function buildComposerAttachments(
   onFile: (file: ComposerFile) => void,
 ): Promise<void> {
   const imageFiles = files.filter(isComposerImageFile);
-  const pdfFiles = files.filter(isPDFFile);
+  const documentFiles = files.filter(isComposerDocumentFile);
   await Promise.all([
     ...imageFiles.map(async (file) => {
       const placeholder = composerImagePlaceholder(file);
@@ -88,9 +88,9 @@ export async function buildComposerAttachments(
         onImageEncoded(encoded);
       }
     }),
-    ...pdfFiles.map(async (file) => {
-      const pdf = await composerFileFromFile(file);
-      onFile(pdf);
+    ...documentFiles.map(async (file) => {
+      const attachment = await composerFileFromFile(file);
+      onFile(attachment);
     }),
   ]);
 }
@@ -104,8 +104,8 @@ async function attachComposerAttachmentFilesToDraft(
     return;
   }
   const imageFiles = files.filter(isComposerImageFile);
-  const pdfFiles = files.filter(isPDFFile);
-  if (imageFiles.length === 0 && pdfFiles.length === 0) {
+  const documentFiles = files.filter(isComposerDocumentFile);
+  if (imageFiles.length === 0 && documentFiles.length === 0) {
     setStatus(localizedText("composer.attachment.imagesAndPdfOnly"));
     return;
   }

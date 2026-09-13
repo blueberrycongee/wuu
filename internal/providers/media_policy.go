@@ -14,6 +14,8 @@ import (
 // The policy is request metadata only: provider clients must never serialize
 // it on the wire.
 type MediaInputPolicy struct {
+	Video      bool
+	VideoKnown bool
 	Image      bool
 	File       bool
 	ImageKnown bool
@@ -47,7 +49,7 @@ func appendMediaMarker(content string, count int, singular, plural string) strin
 func ProjectMediaForPolicy(msgs []ChatMessage, policy MediaInputPolicy) []ChatMessage {
 	rejectImage := policy.ImageKnown && !policy.Image
 	rejectFile := policy.FileKnown && !policy.File
-	if !rejectImage && !rejectFile {
+	if !rejectImage && !rejectFile && !(policy.VideoKnown && !policy.Video) {
 		return msgs
 	}
 	out := make([]ChatMessage, len(msgs))
@@ -58,10 +60,28 @@ func ProjectMediaForPolicy(msgs []ChatMessage, policy MediaInputPolicy) []ChatMe
 			out[i].Images = nil
 			out[i].Content = appendMediaMarker(out[i].Content, omitted, "image", "images")
 		}
-		if rejectFile && len(out[i].Files) > 0 {
-			omitted := len(out[i].Files)
-			out[i].Files = nil
-			out[i].Content = appendMediaMarker(out[i].Content, omitted, "file", "files")
+		if len(out[i].Files) > 0 {
+			kept := make([]InputFile, 0, len(out[i].Files))
+			omittedFiles, omittedVideos := 0, 0
+			for _, file := range out[i].Files {
+				if IsVideoMediaType(file.MediaType) {
+					if policy.VideoKnown && !policy.Video {
+						omittedVideos++
+						continue
+					}
+				} else if rejectFile {
+					omittedFiles++
+					continue
+				}
+				kept = append(kept, file)
+			}
+			out[i].Files = kept
+			if omittedFiles > 0 {
+				out[i].Content = appendMediaMarker(out[i].Content, omittedFiles, "file", "files")
+			}
+			if omittedVideos > 0 {
+				out[i].Content = appendMediaMarker(out[i].Content, omittedVideos, "video", "videos")
+			}
 		}
 	}
 	return out

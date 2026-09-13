@@ -1843,6 +1843,8 @@ func mediaInputPolicyFromCapabilities(caps modelroles.Capabilities) providers.Me
 		File:       caps.FileInput,
 		ImageKnown: caps.ImageInputKnown,
 		FileKnown:  caps.FileInputKnown,
+		Video:      caps.VideoInput,
+		VideoKnown: caps.VideoInputKnown,
 	}
 }
 

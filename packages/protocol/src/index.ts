@@ -699,6 +699,8 @@ export type ModelCapabilitySummary = {
   output_limit?: number;
   image_input?: boolean;
   file_input?: boolean;
+  video_input?: boolean;
+  video_input_known?: boolean;
   prompt_cache?: boolean;
   cache_granularity?: string;
   protocol_family?: string;

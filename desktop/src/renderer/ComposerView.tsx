@@ -1,3 +1,4 @@
+import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import {
   ChevronDown,
   ChevronUp,
@@ -1267,7 +1268,7 @@ export function Composer({
                   ref={attachmentInputRef}
                   className="composer-file-input"
                   type="file"
-                  accept="image/*,application/pdf"
+                  accept={COMPOSER_ATTACHMENT_ACCEPT}
                   multiple
                   tabIndex={-1}
                   onChange={(event) => {

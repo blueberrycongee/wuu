@@ -36,6 +36,21 @@ const IMAGE_TARGET_BYTES = (5 * 1024 * 1024 * 3) / 4;
 // single-file ceiling with headroom; stricter providers should lower this.
 export const COMPOSER_PDF_MAX_BYTES = 20 * 1024 * 1024;
 export const COMPOSER_PDF_MAX_MB = 20;
+export const COMPOSER_VIDEO_MAX_BYTES = 20 * 1024 * 1024;
+export const COMPOSER_ATTACHMENT_ACCEPT = "image/*,application/pdf,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov";
+
+export function composerVideoMediaType(file: Pick<File, "type" | "name">): string | undefined {
+  const type = file.type.toLowerCase();
+  if (type === "video/mov") return "video/quicktime";
+  if (["video/mp4", "video/webm", "video/quicktime"].includes(type)) return type;
+  if (type && type !== "application/octet-stream") return undefined;
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  return extension === "mp4" ? "video/mp4" : extension === "webm" ? "video/webm" : extension === "mov" ? "video/quicktime" : undefined;
+}
+
+export function isComposerVideoFile(file: File): boolean { return Boolean(composerVideoMediaType(file)); }
+export function isComposerDocumentFile(file: File): boolean { return isPDFFile(file) || isComposerVideoFile(file); }
+
 
 // Custom drag MIME carrying a workspace-relative path from the file tree.
 // Path drops insert plain text into the composer — a reference the model
@@ -155,10 +170,14 @@ export async function composerImageFromFile(file: File): Promise<ComposerImage> 
 }
 
 export async function composerFileFromFile(file: File): Promise<ComposerFile> {
-  if (!isPDFFile(file)) {
-    throw new Error(translateCurrent("composer.attachment.pdfOnly"));
+  const videoType = composerVideoMediaType(file);
+  if (!isPDFFile(file) && !videoType) {
+    throw new Error(translateCurrent("composer.attachment.documentsOnly"));
   }
-  if (file.size > COMPOSER_PDF_MAX_BYTES) {
+  if (videoType && file.size > COMPOSER_VIDEO_MAX_BYTES) {
+    throw new Error(translateCurrent("composer.attachment.videoTooLarge", { name: file.name, limit: 20 }));
+  }
+  if (!videoType && file.size > COMPOSER_PDF_MAX_BYTES) {
     throw new Error(
       translateCurrent("composer.attachment.pdfTooLarge", {
         name: file.name.trim() || "attachment.pdf",
@@ -169,14 +188,14 @@ export async function composerFileFromFile(file: File): Promise<ComposerFile> {
   const data = await bufferToBase64(await file.arrayBuffer());
   return {
     id: nextComposerAttachmentID(),
-    media_type: "application/pdf",
+    media_type: videoType ?? "application/pdf",
     data,
     filename: file.name.trim() || "attachment.pdf"
   };
 }
 
 export function isSupportedComposerAttachment(file: File): boolean {
-  return file.type.toLowerCase().startsWith("image/") || isPDFFile(file);
+  return file.type.toLowerCase().startsWith("image/") || isComposerDocumentFile(file);
 }
 
 export function isComposerImageFile(file: File): boolean {

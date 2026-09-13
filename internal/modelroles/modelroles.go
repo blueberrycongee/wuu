@@ -70,6 +70,8 @@ type Selection struct {
 }
 
 type Capabilities struct {
+	VideoInput               bool     `json:"video_input,omitempty"`
+	VideoInputKnown          bool     `json:"video_input_known,omitempty"`
 	Chat                     bool     `json:"chat"`
 	Responses                bool     `json:"responses,omitempty"`
 	Tools                    bool     `json:"tools"`
@@ -442,6 +444,8 @@ func capabilitiesFromProfile(providerName string, provider config.ProviderConfig
 		OutputLimit:              outputLimit,
 		ImageInput:               imageInput,
 		FileInput:                fileInput,
+		VideoInput:               modelCfg.Modalities != nil && containsString(modelCfg.Modalities.Input, "video"),
+		VideoInputKnown:          mediaInputKnown,
 		ImageInputKnown:          mediaInputKnown,
 		FileInputKnown:           mediaInputKnown,
 		PromptCache:              profile.Context.SupportsPromptCache,

@@ -130,7 +130,7 @@ describe("useComposerDraftState", () => {
     });
 
     expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "仅支持图片和 PDF",
+      "仅支持图片、PDF 和视频附件",
     );
     expect(hook.get().composerImages).toEqual([]);
     expect(hook.get().composerFiles).toEqual([]);

@@ -1,3 +1,4 @@
+import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { Plus } from "lucide-react";
 import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { NamedAgent } from "../shared/protocol";
@@ -231,7 +232,7 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
         variant="dock"
         hideRuntimeControls
         leadingActions={<>
-          <input ref={attachmentInputRef} className="channel-attachment-input" type="file" accept="image/*,application/pdf" multiple onChange={(event) => {
+          <input ref={attachmentInputRef} className="channel-attachment-input" type="file" accept={COMPOSER_ATTACHMENT_ACCEPT} multiple onChange={(event) => {
             const selected = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = "";
             if (selected.length > 0) onPasteAttachmentFiles(selected);

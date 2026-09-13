@@ -1,0 +1,6 @@
+.video-attachment { width: 180px; max-width: 100%; min-width: 0; }
+.video-attachment video { display: block; width: 100%; height: 102px; object-fit: contain; border-radius: 6px; background: var(--surface); }
+.video-attachment-caption { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; font-size: 11px; }
+.video-attachment-caption > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.video-attachment-caption small { flex-shrink: 0; color: var(--ink-soft); }
+.composer-file-attachment:has(.video-attachment) { padding: 6px; }

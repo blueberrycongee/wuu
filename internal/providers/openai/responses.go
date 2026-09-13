@@ -187,6 +187,11 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 		return responsesRequest{}, errors.New("messages is required")
 	}
 
+	var videoErr error
+	req, videoErr = providers.PrepareVideoInput(req, false)
+	if videoErr != nil {
+		return responsesRequest{}, videoErr
+	}
 	resolved := providers.ResolveProviderHistory(req.Messages, req.Provider, req.ProviderStateScope)
 	prepared, err := providers.PrepareMessagesForProviderRequestWithPolicy(req.Provider, req.Model, resolved, req.MediaInput)
 	if err != nil {

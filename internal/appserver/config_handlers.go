@@ -1545,6 +1545,8 @@ func (s *Server) applyModelSelectionToRuntime(
 				File:       roleSelections.Main.Capabilities.FileInput,
 				ImageKnown: roleSelections.Main.Capabilities.ImageInputKnown,
 				FileKnown:  roleSelections.Main.Capabilities.FileInputKnown,
+				Video:      roleSelections.Main.Capabilities.VideoInput,
+				VideoKnown: roleSelections.Main.Capabilities.VideoInputKnown,
 			}
 			s.rt.StreamRunner.Effort = selection.LegacyEffort
 			s.rt.StreamRunner.Variant = selection.Variant

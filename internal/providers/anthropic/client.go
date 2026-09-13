@@ -371,6 +371,11 @@ func buildAnthropicRequest(req providers.ChatRequest, maxTokens int, stream bool
 }
 
 func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, stream bool, support anthropicToolSearchSupport) (anthropicRequest, error) {
+	var videoErr error
+	req, videoErr = providers.PrepareVideoInput(req, false)
+	if videoErr != nil {
+		return anthropicRequest{}, videoErr
+	}
 	prepared, err := providers.PrepareMessagesForProviderRequestWithPolicy(req.Provider, req.Model, req.Messages, req.MediaInput)
 	if err != nil {
 		return anthropicRequest{}, err

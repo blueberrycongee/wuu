@@ -1,3 +1,4 @@
+import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import {
   memo,
   type ChangeEvent as ReactChangeEvent,
@@ -795,7 +796,7 @@ function UserMessageInlineEditor({
         ref={fileInputRef}
         className="user-message-edit-file-input"
         type="file"
-        accept="image/*,application/pdf"
+        accept={COMPOSER_ATTACHMENT_ACCEPT}
         multiple
         tabIndex={-1}
         onChange={handleFileInputChange}
