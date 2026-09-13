@@ -22,7 +22,7 @@ func TestRoomPreviewFollowsLatestPublicMessageWithoutAttachmentPayloads(t *testi
 	}
 	latest, err := service.SendHuman(ctx, HumanSendParams{
 		RoomID: room.ID, HumanID: "human-1", ReplyTo: first.Message.ID,
-		Body: strings.Repeat("报告🙂", 100),
+		Body:   strings.Repeat("报告🙂", 100),
 		Images: []MessageImage{{MediaType: "image/png", Data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}},
 	})
 	if err != nil {

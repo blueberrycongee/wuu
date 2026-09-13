@@ -281,6 +281,9 @@
  * panel open). Surfaces clear them with --linux-caption-width padding. */
 :root[data-platform="linux"] {
   --linux-caption-width: 138px;
+  --linux-caption-close-hover: #e81123;
+  --linux-caption-close-active: #c50f1f;
+  --linux-caption-close-ink: #ffffff;
 }
 
 .linux-window-controls {
@@ -358,13 +361,13 @@
 }
 
 .linux-window-control-close:hover {
-  background: #e81123;
-  color: #fff;
+  background: var(--linux-caption-close-hover);
+  color: var(--linux-caption-close-ink);
 }
 
 .linux-window-control-close:active {
-  background: #c50f1f;
-  color: #fff;
+  background: var(--linux-caption-close-active);
+  color: var(--linux-caption-close-ink);
 }
 
 .title-block h1 {

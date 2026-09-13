@@ -56,7 +56,7 @@ export const zhCN = {
   "agentOnboarding.appearance": "外观",
   "agentOnboarding.shape": "形状",
   "agentOnboarding.shape.round": "圆形",
-  "agentOnboarding.shape.rounded-square": "圆角方形",
+  "agentOnboarding.shape.roundedSquare": "圆角方形",
   "agentOnboarding.shape.capsule": "胶囊形",
   "agentOnboarding.shape.triangle": "三角形",
   "agentOnboarding.shape.diamond": "菱形",

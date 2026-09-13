@@ -58,7 +58,7 @@ export const enUS = {
   "agentOnboarding.appearance": "Appearance",
   "agentOnboarding.shape": "Shape",
   "agentOnboarding.shape.round": "Round",
-  "agentOnboarding.shape.rounded-square": "Rounded square",
+  "agentOnboarding.shape.roundedSquare": "Rounded square",
   "agentOnboarding.shape.capsule": "Capsule",
   "agentOnboarding.shape.triangle": "Triangle",
   "agentOnboarding.shape.diamond": "Diamond",
