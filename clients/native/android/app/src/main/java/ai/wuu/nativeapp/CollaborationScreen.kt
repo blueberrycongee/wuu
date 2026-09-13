@@ -185,7 +185,7 @@ import org.json.JSONObject
             Surface(
                 color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
                 contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = if (own) 18.dp else 4.dp, bottomEnd = if (own) 4.dp else 18.dp),
+                shape = if (own) RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp) else RoundedCornerShape(18.dp),
             ) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
             }
