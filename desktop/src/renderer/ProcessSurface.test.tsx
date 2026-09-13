@@ -710,7 +710,6 @@ describe("ProcessSurface", () => {
     );
     expect(svg).not.toBeNull();
     expect(svg?.getAttribute("data-wuu-mascot-activity")).toBe("thinking");
-    expect(container.querySelector(".wuu-mascot-activity-prop-thinking")).not.toBeNull();
 
     rerender({
       processItems: [
@@ -731,8 +730,6 @@ describe("ProcessSurface", () => {
     );
     expect(next).toBe(svg);
     expect(next?.getAttribute("data-wuu-mascot-activity")).toBe("edit");
-    expect(container.querySelector(".wuu-mascot-activity-prop-thinking")).toBeNull();
-    expect(container.querySelector(".wuu-mascot-activity-prop-edit")).not.toBeNull();
   });
 
   it("marks the count is-changing for ~180ms when the value changes", async () => {

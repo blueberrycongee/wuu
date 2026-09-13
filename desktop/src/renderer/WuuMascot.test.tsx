@@ -2,7 +2,7 @@ import { Blobatar } from "blobatar/react";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WuuMascot, WuuMascotRuntimeProvider, WUU_MASCOT_ACTIVITY_PROP_LAYOUT, modelMascotAccessory } from "./WuuMascot";
+import { WuuMascot, WuuMascotRuntimeProvider, modelMascotAccessory } from "./WuuMascot";
 import { EmptyConversationHome } from "./LoadingViews";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 
@@ -196,13 +196,6 @@ describe("WuuMascot activity morph", () => {
     const portal = svg.querySelector(".wuu-mascot-layer-front");
 
     expect(svg.getAttribute("data-wuu-mascot-activity")).toBe("thinking");
-    expect(host.querySelector(".wuu-mascot-activity-prop-thinking")).not.toBeNull();
-    const thinkingLayout = WUU_MASCOT_ACTIVITY_PROP_LAYOUT.thinking;
-    expect(
-      host
-        .querySelector(".wuu-mascot-activity-prop-thinking .wuu-mascot-activity-motion > g")
-        ?.getAttribute("transform"),
-    ).toContain(`translate(${thinkingLayout.x} ${thinkingLayout.y})`);
     expect(thinkingPaths.length).toBeGreaterThan(0);
 
     rerender(<WuuMascot activity="edit" accessory="none" />);
@@ -215,13 +208,7 @@ describe("WuuMascot activity morph", () => {
     expect(next.querySelector(".wuu-mascot-layer-front")).toBe(portal);
     expect(next.getAttribute("data-wuu-mascot-activity")).toBe("edit");
     expect(host.querySelector(".wuu-mascot-activity-prop-thinking")).toBeNull();
-    expect(host.querySelector(".wuu-mascot-activity-prop-edit")).not.toBeNull();
-    const editLayout = WUU_MASCOT_ACTIVITY_PROP_LAYOUT.edit;
-    expect(
-      host
-        .querySelector(".wuu-mascot-activity-prop-edit .wuu-mascot-activity-motion > g")
-        ?.getAttribute("transform"),
-    ).toContain(`translate(${editLayout.x} ${editLayout.y})`);
+
   });
 
   it("updates the camera for an activity even when the eye expression stays the same", () => {

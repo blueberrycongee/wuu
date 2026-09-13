@@ -16,6 +16,8 @@ import {
 import { createPortal } from "react-dom";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMascotMotion";
+import { useMascotCoalescence } from "./useMascotCoalescence";
+import { useMascotMorph, ACTIVITY_MORPHS, type MascotMorph } from "./useMascotMorph";
 import { MascotAccessory, measureAccessoryFit, WUU_MASCOT_ACCESSORIES, type AccessoryFit, type WuuMascotAccessory } from "./WuuMascotAccessories";
 export { WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascotAccessories";
 import "./styles/wuu-mascot.css";
@@ -163,8 +165,11 @@ type WuuMascotProps = Omit<
   activity?: WuuMascotActivity;
   /** Animate entry/exit. Keep the component mounted and change this prop. */
   visible?: boolean;
-  /** Occasional idle glances, suspended for work and reduced motion. */
+  /** Occasional idle glances and liquid gestures, suspended for work and reduced motion. */
   ambient?: boolean;
+  morph?: MascotMorph;
+  motionPaused?: boolean;
+  motionReplay?: number;
   /** Override the face while retaining the mascot's authored identity. */
   expression?: Expression;
   showActivityProp?: boolean;
@@ -189,6 +194,9 @@ export function WuuMascot({
   activity = "idle",
   visible,
   ambient = false,
+  morph,
+  motionPaused = false,
+  motionReplay = 0,
   expression,
   showActivityProp = true,
   followPointer = false,
@@ -221,6 +229,9 @@ export function WuuMascot({
     [identityName, identityTraitsSignature],
   );
   const [svg, setSVG] = useState<SVGSVGElement | null>(null);
+  const effectiveMorph = morph ?? ACTIVITY_MORPHS[activity];
+  useMascotMorph(svg, effectiveMorph, motionPaused || visible === false, motionReplay, `${identityName}:${identityTraitsSignature}`);
+  useMascotCoalescence(svg, ambient && effectiveMorph === "idle" && present && visible !== false && !motionPaused ? "idle" : "off", `${identityName}:${identityTraitsSignature}`);
   const [mascotLayers, setMascotLayers] = useState<{
     rear: SVGGElement;
     front: SVGGElement;
@@ -357,6 +368,7 @@ export function WuuMascot({
         data-wuu-mascot-provider-hue={hue}
         data-wuu-mascot-accessory={selectedAccessory}
         data-wuu-mascot-activity={activity}
+        data-wuu-mascot-morph={effectiveMorph}
         data-wuu-mascot-presence={visible === undefined ? undefined : visible ? "enter" : "exit"}
         data-wuu-mascot-follows-pointer={followPointer ? "" : undefined}
       />
@@ -386,7 +398,7 @@ export function WuuMascot({
             )}
           </>
         : null}
-      {showActivityProp && mascotLayers && activity in WUU_MASCOT_ACTIVITY_PROP_LAYOUT
+      {showActivityProp && effectiveMorph === "idle" && mascotLayers && activity in WUU_MASCOT_ACTIVITY_PROP_LAYOUT
         ? createPortal(
             <MascotActivityProp key={activity} activity={activity as ActivityWithProp} />,
             mascotLayers.front,

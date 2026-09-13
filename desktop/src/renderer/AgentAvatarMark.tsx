@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type JSX } from
 import { SHAPES } from "blobatar/blob";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { WuuMascot, WUU_MASCOT_ACCESSORIES, type WuuMascotAccessory } from "./WuuMascot";
-import { WUU_MASCOT_TRAITS } from "./wuu-mascot-spec";
+import { WUU_MASCOT_TRAITS, type WuuMascotActivity } from "./wuu-mascot-spec";
 import "./styles/agent-avatar-feedback.css";
 
 export const AGENT_AVATAR_KEYS = [
@@ -21,33 +21,16 @@ export type AgentAvatarKey = (typeof AGENT_AVATAR_KEYS)[number];
 
 export type AgentAvatarStatus = "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
 
-function AgentAvatarAccent({ status }: { status: AgentAvatarStatus }): JSX.Element | null {
-  if (status === "idle") return null;
-  return <svg className="agent-avatar-accent" viewBox="0 0 100 100" aria-hidden="true">
-    {status === "thinking" ? <g className="agent-avatar-thoughts"><circle cx="77" cy="17" r="2.5" /><circle cx="86" cy="10" r="3.2" /><circle cx="97" cy="6" r="3.8" /></g> : null}
-    {status === "responding" ? <path d="M20 22C17 22 8 15 10 12C12 9 21 17 22 20Q23 23 20 22ZM28 13C25 13 23 1 26 0C30-1 32 12 28 13ZM11 34C8 35-2 31-1 28C0 25 12 29 13 31Q14 33 11 34Z" /> : null}
-    {status === "sending" ? <path d="M82 18C94 19 101 27 104 37Q104 41 100 38C95 30 89 26 81 24Q77 21 82 18ZM88 7C99 10 106 17 110 27Q111 31 107 29C101 21 95 16 87 13Q84 10 88 7Z" /> : null}
-    {status === "queued" ? <g><circle cx="8" cy="66" r="3.2" /><circle cx="-1" cy="70" r="2.6" /></g> : null}
-    {status === "waiting" ? <path d="M18 22C13 22 6 16 8 12C11 9 20 17 21 20Q21 23 18 22ZM29 12C24 12 23 3 26-1Q29-3 30 1C32 6 32 12 29 12Z" /> : null}
-    {status === "failed" ? <path d="M13 65C12 72 5 76 8 83Q10 87 5 86C-1 83 3 70 10 65Q13 62 13 65ZM87 65C88 72 95 76 92 83Q90 87 95 86C101 83 97 70 90 65Q87 62 87 65Z" /> : null}
-    {status === "interrupted" ? <g>
-      <path transform="translate(76 18) scale(.7)" d="M0 0H12V3L4 11H12V14H0V11L8 3H0Z" />
-      <path transform="translate(86 5) scale(.9)" d="M0 0H12V3L4 11H12V14H0V11L8 3H0Z" />
-      <path transform="translate(99 -10) scale(1.1)" d="M0 0H12V3L4 11H12V14H0V11L8 3H0Z" />
-    </g> : null}
-  </svg>;
-}
-
 const AGENT_TURN_MS = 1100;
 
-/** Work begins with one turn. Work sub-states share it; pauses cancel it. */
+/** Explicit inspection gestures retain their bounded lifetime across work sub-states. */
 function useAgentAvatarTurn(status: AgentAvatarStatus, enabled: boolean, signal: number): number {
   const active = status === "thinking" || status === "responding" || status === "sending";
   const previous = useRef({ active: false, signal });
   const sequence = useRef(0);
   const [turn, setTurn] = useState(0);
   useEffect(() => {
-    const requested = (active && !previous.current.active) || signal !== previous.current.signal;
+    const requested = signal !== previous.current.signal;
     previous.current = { active, signal };
     if (!enabled || (!active && !requested)) { setTurn(0); return; }
     if (requested && !document.hidden && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setTurn(current => current || ++sequence.current);
@@ -141,11 +124,12 @@ export function agentAvatarConfig(value: string): AgentAvatarConfig {
   return DEFAULT_AGENT_AVATAR_CONFIG;
 }
 
-export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", motion = "expressive", turnSignal = 0 }: {
+export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "expressive", turnSignal = 0 }: {
   seed: string;
   avatarKey: string;
   avatarImage?: string;
   status?: AgentAvatarStatus;
+  activity?: WuuMascotActivity;
   /** Secondary placements retain state cues without the working gaze loop. */
   motion?: "expressive" | "subtle";
   /** Increment to replay a deliberate character gesture, independent of status. */
@@ -165,7 +149,9 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle",
         identityHue={config.hue}
         identityTraits={{ ...WUU_MASCOT_TRAITS, shape: shape.trait }}
         accessory={config.accessory}
-        activity={status}
+        activity={activity ?? status}
+        motionPaused={motion === "subtle"}
+        ambient={motion === "expressive"}
         idlePerspective={{ yaw: 0, pitch: 2, strength: 1 }}
         animate={active && motion === "expressive" ? "always" : "hover"}
         style={{
@@ -175,7 +161,6 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle",
         } as CSSProperties}
         showActivityProp={false}
       />}
-      {avatarImage ? null : <AgentAvatarAccent status={status} />}
       {turn ? <AgentAvatarRibbon key={`front-${turn}`} front /> : null}
     </span>
   );

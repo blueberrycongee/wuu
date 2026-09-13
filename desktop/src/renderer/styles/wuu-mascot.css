@@ -340,3 +340,5 @@
     animation: none;
   }
 }
+
+[data-wuu-mascot-morph] .mo-bob { animation: none !important; }

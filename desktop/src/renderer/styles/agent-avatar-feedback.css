@@ -18,6 +18,11 @@
   transform: translateY(-.6%) rotate(-1.5deg) scale(.992, 1.008);
 }
 
+.agent-avatar-mark[data-agent-avatar-state="failed"] > [data-wuu-mascot-activity] {
+  transform: translateY(4%) scale(1.035, .92);
+  transition-delay: 0ms;
+}
+
 .agent-avatar-mark .mo-root {
   --mo-morph: 380ms;
 }
@@ -73,6 +78,15 @@
 
 .agent-avatar-mark[data-agent-avatar-turn] {
   animation: agent-avatar-turn var(--agent-turn-duration) cubic-bezier(.42, 0, .18, 1) both;
+}
+
+/* The liquid silhouette carries inference motion on its own. */
+.agent-avatar-mark[data-agent-avatar-state="thinking"][data-agent-avatar-turn] {
+  animation: none;
+}
+
+.agent-avatar-mark[data-agent-avatar-state="thinking"] > .agent-avatar-ribbon {
+  display: none;
 }
 
 @keyframes agent-avatar-turn {
@@ -147,3 +161,6 @@
     animation: none;
   }
 }
+
+/* Shared SVG morphs own the working silhouette, including failure and recovery. */
+.agent-avatar-mark > [data-wuu-mascot-morph] { transform: none !important; }

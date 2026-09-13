@@ -87,40 +87,15 @@ describe("AgentAvatarMark", () => {
     }
   });
 
-  it("turns once on entering work, retains the turn through a reply and cancels for user attention", async () => {
-    vi.useFakeTimers();
-    const container = document.createElement("div");
-    const root = createRoot(container);
-    const render = async (status: "idle" | "thinking" | "responding" | "failed") => {
-      await act(async () => root.render(<>
-        <AgentAvatarMark seed="live" avatarKey="abstract-1" status={status} />
-        <AgentAvatarMark seed="sidebar" avatarKey="abstract-1" status={status} motion="subtle" />
-      </>));
-    };
-    try {
-      await render("idle");
-      await render("thinking");
-      const live = container.querySelector('[data-agent-avatar-id="live"]')!;
-      const ribbon = live.querySelector(".agent-avatar-ribbon");
-      expect(ribbon).not.toBeNull();
-      expect(container.querySelector('[data-agent-avatar-id="sidebar"] .agent-avatar-ribbon')).toBeNull();
-      await act(async () => vi.advanceTimersByTime(500));
-      await render("responding");
-      expect(live.querySelector(".agent-avatar-ribbon")).toBe(ribbon);
-      await act(async () => vi.advanceTimersByTime(700));
-      expect(live.querySelector(".agent-avatar-ribbon")).toBeNull();
-      await render("thinking");
-      expect(live.querySelector(".agent-avatar-ribbon")).toBeNull();
-      await render("idle");
-      await render("thinking");
-      expect(live.querySelector(".agent-avatar-ribbon")).not.toBeNull();
-      await render("failed");
-      expect(live.querySelector(".agent-avatar-ribbon")).toBeNull();
-      expect(live.getAttribute("data-agent-avatar-state")).toBe("failed");
-    } finally {
-      await act(async () => root.unmount());
-      vi.useRealTimers();
-    }
+  it("preserves tool activity and identity instead of collapsing it into thinking", () => {
+    renderToStaticMarkup(<AgentAvatarMark seed="live" avatarKey="abstract-1" status="thinking" activity="search" />);
+    const search = blobatarProps.mock.calls.at(-1)![0];
+    renderToStaticMarkup(<AgentAvatarMark seed="live" avatarKey="abstract-1" status="thinking" activity="edit" />);
+    const edit = blobatarProps.mock.calls.at(-1)![0];
+    expect(search["data-wuu-mascot-activity"]).toBe("search");
+    expect(edit["data-wuu-mascot-activity"]).toBe("edit");
+    expect(edit.name).toBe(search.name);
+    expect(edit.traits).toEqual(search.traits);
   });
 
   it("keeps an uploaded identity intact across work, error and recovery", async () => {

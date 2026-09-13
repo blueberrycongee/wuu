@@ -53,7 +53,7 @@ export function ProcessSurfaceMascot({
   if (agent) return active ? (
     <span className="process-surface-blobatar">
       <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
-        status={activity === "responding" ? "responding" : "thinking"} />
+        activity={activity} status={activity === "responding" ? "responding" : "thinking"} />
     </span>
   ) : null;
   return (

@@ -32,7 +32,7 @@ button:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 3px; 
 .motion-history > .agent-avatar-mark { flex: 0 0 24px; width: 24px; height: 24px; }
 .motion-history p { margin: 0; }
 .motion-live { display: flex; gap: 12px; align-items: center; }
-.motion-live > .agent-avatar-mark { width: 32px; height: 32px; }
+.motion-live > .agent-avatar-mark, .motion-live > .morph-avatar { width: 32px; height: 32px; flex: 0 0 32px; }
 .motion-live strong { font-size: 12px; font-weight: 550; }
 .motion-sizes { display: flex; align-items: center; justify-content: space-around; gap: 16px; }
 .motion-sizes figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 15px; }
@@ -49,9 +49,19 @@ button:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 3px; 
   .motion-context { grid-template-columns: 1fr; }
   .motion-sizes { padding: 12px 36px; }
 }
-.motion-playback { display: flex; gap: 12px; align-items: center; }
-.motion-state-sheet { margin-top: 24px; padding: 30px 0 10px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(8,minmax(0,1fr)); gap: 20px; }
-.motion-state-sheet figure { margin: 0; display: grid; justify-items: center; gap: 12px; }
-.motion-state-sheet figure > div { width: 48px; height: 48px; }
-.motion-state-sheet figcaption { color: var(--ink-soft); font-size: 11px; }
-@media (max-width: 600px) { .motion-state-sheet { grid-template-columns: repeat(4,minmax(0,1fr)); row-gap: 28px; } }
+.motion-playback { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.motion-state-sheet { margin-top: 24px; padding: 20px 0 10px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 12px; }
+.motion-state-sheet > button { display: grid; justify-items: center; gap: 16px; padding: 16px 4px; color: var(--ink-soft); font-size: 12px; }
+.motion-sheet-avatar { width: 52px; height: 52px; display: block; }
+.motion-character-controls { border-top: 1px solid var(--line); padding-top: 12px; }
+.morph-avatar { display: inline-block; position: relative; width: 100%; height: 100%; vertical-align: middle; }
+.morph-avatar > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.morph-avatar > [data-wuu-mascot-activity] { transition: none; pointer-events: none; }
+@media (max-width: 600px) { .motion-state-sheet { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; } }
+@media (pointer: coarse) { .motion-controls button, .motion-playback button { min-height: 44px; } }
+
+.motion-production { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; margin: 16px 0; font-size: 12px; }
+.motion-production > span, .motion-production label { display: inline-flex; align-items: center; gap: 8px; }
+.motion-product-avatar, .motion-product-avatar > .agent-avatar-mark { display: inline-block; width: 32px; height: 32px; }
+.motion-production .process-surface-blobatar { width: 32px; height: 32px; }
+.motion-production select { color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 5px; padding: 4px; }
