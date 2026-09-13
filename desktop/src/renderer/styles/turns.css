@@ -3324,6 +3324,13 @@
   overflow: hidden;
 }
 
+/* Speech-bubble insets: step the card radius down so code corners stay
+   concentric with the bubble padding (user 8/16, channel 9/14). */
+.user-message .rich-code-block,
+.channel-message-bubble .rich-code-block {
+  border-radius: var(--radius-sm);
+}
+
 /* No-language variant: the header row is gone (see RichCodeBlock in
  * RichContent.tsx) and the copy button floats over the top-right
  * of the <pre> instead. The container becomes the positioning

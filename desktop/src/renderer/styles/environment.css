@@ -1194,7 +1194,7 @@
   min-width: 0;
   height: 46px;
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   outline: 0;
   background: var(--surface-2);
   color: var(--ink);
@@ -1577,7 +1577,7 @@
   align-items: flex-start;
   gap: 12px;
   width: 100%;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   text-align: left;

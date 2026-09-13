@@ -750,7 +750,7 @@
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: calc(var(--radius-xs) + 4px);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
 }
@@ -763,7 +763,7 @@
   min-height: 44px;
   padding: 8px 10px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font: inherit;
