@@ -40,7 +40,7 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "./AppLayoutState";
 import { EnvironmentSideStack } from "./EnvironmentSideStack";
-import { CompactConversationActions } from "./CompactConversationActions";
+import { CompactConversationActions } from "./CompactConversationActions"
 import {
   Composer,
 } from "./ComposerView";

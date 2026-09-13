@@ -4,6 +4,7 @@ import { AccountScreen } from "./AccountScreen";
 import { App } from "./App";
 import { startAppearanceSync } from "./AppearancePreferences";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
+import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxWindowControls";
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
 import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
@@ -27,6 +28,7 @@ startAppearanceSync();
 // Same story for data-platform: the preload stamps it pre-paint; this
 // covers boots whose preload was replaced (e2e mocks).
 applyPlatformStamp();
+startLinuxTitlebarMaximizeGesture();
 
 // Stamp the platform's real scrollbar gutter width before React renders so
 // the dock composer and the message flow are centered in the same visible
@@ -76,6 +78,7 @@ console.error = (...args: unknown[]): void => {
 ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
+      <LinuxWindowControls />
       {window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
         : <App />}

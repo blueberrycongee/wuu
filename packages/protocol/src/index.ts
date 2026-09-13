@@ -2975,6 +2975,13 @@ export type WuuDesktopApi = {
   // on <html> before first paint (window-chrome CSS keys off it) and
   // mirrors the value here for renderer logic (shortcut hints, OS labels).
   platform?: DesktopPlatform;
+  // Linux frameless chrome: the renderer draws caption buttons. Absent or
+  // unused on macOS (traffic lights) and Windows (controls overlay).
+  windowMinimize?: () => Promise<void>;
+  windowToggleMaximize?: () => Promise<boolean>;
+  windowClose?: () => Promise<void>;
+  windowIsMaximized?: () => Promise<boolean>;
+  onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously
