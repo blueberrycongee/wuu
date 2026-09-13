@@ -204,6 +204,7 @@ import {
   FirstRunOnboarding,
   hasOnboardingProvider as hasReadyProvider,
 } from "./FirstRunOnboarding";
+import { LinuxWindowControls } from "./LinuxWindowControls";
 import {
   EmptyConversationHome,
   RuntimeLoading,
@@ -5406,10 +5407,9 @@ export function App(): JSX.Element {
                   {t(collaborationSection === "agents" ? "channels.manageAgents" : "sidebar.collaboration")}
                 </span>
               </div>
-              <div
-                className="title-actions channel-title-actions-placeholder"
-                aria-hidden="true"
-              />
+              <div className="title-actions channel-title-actions-placeholder">
+                <LinuxWindowControls />
+              </div>
             </header> : null}
             {agentOnboardingActive && agentOnboardingDraft ? (
               <AgentOnboarding

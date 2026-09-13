@@ -276,6 +276,63 @@
   min-width: max-content;
 }
 
+/* Linux frameless caption buttons — same white header as app actions. */
+.linux-window-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  height: 30px;
+  margin-left: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar > .linux-window-controls,
+.channel-room-header-actions {
+  margin-left: auto;
+}
+
+.channel-room-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.linux-window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.linux-window-control:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.linux-window-control:active {
+  background: var(--surface-3);
+}
+
+.linux-window-control-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.linux-window-control-close:active {
+  background: #c50f1f;
+  color: #fff;
+}
+
 .title-block h1 {
   min-width: 0;
   max-width: 100%;

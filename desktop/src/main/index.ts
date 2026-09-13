@@ -793,17 +793,20 @@ function windowBackgroundColor(): string {
 // leaves the traffic lights over the renderer's drag strip (top-left);
 // Windows hides it and lets Chromium draw min/max/close as a controls
 // overlay (top-right — the renderer reserves that corner through the
-// --window-controls-inset-* variables). Linux keeps the native OS
-// titlebar so system controls sit above the page; app actions (info /
-// right panel) live in the content top-right, matching the usual
-// "caption above, toolbar below" layout.
+// --window-controls-inset-* variables). Linux is frameless: the renderer
+// draws caption buttons in the same white header as app actions so GTK
+// chrome never sits beside Wuu's icons.
 function usesWindowControlsOverlay(): boolean {
   return process.platform === "win32";
 }
 
 function windowFrameOptions(): Pick<
   BrowserWindowConstructorOptions,
-  "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay" | "autoHideMenuBar"
+  | "frame"
+  | "titleBarStyle"
+  | "trafficLightPosition"
+  | "titleBarOverlay"
+  | "autoHideMenuBar"
 > {
   if (process.platform === "darwin") {
     return {
@@ -815,15 +818,10 @@ function windowFrameOptions(): Pick<
     return {
       titleBarStyle: "hidden",
       titleBarOverlay: nonMacTitleBarOverlay(),
-      // Linux otherwise shows an always-visible in-window menu strip under
-      // the (now hidden) system titlebar; Alt still reveals the menu.
-      ...(process.platform === "linux" ? { autoHideMenuBar: true } : {}),
     };
   }
-  // Native Linux frame: hide the in-window File/Edit strip; Alt still
-  // reveals the menu. Other platforms need no extra frame flags.
   if (process.platform === "linux") {
-    return { autoHideMenuBar: true };
+    return { frame: false, autoHideMenuBar: true };
   }
   return {};
 }
@@ -852,6 +850,12 @@ const themedChromeWindows = new Set<BrowserWindow>();
 
 function registerThemedChromeWindow(win: BrowserWindow): void {
   themedChromeWindows.add(win);
+  const sendMaximized = (): void => {
+    if (win.isDestroyed()) return;
+    win.webContents.send("wuu:window-maximized-changed", win.isMaximized());
+  };
+  win.on("maximize", sendMaximized);
+  win.on("unmaximize", sendMaximized);
   win.on("closed", () => {
     themedChromeWindows.delete(win);
   });
@@ -2083,6 +2087,23 @@ app.whenReady().then(async () => {
       await remoteHostManager.removeDevice(workdir, String(fingerprintOrPub));
       return remoteControlSnapshot(workdir);
     });
+  });
+  ipcMain.handle("wuu:window-minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("wuu:window-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle("wuu:window-close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle("wuu:window-is-maximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return Boolean(win && !win.isDestroyed() && win.isMaximized());
   });
   ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
   ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {

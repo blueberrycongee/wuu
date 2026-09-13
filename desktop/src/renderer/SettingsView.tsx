@@ -39,6 +39,7 @@ import {
   useState,
   useSyncExternalStore
 } from "react";
+import { LinuxWindowControls } from "./LinuxWindowControls";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { SIDEBAR_DRAWER_EXIT_MS, SIDEBAR_MOTION_MS } from "./AppLayoutState";
@@ -1049,6 +1050,9 @@ export function SettingsView({
           >
             <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
           </button>
+          <div className="settings-titlebar-actions">
+            <LinuxWindowControls />
+          </div>
         </div>
         <div ref={settingsScrollRef} className="settings-scroll">
           <div
