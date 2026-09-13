@@ -2837,10 +2837,10 @@
   color: var(--wuu-ink-soft);
   /* One shared height bound for the whole expanded fold: the tool trail
    * and the reasoning block both live here, and either can outgrow a
-   * viewport in busy turns. Cap the combined area at 50vh and scroll it
-   * as a single container so an open fold can never push the
-   * conversation past one screen of activity. */
-  max-height: 50vh;
+   * viewport in busy turns. Cap the combined area and scroll it as a
+   * single container so an open fold stays a compact inspection strip
+   * instead of taking over the conversation. */
+  max-height: var(--conversation-process-fold-max-height, min(320px, 40vh));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -3814,7 +3814,7 @@
                                                                      
                                                   
 .turn-reasoning-scroll {
-  max-height: 50vh;
+  max-height: var(--conversation-process-fold-max-height, min(320px, 40vh));
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;

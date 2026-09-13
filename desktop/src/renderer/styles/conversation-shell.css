@@ -115,6 +115,9 @@
   --conversation-process-font-size: var(--conversation-message-font-size);
   --conversation-process-font-weight: var(--conversation-message-font-weight);
   --conversation-process-line-height: 1.6;
+  /* Expanded process folds (tool trail, reasoning) stay compact: bounded
+     by an absolute ceiling and a viewport share, whichever is smaller. */
+  --conversation-process-fold-max-height: min(320px, 40vh);
   --conversation-meta-line-height: 1.6;
   --conversation-control-line-height: 1.7;
   --conversation-process-control-color: var(--shell-process-control-color);
