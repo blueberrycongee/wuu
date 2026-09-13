@@ -9,6 +9,7 @@ import type {
   ProviderSummary,
   RuntimeConnectionUpdate,
 } from "../shared/protocol";
+import { LinuxWindowControls } from "./LinuxWindowControls";
 import { useI18n } from "./i18n";
 import { ONBOARDING_ENGINES, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
@@ -340,16 +341,19 @@ export function FirstRunOnboarding({
             />
           ))}
         </div>
-        {preview && onDismissPreview ? (
-          <button
-            className="onboarding-preview-exit"
-            type="button"
-            data-testid="onboarding-preview-exit"
-            onClick={onDismissPreview}
-          >
-            {t("onboarding.previewExit")}
-          </button>
-        ) : null}
+        <div className="onboarding-chrome-end">
+          {preview && onDismissPreview ? (
+            <button
+              className="onboarding-preview-exit"
+              type="button"
+              data-testid="onboarding-preview-exit"
+              onClick={onDismissPreview}
+            >
+              {t("onboarding.previewExit")}
+            </button>
+          ) : null}
+          <LinuxWindowControls />
+        </div>
       </header>
 
       <section className={`onboarding-stage onboarding-stage-${step}`}>

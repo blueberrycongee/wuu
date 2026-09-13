@@ -373,8 +373,8 @@
   );
 }
 
-/* Linux uses a native OS titlebar: system min/max/close sit above the
- * page, while app title actions live in the content top-right. */
+/* Linux is frameless: caption buttons are drawn in the renderer, so no
+ * overlay reservation is required. */
 :root[data-platform="linux"] {
   --window-controls-inset-left: 0px;
   --window-controls-inset-right: 0px;

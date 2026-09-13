@@ -6,6 +6,7 @@ import { ChannelComposer } from "./ChannelComposer";
 import { effortLabel, providerModelEffortOptions, providerModelReasoningMode } from "./RuntimeHelpers";
 import { MessageBubble, MessageBubbleRow } from "./MessageBubbleFlow";
 import { SelectMenu } from "./SelectMenu";
+import { LinuxWindowControls } from "./LinuxWindowControls";
 import { useI18n } from "./i18n";
 import "./styles/agent-onboarding.css";
 
@@ -167,6 +168,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
       <span className="channel-room-header-avatar"><AgentAvatarMark seed={draft.requestId} avatarKey={draft.avatarKey} /></span>
       <input className="agent-onboarding-name" name="agent-name" aria-label={t("agentOnboarding.name")} value={draft.name} placeholder={t("channels.newAgent")} onChange={(event) => update({ name: event.currentTarget.value })} disabled={locked} />
       <button type="button" className="icon-button" data-action="close" aria-label={t("agentOnboarding.cancel")} onClick={() => { if (!pendingRef.current) onClose(); }} disabled={Boolean(busy)}><X size={18} /></button>
+      <LinuxWindowControls />
     </header>
     <div className="agent-onboarding-scroll">
       <MessageBubbleRow outgoing={false} className="channel-message agent" contentClassName="channel-message-content"
