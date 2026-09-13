@@ -6,7 +6,7 @@
 
 打开设置，[接上模型](model-services.md)，按对方要求填好 API Key。再把本地项目文件夹添加为工作区，开始对话。
 
-wuu 可以修改文件和运行命令。发送任务前，确认选中的工作区和[权限](../reference/permissions.md)。你发给它的内容和相关文件可能会送到接上的模型，具体见[安全模型](../reference/security-model.md)。
+wuu 可以修改文件和运行命令。发送任务前，确认选中的工作区和[权限](../reference/permissions.md)。你发给它的内容和相关文件可能会发送给你选择的服务商，具体见[安全模型](../reference/security-model.md)。
 
 先让 Agent 了解项目：
 
