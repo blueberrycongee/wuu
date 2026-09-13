@@ -450,8 +450,12 @@ generation-scoped Service Registry，内核服务、自省与执行作用域都�
 ## UI Kit 的覆盖范围
 
 `api.ui` 当前提供 `Page`、`Panel`、`Card`、`Section`、`Stack`、`Row`、`Button`、
-`ToolbarToggle`、`TextInput`、`TextArea`、`Checkbox`、`EmptyState`、`LoadingState`、`ErrorState`
-和 `LiveDuration`。
+`ToolbarToggle`、`TextInput`、`TextArea`、`Checkbox`、`EmptyState`、`LoadingState`、`ErrorState`、
+`LiveDuration` 和 `ComposerDrawer`。
+`ComposerDrawer` 为 `composer.above` 提供共用的抽屉外壳，统一标题栏尺寸、滚动和 Escape 收起行为。
+传入受控的 `expanded`、`onExpandedChange`、可访问标签 `toggleLabel`、摘要 `summary`，以及可选的
+`icon`、`actions`、`notice` 和 `children`。`notice` 在收起时仍显示。
+`tone` 支持 `default`、`muted`、`warning`；空状态是否显示和功能行为由插件决定。
 `Page` 统一密度和响应式间距，三种状态组件统一 ARIA、焦点、错误和加载行为。它的目的有三个：
 
 - 收敛页面、卡片、行和控件的公共节奏；

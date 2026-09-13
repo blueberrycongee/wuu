@@ -197,8 +197,24 @@ export interface PluginUILiveDurationProps extends PluginUIContainerProps {
 
 export type HostUIComponent<Props> = (props: Props) => unknown;
 
+/** Composer accessory shell with shared sizing, scrolling and keyboard dismissal.
+ * Render in composer.above. Empty-state visibility and expansion belong to the caller.
+ */
+export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
+  readonly expanded: boolean;
+  readonly onExpandedChange: (expanded: boolean) => void;
+  readonly toggleLabel: string;
+  /** Feedback displayed in both collapsed and expanded states. */
+  readonly notice?: unknown;
+  readonly icon?: unknown;
+  readonly summary: unknown;
+  readonly actions?: unknown;
+  readonly tone?: "default" | "muted" | "warning";
+}
+
 /** Stable host-owned primitives for plugin views. */
 export interface PluginUIKit {
+  readonly ComposerDrawer: HostUIComponent<PluginUIComposerDrawerProps>;
   readonly Page: HostUIComponent<PluginUIPageProps>;
   readonly Panel: HostUIComponent<PluginUIContainerProps>;
   readonly Card: HostUIComponent<PluginUIContainerProps>;

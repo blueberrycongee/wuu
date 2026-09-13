@@ -35,3 +35,42 @@ describe("PluginUIKit public theme anchors", () => {
     }
   });
 });
+
+describe("ComposerDrawer interaction", () => {
+  it("keeps actions independent and restores focus after keyboard dismissal", async () => {
+    const { act } = React;
+    const { createRoot } = await import("react-dom/client");
+    const ui = createPluginUIKit(React);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    let actions = 0;
+    function Harness() {
+      const [expanded, setExpanded] = React.useState(false);
+      return <ui.ComposerDrawer expanded={expanded} onExpandedChange={setExpanded}
+        toggleLabel="Toggle details" summary="Task" notice={<p role="alert">Retry needed</p>}
+        actions={<button onClick={() => actions++}>Pause</button>}>
+        <input aria-label="Objective" />
+      </ui.ComposerDrawer>;
+    }
+    try {
+      act(() => root.render(<Harness />));
+      const toggle = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+      act(() => container.querySelectorAll<HTMLButtonElement>("button")[1].click());
+      expect(actions).toBe(1);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe("Retry needed");
+      act(() => toggle.click());
+      const input = container.querySelector("input")!;
+      expect(document.getElementById(toggle.getAttribute("aria-controls")!)?.contains(input)).toBe(true);
+      input.focus();
+      act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(container.querySelector("input")).toBeNull();
+      expect(document.activeElement).toBe(toggle);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+});

@@ -608,7 +608,13 @@ boundaries.
 
 `api.ui` currently provides `Page`, `Panel`, `Card`, `Section`, `Stack`, `Row`,
 `Button`, `ToolbarToggle`, `TextInput`, `TextArea`, `Checkbox`, `EmptyState`,
-`LoadingState`, `ErrorState`, and `LiveDuration`.
+`LoadingState`, `ErrorState`, `LiveDuration`, and `ComposerDrawer`.
+`ComposerDrawer` provides the shared accessory shell for `composer.above`, including
+header sizing, scrolling, and Escape dismissal. Pass controlled `expanded` and
+`onExpandedChange`, an accessible `toggleLabel`, `summary`, and optional `icon`,
+`actions`, `notice`, and `children`. `notice` remains visible when collapsed.
+The `tone` can be `default`, `muted`, or `warning`; plugins own empty-state visibility
+and feature behavior.
 `Page` unifies density and responsive spacing, and the three state components unify
 ARIA, focus, error, and loading behavior. Its purposes are threefold:
 

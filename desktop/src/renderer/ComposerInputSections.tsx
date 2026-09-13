@@ -1,7 +1,7 @@
+import * as React from "react";
+import { createComposerDrawer } from "../shared/ComposerDrawer";
 import { AttachmentImage } from "./AttachmentImage";
 import {
-  ChevronDown,
-  ChevronUp,
   CornerDownRight,
   CornerUpLeft,
   FileText,
@@ -12,7 +12,7 @@ import {
   Square,
   X
 } from "lucide-react";
-import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
 import {
@@ -38,6 +38,8 @@ import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import type { MessageContentPart } from "../shared/protocol";
+
+const ComposerDrawer = createComposerDrawer(React);
 
 export function ComposerAttachmentStrip({
   files,
@@ -514,7 +516,6 @@ export function ComposerQueueStrip({
 }): JSX.Element | null {
   const { t } = useI18n();
   const [internalExpanded, setInternalExpanded] = useState(false);
-  const pendingDetailsID = useId();
   const expanded = controlledExpanded ?? internalExpanded;
   const rows = buildQueueRows(guideMessages, queuedMessages);
   if (rows.length === 0) {
@@ -523,7 +524,6 @@ export function ComposerQueueStrip({
 
   const hasHeldMessages = rows.some((row) => row.message.held);
   const latestMessage = rows.at(-1)?.message;
-  const detailsID = `composer-pending-message-details-${pendingDetailsID}`;
 
   function setExpanded(next: boolean): void {
     if (controlledExpanded === undefined) {
@@ -533,91 +533,67 @@ export function ComposerQueueStrip({
   }
 
   return (
-    <section
-      className={`composer-pending-drawer composer-accessory-drawer${expanded ? " expanded" : ""}${hasHeldMessages ? " is-held" : ""}`}
+    <ComposerDrawer
+      className={`composer-pending-drawer${hasHeldMessages ? " is-held" : ""}`}
       data-wuu-component="composer-pending"
-      data-wuu-state={expanded ? "expanded" : "collapsed"}
-    >
-      <div className="composer-pending-summary">
-        <button
-          type="button"
-          className="composer-pending-summary-select composer-drawer-summary-select"
-          aria-controls={detailsID}
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      toggleLabel={t(expanded ? "composer.collapsePending" : "composer.expandPending")}
+      tone={hasHeldMessages ? "warning" : "default"}
+      icon={<ListTodo className="icon-sm" />}
+      summary={
+        <Tooltip
+          content={latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
+          disabled={
+            expanded ||
+            !latestMessage ||
+            queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage)
+          }
         >
-          <span className="composer-pending-icon" aria-hidden="true">
-            <ListTodo className="icon-sm" />
-          </span>
-          <Tooltip
-            content={latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
-            disabled={
-              expanded ||
-              !latestMessage ||
-              queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage)
-            }
+          <span
+            className="composer-pending-preview"
+            role="status"
+            aria-live="polite"
           >
-            <span
-              className="composer-pending-preview"
-              role="status"
-              aria-live="polite"
-            >
-              {expanded
-                ? hasHeldMessages
-                  ? t("composer.heldNotice")
-                  : t("composer.pendingMessages")
-                : latestMessage
-                  ? queuedMessagePreview(latestMessage)
-                  : ""}
-            </span>
-          </Tooltip>
-        </button>
-        <button
-          type="button"
-          className="composer-pending-toggle composer-input-header-action"
-          aria-controls={detailsID}
-          aria-expanded={expanded}
-          aria-label={t(expanded ? "composer.collapsePending" : "composer.expandPending")}
-          title={t(expanded ? "composer.collapsePending" : "composer.expandPending")}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? (
-            <ChevronDown className="icon-sm" aria-hidden="true" />
-          ) : (
-            <ChevronUp className="icon-sm" aria-hidden="true" />
-          )}
-        </button>
+            {expanded
+              ? hasHeldMessages
+                ? t("composer.heldNotice")
+                : t("composer.pendingMessages")
+              : latestMessage
+                ? queuedMessagePreview(latestMessage)
+                : ""}
+          </span>
+        </Tooltip>
+      }
+    >
+      <div className="composer-pending-details">
+        <ol className="composer-queue-list" aria-label={t("composer.pendingMessages")}>
+          {rows.map((row, index) => (
+            <ComposerQueueItem
+              key={row.key}
+              position={index + 1}
+              message={row.message}
+              kind={row.kind}
+              onGuide={
+                !row.message.operationState
+                  ? () => onGuideQueuedMessage(row.message.id)
+                  : undefined
+              }
+              onEdit={() =>
+                row.kind === "queue"
+                  ? onEditQueuedMessage(row.message.id)
+                  : onEditGuideMessage(row.message.id)
+              }
+              onRemove={() =>
+                row.kind === "queue"
+                  ? onRemoveQueuedMessage(row.message.id)
+                  : onRemoveGuideMessage(row.message.id)
+              }
+            />
+          ))}
+        </ol>
       </div>
-      {expanded ? (
-        <div className="composer-pending-details" id={detailsID}>
-          <ol className="composer-queue-list" aria-label={t("composer.pendingMessages")}>
-            {rows.map((row, index) => (
-              <ComposerQueueItem
-                key={row.key}
-                position={index + 1}
-                message={row.message}
-                kind={row.kind}
-                onGuide={
-                  !row.message.operationState
-                    ? () => onGuideQueuedMessage(row.message.id)
-                    : undefined
-                }
-                onEdit={() =>
-                  row.kind === "queue"
-                    ? onEditQueuedMessage(row.message.id)
-                    : onEditGuideMessage(row.message.id)
-                }
-                onRemove={() =>
-                  row.kind === "queue"
-                    ? onRemoveQueuedMessage(row.message.id)
-                    : onRemoveGuideMessage(row.message.id)
-                }
-              />
-            ))}
-          </ol>
-        </div>
-      ) : null}
-    </section>
+    </ComposerDrawer>
   );
 }
 

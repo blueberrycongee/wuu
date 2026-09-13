@@ -776,13 +776,15 @@
 }
 
 .composer-accessory-drawer {
+  --composer-drawer-row-height: 32px;
+  --composer-drawer-overlap: 8px;
+  --composer-drawer-max-height: min(34dvh, 280px);
   position: relative;
   z-index: 0;
   width: calc(100% - 24px);
-  max-height: 40px;
-  margin: 0 auto -8px;
+  margin: 0 auto calc(-1 * var(--composer-drawer-overlap));
+  padding-bottom: var(--composer-drawer-overlap);
   overflow: hidden;
-  /* The drawer continues the composer card, so both share its quiet outline. */
   border: 1px solid var(--hairline-soft);
   border-bottom: 0;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
@@ -791,36 +793,31 @@
   color: var(--ink);
   font-size: 13.5px;
   line-height: 1.5;
-  transition:
-    max-height 180ms var(--ease-out),
-    transform var(--motion-fast) var(--ease-out);
 }
 
-.composer-accessory-drawer.expanded {
-  max-height: min(34vh, 280px);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
+.composer-accessory-drawer[data-tone="muted"] {
+  background: var(--surface-1);
+  color: var(--ink-muted);
 }
 
-.composer-pending-drawer.is-held {
+.composer-accessory-drawer[data-tone="warning"] {
   border-color: color-mix(in srgb, var(--warning) 24%, transparent);
 }
 
-.composer-pending-summary {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  min-height: 40px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+.composer-drawer-summary {
+  display: flex;
+  height: var(--composer-drawer-row-height);
+  min-width: 0;
   align-items: center;
-  padding: 0 8px 8px;
+  gap: 4px;
+  padding: 0 8px;
 }
 
 .composer-drawer-summary-select {
-  display: grid;
+  display: flex;
+  flex: 1;
   min-width: 0;
   height: 100%;
-  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 0;
@@ -835,19 +832,63 @@
 .composer-drawer-summary-select:focus-visible {
   border-radius: var(--radius-sm);
   outline: 2px solid var(--conversation-floating-surface-focus);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
-.composer-pending-icon {
+.composer-drawer-icon {
   display: grid;
   width: 18px;
   height: 18px;
+  flex-shrink: 0;
   place-items: center;
   color: var(--ink-muted);
 }
 
-.composer-pending-drawer.is-held .composer-pending-icon {
+.composer-accessory-drawer[data-tone="warning"] .composer-drawer-icon {
   color: var(--turn-warning-text, var(--warning));
+}
+
+.composer-drawer-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.composer-drawer-chevron {
+  flex-shrink: 0;
+  color: var(--ink-muted);
+}
+
+.composer-drawer-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-drawer-details {
+  color: var(--ink);
+  max-height: max(0px, calc(var(--composer-drawer-max-height) - var(--composer-drawer-row-height) - var(--composer-drawer-overlap)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: composer-drawer-reveal 120ms var(--ease-out);
+}
+
+@keyframes composer-drawer-reveal {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-accessory-drawer { transition: none !important; }
+  .composer-drawer-details { animation: none; }
+}
+
+@media (pointer: coarse) {
+  .composer-accessory-drawer { --composer-drawer-row-height: 44px; }
 }
 
 .composer-pending-preview {
@@ -869,11 +910,7 @@
 }
 
 .composer-pending-details {
-  max-height: calc(min(34vh, 280px) - 40px);
-  margin-top: -8px;
-  padding: 4px 0 16px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  padding: 4px 0 8px;
 }
 
 .composer textarea {

@@ -12,6 +12,7 @@
  */
 
 import type * as React from "react";
+import { createComposerDrawer, type ComposerDrawerProps } from "./ComposerDrawer";
 import type {
   PublicIconName,
   PublicSyntaxTokenName,
@@ -202,6 +203,7 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
  * common visual rhythm while plugins retain freedom inside their contribution.
  */
 export interface PluginUIKit {
+  readonly ComposerDrawer: React.ComponentType<ComposerDrawerProps>;
   readonly Page: React.ComponentType<PluginUIPageProps>;
   readonly Panel: React.ComponentType<PluginUIContainerProps>;
   readonly Card: React.ComponentType<PluginUIContainerProps>;
@@ -439,6 +441,7 @@ export function createPluginUIKit(react: typeof React): PluginUIKit {
   }
 
   return Object.freeze({
+    ComposerDrawer: createComposerDrawer(react),
     Page,
     Panel,
     Card,
