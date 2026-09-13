@@ -2959,7 +2959,13 @@ export function App(): JSX.Element {
             }}
             onCancel={() => cancelUserQuestion(pendingUserQuestionOffer.request_id)}
             onHold={() => holdUserQuestion(pendingUserQuestionOffer.request_id)}
-            onCustom={() => { requestMainComposerFocus(variant === "hero" ? "hero" : "dock"); }}
+            onCustom={async (text) => {
+              if (text?.trim()) {
+                await sendPrompt("steer", text.trim(), undefined, pendingUserQuestionOffer.request_id);
+                return;
+              }
+              requestMainComposerFocus(variant === "hero" ? "hero" : "dock");
+            }}
           />
         ) : undefined}
         variant={variant}

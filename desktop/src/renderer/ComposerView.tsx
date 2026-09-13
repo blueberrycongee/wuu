@@ -1106,7 +1106,6 @@ export function Composer({
 
   const content = (
     <div className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`} data-wuu-component="composer">
-      {topAccessory ? <div className="composer-top-accessory">{topAccessory}</div> : null}
       <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
       <div className="composer-shell" ref={composerShellRef}>
         {slashMenuOpen ? (
@@ -1253,14 +1252,18 @@ export function Composer({
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
           <div
-            className={`composer-frame${dropActive ? " composer-frame-drop-active" : ""}`}
+            className={`composer-frame${dropActive ? " composer-frame-drop-active" : ""}${topAccessory ? " composer-frame-covered" : ""}`}
             data-wuu-component="composer-frame"
             ref={composerFrameRef}
             onDragOver={handleComposerDragOver}
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-          <div className={`composer${hasCollapsedPromptBlocks ? " has-collapsed-prompt" : ""}`}>
+            {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
+          <div
+            className={`composer${hasCollapsedPromptBlocks ? " has-collapsed-prompt" : ""}`}
+            hidden={Boolean(topAccessory)}
+          >
             {textOnly ? null : (
               <>
                 <ComposerAttachmentStrip files={files} images={images} onRemoveFile={onRemoveFile} onRemoveImage={onRemoveImage} />
@@ -1502,7 +1505,7 @@ export function Composer({
             </div>
           </div>
           </div>
-        </div>
+          </div>
         {handoffMode && initialized && !handoffUnavailableReason ? (
           <FloatingMenuPortal
             anchorRef={composerFrameRef}
