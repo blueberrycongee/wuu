@@ -786,7 +786,7 @@
   width: fit-content;
   max-width: 100%;
   margin: 0;
-  border-radius: 18px;
+  border-radius: var(--radius-md);
   padding: 9px 14px;
   background: var(--ink-overlay-6);
   color: var(--text-primary);
@@ -3510,7 +3510,7 @@
   width: min(264px, calc(100vw - 16px));
   padding: 10px;
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: calc(var(--radius-xs) + 10px);
   background: var(--paper);
   color: var(--ink);
   box-shadow: var(--shadow-card);
@@ -3533,7 +3533,7 @@
   min-height: 30px;
   padding: 5px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   background: var(--surface-1);
   color: var(--ink);
   font-size: 12px;

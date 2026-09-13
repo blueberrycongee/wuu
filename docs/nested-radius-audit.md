@@ -5,43 +5,51 @@ concentric nesting → `outer ≈ inner + padding`. Same token on outer+inner wi
 
 Token scale: xs=8 (inner), sm=12 (control), md/lg=22 (panel), overlay≈md.
 
+**Status:** CSS applied (2026-09-13) on `design/nested-radius-system`.
+
 ## Already correct
 - Sidebar notification hold ring: `calc(var(--radius-sm) ± 2px)` for inset/outset rings.
 - Token comments already name “parent-minus-padding concentric calcs”.
+- Collaboration new menu: shell `--radius-sm` + pad 4 + item `--radius-xs`.
+- Channel recipient picker: shell `--radius-sm` + pad 3 + button `--radius-xs`.
+- Nested `.rich-code` inside `.rich-code-block` forces `border-radius: 0`.
 
-## Priority mismatches
+## Applied (this change)
 
-1. **Composer shell vs workspace bar** (`composer.css`)
-   - Outer `.composer-frame`: `--radius-md` (22px)
-   - Sibling/overlap `.composer-workspace-bar`: hardcoded `18px 18px 0 0` with `margin: 0 14px -10px` and padding `4px 8px 12px`
-   - Fails: hardcode bypasses scale; 18≠22−gap; looks like a second outer radius fighting the frame.
+1. **Channel + user bubbles vs code blocks (P0)**
+   - `.channel-message-bubble`: hardcoded `18px` → `var(--radius-md)` (align with harness).
+   - Nested `.user-message .rich-code-block` and `.channel-message-bubble .rich-code-block`:
+     `var(--radius-sm)` so the 22px card token no longer matches the padded bubble.
 
-2. **Ask-user card** (`.user-question-card`)
-   - Outer: `--radius-lg` (22px), padding 16–18px
-   - Inner options: `--radius-xs` (8px) — OK-ish vs padding
-   - Inner actions/buttons: `--radius-sm` (12px)
-   - Concentric target for 16px pad ≈ 6px inner; sm=12 is too round for the pad (outer too tight / inner too soft).
+2. **Fork dialog (P0)**
+   - `.fork-dialog-option`: `--radius-md` → `--radius-sm` (shell overlay 22 + pad 10).
 
-3. **Composer frame vs header controls**
-   - Frame 22px; expand/header chips often `--radius-sm` (12) at ~8px inset
-   - Target ≈14px; 12 is close but not systematic (`calc(var(--radius-md) - 8px)` missing).
+3. **Sidebar name dialog (P0)**
+   - `.sidebar-name-dialog-input`: `--radius-md` → `--radius-sm` (shell 22 + pad 18).
 
-4. **Channel message bubbles** (`channels.css`)
-   - `.channel-message-bubble`: hardcoded `18px` (not token)
-   - Nested media/chips use 8/12/token mix and more hardcodes (7px, 8px, 12px)
-   - Parallel to harness bubbles (`--radius-md` / speech-bubble mix) → two radius dialects.
+4. **Composer workspace bar (P1)**
+   - `.composer-workspace-bar` top radii: hardcoded `18px` →
+     `calc(var(--radius-md) - 4px)` (concentric with the `--radius-md` frame).
 
-5. **Collaboration rail contacts** (`sidebar.css`)
-   - Row `14px` hardcode, unread pill `9px` hardcode — not on product scale; 14 vs 9 with small inset is ad hoc.
+5. **Conversation actions menu (P1)**
+   - `.conversation-actions-menu > button`: `--radius-sm` → `--radius-xs`
+     so hover rows nest under the `--menu-radius` shell (matches other overlay menus).
 
-6. **Mobile session sheet** (`mobile-sidebar.css`)
-   - Dialog `20px` hardcode + padding 16; inner controls 8/12 hardcodes — off-token and non-concentric.
+6. **Channel agent hover card (P1)**
+   - `.channel-agent-hover-card`: hardcoded `12px` → `calc(var(--radius-xs) + 10px)`.
+   - Action buttons: hardcoded `7px` → `var(--radius-xs)` (8 + 10 pad ≈ outer).
 
-7. **Camera sheet** (web): `40px 40px 0 0` hardcode top radii — huge vs inner controls; needs deliberate nested scale.
+## Still open (not in this CSS pass)
 
-8. **Scattered hardcodes** (~40) in turns/settings/channels that skip `--radius-*` roles.
+- Ask-user `.user-question-card` (22 / pad 16 / inner 8–12) — slightly short outer.
+- `.channel-agent-proposal` (22 / pad 18 / inner xs).
+- `.run-debug-panel` nested rows (22 / ~14 / sm).
+- Systemic overlay menus that already use `--radius-xs` rows under `--menu-radius`
+  shells (22 / pad 4–6 / 8): outer > inner, not fully concentric. Left as the
+  existing menu recipe rather than a wide visual rewrite.
+- Collaboration rail 14/9 hardcodes, mobile session sheet 20px, camera sheet
+  40px tops, other scattered hardcodes.
 
-## Recommended fix direction (phase 2)
+## Recommended later
 - Add helpers: `--radius-nested: calc(var(--radius-md) - var(--pad));` or per-component `calc(parent - pad)`.
-- Replace hardcodes with tokens or explicit concentric calc.
-- Unify channel bubble with harness message radius tokens.
+- One shared overlay-menu recipe if we decide to move rows toward `calc(var(--menu-radius) - pad)`.
