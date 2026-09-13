@@ -376,13 +376,16 @@
 /* Linux uses the same Window Controls Overlay as Windows when WCO is
  * enabled (titleBarStyle hidden + titleBarOverlay). Reserve the top-right
  * overlay; titlebar-area-width is what Chromium leaves of the top strip.
+ * Add a small gap beyond the overlay so the title-actions cluster (info /
+ * right-panel) does not sit flush against the round GTK control chips —
+ * those read larger than Windows caption buttons at the same hit width.
  * If WUU_LINUX_NATIVE_CHROME=1 forces the native frame, these insets stay
  * harmless because the OS titlebar sits above the page. */
 :root[data-platform="linux"] {
   --window-controls-inset-left: 0px;
   --window-controls-inset-right: max(
-    138px,
-    calc(100vw - env(titlebar-area-width, 100vw))
+    160px,
+    calc(100vw - env(titlebar-area-width, 100vw) + 14px)
   );
 }
 
