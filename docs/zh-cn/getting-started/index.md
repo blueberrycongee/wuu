@@ -1,12 +1,12 @@
 # 快速开始
 
-第一次尝试，选一个不含敏感资料的小项目。你需要一台 Apple 芯片 Mac，以及可用的模型服务。
+第一次尝试，选一个不含敏感资料的小项目。你需要一台 Apple 芯片 Mac，以及可用的模型。
 
 从 GitHub Releases [安装 wuu](installation.md)。桌面预览版尚未签名；如果 macOS 阻止打开，安装指南中有处理方法。
 
-打开设置，[连接模型服务](model-services.md)，按服务要求填好 API Key。再把本地项目文件夹添加为工作区，开始对话。
+打开设置，[接上模型](model-services.md)，按对方要求填好 API Key。再把本地项目文件夹添加为工作区，开始对话。
 
-wuu 可以修改文件和运行命令。发送任务前，确认选中的工作区和[权限模式](../reference/permissions.md)。提示词及相关文件内容可能会发送给模型服务，具体见[安全模型](../reference/security-model.md)。
+wuu 可以修改文件和运行命令。发送任务前，确认选中的工作区和[权限](../reference/permissions.md)。你发给它的内容和相关文件可能会送到接上的模型，具体见[安全模型](../reference/security-model.md)。
 
 先让 Agent 了解项目：
 

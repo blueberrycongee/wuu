@@ -2,7 +2,7 @@
 
 [English](README.md) · [文档](https://blueberrycongee.github.io/wuu/zh-cn/) · [下载](https://github.com/blueberrycongee/wuu/releases)
 
-wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。连接模型服务、选好文件夹，就可以让 Agent 阅读代码、修改文件或运行命令，再在应用里查看文件、改动和执行结果。
+wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。接上 OpenAI、Anthropic 这类服务，选好文件夹，就可以让 Agent 阅读代码、修改文件或运行命令，再在应用里查看文件、改动和执行结果。
 
 你可以回到已有对话继续工作，也可以让多个 Agent 在群聊中协作。插件可以添加工具和桌面功能，见[扩展 Wuu](docs/zh-cn/customize/index.md)。
 
@@ -12,7 +12,7 @@ wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。
 
 桌面预览版支持 Apple 芯片 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，将 `wuu.app` 放入 `/Applications` 后打开。预览版尚未签名或公证；如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
 
-打开设置，连接模型服务，再把本地项目文件夹添加为工作区。可以先试一个小任务，完成后检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有一个示例。
+打开设置，接上模型，再把本地项目文件夹添加为工作区。可以先试一个小任务，完成后检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有一个示例。
 
 ## 命令行
 
@@ -31,7 +31,7 @@ wuu exec "阅读这个项目，告诉我怎样运行测试"
 
 ## 文件与数据
 
-wuu 会在当前权限模式允许的范围内读写本地文件、运行命令。提示词和相关上下文会发送给你选择的模型服务，会话和设置默认保存在 `~/.wuu`。处理敏感资料或不可信项目之前，请阅读[安全模型](docs/zh-cn/reference/security-model.md)。
+wuu 会在当前权限允许的范围内读写本地文件、运行命令。你发给它的内容和相关上下文会送到你接上的模型，会话和设置默认保存在 `~/.wuu`。处理敏感资料或不可信项目之前，请阅读[安全模型](docs/zh-cn/reference/security-model.md)。
 
 ## 参与项目
 
