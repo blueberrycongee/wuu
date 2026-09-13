@@ -11,7 +11,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -27,7 +29,7 @@ import kotlin.math.roundToInt
     LaunchedEffect(enabled) { if (!enabled) offset = 0f }
     val pinLabel = if (row.pinned) "取消置顶" else "置顶"
     val archiveLabel = if (row.archived) "恢复" else "归档"
-    Box(Modifier.fillMaxWidth().clipToBounds()) {
+    Box(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)) {
         if (offset < 0f) Row(Modifier.matchParentSize().background(MaterialTheme.colorScheme.surfaceContainer), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { offset = 0f; pin() }, enabled = enabled, modifier = Modifier.width(68.dp)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.PushPin, null); Text(pinLabel, style = MaterialTheme.typography.labelSmall) }
@@ -36,10 +38,10 @@ import kotlin.math.roundToInt
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Archive, null); Text(archiveLabel, style = MaterialTheme.typography.labelSmall) }
             }
         }
-        ListItem(headlineContent = { Text(row.title.ifBlank { "新会话" }, maxLines = 2) },
-            supportingContent = { if (row.saved) Text("服务器历史") },
-            leadingContent = { if (row.pinned) Icon(Icons.Default.PushPin, "已置顶") },
-            colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
+        ListItem(headlineContent = { Text(row.title.ifBlank { "新会话" }, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+            supportingContent = if (row.saved) { { Text("服务器历史", style = MaterialTheme.typography.bodySmall) } } else null,
+            leadingContent = if (row.pinned) { { Icon(Icons.Default.PushPin, "已置顶", Modifier.size(16.dp)) } } else null,
+            colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.offset { IntOffset(offset.roundToInt(), 0) }
                 .pointerInput(enabled, width) {
                     if (enabled) detectHorizontalDragGestures(

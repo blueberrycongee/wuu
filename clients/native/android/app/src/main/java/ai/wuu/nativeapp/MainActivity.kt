@@ -8,6 +8,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -17,24 +21,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -47,8 +46,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
         consumeNotification(intent)
         setContent {
-            val dark = androidx.compose.foundation.isSystemInDarkTheme()
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            WuuTheme {
                 Surface(Modifier.fillMaxSize()) { WuuRoot(model) }
             }
         }
@@ -106,68 +104,6 @@ class MainActivity : ComponentActivity() {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun LoginScreen(model: AppModel) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("wuu-settings", 0) }
-    var server by rememberSaveable { mutableStateOf(prefs.getString("server", "") ?: "") }
-    var settings by rememberSaveable { mutableStateOf(server.isBlank()) }
-    var passwordLogin by rememberSaveable { mutableStateOf(false) }
-    var username by rememberSaveable { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var register by rememberSaveable { mutableStateOf(false) }
-    var recover by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(settings, server) { if (!settings) model.loadConfiguration(server) }
-    LaunchedEffect(model.resetRecovery) { if (model.resetRecovery != null) { recover = false; passwordLogin = false; password = "" } }
-    Scaffold(topBar = { CenterAlignedTopAppBar(title = { Text("连接") }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Spacer(Modifier.weight(1f))
-            Text("wuu", fontSize = 100.sp, fontWeight = FontWeight.Black)
-            Text("连接你的电脑", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("随时继续对话，让电脑为你工作。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.weight(1f))
-            if (model.busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("请在浏览器完成登录后返回，或等待登录完成。") }
-            if (model.githubURL != null) {
-                TextButton(onClick = { model.browserURL = model.githubURL }) { Text("重新打开浏览器") }
-                TextButton(onClick = model::cancelLogin) { Text("取消登录") }
-            } else {
-                if (model.configuration?.optBoolean("github") == true) {
-                    Button(onClick = { model.github(server) }, enabled = server.isNotBlank() && !model.busy, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("使用 GitHub 继续") }
-                }
-                TextButton(onClick = { passwordLogin = true }, enabled = server.isNotBlank() && !model.busy, modifier = Modifier.fillMaxWidth()) { Text(if (model.configuration?.optBoolean("github") == true) "更多登录方式" else "密码登录") }
-                if (model.configuration == null && server.isNotBlank()) {
-                    TextButton(onClick = { model.perform { model.loadConfiguration(server) } }) { Text("重新读取服务器设置") }
-                }
-            }
-            TextButton(onClick = { settings = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Tune, null); Spacer(Modifier.width(8.dp)); Text("连接设置") }
-        }
-    }
-    if (settings) ModalBottomSheet(onDismissRequest = { settings = false }) {
-        Column(Modifier.padding(24.dp).imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("连接设置", style = MaterialTheme.typography.headlineSmall)
-            OutlinedTextField(server, { server = it }, label = { Text("HTTPS 服务器地址") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text("使用与你的电脑相同的 Wuu 服务器。")
-            Button(onClick = {
-                try { server = AccountAPI(server).origin.toString(); model.cancelLogin(); register = false; prefs.edit().putString("server", server).apply(); settings = false }
-                catch (e: Exception) { model.error = e.message }
-            }, modifier = Modifier.fillMaxWidth()) { Text("完成") }
-        }
-    }
-    if (passwordLogin) ModalBottomSheet(onDismissRequest = { model.cancelLogin(); passwordLogin = false; password = "" }) {
-        Column(Modifier.padding(24.dp).imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(if (register) "注册账号" else "账号登录", style = MaterialTheme.typography.headlineSmall)
-            OutlinedTextField(username, { username = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(password, { password = it }, label = { Text("密码") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { model.login(server, username, password, register) }, enabled = !model.busy && username.isNotBlank() && password.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text(if (register) "注册并登录" else "登录") }
-            if (model.configuration?.optBoolean("registration") == true) {
-                TextButton(onClick = { register = !register }) { Text(if (register) "已有账号，登录" else "注册账号") }
-            }
-            TextButton(onClick = { model.cancelLogin(); passwordLogin = false; password = ""; recover = true }) { Text("忘记密码？使用恢复密钥") }
-        }
-    }
-    if (recover) PasswordResetSheet(model, server, false) { recover = false }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun DevicesScreen(model: AppModel) {
     var accountPanel by remember { mutableStateOf(false) }
     var licenses by remember { mutableStateOf(false) }
@@ -175,7 +111,7 @@ class MainActivity : ComponentActivity() {
     var changePassword by remember { mutableStateOf(false) }
     var revokeTarget by remember { mutableStateOf<org.json.JSONObject?>(null) }
     Scaffold(topBar = {
-        TopAppBar(title = { Text("你的电脑") }, actions = {
+        TopAppBar(title = { Text("你的电脑", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }, actions = {
             IconButton(onClick = { model.perform { model.loadDevices() } }) { Icon(Icons.Default.Refresh, "刷新") }
             IconButton(onClick = { accountPanel = true }) { Icon(Icons.Default.AccountCircle, "账号") }
         })
@@ -189,8 +125,12 @@ class MainActivity : ComponentActivity() {
                 if (group.isNotEmpty()) item { Text(if (online) "在线" else "离线", style = MaterialTheme.typography.labelLarge) }
                 items(group, key = { it.getString("pub") }) { device ->
                     ListItem(headlineContent = { Text(device.optString("name", "电脑")) },
-                        supportingContent = { Text(if (online) "连接并继续对话" else "查看服务器保存的历史") },
-                        leadingContent = { Icon(Icons.Default.Computer, null) }, modifier = Modifier.clickable { model.selectHost(device) })
+                        supportingContent = { Text(if (online) "连接并继续对话" else "查看服务器保存的历史", style = MaterialTheme.typography.bodySmall) },
+                        leadingContent = { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+                            Icon(Icons.Default.Computer, null, Modifier.padding(12.dp).size(22.dp))
+                        } }, trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        modifier = Modifier.clip(MaterialTheme.shapes.medium).clickable { model.selectHost(device) })
                 }
             }
         }
@@ -240,7 +180,6 @@ class MainActivity : ComponentActivity() {
         model.perform { model.loadThreads() }
     }
     var archive by remember { mutableStateOf<ThreadRow?>(null) }
-    var historyConsent by remember { mutableStateOf<Boolean?>(null) }
     var workspaceMenu by remember { mutableStateOf(false) }
     val drafts = model.conversationDrafts
     val attachmentDrafts = model.conversationAttachments
@@ -248,47 +187,62 @@ class MainActivity : ComponentActivity() {
     val draft = drafts[draftKey] ?: ""
     val attachments = attachmentDrafts[draftKey] ?: emptyList()
     BackHandler { if (drawer.isOpen) scope.launch { drawer.close() } else model.perform { model.leaveHost(); model.foreground() } }
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
-        ModalDrawerSheet(Modifier.width(310.dp)) {
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { scope.launch { drawer.close() } }) { Icon(Icons.Default.Menu, "关闭会话列表") }
-                Text("会话", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                IconButton(onClick = { model.perform { model.newThread(); drawer.close() } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = true, drawerContent = {
+        ModalDrawerSheet(Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp), drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { model.perform { model.leaveHost(); model.foreground() } },
+                    modifier = Modifier.weight(1f), contentPadding = PaddingValues(12.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(model.host?.optString("name") ?: "电脑列表", modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick = { scope.launch { drawer.close() } }) { Icon(Icons.Default.Close, "关闭会话列表") }
+                IconButton(onClick = { scope.launch { drawer.close(); model.perform { model.newThread() } } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }
             }
-            TextButton(onClick = { model.perform { model.leaveHost(); model.foreground() } }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null)
-                Text(model.host?.optString("name") ?: "电脑列表", maxLines = 1)
-            }
-            TextButton(onClick = { workspaceMenu = true }, enabled = model.connected) { Text(model.workspace.ifBlank { "所有工作区" }, maxLines = 1) }
-            OutlinedTextField(model.search, { model.search = it }, singleLine = true,
-                placeholder = { Text(if (model.connected) "搜索全部会话内容" else "搜索历史标题") }, modifier = Modifier.padding(horizontal = 12.dp))
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("已归档", Modifier.weight(1f))
-                Switch(model.archivedList, { model.archivedList = it }, enabled = model.connected)
-            }
-            DropdownMenu(expanded = workspaceMenu, onDismissRequest = { workspaceMenu = false }) {
-                DropdownMenuItem(text = { Text("所有工作区") }, onClick = { workspaceMenu = false; model.workspace = ""; model.perform { model.loadThreads() } })
-                model.workspaces.forEach { ws ->
-                    DropdownMenuItem(text = { Text(ws.optString("name", ws.optString("path"))) }, onClick = {
-                        workspaceMenu = false; model.workspace = ws.optString("path"); model.perform { model.loadThreads() }
-                    })
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                TextButton(onClick = { workspaceMenu = true }, enabled = model.connected,
+                    modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(12.dp)) {
+                    Icon(Icons.Default.FolderOpen, null, Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(if (model.workspace.isBlank()) "所有工作区" else
+                        model.workspaces.firstOrNull { it.optString("path") == model.workspace }?.optString("name")?.takeIf { it.isNotBlank() }
+                            ?: java.io.File(model.workspace).name.ifBlank { model.workspace },
+                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Icon(Icons.Default.ExpandMore, "选择工作区", Modifier.size(24.dp))
+                }
+                DropdownMenu(expanded = workspaceMenu, onDismissRequest = { workspaceMenu = false },
+                    modifier = Modifier.width(maxWidth).heightIn(max = 360.dp)) {
+                    DropdownMenuItem(text = { Text("所有工作区") }, onClick = { workspaceMenu = false; model.workspace = ""; model.perform { model.loadThreads() } })
+                    model.workspaces.forEach { ws ->
+                        DropdownMenuItem(text = { Text(ws.optString("name").ifBlank { ws.optString("path") }, maxLines = 2, overflow = TextOverflow.Ellipsis) }, onClick = {
+                            workspaceMenu = false; model.workspace = ws.optString("path"); model.perform { model.loadThreads() }
+                        })
+                    }
                 }
             }
-            LazyColumn(Modifier.weight(1f)) {
+            Spacer(Modifier.height(8.dp))
+            TextField(model.search, { model.search = it }, singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
+                placeholder = { Text(if (model.connected) "搜索会话" else "搜索历史标题", style = MaterialTheme.typography.bodyMedium) },
+                shape = MaterialTheme.shapes.medium, colors = wuuFieldColors(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(model.rows, key = { it.id }) { row ->
                     ConversationRow(row, model.activeID == row.id, model.connected && !row.saved,
-                        open = { model.perform { drawer.close(); model.open(row.id) } },
+                        open = { scope.launch { drawer.close(); model.perform { model.open(row.id) } } },
                         pin = { model.perform { model.pin(row) } }, archive = { archive = row })
                 }
             }
-            HorizontalDivider()
-            ListItem(headlineContent = { Text("服务器保存对话文本") }, trailingContent = {
-                Switch(checked = model.historyEnabled, onCheckedChange = { historyConsent = it })
-            }, supportingContent = { Text("电脑离线时也能阅读") })
+
         }
     }) {
         Scaffold(topBar = {
-            TopAppBar(title = { Column { Text(model.title, maxLines = 1); Text(if (model.connected) "已连接" else if (model.connecting) "正在连接…" else "离线 · 只读历史", style = MaterialTheme.typography.labelSmall) } },
+            TopAppBar(title = { Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(model.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(if (model.connected) "已连接" else if (model.connecting) "正在连接…" else "离线 · 只读历史", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } },
                 navigationIcon = { IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu, "会话列表") } },
                 actions = {
                     IconButton(onClick = { model.perform { model.newThread() } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }
@@ -322,8 +276,10 @@ class MainActivity : ComponentActivity() {
                     if (model.connected && model.activeID != null && !model.readOnly && !model.sending) key(draftKey) {
                         AttachmentPicker(attachments, { attachmentDrafts[draftKey] = it }, model)
                     }
-                    OutlinedTextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6, modifier = Modifier.weight(1f).testTag("native-composer"), enabled = model.connected && !model.readOnly)
-                    IconButton(onClick = {
+                    TextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6,
+                        shape = MaterialTheme.shapes.large, colors = wuuFieldColors(),
+                        modifier = Modifier.weight(1f).testTag("native-composer"), enabled = model.connected && !model.readOnly)
+                    FilledIconButton(onClick = {
                         val text = draft; val key = draftKey; val files = attachments
                         model.perform {
                             if (model.send(text, files)) {
@@ -335,6 +291,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }) { padding ->
+            val timeline = remember(model.messages) { conversationTimeline(model.messages) }
             val list = key(model.activeID) { rememberLazyListState() }
             var following by remember(model.activeID) { mutableStateOf(true) }
             val dragging by list.interactionSource.collectIsDraggedAsState()
@@ -347,24 +304,27 @@ class MainActivity : ComponentActivity() {
             // measuring canScrollForward after insertion loses that choice.
             val viewportSize by remember(list) { derivedStateOf { list.layoutInfo.viewportSize } }
             LaunchedEffect(model.messages.lastOrNull(), model.pending.lastOrNull()?.id, viewportSize) {
-                if (following && model.messages.isNotEmpty()) list.requestScrollToItem(model.messages.size + model.pending.size + 1)
+                if (following && model.messages.isNotEmpty()) list.requestScrollToItem(timeline.size + model.pending.size + 1)
             }
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 item(key = "history") {
                     if (model.hasOlder) TextButton(onClick = { model.perform { model.loadOlder() } }, enabled = model.connected && !model.loadingHistory) {
                         Text(if (model.loadingHistory) "正在读取…" else "加载更早的消息")
                     }
                 }
-                if (model.messages.isEmpty()) item { Text(if (model.activeID == null) "选择会话，或创建新会话。" else "暂无文本消息。", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                items(model.messages, key = { it.id }) { message ->
-                    if (message.tool != null) {
-                        ToolActivityView(model, message, message.tool)
+                items(timeline, key = { it.key }) { entry ->
+                    if (entry is ConversationEntry.Tools) {
+                        ToolProcessView(model, entry)
                     } else {
+                        val message = (entry as ConversationEntry.Message).message
                         Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.role == "user") Alignment.End else Alignment.Start) {
-                            Text(if (message.role == "user") "你" else if (message.role == "pending") "等待处理" else if (message.role == "error") "错误" else "Wuu", style = MaterialTheme.typography.labelMedium)
+                            if (message.role == "pending" || message.role == "error") Text(if (message.role == "pending") "等待处理" else "错误",
+                                modifier = Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold, color = if (message.role == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                             SelectionContainer {
                                 Surface(color = if (message.role == "user") MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-                                    shape = MaterialTheme.shapes.medium) { MessageText(message.text, message.role == "assistant", Modifier.padding(12.dp)) }
+                                    shape = MaterialTheme.shapes.medium) { MessageText(message.text, message.role == "assistant",
+                                        if (message.role == "user") Modifier.padding(horizontal = 12.dp, vertical = 12.dp) else Modifier.fillMaxWidth()) }
                             }
                             if (message.contentRef.isNotEmpty()) TextButton(onClick = { model.perform { model.expand(message) } }, enabled = model.connected && message.id !in model.loadingContent) {
                                 Text(if (message.id in model.loadingContent) "正在读取…" else "加载完整消息")
@@ -392,8 +352,5 @@ class MainActivity : ComponentActivity() {
     archive?.let { row -> AlertDialog(onDismissRequest = { archive = null }, title = { Text(if (row.archived) "恢复会话？" else "归档会话？") }, text = { Text(row.title) },
         confirmButton = { TextButton(onClick = { archive = null; model.perform { model.archive(row) } }) { Text(if (row.archived) "恢复" else "归档") } },
         dismissButton = { TextButton(onClick = { archive = null }) { Text("取消") } }) }
-    historyConsent?.let { enabled -> AlertDialog(onDismissRequest = { historyConsent = null }, title = { Text(if (enabled) "开启服务器历史？" else "关闭服务器历史？") },
-        text = { Text(if (enabled) "电脑会把用户与助手的对话文本保存到服务器。服务器管理员能够读取这些文本；不包含附件和工具输出。开启后可在电脑离线时阅读。" else "服务器将删除已保存的文本，手机也会清除对应缓存。电脑上的原始会话仍然保留。") },
-        confirmButton = { TextButton(onClick = { historyConsent = null; model.perform { model.setHistory(enabled) } }) { Text("确认") } },
-        dismissButton = { TextButton(onClick = { historyConsent = null }) { Text("取消") } }) }
+
 }

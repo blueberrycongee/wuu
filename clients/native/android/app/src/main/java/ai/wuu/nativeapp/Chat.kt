@@ -3,7 +3,7 @@ package ai.wuu.nativeapp
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ChatMessage(val id: String, val role: String, val text: String, val contentRef: String = "", val attachments: List<String> = emptyList(), val tool: ToolActivity? = null)
+data class ChatMessage(val id: String, val role: String, val text: String, val contentRef: String = "", val attachments: List<String> = emptyList(), val tool: ToolActivity? = null, val turnId: String = "")
 data class ToolActivity(val name: String, val status: String, val arguments: String, val result: String, val error: String) {
     val statusLabel get() = when (status) { "in_progress" -> "执行中"; "completed" -> "已完成"; "failed" -> "失败"; "ended" -> "已结束"; else -> "状态未知" }
     companion object {
@@ -44,7 +44,7 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
             val role = when (item.optString("type")) { "user_message" -> "user"; "agent_message" -> "assistant"; "error" -> "error"; "tool_call" -> "tool"; else -> return@mapNotNull null }
             ChatMessage(turn.getString("id") + ":" + item.getString("id"), role, item.optString("text", item.optString("error")), item.optString("remote_content_ref"),
                 ((item.optJSONArray("images") ?: JSONArray()).objects() + (item.optJSONArray("files") ?: JSONArray()).objects()).map { it.toString() },
-                if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null)
+                if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"))
         }
         val error = turn.optJSONObject("error")?.optString("message").orEmpty()
         if (error.isNotEmpty() && messages.none { it.role == "error" }) messages + ChatMessage(turn.getString("id") + ":error", "error", error) else messages
