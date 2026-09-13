@@ -71,18 +71,22 @@ func TestRoomMessagesWakeVisibleRecipientsAndAcknowledgeInTheirConversation(t *t
 	if messages, err := betaSession.ReceiveCollaboration(ctx, 50); err != nil || len(messages) != 0 {
 		t.Fatalf("unaddressed beta received active input: %#v, %v", messages, err)
 	}
-	if _, err := service.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "@all @Alpha compare hypotheses"}); err != nil {
-		t.Fatal(err)
-	}
-	if wakes := sink.take(); len(wakes) != 2 {
-		t.Fatalf("mixed all mention wake = %v", wakes)
-	}
-	for _, session := range []*AgentClient{alphaSession, betaSession} {
-		received, err := session.ReceiveCollaboration(ctx, 50)
-		if err != nil || len(received) != 1 {
-			t.Fatalf("broadcast receive = %#v, %v", received, err)
+	for _, recipient := range []string{"Alpha", "Beta"} {
+		if _, err := service.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "@" + recipient + " compare hypotheses"}); err != nil {
+			t.Fatal(err)
 		}
-		if err := session.AcknowledgeCollaboration(ctx, []string{received[0].ID}); err != nil {
+		if wakes := sink.take(); len(wakes) != 1 {
+			t.Fatalf("addressed wake = %v", wakes)
+		}
+		target := alphaSession
+		if recipient == "Beta" {
+			target = betaSession
+		}
+		received, err := target.ReceiveCollaboration(ctx, 50)
+		if err != nil || len(received) != 1 {
+			t.Fatalf("receive = %+v %v", received, err)
+		}
+		if err := target.AcknowledgeCollaboration(ctx, []string{received[0].ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,6 +124,9 @@ func TestLegacyUnreadInboxRecoveryIsScopedAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := service.db.ExecContext(ctx, `DELETE FROM collaboration_messages WHERE source_message_id = ?`, direct.Message.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`DELETE FROM channel_metadata WHERE key='room_round_robin_version'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.retireRoomRuntimes(ctx); err != nil {

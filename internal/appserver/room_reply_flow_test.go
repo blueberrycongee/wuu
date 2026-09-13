@@ -144,7 +144,8 @@ func TestRoomReplyConcurrentMembersBothPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.room = createPeerRoom(t, fixture, "Parallel answers", fixture.identity, peer.Agent)
-	sendRoomReplyObjective(t, fixture, "@all Give your independent observations")
+	sendRoomReplyObjective(t, fixture, "@"+fixture.identity.ID+" Give your independent observations")
+	sendRoomReplyObjective(t, fixture, "@"+peer.Agent.ID+" Give your independent observations")
 	first, second := provider.next(t), provider.next(t)
 	first.response <- providers.ChatResponse{Content: "The callback retains a stale socket."}
 	second.response <- providers.ChatResponse{Content: "The subscription also needs to be replaced."}
@@ -166,7 +167,7 @@ func TestRoomReplyConcurrentMembersBothPublish(t *testing.T) {
 			authors[message.AuthorID] = true
 		}
 	}
-	if len(result.Messages) != 3 || len(authors) != 2 || !completed[fixture.identity.ID] || !completed[peer.Agent.ID] || !bodies["The callback retains a stale socket."] || !bodies["The subscription also needs to be replaced."] {
+	if len(result.Messages) != 4 || len(authors) != 2 || !completed[fixture.identity.ID] || !completed[peer.Agent.ID] || !bodies["The callback retains a stale socket."] || !bodies["The subscription also needs to be replaced."] {
 		t.Fatalf("concurrent replies were held, duplicated, or misattributed: %+v", result)
 	}
 	select {

@@ -622,31 +622,35 @@ func evaluateTriggersTx(ctx context.Context, tx *sql.Tx, message Message, mentio
 
 	}
 
-	if message.AuthorType == MemberHuman && !suppressed && !explicitAgentMention && len(wake) == 0 {
-		// A reply in an established task stays with its accountable owner.
+	if message.AuthorType == MemberHuman {
+		if err := stopRoomTurnTx(ctx, tx, message.RoomID, now); err != nil {
+			return nil, err
+		}
 		var owner string
-		if message.ThreadID != "" {
-			err := tx.QueryRowContext(ctx, `SELECT owner_named_agent_id FROM works WHERE id = ? AND room_id = ?`, message.ThreadID, message.RoomID).Scan(&owner)
+		if message.ThreadID != "" && !explicitAgentMention && len(wake) == 0 {
+			err := tx.QueryRowContext(ctx, `SELECT owner_named_agent_id FROM works WHERE id=? AND room_id=?`, message.ThreadID, message.RoomID).Scan(&owner)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
 			}
 		}
 		if _, member := agentSignals[owner]; owner != "" && member {
 			wake[owner] = struct{}{}
-		} else if len(agentSignals) == 1 {
-			// A single member needs no routing inference, including in a DM.
+		}
+		if !suppressed && len(agentSignals) > 1 && (len(wake) == 0 || len(wake) > 1) {
+			return beginRoomTurnTx(ctx, tx, message, now)
+		}
+		if !suppressed && len(wake) == 0 && len(agentSignals) == 1 {
 			for id := range agentSignals {
 				wake[id] = struct{}{}
 			}
-		} else {
-			var coordinator string
-			err := tx.QueryRowContext(ctx, `SELECT id FROM room_runtimes WHERE room_id = ? AND autostart = 1`, message.RoomID).Scan(&coordinator)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-			if coordinator != "" {
-				wake[coordinator] = struct{}{}
-			}
+		}
+	} else {
+		var discussing bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room_turns WHERE room_id=?)`, message.RoomID).Scan(&discussing); err != nil {
+			return nil, err
+		}
+		if discussing {
+			return nil, nil
 		}
 	}
 

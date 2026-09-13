@@ -3,7 +3,6 @@ package appserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/channels"
@@ -94,135 +93,10 @@ type namedAgentDispatchTarget struct {
 // namedAgentMu only while sessions are selected and admitted; inference runs
 // independently after admission.
 func (s *Server) dispatchNamedAgentWakeLocked(ctx context.Context, agent channels.AgentRuntime, force bool) error {
-	if !agent.IsRoomRuntime() {
-		return s.dispatchIdentityConversationLocked(ctx, agent, force)
+	if agent.IsRoomRuntime() {
+		return nil
 	}
-	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
-	if err != nil {
-		return err
-	}
-	bindings, err := client.ListCollaborationSessions(ctx, channels.CollaborationSessionListParams{PrincipalID: agent.ID})
-	if err != nil {
-		return err
-	}
-	bySession := make(map[string]channels.CollaborationSessionBinding, len(bindings))
-	byWork := make(map[string]channels.CollaborationSessionBinding, len(bindings))
-	hasWorkBinding := make(map[string]bool, len(bindings))
-	for _, binding := range bindings {
-		bySession[binding.SessionRef] = binding
-		if binding.WorkID != "" {
-			hasWorkBinding[binding.WorkID] = true
-		}
-		if binding.WorkID != "" && (binding.State == channels.CollaborationSessionIdle || binding.State == channels.CollaborationSessionRunning || binding.State == channels.CollaborationSessionWaiting) {
-			if _, exists := byWork[binding.WorkID]; !exists {
-				byWork[binding.WorkID] = binding
-			}
-		}
-	}
-	dispatches, err := s.channelService.PendingCollaborationDispatches(ctx, agent.ID)
-	if err != nil {
-		return err
-	}
-	targets := make(map[string]namedAgentDispatchTarget)
-	conversationRooms := make(map[string]struct{})
-	var dispatchErr error
-	for _, dispatch := range dispatches {
-		if dispatch.TargetSessionRef == "" && (agent.IsRoomRuntime() || dispatch.WorkID == "" || collaborationDispatchIsResult(dispatch.Kind)) {
-			conversationRooms[dispatch.RoomID] = struct{}{}
-			continue
-		}
-		binding, found := bySession[dispatch.TargetSessionRef]
-		if dispatch.TargetSessionRef == "" {
-			binding, found = byWork[dispatch.WorkID]
-			if !found {
-				sessionRef := namedAgentWorkSessionID(agent, dispatch.WorkID)
-				if hasWorkBinding[dispatch.WorkID] {
-					sessionRef = session.NewID()
-				}
-				binding, err = client.BindCollaborationSession(ctx, channels.CollaborationSessionBindParams{
-					SessionRef: sessionRef, PrincipalID: agent.ID, RoomID: dispatch.RoomID,
-					WorkID: dispatch.WorkID, Purpose: channels.CollaborationSessionWork,
-					State: channels.CollaborationSessionIdle,
-				})
-				if err != nil {
-					dispatchErr = errors.Join(dispatchErr, fmt.Errorf("bind work %q: %w", dispatch.WorkID, err))
-					continue
-				}
-				bySession[binding.SessionRef] = binding
-				byWork[binding.WorkID] = binding
-				hasWorkBinding[binding.WorkID] = true
-			}
-		} else if !found {
-			dispatchErr = errors.Join(dispatchErr, fmt.Errorf("target collaboration session %q is unavailable", dispatch.TargetSessionRef))
-			continue
-		}
-		if binding.PrincipalID != agent.ID || binding.RoomID != dispatch.RoomID || (dispatch.TargetSessionRef == "" && binding.WorkID != dispatch.WorkID) {
-			dispatchErr = errors.Join(dispatchErr, fmt.Errorf("target collaboration session %q has a different owner or scope", binding.SessionRef))
-			continue
-		}
-		if dispatch.TargetSessionRef == "" && dispatch.WorkID != "" {
-			if err := s.channelService.RoutePendingCollaborationToSession(ctx, agent.ID, dispatch.WorkID, binding.SessionRef); err != nil {
-				dispatchErr = errors.Join(dispatchErr, fmt.Errorf("route work %q: %w", dispatch.WorkID, err))
-				continue
-			}
-		}
-		target := targets[binding.SessionRef]
-		target.binding = binding
-		target.workID = binding.WorkID
-		target.roomIDs = appendDistinctStrings(target.roomIDs, binding.RoomID)
-		targets[binding.SessionRef] = target
-	}
-
-	inbox, err := s.channelService.ListInbox(ctx, agent.ID, true)
-	if err != nil {
-		return errors.Join(dispatchErr, err)
-	}
-	for _, item := range inbox {
-		// Public messages without an addressed delivery are passive context.
-		// Processing another session's result must not turn them into new work.
-		if item.Kind != channels.InboxTask && item.Kind != channels.InboxReminder {
-			continue
-		}
-		if item.Kind == channels.InboxTask {
-			if binding, found := byWork[item.MessageID]; found {
-				target := targets[binding.SessionRef]
-				target.binding = binding
-				target.workID = binding.WorkID
-				target.roomIDs = appendDistinctStrings(target.roomIDs, item.RoomID)
-				targets[binding.SessionRef] = target
-				continue
-			}
-		}
-		conversationRooms[item.RoomID] = struct{}{}
-	}
-	for _, target := range targets {
-		if err := s.startNamedAgentDispatchTargetLocked(ctx, agent, client, target, force); err != nil {
-			dispatchErr = errors.Join(dispatchErr, err)
-		}
-	}
-	for roomID := range conversationRooms {
-		if err := s.startNamedAgentConversationLocked(ctx, agent, client, roomID, force); err != nil {
-			dispatchErr = errors.Join(dispatchErr, err)
-		}
-	}
-	if dispatchErr == nil && len(targets) == 0 && len(conversationRooms) == 0 {
-		_, err := s.channelService.FinishWakeAttempt(ctx, agent.ID)
-		dispatchErr = errors.Join(dispatchErr, err)
-	}
-	if dispatchErr != nil {
-		_ = s.channelService.MarkWakePending(ctx, agent.ID)
-	}
-	return dispatchErr
-}
-
-func collaborationDispatchIsResult(kind channels.CollaborationKind) bool {
-	switch kind {
-	case channels.CollaborationPeerResult, channels.CollaborationCandidateReady,
-		channels.CollaborationVerificationFeedback, channels.CollaborationCompletion, channels.CollaborationWorkRunTerminal:
-		return true
-	default:
-		return false
-	}
+	return s.dispatchIdentityConversationLocked(ctx, agent, force)
 }
 
 // Each identity has a separate room conversation. It uses the same durable
@@ -323,75 +197,10 @@ func (s *Server) startNamedAgentDispatchTargetLocked(ctx context.Context, agent 
 }
 
 func (s *Server) resumeNamedAgentBoundSessionsLocked(ctx context.Context, agent channels.AgentRuntime) error {
-	if !agent.IsRoomRuntime() {
-		return s.recoverIdentityConversationLocked(ctx, agent)
+	if agent.IsRoomRuntime() {
+		return nil
 	}
-	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
-	if err != nil {
-		return err
-	}
-	bindings, err := client.ListCollaborationSessions(ctx, channels.CollaborationSessionListParams{PrincipalID: agent.ID})
-	if err != nil {
-		return err
-	}
-	var resumeErr error
-	for _, binding := range bindings {
-		if binding.State != channels.CollaborationSessionRunning && binding.State != channels.CollaborationSessionStarting {
-			continue
-		}
-		if binding.RunID == "" || binding.WorkID == "" {
-			if active, _ := session.ThreadExecutionActive(s.rt.SessionDir, binding.SessionRef); active {
-				continue
-			}
-			if binding.TurnID != "" {
-				if settleErr := s.settleCollaborationTurn(ctx, binding.SessionRef, binding.TurnID); settleErr == nil {
-					continue
-				}
-			}
-			_, stateErr := client.UpdateCollaborationSessionState(ctx, channels.CollaborationSessionStateParams{SessionRef: binding.SessionRef, State: channels.CollaborationSessionIdle})
-			if stateErr == nil {
-				_, stateErr = s.channelService.EnqueueSessionInput(ctx, channels.CollaborationSessionSendParams{SessionRef: binding.SessionRef, Body: "Execution was interrupted by host restart. Continue the existing objective from durable history; inspect completed effects before repeating actions.", RequestID: "recover:" + binding.SessionRef + ":" + binding.UpdatedAt.String()})
-			}
-			resumeErr = errors.Join(resumeErr, stateErr)
-			continue
-		}
-		work, workErr := client.GetWork(ctx, binding.WorkID)
-		if workErr != nil {
-			_, stateErr := client.UpdateCollaborationSessionState(ctx, channels.CollaborationSessionStateParams{
-				SessionRef: binding.SessionRef, State: channels.CollaborationSessionMissing,
-			})
-			resumeErr = errors.Join(resumeErr, workErr, stateErr)
-			continue
-		}
-		var runState channels.WorkRunState
-		for _, run := range work.Runs {
-			if run.ID == binding.RunID {
-				runState = run.State
-				break
-			}
-		}
-		if runState != channels.WorkRunRunning && runState != channels.WorkRunQueued {
-			nextState := channels.CollaborationSessionIdle
-			if runState == "" {
-				nextState = channels.CollaborationSessionMissing
-			} else if runState == channels.WorkRunInterrupted {
-				nextState = channels.CollaborationSessionInterrupted
-			}
-			_, stateErr := client.UpdateCollaborationSessionState(ctx, channels.CollaborationSessionStateParams{
-				SessionRef: binding.SessionRef, State: nextState,
-			})
-			resumeErr = errors.Join(resumeErr, stateErr)
-			continue
-		}
-		th, ensureErr := s.ensureAgentRuntimeSessionThreadLocked(agent, binding.SessionRef)
-		if ensureErr == nil && !threadIsRunning(th) {
-			ensureErr = s.startAgentRuntimeSessionWakeLocked(agent, th, []string{binding.RoomID}, binding.WorkID, binding.RunID)
-		}
-		if ensureErr != nil {
-			resumeErr = errors.Join(resumeErr, fmt.Errorf("resume session %q: %w", binding.SessionRef, ensureErr))
-		}
-	}
-	return resumeErr
+	return s.recoverIdentityConversationLocked(ctx, agent)
 }
 
 func (s *Server) ensureNamedAgentProducerRun(ctx context.Context, client *channels.AgentClient, binding channels.CollaborationSessionBinding) (string, error) {

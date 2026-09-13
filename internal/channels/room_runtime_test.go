@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-func TestNewRoomsKeepCoordinatorOutOfVisibleMembers(t *testing.T) {
+func TestNewRoomsCreateNoCoordinator(t *testing.T) {
 	ctx := context.Background()
 	service := openTestService(t, nil)
 	owner := createTestAgent(t, service, "Owner")
 	room := createTestRoom(t, service, owner)
-	if room.RuntimeID == "" {
-		t.Fatal("room has no coordinator")
+	if room.RuntimeID != "" {
+		t.Fatal("room created a hidden coordinator")
 	}
 	first := room.RuntimeID
 	bootstrap, err := service.EnsureBootstrap(ctx, "human-1")
@@ -28,7 +28,7 @@ func TestNewRoomsKeepCoordinatorOutOfVisibleMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), first) {
+	if strings.Contains(string(raw), "runtime-") {
 		t.Fatalf("hidden identity leaked: %s", raw)
 	}
 	dm, err := service.OpenDirectMessage(ctx, "human-1", owner.Agent.ID)

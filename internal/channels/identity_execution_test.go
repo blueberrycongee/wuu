@@ -421,38 +421,25 @@ func TestIdentityCancelledTaskRejectsLateReply(t *testing.T) {
 	}
 }
 
-func TestIdentityTaskCompletionReturnsToCoordinator(t *testing.T) {
+func TestIdentityTaskCompletionReturnsToVisibleRequester(t *testing.T) {
 	ctx := context.Background()
 	s := openTestService(t, nil)
-	a := createTestAgent(t, s, "Owner")
-	r := createTestRoom(t, s, a)
-	runtime, e := s.BindRuntime(ctx, r.RuntimeID)
-	if e != nil {
-		t.Fatal(e)
+	owner, lead := createTestAgent(t, s, "Owner"), createTestAgent(t, s, "Lead")
+	room := createTestRoom(t, s, owner, lead)
+	requester := flexibleTestSession(t, s, lead.Agent.ID, room.ID, "requester")
+	task, err := requester.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, Title: "Find evidence", Body: "Inspect and report", OwnerID: owner.Agent.ID})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, e = runtime.BindCollaborationSession(ctx, CollaborationSessionBindParams{SessionRef: "coordinator", RoomID: r.ID, Purpose: CollaborationSessionCoordination}); e != nil {
-		t.Fatal(e)
+	worker, binding := prepareIdentityTestTurn(t, s, owner.Agent.ID)
+	if _, err := worker.UpdateTask(ctx, TaskUpdateParams{TaskID: task.ID, State: TaskStateDone}); err != nil {
+		t.Fatal(err)
 	}
-	coordinator, e := s.BindRuntimeSession(ctx, r.RuntimeID, "coordinator")
-	if e != nil {
-		t.Fatal(e)
+	if _, err := s.SettleCollaborationSession(ctx, CollaborationSessionSettleParams{SessionRef: binding.SessionRef, TurnID: "finished", State: CollaborationSessionIdle, Result: "Evidence found", PublicReply: "Evidence found"}); err != nil {
+		t.Fatal(err)
 	}
-	task, e := coordinator.CreateTask(ctx, TaskCreateParams{RoomID: r.ID, Title: "Find evidence", Body: "Inspect task and report", OwnerID: a.Agent.ID})
-	if e != nil {
-		t.Fatal(e)
-	}
-	owner, b := prepareIdentityTestTurn(t, s, a.Agent.ID)
-	if _, e = owner.UpdateTask(ctx, TaskUpdateParams{TaskID: task.ID, State: TaskStateDone}); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = s.SettleCollaborationSession(ctx, CollaborationSessionSettleParams{SessionRef: b.SessionRef, TurnID: "finished", State: CollaborationSessionIdle, Result: "Evidence found", PublicReply: "Evidence found"}); e != nil {
-		t.Fatal(e)
-	}
-	messages, e := coordinator.ReceiveCollaboration(ctx, 32)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if len(messages) == 0 {
-		t.Fatal("coordinator received no terminal event after its assignment completed and public result was published")
+	received, err := requester.ReceiveCollaboration(ctx, 32)
+	if err != nil || len(received) == 0 {
+		t.Fatalf("requester received no result: %+v %v", received, err)
 	}
 }

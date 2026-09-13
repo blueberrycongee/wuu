@@ -55,6 +55,13 @@ func (s *Service) PrepareIdentityConversation(ctx context.Context, agent AgentRu
 		WHERE to_agent_id = ? AND pulled_at IS NULL AND invalidated_at IS NULL`, agent.ID); err != nil {
 		return current, false, err
 	}
+	// A task may finish before its queued assignment is admitted. Keep its
+	// later control/result messages, but never restart the finished task.
+	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_messages SET invalidated_at=?
+        WHERE to_agent_id=? AND kind='assignment' AND pulled_at IS NULL AND invalidated_at IS NULL
+        AND EXISTS(SELECT 1 FROM works WHERE works.id=collaboration_messages.work_id AND works.state IN ('completed','cancelled','failed'))`, toMillis(s.now()), agent.ID); err != nil {
+		return current, false, err
+	}
 	var roomID, workID string
 	err = tx.QueryRowContext(ctx, `SELECT delivery.room_id,
 		CASE WHEN work.state NOT IN ('completed','cancelled','failed') THEN COALESCE(delivery.work_id,'') ELSE '' END
@@ -121,7 +128,8 @@ func (s *Service) PrepareIdentityConversation(ctx context.Context, agent AgentRu
 	// stay durable and cannot run concurrently under the same name.
 	if _, err = tx.ExecContext(ctx, `UPDATE collaboration_messages SET target_session_ref=?
 		WHERE to_agent_id=? AND room_id=? AND pulled_at IS NULL AND invalidated_at IS NULL
-		AND (COALESCE(work_id,'')=? OR work_id IS NULL OR kind IN ('candidate_ready','peer_result','work_run_terminal','verification_feedback','completion'))`, ref, agent.ID, roomID, workID); err != nil {
+		AND (COALESCE(work_id,'')=? OR work_id IS NULL OR kind IN ('candidate_ready','peer_result','work_run_terminal','verification_feedback','completion')
+		OR kind='control' AND EXISTS(SELECT 1 FROM works WHERE works.id=collaboration_messages.work_id AND works.state IN ('completed','cancelled','failed')))`, ref, agent.ID, roomID, workID); err != nil {
 		return binding, false, err
 	}
 	binding.Primary, binding.TurnID, binding.ParentSessionRef, binding.Objective = true, "", "", ""
