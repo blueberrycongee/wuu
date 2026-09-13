@@ -117,6 +117,48 @@ func TestIdentityConversationTaskAssignmentsDoNotCreateWorkers(t *testing.T) {
 	}
 }
 
+func TestIdentityTaskProgressSettlesWithoutEmptyWake(t *testing.T) {
+	f, provider := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	client, err := f.server.channelService.BindAgent(ctx, f.identity.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.CreateTask(ctx, channels.TaskCreateParams{RoomID: f.room.ID, OwnerID: f.identity.ID, Title: "Review the change"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := provider.next(t)
+	if _, err := client.UpdateTask(ctx, channels.TaskUpdateParams{TaskID: task.ID, State: channels.TaskStateDoing}); err != nil {
+		t.Fatal(err)
+	}
+	call.response <- providers.ChatResponse{Content: "Review progress recorded."}
+	f.waitForCompletion(t)
+	bindings, err := f.server.channelService.ListAllCollaborationSessions(ctx)
+	if err != nil || len(bindings) != 1 || bindings[0].State != channels.CollaborationSessionIdle {
+		t.Fatalf("task progress started an empty continuation: %+v, %v", bindings, err)
+	}
+	wake, err := f.server.channelService.WakeState(ctx, f.identity.ID)
+	if err != nil || wake.Outstanding || wake.Pending {
+		t.Fatalf("settled task left a pending wake: %+v, %v", wake, err)
+	}
+	select {
+	case <-provider.calls:
+		t.Fatal("consumed assignment caused another model request")
+	default:
+	}
+	var continued ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{
+		AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect the latest evidence", RequestID: "new-evidence",
+	}, &continued)
+	next := provider.next(t)
+	if continued.Session.SessionRef != bindings[0].SessionRef || !strings.Contains(collaborationRequestText(next.request), "Inspect the latest evidence") {
+		t.Fatal("new input did not resume the existing identity")
+	}
+	next.response <- providers.ChatResponse{Content: "Latest evidence inspected."}
+	f.waitForCompletion(t)
+}
+
 func TestIdentityConversationStopResumeRetainsTheSameHistory(t *testing.T) {
 	f := newCollaborationRPCFixture(t)
 	binding, call := f.create(t, "Keep this original responsibility")

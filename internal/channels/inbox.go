@@ -415,6 +415,21 @@ func (s *Service) checkAgent(ctx context.Context, agentID string) (CheckResult, 
 }
 
 func recomputeAgentWakeTx(ctx context.Context, tx *sql.Tx, agentID string, now int64) error {
+	// Task updates can reopen their room notification after the assignment was
+	// consumed. Only a pending assignment can admit that task into a session;
+	// retire its duplicate notification before counting or selecting wake input.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbox_items SET pulled_at = ?
+		WHERE member_type = 'agent' AND member_id = ? AND kind = 'task' AND pulled_at IS NULL
+			AND EXISTS (SELECT 1 FROM works work WHERE work.id = inbox_items.message_id)
+			AND NOT EXISTS (
+				SELECT 1 FROM collaboration_messages assignment
+				WHERE assignment.to_agent_id = inbox_items.member_id
+					AND assignment.work_id = inbox_items.message_id AND assignment.kind = 'assignment'
+					AND assignment.pulled_at IS NULL AND assignment.invalidated_at IS NULL
+			)`, now, agentID); err != nil {
+		return fmt.Errorf("retire handled task notifications: %w", err)
+	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT

@@ -62,6 +62,9 @@ func (s *Service) PrepareIdentityConversation(ctx context.Context, agent AgentRu
         AND EXISTS(SELECT 1 FROM works WHERE works.id=collaboration_messages.work_id AND works.state IN ('completed','cancelled','failed'))`, toMillis(s.now()), agent.ID); err != nil {
 		return current, false, err
 	}
+	if err := recomputeAgentWakeTx(ctx, tx, agent.ID, toMillis(s.now())); err != nil {
+		return current, false, err
+	}
 	var roomID, workID string
 	err = tx.QueryRowContext(ctx, `SELECT delivery.room_id,
 		CASE WHEN work.state NOT IN ('completed','cancelled','failed') THEN COALESCE(delivery.work_id,'') ELSE '' END
