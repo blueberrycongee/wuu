@@ -6,9 +6,12 @@
   color: var(--ink);
 }
 
+
 .account-screen-titlebar {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
-  padding: 52px 24px 12px;
+  padding: 20px 24px 12px;
   -webkit-app-region: drag;
 }
 
@@ -30,7 +33,7 @@
 
 .account-connected { display: flex; align-items: center; gap: 10px; max-width: 480px; margin: 0 auto 24px; padding: 16px; box-sizing: border-box; border: 1px solid var(--hairline-soft); border-radius: 12px; background: var(--surface-1); line-height: 1.6; }
 
-.account-screen-window .account-screen-titlebar { padding: 40px 20px 0; }
+.account-screen-window .account-screen-titlebar { padding: 16px 12px 0; }
 .account-screen-window .account-screen-content { padding: 12px 32px 32px; }
 .account-window-done { display: block; width: 100%; max-width: 480px; margin: 20px auto 0; }
 

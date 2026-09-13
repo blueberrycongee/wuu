@@ -340,16 +340,18 @@ export function FirstRunOnboarding({
             />
           ))}
         </div>
-        {preview && onDismissPreview ? (
-          <button
-            className="onboarding-preview-exit"
-            type="button"
-            data-testid="onboarding-preview-exit"
-            onClick={onDismissPreview}
-          >
-            {t("onboarding.previewExit")}
-          </button>
-        ) : null}
+        <div className="onboarding-chrome-end">
+          {preview && onDismissPreview ? (
+            <button
+              className="onboarding-preview-exit"
+              type="button"
+              data-testid="onboarding-preview-exit"
+              onClick={onDismissPreview}
+            >
+              {t("onboarding.previewExit")}
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <section className={`onboarding-stage onboarding-stage-${step}`}>

@@ -791,24 +791,22 @@ function windowBackgroundColor(): string {
 
 // The window-chrome contract per platform: macOS hides the titlebar and
 // leaves the traffic lights over the renderer's drag strip (top-left);
-// Windows and Linux hide it and let Chromium draw min/max/close as a
-// controls overlay (top-right — the renderer reserves that corner through
-// the --window-controls-inset-* variables). Other platforms keep the
-// native frame, which needs no in-page reservation at all.
-//
-// Linux WCO has had DE/Wayland regressions in Electron; set
-// WUU_LINUX_NATIVE_CHROME=1 to force the previous native-frame path.
+// Windows hides it and lets Chromium draw min/max/close as a controls
+// overlay (top-right — the renderer reserves that corner through the
+// --window-controls-inset-* variables). Linux is frameless: the renderer
+// draws caption buttons in the same white header as app actions so GTK
+// chrome never sits beside Wuu's icons.
 function usesWindowControlsOverlay(): boolean {
-  if (process.platform === "win32") return true;
-  if (process.platform === "linux") {
-    return process.env.WUU_LINUX_NATIVE_CHROME !== "1";
-  }
-  return false;
+  return process.platform === "win32";
 }
 
 function windowFrameOptions(): Pick<
   BrowserWindowConstructorOptions,
-  "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay" | "autoHideMenuBar"
+  | "frame"
+  | "titleBarStyle"
+  | "trafficLightPosition"
+  | "titleBarOverlay"
+  | "autoHideMenuBar"
 > {
   if (process.platform === "darwin") {
     return {
@@ -820,10 +818,10 @@ function windowFrameOptions(): Pick<
     return {
       titleBarStyle: "hidden",
       titleBarOverlay: nonMacTitleBarOverlay(),
-      // Linux otherwise shows an always-visible in-window menu strip under
-      // the (now hidden) system titlebar; Alt still reveals the menu.
-      ...(process.platform === "linux" ? { autoHideMenuBar: true } : {}),
     };
+  }
+  if (process.platform === "linux") {
+    return { frame: false, autoHideMenuBar: true };
   }
   return {};
 }
@@ -843,7 +841,7 @@ function nonMacTitleBarOverlay(): Electron.TitleBarOverlay {
 // The theme preference is app-global state owned by the main process.
 // Every themed content window (main + pop-outs) registers here; a theme
 // change — explicit preference or an OS dark-mode flip while on
-// "system" — re-pushes the native chrome (Win/Linux controls overlay,
+// "system" — re-pushes the native chrome (Windows controls overlay,
 // non-macOS window background fill) to all of them, and the new
 // preference is broadcast so each renderer re-applies data-theme.
 // macOS skips both: its vibrancy material and transparent fill are
@@ -852,6 +850,12 @@ const themedChromeWindows = new Set<BrowserWindow>();
 
 function registerThemedChromeWindow(win: BrowserWindow): void {
   themedChromeWindows.add(win);
+  const sendMaximized = (): void => {
+    if (win.isDestroyed()) return;
+    win.webContents.send("wuu:window-maximized-changed", win.isMaximized());
+  };
+  win.on("maximize", sendMaximized);
+  win.on("unmaximize", sendMaximized);
   win.on("closed", () => {
     themedChromeWindows.delete(win);
   });
@@ -2083,6 +2087,23 @@ app.whenReady().then(async () => {
       await remoteHostManager.removeDevice(workdir, String(fingerprintOrPub));
       return remoteControlSnapshot(workdir);
     });
+  });
+  ipcMain.handle("wuu:window-minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("wuu:window-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle("wuu:window-close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle("wuu:window-is-maximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return Boolean(win && !win.isDestroyed() && win.isMaximized());
   });
   ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
   ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {
