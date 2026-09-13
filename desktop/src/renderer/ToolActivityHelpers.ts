@@ -1,7 +1,7 @@
 import { formatMessageFlowCommand } from "./message-flow-display";
 import type { ThreadItem } from "../shared/protocol";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
-import { translateCurrent as t } from "./i18n";
+import { getActiveLocale, translateCurrent as t } from "./i18n";
 
 export type ToolActivityKind =
   | "edit"
@@ -416,7 +416,7 @@ function toolActivitySectionFromItems(
         id: key,
         kind: "read",
         title: t("toolActivity.view"),
-        detail: compactDetailText(compactToolTargets(items)),
+        detail: compactDetailText(toolTargetPaths(items).map(fileBaseName)),
         status: combinedToolStatus(items),
         commands: toolCommands(items),
         error: firstToolError(items),
@@ -436,7 +436,7 @@ function toolActivitySectionFromItems(
         id: key,
         kind: "edit",
         title: t("toolActivity.updateFiles"),
-        detail: compactDetailText(compactToolTargets(items)),
+        detail: compactDetailText(toolTargetPaths(items).map(fileBaseName)),
         status: combinedToolStatus(items),
         commands: toolCommands(items),
         error: firstToolError(items),
@@ -555,18 +555,22 @@ function toolActivityProcessSegmentFromItems(
   key: string,
   items: ThreadItem[],
 ): ToolActivityProcessSegment {
-  const status = combinedToolStatus(items);
+  const status = items.some((item) => itemToolStatus(item) === "running")
+    ? "running"
+    : combinedToolStatus(items);
   const error = firstToolError(items);
+  const verb = (action: "read" | "search" | "edit" | "command"): string =>
+    t(`process.action.${action}.${status}`);
   switch (key) {
     case "read": {
-      const targets = compactToolTargets(items);
+      const targets = toolTargetPaths(items);
       return fileCountSegment({
         id: key,
         kind: "read",
         status,
         error,
-        singularPrefix: t("toolActivity.view"),
-        countPrefix: t("toolActivity.view"),
+        singularPrefix: verb("read"),
+        countPrefix: verb("read"),
         targets,
         fallbackCount: items.length,
       });
@@ -584,7 +588,7 @@ function toolActivityProcessSegmentFromItems(
             kind: "search",
             status,
             error,
-            countPrefix: `${t("toolActivity.search")} `,
+            countPrefix: `${verb("search")} `,
             count,
             countSuffix: ` ${t("toolActivity.times")}`,
           }
@@ -594,35 +598,35 @@ function toolActivityProcessSegmentFromItems(
             status,
             error,
             text: targets[0]
-              ? t("toolActivity.searchTarget", { target: targets[0] })
-              : t("toolActivity.search"),
+              ? `${verb("search")} ${targets[0]}`
+              : verb("search"),
           };
     }
     case "change": {
-      const targets = compactToolTargets(items);
+      const targets = toolTargetPaths(items);
       return fileCountSegment({
         id: key,
         kind: "edit",
         status,
         error,
-        singularPrefix: t("toolActivity.update"),
-        countPrefix: t("toolActivity.update"),
+        singularPrefix: verb("edit"),
+        countPrefix: verb("edit"),
         targets,
         fallbackCount: items.length,
       });
     }
     case "command": {
       const labels = compactCommandLabels(items);
-      const count = labels.length || items.length;
+      const count = items.length;
       return count > 1
         ? {
             id: key,
             kind: "command",
             status,
             error,
-            countPrefix: `${t("toolActivity.inspect")} `,
+            countPrefix: `${verb("command")} `,
             count,
-            countSuffix: ` ${t("toolActivity.items")}`,
+            countSuffix: ` ${t("toolActivity.commands")}`,
           }
         : {
             id: key,
@@ -790,7 +794,7 @@ function fileCountSegment({
         kind,
         status,
         error,
-        text: targets[0] ? `${singularPrefix} ${targets[0]}` : singularPrefix,
+        text: targets[0] ? `${singularPrefix} ${fileBaseName(targets[0])}` : singularPrefix,
       };
 }
 
@@ -813,7 +817,7 @@ function firstToolError(items: ThreadItem[]): string | undefined {
   return `${display.title}。${display.detail}`;
 }
 
-function compactToolTargets(items: ThreadItem[]): string[] {
+function toolTargetPaths(items: ThreadItem[]): string[] {
   return uniqueStrings(
     items
       .flatMap((item) => {
@@ -827,9 +831,9 @@ function compactToolTargets(items: ThreadItem[]): string[] {
           stringValue(args, "notebook_path");
         const patchPaths = patchChangedFiles(result);
         if (patchPaths.length > 0) {
-          return patchPaths.map(fileBaseName);
+          return patchPaths;
         }
-        return path ? [fileBaseName(path)] : [];
+        return path ? [path] : [];
       })
   );
 }
@@ -1126,7 +1130,20 @@ export function readableToolName(name: string | undefined): string {
 export function readableToolActivityName(
   item: Pick<ThreadItem, "name" | "display">,
 ): string {
-  return item.display?.label?.trim() || readableToolName(item.name);
+  return toolDisplayLabel(item.display) || readableToolName(item.name);
+}
+
+/** Resolve a saved tool label without requiring its plugin to remain installed. */
+export function toolDisplayLabel(
+  display: ThreadItem["display"],
+  locale: string = getActiveLocale(),
+): string | undefined {
+  const translations = Object.entries(display?.label_translations ?? {});
+  for (const candidate of [locale, locale.split("-")[0]]) {
+    const label = translations.find(([key]) => key.toLowerCase() === candidate.toLowerCase())?.[1]?.trim();
+    if (label) return label;
+  }
+  return display?.label?.trim() || undefined;
 }
 
 /**
@@ -1232,7 +1249,9 @@ export function summarizeToolActivity(items: ThreadItem[]): ToolActivitySummary 
       primaryKind = diff.newFile ? "create" : "edit";
       continue;
     }
-    unknownTools.add(name);
+    // Fold-header summaries must use the saved presentation label as well;
+    // the raw name is the dispatch identity and may contain a plugin hash.
+    unknownTools.add(readableToolActivityName(item));
   }
 
   const singleChangedFile =

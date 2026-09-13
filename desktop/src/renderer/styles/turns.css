@@ -2248,53 +2248,30 @@
 .activity-row svg {
   flex: 0 0 auto;
   color: currentColor;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
-/* Line-start marker of a tool activity row: a rounded square whose only job
- * is encoding execution state, not a semantic metaphor. */
 .tool-activity-marker {
   flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   align-self: center;
 }
 
-.tool-activity-marker-track {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
+.tool-activity-marker.is-running {
+  animation: tool-activity-marker-pulse 1.5s ease-in-out infinite;
 }
 
-/* Running: a bright segment chases around the square perimeter. The path is
- * pathLength-normalized to 100, so a 26-unit dash on a -100 offset loop reads
- * as one cursor completing a lap — no rotation, no spinner. */
-.tool-activity-marker.is-running .tool-activity-marker-track {
-  stroke-dasharray: 26 74;
-  animation: tool-activity-marker-chase 1.5s linear infinite;
-}
-
-/* Settled: the row's resting state — a quiet hollow square. */
-.tool-activity-marker.is-settled .tool-activity-marker-track {
-  opacity: 0.55;
-}
-
-@keyframes tool-activity-marker-chase {
-  from {
-    stroke-dashoffset: 0;
-  }
-  to {
-    stroke-dashoffset: -100;
+@keyframes tool-activity-marker-pulse {
+  50% {
+    opacity: 0.45;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tool-activity-marker.is-running .tool-activity-marker-track {
+  .tool-activity-marker.is-running {
     animation: none;
-    stroke-dasharray: none;
-    opacity: 0.55;
   }
 }
 
@@ -2579,6 +2556,14 @@
   margin-right: 8px;
 }
 
+.process-surface-condensed-summary {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The standalone reasoning fold uses a 6px flex gap; another 2px preserves
  * the same 8px mascot-to-label spacing as the unified process row. */
 .turn-reasoning-summary > .process-surface-blobatar {
@@ -2665,10 +2650,7 @@
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
 }
 
-.stream-reconnect-notice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.stream-event-card {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -2679,6 +2661,12 @@
   color: var(--ink);
   font-size: 13px;
   line-height: 20px;
+}
+
+.stream-reconnect-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .stream-reconnect-icon { flex: 0 0 auto; }
@@ -2763,56 +2751,6 @@
   animation: process-surface-count-jump var(--motion-base) var(--ease-out);
 }
 
-/* Live token counter after the "正在思考" process label. Reuses the count
- * jump keyframe so the increment cue matches the operation counters. */
-.thinking-token-count {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: baseline;
-}
-
-@media (max-width: 720px) {
-  .process-surface-summary-text .thinking-token-count,
-  .turn-reasoning-summary-text .thinking-token-count {
-    display: none;
-  }
-}
-
-@media (max-width: 720px) and (prefers-reduced-motion: no-preference) {
-  /* The live highlight must omit the same stats as the visible row. */
-  .process-surface-summary-text.wuu-live-text-wave::after,
-  .turn-reasoning-summary-text.wuu-live-text-wave::after {
-    content: attr(data-compact-text);
-  }
-}
-
-.thinking-token-separator {
-  flex: 0 0 auto;
-}
-
-.thinking-token-stat {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.thinking-token-value {
-  display: inline-block;
-  min-width: 1ch;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  text-align: center;
-}
-
-.thinking-token-suffix {
-  opacity: 0.82;
-  white-space: nowrap;
-}
-
-.thinking-token-value.is-changing {
-  animation: process-surface-count-jump var(--motion-base) var(--ease-out);
-}
-
 .process-surface-row.is-live-gray .process-surface-summary-line {
   display: inline-flex;
 }
@@ -2837,8 +2775,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .process-surface-count.is-changing,
-  .thinking-token-value.is-changing {
+  .process-surface-count.is-changing {
     animation: none;
   }
 
@@ -2931,6 +2868,27 @@
 
 .process-surface-tool-list {
   min-width: 0;
+}
+
+.process-surface-tool-list .activity-timeline {
+  gap: 4px;
+}
+
+.process-surface-tool-list .activity-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.5;
+  color: var(--wuu-ink-soft);
+}
+
+.process-surface-tool-list .tool-activity-marker {
+  align-self: flex-start;
+  margin-top: 0.3em;
+}
+
+.process-surface-tool-list .activity-copy {
+  overflow-wrap: anywhere;
 }
 
 .process-surface-reasoning-list {
@@ -4780,34 +4738,29 @@ pre {
 }
 
 .turn-artifact-inline-image {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
   margin: 0;
-  min-width: 0;
 }
 
 .turn-artifact-inline-image button {
   display: block;
-  width: min(100%, 620px);
-  max-height: 520px;
+  width: 100%;
+  height: 100%;
   padding: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: inherit;
   overflow: hidden;
-  background: var(--surface-1);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  overflow-wrap: anywhere;
   cursor: zoom-in;
 }
 
-.turn-artifact-inline-image img {
-  display: block;
-  width: 100%;
-  max-height: 518px;
-  object-fit: contain;
+.turn-artifact-inline-image button:focus-visible {
+  outline: 2px solid var(--image-preview-outline-focus);
+  outline-offset: 2px;
 }
 
-.turn-artifact-inline-image figcaption,
 .turn-artifact-unavailable {
   color: var(--ink-muted);
   font-size: var(--font-xs);

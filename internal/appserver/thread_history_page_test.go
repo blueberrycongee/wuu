@@ -8,12 +8,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"image"
 	"image/png"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func TestHistoryPagesSurviveAppendsAndRejectRemovedBoundary(t *testing.T) {
@@ -108,7 +110,8 @@ func TestHistoryBoundsSingleLongTurnAndRetainsCompleteContent(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		turn.Items = append(turn.Items, ThreadItem{ID: fmt.Sprint(i), Type: ThreadItemToolCall, Result: strings.Repeat("x", 20_000)})
 	}
-	turn.Items = append(turn.Items, ThreadItem{ID: "large", Type: ThreadItemToolCall, Result: strings.Repeat("y", 2*1024*1024)})
+	display := &providers.ToolCallDisplay{Label: "Working notes", LabelTranslations: map[string]string{"zh": "工作笔记"}}
+	turn.Items = append(turn.Items, ThreadItem{ID: "large", Type: ThreadItemToolCall, Display: display, Result: strings.Repeat("y", 2*1024*1024)})
 	th.Turns = []Turn{turn}
 	first := th.resumeSnapshotLocked(true)
 	raw, _ := json.Marshal(first)
@@ -118,6 +121,13 @@ func TestHistoryBoundsSingleLongTurnAndRetainsCompleteContent(t *testing.T) {
 	last := first.Turns[0].Items[len(first.Turns[0].Items)-1]
 	if last.RemoteContentRef == "" || len(last.Result) > 2100 {
 		t.Fatal("large result was not deferred")
+	}
+	if last.Display == nil || last.Display.Label != display.Label || last.Display.LabelTranslations["zh"] != display.LabelTranslations["zh"] {
+		t.Fatal("paging a large tool result removed its display name")
+	}
+	last.Display.LabelTranslations["zh"] = "changed by reader"
+	if display.LabelTranslations["zh"] == "changed by reader" {
+		t.Fatal("page metadata aliases the stored label")
 	}
 	if len(th.Turns[0].Items[50].Result) != 2*1024*1024 {
 		t.Fatal("projection mutated source")
@@ -162,6 +172,30 @@ func TestHistoryBoundsSingleLongTurnAndRetainsCompleteContent(t *testing.T) {
 	}
 	if full.Result != th.Turns[0].Items[50].Result {
 		t.Fatal("full content changed")
+	}
+}
+
+func TestHistoryBoundsTranslatedToolLabels(t *testing.T) {
+	translations := make(map[string]string, historyDisplayTranslations+1)
+	for i := 0; i < historyDisplayTranslations+1; i++ {
+		translations[fmt.Sprintf("locale-%d", i)] = strings.Repeat("z", 2_000)
+	}
+	got := historyItem("thread", "turn", ThreadItem{
+		ID:   "tool",
+		Type: ThreadItemToolCall,
+		Display: &providers.ToolCallDisplay{
+			Label:             "Working notes",
+			LabelTranslations: translations,
+		},
+		Result: strings.Repeat("y", 2*1024*1024),
+	})
+	if len(got.Display.LabelTranslations) > historyDisplayTranslations {
+		t.Fatalf("history page retained too many translated labels: %d", len(got.Display.LabelTranslations))
+	}
+	for locale, label := range got.Display.LabelTranslations {
+		if len(locale) > historyDisplayLocaleBytes || len(label) > historyDisplayLabelBytes+len("…") {
+			t.Fatalf("history page did not bound translated label %q", locale)
+		}
 	}
 }
 

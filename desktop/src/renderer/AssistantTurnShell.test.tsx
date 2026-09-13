@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type JSX } from "react";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
+import { turnTelemetryStore } from "./TurnTelemetryStore";
 import {
   AssistantTurnShell,
   resetRecoveredTurnStarts,
@@ -432,6 +433,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  turnTelemetryStore.reset();
   vi.useRealTimers();
   act(() => {
     for (const root of mountedRoots) {
@@ -779,6 +781,46 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
 });
 
 describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
+  it.each(["tool group", "reasoning"])(
+    "retains usage data without appending it to the %s summary",
+    (kind) => {
+      vi.useFakeTimers();
+      const items = [makeStreamingReasoning("working it out")];
+      if (kind === "tool group") {
+        items.unshift(makeReadFileTool("src/App.tsx"));
+      }
+      const turn = makeTurn("in_progress", items);
+      const { container } = renderShell(turn);
+      const summary = container.querySelector(
+        kind === "tool group"
+          ? ".process-surface-summary-text"
+          : ".turn-reasoning-summary-text",
+      );
+      expect(summary).not.toBeNull();
+      const label = summary?.textContent;
+      const waveLabel = summary?.getAttribute("data-text");
+
+      act(() => {
+        turnTelemetryStore.ingest({
+          kind: "notification",
+          workdir: "/repo",
+          message: {
+            method: "turn/usage",
+            params: { turn_id: turn.id, input_tokens: 115_300, output_tokens: 1_300 },
+          },
+        });
+        vi.advanceTimersByTime(1_000);
+      });
+
+      expect(turnTelemetryStore.getSnapshot(turn.id)).toMatchObject({
+        inputTokens: 115_300,
+        outputTokens: 1_300,
+      });
+      expect(summary?.textContent).toBe(label);
+      expect(summary?.getAttribute("data-text")).toBe(waveLabel);
+    },
+  );
+
   it("renders reasoning as a nested fold with default closed state", () => {
     const turn = makeTurn("completed", [
       makeReasoning("considering options A and B"),
@@ -1016,7 +1058,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
 
     const surfaceBefore = container.querySelector(".process-surface");
     expect(surfaceBefore).toBeTruthy();
-    expect(surfaceBefore?.textContent).toContain("查看 App.tsx");
+    expect(surfaceBefore?.textContent).toContain("App.tsx");
 
     const reasoning = makeStreamingReasoning("checking the result");
     const secondTurn = makeTurn("in_progress", [
@@ -1044,7 +1086,6 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(groups[0].querySelector(".process-surface-count")?.textContent).toBe(
       "2",
     );
-    expect(groups[0].textContent).toContain("查看 2 个文件");
     expect(groups[0].querySelectorAll(".activity-group")).toHaveLength(2);
   });
 

@@ -54,11 +54,7 @@ function fakeInFlightReadFileTool(): ThreadItem {
   };
 }
 
-// ToolActivityRow's summary is `${section.title} ${section.detail}`.
-// section.title is the verb group ("查看" for the read group), and
-// section.detail comes from compactToolTargets which returns the
-// path basename — NOT the full readable title. So a parsed read_file
-// surfaces as "查看 foo.ts".
+// A read activity shows its action and filename, without the parent path.
 const SUMMARY_TEXT = "查看 foo.ts";
 
 let container: HTMLDivElement | null = null;
@@ -129,6 +125,21 @@ describe("ToolActivityRow", () => {
     expect(surfaceText()).toBe("搜索软件包");
   });
 
+  it("shows a plugin label without a generic tool prefix", () => {
+    mount({
+      items: [{
+        id: "tool-plugin",
+        type: "tool_call",
+        status: "completed",
+        name: "plugin_notes_work_0123456789abcdef",
+        arguments: "{}",
+        display: { label: "工作笔记" },
+      }],
+      streaming: false,
+    });
+    expect(surfaceText()).toBe("工作笔记");
+  });
+
   it("renders an initial live summary in full", () => {
     mount({ items: [fakeReadFileTool()], streaming: true });
     expect(surfaceText()).toBe(SUMMARY_TEXT);
@@ -180,12 +191,7 @@ describe("ToolActivityRow", () => {
   });
 
   it("still renders the section title when args haven't arrived yet", () => {
-    // compactToolTargets returns [] when args are missing, so
-    // section.detail is undefined. The row falls back to the bare
-    // section.title ("查看") so the user still sees the section header
-    // for the in-flight tool, just without a target. This is the
-    // expected unified-timing behaviour — no placeholder like
-    // "读取 文件" — the detail only appears once args parse.
+    // The action remains visible before streamed arguments provide a target.
     const inFlight: ThreadItem = {
       id: "tool-empty",
       type: "tool_call",

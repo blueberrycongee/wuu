@@ -173,10 +173,17 @@ func (h *Host) addLocked(client Client) {
 	}
 	for _, registration := range registrations {
 		publicName := h.availablePublicToolName(client.ID(), registration.ID)
+		registration = cloneToolRegistration(registration)
+		if registration.Display == nil {
+			registration.Display = &providers.ToolCallDisplay{}
+		}
+		if strings.TrimSpace(registration.Display.Label) == "" {
+			registration.Display.Label = registration.ID
+		}
 		h.tools[publicName] = RegisteredTool{
 			PublicName:   publicName,
 			PluginID:     client.ID(),
-			Registration: cloneToolRegistration(registration),
+			Registration: registration,
 			client:       toolClient,
 		}
 		h.toolOrder = append(h.toolOrder, publicName)
@@ -658,10 +665,7 @@ func cloneToolRegistration(registration ToolRegistration) ToolRegistration {
 		activity := *registration.Activity
 		clone.Activity = &activity
 	}
-	if registration.Display != nil {
-		display := *registration.Display
-		clone.Display = &display
-	}
+	clone.Display = registration.Display.Clone()
 	return clone
 }
 

@@ -6,14 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const historyPageTurns = 20
 const historyPageBytes = 256 * 1024
+const historyDisplayTranslations = 32
+const historyDisplayLocaleBytes = 64
+const historyDisplayLabelBytes = 80
+const historyDisplayMetadataBytes = 1024
 
 // The cursor names the first retained turn, so appends do not shift older
 // pages. A removed boundary fails explicitly instead of silently skipping data.
@@ -138,13 +144,51 @@ func historyItem(threadID, turnID string, item ThreadItem) ThreadItem {
 			item.ResultDetail.Content = item.ResultDetail.Content[:4]
 		}
 	}
-	item.Display = nil
+	if item.Display != nil {
+		item.Display = boundedHistoryToolDisplay(item.Display)
+	}
 	item.Files = nil
 	// Thousands of attachments must not make a single item unbounded either.
 	if len(item.Images) > 4 {
 		item.Images = item.Images[:4]
 	}
 	return item
+}
+
+func boundedHistoryToolDisplay(display *providers.ToolCallDisplay) *providers.ToolCallDisplay {
+	clone := display.Clone()
+	clone.Kind = boundedHistoryText(clone.Kind, historyDisplayMetadataBytes)
+	clone.Label = boundedHistoryText(clone.Label, historyDisplayLabelBytes)
+	clone.Text = boundedHistoryText(clone.Text, historyDisplayMetadataBytes)
+	clone.Capability = boundedHistoryText(clone.Capability, historyDisplayMetadataBytes)
+	if len(clone.LabelTranslations) == 0 {
+		return clone
+	}
+	translations := make(map[string]string, min(len(clone.LabelTranslations), historyDisplayTranslations))
+	locales := make([]string, 0, len(clone.LabelTranslations))
+	for locale := range clone.LabelTranslations {
+		locales = append(locales, locale)
+	}
+	sort.Strings(locales)
+	for _, locale := range locales {
+		locale = boundedHistoryText(locale, historyDisplayLocaleBytes)
+		if strings.TrimSpace(locale) == "" {
+			continue
+		}
+		translations[locale] = boundedHistoryText(clone.LabelTranslations[locale], historyDisplayLabelBytes)
+		if len(translations) == historyDisplayTranslations {
+			break
+		}
+	}
+	clone.LabelTranslations = translations
+	return clone
+}
+
+func boundedHistoryText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return strings.ToValidUTF8(text[:limit], "") + "…"
 }
 
 func historyTextPreview(text string) string {

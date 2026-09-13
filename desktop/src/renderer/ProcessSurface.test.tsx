@@ -13,6 +13,7 @@ import { ProcessSurface } from "./ProcessSurface";
 import type { ThreadItem } from "../shared/protocol";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { modelMascotAccessory } from "./WuuMascot";
+import { translateCurrent as t } from "./i18n";
 
 beforeAll(() => {
   // jsdom does not lay out real heights. Stub getBoundingClientRect so
@@ -401,7 +402,7 @@ describe("ProcessSurface", () => {
     });
     expect(
       container.querySelector(".process-text-motion-current")?.textContent,
-    ).toBe("查看 a.ts");
+    ).toContain("a.ts");
 
     rerender({
       processItems: [makeReadFile("tool-1", "b.ts", "in_progress")],
@@ -410,10 +411,10 @@ describe("ProcessSurface", () => {
 
     expect(
       container.querySelector(".process-text-motion-current")?.textContent,
-    ).toBe("查看 b.ts");
+    ).toContain("b.ts");
     expect(
       container.querySelector(".process-text-motion-exit")?.textContent,
-    ).toBe("查看 a.ts");
+    ).toContain("a.ts");
 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 220));
@@ -489,7 +490,7 @@ describe("ProcessSurface", () => {
     expect(count?.textContent).toBe("3");
   });
 
-  it("condenses many mixed tool calls into one bounded summary sentence", () => {
+  it("keeps concrete actions in a mixed summary and the remaining tools in its details", () => {
     const { container } = render({
       processItems: [
         {
@@ -514,7 +515,7 @@ describe("ProcessSurface", () => {
           type: "tool_call",
           name: "bash",
           status: "completed",
-          arguments: JSON.stringify({ command: "sqlite3 sessions.db" }),
+          arguments: JSON.stringify({ command: "bun run verify-database" }),
         },
         {
           id: "schedule-1",
@@ -528,11 +529,35 @@ describe("ProcessSurface", () => {
     });
 
     const summary = container.querySelector(".process-surface-summary-line");
-    expect(summary?.textContent).toBe(
-      "已完成 6 项操作，包括搜索、查看文件等",
+    expect(summary?.textContent).toContain("bun run verify-database");
+    expect(summary?.textContent).not.toContain("cron");
+    setProcessFoldOpen(container.querySelector("details.process-surface-fold"), true);
+    expect(container.querySelector(".activity-timeline")?.textContent).toContain("cron");
+  });
+
+  it("shows the latest tool immediately when opening a live group with a long backlog", () => {
+    const items: ThreadItem[] = Array.from({ length: 12 }, (_, index) =>
+      makeReadFile(`read-${index}`, `file-${index}.ts`),
     );
-    expect(summary?.textContent).not.toContain("未完成");
-    expect(summary?.querySelectorAll(".process-surface-segment")).toHaveLength(0);
+    items.push({
+      id: "latest-command",
+      type: "tool_call",
+      name: "bash",
+      status: "in_progress",
+    });
+    const { container } = render({ processItems: items, streaming: true });
+    setProcessFoldOpen(container.querySelector("details.process-surface-fold"), true);
+    expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(items.length);
+
+    rerender({
+      processItems: items.map(item => item.id === "latest-command"
+        ? { ...item, arguments: JSON.stringify({ command: "bun run verify-recovery" }) }
+        : item),
+      streaming: true,
+    });
+    const rows = container.querySelectorAll(".activity-timeline-item");
+    expect(rows[rows.length - 1].textContent).toContain("bun run verify-recovery");
+    expect(container.querySelector<HTMLDetailsElement>("details.process-surface-fold")?.open).toBe(true);
   });
 
   it("keeps a useful count when many calls are all the same kind", () => {
@@ -547,8 +572,8 @@ describe("ProcessSurface", () => {
     });
 
     expect(
-      container.querySelector(".process-surface-summary-line")?.textContent,
-    ).toBe("查看 4 个文件");
+      container.querySelector(".process-surface-count")?.textContent,
+    ).toBe("4");
   });
 
   it("reports the current phase instead of appending reasoning to a long summary", () => {
@@ -577,7 +602,7 @@ describe("ProcessSurface", () => {
 
     expect(
       container.querySelector(".process-surface-summary-line")?.textContent,
-    ).toBe("完成 4 项操作后，正在思考");
+    ).toBe(t("process.thinkingAfterOperations", { count: 4 }));
     const summary = container.querySelector(".process-surface-summary-line");
     const blobatar = summary?.querySelector<SVGSVGElement>(
       "svg.process-surface-blobatar",
@@ -585,6 +610,34 @@ describe("ProcessSurface", () => {
     expect(blobatar).not.toBeNull();
     expect(summary?.firstElementChild).toBe(blobatar);
     expect(blobatar?.tagName.toLowerCase()).toBe("svg");
+  });
+
+  it("keeps an active tool in the summary after an earlier call of the same kind fails", () => {
+    const items: ThreadItem[] = [
+      makeReadFile("failed-read", "a.ts", "failed"),
+      makeReadFile("retry-read", "a.ts", "in_progress"),
+      ...["cache_read", "cache_write"].map((pattern): ThreadItem => ({
+        id: pattern,
+        type: "tool_call",
+        name: "grep",
+        status: "completed",
+        arguments: JSON.stringify({ pattern }),
+      })),
+      makeReasoning("reason-1", "checking results", "in_progress"),
+    ];
+    const { container } = render({ processItems: items, streaming: true });
+    const summary = container.querySelector(".process-surface-summary-line");
+    expect(summary?.getAttribute("aria-label")).toContain("a.ts");
+
+    rerender({
+      processItems: items.map((item) => item.id === "retry-read"
+        ? { ...item, status: "completed" }
+        : item),
+      streaming: true,
+    });
+    expect(summary?.getAttribute("aria-label")).toBe(
+      t("process.thinkingAfterOperations", { count: 4 }),
+    );
   });
 
   it("keeps the blobatar off a settled synthesized toolcall row", () => {

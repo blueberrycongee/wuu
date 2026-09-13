@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import type {
   ThreadItem,
@@ -41,12 +40,6 @@ import {
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
-import { turnTelemetryStore } from "./TurnTelemetryStore";
-import {
-  ThinkingTokenCount,
-  tokenCountLocale,
-  turnTokenCountText,
-} from "./ThinkingTokenCount";
 import { useConversationRenderActive } from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
@@ -569,7 +562,6 @@ function EntryRenderer({
         processItems={entry.items ?? [item]}
         streaming={streaming}
         active={activeGray}
-        turnID={turn.id}
         provider={turn.model_provider}
         model={turn.model}
         renderReasoningItem={(processItem, isStreaming) => (
@@ -666,17 +658,6 @@ function ReasoningFold({
 }): JSX.Element {
   const { t } = useI18n();
   const label = streaming ? t("process.thinking") : t("process.viewReasoning");
-  const tokenSnapshot = useSyncExternalStore(
-    turnTelemetryStore.subscribe,
-    () => turnTelemetryStore.getSnapshot(turnID),
-    () => turnTelemetryStore.getSnapshot(turnID),
-  );
-  const tokenWaveText = turnTokenCountText(
-    tokenSnapshot.inputTokens,
-    tokenSnapshot.outputTokens,
-    tokenCountLocale(),
-  );
-  const reasoningWaveText = `${label}${tokenWaveText}`;
   // Only the latest visible gray process label sweeps while the turn
   // is still running. The label text still reflects this item's own
   // state.
@@ -734,14 +715,12 @@ function ReasoningFold({
         <span
           ref={waveRef}
           className={textClass}
-          data-text={reasoningWaveText}
-          data-compact-text={label}
+          data-text={label}
         >
           <AnimatedProcessText
             className="turn-reasoning-summary-label"
             text={label}
           />
-          <ThinkingTokenCount turnID={turnID} active={activeGray} />
         </span>
         <ChevronRight
           className="turn-reasoning-chevron icon-xs"

@@ -327,6 +327,14 @@ runtime 插件可以注册工具和挂钩 Agent 生命周期。SDK 提供以下�
 每个 capability 都属于一个 generation，并声明已经实现的 `kind`（observe / transform /
 decision）与 `priority`。`guard`、`around` 没有宿主实现，不是可声明的公开 kind。
 
+工具命名有两个独立的合同。模型可见的分发名称由宿主生成并加命名空间以避免冲突，插件不应
+把这个名称直接显示给用户。工具注册可以通过 `display.label` 提供简短稳定的用户可见名称，
+并通过 `display.label_translations` 提供按语言覆盖的名称。宿主先匹配完整 locale，再匹配语言，
+最后回退到默认名称。未声明名称时，宿主使用插件本地 Tool ID 作为回退；名称会随每次调用保存，
+因此插件暂时不可用时历史仍可读。`display.kind`
+用于归类常见活动，`display.capability` 是用于展示和聚合的稳定语义标识。未知 capability 只会
+与相同 capability（或相同原始工具身份）聚合，不会全部合并成一个通用分组。
+
 旧 `hook.invoke` 已删除；Host→plugin 只通过上表的版本化 capability 或工具执行，plugin→Host 只通过 Host Service。
 候选 prepare 失败时旧 generation 继续工作；durable commit 后的单插件 activate 失败会在 inventory 中显示
 `failed/last_error`，不会伪装成 active。

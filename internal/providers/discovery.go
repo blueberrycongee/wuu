@@ -159,10 +159,7 @@ func CloneToolCalls(calls []ToolCall) []ToolCall {
 }
 
 func CloneToolCall(call ToolCall) ToolCall {
-	if call.Display != nil {
-		display := *call.Display
-		call.Display = &display
-	}
+	call.Display = call.Display.Clone()
 	return call
 }
 

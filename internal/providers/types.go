@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"time"
 
@@ -48,10 +49,22 @@ func LoadableToolFromDefinition(def ToolDefinition) LoadableToolDefinition {
 
 // ToolCallDisplay carries a user-facing summary for a tool invocation.
 type ToolCallDisplay struct {
-	Kind       string `json:"kind,omitempty"`
-	Label      string `json:"label,omitempty"`
-	Text       string `json:"text,omitempty"`
-	Capability string `json:"capability,omitempty"`
+	Kind  string `json:"kind,omitempty"`
+	Label string `json:"label,omitempty"`
+	// LabelTranslations overrides Label by locale without changing tool identity.
+	LabelTranslations map[string]string `json:"label_translations,omitempty"`
+	Text              string            `json:"text,omitempty"`
+	Capability        string            `json:"capability,omitempty"`
+}
+
+// Clone returns an independent display snapshot, including its translations.
+func (d *ToolCallDisplay) Clone() *ToolCallDisplay {
+	if d == nil {
+		return nil
+	}
+	clone := *d
+	clone.LabelTranslations = maps.Clone(d.LabelTranslations)
+	return &clone
 }
 
 // ToolCallKind distinguishes ordinary function calls from provider-native

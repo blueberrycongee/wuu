@@ -1,6 +1,8 @@
 import { useMemo, type ReactNode } from "react";
 
 import type { ThreadItem } from "../../shared/protocol";
+import { useI18n } from "../i18n";
+import { toolDisplayLabel } from "../ToolActivityHelpers";
 import type {
   ConversationProcessItemV1,
   ConversationProcessKindV1,
@@ -30,9 +32,10 @@ export function ConversationProcessPresentation({
   host = desktopPluginHost,
   controller = desktopWorkbenchController,
 }: ConversationProcessPresentationProps): JSX.Element {
+  const { locale } = useI18n();
   const snapshot = useMemo(
-    () => toConversationProcessSnapshot(processItems, streaming, active ?? streaming),
-    [active, processItems, streaming],
+    () => toConversationProcessSnapshot(processItems, streaming, active ?? streaming, locale),
+    [active, processItems, streaming, locale],
   );
 
   return (
@@ -54,6 +57,7 @@ export function toConversationProcessSnapshot(
   processItems: readonly ThreadItem[],
   streaming: boolean,
   active: boolean,
+  locale?: string,
 ): ConversationProcessSnapshotV1 | undefined {
   const items = processItems.flatMap((item): ConversationProcessItemV1[] => {
     if (item.type === "reasoning") {
@@ -71,7 +75,7 @@ export function toConversationProcessSnapshot(
         kind: "tool-activity" as const,
         status: publicProcessStatus(item),
         toolName: item.name,
-        displayLabel: item.display?.label,
+        displayLabel: toolDisplayLabel(item.display, locale),
         capability: item.display?.capability,
         toolKind: item.display?.kind,
         error: item.error,

@@ -1,6 +1,8 @@
 import { type ReactNode } from "react";
 
 import type { ThreadItem } from "../../shared/protocol";
+import { useI18n } from "../i18n";
+import { toolDisplayLabel } from "../ToolActivityHelpers";
 import type { ToolActivitySnapshot, ToolActivityStructuredResult } from "../../shared/workbench";
 import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
 import type { PluginHost } from "./PluginHost";
@@ -20,6 +22,7 @@ export function ToolActivityPresenter({
   host = desktopPluginHost,
   controller = desktopWorkbenchController,
 }: ToolActivityPresenterProps): JSX.Element {
+  const { locale } = useI18n();
   const dispatchKey = item?.display?.capability ?? item?.name;
   return (
     <PluginPresentation
@@ -28,7 +31,7 @@ export function ToolActivityPresenter({
       controller={controller}
       target="conversation.tool-activity"
       presentationKey={dispatchKey}
-      snapshot={item === undefined ? EMPTY_TOOL_ACTIVITY_SNAPSHOT : toToolActivitySnapshot(item)}
+      snapshot={item === undefined ? EMPTY_TOOL_ACTIVITY_SNAPSHOT : toToolActivitySnapshot(item, locale)}
       fallback={fallback}
     />
   );
@@ -37,7 +40,8 @@ export function ToolActivityPresenter({
 const EMPTY_TOOL_ACTIVITY_SNAPSHOT = Object.freeze({});
 
 /** Convert the private thread record into the complete public presenter DTO. */
-export function toToolActivitySnapshot(item: ThreadItem): ToolActivitySnapshot {
+export function toToolActivitySnapshot(item: ThreadItem, locale?: string): ToolActivitySnapshot {
+  const displayLabel = toolDisplayLabel(item.display, locale);
   const detail = item.result_detail;
   const structuredResult: ToolActivityStructuredResult | undefined = detail === undefined
     ? undefined
@@ -78,7 +82,7 @@ export function toToolActivitySnapshot(item: ThreadItem): ToolActivitySnapshot {
     contractVersion: 1,
     id: item.id,
     toolName: item.name ?? "",
-    ...(item.display?.label === undefined ? {} : { displayLabel: item.display.label }),
+    ...(displayLabel === undefined ? {} : { displayLabel }),
     ...(item.display?.capability === undefined ? {} : { capability: item.display.capability }),
     ...(item.display?.kind === undefined ? {} : { kind: item.display.kind }),
     status: item.status === "in_progress"

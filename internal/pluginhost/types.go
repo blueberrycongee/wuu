@@ -21,6 +21,7 @@ const (
 )
 
 var localToolIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+var toolLabelLocalePattern = regexp.MustCompile(`^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8})*$`)
 
 // InitializeParams describes the runtime instance offered to a plugin.
 type InitializeParams struct {
@@ -136,6 +137,23 @@ func validateToolRegistrations(tools []ToolRegistration) error {
 			}
 			if len(tool.Display.Label) > maxToolDisplayLabelLen {
 				return fmt.Errorf("%s: display.label exceeds %d bytes", prefix, maxToolDisplayLabelLen)
+			}
+			if len(tool.Display.LabelTranslations) > 0 && strings.TrimSpace(tool.Display.Label) == "" {
+				return fmt.Errorf("%s: display.label is required with label_translations", prefix)
+			}
+			if len(tool.Display.LabelTranslations) > 32 {
+				return fmt.Errorf("%s: display.label_translations exceeds 32 locales", prefix)
+			}
+			for locale, label := range tool.Display.LabelTranslations {
+				if len(locale) > 64 || !toolLabelLocalePattern.MatchString(locale) {
+					return fmt.Errorf("%s: invalid label locale %q", prefix, locale)
+				}
+				if strings.TrimSpace(label) == "" || len(label) > maxToolDisplayLabelLen {
+					return fmt.Errorf("%s: translated label for %q must contain 1 to %d bytes", prefix, locale, maxToolDisplayLabelLen)
+				}
+				if err := validateBoundedMetadata("display.label_translations", label); err != nil {
+					return fmt.Errorf("%s: %w", prefix, err)
+				}
 			}
 			for field, value := range map[string]string{
 				"display.kind":       tool.Display.Kind,

@@ -1916,9 +1916,5 @@ func cloneToolResult(result *toolresult.Result) *toolresult.Result {
 }
 
 func cloneToolCallDisplay(display *providers.ToolCallDisplay) *providers.ToolCallDisplay {
-	if display == nil {
-		return nil
-	}
-	clone := *display
-	return &clone
+	return display.Clone()
 }

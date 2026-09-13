@@ -722,6 +722,9 @@ export interface ProcessSandboxResult {
 export interface ToolDisplayMetadata {
   /** Short stable user-facing tool name. Dispatch identity remains host-owned. */
   label?: string;
+  /** Optional locale overrides, resolved by exact locale, language, then label.
+   * Requires a default label. Stored with each call for historical display. */
+  label_translations?: Record<string, string>;
   kind?: string;
   text?: string;
   capability?: string;

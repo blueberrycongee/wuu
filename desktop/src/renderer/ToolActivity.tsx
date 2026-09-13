@@ -7,6 +7,7 @@ import {
 } from "./ToolActivityHelpers";
 import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ToolActivityMarker } from "./ToolActivityMarker";
+import { useI18n } from "./i18n";
 import { RemoteItemContent } from "./RemoteItemContent";
 import { collectTurnArtifacts, TurnInlineArtifactOutputs, TurnEndArtifactOutputs } from "./ArtifactOutputs";
 export type { JsonRecord } from "./ToolActivityHelpers";
@@ -118,6 +119,8 @@ export function ToolActivityRow({
    */
   streaming?: boolean;
 }): JSX.Element {
+  // Locale changes must reach rows inside the memoized activity timeline.
+  useI18n();
   const summary = summarizeToolActivity(items);
   const sections = buildToolActivitySections(items);
 
@@ -133,6 +136,10 @@ export function ToolActivityRow({
       // "搜索软件包" or "运行测试". Prefixing them with the generic section
       // title produced awkward rows like "检查 运行命令".
       if (s.kind === "command" && s.detail) return s.detail;
+      // A plugin label is already a complete user-facing name. Prefixing it
+      // with the generic "使用工具" title only exposes the implementation
+      // category and makes the aggregate row feel repetitive.
+      if (s.kind === "unknown" && s.detail) return s.detail;
       if (s.detail && s.title) return `${s.title} ${s.detail}`;
       return s.detail || s.title;
     })
@@ -144,7 +151,10 @@ export function ToolActivityRow({
   return (
     <article className={className}>
       <span className="activity-row activity-summary">
-        <ToolActivityMarker running={summary.running} />
+        <ToolActivityMarker
+          kind={summary.kind === "list" || summary.kind === "create" ? summary.kind : sections[0]?.kind}
+          running={summary.running}
+        />
         <span className="activity-copy">
           <LightweightStreamingText
             text={summaryText}

@@ -1916,9 +1916,9 @@ func enrichToolCallDisplay(executor ToolExecutor, call providers.ToolCall) provi
 		return call
 	}
 	display, ok := displayProvider.ToolDisplay(call)
-	if !ok || strings.TrimSpace(display.Text) == "" {
+	if !ok || (strings.TrimSpace(display.Text) == "" && strings.TrimSpace(display.Label) == "") {
 		return call
 	}
-	call.Display = &display
+	call.Display = display.Clone()
 	return call
 }

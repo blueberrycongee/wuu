@@ -590,11 +590,15 @@ func TestStreamRunner_EmitsTodoUpdateEventAfterUpdateTodo(t *testing.T) {
 
 type displayLoopTools struct {
 	fakeLoopTools
+	display *providers.ToolCallDisplay
 }
 
 func (f *displayLoopTools) ToolDisplay(call providers.ToolCall) (providers.ToolCallDisplay, bool) {
 	if call.Name != "read_file" {
 		return providers.ToolCallDisplay{}, false
+	}
+	if f.display != nil {
+		return *f.display, true
 	}
 	return providers.ToolCallDisplay{Kind: "read", Text: "读取 model.go"}, true
 }
@@ -658,6 +662,19 @@ func TestStreamRunner_EnrichesToolCallDisplay(t *testing.T) {
 		if call.Display == nil || call.Display.Text != "读取 model.go" || call.Display.Kind != "read" {
 			t.Fatalf("expected display metadata on tool event, got %+v", call)
 		}
+	}
+}
+
+func TestStreamRunner_EnrichesLabelOnlyToolDisplay(t *testing.T) {
+	want := &providers.ToolCallDisplay{Label: "Working notes", LabelTranslations: map[string]string{"zh-CN": "工作笔记"}}
+	tools := &displayLoopTools{display: want}
+	got := enrichToolCallDisplay(tools, providers.ToolCall{Name: "read_file"})
+	if !reflect.DeepEqual(got.Display, want) {
+		t.Fatalf("expected label-only display metadata, got %+v", got.Display)
+	}
+	got.Display.LabelTranslations["zh-CN"] = "changed"
+	if want.LabelTranslations["zh-CN"] == "changed" {
+		t.Fatal("enrichment aliased the provider display map")
 	}
 }
 

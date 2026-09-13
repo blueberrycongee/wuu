@@ -193,9 +193,13 @@ type Tool struct {
 }
 
 type ToolDisplay struct {
-	Kind       string `json:"kind,omitempty"`
-	Text       string `json:"text,omitempty"`
-	Capability string `json:"capability,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	// Label is the default user-facing tool name; dispatch names are host-owned.
+	Label string `json:"label,omitempty"`
+	// LabelTranslations optionally overrides Label by locale, then language.
+	LabelTranslations map[string]string `json:"label_translations,omitempty"`
+	Text              string            `json:"text,omitempty"`
+	Capability        string            `json:"capability,omitempty"`
 }
 
 type ToolActivity struct {

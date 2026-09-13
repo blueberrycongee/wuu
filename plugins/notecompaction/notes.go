@@ -18,7 +18,11 @@ const maxNotesBytes = 1_000_000
 
 func notesTool() pluginapi.Tool {
 	return pluginapi.Tool{
-		ID:          toolNotes,
+		ID: toolNotes,
+		Display: &pluginapi.ToolDisplay{
+			Label:             "Working notes",
+			LabelTranslations: map[string]string{"zh-CN": "工作笔记"},
+		},
 		Description: "Maintain persistent working notes for this session. Save objectives, constraints, decisions, progress, checks and next steps as work proceeds and before new_context. Read notes after a context switch; use history_read/history_search for exact facts. These virtual files survive resets, restarts and model changes; they do not write workspace files. Actions: list, read, search (literal substring), write (replace), append. Paths are relative. Reads/search use Unicode character offsets and bounded pages. Writes require the revision returned by list/read/search (use the empty revision for a new collection); conflicts require rereading. Total stored JSON is limited to 1 MB per session. No background model maintains these notes.",
 		InputSchema: map[string]any{
 			"type": "object", "additionalProperties": false,

@@ -87,7 +87,13 @@ func Handler() pluginapi.Handler {
 					},
 					"additionalProperties": false,
 				},
-				Display: &pluginapi.ToolDisplay{Kind: "handoff", Text: "Requesting handoff", Capability: "handoff"},
+				Display: &pluginapi.ToolDisplay{
+					Kind:              "handoff",
+					Label:             "Start a new session",
+					LabelTranslations: map[string]string{"zh-CN": "开启新会话"},
+					Text:              "Requesting handoff",
+					Capability:        "handoff",
+				},
 			}},
 		},
 		ExecuteTool: func(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCall) (pluginapi.ToolResult, error) {

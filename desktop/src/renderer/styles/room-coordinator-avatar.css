@@ -1,0 +1,8 @@
+/* The room keeps one monochrome identity across providers and themes. */
+.channel-coordinator-mascot {
+  --channel-coordinator-body: #353637;
+  --channel-coordinator-eyes: #ffffff;
+}
+.channel-coordinator-mascot svg { filter: drop-shadow(0 0 1px var(--text-secondary)); }
+
+.channel-coordinator-mascot { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }

@@ -158,7 +158,7 @@ export function StreamReconnectNotice({
   const title = streamReconnectTitle(item);
   return (
     <aside
-      className="stream-reconnect-notice"
+      className="stream-event-card stream-reconnect-notice"
       role={inProgress ? "status" : "alert"}
       aria-label={title}
     >

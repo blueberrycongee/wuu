@@ -213,10 +213,9 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { openPreview } = useImagePreview();
   const source = artifactSource(artifact, cwd);
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) {
-    return <figure className="turn-artifact-inline-image">
-      <AttachmentImage image={{media_type:artifact.mimeType,data:artifact.data ?? "",remote_ref:artifact.remoteRef}} label={artifact.name}
+    return <figure className="composer-image-attachment turn-artifact-inline-image">
+      <AttachmentImage image={{media_type:artifact.mimeType,data:artifact.data ?? "",remote_ref:artifact.remoteRef}} label={t("composer.imageNumber", { number: artifact.index + 1 })}
         onOpen={src => openPreview({src,alt:artifact.name,title:artifact.name})} />
-      <figcaption>{artifact.name}</figcaption>
     </figure>;
   }
   if (!source || !artifact.mimeType.startsWith("image/")) {
@@ -224,7 +223,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   }
   const open = (): void => openPreview({ src: source, alt: artifact.name, title: artifact.name });
   return (
-    <figure className="turn-artifact-inline-image">
+    <figure className="composer-image-attachment turn-artifact-inline-image">
       <button
         type="button"
         onClick={open}
@@ -232,7 +231,6 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
       >
         <img src={source} alt={artifact.name} />
       </button>
-      <figcaption>{artifact.name}</figcaption>
     </figure>
   );
 }

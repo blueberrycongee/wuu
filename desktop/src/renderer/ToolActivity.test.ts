@@ -7,10 +7,61 @@ import {
   buildToolActivitySections,
   collectTurnSources,
   summarizeToolActivity,
+  readableToolActivityName,
+  toolDisplayLabel,
 } from "./ToolActivityHelpers";
 import { setActiveLocale } from "./i18n";
 
 afterEach(() => setActiveLocale("zh-CN"));
+
+describe("localized plugin tool names", () => {
+  it("uses saved locale overrides with language and default fallbacks", () => {
+    const display = {
+      label: "Working notes",
+      label_translations: { "zh-CN": "工作笔记", zh: "筆記" },
+    };
+    expect(toolDisplayLabel(display, "zh-CN")).toBe(display.label_translations["zh-CN"]);
+    expect(toolDisplayLabel(display, "zh-HK")).toBe(display.label_translations.zh);
+    expect(toolDisplayLabel(display, "fr-FR")).toBe(display.label);
+    const item: ThreadItem = {
+      id: "notes",
+      type: "tool_call",
+      name: "plugin_notes_work_0123456789abcdef",
+      status: "completed",
+      arguments: "{}",
+      display,
+    };
+    for (const locale of ["zh-CN", "en-US"] as const) {
+      setActiveLocale(locale);
+      const expected = toolDisplayLabel(display, locale);
+      expect(readableToolActivityName(item)).toBe(expected);
+      expect(readableToolActivityCommand(item)).toBe(expected);
+      expect(buildToolActivityProcessSegments([item])[0].text).toBe(expected);
+    }
+    expect(item.name).toBe("plugin_notes_work_0123456789abcdef");
+  });
+
+  it("keeps distinct plugin tools separate when their display names match", () => {
+    const items = ["first", "second"].map((id): ThreadItem => ({
+      id, type: "tool_call", name: `plugin_${id}_0123456789abcdef`, status: "completed",
+      display: { label: "Shared name" },
+    }));
+    expect(buildToolActivityProcessSegments(items)).toHaveLength(2);
+  });
+
+  it("uses the localized label in the silent-turn summary", () => {
+    setActiveLocale("zh-CN");
+    const summary = summarizeToolActivity([{
+      id: "notes",
+      type: "tool_call",
+      name: "plugin_notes_work_0123456789abcdef",
+      status: "completed",
+      arguments: "{}",
+      display: { label: "Working notes", label_translations: { "zh-CN": "工作笔记" } },
+    }]);
+    expect(summary.text).toBe("已调用 工作笔记");
+  });
+});
 
 describe("activitySummaryText", () => {
   it("does not label an aggregated tool summary as incomplete", () => {
@@ -354,11 +405,31 @@ describe("buildToolActivityProcessSegments", () => {
     expect(segments).toMatchObject([
       {
         kind: "read",
-        countPrefix: "查看 ",
         count: 2,
-        countSuffix: " 个文件",
       },
     ]);
+  });
+
+  it("counts command invocations even when they share the same purpose", () => {
+    const items = ["npm test", "npm test", "pnpm test"].map((command, index): ThreadItem => ({
+      id: `command-${index}`,
+      type: "tool_call",
+      name: "bash",
+      status: "completed",
+      arguments: JSON.stringify({ command }),
+    }));
+    expect(buildToolActivityProcessSegments(items)).toMatchObject([{ kind: "command", count: 3 }]);
+  });
+
+  it("counts distinct file paths without merging equal basenames or repeated reads", () => {
+    const items = ["src/index.ts", "test/index.ts", "src/index.ts"].map((path, index): ThreadItem => ({
+      id: `read-${index}`,
+      type: "tool_call",
+      name: "read_file",
+      status: "completed",
+      arguments: JSON.stringify({ path }),
+    }));
+    expect(buildToolActivityProcessSegments(items)).toMatchObject([{ kind: "read", count: 2 }]);
   });
 
   it("compacts long OR search patterns by common prefix", () => {
@@ -378,7 +449,7 @@ describe("buildToolActivityProcessSegments", () => {
     expect(segments).toMatchObject([
       {
         kind: "search",
-        text: "搜索 WORKSPACE_RIGHT_PANEL_*",
+        text: expect.stringContaining("WORKSPACE_RIGHT_PANEL_*"),
       },
     ]);
   });
@@ -411,9 +482,7 @@ describe("buildToolActivityProcessSegments", () => {
     expect(segments).toMatchObject([
       {
         kind: "search",
-        countPrefix: "搜索 ",
         count: 3,
-        countSuffix: " 次",
       },
     ]);
   });

@@ -13,6 +13,8 @@ vi.mock("./LightweightStreamingText", () => ({
 }));
 
 import { ToolActivityTimeline } from "./ToolActivity";
+import { I18nProvider, setActiveLocale } from "./i18n";
+import type { LanguagePreference } from "../shared/protocol";
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
@@ -25,6 +27,7 @@ afterEach(() => {
   container?.remove();
   container = undefined;
   textProbe.renders = 0;
+  setActiveLocale("zh-CN");
 });
 
 function readTool(id: string, path: string, status: "completed" | "in_progress"): ThreadItem {
@@ -38,6 +41,35 @@ function readTool(id: string, path: string, status: "completed" | "in_progress")
 }
 
 describe("ToolActivityTimeline memoization", () => {
+  it("updates localized names in existing memoized rows when the app language changes", () => {
+    const display = { label: "Working notes", label_translations: { "zh-CN": "工作笔记" } };
+    const items: ThreadItem[] = [{
+      id: "notes", type: "tool_call", name: "plugin_notes_work_0123456789abcdef",
+      status: "completed", arguments: "{}", display,
+    }];
+    let changeLanguage: ((locale: LanguagePreference) => void) | undefined;
+    const preferenceStore = {
+      get: (): LanguagePreference => "en-US",
+      set: async () => undefined,
+      subscribe: (listener: (locale: LanguagePreference) => void) => {
+        changeLanguage = listener;
+        return () => { changeLanguage = undefined; };
+      },
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root?.render(
+      <I18nProvider preferenceStore={preferenceStore}>
+        <ToolActivityTimeline items={items} />
+      </I18nProvider>,
+    ));
+    expect(container.textContent).toContain(display.label);
+    act(() => changeLanguage?.("zh-CN"));
+    expect(container.textContent).toContain(display.label_translations["zh-CN"]);
+    expect(container.textContent).not.toContain(items[0].name);
+  });
+
   it("renders only the appended row when a long process timeline grows", () => {
     const first = readTool("tool-1", "first.ts", "completed");
     const second = readTool("tool-2", "second.ts", "completed");

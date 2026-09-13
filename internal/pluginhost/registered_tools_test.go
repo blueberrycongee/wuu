@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -53,6 +54,10 @@ func TestHostRegistersNamespacedToolsAndExecutesStructuredResult(t *testing.T) {
 	publicName := definitions[0].Name
 	if !strings.HasPrefix(publicName, "plugin_acme_lookup_search_") || publicName == "search" {
 		t.Fatalf("public name = %q", publicName)
+	}
+	registered, _ := host.Tool(publicName)
+	if registered.Registration.Display == nil || registered.Registration.Display.Label != client.tools[0].ID {
+		t.Fatalf("missing readable fallback for an unlabeled tool: %+v", registered)
 	}
 	definitions[0].InputSchema["type"] = "array"
 	if got := host.ToolDefinitions()[0].InputSchema["type"]; got != "object" {
@@ -163,3 +168,38 @@ func TestProcessClientFailureClearsRuntimeRegistrations(t *testing.T) {
 }
 
 var _ ToolClient = (*registeredToolTestClient)(nil)
+
+func TestHostSnapshotsTranslatedToolLabels(t *testing.T) {
+	display := &providers.ToolCallDisplay{Label: "Lookup", LabelTranslations: map[string]string{"zh": "查询"}}
+	client := &registeredToolTestClient{
+		fakeClient: fakeClient{id: "labels", status: Status{State: StateActive}},
+		tools:      []ToolRegistration{{ID: "lookup", Description: "Lookup", InputSchema: map[string]any{"type": "object"}, Display: display}},
+	}
+	host := New(client)
+	name := host.ToolDefinitions()[0].Name
+	display.LabelTranslations["zh"] = "changed by plugin"
+	registered, _ := host.Tool(name)
+	if registered.Registration.Display.LabelTranslations["zh"] != "查询" {
+		t.Fatal("plugin mutation changed the registered label")
+	}
+	registered.Registration.Display.LabelTranslations["zh"] = "changed by caller"
+	again, _ := host.Tool(name)
+	if again.Registration.Display.LabelTranslations["zh"] != "查询" {
+		t.Fatal("caller mutation changed the registered label")
+	}
+}
+
+func TestHostRejectsUnboundedTranslatedLabels(t *testing.T) {
+	for name, display := range map[string]*providers.ToolCallDisplay{
+		"missing fallback":      {LabelTranslations: map[string]string{"zh": "查询"}},
+		"oversized translation": {Label: "Lookup", LabelTranslations: map[string]string{"zh": strings.Repeat("x", maxToolDisplayLabelLen+1)}},
+		"invalid locale":        {Label: "Lookup", LabelTranslations: map[string]string{"zh\x00CN": "查询"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tool := ToolRegistration{ID: "lookup", Description: "Lookup", InputSchema: map[string]any{"type": "object"}, Display: display}
+			if err := validateToolRegistrations([]ToolRegistration{tool}); err == nil {
+				t.Fatal("invalid display metadata was accepted")
+			}
+		})
+	}
+}

@@ -435,7 +435,11 @@ and are not declarable public kinds.
 Tool naming has two separate contracts. The host owns the model-visible
 dispatch name and namespaces it to avoid collisions; plugins must not present
 that value as UI. A registration may set `display.label` to a short, stable
-user-facing name. `display.kind` classifies familiar activity, while
+user-facing name and `display.label_translations` for locale-specific labels.
+The host resolves an exact locale first, then its language, then the default
+label. If no label is declared, the host uses the plugin-local tool ID as a
+fallback; labels are stored with each call so history remains readable after
+the plugin is unavailable. `display.kind` classifies familiar activity, while
 `display.capability` is the stable semantic identity used for presentation and
 aggregation. Unknown capabilities aggregate only with the same capability (or
 the same raw tool identity), rather than being merged into one generic group.

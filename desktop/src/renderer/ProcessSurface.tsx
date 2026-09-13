@@ -3,7 +3,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type JSX,
   type SyntheticEvent,
 } from "react";
@@ -22,15 +21,10 @@ import {
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { useLiveTextWave } from "./LiveTextWave";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
-import { turnTelemetryStore } from "./TurnTelemetryStore";
-import {
-  ThinkingTokenCount,
-  tokenCountLocale,
-  turnTokenCountText,
-} from "./ThinkingTokenCount";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 import { AgentAvatarMark } from "./AgentAvatarMark";
+import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { AgentIdentityContext } from "./AgentIdentityContext";
 
 /**
@@ -55,6 +49,7 @@ export function ProcessSurfaceMascot({
   model?: string;
 }): JSX.Element | null {
   const agent = useContext(AgentIdentityContext);
+  if (agent === "room") return active ? <span className="process-surface-blobatar"><RoomCoordinatorAvatar size={28} activity={activity} /></span> : null;
   if (agent) return active ? (
     <span className="process-surface-blobatar">
       <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
@@ -88,11 +83,6 @@ type ProcessSurfaceProps = {
    * not have to split tools from reasoning first.
    */
   processItems: ThreadItem[];
-  /**
-   * The owning turn, used to subscribe the "正在思考" label's live token
-   * counter to that turn's telemetry. Omitted by legacy callers/tests.
-   */
-  turnID?: string;
   /**
    * True while any process item is still receiving deltas. Drives the
    * tool/reasoning reveal behavior while the fold stays compact until
@@ -129,22 +119,10 @@ const TOOL_ACTIVITY_ITEM_TYPES = new Set<string>(["tool_call"]);
 // this size. Same-kind groups keep their more useful count summary.
 const CONDENSED_SUMMARY_MIN_TOOL_COUNT = 4;
 
-function processKindLabel(kind: ToolActivityProcessSegment["kind"]): string {
-  switch (kind) {
-    case "edit": return translate("process.kind.edit");
-    case "create": return translate("process.kind.create");
-    case "search": return translate("process.kind.search");
-    case "read": return translate("process.kind.read");
-    case "list": return translate("process.kind.list");
-    case "command": return translate("process.kind.command");
-    case "agent": return translate("process.kind.agent");
-    case "todo": return translate("process.kind.todo");
-    case "interaction": return translate("process.kind.interaction");
-    case "browser": return translate("process.kind.browser");
-    case "skill": return translate("process.kind.skill");
-    case "context": return translate("process.kind.context");
-    default: return translate("process.kind.unknown");
-  }
+function processSegmentText(segment: ToolActivityProcessSegment): string {
+  return typeof segment.count === "number"
+    ? `${segment.countPrefix}${segment.count}${segment.countSuffix}`
+    : (segment.text ?? "");
 }
 
 function mascotActivityForToolKind(
@@ -178,23 +156,13 @@ function condensedToolActivityText(
   toolCount: number,
   reasoningStreaming: boolean,
 ): string {
-  const running = segments.some((segment) => segment.status === "running");
-  if (reasoningStreaming && !running) {
+  if (reasoningStreaming && !segments.some((segment) => segment.status === "running")) {
     return translate("process.thinkingAfterOperations", { count: toolCount });
   }
-
-  const labels = Array.from(
-    new Set(segments.map((segment) => processKindLabel(segment.kind))),
-  );
-  const shownLabels = labels.slice(0, 2);
-  const categoryText =
-    labels.length > 2
-      ? translate("process.categoriesMore", { categories: shownLabels.join(translate("toolActivity.compactSeparator")) })
-      : shownLabels.join(translate("process.categoryJoin"));
-  return translate(running ? "process.runningOperations" : "process.completedOperations", {
-    count: toolCount,
-    categories: categoryText,
-  });
+  const parts = segments.slice(0, 3).map(processSegmentText);
+  if (segments.length > 3) parts.push("…");
+  if (reasoningStreaming) parts.push(translate("process.thinking"));
+  return parts.join(translate("process.actionSeparator"));
 }
 
 export function ProcessSurface({
@@ -203,15 +171,9 @@ export function ProcessSurface({
   active,
   provider,
   model,
-  turnID,
   renderReasoningItem,
 }: ProcessSurfaceProps): JSX.Element {
   const { t } = useI18n();
-  const tokenSnapshot = useSyncExternalStore(
-    turnTelemetryStore.subscribe,
-    () => turnTelemetryStore.getSnapshot(turnID),
-    () => turnTelemetryStore.getSnapshot(turnID),
-  );
   const toolItems = processItems.filter(isToolActivityItem);
   const reasoningItems = processItems.filter(
     (item) => item.type === "reasoning",
@@ -240,11 +202,6 @@ export function ProcessSurface({
   // assigned to the latest gray process entry; `streaming` is only the legacy
   // fallback for direct callers that do not provide that entry-level state.
   const processEntryActive = active ?? streaming;
-  // The token counter belongs to the reasoning trail and stays visible after
-  // thinking settles: the total freezes at the last sample and resumes
-  // climbing on the next thinking phase. It persists for the live session
-  // even once the process row stops sweeping.
-  const showThinkingToken = Boolean(turnID) && hasReasoning;
   const summaryWaveRef = useLiveTextWave<HTMLSpanElement>(processEntryActive);
 
   // Details are opt-in. The running row itself should stay compact by
@@ -277,35 +234,16 @@ export function ProcessSurface({
     hasDetails ? " has-details" : " no-details"
   }${streaming ? " is-streaming" : ""}`;
   const summaryText = useCondensedSummary
-    ? condensedToolActivityText(
-        toolSegments,
-        toolItems.length,
-        reasoningStreaming,
-      )
+    ? condensedToolActivityText(toolSegments, toolItems.length, reasoningStreaming)
     : `${toolSegments
-        .map((segment) =>
-          typeof segment.count === "number"
-            ? `${segment.countPrefix}${segment.count}${segment.countSuffix}`
-            : (segment.text ?? ""),
-        )
-        .join(" · ")}${
+        .map(processSegmentText)
+        .join(t("process.actionSeparator"))}${
         hasReasoning
           ? `${toolSegments.length > 0 ? " · " : ""}${
               reasoningStreaming ? t("process.thinking") : t("process.reasoning")
             }`
           : ""
       }`;
-
-  const tokenWaveText =
-    showThinkingToken &&
-    (tokenSnapshot.inputTokens > 0 || tokenSnapshot.outputTokens > 0)
-      ? turnTokenCountText(
-          tokenSnapshot.inputTokens,
-          tokenSnapshot.outputTokens,
-          tokenCountLocale(),
-        )
-      : "";
-  const summaryWaveText = `${summaryText}${tokenWaveText}`;
 
   const summaryLine = (
     <span className="process-surface-summary-line" aria-label={summaryText}>
@@ -320,8 +258,7 @@ export function ProcessSurface({
         className={`process-surface-summary-text${
           processEntryActive ? " wuu-live-text-wave" : ""
         }`}
-        data-text={summaryWaveText}
-        data-compact-text={summaryText}
+        data-text={summaryText}
       >
         {useCondensedSummary ? (
           <AnimatedProcessText
@@ -354,9 +291,6 @@ export function ProcessSurface({
             />
           </span>
         ) : null}
-        {showThinkingToken && turnID ? (
-          <ThinkingTokenCount turnID={turnID} active={active} />
-        ) : null}
       </span>
     </span>
   );
@@ -376,11 +310,7 @@ export function ProcessSurface({
       >
         {hasMultipleTools ? (
           <div className="process-surface-tool-list">
-            <ToolActivityTimeline
-              items={toolItems}
-              revealItems={streaming}
-              streaming={streaming}
-            />
+            <ToolActivityTimeline items={toolItems} />
           </div>
         ) : null}
         {hasReasoning && renderReasoningItem ? (
@@ -433,7 +363,7 @@ function ProcessSurfaceSegmentView({
       className={`process-surface-segment process-surface-segment-${segment.kind}`}
     >
       {separator ? (
-        <span className="process-surface-separator">{" · "}</span>
+        <span className="process-surface-separator">{translate("process.actionSeparator")}</span>
       ) : null}
       {typeof segment.count === "number" ? (
         <>
@@ -476,4 +406,3 @@ function ProcessSurfaceAnimatedCount({
     </span>
   );
 }
-

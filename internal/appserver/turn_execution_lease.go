@@ -126,6 +126,7 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	th.History = cloneHistory(loaded.history)
 	th.historyHeadSeq = loaded.baselineSeq
 	th.Turns = turnsFromPersistedHistory(th.ID, loaded.displayHistory, time.Now().UTC(), s.resolveParticipantSummary)
+	s.restorePluginToolLabels(th.Turns)
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.currentTurn = ""
 	th.currentTurnKind = ""

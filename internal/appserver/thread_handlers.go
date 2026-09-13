@@ -286,6 +286,7 @@ func (s *Server) handleThreadResume(req Request) error {
 	}
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
+		s.restorePluginToolLabels(th.Turns)
 		thread := th.resumeSnapshotLocked(params.HistoryPage)
 		th.mu.Unlock()
 		thread, err = s.threadWithChildAgents(thread)
@@ -408,6 +409,7 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	th := newThreadState(id, loaded.history, s.rt.ProviderName, s.rt.Model, threadCWD, true, now)
 	th.historyHeadSeq = loaded.baselineSeq
 	th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.resolveParticipantSummary)
+	s.restorePluginToolLabels(th.Turns)
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
@@ -805,6 +807,7 @@ func (s *Server) handleThreadEditMessage(req Request) error {
 func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThread, error) {
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
+		s.restorePluginToolLabels(th.Turns)
 		source := forkSourceThread{
 			history:        cloneHistory(th.History),
 			displayHistory: cloneHistory(th.History),
@@ -854,6 +857,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 		displayHistory = chatMessagesFromPersistedMessages(loaded.displayHistory)
 		rawHistory = loaded.rawHistory
 		th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.resolveParticipantSummary)
+		s.restorePluginToolLabels(th.Turns)
 	}
 	if metas, err := loadMetaMessages(s.rt.SessionDir, id); err != nil {
 		return forkSourceThread{}, err

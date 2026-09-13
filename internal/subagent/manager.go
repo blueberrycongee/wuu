@@ -1460,10 +1460,7 @@ func cloneChatMessage(msg providers.ChatMessage) providers.ChatMessage {
 }
 
 func cloneToolCall(call providers.ToolCall) providers.ToolCall {
-	if call.Display != nil {
-		display := *call.Display
-		call.Display = &display
-	}
+	call.Display = call.Display.Clone()
 	return call
 }
 

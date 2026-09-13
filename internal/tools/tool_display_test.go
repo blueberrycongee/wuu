@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -55,7 +56,7 @@ func TestToolkitToolDisplayFormatsBuiltInTools(t *testing.T) {
 			if !ok {
 				t.Fatal("expected display metadata")
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("unexpected display: got %+v want %+v", got, tt.want)
 			}
 		})
