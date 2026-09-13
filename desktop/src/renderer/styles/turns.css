@@ -2572,10 +2572,8 @@
   margin-right: 2px;
 }
 
-/* The sweep overlay duplicates the row text via `data-text` and anchors to
- * this wrapper, not the whole summary line: the blobatar sits outside it, so
- * an overlay on the line itself would start one avatar-width left of the
- * first glyph and paint the sweep misaligned. */
+/* Mask the actual glyphs so segmented labels and changing counts stay aligned.
+ * The mascot sits outside this wrapper and keeps its normal contrast. */
 .process-surface-summary-text {
   display: inline-flex;
   flex: 1 1 auto;
@@ -2583,6 +2581,44 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
+}
+
+.process-surface-summary-text.wuu-live-text-wave {
+  mask-image: linear-gradient(
+    90deg,
+    currentColor calc(50% - 60px),
+    color-mix(in srgb, currentColor 15%, transparent) 50%,
+    currentColor calc(50% + 60px)
+  );
+  mask-size: calc(200% + 120px) 100%;
+  mask-repeat: no-repeat;
+  animation: process-summary-soft-wave 2s linear infinite;
+}
+
+.process-surface-summary-text.wuu-live-text-wave::after {
+  content: none;
+  animation: none;
+}
+
+@keyframes process-summary-soft-wave {
+  from { mask-position: 100% 50%; }
+  to { mask-position: 0% 50%; }
+}
+
+:root[data-renderer-hidden] .process-surface-summary-text.wuu-live-text-wave {
+  animation-play-state: paused;
+}
+
+.cached-conversation-pane[data-active="false"] .process-surface-summary-text.wuu-live-text-wave {
+  animation: none;
+  mask-image: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .process-surface-summary-text.wuu-live-text-wave {
+    animation: none;
+    mask-image: none;
+  }
 }
 
 .process-surface-segment {

@@ -19,7 +19,6 @@ import {
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
-import { useLiveTextWave } from "./LiveTextWave";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
@@ -202,7 +201,6 @@ export function ProcessSurface({
   // assigned to the latest gray process entry; `streaming` is only the legacy
   // fallback for direct callers that do not provide that entry-level state.
   const processEntryActive = active ?? streaming;
-  const summaryWaveRef = useLiveTextWave<HTMLSpanElement>(processEntryActive);
 
   // Details are opt-in. The running row itself should stay compact by
   // default; expanding it is a user request to inspect the process trail.
@@ -254,7 +252,6 @@ export function ProcessSurface({
         model={model}
       />
       <span
-        ref={summaryWaveRef}
         className={`process-surface-summary-text${
           processEntryActive ? " wuu-live-text-wave" : ""
         }`}
