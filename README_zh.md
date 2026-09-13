@@ -1,113 +1,40 @@
-<h1 align="center">wuu</h1>
+# wuu
 
-<p align="center"><strong>与其 fork,不如扩展。</strong></p>
+[English](README.md) · [文档](https://blueberrycongee.github.io/wuu/zh-cn/) · [下载](https://github.com/blueberrycongee/wuu/releases)
 
-<p align="center">开源 · macOS · 自选模型 · 可扩展</p>
+wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。连接模型服务、选好文件夹，就可以让 Agent 阅读代码、修改文件或运行命令，再在应用里查看文件、改动和执行结果。
 
-<div align="center">
-  <p>
-    <a href="README.md">English</a> |
-    <a href="README_zh.md">简体中文</a>
-  </p>
-  <p>
-    <a href="https://github.com/blueberrycongee/wuu/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/blueberrycongee/wuu/ci.yml?branch=main&style=flat-square&label=ci"></a>
-    <a href="https://github.com/blueberrycongee/wuu/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/blueberrycongee/wuu?style=flat-square"></a>
-    <a href="https://github.com/blueberrycongee/wuu/releases"><img alt="GitHub release downloads" src="https://img.shields.io/github/downloads/blueberrycongee/wuu/total?style=flat-square&label=downloads"></a>
-  </p>
-</div>
+你可以回到已有对话继续工作，也可以让多个 Agent 在群聊中协作。插件可以添加工具和桌面功能，见[扩展 Wuu](docs/zh-cn/customize/index.md)。
 
-<img width="2272" height="2494" alt="wuu 桌面应用" src="https://github.com/user-attachments/assets/2d9030aa-ca03-42b1-9333-f79cc5aff95b" />
-
-如果你用过 OpenCode、Claude Code 或 Codex，wuu 的上手方式不会陌生。最简单的理解是：**它把本地 Coding Agent 的工作方式做成了一个桌面 GUI，并构建在一个可扩展的插件平台之上。**
-
-你仍然是打开一个项目，然后和 Agent 一起工作。区别在于，wuu 把这套工作流放进了一个完整的桌面工作区：左侧管理项目和会话，中间处理当前任务，文件、diff、终端、浏览器、技能和模型设置都在旁边。
-
-wuu 是独立开发的项目，不是 OpenCode、Claude Code 或 Codex 的官方客户端。
-
-在真实代码仓库的内部 bench 中，wuu 普通 session 每次成功修复的成本约为 [pi](https://github.com/badlogic/pi-mono) 的一半。
-
-## 为扩展而生
-
-wuu 当前的主线是它的插件体系：一个让生态可以共同生长、而无需 fork 项目的插件平台。
-
-- **一个包承载多种能力**：Wuu Plugin 是可安装、可升级的扩展包，能把 Agent 工具、上下文、桌面视图、主题、设置、技能、Hook、MCP 服务器和命令打包在一起，共享同一套安装与升级生命周期。
-- **功能插件自由扩展，外观插件统一换肤**：两者正交且可组合，无需感知彼此的存在。
-- **内置功能走同一套 API**：子 Agent、自动化、记忆和待办都以插件形式提供，使用与第三方相同的机制。
-- **本地优先，无需 fork**：安装本地目录或 zip 包，一次批准即可启用；没有应用市场或中心注册表。
-
-```bash
-wuu plugin create --type agent my-agent
-wuu plugin create --type desktop my-ui
-
-wuu plugin pack ./my-agent
-wuu plugin install ./my-agent.zip
-wuu plugin approve my-agent
-```
-
-从 [Wuu Plugin 指南](docs/zh-cn/customize/plugins.md)开始，或查看[扩展 Wuu](docs/zh-cn/customize/index.md)选择最合适的扩展。
-
-> [!WARNING]
-> wuu 仍处于早期预览阶段，正在快速迭代。打包版本目前支持 Apple 芯片 Mac。
-
-## 下载
-
-从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载最新版本，把 `wuu.app` 移到 `/Applications` 后打开。
-
-当前预览版尚未签名和公证。如果 macOS 阻止打开，并且你确认安装包来自官方 Release，可以运行：
-
-```bash
-xattr -dr com.apple.quarantine /Applications/wuu.app && open /Applications/wuu.app
-```
-
-## 桌面端多了什么
-
-- **项目和会话**：在不同仓库之间切换，跨工作区搜索会话，并恢复或派生之前的工作。
-- **文件、改动和终端**：浏览仓库、检查当前 Git diff、预览图片和文档、回看命令输出，不必离开应用。
-- **可见的 Agent 过程**：任务运行时可以看到工具调用、后台进程、委派工作和附件。
-- **不必折腾繁琐的配置文件**：可以在桌面端管理模型服务、权限、技能和记忆，并查看已加载的项目规则。
-- **开箱即用的完整 Agent 体验**：待办、子 Agent、后台任务和持久会话都已内置，无需自行拼装。
+![wuu 桌面应用](https://github.com/user-attachments/assets/2d9030aa-ca03-42b1-9333-f79cc5aff95b)
 
 ## 开始使用
 
-1. 打开**设置 → 模型服务**，连接 Anthropic 或 OpenAI 兼容提供商。
-2. 添加一个本地项目文件夹。
-3. 新建对话。
+桌面预览版支持 Apple 芯片 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，将 `wuu.app` 放入 `/Applications` 后打开。预览版尚未签名或公证；如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
 
-模型配置、权限、附件和会话见[快速开始](docs/zh-cn/getting-started/index.md)。
+打开设置，连接模型服务，再把本地项目文件夹添加为工作区。可以先试一个小任务，完成后检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有一个示例。
 
-## CLI
+## 命令行
 
-桌面应用自带 core，不需要另行安装 CLI。如果要在脚本、CI 或非交互任务中使用 wuu，可以通过 Go 安装；模块当前声明使用 Go 1.26.5：
+桌面应用自带运行所需的核心。如果还想在终端或脚本里使用 wuu，先安装 [go.mod](go.mod) 要求的 Go 版本，再从源码构建 CLI：
 
 ```bash
-go install github.com/blueberrycongee/wuu/cmd/wuu@latest
+git clone https://github.com/blueberrycongee/wuu.git
+cd wuu
+make install
 wuu init
-
-wuu exec "修复失败的测试并验证结果"
-wuu exec --json "审查当前 diff"
-wuu exec review --uncommitted
+cd /path/to/your/project
+wuu exec "阅读这个项目，告诉我怎样运行测试"
 ```
 
-结构化输出、附件、会话控制和常用参数见 [`wuu exec` 指南](docs/zh-cn/automation/exec.md)。
+请确保 Go 的二进制目录在 `PATH` 中。脚本调用、JSONL 输出和会话控制见 [`wuu exec` 指南](docs/zh-cn/automation/exec.md)。
 
-## 模型与本地数据
+## 文件与数据
 
-- 模型提供商和凭据由你选择；提示词和相关上下文会发送给该提供商。
-- 会话、配置、日志和其他本地状态默认保存在 `~/.wuu`。
-- 文件改动和命令在选定的本地工作区内执行，并受当前权限模式控制。
+wuu 会在当前权限模式允许的范围内读写本地文件、运行命令。提示词和相关上下文会发送给你选择的模型服务，会话和设置默认保存在 `~/.wuu`。处理敏感资料或不可信项目之前，请阅读[安全模型](docs/zh-cn/reference/security-model.md)。
 
-在处理不受信任的仓库或敏感数据前，请阅读[安全模型](docs/zh-cn/reference/security-model.md)。
+## 参与项目
 
-## 项目
+开发相关说明见[贡献指南](CONTRIBUTING.md)。遇到问题可以[提交 issue](https://github.com/blueberrycongee/wuu/issues)；安全漏洞请按 [SECURITY.md](SECURITY.md) 报告。
 
-- Agent 的圆球头像由 [`blobatar`](https://github.com/Alain00/blobatar) 提供，这是一个采用 MIT 许可证的确定性几何头像库。
-- [文档](https://blueberrycongee.github.io/wuu/zh-cn/)
-- [更新记录](CHANGELOG.md)
-- [公开评测](evals/)
-- [参与贡献](CONTRIBUTING.md)
-
-遇到问题可以[提交 issue](https://github.com/blueberrycongee/wuu/issues)；安全漏洞请按照 [SECURITY.md](SECURITY.md) 报告。
-
-## 许可证
-
-[MIT](LICENSE)
+项目采用 [MIT 许可证](LICENSE)。Agent 头像使用同为 MIT 许可的 [blobatar](https://github.com/Alain00/blobatar)。

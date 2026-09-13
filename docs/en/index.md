@@ -1,79 +1,13 @@
 # wuu documentation
 
-wuu is a local-workspace AI agent that starts with software development. It works
-directly in a folder you choose: reading and editing files, running commands,
-checking results, and continuing work across sessions.
+wuu lets you work with AI agents on local projects. Agents can read and change files, run commands, and continue work in saved conversations. You choose the model provider and review the results.
 
-The desktop app is for interactive work; `wuu exec` is for terminals, scripts, CI,
-and other agents. Both surfaces share the same Go core, but the desktop ships its own
-private core and does not depend on a separately installed CLI.
+Start with the [quick start](getting-started/index.md): install the desktop app, connect a model, and try a small task.
 
-## First time here
+The guides to [workspaces](desktop/workspaces.md) and [conversations](desktop/conversations.md) explain how to choose a project and return to earlier work. Use [files, changes, and terminals](desktop/workspace-tools.md) to check what the agent did. To work with several agents, see [group chats](desktop/collaboration.md).
 
-Follow the [user guide](getting-started/index.md) along a real path:
+Before using sensitive files, read about [permissions](reference/permissions.md) and [security](reference/security-model.md) to understand what wuu can access and where your data goes.
 
-1. Install the desktop app.
-2. Connect a model provider.
-3. Add a local workspace.
-4. Hand the agent a small, clearly scoped task.
-5. Check the files, diffs, and verification results.
+For more, see [extensions](customize/index.md), [command-line automation](automation/exec.md), or [troubleshooting](help/troubleshooting.md).
 
-The desktop app opens straight into the shared conversations area on first launch —
-no account registration and no forced onboarding wizard. To let wuu read and modify
-project files or run project commands, add a real workspace.
-
-## Read by what you want to do
-
-- **Manage projects and sessions:** [workspaces and projects](desktop/workspaces.md),
-  [conversations and branches](desktop/conversations.md).
-- **Inspect what the agent produced:** [files, changes, terminal, and
-  browser](desktop/workspace-tools.md).
-- **Understand how complex work advances:** [agent collaboration and
-  subagents](desktop/subagents.md), [group chats and named-agent
-  collaboration](desktop/collaboration.md), and [slash commands and background
-  tasks](reference/agent-command-system.md).
-- **Extend Wuu:** start with the [extension overview](customize/index.md), then choose
-  [Skills](customize/skills.md), [MCP](customize/mcp.md), [Hooks](customize/hooks.md),
-  or [Wuu Plugins](customize/plugins.md).
-- **Keep durable preferences:** [memory](customize/memory.md) and
-  [dream background memory integration](customize/dream.md).
-- **Run on a schedule:** [automations](automation/scheduled-tasks.md).
-- **Control local permissions:** [permission modes](reference/permissions.md) and the
-  [security model](reference/security-model.md).
-- **Wire into scripts and CI:** [automate with `wuu exec`](automation/exec.md) and
-  [JSONL events](automation/jsonl-events.md).
-- **Stuck?** Start with [troubleshooting](help/troubleshooting.md).
-
-## Files are the durable result
-
-Conversation is how you state goals, add context, and inspect progress. The durable
-result lives in workspace files, where it remains available to editors, Git, and other
-tools instead of being locked inside one chat.
-
-The current public product focuses first on software-development workflows. These docs
-describe behavior available today rather than presenting planned writing,
-knowledge-management, or publishing features as shipped.
-
-## Product surfaces
-
-### Desktop app
-
-The desktop provides workspace selection, multiple conversations, attachments, change
-review, and settings, and suits everyday interactive work.
-
-### CLI and automation
-
-`wuu exec` provides automation-safe text and JSONL output for scripts, CI, review
-tasks, or calls from other agents.
-
-### App-server integration
-
-New desktop apps, editor extensions, or other shells can start the wuu core as a
-subprocess and reuse its sessions, tools, and model capabilities over a
-stdin/stdout line-delimited JSON protocol. The wire protocol is still `v0.1` and suited
-to controlled integrations; do not assume every field is long-term stable. See the
-[app-server protocol](integrations/app-server-protocol.md) for details.
-
----
-
-[简体中文文档](../zh-cn/index.md)
+[简体中文](../zh-cn/index.md)
