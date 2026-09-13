@@ -203,9 +203,11 @@
 .settings-titlebar-actions {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
+  align-items: stretch;
+  align-self: stretch;
   margin-left: auto;
-  height: 30px;
+  height: 100%;
+  min-height: 48px;
   -webkit-app-region: no-drag;
 }
 

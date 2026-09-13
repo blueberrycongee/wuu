@@ -276,14 +276,35 @@
   min-width: max-content;
 }
 
-/* Linux frameless caption buttons — same white header as app actions. */
+/* Linux frameless caption buttons — ChatGPT-style right-edge alignment:
+ * app actions sit immediately left of a flush caption cluster that owns
+ * the window's top-right corner (no trailing titlebar padding). */
 .linux-window-controls {
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
-  height: 30px;
-  margin-left: 2px;
+  align-self: stretch;
+  height: 100%;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--hairline);
   -webkit-app-region: no-drag;
+}
+
+:root[data-platform="linux"] .titlebar,
+:root[data-platform="linux"] .settings-titlebar {
+  /* Caption buttons paint to the window edge, like Win11 / ChatGPT. */
+  padding-right: 0;
+}
+
+:root[data-platform="linux"] .app-shell.right-panel-open .titlebar {
+  padding-right: 0;
+}
+
+:root[data-platform="linux"] .titlebar .title-actions {
+  align-self: stretch;
+  gap: 4px;
+  padding-right: 0;
 }
 
 .titlebar > .linux-window-controls,
@@ -294,8 +315,10 @@
 .channel-room-header-actions {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
+  align-items: stretch;
+  align-self: stretch;
   gap: 4px;
+  height: 100%;
   -webkit-app-region: no-drag;
 }
 
@@ -304,11 +327,12 @@
   align-items: center;
   justify-content: center;
   width: 46px;
+  min-height: 48px;
   height: 100%;
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--ink-secondary);
   cursor: pointer;
