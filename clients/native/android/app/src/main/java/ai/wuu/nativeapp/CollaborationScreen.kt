@@ -2,6 +2,7 @@ package ai.wuu.nativeapp
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -74,20 +75,19 @@ import org.json.JSONObject
         })
     }, bottomBar = {
         state.selectedID?.let { id ->
-            Column(Modifier.imePadding()) {
-                val attachments = state.attachments[id].orEmpty()
-                attachments.forEach { file ->
-                    TextButton(onClick = { state.attachments[id] = attachments.filterNot { it.id == file.id } }) { Text("${file.filename} ×", maxLines = 1) }
-                }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.Bottom) {
-                    key(id) { AttachmentPicker(attachments, { state.attachments[id] = it }, model) }
-                    OutlinedTextField(state.drafts[id].orEmpty(), { state.drafts[id] = it }, Modifier.weight(1f).testTag("native-composer"),
-                        placeholder = { Text("发送消息") }, maxLines = 5)
-                    IconButton(onClick = { model.perform { state.send() } }, enabled = model.connected && !state.sending &&
-                        (state.drafts[id].orEmpty().isNotBlank() || attachments.isNotEmpty())) {
-                        Icon(Icons.AutoMirrored.Filled.Send, if (state.sending) "正在发送" else "发送")
-                    }
-                }
+            val attachments = state.attachments[id].orEmpty()
+            Column(Modifier.padding(12.dp)) {
+                ComposerRow(
+                    value = state.drafts[id].orEmpty(),
+                    onChange = { state.drafts[id] = it },
+                    onSend = { model.perform { state.send() } },
+                    enabled = model.connected,
+                    sending = state.sending,
+                    attachments = attachments,
+                    onAttachments = { state.attachments[id] = it },
+                    model = model,
+                    draftKey = id,
+                )
             }
         }
     }) { padding ->
@@ -144,19 +144,21 @@ import org.json.JSONObject
             initialized = true
         }
     }
-    LazyColumn(Modifier.fillMaxSize().testTag("room-timeline"), state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("room-timeline"), state = list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "older") {
             if (state.hasOlder) TextButton(onClick = { model.perform { state.loadOlder() } }, enabled = model.connected && !state.loading) { Text("加载更早消息") }
         }
         items(state.messages, key = { it.getString("id") }) { message ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(if (message.optString("author_type") == "human") "你" else state.agentName(message.optString("author_id")),
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val own = message.optString("author_type") == "human"
+            RoomBubble(
+                own = own,
+                name = if (own) null else state.agentName(message.optString("author_id")),
+            ) {
                 val reply = message.optString("reply_to")
                 if (reply.isNotEmpty()) Text("回复：" + (state.messages.firstOrNull { it.optString("id") == reply }?.optString("body") ?: "较早消息"),
                     style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (message.optString("kind") == "task") TaskSummary(message)
-                if (message.optString("body").isNotEmpty()) SelectionContainer { MessageText(message.optString("body"), message.optString("author_type") != "human") }
+                if (message.optString("body").isNotEmpty()) SelectionContainer { MessageText(message.optString("body"), !own) }
                 val images = message.optJSONArray("images")?.length() ?: 0
                 if (images > 0) Text("$images 张图片 · 在电脑上查看", style = MaterialTheme.typography.labelMedium)
                 message.optJSONArray("files")?.objects()?.forEach { Text("${it.optString("filename").ifBlank { "附件" }} · 在电脑上查看", style = MaterialTheme.typography.labelMedium) }
@@ -164,11 +166,28 @@ import org.json.JSONObject
             }
         }
         items(state.responses, key = { "response:${it.getString("id")}" }) { response ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(state.agentName(response.optString("agent_id")) + " · " + if (response.optString("state") == "failed") "回复失败" else "正在回复",
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                MessageText(response.optString("body"), true)
+            RoomBubble(own = false, name = state.agentName(response.optString("agent_id")) + " · " + if (response.optString("state") == "failed") "回复失败" else "正在回复") {
+                if (response.optString("body").isNotEmpty()) MessageText(response.optString("body"), true)
                 if (response.optString("error").isNotBlank()) Text(response.optString("error"), color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable private fun RoomBubble(own: Boolean, name: String?, content: @Composable ColumnScope.() -> Unit) {
+    Box(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.fillMaxWidth(0.78f).align(if (own) Alignment.CenterEnd else Alignment.CenterStart),
+            horizontalAlignment = if (own) Alignment.End else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (!name.isNullOrBlank()) Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Surface(
+                color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = if (own) 18.dp else 4.dp, bottomEnd = if (own) 4.dp else 18.dp),
+            ) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
             }
         }
     }

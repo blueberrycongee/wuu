@@ -263,25 +263,10 @@ class MainActivity : ComponentActivity() {
                     Text("电脑正在工作", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
                     TextButton(onClick = { model.perform { model.stop() } }, enabled = model.connected) { Text("停止") }
                 }
-                if (attachments.isNotEmpty()) androidx.compose.foundation.lazy.LazyRow {
-                    items(attachments, key = { it.id }) { attachment ->
-                        TextButton(onClick = { attachmentDrafts[draftKey] = attachments.filterNot { it.id == attachment.id } }, enabled = !model.sending) {
-                            Text("移除 ${attachment.filename}", maxLines = 1)
-                        }
-                    }
-                }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (model.connected && model.activeID != null && !model.readOnly && !model.sending) key(draftKey) {
-                        AttachmentPicker(attachments, { attachmentDrafts[draftKey] = it }, model)
-                    }
-                    Box(Modifier.weight(1f)) {
-                        key(draftKey) {
-                            TextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6,
-                                shape = MaterialTheme.shapes.large, colors = wuuFieldColors(),
-                                modifier = Modifier.fillMaxWidth().testTag("native-composer"), enabled = model.connected && !model.readOnly)
-                        }
-                    }
-                    FilledIconButton(onClick = {
+                ComposerRow(
+                    value = draft,
+                    onChange = { drafts[draftKey] = it },
+                    onSend = {
                         val text = draft; val key = draftKey; val files = attachments
                         model.perform {
                             if (model.send(text, files)) {
@@ -289,8 +274,16 @@ class MainActivity : ComponentActivity() {
                                 attachmentDrafts[key] = (attachmentDrafts[key] ?: emptyList()).filterNot { file -> files.any { it.id == file.id } }
                             }
                         }
-                    }, enabled = model.connected && !model.readOnly && !model.sending && (draft.isNotBlank() || attachments.isNotEmpty())) { Icon(Icons.AutoMirrored.Filled.Send, "发送") }
-                }
+                    },
+                    enabled = model.connected && !model.readOnly,
+                    sending = model.sending,
+                    attachments = attachments,
+                    onAttachments = { attachmentDrafts[draftKey] = it },
+                    model = model,
+                    draftKey = draftKey,
+                    placeholder = if (model.running) "添加后续消息" else "发送消息",
+                    showAttach = model.connected && model.activeID != null && !model.readOnly && !model.sending,
+                )
             }
         }) { padding ->
             val timeline = remember(model.messages) { conversationTimeline(model.messages) }
