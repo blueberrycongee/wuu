@@ -166,7 +166,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable private fun ConversationScreen(model: AppModel) {
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -186,7 +186,11 @@ class MainActivity : ComponentActivity() {
     val draftKey = model.activeID ?: "new"
     val draft = drafts[draftKey] ?: ""
     val attachments = attachmentDrafts[draftKey] ?: emptyList()
-    BackHandler { if (drawer.isOpen) scope.launch { drawer.close() } else model.perform { model.leaveHost(); model.foreground() } }
+    // When the IME is open, let the system hide it first. Handling Back here would
+    // leave the host and wipe conversationDrafts.
+    BackHandler(enabled = !WindowInsets.isImeVisible) {
+        if (drawer.isOpen) scope.launch { drawer.close() } else model.perform { model.leaveHost(); model.foreground() }
+    }
     ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = true, drawerContent = {
         ModalDrawerSheet(Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp), drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -276,9 +280,13 @@ class MainActivity : ComponentActivity() {
                     if (model.connected && model.activeID != null && !model.readOnly && !model.sending) key(draftKey) {
                         AttachmentPicker(attachments, { attachmentDrafts[draftKey] = it }, model)
                     }
-                    TextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6,
-                        shape = MaterialTheme.shapes.large, colors = wuuFieldColors(),
-                        modifier = Modifier.weight(1f).testTag("native-composer"), enabled = model.connected && !model.readOnly)
+                    Box(Modifier.weight(1f)) {
+                        key(draftKey) {
+                            TextField(draft, { drafts[draftKey] = it }, placeholder = { Text(if (model.running) "添加后续消息" else "发送消息") }, maxLines = 6,
+                                shape = MaterialTheme.shapes.large, colors = wuuFieldColors(),
+                                modifier = Modifier.fillMaxWidth().testTag("native-composer"), enabled = model.connected && !model.readOnly)
+                        }
+                    }
                     FilledIconButton(onClick = {
                         val text = draft; val key = draftKey; val files = attachments
                         model.perform {
@@ -304,7 +312,13 @@ class MainActivity : ComponentActivity() {
             // measuring canScrollForward after insertion loses that choice.
             val viewportSize by remember(list) { derivedStateOf { list.layoutInfo.viewportSize } }
             LaunchedEffect(model.messages.lastOrNull(), model.pending.lastOrNull()?.id, viewportSize) {
-                if (following && model.messages.isNotEmpty()) list.requestScrollToItem(timeline.size + model.pending.size + 1)
+                if (!following || model.messages.isEmpty()) return@LaunchedEffect
+                // Defer past the measure/layout pass that updated viewportSize.
+                withFrameNanos { }
+                val total = list.layoutInfo.totalItemsCount
+                if (total <= 0) return@LaunchedEffect
+                val target = (timeline.size + model.pending.size + 1).coerceIn(0, total - 1)
+                list.requestScrollToItem(target)
             }
             LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 item(key = "history") {
