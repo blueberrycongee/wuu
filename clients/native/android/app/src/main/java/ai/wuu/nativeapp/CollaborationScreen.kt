@@ -65,12 +65,8 @@ import org.json.JSONObject
     }
     BackHandler(onBack = ::back)
     Scaffold(topBar = {
-        TopAppBar(title = { Column {
-            Text(room?.let(state::roomName) ?: "协作", style = MaterialTheme.typography.titleMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!model.connected) Text(if (model.connecting) "正在连接…" else "离线 · 已加载内容只读",
-                style = MaterialTheme.typography.labelSmall)
-        } }, navigationIcon = {
+        TopAppBar(title = { Text(room?.let(state::roomName) ?: "协作", style = MaterialTheme.typography.titleMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
             IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, if (room == null) "电脑列表" else "协作列表") }
         }, actions = {
             if (room != null) IconButton(onClick = { details = true }) { Icon(Icons.Default.Info, "成员与任务") }

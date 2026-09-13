@@ -117,15 +117,12 @@ class MainActivity : ComponentActivity() {
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (model.directoryCached) item { Text("显示上次登录保存的电脑；联网后会更新访问权限和在线状态。", style = MaterialTheme.typography.bodySmall) }
             val hosts = model.devices.filter { it.optString("role") == "host" }
             if (hosts.isEmpty()) item { Text("在电脑上登录同一账号后，它会出现在这里。") }
             listOf(true, false).forEach { online ->
                 val group = hosts.filter { it.optBoolean("online") == online }
-                if (group.isNotEmpty()) item { Text(if (online) "在线" else "离线", style = MaterialTheme.typography.labelLarge) }
                 items(group, key = { it.getString("pub") }) { device ->
                     ListItem(headlineContent = { Text(device.optString("name", "电脑")) },
-                        supportingContent = { Text(if (online) "连接并继续对话" else "查看服务器保存的历史", style = MaterialTheme.typography.bodySmall) },
                         leadingContent = { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
                             Icon(Icons.Default.Computer, null, Modifier.padding(12.dp).size(22.dp))
                         } }, trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
@@ -229,7 +226,7 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(8.dp))
             TextField(model.search, { model.search = it }, singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
-                placeholder = { Text(if (model.connected) "搜索会话" else "搜索历史标题", style = MaterialTheme.typography.bodyMedium) },
+                placeholder = { Text("搜索会话", style = MaterialTheme.typography.bodyMedium) },
                 shape = MaterialTheme.shapes.medium, colors = wuuFieldColors(),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -243,10 +240,7 @@ class MainActivity : ComponentActivity() {
         }
     }) {
         Scaffold(topBar = {
-            TopAppBar(title = { Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(model.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(if (model.connected) "已连接" else if (model.connecting) "正在连接…" else "离线 · 只读历史", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } },
+            TopAppBar(title = { Text(model.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = { IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu, "会话列表") } },
                 actions = {
                     IconButton(onClick = { model.perform { model.newThread() } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }

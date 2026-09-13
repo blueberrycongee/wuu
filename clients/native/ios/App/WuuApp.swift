@@ -128,11 +128,10 @@ struct DevicesView: View {
     var body: some View {
         NavigationStack {
             List {
-                if model.directoryCached { Text("显示上次登录保存的电脑；联网后会更新访问权限和在线状态。").font(.footnote).foregroundStyle(.secondary) }
                 ForEach([true, false], id: \.self) { online in
                     let group = model.devices.filter { $0.role == "host" && $0.online == online }
                     if !group.isEmpty {
-                        Section(online ? "可连接" : "离线 · 可查看已同步记录") {
+                        Section {
                             ForEach(group) { device in
                                 Button { model.perform { try await model.selectHost(device) } } label: {
                                     HStack(spacing: 16) {
