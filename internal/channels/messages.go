@@ -265,13 +265,19 @@ func (s *Service) ListMessages(ctx context.Context, roomID string, afterSeq int6
 	return s.queryMessages(ctx, RoomHistoryQuery{RoomID: roomID, AfterSeq: afterSeq, Limit: limit})
 }
 
+// ListMessageWindow supports bounded backward paging without loading an entire room.
+// BeforeSeq is exclusive; zero means no upper bound. Results are always chronological.
+func (s *Service) ListMessageWindow(ctx context.Context, p RoomHistoryQuery) ([]Message, error) {
+	return s.queryMessages(ctx, p)
+}
+
 func (s *Service) queryMessages(ctx context.Context, p RoomHistoryQuery) ([]Message, error) {
 	roomID, afterSeq, limit := p.RoomID, p.AfterSeq, p.Limit
 	roomID = strings.TrimSpace(roomID)
 	if roomID == "" {
 		return nil, errors.New("message room is required")
 	}
-	if afterSeq < 0 {
+	if afterSeq < 0 || p.BeforeSeq < 0 {
 		return nil, errors.New("message sequence cannot be negative")
 	}
 	if limit <= 0 {
@@ -279,6 +285,10 @@ func (s *Service) queryMessages(ctx context.Context, p RoomHistoryQuery) ([]Mess
 	}
 	if limit > 500 {
 		limit = 500
+	}
+	order := "ASC"
+	if p.Latest {
+		order = "DESC"
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, room_id, seq, COALESCE(thread_id, ''), author_type, author_id,
@@ -288,7 +298,7 @@ func (s *Service) queryMessages(ctx context.Context, p RoomHistoryQuery) ([]Mess
 			COALESCE(source_session_ref, ''), COALESCE(source_turn_id, '')
 		FROM room_messages WHERE room_id = ? AND seq > ? AND (?=0 OR seq<?)
    AND (?='' OR thread_id=? OR id=?) AND (?='' OR instr(lower(body),lower(?))>0)
-   ORDER BY seq LIMIT ?`, roomID, afterSeq, p.BeforeSeq, p.BeforeSeq, p.ThreadID, p.ThreadID, p.ThreadID, p.Query, p.Query, limit)
+   ORDER BY seq `+order+` LIMIT ?`, roomID, afterSeq, p.BeforeSeq, p.BeforeSeq, p.ThreadID, p.ThreadID, p.ThreadID, p.Query, p.Query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list room messages: %w", err)
 	}
@@ -306,6 +316,11 @@ func (s *Service) queryMessages(ctx context.Context, p RoomHistoryQuery) ([]Mess
 	}
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("close room messages: %w", err)
+	}
+	if p.Latest {
+		for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+			messages[left], messages[right] = messages[right], messages[left]
+		}
 	}
 	if err := s.attachWorkDetails(ctx, messages); err != nil {
 		return nil, err

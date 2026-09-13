@@ -2,8 +2,9 @@ import SwiftUI
 import WuuCore
 import CryptoKit
 
-@MainActor @Observable final class AppModel {
+@MainActor @Observable final class AppModel: CollaborationConnection {
     var account: AccountSession?
+    let collaboration = CollaborationModel()
     let push = PushNotifications()
     var devices: [AccountDevice] = []
     var host: AccountDevice?
@@ -274,6 +275,7 @@ import CryptoKit
         await oldRemote?.disconnect()
     }
     @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
+        collaboration.reset()
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
         workspace = ""; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
@@ -321,6 +323,14 @@ import CryptoKit
             let body = try await history.thread(id)
             if epoch == stamp, activeID == id { saved = body }
         }
+    }
+    func channelCall(_ method: String, _ params: JSONValue = [:]) async throws -> JSONValue {
+        try Task.checkCancellation()
+        guard connected, let remote else { throw NativeError.invalid("请先连接电脑") }
+        let stamp = epoch
+        let result = try await remote.call(method, params: params)
+        guard stamp == epoch, self.remote === remote else { throw CancellationError() }
+        return result
     }
     func setHistory(_ enabled: Bool) async throws {
         let stamp = epoch

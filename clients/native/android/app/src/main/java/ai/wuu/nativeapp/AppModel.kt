@@ -63,6 +63,16 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var threadSettings by mutableStateOf<ThreadSettings?>(null); private set
     var threadEngine by mutableStateOf(""); private set
     private var remote: Remote? = null
+    val collaboration = Collaboration { method, params ->
+        val transport = checkNotNull(remote) { "电脑未连接" }; val stamp = generation
+        check(connected) { "电脑未连接" }
+        val result = transport.call(method, params)
+        check(stamp)
+        if (remote !== transport) throw CancellationException()
+        result
+    }
+    val conversationDrafts = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    val conversationAttachments = androidx.compose.runtime.mutableStateMapOf<String, List<InputAttachment>>()
     private var history: History? = null
     private var liveRows = emptyList<ThreadRow>()
     private var refresh: Job? = null
@@ -270,6 +280,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun background() {
+        collaboration.invalidate()
         generation++; refresh?.cancel(); refresh = null; eventJob?.cancel(); eventJob = null
         remote?.close(); remote = null; connected = false; connecting = false; approval = null; sending = false
         loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
@@ -456,6 +467,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
     suspend fun leaveHost(removeCache: Boolean = false): Long {
         val oldHistory = history
+        collaboration.clear(); conversationDrafts.clear(); conversationAttachments.clear()
         background(); history = null; host = null; activeID = null; live = null; openGeneration++
         liveRows = emptyList(); rows = emptyList(); messages = emptyList(); workspace = ""; workspaces = emptyList(); historyEnabled = false; threadSettings = null; threadEngine = ""
         running = false; sending = false; readOnly = true; pending = emptyList(); search = ""; archivedList = false

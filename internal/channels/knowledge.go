@@ -13,6 +13,8 @@ type RoomHistoryQuery struct {
 	ThreadID  string
 	Query     string
 	Limit     int
+	// Latest selects the newest matching window, still returned in ascending sequence order.
+	Latest bool
 }
 
 func (c *AgentClient) QueryRoomHistory(ctx context.Context, p RoomHistoryQuery) ([]Message, error) {

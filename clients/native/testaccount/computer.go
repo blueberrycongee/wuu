@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,12 +13,14 @@ import (
 
 	"github.com/blueberrycongee/wuu/clients/native/testsupport"
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -75,10 +78,12 @@ func startUIComputer(root string, store *host.Store, server string, login accoun
 	must(testsupport.WriteConfig(filepath.Join(root, "config.json"), "native-ui"))
 	rt := &runtime.Session{
 		ProviderName: "native-ui", Model: "native-ui", RootDir: root,
+		WuuHome:    filepath.Join(root, ".wuu"),
 		ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, HomeDir: root, SessionDir: filepath.Join(root, "sessions"),
 		HookDispatcher: hooks.NewDispatcher(nil), Toolkit: kit, UserQuestions: pluginhost.NewUserQuestionBroker(),
 		StreamRunner: &agent.StreamRunner{Client: uiProvider{}, Model: "native-ui", SystemPrompt: "test"},
 	}
+	seedUICollaboration(rt.WuuHome)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	h, err := host.New(host.Options{Runtime: rt, Store: store, RelayURL: "ws" + strings.TrimPrefix(server, "http") + "/v1/connect",
@@ -120,4 +125,30 @@ func startUIComputer(root string, store *host.Store, server string, login accoun
 		case <-ticker.C:
 		}
 	}
+}
+
+func seedUICollaboration(home string) {
+	s, err := channels.Open(statepath.ChannelsDir(home), nil)
+	must(err)
+	defer s.Close()
+	ctx := context.Background()
+	alpha, err := s.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Alpha", Role: "Mobile collaboration verification", ProviderOverride: "native-ui", ModelOverride: "native-ui"})
+	must(err)
+	beta, err := s.CreateNamedAgent(ctx, channels.CreateNamedAgentParams{Name: "Beta", Role: "Review", ProviderOverride: "native-ui", ModelOverride: "native-ui"})
+	must(err)
+	room, err := s.CreateRoom(ctx, channels.CreateRoomParams{Kind: channels.RoomChannel, Name: "Native collaboration", CreatedBy: "local-user"})
+	must(err)
+	for i := 1; i <= 35; i++ {
+		_, err = s.SendHuman(ctx, channels.HumanSendParams{RoomID: room.ID, HumanID: "local-user", Body: fmt.Sprintf("Collaboration history %02d — 手机与电脑共享同一房间。", i)})
+		must(err)
+	}
+	_, err = s.SendHuman(ctx, channels.HumanSendParams{RoomID: room.ID, HumanID: "local-user", Body: "Collaboration ready", Images: []channels.MessageImage{{MediaType: "image/png", Data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}}})
+	must(err)
+	members := []channels.RoomMember{{MemberType: channels.MemberHuman, MemberID: "local-user"}, {MemberType: channels.MemberAgent, MemberID: alpha.Agent.ID}, {MemberType: channels.MemberAgent, MemberID: beta.Agent.ID}}
+	_, err = s.UpdateRoom(ctx, channels.UpdateRoomParams{RoomID: room.ID, Members: &members})
+	must(err)
+	_, err = s.CreateTaskHuman(ctx, channels.TaskCreateParams{RoomID: room.ID, HumanID: "local-user", OwnerID: alpha.Agent.ID, Title: "Native collaboration task"})
+	must(err)
+	_, err = s.OpenDirectMessage(ctx, "local-user", alpha.Agent.ID)
+	must(err)
 }
