@@ -276,40 +276,50 @@
   min-width: max-content;
 }
 
-/* Linux frameless caption buttons — ChatGPT-style right-edge alignment:
- * app actions sit immediately left of a flush caption cluster that owns
- * the window's top-right corner (no trailing titlebar padding). */
+/* Linux frameless caption: fixed to the window's top-right so min/max/close
+ * never leave the corner when the conversation column shrinks (e.g. right
+ * panel open). Surfaces clear them with --linux-caption-width padding. */
+:root[data-platform="linux"] {
+  --linux-caption-width: 138px;
+}
+
 .linux-window-controls {
+  display: none;
+}
+
+:root[data-platform="linux"][data-host-kind="desktop"] .linux-window-controls {
   display: flex;
-  flex: 0 0 auto;
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 10000;
   align-items: stretch;
-  align-self: stretch;
-  height: 100%;
-  margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid var(--hairline);
+  width: var(--linux-caption-width);
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   -webkit-app-region: no-drag;
+  pointer-events: auto;
 }
 
 :root[data-platform="linux"] .titlebar,
-:root[data-platform="linux"] .settings-titlebar {
-  /* Caption buttons paint to the window edge, like Win11 / ChatGPT. */
-  padding-right: 0;
+:root[data-platform="linux"] .settings-titlebar,
+:root[data-platform="linux"] .account-screen-titlebar,
+:root[data-platform="linux"] .onboarding-chrome,
+:root[data-platform="linux"] .channel-room-header {
+  padding-right: var(--linux-caption-width);
 }
 
+/* Right panel owns the window's trailing edge; keep conversation chrome
+ * neutral and clear the caption on the panel tabbar instead. */
 :root[data-platform="linux"] .app-shell.right-panel-open .titlebar {
-  padding-right: 0;
+  padding-right: 24px;
 }
 
-:root[data-platform="linux"] .titlebar .title-actions {
-  align-self: stretch;
-  gap: 4px;
-  padding-right: 0;
-}
-
-.titlebar > .linux-window-controls,
-.channel-room-header-actions {
-  margin-left: auto;
+:root[data-platform="linux"] .app-shell.right-panel-open .workspace-panel-tabbar {
+  padding-right: var(--linux-caption-width);
 }
 
 .channel-room-header-actions {
@@ -319,6 +329,7 @@
   align-self: stretch;
   gap: 4px;
   height: 100%;
+  margin-left: auto;
   -webkit-app-region: no-drag;
 }
 
@@ -327,7 +338,6 @@
   align-items: center;
   justify-content: center;
   width: 46px;
-  min-height: 48px;
   height: 100%;
   margin: 0;
   padding: 0;

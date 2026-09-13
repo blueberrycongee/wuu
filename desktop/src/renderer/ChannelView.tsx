@@ -37,7 +37,6 @@ import {
 } from "./ComposerMessages";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { useI18n } from "./i18n";
-import { LinuxWindowControls } from "./LinuxWindowControls";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { useLongTextCollapse } from "./LongTextCollapse";
 import { useChannelMessageMotion } from "./useChannelMessageMotion";
@@ -1795,7 +1794,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   disabled={creatingRoom}
                 />
                 <button className="icon-button channel-new-room-close" type="button" aria-label={t("channels.cancelNewRoom")} disabled={creatingRoom} onClick={closeRoomPanel}><X aria-hidden="true" /></button>
-                <div className="channel-room-header-actions"><LinuxWindowControls /></div>
               </> : <>
                 <button ref={settingsTriggerRef} type="button" className="channel-room-header-title channel-room-settings-trigger" disabled={!selectedRoom || savingAgent} aria-expanded={settingsOpen} aria-controls={settingsOpen ? "channel-conversation-settings" : undefined} onClick={openConversationSettings}>
                   {selectedRoom ? <span className="channel-room-header-avatar">
@@ -1809,7 +1807,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   <span className="channel-room-settings-name" role="heading" aria-level={2}>{selectedRoomTitle || t("channels.rooms")}</span><ChevronDown className="icon" aria-hidden="true" />
                 </button>
                 {selectedRoom ? <ChannelContinuity key={selectedRoom.id} roomId={selectedRoom.id} agents={selectedRoomAgents} /> : null}
-                <div className="channel-room-header-actions"><LinuxWindowControls /></div>
               </>}
             </header>
           {composingNewRoom ? <div className="channel-new-room-surface">

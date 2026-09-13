@@ -6,16 +6,6 @@
   color: var(--ink);
 }
 
-.account-screen-titlebar-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: stretch;
-  align-self: stretch;
-  margin-left: auto;
-  height: 100%;
-  min-height: 48px;
-  -webkit-app-region: no-drag;
-}
 
 .account-screen-titlebar {
   display: flex;

@@ -41,7 +41,6 @@ import {
 } from "./AppLayoutState";
 import { EnvironmentSideStack } from "./EnvironmentSideStack";
 import { CompactConversationActions } from "./CompactConversationActions"
-import { LinuxWindowControls } from "./LinuxWindowControls";
 import {
   Composer,
 } from "./ComposerView";
@@ -467,7 +466,6 @@ export function ConversationTitleActions({
           >
             <SidePanelToggleIcon side="right" open={rightPanelOpen} />
       </button>
-      <LinuxWindowControls />
     </div>
   );
 }

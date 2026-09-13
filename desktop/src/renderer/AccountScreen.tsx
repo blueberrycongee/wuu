@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AccountPanel, type AccountDriver } from "./AccountPanel";
-import { LinuxWindowControls } from "./LinuxWindowControls";
 import { useI18n } from "./i18n";
 import "./AccountScreen.css";
 
@@ -21,9 +20,6 @@ export function AccountScreen({ driver, onBack, standalone = false }: {
       {!standalone && <button type="button" className="account-screen-back" onClick={onBack}>
         <ArrowLeft size={18} aria-hidden="true" />{t("settings.backToApp")}
       </button>}
-      <div className="account-screen-titlebar-actions">
-        <LinuxWindowControls />
-      </div>
     </header>
     <main className="account-screen-content">
       <AccountPanel desktopConnectionFlow driver={driver} onSignedIn={() => setConnected(true)} />
