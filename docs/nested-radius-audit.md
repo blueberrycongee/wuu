@@ -53,3 +53,6 @@ Token scale: xs=8 (inner), sm=12 (control), md/lg=22 (panel), overlay≈md.
 ## Recommended later
 - Add helpers: `--radius-nested: calc(var(--radius-md) - var(--pad));` or per-component `calc(parent - pad)`.
 - One shared overlay-menu recipe if we decide to move rows toward `calc(var(--menu-radius) - pad)`.
+
+## Follow-up (2026-09-13)
+- Compact floating menus (select / codex-runtime / composer context & project / mention / conversation-actions): shell uses `--menu-shell-radius` = `calc(--radius-xs + --menu-inset)` instead of panel `--menu-radius` (22), so row hover (xs) nests concentrically under ~6px pad.

@@ -263,9 +263,9 @@
     min(320px, calc(100vh - 120px))
   );
   overflow: hidden;
-  padding: 6px;
+  padding: var(--menu-inset);
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
   --menu-enter-y: -4px;
