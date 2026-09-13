@@ -597,21 +597,6 @@ const api: WuuDesktopApi = {
     return () =>
       ipcRenderer.removeListener("wuu:window-resize-state", listener);
   },
-  windowMinimize: () => ipcRenderer.invoke("wuu:window-minimize"),
-  windowToggleMaximize: () =>
-    ipcRenderer.invoke("wuu:window-toggle-maximize") as Promise<boolean>,
-  windowClose: () => ipcRenderer.invoke("wuu:window-close"),
-  windowIsMaximized: () =>
-    ipcRenderer.invoke("wuu:window-is-maximized") as Promise<boolean>,
-  onWindowMaximizedChange: (handler: (maximized: boolean) => void) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      maximized: boolean,
-    ) => handler(maximized);
-    ipcRenderer.on("wuu:window-maximized-changed", listener);
-    return () =>
-      ipcRenderer.removeListener("wuu:window-maximized-changed", listener);
-  },
   popOutSession: (params) =>
     ipcRenderer.invoke("wuu:pop-out-session", params),
   popOutClosed: (params) =>

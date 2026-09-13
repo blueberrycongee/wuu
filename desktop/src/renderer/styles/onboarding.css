@@ -47,16 +47,8 @@
   letter-spacing: -0.04em;
 }
 
-.onboarding-chrome-end {
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  -webkit-app-region: no-drag;
-}
-
 .onboarding-preview-exit {
+  justify-self: end;
   -webkit-app-region: no-drag;
   height: 28px;
   padding: 0 12px;

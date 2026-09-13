@@ -40,8 +40,7 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "./AppLayoutState";
 import { EnvironmentSideStack } from "./EnvironmentSideStack";
-import { CompactConversationActions } from "./CompactConversationActions"
-import { LinuxWindowControls } from "./LinuxWindowControls";
+import { CompactConversationActions } from "./CompactConversationActions";
 import {
   Composer,
 } from "./ComposerView";
@@ -467,7 +466,6 @@ export function ConversationTitleActions({
           >
             <SidePanelToggleIcon side="right" open={rightPanelOpen} />
       </button>
-      <LinuxWindowControls />
     </div>
   );
 }

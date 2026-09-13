@@ -2,7 +2,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } f
 import { Ellipsis, Info, SquarePen } from "lucide-react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { isTouchWebShell } from "./ComposerFocus";
-import { LinuxWindowControls } from "./LinuxWindowControls";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
 
@@ -97,7 +96,6 @@ export function CompactConversationActions({
           </button>
         </div>
       </FloatingMenuPortal>}
-      <LinuxWindowControls />
     </div>
   );
 }

@@ -200,15 +200,6 @@
   -webkit-app-region: drag;
 }
 
-.settings-titlebar-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  margin-left: auto;
-  height: 30px;
-  -webkit-app-region: no-drag;
-}
-
 /* Once the settings rail is collapsed, the titlebar starts at the window
  * edge. Keep the toggle clear of the macOS traffic lights, matching the
  * main conversation titlebar reservation. */
