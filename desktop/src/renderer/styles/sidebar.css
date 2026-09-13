@@ -762,18 +762,17 @@
 }
 
 .traffic-spacer {
-  /* Keep enough room for the macOS traffic-light row while letting the
-   * sidebar content sit higher than the old 58px reservation. The titlebar
-   * itself is 48px, but the lights need ~28px from the window top. The
-   * same height stays on every platform: with hidden window chrome the
-   * sidebar has no other drag strip, and matching heights keep the rail's
-   * vertical rhythm identical across OSes. */
+  /* macOS: reserve room for traffic lights (trafficLightPosition ~18,15)
+   * so the brand row sits under them. Other desktops put window controls
+   * on the right (or draw them in the titlebar), so keep only a short
+   * drag strip here and let the brand sit higher. */
   height: 46px;
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
 
-/* Browsers have no native titlebar or window drag strip. */
+:root[data-platform="linux"] .traffic-spacer,
+:root[data-platform="win32"] .traffic-spacer,
 :root[data-host-kind="web"] .traffic-spacer {
   height: 12px;
 }
