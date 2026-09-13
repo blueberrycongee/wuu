@@ -276,16 +276,6 @@
   min-width: max-content;
 }
 
-/* Linux WCO: keep the Mac-designed info / right-panel cluster, but give it
- * a hairline and a little trailing air so it reads as app chrome rather
- * than colliding with the system window controls. */
-:root[data-platform="linux"] .titlebar .title-actions {
-  gap: 6px;
-  margin-right: 2px;
-  padding-right: 10px;
-  border-right: 1px solid var(--hairline);
-}
-
 .title-block h1 {
   min-width: 0;
   max-width: 100%;

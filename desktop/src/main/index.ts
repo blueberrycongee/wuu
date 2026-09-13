@@ -791,19 +791,14 @@ function windowBackgroundColor(): string {
 
 // The window-chrome contract per platform: macOS hides the titlebar and
 // leaves the traffic lights over the renderer's drag strip (top-left);
-// Windows and Linux hide it and let Chromium draw min/max/close as a
-// controls overlay (top-right — the renderer reserves that corner through
-// the --window-controls-inset-* variables). Other platforms keep the
-// native frame, which needs no in-page reservation at all.
-//
-// Linux WCO has had DE/Wayland regressions in Electron; set
-// WUU_LINUX_NATIVE_CHROME=1 to force the previous native-frame path.
+// Windows hides it and lets Chromium draw min/max/close as a controls
+// overlay (top-right — the renderer reserves that corner through the
+// --window-controls-inset-* variables). Linux keeps the native OS
+// titlebar so system controls sit above the page; app actions (info /
+// right panel) live in the content top-right, matching the usual
+// "caption above, toolbar below" layout.
 function usesWindowControlsOverlay(): boolean {
-  if (process.platform === "win32") return true;
-  if (process.platform === "linux") {
-    return process.env.WUU_LINUX_NATIVE_CHROME !== "1";
-  }
-  return false;
+  return process.platform === "win32";
 }
 
 function windowFrameOptions(): Pick<
@@ -825,6 +820,11 @@ function windowFrameOptions(): Pick<
       ...(process.platform === "linux" ? { autoHideMenuBar: true } : {}),
     };
   }
+  // Native Linux frame: hide the in-window File/Edit strip; Alt still
+  // reveals the menu. Other platforms need no extra frame flags.
+  if (process.platform === "linux") {
+    return { autoHideMenuBar: true };
+  }
   return {};
 }
 
@@ -843,7 +843,7 @@ function nonMacTitleBarOverlay(): Electron.TitleBarOverlay {
 // The theme preference is app-global state owned by the main process.
 // Every themed content window (main + pop-outs) registers here; a theme
 // change — explicit preference or an OS dark-mode flip while on
-// "system" — re-pushes the native chrome (Win/Linux controls overlay,
+// "system" — re-pushes the native chrome (Windows controls overlay,
 // non-macOS window background fill) to all of them, and the new
 // preference is broadcast so each renderer re-applies data-theme.
 // macOS skips both: its vibrancy material and transparent fill are
