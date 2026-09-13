@@ -81,19 +81,14 @@ bash clients/native/verify.sh all
 
 也可以分别执行 `swift test --package-path clients/native/ios` 和 Gradle 的 `:app:testDebugUnitTest`。独立运行的集成测试需要 `WUU_NATIVE_TESTHOST`、`WUU_NATIVE_TESTACCOUNT` 可执行文件路径和临时数据库；缺少环境会明确跳过对应集成测试，完整验收请使用上述脚本。
 
-模拟器 UI 测试入口如下。iOS 脚本创建并删除专用模拟器，隔离 Keychain 与 App 数据，并使用临时签名运行；Android 使用包名后缀为 `.uitest` 的独立构建，只对该测试 App 开放回环 HTTP。`testaccount -live` 启动完整账号、relay 和电脑执行主机，仅替换模型提供方。UI 测试操作正常服务器设置和登录界面，不使用 App 内测试后门。两端均已通过登录、选择电脑、新建、发送、流式回复、实际工具执行与展开结果、停止、前后台重连、会话设置保存和侧栏开关流程。
-
-```sh
-python3 clients/native/ui-test.py ios
-python3 clients/native/ui-test.py android --device emulator-5554
-```
+模拟器上的整段登录/发送/前后台流程会跟着界面一起变，不适合作为日常门禁。CI 只跑核心集成、未签名 Release 构建和 Android lint。
 
 ## 验收边界
 
-本地完整验证通过 Swift 15 项、Android 16 项核心及集成测试，无失败或跳过；上述两端 UI 流程也已通过。iOS 模拟器、未签名的 iOS 真机 Release、Android Debug APK 和未签名 Release APK/AAB 均构建成功，Android Release lint 无错误。本地 UI 测试环境为 iOS 26.2 和 Android 16 / API 36。这些结果不证明真机滚动帧率、键盘、VoiceOver/TalkBack 或全部主题和屏幕尺寸的体验；尚未完成人工视觉验收。
+本地完整验证通过 Swift 15 项、Android 16 项核心及集成测试，无失败或跳过。iOS 模拟器、未签名的 iOS 真机 Release、Android Debug APK 和未签名 Release APK/AAB 均构建成功，Android Release lint 无错误。这些结果不证明真机滚动帧率、键盘、VoiceOver/TalkBack 或全部主题和屏幕尺寸的体验；尚未完成人工视觉验收。
 
 发布前仍需验证部署的 HTTPS、真实 GitHub OAuth 配置和系统浏览器返回，再做 iPhone 和 Android 真机交互测试。推送注册、轮换、关闭与撤销已通过本地账号服务测试；APNs / FCM 实际送达、点击和系统权限需要配置签名及服务凭据后联调。商店图标、截图、隐私政策与发布签名尚未准备。手机后台会断开执行通道，回到前台重新连接并恢复，不承诺后台常驻连接。
 
 iOS 安装包声明本机偏好设置，以及缓存和用户选择文件的元数据访问理由；商店的数据收集声明仍需按实际服务器部署填写。Android 明确排除云备份和换机数据迁移，避免把设备身份、推送同意和历史缓存复制到另一部手机。
 
-Native mobile 工作流运行核心集成、未签名 Release 构建、Android Release lint 及 iOS 26.2 / Android API 28、36 UI 流程，保存失败报告和 iOS 截图。工作流已加入仓库，尚未在 GitHub 执行验证；临时 PostgreSQL 不连接已有数据库，也不需要账号或模型密钥。发布签名、商店分发和分支保护门禁仍需单独配置。旧手机实现停止开发的标记不会删除原有代码，也不表示已有新的商店版本。
+Native mobile 工作流运行核心集成、未签名 Release 构建和 Android Release lint。临时 PostgreSQL 不连接已有数据库，也不需要账号或模型密钥。发布签名、商店分发和分支保护门禁仍需单独配置。旧手机实现停止开发的标记不会删除原有代码，也不表示已有新的商店版本。

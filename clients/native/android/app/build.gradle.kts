@@ -14,7 +14,6 @@ android {
         targetSdk = 36
         versionCode = 260900199
         versionName = "2026.9.1"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         for (key in listOf("APP_ID", "API_KEY", "PROJECT_ID", "SENDER_ID")) {
             val name = "WUU_FIREBASE_$key"
             val value = providers.gradleProperty(name).orElse(providers.environmentVariable(name)).getOrElse("")
@@ -24,14 +23,6 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("main").assets.srcDir("../../licenses")
-    buildTypes {
-        create("uitest") {
-            initWith(getByName("debug"))
-            applicationIdSuffix = ".uitest"
-            matchingFallbacks += listOf("debug")
-        }
-    }
-    testBuildType = if (project.hasProperty("nativeUiTest")) "uitest" else "debug"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -60,10 +51,6 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.16.1") {
         exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
     }
-    androidTestImplementation(platform("androidx.compose:compose-bom:2025.10.00"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    androidTestImplementation("androidx.test:runner:1.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
 
 // Google ships complete third-party notices inside its AARs, outside packaged resources.

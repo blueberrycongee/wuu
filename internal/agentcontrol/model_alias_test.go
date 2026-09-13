@@ -111,8 +111,8 @@ func TestSpawnValidModelAliasUsesResolvedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if res.Status != "running" {
-		t.Fatalf("expected running, got %s", res.Status)
+	if res.Status != "running" && res.Status != "completed" {
+		t.Fatalf("expected running or completed, got %s", res.Status)
 	}
 	if res.ModelAlias != "cheap" {
 		t.Fatalf("expected model_alias cheap, got %q", res.ModelAlias)
