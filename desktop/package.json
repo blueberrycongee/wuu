@@ -28,7 +28,7 @@
     "release:desktop": "npm run dist:mac",
     "test": "npm run test:dev-launcher && npm run test:unit",
     "test:dev-launcher": "node scripts/test-dev-launcher.cjs",
-    "test:unit": "vitest run --exclude=src/main/gitService.test.ts && vitest run src/main/gitService.test.ts --maxWorkers=1 --minWorkers=1 --testTimeout=15000",
+    "test:unit": "vitest run --exclude=src/main/gitService.test.ts --exclude=src/main/remoteGit.test.ts && vitest run src/main/gitService.test.ts src/main/remoteGit.test.ts --maxWorkers=1 --minWorkers=1 --testTimeout=15000",
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
