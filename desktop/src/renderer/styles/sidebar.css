@@ -1193,6 +1193,22 @@
 
 .collaboration-sidebar-topbar button { -webkit-app-region: no-drag; }
 
+.select-menu-panel.collaboration-new-menu {
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.collaboration-new-menu .select-menu-item {
+  justify-content: flex-start;
+  gap: 8px;
+  font-weight: var(--weight-regular);
+}
+
+.collaboration-new-menu .select-menu-item svg {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+}
+
 .collaboration-sidebar-tools {
   padding: 2px 0 12px;
 }

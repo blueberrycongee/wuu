@@ -70,8 +70,8 @@ host.wuu = {
   }),
   readChannelSession: async ({ sessionRef }: { sessionRef: string }) => {
     host.lastReadSession = sessionRef;
-    return { session: { session_ref: sessionRef, principal_id: "a0", named_agent_id: "a0", room_id: "room", purpose: "conversation", state: "running", created_at, updated_at: created_at },
-      thread: { id: sessionRef, turns: [{ id: "turn", status: "in_progress", items: [{ id: "request", type: "user_message", text: "Inspect the login recovery" }] }] } };
+    return { session: { session_ref: sessionRef, principal_id: sessionRef === "private-room-session" ? "room-runtime" : "a0", named_agent_id: sessionRef === "private-room-session" ? undefined : "a0", room_id: "room", purpose: sessionRef === "private-room-session" ? "coordination" : "conversation", state: "running", created_at, updated_at: created_at },
+      thread: { id: sessionRef, turns: [{ id: "turn", status: "in_progress", items: [{ id: "request", type: "user_message", text: "检查登录恢复的问题，安排合适的成员处理。" }, { id: "reading", type: "tool_call", name: "read_file", status: "in_progress" }] }] } };
   },
   resumeChannelSession: async ({ sessionRef }: { sessionRef: string }) => {
     if (sessionRef !== "private-room-session") throw new Error("Wrong retry target");

@@ -843,7 +843,7 @@
 }
 
 .channel-message.own .channel-message-bubble {
-  border-radius: 18px;
+  border-radius: var(--wuu-message-user-radius, var(--radius-md) var(--radius-md) 4px var(--radius-md));
   background: var(--ink-strong);
   color: var(--paper);
 }
@@ -870,7 +870,7 @@
 .channel-orchestration-row .chat-bubble-group {
   width: 100%;
   max-width: 100%;
-  padding-left: calc(var(--channel-avatar-size) + var(--channel-message-column-gap));
+  padding-left: 0;
 }
 
 .channel-orchestration-avatar {
@@ -943,14 +943,15 @@
 
 .channel-assignment-list {
   width: min(100%, 560px);
+  margin-inline: auto;
   display: grid;
-  gap: 0;
+  gap: 8px;
 }
 
 .channel-assignment-item {
   width: 100%;
   min-width: 0;
-  transform-origin: 10% 50%;
+  transform-origin: center;
   animation: channel-assignment-arrive 380ms cubic-bezier(.2, .85, .25, 1) both;
   animation-delay: calc(var(--channel-assignment-index, 0) * 120ms);
 }
@@ -982,17 +983,17 @@
     transform: translateY(4px);
   }
   100% {
-    opacity: 0.85;
+    opacity: 1;
     transform: translateY(0);
   }
 }
 
 .channel-assignment-heading {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 14px;
+  grid-template-columns: 20px minmax(0, 1fr) 14px;
   align-items: center;
   gap: 10px;
-  padding: 5px 0;
+  padding: 0;
   list-style: none;
   cursor: pointer;
   border-radius: var(--radius-xs);
@@ -1002,108 +1003,25 @@
 .channel-assignment-heading:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 3px; }
 .channel-assignment-chevron { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-fast) ease; }
 .channel-assignment-item[open] > summary .channel-assignment-chevron { transform: rotate(180deg); }
-.channel-assignment-target { width: 24px; height: 24px; }
+.channel-assignment-target { width: 20px; height: 20px; }
 .channel-assignment-target > * { width: 100%; height: 100%; }
 .channel-assignment-copy { min-width: 0; display: grid; gap: 3px; }
 .channel-assignment-copy > strong { color: var(--text-secondary); font-size: 13px; font-weight: 500; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-assignment-item[open] .channel-assignment-copy > strong { white-space: normal; overflow-wrap: anywhere; }
-.channel-assignment-body { padding: 6px 0 10px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.channel-assignment-item[open] .channel-work-card-details { display: block; padding: 0 0 12px; }
-.channel-assignment-context { display: flex; gap: 8px; padding-top: 8px; color: var(--text-tertiary); font-size: 11px; }
-
-.channel-assignment-body .rich-content {
-  gap: 4px;
-}
-
-.channel-work-card-details {
-  display: none;
-}
-
-.channel-work-summary-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 14px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.channel-work-evidence {
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 5px;
-}
-
-.channel-work-evidence summary {
-  width: max-content;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-weight: 620;
-}
-
-.channel-work-evidence summary:hover,
-.channel-work-evidence summary:focus-visible {
-  color: var(--text-primary);
-}
-
-.channel-work-evidence-body {
+.channel-assignment-content {
   display: grid;
   gap: 8px;
-  margin-top: 7px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
-  background: var(--ink-overlay-4);
-}
-
-.channel-work-evidence-body > p {
-  margin: 0;
-}
-
-.channel-work-evidence-body section {
-  display: grid;
-  gap: 4px;
-}
-
-.channel-work-evidence-body ul {
-  display: grid;
-  gap: 3px;
-  margin: 0;
-  padding-inline-start: 18px;
-}
-
-.channel-work-evidence-body li {
-  min-width: 0;
-}
-
-.channel-work-evidence-body code {
-  display: block;
-  overflow: hidden;
-  color: var(--text-tertiary);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.channel-work-session-link {
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: start;
-}
-
-.channel-work-session-link:hover code,
-.channel-work-session-link:focus-visible code {
-  color: var(--wuu-accent);
-}
-
-.channel-work-evidence-body a {
-  color: var(--wuu-accent);
+  padding-top: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
+
+.channel-assignment-content .rich-content { gap: 4px; }
+.channel-assignment-context { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-tertiary); font-size: 12px; }
+.channel-assignment-artifacts { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.channel-assignment-artifacts a { color: var(--wuu-accent); overflow-wrap: anywhere; }
 
 .channel-assignment-status {
   flex: 0 0 auto;
@@ -1258,7 +1176,7 @@
 }
 
 .channel-message-content > .composer-attachments {
-  margin-top: 8px;
+  margin-bottom: 8px;
 }
 
 .channel-message.own .composer-attachments {
@@ -2706,7 +2624,7 @@
   min-width: 0;
   height: 44px;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 0 4px;
@@ -3352,7 +3270,7 @@
 
 .channel-recipient-options > button:hover,
 .channel-recipient-options > button.active { background: var(--ink-overlay-6); }
-.channel-recipient-option-avatar { width: 28px; height: 28px; }
+.channel-recipient-option-avatar { width: 30px; height: 30px; }
 .channel-recipient-option-avatar .agent-avatar-mark { width: 100%; height: 100%; }
 .channel-recipient-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .channel-recipient-options kbd { display: inline-flex; gap: 3px; color: var(--text-tertiary); font-family: inherit; font-size: 10px; opacity: 0.75; }

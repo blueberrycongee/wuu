@@ -105,6 +105,8 @@ export function CollaborationSidebar({
             const unread = selected ? 0 : (room?.unread_count ?? 0);
             const message = room?.last_message;
             const thinking = room?.activity_status === "thinking" || (agent?.activity_status === "thinking" && (!room || agent.activity_room_ids?.includes(room.id)));
+            // An agent's avatar stays active across rooms; the preview belongs to this conversation.
+            const avatarThinking = agent?.activity_status === "thinking" || thinking;
             const text = message?.body.replace(/\s+/gu, " ").trim() || (message?.has_attachments ? t("channels.attachmentPreview") : "");
             const author = message?.kind === "system" ? "" : message?.author_type === "human" ? t("channels.you") : room?.kind === "channel" ? agentNames.get(message?.author_id ?? "") : "";
             const preview = thinking ? t("channels.agentStatus.thinking") : text ? `${author ? `${author}: ` : ""}${text}` : agent?.role || (room?.kind === "channel" ? t("channels.memberCount", { count: room.members.length }) : t("channels.startConversation"));
@@ -114,7 +116,7 @@ export function CollaborationSidebar({
             return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
               aria-current={selected ? "page" : undefined} disabled={!initialized}
               aria-label={collapsed ? `${name}${unread > 0 ? `, ${t("channels.unreadMessages", { count: unread })}` : ""}` : undefined}
-              title={collapsed ? `${name}${thinking ? ` · ${t("channels.agentWorking")}` : ""}` : undefined}
+              title={collapsed ? `${name}${avatarThinking ? ` · ${t("channels.agentWorking")}` : ""}` : undefined}
               onContextMenu={(event) => {
                 if (!initialized) return;
                 event.preventDefault();
@@ -127,7 +129,7 @@ export function CollaborationSidebar({
               }}
               onClick={() => { if (room) onSelectRoom(room.id); else if (agent) onSelectAgent(agent.id); }}>
               <span className="collaboration-contact-avatar" aria-hidden="true">
-                {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={thinking ? "thinking" : "idle"} motion="subtle" />
+                {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={avatarThinking ? "thinking" : "idle"} />
                   : room ? <ChannelGroupAvatar room={room} agents={agents} /> : null}
               </span>
               {collapsed && unread > 0 ? <span className="collaboration-rail-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}

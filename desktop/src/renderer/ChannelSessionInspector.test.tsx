@@ -182,3 +182,22 @@ it("uses the session owner's avatar in the live process and updates its appearan
   expect(avatar()!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,dGVzdA==");
   expect(avatar()!.querySelector('[data-wuu-mascot-activity]')).toBeNull();
 });
+
+it("uses the Room identity for coordination sessions without a named agent", async () => {
+  api.readChannelSession = vi.fn(async () => {
+    const result = liveSnapshot();
+    result.session.purpose = "coordination";
+    result.session.principal_id = "room-runtime";
+    result.session.named_agent_id = undefined;
+    result.thread.turns.at(-1)!.items = [
+      { id: "question", type: "user_message", text: "Assign the work" },
+      { id: "reading", type: "tool_call", name: "read_file", status: "in_progress" },
+    ];
+    return result;
+  });
+  await render();
+  expect(host.querySelector(".session-inspector-header")?.textContent).toContain("Room");
+  expect(host.querySelector(".session-inspector-header .channel-coordinator-mascot")).not.toBeNull();
+  expect(host.querySelector(".process-surface-blobatar .channel-coordinator-mascot")).not.toBeNull();
+  expect(host.querySelector("[data-agent-avatar-id]")).toBeNull();
+});

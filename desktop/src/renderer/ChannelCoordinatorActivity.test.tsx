@@ -13,13 +13,13 @@ it("shows responsible members without exposing the hidden session identity", asy
   await act(async () => root.render(<ChannelCoordinatorActivity onInspectAgent={inspect}
     status={{ state: "waiting", session_ref: "private-coordination-session", agent_ids: ["alice", "removed-member"] }}
     agents={[{ id: "alice", name: "Alice" } as NamedAgent]} onRetry={vi.fn()} />));
-  expect(container.querySelector('[role="status"]')?.getAttribute("aria-label")).toContain("Alice");
+  expect(container.querySelector('.channel-coordinator-member')?.getAttribute("aria-label")).toContain("Alice");
   expect(container.textContent).toBe("");
   expect(container.querySelector('[data-agent-avatar-id="alice"]')).not.toBeNull();
   expect(container.textContent).not.toContain("private-coordination-session");
   expect(container.textContent).not.toContain("removed-member");
   expect(container.textContent).not.toContain("{");
-  await act(async () => container.querySelector("button")!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>(".channel-coordinator-member button")!.click());
   expect(inspect).toHaveBeenCalledExactlyOnceWith("alice");
 });
 
@@ -44,14 +44,17 @@ it("removes coordination feedback when the room is idle", async () => {
   expect(container.childElementCount).toBe(0);
 });
 
-it("hands off to actual member activity without leaving duplicate accessible avatars", async () => {
+it("keeps Room inspectable while members work without duplicating their avatars", async () => {
   const agents = [{ id: "alice", name: "Alice" } as NamedAgent];
+  const inspect = vi.fn();
   await act(async () => root.render(<ChannelCoordinatorActivity
-    status={{ state: "working" }} agents={agents} onRetry={vi.fn()} />));
+    status={{ state: "working", session_ref: "room-session" }} agents={agents} onRetry={vi.fn()} />));
   expect(container.querySelector("svg")).not.toBeNull();
   expect(container.textContent).toBe("");
   await act(async () => root.render(<ChannelCoordinatorActivity
-    status={{ state: "waiting", agent_ids: ["alice"] }} agents={agents} activeAgentIDs={["alice"]} onRetry={vi.fn()} />));
-  expect(container.querySelector(".channel-activity-slot:not([inert])")).toBeNull();
+    status={{ state: "waiting", session_ref: "room-session", agent_ids: ["alice"] }} agents={agents} activeAgentIDs={["alice"]} onInspectCoordinator={inspect} onRetry={vi.fn()} />));
+  expect(container.querySelector(".channel-activity-slot:not([inert])")).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>(".channel-coordinator-activity button")!.click());
+  expect(inspect).toHaveBeenCalledExactlyOnceWith("room-session");
   expect(container.querySelector('[data-agent-avatar-id="alice"]')).toBeNull();
 });

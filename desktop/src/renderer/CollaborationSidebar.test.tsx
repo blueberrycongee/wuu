@@ -25,8 +25,8 @@ const callbacks = {
   onEditAgent: vi.fn(), onEditRoom: vi.fn(),
   onTogglePinned: vi.fn(), onHideConversation: vi.fn(), onDeleteConversation: vi.fn(),
 };
-function render(rooms: ChannelRoom[] = [dm, group], pinnedRoomIDs: string[] = [], collapsed = false) {
-  act(() => root.render(<WuuUIRoot><CollaborationSidebar initialized agents={[agent, { ...agent, id: "beta", name: "Beta" }]}
+function render(rooms: ChannelRoom[] = [dm, group], pinnedRoomIDs: string[] = [], collapsed = false, agents: NamedAgent[] = [agent, { ...agent, id: "beta", name: "Beta" }]) {
+  act(() => root.render(<WuuUIRoot><CollaborationSidebar initialized agents={agents}
     rooms={rooms} pinnedRoomIDs={pinnedRoomIDs} selectedRoomID="dm" collapsed={collapsed} {...callbacks} /></WuuUIRoot>));
 }
 function rows() { return Array.from(host.querySelectorAll<HTMLButtonElement>("nav button")); }
@@ -174,4 +174,25 @@ it("does not let a hidden search filter remove rail shortcuts", () => {
   expect(rows()).toHaveLength(3);
   render();
   expect(rows()).toHaveLength(1);
+});
+
+it.each([false, true])("keeps an agent active across group work until all its work ends (collapsed=%s)", (collapsed) => {
+  const beta = { ...agent, id: "beta", name: "Beta" };
+  const avatar = (id: string) => host.querySelector(`[data-agent-avatar-id="${id}"]`)!;
+  const update = (activityRoomIDs: string[]) => render([dm, group], [], collapsed, [
+    { ...agent, activity_status: activityRoomIDs.length ? "thinking" : "idle", activity_room_ids: activityRoomIDs }, beta,
+  ]);
+  update([]);
+  const identity = avatar(agent.id);
+  update([group.id, "other-group"]);
+  expect(avatar(agent.id)).toBe(identity);
+  expect(identity.getAttribute("data-agent-avatar-state")).toBe("thinking");
+  expect(identity.getAttribute("data-agent-avatar-motion")).toBe("expressive");
+  expect(avatar(beta.id).getAttribute("data-agent-avatar-state")).toBe("idle");
+  expect(rows().find(row => row.contains(identity))?.textContent).toContain(dm.last_message!.body);
+  update(["other-group"]);
+  expect(identity.getAttribute("data-agent-avatar-state")).toBe("thinking");
+  update([]);
+  expect(identity.getAttribute("data-agent-avatar-state")).toBe("idle");
+  expect(identity.hasAttribute("data-agent-avatar-turn")).toBe(false);
 });

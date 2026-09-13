@@ -1736,13 +1736,23 @@ func (s *Service) GetRoom(ctx context.Context, id string) (Room, error) {
 	}
 	var room Room
 	var createdAt int64
+	var preview RoomMessagePreview
+	var messageCreatedAt int64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT room.id, room.kind, room.name, room.avatar_image, room.created_by, room.membership_revision, room.created_at,
-			COALESCE(runtime.id, '')
+			COALESCE(runtime.id, ''), COALESCE(message.id, ''), COALESCE(message.author_type, ''),
+			COALESCE(message.author_id, ''), COALESCE(message.kind, ''),
+			substr(COALESCE(NULLIF(message.body, ''), message.task_title, ''), 1, 240),
+			COALESCE(json_array_length(message.images_json) + json_array_length(message.files_json), 0) > 0,
+			COALESCE(message.created_at, 0)
 		FROM rooms room
 		LEFT JOIN room_runtimes runtime ON runtime.room_id = room.id
+		LEFT JOIN room_messages message ON message.id = (
+			SELECT id FROM room_messages WHERE room_id = room.id ORDER BY seq DESC LIMIT 1
+		)
 		WHERE room.id = ?`, id,
-	).Scan(&room.ID, &room.Kind, &room.Name, &room.AvatarImage, &room.CreatedBy, &room.MembershipRevision, &createdAt, &room.RuntimeID)
+	).Scan(&room.ID, &room.Kind, &room.Name, &room.AvatarImage, &room.CreatedBy, &room.MembershipRevision, &createdAt, &room.RuntimeID,
+		&preview.ID, &preview.AuthorType, &preview.AuthorID, &preview.Kind, &preview.Body, &preview.HasAttachments, &messageCreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, fmt.Errorf("%w: room %q", ErrNotFound, id)
 	}
@@ -1750,6 +1760,10 @@ func (s *Service) GetRoom(ctx context.Context, id string) (Room, error) {
 		return Room{}, fmt.Errorf("get room: %w", err)
 	}
 	room.CreatedAt = fromMillis(createdAt)
+	if preview.ID != "" {
+		preview.CreatedAt = fromMillis(messageCreatedAt)
+		room.LastMessage = &preview
+	}
 	room.AgentID = room.RuntimeID
 	room.AvatarKey = room.ID
 	rows, err := s.db.QueryContext(ctx, `

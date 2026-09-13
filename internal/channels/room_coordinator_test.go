@@ -35,6 +35,20 @@ func TestRoomCoordinatorIdentityAndSessionBoundaries(t *testing.T) {
 	}
 	worker := flexibleTestSession(t, service, alice.Agent.ID, room.ID, "worker")
 	outsider := flexibleTestSession(t, service, alice.Agent.ID, other.ID, "other-worker")
+	for _, params := range []CollaborationSessionListParams{{}, {RoomID: room.ID}} {
+		bindings, err := coordinator.ListCollaborationSessions(ctx, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bindings) != 2 {
+			t.Fatalf("room session list = %#v, want coordinator and worker", bindings)
+		}
+		for _, binding := range bindings {
+			if binding.RoomID != room.ID {
+				t.Fatalf("coordinator listed another room's session: %#v", binding)
+			}
+		}
+	}
 	if _, err := coordinator.GetCollaborationSession(ctx, worker.SessionRef()); err != nil {
 		t.Fatal(err)
 	}

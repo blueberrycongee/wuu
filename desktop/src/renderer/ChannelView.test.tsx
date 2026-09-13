@@ -330,7 +330,7 @@ describe("ChannelView", () => {
     expect(card?.querySelector(".channel-agent-proposal-actions")).toBeNull();
   });
 
-  it("renders durable Work evidence under the visible owner without hidden personas", async () => {
+  it("expands task content with actionable blockers and artifact links", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: room_id === "room-1" ? [{
       id: "work-1", room_id, seq: 1, author_type: "agent" as const, author_id: "agent-1",
@@ -378,14 +378,10 @@ describe("ChannelView", () => {
     expect(task?.textContent).toContain("Reject callback replay");
     expect(container.querySelector(".channel-work-activity")).toBeNull();
     expect(container.querySelector(".channel-assignment-status")?.textContent).toBe("验收中");
-    expect(container.querySelector(".channel-work-summary-line")?.textContent).toContain("3");
-    const evidence = container.querySelector<HTMLDetailsElement>(".channel-work-evidence");
-    expect(evidence).not.toBeNull();
-    act(() => evidence?.querySelector("summary")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(evidence?.textContent).toContain("Replay still created a session before repair.");
-    expect(evidence?.textContent).toContain("session-check-1");
-    act(() => evidence?.querySelector<HTMLButtonElement>(".channel-work-session-link")?.click());
-    expect(onOpenSession).toHaveBeenCalledWith("session-check-1");
+    expect(task?.textContent).toContain("full suite unavailable");
+    const artifact = task?.querySelector<HTMLAnchorElement>(".channel-assignment-artifacts a");
+    expect(artifact?.textContent).toBe("callback diff");
+    expect(artifact?.getAttribute("href")).toBe("artifact://diff-1");
     expect(container.textContent).not.toContain("Verifier Bot");
   });
 
@@ -855,6 +851,11 @@ describe("ChannelView", () => {
     expect(container.querySelector<HTMLImageElement>(".channel-message.own .composer-image-attachment img")?.src).toContain("data:image/png;base64,aW1hZ2U=");
     expect(container.querySelector(".channel-message.own .composer-file-attachment")?.textContent).toContain("brief.pdf");
     expect(container.querySelector(".channel-message.own .composer-attachments button")).toBeNull();
+    const ownMessageContent = container.querySelector(".channel-message.own .channel-message-content");
+    expect(Array.from(ownMessageContent?.children ?? []).map((child) => child.className)).toEqual([
+      "composer-attachments",
+      expect.stringContaining("channel-message-bubble"),
+    ]);
     expect(container.querySelector(".channel-message.own .channel-human-avatar")).toBeNull();
     expect(container.querySelector(".channel-message.own .channel-message-meta strong")).toBeNull();
     expect(container.querySelector(".channel-task-card")).toBeNull();
@@ -1605,8 +1606,9 @@ describe("ChannelView", () => {
     expect(editor.querySelector<HTMLDetailsElement>("details")?.open).toBe(false);
     act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
     expect(editor.querySelector(".agent-avatar-creator")).not.toBeNull();
-    // Mascot accessories replaced the old blobatar "cloud" preset.
-    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="小叶子"]')?.click());
+    const capsule = editor.querySelector<HTMLButtonElement>('button[aria-label="胶囊形"]');
+    expect(capsule).not.toBeNull();
+    act(() => capsule!.click());
     act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
     expect(editor.querySelector(".agent-avatar-creator")).toBeNull();
     act(() => setInputValue(editor.querySelector<HTMLTextAreaElement>("textarea")!, "Reviews the interface"));
@@ -1627,7 +1629,7 @@ describe("ChannelView", () => {
       agent_id: "agent-1",
       name: "Reasoner",
       role: "Reviews the interface",
-      avatar_key: expect.stringMatching(/^mascot-v1:.+:leaf:\d+$/),
+      avatar_key: expect.stringContaining(":capsule:"),
       avatar_image: "",
       provider_override: "openai",
       model_override: "gpt-reasoner",
@@ -1966,6 +1968,31 @@ describe("ChannelView", () => {
       owner_id: "agent-2",
     });
   });
+  it("keeps the waiting Room trace accessible and excludes activity from non-members", async () => {
+    const api = createApi();
+    const outsider = { ...agents[0], id: "outsider", name: "Other room agent", avatar_key: "abstract-3" };
+    api.bootstrapChannels = vi.fn(async () => ({ agents: [...agents, outsider], rooms }));
+    api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [], coordinator: {
+      state: "waiting" as const, session_ref: "room-coordination", agent_ids: ["outsider", "agent-2"],
+    } }));
+    api.readChannelSession = vi.fn(async () => ({
+      session: { session_ref: "room-coordination", principal_id: "room-runtime", room_id: "room-1", purpose: "coordination" as const, state: "waiting" as const, created_at: "", updated_at: "" },
+      thread: { id: "room-coordination", turns: [{ id: "turn", status: "completed" as const, items: [{ id: "text", type: "agent_message", text: "Assigned to Beta" }] }] },
+    } as Awaited<ReturnType<WuuDesktopApi["readChannelSession"]>>));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    await act(async () => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await settle();
+    expect(container.querySelector('.channel-activity-region [data-agent-avatar-id="outsider"]')).toBeNull();
+    expect(container.querySelector('.channel-activity-region [data-agent-avatar-id="agent-2"]')).not.toBeNull();
+    const room = container.querySelector<HTMLButtonElement>(".channel-coordinator-activity button")!;
+    expect(room.disabled).toBe(false);
+    await act(async () => room.click());
+    await settle();
+    expect(api.readChannelSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "room-coordination" }));
+    expect(container.querySelector(".session-inspector-extension")?.textContent).toContain("Assigned to Beta");
+  });
+
   it("opens the identity conversation directly without session selection", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async () => ({ messages: [], responses: [], coordinator: { state: "waiting" as const, agent_ids: ["agent-2"] } }));

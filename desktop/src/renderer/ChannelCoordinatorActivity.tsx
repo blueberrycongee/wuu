@@ -1,8 +1,8 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import type { ChannelCoordinatorStatus, NamedAgent } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { AgentAvatarMark } from "./AgentAvatarMark";
-import { WuuMascot } from "./WuuMascot";
+import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { toastErrorMessage } from "./Toast";
 import "./styles/channel-coordinator.css";
@@ -31,18 +31,14 @@ export function ChannelCoordinatorActivity({ status, agents, activeAgentIDs = []
     finally { setRetrying(false); }
   }
   const members = status?.state === "waiting" ? agents.filter(agent => status.agent_ids?.includes(agent.id)) : [];
-  const showCoordinator = visible && (status?.state !== "waiting" || (members.length === 0 && activeAgentIDs.length === 0));
+  const showCoordinator = visible;
   const needsAttention = status?.state === "failed" || status?.state === "needs_members";
   return <ChannelActivityPresence>
     {showCoordinator ? <div key="coordinator" className="channel-coordinator-activity channel-animated-activity"
-      data-activity-state={status?.state === "working" ? "thinking" : status?.state} role="status" aria-label={label} title={label}>
+      data-activity-state={status?.state === "working" ? "thinking" : status?.state} role="status" aria-label={`Room · ${label}`} title={`Room · ${label}`}>
       <button type="button" className="channel-activity-inspect" disabled={!onInspectCoordinator || !status?.session_ref}
-        aria-label={`${label} · ${t("channels.executionTrace")}`} onClick={() => status?.session_ref && onInspectCoordinator?.(status.session_ref)}>
-      <span className="channel-coordinator-mascot" aria-hidden="true">
-        <WuuMascot size={32} brand accessory="none" showActivityProp={false}
-          style={{ "--mo-head": "var(--channel-coordinator-body)", "--mo-eye": "var(--channel-coordinator-eyes)" } as CSSProperties}
-          activity={status?.state === "working" ? "thinking" : status?.state === "needs_members" ? "waiting" : status?.state ?? "idle"} />
-      </span>
+        aria-label={`Room · ${label} · ${t("channels.executionTrace")}`} onClick={() => status?.session_ref && onInspectCoordinator?.(status.session_ref)}>
+      <RoomCoordinatorAvatar activity={status?.state === "working" ? "thinking" : status?.state === "needs_members" ? "waiting" : status?.state ?? "idle"} />
       </button>
       {needsAttention ? <span>{label}</span> : null}
       {status?.state === "failed" && status.error ? <span className="channel-coordinator-error">{status.error}</span> : null}

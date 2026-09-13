@@ -186,14 +186,13 @@ function workDisplayState(state?: string): "open" | "doing" | "checking" | "revi
 }
 
 function ChannelOrchestrationCluster({
+  room,
   tasks,
   agents,
-  onOpenSession,
 }: {
   room: ChannelRoom;
   tasks: ChannelMessage[];
   agents: NamedAgent[];
-  onOpenSession?: (sessionID: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const agentByID = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -218,31 +217,13 @@ function ChannelOrchestrationCluster({
                 : workState === "integrating"
                   ? t("channels.workStatus.integrating")
                   : t(`channels.assignmentStatus.${assignmentStatusKey(workState)}`);
-          const elapsedMilliseconds = work
-            ? Math.max(0, Date.parse(work.updated_at) - Date.parse(work.created_at))
-            : 0;
-          const elapsedMinutes = Math.max(1, Math.round(elapsedMilliseconds / 60_000));
-          const elapsed = elapsedMinutes >= 60
-            ? `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m`
-            : `${elapsedMinutes}m`;
-          const inputTokens = work?.runs?.reduce((sum, run) => sum + (run.input_tokens ?? 0), 0) ?? 0;
-          const outputTokens = work?.runs?.reduce((sum, run) => sum + (run.output_tokens ?? 0), 0) ?? 0;
-          const queuedRuns = work?.runs?.filter((run) => run.state === "queued").length ?? 0;
-          const hasInternalDetails = Boolean(
-            work?.checks_summary
-            || work?.verification?.report
-            || work?.artifacts?.length
-            || work?.runs?.length
-            || work?.deliveries?.length
-            || work?.unresolved_items,
-          );
           const title = task.task_title?.trim() || task.body.trim() || t("channels.newTask");
           const body = task.task_title?.trim() && task.body.trim() !== task.task_title.trim()
             ? task.body.trim()
             : "";
           return (
             <details
-              className="channel-assignment-item"
+              className="stream-event-card channel-assignment-item"
               data-state={workState}
               key={task.id}
               style={{ "--channel-assignment-index": index } as CSSProperties}
@@ -255,107 +236,23 @@ function ChannelOrchestrationCluster({
                 <span className="channel-assignment-copy"><strong>{title}</strong></span>
                 <ChevronDown className="channel-assignment-chevron" aria-hidden="true" />
               </summary>
-              <div className="channel-assignment-context">
-                <span>{ownerName}</span>
-                <span className="channel-assignment-status" data-state={workState}>{statusLabel}</span>
-              </div>
-              {body ? <div className="channel-assignment-body"><RichContent text={body} /></div> : null}
-              {work ? (
-                <div className="channel-work-card-details">
-                  <div className="channel-work-summary-line">
-                    {work.changed_files_count ? <span>{t("channels.workFilesChanged", { count: work.changed_files_count })}</span> : null}
-                    <span>{t("channels.workElapsed", { duration: elapsed })}</span>
-                  </div>
-                  {hasInternalDetails ? (
-                    <details className="channel-work-evidence">
-                      <summary>{t("channels.workDetails")}</summary>
-                      <div className="channel-work-evidence-body">
-                        <section>
-                          <strong>{t("channels.workOrchestration")}</strong>
-                          <p>{t("channels.workRevisions", { goal: work.goal_revision, candidate: work.candidate_revision })}</p>
-                          <p>{t("channels.workRounds", { current: work.current_round ?? 1, max: work.max_rounds ?? 3, qualified: work.qualified_candidates ?? 0, candidates: work.candidates_used })}</p>
-                          <p>{t("channels.workUsage", { input: inputTokens.toLocaleString(), output: outputTokens.toLocaleString(), queued: queuedRuns })}</p>
-                          {work.total_cost_usd ? <p>{t("channels.workCost", { cost: work.total_cost_usd.toFixed(4) })}</p> : null}
-                          {work.owner_capacity && work.room_capacity && work.global_capacity ? (
-                            <p>{t("channels.workCapacity", {
-                              ownerActive: work.owner_capacity.active + work.owner_capacity.starting,
-                              ownerStarting: work.owner_capacity.starting,
-                              ownerLimit: work.owner_capacity.limit,
-                              roomActive: work.room_capacity.active + work.room_capacity.starting,
-                              roomStarting: work.room_capacity.starting,
-                              roomLimit: work.room_capacity.limit,
-                              globalActive: work.global_capacity.active + work.global_capacity.starting,
-                              globalStarting: work.global_capacity.starting,
-                              globalLimit: work.global_capacity.limit,
-                            })}</p>
-                          ) : null}
-                          {work.deadline_at ? <p>{t("channels.workDeadline", { deadline: new Date(work.deadline_at).toLocaleString() })}</p> : null}
-                          {work.selection_reason ? <p>{t("channels.workSelection", { reason: work.selection_reason })}</p> : null}
-                        </section>
-                        {work.checks_summary ? <p>{t("channels.workChecks", { summary: work.checks_summary })}</p> : null}
-                        {work.verification?.report ? (
-                          <section>
-                            <strong>{t("channels.workVerifierReport")}</strong>
-                            <RichContent text={work.verification.report} />
-                          </section>
-                        ) : null}
-                        {work.artifacts?.length ? (
-                          <section>
-                            <strong>{t("channels.workArtifacts")}</strong>
-                            <ul>{work.artifacts.map((artifact) => (
-                              <li key={artifact.id}>
-                                <a href={artifact.uri}>{artifact.label || artifact.summary || artifact.kind}</a>
-                                {artifact.id === work.candidate_artifact_ref ? <strong> · {t("channels.workCanonicalCandidate")}</strong> : null}
-                              </li>
-                            ))}</ul>
-                          </section>
-                        ) : null}
-                        {work.runs?.length ? (
-                          <section>
-                            <strong>{t("channels.workRuns")}</strong>
-                            <ul>{work.runs.map((run) => (
-                              <li key={run.id}>
-                                <span>
-                                  {run.profile || run.kind} · {run.state} · {t("channels.workRunRound", { round: run.round ?? 1 })}
-                                  {run.qualified ? ` · ${t("channels.workQualified")}` : ""}
-                                  {(run.input_tokens || run.output_tokens) ? ` · ${((run.input_tokens ?? 0) + (run.output_tokens ?? 0)).toLocaleString()} tokens` : ""}
-                                  {run.cost_usd ? ` · $${run.cost_usd.toFixed(4)}` : ""}
-                                  {run.started_at && Date.parse(run.started_at) > Date.parse(run.created_at)
-                                    ? ` · ${t("channels.workQueuedFor", { seconds: Math.max(1, Math.round((Date.parse(run.started_at) - Date.parse(run.created_at)) / 1000)) })}`
-                                    : ""}
-                                  {run.queue_reason ? ` · ${run.queue_reason}` : ""}
-                                </span>
-                                {run.session_ref ? (
-                                  <button className="channel-work-session-link" type="button" onClick={() => onOpenSession?.(run.session_ref ?? "")}>
-                                    <code>{run.session_ref}</code>
-                                  </button>
-                                ) : null}
-                              </li>
-                            ))}</ul>
-                          </section>
-                        ) : null}
-                        {work.deliveries?.length ? (
-                          <section>
-                            <strong>{t("channels.workPrivateMessages")}</strong>
-                            <ul>{work.deliveries.map((delivery) => (
-                              <li key={delivery.id}>
-                                <span>
-                                  {delivery.kind || "control"} · {delivery.visibility ?? "private"} · {delivery.target_kind ?? "named_agent"}{delivery.target_id ? `:${delivery.target_id}` : ""}
-                                  {delivery.terminal_state ? ` · ${delivery.terminal_state}` : ""}
-                                  {delivery.correlation_id ? ` · #${delivery.correlation_id}` : ""}
-                                  {delivery.invalidated_at ? ` · ${t("channels.workMessageInvalidated")}` : ""}
-                                </span>
-                                <RichContent text={delivery.body} />
-                              </li>
-                            ))}</ul>
-                          </section>
-                        ) : null}
-                        {work.unresolved_items ? <p>{t("channels.workUnresolved", { items: work.unresolved_items })}</p> : null}
-                      </div>
-                    </details>
-                  ) : null}
+              <div className="channel-assignment-content">
+                <div className="channel-assignment-context">
+                  {room.kind !== "dm" ? <span>{ownerName}</span> : null}
+                  <span className="channel-assignment-status" data-state={workState}>{statusLabel}</span>
                 </div>
-              ) : null}
+                {body ? <RichContent text={body} /> : null}
+                {work?.unresolved_items?.trim() && work.unresolved_items.trim() !== body ? (
+                  <RichContent text={work.unresolved_items.trim()} />
+                ) : null}
+                {work?.artifacts?.length ? (
+                  <div className="channel-assignment-artifacts">
+                    {work.artifacts.map((artifact) => (
+                      <a key={artifact.id} href={artifact.uri}>{artifact.label || artifact.summary || artifact.kind}</a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </details>
           );
         })}
@@ -392,6 +289,13 @@ function ChannelMessageBubble({
 
   return (
     <>
+      {message.images?.length || message.files?.length ? (
+        <ComposerAttachmentStrip
+          images={(message.images ?? []).map((image, index) => ({ id: `${message.id}-${attachmentIDPrefix}-image-${index}`, ...image }))}
+          files={(message.files ?? []).map((file, index) => ({ id: `${message.id}-${attachmentIDPrefix}-file-${index}`, ...file }))}
+          removable={false}
+        />
+      ) : null}
       {hasBubble ? (
         <MessageBubble
           outgoing={outgoing}
@@ -423,13 +327,6 @@ function ChannelMessageBubble({
             </button>
           ) : null}
         </MessageBubble>
-      ) : null}
-      {message.images?.length || message.files?.length ? (
-        <ComposerAttachmentStrip
-          images={(message.images ?? []).map((image, index) => ({ id: `${message.id}-${attachmentIDPrefix}-image-${index}`, ...image }))}
-          files={(message.files ?? []).map((file, index) => ({ id: `${message.id}-${attachmentIDPrefix}-file-${index}`, ...file }))}
-          removable={false}
-        />
       ) : null}
     </>
   );
@@ -1963,7 +1860,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   room={selectedRoom}
                   tasks={item.tasks}
                   agents={agents}
-                  onOpenSession={onOpenSession}
                 />
               );
             }
@@ -2111,7 +2007,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
             <div className="channel-activity-region channel-activity-motion" aria-live="polite">
-              <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={agents} activeAgentIDs={responseActivities.map(response => response.agent_id)}
+              <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={selectedRoomAgents} activeAgentIDs={responseActivities.map(response => response.agent_id)}
                 onInspectAgent={inspectAgentActivity}
                 onInspectCoordinator={ref => inspectSession(ref, undefined, t("channels.sessions.coordination"))}
                 onRetry={async (sessionRef) => { await window.wuu!.resumeChannelSession({ sessionRef }); await refreshMessages(selectedRoomID, true); }} />

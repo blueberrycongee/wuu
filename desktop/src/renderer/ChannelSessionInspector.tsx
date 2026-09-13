@@ -6,6 +6,7 @@ import { latestAgentMessageItemID, TurnView } from "./TurnView";
 import { useI18n } from "./i18n";
 import { useChannelSession } from "./useChannelSession";
 import type { NamedAgent } from "../shared/protocol";
+import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { AgentIdentityContext } from "./AgentIdentityContext";
 
 export function ChannelSessionInspector({ sessionRef, turnID, name, agents, overlay = false, closing = false, onBack, onClose }: {
@@ -36,6 +37,7 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
     else scroll.scrollToBottom({ force: true });
   }, [sessionRef, turnID]);
 
+  const isCoordinator = detail?.session.purpose === "coordination";
   const turns = detail?.thread.turns ?? [];
   const targetTurn = turnID ? turns.find((turn) => turn.id === turnID) : undefined;
   const statusTurn = targetTurn ?? turns.at(-1);
@@ -92,7 +94,7 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
         {overlay ? <ArrowLeft className="icon" /> : <PanelRightClose className="icon" />}
       </button>
       {onBack ? <button type="button" className="icon-button" aria-label={t("channels.sessions.back")} onClick={onBack}><ArrowLeft className="icon" /></button> : null}
-      <strong>{name}</strong>
+      <>{isCoordinator ? <RoomCoordinatorAvatar size={24} /> : null}<strong>{isCoordinator ? `Room · ${name}` : name}</strong></>
       {status ? <div className="channel-session-meta">{status}</div> : null}
     </header>
     {error ? <div className="channel-error" role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>{t("channels.sessions.retry")}</button></div> : null}
@@ -110,7 +112,7 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
       const node = event.currentTarget;
       setScrolledAway(node.scrollHeight - node.scrollTop - node.clientHeight >= 80);
     }}>
-      <AgentIdentityContext.Provider value={agents?.find(agent => agent.id === (detail?.session.named_agent_id || detail?.session.principal_id))}>
+      <AgentIdentityContext.Provider value={isCoordinator ? "room" : agents?.find(agent => agent.id === (detail?.session.named_agent_id || detail?.session.principal_id))}>
         <div className="conversation-width session-flow">
           <ConversationTurnList threadID={sessionRef} turns={turns} forcedFullTurnIDs={turnID ? [turnID] : undefined} renderTurn={(turn) => (
             <TurnView turn={turn} threadID={sessionRef} cwd={detail?.thread.cwd}

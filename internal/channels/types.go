@@ -213,15 +213,28 @@ type Room struct {
 	RuntimeID string `json:"-"`
 	// AgentID is a source-compatible internal alias for migrations and tests.
 	// It is never serialized and is not a Named Agent identity.
-	AgentID            string       `json:"-"`
-	AvatarKey          string       `json:"avatar_key,omitempty"`
-	AvatarImage        string       `json:"avatar_image,omitempty"`
-	CreatedBy          string       `json:"created_by"`
-	CreatedAt          time.Time    `json:"created_at"`
-	MembershipRevision int64        `json:"membership_revision"`
-	Members            []RoomMember `json:"members"`
-	UnreadCount        int          `json:"unread_count"`
-	ActivityStatus     string       `json:"activity_status,omitempty"`
+	AgentID            string              `json:"-"`
+	AvatarKey          string              `json:"avatar_key,omitempty"`
+	AvatarImage        string              `json:"avatar_image,omitempty"`
+	CreatedBy          string              `json:"created_by"`
+	CreatedAt          time.Time           `json:"created_at"`
+	MembershipRevision int64               `json:"membership_revision"`
+	Members            []RoomMember        `json:"members"`
+	UnreadCount        int                 `json:"unread_count"`
+	ActivityStatus     string              `json:"activity_status,omitempty"`
+	LastMessage        *RoomMessagePreview `json:"last_message,omitempty"`
+}
+
+// RoomMessagePreview is a bounded public message excerpt, without attachment
+// payloads or private session activity. Empty rooms have no preview.
+type RoomMessagePreview struct {
+	ID             string      `json:"id"`
+	AuthorType     MemberType  `json:"author_type"`
+	AuthorID       string      `json:"author_id"`
+	Kind           MessageKind `json:"kind"`
+	Body           string      `json:"body"`
+	HasAttachments bool        `json:"has_attachments"`
+	CreatedAt      time.Time   `json:"created_at"`
 }
 
 type CreateRoomParams struct {

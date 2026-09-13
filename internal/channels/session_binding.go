@@ -283,7 +283,7 @@ func (s *Service) ListCollaborationSessions(ctx context.Context, params Collabor
 		query += ` AND binding.principal_id = ?`
 		args = append(args, params.PrincipalID)
 	}
-	if params.RoomID != "" && !actor.IsRoomRuntime() {
+	if params.RoomID != "" {
 		query += ` AND binding.room_id = ?`
 		args = append(args, params.RoomID)
 	}
