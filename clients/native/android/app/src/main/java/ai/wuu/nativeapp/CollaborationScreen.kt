@@ -222,7 +222,7 @@ import org.json.JSONObject
         }
     }
     Box(Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.fillMaxSize().testTag("room-timeline"), state = list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("room-timeline"), state = list, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "older") {
             if (state.hasOlder) TextButton(onClick = { model.perform { state.loadOlder() } }, enabled = model.connected && !state.loading) { Text("加载更早消息") }
         }
@@ -307,24 +307,20 @@ import org.json.JSONObject
 }
 
 @Composable private fun RoomBubble(own: Boolean, mark: JSONObject?, status: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth(0.88f).align(if (own) Alignment.CenterEnd else Alignment.CenterStart),
-            horizontalArrangement = if (own) Arrangement.End else Arrangement.Start,
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            if (!own && mark != null) {
-                AgentMark(mark, 22.dp, status = status, subtle = status == null)
-                Spacer(Modifier.width(6.dp))
-            }
-            Surface(
-                color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
-                contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(18.dp),
-            ) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
-            }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+        if (own) Spacer(Modifier.widthIn(min = 40.dp).weight(1f))
+        if (!own && mark != null) {
+            AgentMark(mark, 22.dp, status = status, subtle = status == null)
+            Spacer(Modifier.width(6.dp))
         }
+        Surface(
+            color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(18.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+        }
+        if (!own) Spacer(Modifier.widthIn(min = 30.dp).weight(1f))
     }
 }
 
