@@ -222,7 +222,7 @@ import org.json.JSONObject
         }
     }
     Box(Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.fillMaxSize().testTag("room-timeline"), state = list, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("room-timeline"), state = list, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item(key = "older") {
             if (state.hasOlder) TextButton(onClick = { model.perform { state.loadOlder() } }, enabled = model.connected && !state.loading) { Text("加载更早消息") }
         }
@@ -241,16 +241,19 @@ import org.json.JSONObject
             }
             val own = message.optString("author_type") == "human"
             val mark = if (!own && group) state.agents.firstOrNull { it.optString("id") == message.optString("author_id") } else null
-            // First-of-streak: show mascot only when the previous bubble is a different author (common IM + fits top-stagger).
+            // First-of-streak: name + mascot on the first bubble; later same-author rows keep the avatar gutter empty.
             val previousMessage = state.messages.getOrNull(index - 1)
             val sameAuthorStreak = previousMessage != null
                 && previousMessage.optString("kind") != "system"
                 && previousMessage.optString("author_type") == message.optString("author_type")
                 && previousMessage.optString("author_id") == message.optString("author_id")
+            val firstOfStreak = mark != null && !sameAuthorStreak
             RoomBubble(
                 own = own,
                 mark = mark,
-                showMark = mark != null && !sameAuthorStreak,
+                showMark = firstOfStreak,
+                senderName = if (firstOfStreak) state.agentName(message.optString("author_id")) else null,
+                streakContinue = sameAuthorStreak,
             ) {
                 val reply = message.optString("reply_to")
                 if (reply.isNotEmpty()) ReplyOrnament(state.messages.firstOrNull { it.optString("id") == reply }?.optString("body")?.takeIf { it.isNotBlank() } ?: "回复较早的消息")
@@ -283,7 +286,7 @@ import org.json.JSONObject
                 && last.optString("kind") != "system"
                 && last.optString("author_type") == "agent"
                 && last.optString("author_id") == response.optString("agent_id")
-            CollaborationActivity(model, response, showMark = !sameAgentStreak)
+            CollaborationActivity(model, response, showMark = !sameAgentStreak, reserveGutter = group)
         }
         item(key = "bottom") { Spacer(Modifier.height(1.dp)) }
     }
@@ -293,7 +296,7 @@ import org.json.JSONObject
     }
 }
 
-@Composable internal fun CollaborationActivity(model: AppModel, response: JSONObject, showMark: Boolean = true) {
+@Composable internal fun CollaborationActivity(model: AppModel, response: JSONObject, showMark: Boolean = true, reserveGutter: Boolean = false) {
     val state = response.optString("state")
     val failed = state in listOf("failed", "interrupted")
     val label = when (state) {
@@ -305,9 +308,19 @@ import org.json.JSONObject
         else -> "处理中"
     }
     var resuming by remember(response.optString("id")) { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (showMark) {
+    val avatarSize = 26.dp
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (reserveGutter) {
+            // Match group bubble gutter so activity status lines up under the message column.
+            Box(Modifier.width(avatarSize), contentAlignment = Alignment.Center) {
+                if (showMark) {
+                    AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == response.optString("agent_id") }, avatarSize, status = state)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+        } else if (showMark) {
             AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == response.optString("agent_id") }, 36.dp, status = state)
+            Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f)) {
             Text(model.collaboration.agentName(response.optString("agent_id")), style = MaterialTheme.typography.labelMedium)
@@ -321,43 +334,76 @@ import org.json.JSONObject
     }
 }
 
-@Composable private fun RoomBubble(own: Boolean, mark: JSONObject?, showMark: Boolean = mark != null, status: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    // Cap at ~88% like iOS spacers; arrange start/end so the Surface wraps content instead of
-    // expanding under weight(1f) spacers (which made short bubbles look full-width).
-    Box(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth(0.88f).align(if (own) Alignment.CenterEnd else Alignment.CenterStart),
-            horizontalArrangement = if (own) Arrangement.End else Arrangement.Start,
-            verticalAlignment = Alignment.Top,
-        ) {
-            if (!own && mark != null) {
-                // Stagger: avatar top-leading overlaps bubble so face stays near DM (~8dp pad).
-                // Keep the same leading inset when hiding consecutive avatars so left edges stay stable.
-                Box {
-                    Surface(
-                        modifier = Modifier.padding(start = 2.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        shape = RoundedCornerShape(18.dp),
-                    ) {
-                        Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
-                    }
-                    if (showMark) {
-                        Box(Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = 1.dp)) {
-                            AgentMark(mark, 22.dp, status = status, subtle = status == null)
-                        }
-                    }
-                }
-            } else {
-                Surface(
-                    color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
-                    contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(18.dp),
+@Composable private fun RoomBubble(
+    own: Boolean,
+    mark: JSONObject?,
+    showMark: Boolean = mark != null,
+    senderName: String? = null,
+    streakContinue: Boolean = false,
+    status: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    // ~78% max like iOS trailing/leading spacers; Surface wraps content (short 「好的」 stays small).
+    val maxFrac = 0.78f
+    val avatarSize = 26.dp
+    val gutterGap = 8.dp
+    // Tighter gap inside a streak; slightly larger between different authors.
+    val topPad = if (streakContinue) 0.dp else 6.dp
+    Box(Modifier.fillMaxWidth().padding(top = topPad)) {
+        when {
+            own -> Row(
+                Modifier.fillMaxWidth(maxFrac).align(Alignment.CenterEnd),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                BubbleSurface(own = true, content = content)
+            }
+            mark != null -> Row(
+                Modifier.fillMaxWidth(maxFrac).align(Alignment.CenterStart),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.Top,
+            ) {
+                // Fixed avatar column BESIDE the bubble (never overlapping the corner).
+                // When a name sits above the first streak bubble, pad the mark so it top-aligns to the bubble.
+                val namePad = if (senderName != null) 17.dp else 0.dp
+                Box(
+                    Modifier.width(avatarSize).padding(top = namePad),
+                    contentAlignment = Alignment.TopCenter,
                 ) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+                    if (showMark) AgentMark(mark, avatarSize, status = status, subtle = status == null)
+                }
+                Spacer(Modifier.width(gutterGap))
+                Column(horizontalAlignment = Alignment.Start) {
+                    if (senderName != null) {
+                        Text(
+                            senderName,
+                            Modifier.padding(start = 2.dp, bottom = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    BubbleSurface(own = false, content = content)
                 }
             }
+            else -> Row(
+                Modifier.fillMaxWidth(maxFrac).align(Alignment.CenterStart),
+                horizontalArrangement = Arrangement.Start,
+            ) {
+                // DM incoming: no avatar / name column (unchanged).
+                BubbleSurface(own = false, content = content)
+            }
         }
+    }
+}
+
+@Composable private fun BubbleSurface(own: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
     }
 }
 
