@@ -117,7 +117,20 @@ import org.json.JSONObject
     }, bottomBar = {
         state.selectedID?.let { id ->
             val attachments = state.attachments[id].orEmpty()
+            // Activity strip + composer share this column so HostScreen imePadding
+            // (and adjustResize) push both above the IME together.
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                val activities = state.responses.distinctBy { it.optString("agent_id") }
+                if (activities.isNotEmpty()) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        activities.forEach { response ->
+                            CollaborationActivity(model, response)
+                        }
+                    }
+                }
                 ComposerRow(
                     value = state.drafts[id].orEmpty(),
                     onChange = { state.drafts[id] = it },
@@ -214,7 +227,7 @@ import org.json.JSONObject
         }
     }
     val viewport by remember { derivedStateOf { list.layoutInfo.viewportSize } }
-    LaunchedEffect(state.messages.lastOrNull()?.toString(), state.responses.lastOrNull()?.toString(), viewport) {
+    LaunchedEffect(state.messages.lastOrNull()?.toString(), viewport) {
         if (state.messages.isNotEmpty() && (!initialized || following)) {
             withFrameNanos { }
             list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
@@ -280,14 +293,6 @@ import org.json.JSONObject
                 }
             }
         }
-        items(state.responses, key = { "response:${it.getString("id")}" }) { response ->
-            val last = state.messages.lastOrNull()
-            val sameAgentStreak = last != null
-                && last.optString("kind") != "system"
-                && last.optString("author_type") == "agent"
-                && last.optString("author_id") == response.optString("agent_id")
-            CollaborationActivity(model, response, showMark = !sameAgentStreak, reserveGutter = group)
-        }
         item(key = "bottom") { Spacer(Modifier.height(1.dp)) }
     }
         if (!following && list.canScrollForward) Box(Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
@@ -296,37 +301,29 @@ import org.json.JSONObject
     }
 }
 
-@Composable internal fun CollaborationActivity(model: AppModel, response: JSONObject, showMark: Boolean = true, reserveGutter: Boolean = false) {
+@Composable internal fun CollaborationActivity(model: AppModel, response: JSONObject) {
     val state = response.optString("state")
     val failed = state in listOf("failed", "interrupted")
-    val label = when (state) {
-        "thinking", "responding", "sending" -> "正在工作"
-        "queued" -> "等待中"
-        "waiting" -> "等待后续消息"
-        "failed" -> "回复失败"
-        "interrupted" -> "已停止"
-        else -> "处理中"
-    }
+    // Prefer shared collaborationStatus copy; unknown response states fall back to 处理中.
+    val statusCopy = collaborationStatus(state)
+    val label = if (statusCopy.isBlank() || statusCopy == state) "处理中" else statusCopy
     var resuming by remember(response.optString("id")) { mutableStateOf(false) }
-    val avatarSize = 26.dp
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (reserveGutter) {
-            // Match group bubble gutter so activity status lines up under the message column.
-            Box(Modifier.width(avatarSize), contentAlignment = Alignment.Center) {
-                if (showMark) {
-                    AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == response.optString("agent_id") }, avatarSize, status = state)
-                }
-            }
-            Spacer(Modifier.width(8.dp))
-        } else if (showMark) {
-            AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == response.optString("agent_id") }, 36.dp, status = state)
-            Spacer(Modifier.width(10.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(model.collaboration.agentName(response.optString("agent_id")), style = MaterialTheme.typography.labelMedium)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (failed && response.optString("error").isNotBlank()) Text(response.optString("error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
+    val agentID = response.optString("agent_id")
+    val name = model.collaboration.agentName(agentID)
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == agentID }, 22.dp, status = state)
+        Text(
+            "$name $label",
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (failed) TextButton(enabled = model.connected && !resuming, onClick = {
             resuming = true
             model.perform { try { model.collaboration.resume(response) } finally { resuming = false } }
