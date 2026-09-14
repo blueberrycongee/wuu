@@ -1,3 +1,4 @@
+import "./styles/channel-group-avatar.css";
 import type { CSSProperties, JSX } from "react";
 import type { ChannelRoom, ChannelRoomMember, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";

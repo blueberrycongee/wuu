@@ -4,6 +4,14 @@ on:
   pull_request:
     paths:
       - "clients/native/**"
+      - "assets/app-icon-source.json"
+      - "desktop/src/renderer/*Avatar*.tsx"
+      - "desktop/src/renderer/WuuMascot*.tsx"
+      - "desktop/src/renderer/useMascot*.ts"
+      - "desktop/src/renderer/wuu-mascot-spec.ts"
+      - "desktop/src/renderer/styles/*avatar*.css"
+      - "desktop/src/renderer/styles/wuu-mascot.css"
+      - "desktop/vendor/blobatar/**"
       - "internal/**"
       - "packages/plugin-go/**"
       - "go.mod"
@@ -14,6 +22,14 @@ on:
     branches: [main]
     paths:
       - "clients/native/**"
+      - "assets/app-icon-source.json"
+      - "desktop/src/renderer/*Avatar*.tsx"
+      - "desktop/src/renderer/WuuMascot*.tsx"
+      - "desktop/src/renderer/useMascot*.ts"
+      - "desktop/src/renderer/wuu-mascot-spec.ts"
+      - "desktop/src/renderer/styles/*avatar*.css"
+      - "desktop/src/renderer/styles/wuu-mascot.css"
+      - "desktop/vendor/blobatar/**"
       - "internal/**"
       - "packages/plugin-go/**"
       - "go.mod"

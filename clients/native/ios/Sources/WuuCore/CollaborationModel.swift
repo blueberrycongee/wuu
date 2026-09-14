@@ -14,6 +14,7 @@ import Observation
     public var drafts: [String: String] = [:]
     public var attachments: [String: [InputAttachment]] = [:]
     public var positions: [String: String] = [:]
+    public var followingLatest: [String: Bool] = [:]
     public private(set) var hasOlder: [String: Bool] = [:]
     public private(set) var loadingOlder = false
     public var error: String?
@@ -31,7 +32,7 @@ import Observation
 
     public func reset() {
         revision = UUID(); selection = UUID(); mutation += 1
-        agents = []; rooms = []; roomID = nil; timelines = [:]; drafts = [:]; attachments = [:]; positions = [:]
+        agents = []; rooms = []; roomID = nil; timelines = [:]; drafts = [:]; attachments = [:]; positions = [:]; followingLatest = [:]
         hasOlder = [:]; loadingOlder = false
         removedRooms = []; taskRefreshOffset = [:]
         error = nil; loading = false; sending = false; creating = false
@@ -52,7 +53,7 @@ import Observation
                     let nextIDs = Set(directory["rooms"].array.compactMap { $0["id"].string })
                     for id in rooms.map(\.id) where !nextIDs.contains(id) {
                         removedRooms.insert(id)
-                        timelines[id] = nil; drafts[id] = nil; attachments[id] = nil; positions[id] = nil
+                        timelines[id] = nil; drafts[id] = nil; attachments[id] = nil; positions[id] = nil; followingLatest[id] = nil
                         hasOlder[id] = nil; taskRefreshOffset[id] = nil
                     }
                     removedRooms.subtract(nextIDs)
@@ -68,6 +69,30 @@ import Observation
             guard app.connected, revision == stamp else { return }
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
         }
+    }
+
+    public func resume(_ response: JSONValue, app: any CollaborationConnection) async throws {
+        guard app.connected, let id = roomID,
+              let current = timeline.responses.first(where: { $0["id"] == response["id"] }),
+              current["session_ref"] == response["session_ref"], let ref = current["session_ref"].string, !ref.isEmpty,
+              ["failed", "interrupted"].contains(current["state"].string ?? "") else { throw NativeError.invalid("回复状态已更新") }
+        let stamp = revision, selected = selection
+        _ = try await app.channelCall("channel/session/resume", ["sessionRef": .string(ref)])
+        try Task.checkCancellation()
+        guard revision == stamp, selection == selected, roomID == id else { throw CancellationError() }
+        try await refreshRoom(id, app: app)
+    }
+
+    public func readAttachment(_ message: CollaborationMessage, field: String, index: Int, preview: Bool = false, app: any CollaborationConnection) async throws -> LoadedAttachment {
+        guard let id = roomID, ["images", "markdown_images", "files"].contains(field), message.value[field].array.indices.contains(index),
+              timeline.messages.contains(where: { $0.id == message.id }) else { throw NativeError.invalid("附件不属于当前房间") }
+        let stamp = revision, selected = selection
+        let result = try await readMessageAttachment(message.value[field].array[index], scopeID: id, messageID: message.id, preview: preview) { method, params in
+            try await app.channelCall(method, params)
+        }
+        try Task.checkCancellation()
+        guard revision == stamp, selection == selected, roomID == id else { throw CancellationError() }
+        return result
     }
 
     public func refreshRoom(_ id: String, app: any CollaborationConnection) async throws {

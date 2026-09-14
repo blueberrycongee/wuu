@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { projectRemoteHistory } from "./remoteHistory";
-import { RemoteAttachments, threadAttachmentParams, threadContentParams } from "./remoteAttachments";
+import { RemoteAttachments, attachmentReadTarget, threadContentParams } from "./remoteAttachments";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AppServerResponse, ServerEvent } from "../shared/protocol";
 
@@ -139,17 +139,17 @@ export class RemoteAppServerBridge {
           if (method === "remote/history/read") return request(cwd, "thread/history/read", params, finish);
           if (method === "remote/attachment/read" || method === "remote/attachment/preview") {
             const input = params as { ref?: unknown; offset?: unknown };
-            const source = typeof input?.ref === "string" ? threadAttachmentParams(input.ref) : undefined;
-            if (source) return request(cwd, "thread/attachment/read", { ...source, offset: input.offset ?? 0, preview: method.endsWith("preview") }, finish);
+            const source = typeof input?.ref === "string" ? attachmentReadTarget(input.ref) : undefined;
+            if (source) return request(cwd, source.method, { ...source.params, offset: input.offset ?? 0, preview: method.endsWith("preview") }, finish);
             if (method.endsWith("preview")) throw new Error("Preview is unavailable for this attachment");
             return this.attachments.read(params);
           }
           const hydrated = await this.attachments.hydrateRemote(params, async ref => {
-            const source = threadAttachmentParams(ref)!;
+            const source = attachmentReadTarget(ref)!;
             const chunks: string[] = [];
             let offset = 0, total = 1;
             while (offset < total) {
-              const chunk = await request(cwd, "thread/attachment/read", { ...source, offset }, () => {}) as { data: string; total: number; offset: number };
+              const chunk = await request(cwd, source.method, { ...source.params, offset }, () => {}) as { data: string; total: number; offset: number };
               if (!chunk.data || chunk.offset !== offset || chunk.total > 64 * 1024 * 1024) throw new Error("Invalid attachment response");
               chunks.push(chunk.data); offset += chunk.data.length; total = chunk.total;
             }

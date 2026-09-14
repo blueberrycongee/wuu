@@ -82,7 +82,10 @@ public struct ChatThread: Identifiable, Sendable {
                 return ChatMessage(id: (turn["id"].string ?? "") + ":" + (item["id"].string ?? ""),
                     role: type == "user_message" ? "user" : type == "error" ? "error" : type == "tool_call" ? "tool" : "assistant",
                     text: item["text"].string ?? item["error"].string ?? "", contentRef: item["remote_content_ref"].string ?? "",
-                    attachments: item["images"].array + item["files"].array,
+                    attachments: item["images"].array + item["files"].array + item["markdown_images"].array +
+                        item["result_detail"]["content"].array.filter { $0["type"].string == "image" }.map { part in
+                            ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"]]
+                        },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil)
             }
             if let error = turn["error"]["message"].string, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {

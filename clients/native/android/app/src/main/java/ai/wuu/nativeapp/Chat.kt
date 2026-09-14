@@ -43,7 +43,10 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
         val messages = (turn.optJSONArray("items") ?: JSONArray()).objects().mapNotNull { item ->
             val role = when (item.optString("type")) { "user_message" -> "user"; "agent_message" -> "assistant"; "error" -> "error"; "tool_call" -> "tool"; else -> return@mapNotNull null }
             ChatMessage(turn.getString("id") + ":" + item.getString("id"), role, item.optString("text", item.optString("error")), item.optString("remote_content_ref"),
-                ((item.optJSONArray("images") ?: JSONArray()).objects() + (item.optJSONArray("files") ?: JSONArray()).objects()).map { it.toString() },
+                ((item.optJSONArray("images") ?: JSONArray()).objects() + (item.optJSONArray("files") ?: JSONArray()).objects() + (item.optJSONArray("markdown_images") ?: JSONArray()).objects() +
+                    item.optJSONObject("result_detail")?.optJSONArray("content")?.objects().orEmpty().filter { it.optString("type") == "image" }.map {
+                        JSONObject(it.toString()).put("media_type", it.optString("mime_type"))
+                    }).map { it.toString() },
                 if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"))
         }
         val error = turn.optJSONObject("error")?.optString("message").orEmpty()

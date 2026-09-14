@@ -11,6 +11,55 @@ class CollaborationTest {
     private fun room(id: String) = json("id" to id, "name" to id, "kind" to "channel")
     private fun message(id: String, seq: Int, body: String = id) = json("id" to id, "seq" to seq, "body" to body)
 
+    @Test fun resumeUsesCurrentPublicReplyAndRejectsStaleSelection() = runTest {
+        val reply = json("id" to "reply", "agent_id" to "agent", "session_ref" to "session", "turn_id" to "turn", "state" to "failed")
+        var resumed = 0
+        lateinit var state: Collaboration
+        state = Collaboration { method, params -> when (method) {
+            "channel/bootstrap" -> json("rooms" to JSONArray(listOf(room("a"), room("b"))))
+            "channel/message/list" -> json("messages" to JSONArray(), "responses" to JSONArray(listOf(reply)))
+            "channel/session/resume" -> { assertEquals("session", params.getString("sessionRef")); resumed++; reply.put("state", "thinking"); json() }
+            else -> json()
+        } }
+        state.mode(true); state.select("a"); state.refresh()
+        state.resume(reply)
+        assertEquals(1, resumed)
+        assertTrue(runCatching { state.resume(reply) }.isFailure)
+        state.select("b")
+        assertTrue(runCatching { state.resume(reply) }.isFailure)
+        assertEquals(1, resumed)
+    }
+
+    @Test fun attachmentReadUsesBoundedProtocolAndRejectsNavigationRace() = runTest {
+        val data = java.util.Base64.getEncoder().encodeToString("%PDF-test".toByteArray())
+        val digest = sha256(("application/pdf\u0000" + data).toByteArray()).joinToString("") { "%02x".format(it) }
+        val reference = "channel:" + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(JSONArray(listOf("a", "file", 7, 0, digest, "files")).toString().toByteArray())
+        val message = message("file", 7).put("files", JSONArray(listOf(json("media_type" to "application/pdf", "filename" to "brief.pdf", "remote_ref" to reference))))
+        var switchRoom = false
+        lateinit var state: Collaboration
+        state = Collaboration { method, params -> when (method) {
+            "channel/bootstrap" -> json("rooms" to JSONArray(listOf(room("a"), room("b"))))
+            "channel/message/list" -> json("messages" to JSONArray(listOf(message)))
+            "channel/attachment/read" -> {
+                assertEquals("a", params.getString("room_id")); assertEquals("file", params.getString("message_id")); assertEquals(7, params.getInt("seq"))
+                assertEquals(0, params.getInt("offset")); assertEquals(digest, params.getString("sha256"))
+                if (switchRoom) state.select("b")
+                json("data" to data, "total" to data.length, "offset" to 0, "content_type" to "application/pdf")
+            }
+            else -> json()
+        } }
+        state.mode(true); state.select("a"); state.refresh()
+        assertEquals("brief.pdf", state.readAttachment(message, "files", 0).filename)
+        switchRoom = true
+        assertTrue(runCatching { state.readAttachment(message, "files", 0) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+    }
+
+    @Test fun attachmentReadRejectsUnsupportedOrMalformedInlineContent() {
+        assertTrue(runCatching { decodeInlineAttachment(json("media_type" to "text/html", "data" to "dGVzdA==")) }.isFailure)
+        assertTrue(runCatching { decodeInlineAttachment(json("media_type" to "application/pdf", "data" to "dGVzdA==")) }.isFailure)
+        assertTrue(runCatching { decodeInlineAttachment(json("media_type" to "image/png", "url" to "https://example.test/photo.png")) }.isFailure)
+    }
+
     @Test fun lateDirectoryCannotReturnAfterLeavingHost() = runTest {
         val pending = CompletableDeferred<Unit>()
         val started = CompletableDeferred<Unit>()

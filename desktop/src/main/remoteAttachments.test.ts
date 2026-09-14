@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { RemoteAttachments, threadAttachmentParams } from "./remoteAttachments";
+import { RemoteAttachments, attachmentReadTarget, threadAttachmentParams } from "./remoteAttachments";
 it("defers images, reads bounded chunks and hydrates edits without changing history", () => {
   const store = new RemoteAttachments();
   const image = { media_type: "image/png", data: "a".repeat(400_000) };
@@ -39,4 +39,14 @@ it("addresses structured tool-result images by their original content position",
   const image = result.item.result_detail.content[1];
   expect(image.data).toBe("");
   expect(threadAttachmentParams(image.remote_ref!)).toMatchObject({thread_id:"thread",turn_id:"turn",item_id:"tool",index:1,kind:"result"});
+});
+
+it("keeps channel photos readable after the transient cache is cleared", async () => {
+  const store = new RemoteAttachments();
+  const source = { room_id: "room", id: "message", seq: 12, images: [{ media_type: "image/png", data: "a".repeat(20_000) }] };
+  const projected = store.project(source) as typeof source & { images: Array<{ remote_ref: string }> };
+  const reference = projected.images[0].remote_ref;
+  store.clear();
+  expect(attachmentReadTarget(reference)).toMatchObject({ method: "channel/attachment/read", params: { room_id: "room", message_id: "message", seq: 12, index: 0, field: "images" } });
+  expect(await store.hydrateRemote(projected, async ref => { expect(ref).toBe(reference); return source.images[0].data; })).toEqual(source);
 });

@@ -20,7 +20,10 @@ struct ConversationTimeline: View {
                         }
                         ForEach(model.messages) { message in
                             if let tool = message.tool {
-                                ToolActivityView(model: model, message: message, tool: tool).id(message.id)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ToolActivityView(model: model, message: message, tool: tool)
+                                    MessageAttachments(model: model, message: message)
+                                }.id(message.id)
                             } else {
                                 MessageBubble(model: model, message: message).id(message.id)
                             }
@@ -92,11 +95,7 @@ private struct MessageBubble: View {
             VStack(alignment: .leading, spacing: 8) {
                 MessageText(text: message.text, markdown: message.role == "assistant")
                     .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
-                ForEach(Array(message.attachments.enumerated()), id: \.offset) { index, attachment in
-                    Button { model.perform { try await model.previewAttachment(message, index: index) } } label: {
-                        Label(attachment["filename"].string ?? "查看图片", systemImage: attachment["media_type"].string?.hasPrefix("image/") == true ? "photo" : "doc")
-                    }.disabled(!model.connected || model.loadingAttachment)
-                }
+                MessageAttachments(model: model, message: message)
                 if !message.contentRef.isEmpty {
                     Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
                         .disabled(!model.connected || model.loadingContent.contains(message.id))

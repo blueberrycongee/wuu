@@ -855,6 +855,8 @@ export type ChannelAgentCreationProposal = {
 };
 
 export type ChannelMessage = {
+  /** Local images explicitly embedded in the reply; projected for remote clients. */
+  markdown_images?: InputImage[];
   source_session_ref?: string;
   source_turn_id?: string;
   id: string;
@@ -1167,7 +1169,42 @@ export type ChannelRoomReadResult = { read: boolean };
 export type ChannelMessageListParams = {
   room_id: string;
   after_seq?: number;
+  before_seq?: number;
   limit?: number;
+  latest?: boolean;
+  attachment_metadata_only?: boolean;
+};
+
+/** Offset and total count base64 characters; each chunk is at most 128 KiB. */
+export type AttachmentReadResult = {
+  data: string;
+  total: number;
+  offset: number;
+  content_type: string;
+  sha256?: string;
+};
+export type ChannelAttachmentReadParams = {
+  room_id: string;
+  message_id: string;
+  seq: number;
+  field: "images" | "files";
+  index: number;
+  sha256: string;
+  offset?: number;
+  preview?: boolean;
+};
+/** Source must be an image embedded in this assistant reply. No remote URLs are fetched. */
+export type MessageImageReadParams = {
+  kind: "channel" | "thread";
+  scope_id: string;
+  turn_id?: string;
+  message_id: string;
+  seq?: number;
+  source: string;
+  offset?: number;
+  preview?: boolean;
+  /** Echo the first response digest for every later original-image chunk. */
+  sha256?: string;
 };
 export type ChannelResponse = {
   id: string;
@@ -2346,6 +2383,8 @@ export type TurnEventNotification = {
 };
 
 export type ThreadItem = {
+  /** Local Markdown images, readable through message/image/read. */
+  markdown_images?: InputImage[];
   /** Complete content is fetched separately when a history item exceeds the page budget. */
   remote_content_ref?: string;
   id: string;
@@ -2415,13 +2454,16 @@ export type TodoUpdate = {
 export type InputImage = {
   media_type: string;
   data: string;
-  /** Remote images may retain bytes on the desktop until explicitly viewed. */
+  width?: number;
+  height?: number;
+  /** Bytes stay on the host; previews load on visibility and originals on activation. */
   remote_ref?: string;
 };
 
 export type InputFile = {
   media_type: string;
   data: string;
+  remote_ref?: string;
   filename?: string;
 };
 

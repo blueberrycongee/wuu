@@ -2212,8 +2212,9 @@ const (
 )
 
 type ThreadItem struct {
-	RemoteContentRef string `json:"remote_content_ref,omitempty"`
-	ID               string `json:"id"`
+	MarkdownImages   []ThreadItemImage `json:"markdown_images,omitempty"`
+	RemoteContentRef string            `json:"remote_content_ref,omitempty"`
+	ID               string            `json:"id"`
 	// Seq is the message's stable per-thread address (session_messages.seq),
 	// present on persisted chat messages.
 	// 0/absent for synthetic or not-yet-persisted items.

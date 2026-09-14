@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import WuuCore
 
 @MainActor private final class ChannelFixture: CollaborationConnection {
@@ -12,16 +13,67 @@ import XCTest
 }
 
 final class CollaborationLifecycleTests: XCTestCase {
+    @MainActor func testResumeUsesCurrentPublicReplyAndRejectsStaleSelection() async throws {
+        let model = CollaborationModel(), fixture = ChannelFixture()
+        let reply: JSONValue = ["id": "reply", "session_ref": "session", "turn_id": "turn", "state": "failed"]
+        var timeline = CollaborationTimeline(); timeline.merge(["responses": .array([reply])])
+        model.select("a"); model.timelines["a"] = timeline
+        var resumes = 0
+        fixture.handle = { method, params in
+            if method == "channel/session/resume" {
+                XCTAssertEqual(params["sessionRef"].string, "session"); resumes += 1
+            }
+            return ["messages": [], "responses": []]
+        }
+        try await model.resume(reply, app: fixture)
+        XCTAssertEqual(resumes, 1)
+        do { try await model.resume(reply, app: fixture); XCTFail("Finished reply was resumed twice") } catch {}
+        model.select("b")
+        do { try await model.resume(reply, app: fixture); XCTFail("Old room reply was resumed") } catch {}
+        XCTAssertEqual(resumes, 1)
+    }
+
+    @MainActor func testAttachmentUsesBoundedProtocolAndRejectsNavigationRace() async throws {
+        let model = CollaborationModel(), fixture = ChannelFixture()
+        let data = Data("%PDF-test".utf8).base64EncodedString()
+        let digest = SHA256.hash(data: Data(("application/pdf\0" + data).utf8)).map { String(format: "%02x", $0) }.joined()
+        let reference: JSONValue = .array(["a", "file", 7, 0, .string(digest), "files"])
+        let file: JSONValue = ["media_type": "application/pdf", "filename": "brief.pdf", "remote_ref": .string("channel:" + (try JSONEncoder().encode(reference)).base64URL)]
+        let value: JSONValue = ["id": "file", "seq": 7, "files": .array([file])]
+        var timeline = CollaborationTimeline(); timeline.merge(["messages": .array([value])])
+        model.select("a"); model.timelines["a"] = timeline
+        var switchRoom = false
+        fixture.handle = { method, params in
+            XCTAssertEqual(method, "channel/attachment/read")
+            XCTAssertEqual(params["room_id"].string, "a"); XCTAssertEqual(params["message_id"].string, "file")
+            XCTAssertEqual(params["seq"].number, 7); XCTAssertEqual(params["offset"].number, 0); XCTAssertEqual(params["sha256"].string, digest)
+            if switchRoom { model.select("b") }
+            return ["data": .string(data), "total": .number(Double(data.count)), "offset": 0, "content_type": "application/pdf"]
+        }
+        let attachment = try await model.readAttachment(CollaborationMessage(value), field: "files", index: 0, app: fixture)
+        XCTAssertEqual(attachment.filename, "brief.pdf")
+        switchRoom = true
+        do { _ = try await model.readAttachment(CollaborationMessage(value), field: "files", index: 0, app: fixture); XCTFail("Stale attachment opened") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    func testInlineAttachmentRejectsUnsupportedContentAndURLs() {
+        XCTAssertThrowsError(try decodeInlineAttachment(["media_type": "text/html", "data": "dGVzdA=="]))
+        XCTAssertThrowsError(try decodeInlineAttachment(["media_type": "application/pdf", "data": "dGVzdA=="]))
+        XCTAssertThrowsError(try decodeInlineAttachment(["media_type": "image/png", "url": "https://example.test/photo.png"]))
+    }
+
     @MainActor func testDeletedRoomClearsAllHostScopedContent() async {
         let model = CollaborationModel(), fixture = ChannelFixture()
         model.rooms = [CollaborationRoom(["id": "deleted"])]
         model.select("deleted"); model.drafts["deleted"] = "private draft"
         model.positions["deleted"] = "message"
+        model.followingLatest["deleted"] = false
         model.timelines["deleted"] = CollaborationTimeline()
         fixture.handle = { _, _ in fixture.connected = false; return ["rooms": [], "agents": []] }
         await model.poll(app: fixture)
         XCTAssertNil(model.roomID)
-        XCTAssertTrue(model.timelines.isEmpty); XCTAssertTrue(model.drafts.isEmpty); XCTAssertTrue(model.positions.isEmpty)
+        XCTAssertTrue(model.timelines.isEmpty); XCTAssertTrue(model.drafts.isEmpty); XCTAssertTrue(model.positions.isEmpty); XCTAssertTrue(model.followingLatest.isEmpty)
     }
 
     @MainActor func testOlderLoadedTaskRefreshesOutsideLatestWindow() async throws {

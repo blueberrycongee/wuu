@@ -19,6 +19,7 @@ import CryptoKit
     var sending = false
     var loadingHistory = false
     var loadingContent: Set<String> = []
+    let imagePreviews = ImagePreviewLoader()
     var attachmentPreview: LoadedAttachment?
     var loadingAttachment = false
     var archivedList = false
@@ -270,7 +271,7 @@ import CryptoKit
         events?.cancel(); events = nil
         let oldRemote = remote; remote = nil
         connected = false; connecting = false; pendingApproval = nil; sending = false
-        loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         questions = []; questionRevision += 1
         await oldRemote?.disconnect()
     }
@@ -410,7 +411,7 @@ import CryptoKit
     }
     func open(_ id: String) async throws {
         opening = UUID(); let selection = opening
-        activeID = id; live = nil; saved = nil; loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        activeID = id; live = nil; saved = nil; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         let stamp = epoch
         if connected, let remote {
             _ = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true], snapshotTag: selection.uuidString)
@@ -461,7 +462,7 @@ import CryptoKit
         let result = try await remote.call("thread/start", params: params)
         guard epoch == stamp, opening == selection else { return }
         let thread = ChatThread(result["thread"])
-        activeID = thread.id; live = thread; saved = nil; loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        activeID = thread.id; live = thread; saved = nil; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         try await loadThreads()
     }
     func send(_ text: String, attachments: [InputAttachment] = []) async throws {
@@ -472,6 +473,14 @@ import CryptoKit
         _ = try await remote.call(live.running ? "turn/queue" : "turn/start", params: input.params(threadID: live.id, queued: live.running))
         guard epoch == stamp else { throw CancellationError() }
     }
+    func attachmentThumbnail(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
+        guard connected, let remote, let live, message.attachments.indices.contains(index),
+              live.messages.contains(where: { $0.id == message.id }) else { throw CancellationError() }
+        let stamp = epoch, selected = opening
+        let result = try await remote.readAttachment(message.attachments[index], threadID: live.id, messageID: message.id, preview: true)
+        guard epoch == stamp, opening == selected else { throw CancellationError() }
+        return result
+    }
     func previewAttachment(_ message: ChatMessage, index: Int) async throws {
         guard connected, let remote, let live, !loadingAttachment, message.attachments.indices.contains(index),
               live.messages.contains(where: { $0 == message }) else { return }
@@ -481,6 +490,14 @@ import CryptoKit
         let result = try await remote.readAttachment(message.attachments[index], threadID: live.id, messageID: message.id)
         guard epoch == stamp, opening == selection, self.remote === remote,
               self.live?.messages.contains(where: { $0 == message }) == true else { return }
+        attachmentPreview = result
+    }
+    func previewCollaborationAttachment(_ message: CollaborationMessage, field: String, index: Int) async throws {
+        guard connected, !loadingAttachment else { return }
+        let stamp = epoch; loadingAttachment = true
+        defer { if epoch == stamp { loadingAttachment = false } }
+        let result = try await collaboration.readAttachment(message, field: field, index: index, app: self)
+        guard stamp == epoch else { return }
         attachmentPreview = result
     }
     func stop() async throws {
