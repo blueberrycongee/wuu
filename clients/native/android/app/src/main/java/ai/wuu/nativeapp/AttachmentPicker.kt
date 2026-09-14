@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.clickable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,7 +69,6 @@ internal fun decodeAttachmentImage(bytes: ByteArray, maxDimension: Int = 1600): 
         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
     }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun AttachmentPicker(attachments: List<InputAttachment>, update: (List<InputAttachment>) -> Unit, model: AppModel, enabled: Boolean = true) {
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }; var reading by remember { mutableStateOf(false) }
@@ -96,26 +94,51 @@ internal fun decodeAttachmentImage(bytes: ByteArray, maxDimension: Int = 1600): 
         val file = cameraPath?.let(::File); cameraPath = null
         accept(if (captured && file != null) FileProvider.getUriForFile(context, context.packageName + ".exports", file) else null, file)
     }
-    ChromeButton(Icons.Default.Add, if (reading) "正在处理附件" else "添加附件", enabled && !reading && attachments.size < 4) { menu = true }
-    if (menu) ModalBottomSheet(onDismissRequest = { menu = false }) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            Text("添加附件", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(12.dp))
-            ListItem(headlineContent = { Text("拍照") }, leadingContent = { Icon(Icons.Default.PhotoCamera, null) },
-                modifier = Modifier.clickable {
+    Box {
+        ChromeButton(Icons.Default.Add, if (reading) "正在处理附件" else "添加附件", enabled && !reading && attachments.size < 4) { menu = true }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text("拍照") },
+                onClick = {
                     menu = false
                     try {
                         val folder = File(context.cacheDir, "exports").apply { mkdirs() }
                         val file = File.createTempFile("capture-", ".jpg", folder)
                         cameraPath = file.absolutePath
                         camera.launch(FileProvider.getUriForFile(context, context.packageName + ".exports", file))
-                    } catch (e: Exception) { cameraPath?.let(::File)?.delete(); cameraPath = null; model.error = "无法打开相机：${e.message}" }
-                })
-            ListItem(headlineContent = { Text("照片") }, leadingContent = { Icon(Icons.Default.PhotoLibrary, null) },
-                modifier = Modifier.clickable { menu = false; photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
-            ListItem(headlineContent = { Text("文件") }, leadingContent = { Icon(Icons.Default.Description, null) },
-                modifier = Modifier.clickable { menu = false; files.launch(arrayOf("image/*", "application/pdf")) })
-            Text("最多 4 个图片或 PDF，合计 3 MB", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+                    } catch (e: Exception) {
+                        cameraPath?.let(::File)?.delete(); cameraPath = null; model.error = "无法打开相机：${e.message}"
+                    }
+                },
+                leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
+            )
+            DropdownMenuItem(
+                text = { Text("照片") },
+                onClick = {
+                    menu = false
+                    photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                },
+                leadingIcon = { Icon(Icons.Default.PhotoLibrary, null) },
+            )
+            DropdownMenuItem(
+                text = { Text("文件") },
+                onClick = {
+                    menu = false
+                    files.launch(arrayOf("image/*", "application/pdf"))
+                },
+                leadingIcon = { Icon(Icons.Default.Description, null) },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        "最多 4 个图片或 PDF，合计 3 MB",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+                onClick = {},
+                enabled = false,
+            )
         }
     }
 }

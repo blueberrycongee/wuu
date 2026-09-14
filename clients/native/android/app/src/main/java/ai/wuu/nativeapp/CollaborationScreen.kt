@@ -3,7 +3,6 @@ package ai.wuu.nativeapp
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.ui.semantics.semantics
@@ -94,14 +93,11 @@ import org.json.JSONObject
                 ChromeButton(if (room == null) Icons.Default.AccountCircle else Icons.AutoMirrored.Filled.ArrowBack,
                     if (room == null) "账号设置" else "协作列表") { if (room == null) account = true else back() }
                 if (room != null) {
-                    Box(Modifier.weight(1f)) {
-                        Surface(shape = CircleShape, border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                            Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                RoomMark(room, state.agents, 28.dp)
-                                Text(state.roomName(room), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
+                    Row(Modifier.weight(1f).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        RoomMark(room, state.agents, 27.dp)
+                        Text(state.roomName(room), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     ChromeButton(Icons.Default.MoreHoriz, "成员与任务") { details = true }
                 } else {
@@ -249,8 +245,7 @@ import org.json.JSONObject
                 mark = if (!own && group) state.agents.firstOrNull { it.optString("id") == message.optString("author_id") } else null,
             ) {
                 val reply = message.optString("reply_to")
-                if (reply.isNotEmpty()) Text("回复：" + (state.messages.firstOrNull { it.optString("id") == reply }?.optString("body") ?: "较早消息"),
-                    style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (reply.isNotEmpty()) ReplyOrnament(state.messages.firstOrNull { it.optString("id") == reply }?.optString("body")?.takeIf { it.isNotBlank() } ?: "回复较早的消息")
                 if (message.optString("kind") == "task") TaskSummary(message)
                 if (message.optString("body").isNotEmpty()) SelectionContainer { MessageText(message.optString("body"), !own) }
                 listOf("images", "markdown_images", "files").forEach { field ->
@@ -266,7 +261,12 @@ import org.json.JSONObject
                         }
                     }
                 }
-                if (message.has("agent_creation_proposal")) Text("Agent 创建申请 · 在电脑上处理", style = MaterialTheme.typography.labelMedium)
+                if (!message.isNull("agent_creation_proposal")) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.PersonAdd, null, Modifier.size(14.dp))
+                        Text("Agent 创建请求 · 在电脑上处理", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
         }
         items(state.responses, key = { "response:${it.getString("id")}" }) { response ->
@@ -328,13 +328,53 @@ import org.json.JSONObject
     }
 }
 
-@Composable private fun TaskSummary(message: JSONObject) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(message.optString("task_title").ifBlank { "任务" }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-        val status = message.optJSONObject("work")?.optString("state")?.takeIf { it.isNotBlank() } ?: message.optString("task_state")
-        Text(when (status) { "done", "completed" -> "已完成"; "doing", "working" -> "进行中"; "checking" -> "检查中"; "needs_human" -> "需要你处理"; "open" -> "待处理"; "cancelled" -> "已取消"; else -> status },
-            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+@Composable private fun ReplyOrnament(body: String) {
+    Row(Modifier.height(IntrinsicSize.Min), verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier
+                .width(2.dp)
+                .fillMaxHeight()
+                .background(LocalContentColor.current.copy(alpha = 0.2f), RoundedCornerShape(50)),
+        )
+        Text(
+            body,
+            Modifier.padding(start = 8.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = LocalContentColor.current.copy(alpha = 0.7f),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
+}
+
+@Composable private fun TaskSummary(message: JSONObject) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(Icons.Default.Checklist, null, Modifier.size(16.dp))
+            Text(message.optString("task_title").ifBlank { "任务" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        }
+        val status = message.optJSONObject("work")?.optString("state")?.takeIf { it.isNotBlank() } ?: message.optString("task_state")
+        Text(
+            collaborationStatus(status),
+            style = MaterialTheme.typography.labelMedium,
+            color = LocalContentColor.current.copy(alpha = 0.7f),
+        )
+    }
+}
+
+private fun collaborationStatus(state: String): String = when (state) {
+    "thinking", "responding", "sending" -> "正在工作"
+    "waiting" -> "等待后续消息"
+    "open" -> "待处理"
+    "doing", "running", "streaming", "working" -> "处理中"
+    "checking" -> "检查中"
+    "revising" -> "修改中"
+    "needs_human" -> "需要你处理"
+    "done", "completed" -> "已完成"
+    "queued", "pending" -> "等待中"
+    "failed" -> "失败"
+    "interrupted", "cancelled", "stopped" -> "已停止"
+    else -> state
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
