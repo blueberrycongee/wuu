@@ -99,6 +99,18 @@ resuming an interrupted model stream at the same token position.
 
 ## Messages and private handoffs
 
+Follow-up messages received during execution accumulate in the inbox. At most
+once every 3 seconds, the runtime samples the unread count available to the
+current session and adds a reminder at the tail of the next normal model request.
+The agent calls `chat_check` to pull the messages. Bursts are counted together;
+unchanged counts and message batches do not emit another reminder. Sampling does
+not interrupt inference or tools, or start a model request just to refresh a count.
+
+Reminders use request-only context and stay out of durable conversation history.
+Previously sent reminders retain their positions in the model request; changed
+snapshots append at the tail to preserve the existing request prefix. Clearing a
+reminder after receipt also leaves that prefix intact.
+
 Room messages are ordered by sequence number and may contain text, images, files,
 tasks, or system events. Text messages are limited to 4000 characters. Replies retain
 their source-message relationship; task discussions retain their task thread.

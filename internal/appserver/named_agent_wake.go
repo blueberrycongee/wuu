@@ -355,6 +355,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 		return nil, err
 	}
 	s.attachNamedAgentRoomContext(threadRuntime, agent.ID)
+	attachNamedAgentInboxContext(threadRuntime, chatAgent)
 	return threadRuntime, nil
 }
 
