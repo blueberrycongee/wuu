@@ -240,9 +240,17 @@ import org.json.JSONObject
                 return@itemsIndexed
             }
             val own = message.optString("author_type") == "human"
+            val mark = if (!own && group) state.agents.firstOrNull { it.optString("id") == message.optString("author_id") } else null
+            // First-of-streak: show mascot only when the previous bubble is a different author (common IM + fits top-stagger).
+            val previousMessage = state.messages.getOrNull(index - 1)
+            val sameAuthorStreak = previousMessage != null
+                && previousMessage.optString("kind") != "system"
+                && previousMessage.optString("author_type") == message.optString("author_type")
+                && previousMessage.optString("author_id") == message.optString("author_id")
             RoomBubble(
                 own = own,
-                mark = if (!own && group) state.agents.firstOrNull { it.optString("id") == message.optString("author_id") } else null,
+                mark = mark,
+                showMark = mark != null && !sameAuthorStreak,
             ) {
                 val reply = message.optString("reply_to")
                 if (reply.isNotEmpty()) ReplyOrnament(state.messages.firstOrNull { it.optString("id") == reply }?.optString("body")?.takeIf { it.isNotBlank() } ?: "回复较早的消息")
@@ -306,11 +314,12 @@ import org.json.JSONObject
     }
 }
 
-@Composable private fun RoomBubble(own: Boolean, mark: JSONObject?, status: String? = null, content: @Composable ColumnScope.() -> Unit) {
+@Composable private fun RoomBubble(own: Boolean, mark: JSONObject?, showMark: Boolean = mark != null, status: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         if (own) Spacer(Modifier.widthIn(min = 40.dp).weight(1f))
         if (!own && mark != null) {
             // Stagger: avatar top-leading overlaps bubble so face stays near DM (~8dp pad), not a rigid 22+6 column.
+            // Keep the same leading inset when hiding consecutive avatars so rows do not jump left/right.
             Box {
                 Surface(
                     modifier = Modifier.padding(start = 2.dp),
@@ -320,8 +329,10 @@ import org.json.JSONObject
                 ) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
                 }
-                Box(Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = 1.dp)) {
-                    AgentMark(mark, 22.dp, status = status, subtle = status == null)
+                if (showMark) {
+                    Box(Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = 1.dp)) {
+                        AgentMark(mark, 22.dp, status = status, subtle = status == null)
+                    }
                 }
             }
         } else {
