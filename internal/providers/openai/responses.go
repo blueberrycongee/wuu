@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -884,19 +883,9 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	var currentTextPhase providers.MessagePhase
 	var currentTextItemID string
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
-		resetIdle()
-		line := scanner.Text()
-		providers.DebugLogfWire("Responses SSE raw: %s", line)
-		if line == "" || strings.HasPrefix(line, "event:") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
+		data := scanner.Event().Data
 		if data == "[DONE]" {
 			pending.emitEnds(emit)
 			lease.Succeed()

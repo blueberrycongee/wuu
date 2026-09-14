@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1092,42 +1091,13 @@ func (c *Client) readSSEStream(ctx context.Context, resp *http.Response, lease *
 		usage          providers.TokenUsage
 		stopReason     string
 		blocks         = make(map[int]*blockState)
-		cur            sseRawEvent
 		sawMessageStop bool
 		sawStreamError bool
 	)
 
-	scanner := bufio.NewScanner(resp.Body)
-	// The default 64KiB token cap turns one long data: line (large tool-arg
-	// deltas, batched frames from compatible endpoints) into a non-retryable
-	// bufio.ErrTooLong that a replay would deterministically hit again.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
-		resetIdle()
-		line := scanner.Text()
-
-		if strings.HasPrefix(line, "event:") {
-			cur.Event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			cur.Data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			continue
-		}
-		if line == "" && cur.Event != "" {
-			stop := c.handleSSEEvent(cur, &usage, &stopReason, blocks, lease, emit, &sawMessageStop, &sawStreamError)
-			cur = sseRawEvent{}
-			if stop {
-				// message_stop and error are terminal: keeping the scanner
-				// alive lets a trailing reset or a keepalive-holding proxy
-				// turn an already-delivered response into a retry or a hang.
-				return
-			}
-		}
-	}
-
-	if cur.Event != "" {
-		if c.handleSSEEvent(cur, &usage, &stopReason, blocks, lease, emit, &sawMessageStop, &sawStreamError) {
+		if c.handleSSEEvent(scanner.Event(), &usage, &stopReason, blocks, lease, emit, &sawMessageStop, &sawStreamError) {
 			return
 		}
 	}
@@ -1168,7 +1138,7 @@ func (c *Client) readSSEStream(ctx context.Context, resp *http.Response, lease *
 // stop: after the terminal message_stop/error events, or once the request
 // context ended and no further event can be delivered.
 func (c *Client) handleSSEEvent(
-	raw sseRawEvent,
+	raw providers.SSEEvent,
 	usage *providers.TokenUsage,
 	stopReason *string,
 	blocks map[int]*blockState,
@@ -1727,11 +1697,6 @@ type anthropicResponse struct {
 		CacheCreationTokens int `json:"cache_creation_input_tokens,omitempty"`
 		CacheReadTokens     int `json:"cache_read_input_tokens,omitempty"`
 	} `json:"usage,omitempty"`
-}
-
-type sseRawEvent struct {
-	Event string
-	Data  string
 }
 
 type anthropicErrorPayload struct {

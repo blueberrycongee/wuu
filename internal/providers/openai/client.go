@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -562,21 +561,9 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 		return true
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	// Match the Responses SSE reader: one oversized data: line must not turn
-	// into a non-retryable bufio.ErrTooLong failure.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
-		resetIdle()
-		line := scanner.Text()
-		providers.DebugLogfWire("SSE raw: %s", line)
-		if line == "" || strings.HasPrefix(line, "event:") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
+		data := scanner.Event().Data
 		if data == "[DONE]" {
 			providers.DebugLogf("SSE [DONE]")
 			if sawThinking && !thinkingDone {
