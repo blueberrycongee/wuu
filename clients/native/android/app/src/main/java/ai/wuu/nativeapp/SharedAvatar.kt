@@ -10,22 +10,19 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.RenderProcessGoneDetail
-import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -46,9 +43,6 @@ private object AvatarDocument {
     fun read(context: Context) = html ?: context.assets.open("mascot.html").bufferedReader().use { it.readText() }.also { html = it }
 }
 
-/** Desktop AVATAR_HUES — keep Compose fallback hues aligned with blobatar seeds. */
-private val AVATAR_HUES = intArrayOf(14, 33, 52, 96, 150, 182, 202, 222, 250, 288, 322, 350)
-
 private fun fnv1a(seed: String): Int {
     var h = 0x811c9dc5.toInt()
     for (ch in seed) {
@@ -58,25 +52,38 @@ private fun fnv1a(seed: String): Int {
     return h
 }
 
-private fun avatarHue(seed: String): Float {
-    val index = fnv1a(seed).absoluteValue % AVATAR_HUES.size
-    return AVATAR_HUES[index].toFloat()
-}
+private data class AvatarFallbackModel(
+    val seed: String,
+    val label: String,
+    val avatarKey: String = "abstract-1",
+    val group: Boolean = false,
+)
 
-private fun avatarLetter(label: String, seed: String): String {
-    val source = label.trim().ifBlank { seed.trim() }.ifBlank { "?" }
-    val first = source.firstOrNull { !it.isWhitespace() } ?: '?'
-    return first.uppercaseChar().toString()
+/** Map desktop abstract-* keys (and unknown keys) onto pre-rendered AgentAvatarMark balls. */
+private fun mascotDrawable(avatarKey: String): Int {
+    val match = Regex("""^abstract-([1-9])$""").matchEntire(avatarKey.trim())
+    val index = match?.groupValues?.get(1)?.toIntOrNull()
+        ?: ((fnv1a(avatarKey.ifBlank { "abstract-1" }).absoluteValue % 9) + 1)
+    return when (index) {
+        1 -> R.drawable.mascot_abstract_1
+        2 -> R.drawable.mascot_abstract_2
+        3 -> R.drawable.mascot_abstract_3
+        4 -> R.drawable.mascot_abstract_4
+        5 -> R.drawable.mascot_abstract_5
+        6 -> R.drawable.mascot_abstract_6
+        7 -> R.drawable.mascot_abstract_7
+        8 -> R.drawable.mascot_abstract_8
+        else -> R.drawable.mascot_abstract_9
+    }
 }
-
-private data class AvatarFallbackModel(val seed: String, val label: String, val group: Boolean = false)
 
 private fun fallbackModel(value: JSONObject): AvatarFallbackModel {
     val agent = value.optJSONObject("agent")
     if (agent != null) {
         val seed = agent.optString("id").ifBlank { "wuu" }
         val label = agent.optString("name").ifBlank { seed }
-        return AvatarFallbackModel(seed, label)
+        val key = agent.optString("avatar_key").ifBlank { "abstract-1" }
+        return AvatarFallbackModel(seed, label, key)
     }
     val room = value.optJSONObject("room")
     val agents = value.optJSONArray("agents") ?: JSONArray()
@@ -84,33 +91,27 @@ private fun fallbackModel(value: JSONObject): AvatarFallbackModel {
         val first = agents.optJSONObject(0)
         val seed = first?.optString("id").orEmpty().ifBlank { room.optString("id").ifBlank { "group" } }
         val label = first?.optString("name").orEmpty().ifBlank { room.optString("name").ifBlank { "群" } }
-        return AvatarFallbackModel(seed, label, group = true)
+        val key = first?.optString("avatar_key").orEmpty().ifBlank { "abstract-1" }
+        return AvatarFallbackModel(seed, label, key, group = true)
     }
     if (agents.length() > 0) {
         val first = agents.optJSONObject(0)
         val seed = first?.optString("id").orEmpty().ifBlank { "wuu" }
-        return AvatarFallbackModel(seed, first?.optString("name").orEmpty().ifBlank { seed })
+        val key = first?.optString("avatar_key").orEmpty().ifBlank { "abstract-1" }
+        return AvatarFallbackModel(seed, first?.optString("name").orEmpty().ifBlank { seed }, key)
     }
     val seed = room?.optString("id").orEmpty().ifBlank { "wuu" }
-    return AvatarFallbackModel(seed, room?.optString("name").orEmpty().ifBlank { seed }, group = room != null)
+    return AvatarFallbackModel(seed, room?.optString("name").orEmpty().ifBlank { seed }, "abstract-1", group = room != null)
 }
 
+/** Static AgentAvatarMark art — used for small marks and when WebView cannot host the live mascot. */
 @Composable private fun AvatarFallbackMark(model: AvatarFallbackModel, size: Dp) {
-    val hue = avatarHue(model.seed)
-    val fill = androidx.compose.ui.graphics.Color.hsv(hue, 0.42f, if (isSystemInDarkTheme()) 0.62f else 0.78f)
-    val onFill = androidx.compose.ui.graphics.Color.hsv(hue, 0.15f, if (isSystemInDarkTheme()) 0.95f else 0.18f)
-    val letterSize = (size.value * 0.42f).coerceIn(9f, 18f).sp
-    Box(
-        Modifier.size(size).clip(CircleShape).background(fill),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = avatarLetter(model.label, model.seed),
-            color = onFill,
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = letterSize, lineHeight = letterSize),
-            maxLines = 1,
-        )
-    }
+    Image(
+        painter = painterResource(mascotDrawable(model.avatarKey)),
+        contentDescription = null,
+        modifier = Modifier.size(size),
+        contentScale = ContentScale.Fit,
+    )
 }
 
 /** Local presentation surface for the desktop AgentAvatarMark/ChannelGroupAvatar. */
@@ -166,7 +167,7 @@ private class AvatarWebView(
     var webReady by remember { mutableStateOf(false) }
     val fallback = remember(value.toString()) { fallbackModel(value) }
     val payload = remember(value, dark, size) { value.put("dark", dark).put("size", size.value).toString() }
-    // Timeline marks are tiny; Compose letter marks are reliable on API 28 WebView 69.
+    // Timeline marks are tiny; pre-rendered mascot balls match desktop when WebView cannot run.
     val useWeb = size >= 28.dp && webAvatarSupported()
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         AvatarFallbackMark(fallback, size)

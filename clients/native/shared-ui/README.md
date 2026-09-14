@@ -14,3 +14,11 @@ node clients/native/shared-ui/build.mjs --check
 Commit `NativeUI/mascot.html` and `NativeUI/sources.sha256` together with changes to their inputs. Gradle and Xcode verify the recorded source and output hashes before building, without a Node dependency in the native build environment. Licenses are bundled in `../licenses/Notices.txt`.
 
 Validate changes in both native simulators: first presentation, list reuse, small group avatars, custom images, working/reply transitions, dark mode, reduced motion, background/foreground, and navigation gestures. Browser/component tests alone do not establish native viewport layout or device performance.
+
+Android Compose falls back to pre-rendered idle `AgentAvatarMark` PNGs in
+`android/app/src/main/res/drawable-nodpi/mascot_abstract_*.png` for timeline-sized
+marks and for WebViews older than Chromium 80 (API 28 ships 69). Regenerate with:
+
+```sh
+bun clients/native/shared-ui/scripts/render-static-balls.mjs
+```
