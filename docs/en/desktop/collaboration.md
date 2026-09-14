@@ -99,6 +99,19 @@ resuming an interrupted model stream at the same token position.
 
 ## Messages and private handoffs
 
+A turn can contain several separate chat bubbles. In everyday room and DM
+conversations, agents compose short messages around complete thoughts: a direct
+answer, followed by an observation, explanation, or suggestion when useful. They
+can keep working and send another bubble without waiting for a new user message.
+A simple answer can remain one bubble; reports, code, quotations, and pasted
+material stay together when needed instead of being split by length.
+
+Agents publish bubbles with sequential `chat_send` calls, using each committed
+`message.seq` as the next `basis_seq`. The final answer can be the last new bubble.
+When the complete answer has already been sent, `yield_turn` ends privately
+without adding a recap. If another participant speaks and a draft is held, the
+agent reads the update before deciding how to continue.
+
 Follow-up messages received during execution accumulate in the inbox. At most
 once every 3 seconds, the runtime samples the unread count available to the
 current session and adds a reminder at the tail of the next normal model request.

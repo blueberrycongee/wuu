@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,91 @@ func TestRoomReplyPublishesFinalAfterExplicitProgress(t *testing.T) {
 	result := readRoomReplies(t, fixture, fixture.room.ID)
 	if len(result.Messages) != 3 || result.Messages[1].Body != progress || result.Messages[2].Body != final || result.Messages[2].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
 		t.Fatalf("public progress swallowed the final answer: %+v", result)
+	}
+}
+
+func TestRoomReplyMultipleBubblesStayInOneTurn(t *testing.T) {
+	for _, ending := range []string{"final bubble", "already answered", "duplicate final"} {
+		t.Run(ending, func(t *testing.T) {
+			fixture, provider := newCollaborationFlowFixture(t)
+			fixture.room = createPeerRoom(t, fixture, "Conversational bubbles", fixture.identity)
+			sendRoomReplyObjective(t, fixture, "解释一下为什么重连后收不到消息，再给个建议")
+			call := provider.next(t)
+			bubbles := []string{
+				"问题出在重连后的回调。",
+				"回调还拿着旧 socket，所以消息没有进入新连接。",
+			}
+			var basis int64 = 1
+			var sessionRef, turnID string
+			for index, body := range bubbles {
+				args, err := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": body, "basis_seq": basis})
+				if err != nil {
+					t.Fatal(err)
+				}
+				call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: fmt.Sprintf("bubble-%d", index), Name: "chat_send", Arguments: string(args)}}}
+				call = provider.next(t)
+				room := readRoomReplies(t, fixture, fixture.room.ID)
+				if len(room.Messages) != index+2 || room.Messages[index+1].Body != body {
+					t.Fatalf("bubble was held or invisible before the turn ended: %+v", room)
+				}
+				message := room.Messages[index+1]
+				basis = message.Seq
+				if index == 0 {
+					sessionRef, turnID = message.SourceSessionRef, message.SourceTurnID
+				}
+				if sessionRef == "" || turnID == "" || message.SourceSessionRef != sessionRef || message.SourceTurnID != turnID {
+					t.Fatalf("bubble left its originating turn: %+v", message)
+				}
+				binding, err := fixture.server.channelService.LookupCollaborationSession(context.Background(), sessionRef)
+				if err != nil || binding.State != channels.CollaborationSessionRunning || binding.TurnID != turnID {
+					t.Fatalf("posting a bubble ended the running turn: %+v, %v", binding, err)
+				}
+				if index == 0 {
+					// Ordinary work can continue between public messages without
+					// needing another human request or an execution context.
+					call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "check-context", Name: "chat_check", Arguments: `{}`}}}
+					call = provider.next(t)
+				}
+			}
+			const privateReason = "The complete response is already delivered as separate bubbles."
+			switch ending {
+			case "final bubble":
+				bubbles = append(bubbles, "我建议在连接变化时重新绑定回调。")
+				call.response <- providers.ChatResponse{Content: bubbles[len(bubbles)-1]}
+			case "already answered":
+				args, _ := json.Marshal(map[string]any{"reason": privateReason})
+				call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "finish-chat", Name: "yield_turn", Arguments: string(args)}}}
+			case "duplicate final":
+				call.response <- providers.ChatResponse{Content: bubbles[len(bubbles)-1]}
+			}
+			fixture.waitForCompletion(t)
+			// Replaying durable settlement must not combine or repost bubbles.
+			if err := fixture.server.settleCollaborationTurn(context.Background(), sessionRef, turnID); err != nil {
+				t.Fatal(err)
+			}
+			room := readRoomReplies(t, fixture, fixture.room.ID)
+			if len(room.Messages) != len(bubbles)+1 || len(room.Responses) != 0 {
+				t.Fatalf("finishing changed the bubble count or retained a preview: %+v", room)
+			}
+			seen := make(map[string]bool)
+			for index, body := range bubbles {
+				message := room.Messages[index+1]
+				if message.Body != body || seen[message.ID] || message.AuthorID != fixture.identity.ID ||
+					message.SourceSessionRef != sessionRef || message.SourceTurnID != turnID || message.Seq != int64(index+2) {
+					t.Fatalf("bubble lost its text, order, identity, or provenance: %+v", message)
+				}
+				seen[message.ID] = true
+			}
+			encoded, _ := json.Marshal(room)
+			if strings.Contains(string(encoded), privateReason) {
+				t.Fatal("private completion reason became a public bubble")
+			}
+			select {
+			case <-provider.calls:
+				t.Fatal("finishing the chat created another model turn")
+			default:
+			}
+		})
 	}
 }
 
