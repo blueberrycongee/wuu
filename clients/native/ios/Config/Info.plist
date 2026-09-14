@@ -3,6 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>WuuPushEnabled</key><string>$(WUU_PUSH_ENABLED)</string>
+    <key>NSCameraUsageDescription</key><string>拍摄照片并添加到你发送的消息。</string>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key>
     <array>

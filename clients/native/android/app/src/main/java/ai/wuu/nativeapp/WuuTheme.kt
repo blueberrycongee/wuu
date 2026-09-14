@@ -6,6 +6,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable internal fun WuuTheme(content: @Composable () -> Unit) {
     val colors = if (isSystemInDarkTheme()) darkColorScheme(
@@ -35,7 +36,11 @@ import androidx.compose.ui.unit.dp
         surfaceContainerHighest = Color(0xFFE4E4E4), surfaceTint = Color.Transparent,
         outline = Color(0xFF8A8A8A), outlineVariant = Color(0xFFE5E5E5),
     )
-    MaterialTheme(colorScheme = colors, shapes = Shapes(
+    MaterialTheme(colorScheme = colors, typography = Typography(
+        bodyLarge = Typography().bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp),
+        bodyMedium = Typography().bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
+        titleMedium = Typography().titleMedium.copy(fontSize = 16.sp, lineHeight = 22.sp),
+    ), shapes = Shapes(
         extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
         medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp),
         extraLarge = RoundedCornerShape(28.dp),

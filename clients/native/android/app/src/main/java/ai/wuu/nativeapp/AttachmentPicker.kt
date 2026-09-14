@@ -9,7 +9,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
@@ -51,36 +61,61 @@ internal fun prepareAttachment(context: Context, uri: Uri): InputAttachment {
 }
 
 // ImageDecoder applies camera orientation and downsizes before allocating the bitmap.
-internal fun decodeAttachmentImage(bytes: ByteArray): Bitmap =
+internal fun decodeAttachmentImage(bytes: ByteArray, maxDimension: Int = 1600): Bitmap =
     ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
         val (width, height) = info.size.width to info.size.height
         require(width > 0 && height > 0 && width.toLong() * height <= 40_000_000) { "无法读取图片，或图片超过 4000 万像素" }
-        val scale = minOf(1.0, 1600.0 / maxOf(width, height))
+        val scale = minOf(1.0, maxDimension.toDouble() / maxOf(width, height))
         decoder.setTargetSize(maxOf(1, (width * scale).toInt()), maxOf(1, (height * scale).toInt()))
         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
     }
 
-@Composable fun AttachmentPicker(attachments: List<InputAttachment>, update: (List<InputAttachment>) -> Unit, model: AppModel) {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable fun AttachmentPicker(attachments: List<InputAttachment>, update: (List<InputAttachment>) -> Unit, model: AppModel, enabled: Boolean = true) {
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }; var reading by remember { mutableStateOf(false) }
-    fun accept(uri: Uri?) {
-        if (uri == null) return
+    var cameraPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentAttachments by rememberUpdatedState(attachments)
+    val currentUpdate by rememberUpdatedState(update)
+    fun accept(uri: Uri?, cleanup: File? = null) {
+        if (uri == null) { cleanup?.delete(); return }
         reading = true
         scope.launch {
             try {
                 val attachment = withContext(Dispatchers.IO) { prepareAttachment(context, uri) }
-                InputAttachment.validate(attachments + attachment, ""); update(attachments + attachment)
+                val next = currentAttachments + attachment
+                InputAttachment.validate(next, ""); currentUpdate(next)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { model.error = e.message }
-            finally { reading = false }
+            finally { reading = false; cleanup?.delete() }
         }
     }
     val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { accept(it) }
     val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { accept(it) }
-    IconButton(onClick = { menu = true }, enabled = !reading && attachments.size < 4) { Icon(Icons.Default.AttachFile, "添加附件") }
-    DropdownMenu(menu, { menu = false }) {
-        DropdownMenuItem(text = { Text("选择照片") }, onClick = { menu = false; photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
-        DropdownMenuItem(text = { Text("选择图片或 PDF") }, onClick = { menu = false; files.launch(arrayOf("image/*", "application/pdf")) })
-        DropdownMenuItem(text = { Text("图片缩至 1600 像素；附件合计最多 3 MB") }, onClick = {}, enabled = false)
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val file = cameraPath?.let(::File); cameraPath = null
+        accept(if (captured && file != null) FileProvider.getUriForFile(context, context.packageName + ".exports", file) else null, file)
+    }
+    ChromeButton(Icons.Default.Add, if (reading) "正在处理附件" else "添加附件", enabled && !reading && attachments.size < 4) { menu = true }
+    if (menu) ModalBottomSheet(onDismissRequest = { menu = false }) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            Text("添加附件", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(12.dp))
+            ListItem(headlineContent = { Text("拍照") }, leadingContent = { Icon(Icons.Default.PhotoCamera, null) },
+                modifier = Modifier.clickable {
+                    menu = false
+                    try {
+                        val folder = File(context.cacheDir, "exports").apply { mkdirs() }
+                        val file = File.createTempFile("capture-", ".jpg", folder)
+                        cameraPath = file.absolutePath
+                        camera.launch(FileProvider.getUriForFile(context, context.packageName + ".exports", file))
+                    } catch (e: Exception) { cameraPath?.let(::File)?.delete(); cameraPath = null; model.error = "无法打开相机：${e.message}" }
+                })
+            ListItem(headlineContent = { Text("照片") }, leadingContent = { Icon(Icons.Default.PhotoLibrary, null) },
+                modifier = Modifier.clickable { menu = false; photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
+            ListItem(headlineContent = { Text("文件") }, leadingContent = { Icon(Icons.Default.Description, null) },
+                modifier = Modifier.clickable { menu = false; files.launch(arrayOf("image/*", "application/pdf")) })
+            Text("最多 4 个图片或 PDF，合计 3 MB", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+        }
     }
 }

@@ -62,6 +62,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private var live: ChatThread? = null
     var threadSettings by mutableStateOf<ThreadSettings?>(null); private set
     var threadEngine by mutableStateOf(""); private set
+    internal val imagePreviews = ImagePreviewLoader()
     private var remote: Remote? = null
     val collaboration = Collaboration { method, params ->
         val transport = checkNotNull(remote) { "电脑未连接" }; val stamp = generation
@@ -283,8 +284,11 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         collaboration.invalidate()
         generation++; refresh?.cancel(); refresh = null; eventJob?.cancel(); eventJob = null
         remote?.close(); remote = null; connected = false; connecting = false; approval = null; sending = false
-        loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
+        imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
         questions = emptyList(); questionRevision++
+    }
+    fun reconnect() {
+        if (!connected && !connecting && host != null) perform { connect(generation) }
     }
     private suspend fun connect(stamp: Long) {
         val session = account ?: return; val selected = host ?: return
@@ -343,7 +347,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     suspend fun open(id: String) {
         val stamp = generation; val opening = ++openGeneration
         activeID = id; live = null; threadSettings = null; pending = emptyList(); messages = savedMessages(history?.snapshot?.cached(id)); running = false; readOnly = true
-        hasOlder = false; loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
+        hasOlder = false; imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
         title = rows.firstOrNull { it.id == id }?.title ?: "会话"
         if (connected) {
             checkNotNull(remote).call("thread/resume", json("session_id" to id, "response_only" to true, "history_page" to true), snapshotTag = opening)
@@ -391,11 +395,21 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val opening = ++openGeneration
         val result = checkNotNull(remote).call("thread/start", params); check(stamp)
         if (opening != openGeneration) return
-        live = ChatThread(result.getJSONObject("thread")); activeID = live?.id; loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false; showLive(); loadThreads()
+        live = ChatThread(result.getJSONObject("thread")); activeID = live?.id; imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false; showLive(); loadThreads()
     }
     suspend fun export(context: android.content.Context) {
         val session = account; val selection = openGeneration; val stamp = generation
         exportConversation(context, messages) { account == session && openGeneration == selection && generation == stamp }
+    }
+    suspend fun attachmentThumbnail(message: ChatMessage, index: Int): LoadedAttachment {
+        val thread = live ?: throw CancellationException()
+        val transport = remote ?: throw CancellationException()
+        val stamp = generation; val selection = openGeneration
+        require(index in message.attachments.indices && thread.messages.any { it.id == message.id })
+        val result = transport.readAttachment(JSONObject(message.attachments[index]), thread.id, message.id, preview = true)
+        check(stamp)
+        if (selection != openGeneration) throw CancellationException()
+        return result
     }
     suspend fun previewAttachment(message: ChatMessage, index: Int) {
         val thread = live ?: return; val transport = remote ?: return
@@ -405,6 +419,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             val result = transport.readAttachment(JSONObject(message.attachments[index]), thread.id, message.id); check(stamp)
             if (selection == openGeneration && remote === transport && live?.messages?.contains(message) == true) attachmentPreview = result
         } finally { if (stamp == generation && selection == openGeneration) loadingAttachment = false }
+    }
+    suspend fun previewCollaborationAttachment(message: JSONObject, field: String, index: Int) {
+        if (!connected || loadingAttachment) return
+        val stamp = generation; loadingAttachment = true
+        try { val result = collaboration.readAttachment(message, field, index); check(stamp); attachmentPreview = result }
+        finally { if (stamp == generation) loadingAttachment = false }
     }
     suspend fun exportAttachment(context: android.content.Context, attachment: LoadedAttachment, view: Boolean) {
         val stamp = generation; val selection = openGeneration

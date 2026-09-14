@@ -106,12 +106,8 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun DevicesScreen(model: AppModel) {
     var accountPanel by remember { mutableStateOf(false) }
-    var licenses by remember { mutableStateOf(false) }
-    var notifications by remember { mutableStateOf(false) }
-    var changePassword by remember { mutableStateOf(false) }
-    var revokeTarget by remember { mutableStateOf<org.json.JSONObject?>(null) }
     Scaffold(topBar = {
-        TopAppBar(title = { Text("你的电脑", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }, actions = {
+        TopAppBar(title = { Text("你的电脑", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }, actions = {
             IconButton(onClick = { model.perform { model.loadDevices() } }) { Icon(Icons.Default.Refresh, "刷新") }
             IconButton(onClick = { accountPanel = true }) { Icon(Icons.Default.AccountCircle, "账号") }
         })
@@ -123,6 +119,7 @@ class MainActivity : ComponentActivity() {
                 val group = hosts.filter { it.optBoolean("online") == online }
                 items(group, key = { it.getString("pub") }) { device ->
                     ListItem(headlineContent = { Text(device.optString("name", "电脑")) },
+                        supportingContent = { Text(if (online) "在线" else "离线", style = MaterialTheme.typography.bodySmall) },
                         leadingContent = { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
                             Icon(Icons.Default.Computer, null, Modifier.padding(12.dp).size(22.dp))
                         } }, trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
@@ -132,35 +129,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    if (accountPanel) ModalBottomSheet(onDismissRequest = { accountPanel = false }) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(model.account?.username ?: "", style = MaterialTheme.typography.headlineSmall)
-            Text(model.account?.server ?: "")
-            if (model.authMethod == "password") {
-                TextButton(onClick = { accountPanel = false; changePassword = true }) { Text("修改密码") }
-            }
-            LazyColumn(Modifier.heightIn(max = 300.dp)) {
-                items(model.devices, key = { it.getString("pub") }) { device ->
-                    ListItem(headlineContent = { Text(device.optString("name")) }, trailingContent = {
-                        TextButton(onClick = { revokeTarget = device }) { Text("移除") }
-                    })
-                }
-            }
-            Text("退出登录会删除这部手机缓存的会话文本。")
-            Button(onClick = { accountPanel = false; model.logout() }, enabled = !model.busy, modifier = Modifier.fillMaxWidth()) { Text("退出登录") }
-            TextButton(onClick = { accountPanel = false; licenses = true }) { Text("开源许可") }
-            TextButton(onClick = { accountPanel = false; notifications = true }) { Text("通知") }
-        }
-    }
-    if (changePassword) PasswordResetSheet(model, model.account?.server ?: "", true) { changePassword = false }
-    if (licenses) LicensesSheet { licenses = false }
-    if (notifications) PushSettingsSheet(model.push) { notifications = false }
-    revokeTarget?.let { device ->
-        AlertDialog(onDismissRequest = { revokeTarget = null }, title = { Text("移除设备？") },
-            text = { Text("移除 ${device.optString("name")} 的账号访问权限。") },
-            confirmButton = { TextButton(onClick = { revokeTarget = null; model.perform { model.revoke(device) } }) { Text("移除") } },
-            dismissButton = { TextButton(onClick = { revokeTarget = null }) { Text("取消") } })
-    }
+    if (accountPanel) AccountSettingsSheet(model) { accountPanel = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -330,12 +299,7 @@ class MainActivity : ComponentActivity() {
                             if (message.contentRef.isNotEmpty()) TextButton(onClick = { model.perform { model.expand(message) } }, enabled = model.connected && message.id !in model.loadingContent) {
                                 Text(if (message.id in model.loadingContent) "正在读取…" else "加载完整消息")
                             }
-                            message.attachments.forEachIndexed { index, raw ->
-                                val attachment = org.json.JSONObject(raw)
-                                TextButton(onClick = { model.perform { model.previewAttachment(message, index) } }, enabled = model.connected && !model.loadingAttachment) {
-                                    Text(attachment.optString("filename", "查看图片"))
-                                }
-                            }
+                            MessageAttachments(model, message)
                         }
                     }
                 }

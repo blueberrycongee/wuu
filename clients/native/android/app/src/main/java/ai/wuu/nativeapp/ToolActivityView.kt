@@ -43,6 +43,7 @@ internal fun ToolProcessView(model: AppModel, group: ConversationEntry.Tools) {
             Icon(if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        group.messages.filter { it.attachments.isNotEmpty() }.forEach { MessageAttachments(model, it) }
         if (expanded) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.medium) {
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp), contentPadding = PaddingValues(12.dp)) {

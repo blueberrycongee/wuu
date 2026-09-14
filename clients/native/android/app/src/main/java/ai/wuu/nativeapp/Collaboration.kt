@@ -107,6 +107,16 @@ class Collaboration(private val call: suspend (String, JSONObject) -> JSONObject
         finally { if (epoch == stamp) loading = false }
     }
 
+    suspend fun readAttachment(message: JSONObject, field: String, index: Int, preview: Boolean = false): LoadedAttachment {
+        val id = selectedID ?: throw CancellationException()
+        require(field in listOf("images", "markdown_images", "files") && index >= 0 && index < (message.optJSONArray(field)?.length() ?: 0)) { "附件不存在" }
+        require(messages.any { it.optString("id") == message.optString("id") }) { "消息不属于当前房间" }
+        val stamp = epoch
+        val result = readMessageAttachment(call, message.getJSONArray(field).getJSONObject(index), id, message.getString("id"), preview)
+        check(stamp)
+        return result
+    }
+
     suspend fun loadOlder() = refreshLock.withLock {
         val id = selectedID ?: return@withLock; val stamp = epoch
         val first = messages.firstOrNull()?.optLong("seq") ?: return@withLock
@@ -116,6 +126,15 @@ class Collaboration(private val call: suspend (String, JSONObject) -> JSONObject
     }
     private fun merge(id: String, page: List<JSONObject>) {
         timelines[id] = mergeRoomMessages(timelines[id].orEmpty(), page)
+    }
+    suspend fun resume(response: JSONObject) {
+        val id = selectedID ?: return
+        val current = responses.firstOrNull { it.optString("id") == response.optString("id") }
+        require(current != null && current.optString("session_ref") == response.optString("session_ref") &&
+            current.optString("state") in listOf("failed", "interrupted") && current.optString("session_ref").isNotBlank()) { "回复状态已更新" }
+        val stamp = epoch
+        call("channel/session/resume", json("sessionRef" to current.getString("session_ref"))); check(stamp)
+        if (selectedID == id) refresh()
     }
     suspend fun direct(agentID: String) {
         val stamp = epoch

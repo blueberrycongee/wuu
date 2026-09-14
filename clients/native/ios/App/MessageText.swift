@@ -37,7 +37,7 @@ struct MessageText: View {
 // Remote Markdown must not fetch tracking images just because a conversation was opened.
 private struct ExternalImageLink: ImageProvider, InlineImageProvider {
     func makeImage(url: URL?) -> some View {
-        if let url { Link("在浏览器查看图片", destination: url).font(.caption) }
+        if let url, ["https", "http"].contains(url.scheme ?? "") { Link("在浏览器查看图片", destination: url).font(.caption) }
     }
     func image(with url: URL, label: String) async throws -> Image { Image(systemName: "photo") }
 }

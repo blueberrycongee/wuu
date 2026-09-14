@@ -124,7 +124,6 @@ struct LoginView: View {
 struct DevicesView: View {
     @Bindable var model: AppModel
     @State private var settings = false
-    @State private var revokeTarget: AccountDevice?
     var body: some View {
         NavigationStack {
             List {
@@ -149,37 +148,10 @@ struct DevicesView: View {
                 if !model.devices.contains(where: { $0.role == "host" }) {
                     ContentUnavailableView("还没有电脑", systemImage: "desktopcomputer", description: Text("在电脑上的 Wuu 登录同一账号。"))
                 }
-            }.navigationTitle("你的电脑")
+            }.listStyle(.plain).navigationTitle("你的电脑").navigationBarTitleDisplayMode(.inline)
                 .refreshable { model.perform { try await model.loadDevices() } }
                 .toolbar { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("账号设置") }
-                .sheet(isPresented: $settings) {
-                    NavigationStack {
-                        Form {
-                            Section("账号") { Text(model.account?.username ?? ""); Text(model.account?.server ?? "").font(.footnote) }
-                            if model.authMethod == "password" {
-                                NavigationLink("修改密码") { PasswordResetView(model: model, server: model.account?.server ?? "", changing: true) }
-                            }
-                            Section("设备") {
-                                ForEach(model.devices) { device in
-                                    HStack {
-                                        Text(device.name)
-                                        Spacer()
-                                        Button("移除", role: .destructive) { revokeTarget = device }
-                                    }
-                                }
-                            }
-                            Button("退出此手机登录", role: .destructive) { model.perform { try await model.logout(); settings = false } }.disabled(model.busy)
-                            NavigationLink("开源许可") { LicensesView() }
-                            NavigationLink("通知") { PushSettingsView(push: model.push) }
-                        }.navigationTitle("账号设置").toolbar { Button("完成") { settings = false } }
-                            .confirmationDialog("移除这台设备的账号访问权限？", isPresented: Binding(get: { revokeTarget != nil }, set: { if !$0 { revokeTarget = nil } }), titleVisibility: .visible) {
-                                Button("移除设备", role: .destructive) {
-                                    if let device = revokeTarget { model.perform { try await model.revoke(device) } }
-                                    revokeTarget = nil
-                                }
-                            }
-                    }
-                }
+                .sheet(isPresented: $settings) { AccountSettingsView(model: model) }
         }
     }
 }
@@ -233,28 +205,16 @@ struct ConversationView: View {
                 if let request = model.questions.first(where: { $0["thread_id"].string == model.activeID }) {
                     QuestionView(model: model, request: request).id(request["request_id"].string)
                 }
-                if !attachments.wrappedValue.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack {
-                            ForEach(attachments.wrappedValue) { attachment in
-                                Button { attachmentDrafts[draftKey]?.removeAll { $0.id == attachment.id } } label: {
-                                    Label(attachment.filename, systemImage: "xmark.circle").font(.caption).lineLimit(1)
-                                }.accessibilityLabel("移除附件 " + attachment.filename)
-                            }
-                        }.padding(.horizontal, 12)
-                    }.disabled(model.sending)
+                if model.live?.running == true {
+                    HStack {
+                        Text("电脑正在工作").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("停止") { model.perform { try await model.stop() } }.font(.caption)
+                    }.padding(.horizontal, 20)
                 }
-                HStack(alignment: .bottom, spacing: 12) {
-                    AttachmentPicker(attachments: attachments, model: model).id(draftKey)
-                        .disabled(!model.connected || model.live == nil || model.sending || model.live?.readOnly == true)
-                    TextField(model.connected ? "发送消息" : "连接电脑后发送", text: draft, axis: .vertical)
-                        .accessibilityIdentifier("harness-composer")
-                        .focused($composerFocused)
-                        .lineLimit(1...6).padding(12).background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
-                    if model.live?.running == true {
-                        Button { model.perform { try await model.stop() } } label: { Image(systemName: "stop.circle.fill").font(.title) }.accessibilityLabel("停止")
-                    }
-                    Button {
+                MobileComposer(text: draft, attachments: attachments, model: model,
+                    enabled: model.connected && model.live != nil && model.live?.readOnly != true && model.live?.archived != true,
+                    sending: model.sending, placeholder: model.live?.running == true ? "添加后续消息" : "发送消息", identifier: "harness-composer") {
                         let key = draftKey
                         let original = drafts[key] ?? ""
                         let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -264,11 +224,8 @@ struct ConversationView: View {
                             if drafts[key] == original { drafts[key] = "" }
                             attachmentDrafts[key]?.removeAll { file in files.contains { $0.id == file.id } }
                         }
-                    } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .accessibilityLabel("发送").disabled(!model.connected || model.live == nil || model.sending || model.live?.readOnly == true || model.live?.archived == true || (draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.wrappedValue.isEmpty))
-                }.padding(12)
+                }
             }.navigationTitle(model.live?.title ?? model.saved?.title ?? "Wuu").navigationBarTitleDisplayMode(.inline)
-                .modifier(KeyboardDismissToolbar { composerFocused = false })
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { Button { drawer.toggle() } label: { Image(systemName: "sidebar.left") }.accessibilityLabel(drawer ? "关闭会话列表" : "会话列表") }
                     ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread(); drawer = false } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }
