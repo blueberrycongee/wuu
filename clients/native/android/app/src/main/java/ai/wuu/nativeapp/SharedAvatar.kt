@@ -35,6 +35,12 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import kotlin.math.absoluteValue
 
+
+private fun webAvatarSupported(): Boolean = try {
+    val major = WebView.getCurrentWebViewPackage()?.versionName?.substringBefore('.')?.toIntOrNull() ?: 0
+    major >= 80
+} catch (_: Exception) { false }
+
 private object AvatarDocument {
     private var html: String? = null
     fun read(context: Context) = html ?: context.assets.open("mascot.html").bufferedReader().use { it.readText() }.also { html = it }
@@ -120,6 +126,7 @@ private class AvatarWebView(
     init {
         setBackgroundColor(Color.TRANSPARENT)
         setLayerType(LAYER_TYPE_HARDWARE, null)
+        isClickable = false; isFocusable = false; isFocusableInTouchMode = false
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         isHorizontalScrollBarEnabled = false; isVerticalScrollBarEnabled = false
         settings.javaScriptEnabled = true
@@ -160,7 +167,7 @@ private class AvatarWebView(
     val fallback = remember(value.toString()) { fallbackModel(value) }
     val payload = remember(value, dark, size) { value.put("dark", dark).put("size", size.value).toString() }
     // Timeline marks are tiny; Compose letter marks are reliable on API 28 WebView 69.
-    val useWeb = size >= 28.dp
+    val useWeb = size >= 28.dp && webAvatarSupported()
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         AvatarFallbackMark(fallback, size)
         if (useWeb) {
