@@ -278,7 +278,12 @@ import org.json.JSONObject
             }
         }
         items(state.responses, key = { "response:${it.getString("id")}" }) { response ->
-            CollaborationActivity(model, response)
+            val last = state.messages.lastOrNull()
+            val sameAgentStreak = last != null
+                && last.optString("kind") != "system"
+                && last.optString("author_type") == "agent"
+                && last.optString("author_id") == response.optString("agent_id")
+            CollaborationActivity(model, response, showMark = !sameAgentStreak)
         }
         item(key = "bottom") { Spacer(Modifier.height(1.dp)) }
     }
@@ -288,7 +293,7 @@ import org.json.JSONObject
     }
 }
 
-@Composable internal fun CollaborationActivity(model: AppModel, response: JSONObject) {
+@Composable internal fun CollaborationActivity(model: AppModel, response: JSONObject, showMark: Boolean = true) {
     val state = response.optString("state")
     val failed = state in listOf("failed", "interrupted")
     val label = when (state) {
@@ -301,7 +306,9 @@ import org.json.JSONObject
     }
     var resuming by remember(response.optString("id")) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == response.optString("agent_id") }, 36.dp, status = state)
+        if (showMark) {
+            AgentMark(model.collaboration.agents.firstOrNull { it.optString("id") == response.optString("agent_id") }, 36.dp, status = state)
+        }
         Column(Modifier.weight(1f)) {
             Text(model.collaboration.agentName(response.optString("agent_id")), style = MaterialTheme.typography.labelMedium)
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -315,36 +322,42 @@ import org.json.JSONObject
 }
 
 @Composable private fun RoomBubble(own: Boolean, mark: JSONObject?, showMark: Boolean = mark != null, status: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        if (own) Spacer(Modifier.widthIn(min = 40.dp).weight(1f))
-        if (!own && mark != null) {
-            // Stagger: avatar top-leading overlaps bubble so face stays near DM (~8dp pad), not a rigid 22+6 column.
-            // Keep the same leading inset when hiding consecutive avatars so rows do not jump left/right.
-            Box {
+    // Cap at ~88% like iOS spacers; arrange start/end so the Surface wraps content instead of
+    // expanding under weight(1f) spacers (which made short bubbles look full-width).
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth(0.88f).align(if (own) Alignment.CenterEnd else Alignment.CenterStart),
+            horizontalArrangement = if (own) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Top,
+        ) {
+            if (!own && mark != null) {
+                // Stagger: avatar top-leading overlaps bubble so face stays near DM (~8dp pad).
+                // Keep the same leading inset when hiding consecutive avatars so left edges stay stable.
+                Box {
+                    Surface(
+                        modifier = Modifier.padding(start = 2.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+                    }
+                    if (showMark) {
+                        Box(Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = 1.dp)) {
+                            AgentMark(mark, 22.dp, status = status, subtle = status == null)
+                        }
+                    }
+                }
+            } else {
                 Surface(
-                    modifier = Modifier.padding(start = 2.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
+                    contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
                     shape = RoundedCornerShape(18.dp),
                 ) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
                 }
-                if (showMark) {
-                    Box(Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = 1.dp)) {
-                        AgentMark(mark, 22.dp, status = status, subtle = status == null)
-                    }
-                }
-            }
-        } else {
-            Surface(
-                color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
-                contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(18.dp),
-            ) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
             }
         }
-        if (!own) Spacer(Modifier.widthIn(min = 30.dp).weight(1f))
     }
 }
 
@@ -368,7 +381,7 @@ import org.json.JSONObject
 }
 
 @Composable private fun TaskSummary(message: JSONObject) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(Icons.Default.Checklist, null, Modifier.size(16.dp))
             Text(message.optString("task_title").ifBlank { "任务" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

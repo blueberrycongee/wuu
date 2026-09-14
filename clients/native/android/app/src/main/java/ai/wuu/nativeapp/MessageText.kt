@@ -54,8 +54,8 @@ internal fun messageMarkdown(context: Context, open: (Uri) -> Unit): Markwon = M
     val size = bodyStyle.fontSize.value
     val lineHeight = with(LocalDensity.current) { bodyStyle.lineHeight.toPx().roundToInt() }
     AndroidView(modifier = modifier, factory = { TextView(it).apply {
-        // Let the lazy list measure the full reply, including asynchronously rendered text.
-        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        // WRAP_CONTENT so short agent bubbles hug text; parents that need full width pass Modifier.fillMaxWidth().
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         setTextIsSelectable(true)
         // Populate before the first measure; lazy prefetch can otherwise cache an empty layout.
         renderer.setParsedMarkdown(this, value)
