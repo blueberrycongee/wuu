@@ -33,7 +33,9 @@
 
 .channel-activity-region.channel-activity-motion {
   gap: 0;
-  min-height: 40px;
+  /* Reserve the complete row while empty: 36px control, 6px slot padding,
+     and 20px region padding. Presence changes must not resize the footer. */
+  min-height: 62px;
   /* The 32px avatar and attachment button share the composer padding. */
   padding-inline-start: 7px;
   align-items: center;
@@ -122,6 +124,7 @@
   50% { transform: translateY(-1.5px) scale(1.025); }
 }
 @media (pointer: coarse) {
+  .channel-activity-region.channel-activity-motion { min-height: 70px; }
   .channel-activity-motion .channel-activity-inspect { min-width: 44px; min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {

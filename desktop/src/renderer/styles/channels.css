@@ -1210,10 +1210,6 @@
   background: var(--paper);
 }
 
-.channel-conversation-footer .channel-activity-region:empty {
-  display: none;
-}
-
 .channel-conversation-footer .channel-activity-slot-content,
 .channel-conversation-footer .channel-send-error {
   position: relative;
