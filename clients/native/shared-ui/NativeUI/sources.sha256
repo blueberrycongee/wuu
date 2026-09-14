@@ -1,5 +1,5 @@
 703c2d30dda8d8efd0884b9eb9bfbdbd8099311aa722d3748e5e8794fb866a19  assets/app-icon-source.json
-aac13c709617983de37e8c97acdec6e14035c8682e6c096f304476174202b3f2  clients/native/shared-ui/build.mjs
+2424283192d0ceed72688d50907a9f7db1e5ec678b4cc2bcfec9de9aa1fceb3b  clients/native/shared-ui/build.mjs
 d72b8bd279ab23110da0ed799bd1fd6d30d19fc30382c373aec449d6b8323cbe  clients/native/shared-ui/src/mascot.tsx
 8007d9f7b27d6a6658684e70e7bfb803971c0c3f9c4e92803ae207b17f97c110  clients/native/shared-ui/src/native.css
 8fd69d8a162e840cc9383f44816121a6804e52efefc26ef728ddc1bafe5d6c95  desktop/src/renderer/AgentAvatarMark.tsx
@@ -32,4 +32,4 @@ afd2640f8f42e6d149206b15da6668311d4239d16bfe2764cbcbee38b97cafae  desktop/vendor
 0a27a0b2787f3d2339ce734cf9ecbd7e382352261f7db765dfb59f6fb886c81f  desktop/vendor/blobatar/src/surface.ts
 81b3d0b43a10b87ada252240ad975b05bf92a8099102e85b304548cbfe9d1a45  desktop/vendor/blobatar/src/traits.ts
 9715f0b69b1834b164a866ba191f8a5cc25ebc30c7d5dd6c109d122cd7ed715c  desktop/vendor/blobatar/src/uri.ts
-255a93d071c491332eeb44c992be9100ef86dfc5c7fc03269eb735101c940b75  clients/native/shared-ui/NativeUI/mascot.html
+c893051381ad02f59df566f29d6e483a0962dd3d9a065effb87bf0407af01683  clients/native/shared-ui/NativeUI/mascot.html
