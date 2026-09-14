@@ -307,18 +307,31 @@ import org.json.JSONObject
 }
 
 @Composable private fun RoomBubble(own: Boolean, mark: JSONObject?, status: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         if (own) Spacer(Modifier.widthIn(min = 40.dp).weight(1f))
         if (!own && mark != null) {
-            AgentMark(mark, 22.dp, status = status, subtle = status == null)
-            Spacer(Modifier.width(6.dp))
-        }
-        Surface(
-            color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
-            contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-            shape = RoundedCornerShape(18.dp),
-        ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+            // Stagger: avatar top-leading overlaps bubble so face stays near DM (~8dp pad), not a rigid 22+6 column.
+            Box {
+                Surface(
+                    modifier = Modifier.padding(start = 2.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+                }
+                Box(Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = 1.dp)) {
+                    AgentMark(mark, 22.dp, status = status, subtle = status == null)
+                }
+            }
+        } else {
+            Surface(
+                color = if (own) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
+                contentColor = if (own) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+            }
         }
         if (!own) Spacer(Modifier.widthIn(min = 30.dp).weight(1f))
     }
