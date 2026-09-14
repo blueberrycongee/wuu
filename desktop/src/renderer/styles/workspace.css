@@ -2647,7 +2647,7 @@ html.resizing-workspace-file-split * {
 .plugin-settings-editor-page {
   padding: 0 16px;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
 }
 
 .plugin-settings-editor-page .plugin-setting {

@@ -2003,10 +2003,10 @@
   width: auto;
   gap: 1px;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 6px;
+  padding: var(--menu-inset);
   transform-origin: top left;
   --menu-enter-x: 0;
   --menu-enter-y: 0;
@@ -3002,10 +3002,10 @@
   z-index: 2147482000;
   min-width: 180px;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 6px;
+  padding: var(--menu-inset);
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 

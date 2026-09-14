@@ -323,7 +323,8 @@
 .settings-section > .settings-group {
   padding: 0 16px;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  /* Control-wrapping shell: one tier below panel. */
+  border-radius: var(--radius-sm);
 }
 
 .settings-group .settings-row:last-child {
@@ -752,7 +753,7 @@
 .settings-engine-body {
   padding: 0 16px;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
 }
 
 .settings-engine-body .settings-row {
@@ -965,7 +966,7 @@
   min-height: 64px;
   align-items: center;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   padding: 16px 48px 16px 16px;
@@ -1040,7 +1041,7 @@
   min-width: 0;
   padding: 16px;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
 }
 
 .settings-provider-editor-header {
