@@ -197,3 +197,27 @@ func itemTypes(items []appserver.ThreadItem) string {
 	}
 	return out
 }
+
+func TestMobileReplyImagesArriveInCompletionWithoutChangingLegacyChat(t *testing.T) {
+	raw := []byte(`{"method":"item/completed","params":{"thread_id":"thread","turn_id":"turn","item":{"id":"reply","type":"agent_message","text":"![result](reply.png)"}}}`)
+	projected, keep := (mobileChatFilter{tools: true}).line(raw)
+	if !keep {
+		t.Fatal("assistant completion was lost")
+	}
+	var event struct {
+		Params struct {
+			Item appserver.ThreadItem `json:"item"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(projected, &event); err != nil {
+		t.Fatal(err)
+	}
+	images := event.Params.Item.MarkdownImages
+	if len(images) != 1 || images[0].Data != "" || !strings.HasPrefix(images[0].RemoteRef, "markdown:") {
+		t.Fatalf("missing reply image: %+v", images)
+	}
+	legacy, keep := filterMobileChatLine(raw)
+	if !keep || strings.Contains(string(legacy), "markdown_images") {
+		t.Fatalf("legacy profile changed: %s", legacy)
+	}
+}
