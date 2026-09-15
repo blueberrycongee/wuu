@@ -57,6 +57,13 @@ final class SnapshotTests: XCTestCase {
         XCTAssertThrowsError(try ticket.validate(reference: ticket.id, processID: pid, launchTime: 10, epoch: "lease", requiresReference: true, resourceRevision: second.revision))
     }
 
+    func testMalformedPostconditionsCannotSilentlyWeakenVerification() throws {
+        XCTAssertThrowsError(try AXExpectation(["role": "AXTextField", "value": 123]))
+        XCTAssertThrowsError(try AXExpectation(["role": "AXTextField", "titel": "Name"]))
+        XCTAssertThrowsError(try AXExpectation(["title": "Name", "exists": 1]))
+        XCTAssertThrowsError(try ComputerCommand(arguments: ["action": "click", "expect": "saved"]))
+    }
+
     func testObservationOptionsValidateAtProtocolBoundary() throws {
         let command = try ComputerCommand(arguments: ["action": "observe", "mode": "ax", "limit": 999, "root_element_id": 12, "snapshot_id": "s"])
         XCTAssertEqual(command.observationMode, .ax)

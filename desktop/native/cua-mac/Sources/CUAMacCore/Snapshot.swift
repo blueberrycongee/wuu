@@ -52,6 +52,16 @@ public struct AXExpectation: Sendable {
     let exists: Bool
 
     init(_ fields: [String: Any]) throws {
+        let names = Set(["role", "title", "description", "value", "exists"])
+        guard Set(fields.keys).isSubset(of: names) else { throw ComputerError.invalidArguments("expect contains unsupported fields") }
+        for name in ["role", "title", "description", "value"] {
+            if let value = fields[name], !(value is String) { throw ComputerError.invalidArguments("expect.\(name) must be a string") }
+        }
+        if let value = fields["exists"] {
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw ComputerError.invalidArguments("expect.exists must be a boolean")
+            }
+        }
         role = fields["role"] as? String
         title = fields["title"] as? String
         description = fields["description"] as? String

@@ -97,7 +97,10 @@ public struct ComputerCommand: @unchecked Sendable {
             guard let mode = ObservationMode(rawValue: rawAfter) else { throw ComputerError.invalidArguments("after must be ax, vision, or both") }
             after = mode
         } else { after = nil }
-        expectation = try (arguments["expect"] as? [String: Any]).map(AXExpectation.init)
+        if let value = arguments["expect"] {
+            guard let fields = value as? [String: Any] else { throw ComputerError.invalidArguments("expect must be an object") }
+            expectation = try AXExpectation(fields)
+        } else { expectation = nil }
         if action == .waitFor && expectation == nil { throw ComputerError.invalidArguments("wait_for requires expect") }
         query = arguments["query"] as? String
         offset = max(0, Self.int(arguments["offset"]) ?? 0)
@@ -313,20 +316,20 @@ public final class MCPServer {
             variant(.observe, required: ["app"]),
             variant(.querySnapshot, required: ["app", "snapshot_id"]),
             variant(.click, required: ["app"], anyOf: [
-                ["required": ["element_id"]],
-                ["required": ["x", "y", "coordinate_space"]],
+                ["required": ["element_id", "snapshot_id"]],
+                ["required": ["x", "y", "coordinate_space", "snapshot_id"]],
             ]),
-            variant(.drag, required: ["app", "from_x", "from_y", "to_x", "to_y", "coordinate_space"]),
+            variant(.drag, required: ["app", "snapshot_id", "from_x", "from_y", "to_x", "to_y", "coordinate_space"]),
             variant(.pressKey, required: ["app", "key"]),
             variant(.pressKeys, required: ["app", "keys"]),
             variant(.scroll, required: ["app", "direction"]),
-            variant(.setValue, required: ["app", "element_id"], anyOf: [
+            variant(.setValue, required: ["app", "element_id", "snapshot_id"], anyOf: [
                 ["required": ["value"]],
                 ["required": ["text"]],
             ]),
             variant(.typeText, required: ["app", "text"]),
-            variant(.selectText, required: ["app", "element_id", "text"]),
-            variant(.performAction, required: ["app", "element_id", "action_name"]),
+            variant(.selectText, required: ["app", "element_id", "text", "snapshot_id"]),
+            variant(.performAction, required: ["app", "element_id", "action_name", "snapshot_id"]),
             variant(.waitForChange, required: ["app"]),
             variant(.waitFor, required: ["app", "expect"]),
             variant(.sequence, required: ["app", "steps"]),
