@@ -56,3 +56,6 @@ Token scale: xs=8 (inner), sm=12 (control), md/lg=22 (panel), overlay≈md.
 
 ## Follow-up (2026-09-13)
 - Compact floating menus (select / codex-runtime / composer context & project / mention / conversation-actions): shell uses `--menu-shell-radius` = `calc(--radius-xs + --menu-inset)` instead of panel `--menu-radius` (22), so row hover (xs) nests concentrically under ~6px pad.
+
+## Follow-up (2026-09-15)
+- TODO hover card: use the compact shell recipe (`--menu-shell-radius`, default 14px, with `--menu-inset`, default 6px) instead of the 22px panel radius. Task rows use `--radius-xs` (8px); the current task gets a theme-aware highlight. Header and row content share an 8px horizontal inset, and long task text/explanations wrap within the scrollable card.

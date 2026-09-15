@@ -1364,11 +1364,12 @@ button.conversation-status-capsule,
   width: min(360px, calc(100vw - 48px));
   max-height: min(360px, 50vh);
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: var(--menu-inset);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
-  border-radius: var(--radius-md);
+  /* Compact shell: inner row radius + inset, not a panel-sized corner. */
+  border-radius: var(--menu-shell-radius);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
   opacity: 0;
@@ -1396,6 +1397,7 @@ button.conversation-status-capsule,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 6px 8px 2px;
   color: var(--shell-todo-card-ink);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -1412,13 +1414,15 @@ button.conversation-status-capsule,
 
 .conversation-status-todo-explanation {
   margin: 0;
+  padding: 0 8px 4px;
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .conversation-status-todo-list {
   display: grid;
-  gap: 8px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1428,9 +1432,12 @@ button.conversation-status-capsule,
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 7px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
   color: var(--shell-todo-card-soft);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .conversation-status-todo-list li > span:first-child {
@@ -1440,6 +1447,7 @@ button.conversation-status-capsule,
 }
 
 .conversation-status-todo-list li.is-in_progress {
+  background: var(--menu-hover);
   color: var(--shell-todo-card-ink);
   font-weight: var(--weight-medium);
 }
