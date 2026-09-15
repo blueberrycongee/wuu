@@ -31,6 +31,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Positioned Collaboration message history before paint to avoid a visible scroll
   jump on entry, while preserving the reading position during message updates.
 
+### Changed
+
+- Simplified the native iOS conversation drawer with one set of header controls,
+  adaptive width, and secondary archive/history actions in its menu. Workspace
+  selectors show project names instead of full paths.
+
 ## [2026.9.2] - 2026-09-15
 
 ### Changed
