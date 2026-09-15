@@ -1189,9 +1189,21 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     };
   }, [refreshTrackedTasks, section]);
 
-  useEffect(() => {
-    messageScroll.scrollToBottom();
-  }, [messageScroll, messages.length, messages.at(-1)?.id, pendingMessage]);
+  const positionedStreamRef = useRef<{ roomID: string; node: HTMLDivElement } | null>(null);
+  useLayoutEffect(() => {
+    const node = messageScroll.scrollRef.current;
+    if (section !== "rooms" || !node) {
+      positionedStreamRef.current = null;
+      return;
+    }
+    const previous = positionedStreamRef.current;
+    // Position fetched history before paint, not after showing its first rows.
+    // A new room starts at latest; updates within it respect reading history.
+    messageScroll.scrollToBottom({
+      force: previous?.roomID !== selectedRoomID || previous.node !== node,
+    });
+    positionedStreamRef.current = { roomID: selectedRoomID, node };
+  }, [messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
 
   async function submitAgent(): Promise<void> {
     if (!window.wuu || !editingAgentID || !agentName.trim() || savingAgent) return;

@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -228,6 +228,74 @@ afterEach(() => {
 });
 
 describe("ChannelView", () => {
+  it("positions asynchronously loaded history before paint", async () => {
+    const api = createApi();
+    let resolveMessages!: (value: { messages: ChannelMessage[] }) => void;
+    api.listChannelMessages = vi.fn(() => new Promise<{ messages: ChannelMessage[] }>((resolve) => { resolveMessages = resolve; }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    const positions: number[] = [];
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <Profiler id="room" onRender={() => {
+        const stream = container.querySelector<HTMLDivElement>("[role=log]");
+        if (stream?.querySelector("[data-message-id]")) positions.push(stream.scrollTop);
+      }}>
+        <ChannelView section="rooms" selectedRoomID="room-1" directoryAgents={agents} directoryRooms={rooms} />
+      </Profiler>,
+    ));
+    const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+    let top = 0;
+    Object.defineProperties(stream, {
+      scrollHeight: { configurable: true, get: () => stream.querySelector("[data-message-id]") ? 1000 : 400 },
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.min(value, stream.scrollHeight - 400); } },
+    });
+    await act(async () => resolveMessages({ messages: [{
+      id: "history", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user",
+      kind: "text", body: "Previously loaded history", created_at: "2026-07-23T00:00:00Z",
+    }] }));
+    expect(positions.length).toBeGreaterThan(0);
+    expect(positions.every((position) => position === 600)).toBe(true);
+  });
+
+  it("keeps the reading position on refresh but starts the next room at latest", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      const renderRoom = (roomID: string) => root!.render(
+        <ChannelView section="rooms" selectedRoomID={roomID} directoryAgents={agents} directoryRooms={rooms} />,
+      );
+      await act(async () => renderRoom("room-1"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+      const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+      let top = 600;
+      Object.defineProperties(stream, {
+        scrollHeight: { configurable: true, get: () => 1000 },
+        clientHeight: { configurable: true, get: () => 400 },
+        scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.min(value, 600); } },
+      });
+      act(() => {
+        stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        top = 200;
+        stream.dispatchEvent(new Event("scroll"));
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+      vi.mocked(api.listChannelMessages!).mockResolvedValue({ messages: [{
+        id: "new-message", room_id: "room-1", seq: 99, author_type: "human", author_id: "local-user",
+        kind: "text", body: "New message while reading", created_at: "2026-07-23T00:00:00Z",
+      }] });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(stream.textContent).toContain("New message while reading");
+      expect(top).toBe(200);
+      await act(async () => renderRoom("room-2"));
+      expect(top).toBe(600);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves verifier task states for honest room activity", () => {
     expect(assignmentState("checking")).toBe("checking");
     expect(assignmentState("revising")).toBe("revising");
