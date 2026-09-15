@@ -39,8 +39,9 @@ work that affects compatibility across shells.
 
 See [the development guide](docs/en/project/development.md) for component commands,
 supported platforms, CI checks, architecture boundaries, and restart behavior.
-`AGENTS.md` contains additional automation instructions but is not required
-reading for human contributors.
+Shared project constraints and agent execution instructions are maintained in
+[`AGENTS.md`](AGENTS.md). Read its design and visual acceptance requirements
+when contributing UI changes.
 
 The current supported build targets are macOS and Linux for the CLI and arm64
 macOS for the desktop preview. Mobile and remote control are experimental and
@@ -87,9 +88,9 @@ snapshot generated theme matrices, or quote prompt phrasing.
 - Add user-visible changes to the `[Unreleased]` section of `CHANGELOG.md`.
 - Do not edit product package versions by hand; `VERSION` is synchronized with
   `make release-prepare RELEASE_VERSION=<version>`.
-- Compatible fixes use a patch release. Features and compatibility-sensitive
-  protocol, configuration, data, or behavior changes use a minor release while
-  wuu remains pre-1.0.
+- Product releases use UTC CalVer `YYYY.M.N`, with `N` starting at 1 each month.
+  Check API, protocol, configuration, and storage compatibility separately; product
+  version increments do not express compatibility.
 - Only maintainers create release tags. See [the release guide](docs/en/project/release.md).
 
 ### Pull request process

@@ -74,8 +74,9 @@ thirdparty/
 # Local agent / shell / editor config
 # ============================================================
 
-# AI agent scratchpads (each shell/contributor brings its own)
+# Keep the root project instructions public; other local instruction files stay ignored.
 AGENTS.md
+!/AGENTS.md
 CLAUDE.md
 .claude/
 .mavis/
