@@ -597,8 +597,9 @@
   animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
 }
 
-.session-tab.pending-switch .session-tab-status,
-.session-tab.has-unread .session-tab-status {
+/* Selection loading must not turn an existing running spinner into a dot. */
+.session-tab.pending-switch:not(.running) .session-tab-status,
+.session-tab.has-unread:not(.running) .session-tab-status {
   width: 7px;
   background: var(--sidebar-accent);
   opacity: 1;
