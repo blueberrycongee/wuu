@@ -23,6 +23,14 @@ describe("CUALineDecoder", () => {
     ]);
   });
 
+  it("preserves UTF-8 characters split across pipe chunks", () => {
+    const decoder = new CUALineDecoder();
+    const data = Buffer.from('{"event":"capture_status","message":"窗口已关闭"}\n');
+    const split = data.indexOf(Buffer.from("窗")) + 1;
+    expect(decoder.push(data.subarray(0, split))).toEqual([]);
+    expect(decoder.push(data.subarray(split))).toEqual([{ event: "capture_status", message: "窗口已关闭" }]);
+  });
+
   it("keeps an incomplete final line for the next chunk", () => {
     const decoder = new CUALineDecoder();
     expect(decoder.push('{"event":"capture_status","status":"idle"}')).toEqual([]);

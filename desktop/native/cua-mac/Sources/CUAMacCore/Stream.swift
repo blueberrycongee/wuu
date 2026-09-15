@@ -94,6 +94,7 @@ private final class NativePiPLiveView: NSView {
         pointerPath.addLine(to: CGPoint(x: 13, y: 13))
         pointerPath.addLine(to: CGPoint(x: 21, y: 13))
         pointerPath.closeSubpath()
+        pointerLayer.opacity = 0
         pointerLayer.path = pointerPath
         pointerLayer.fillColor = NSColor.white.cgColor
         pointerLayer.strokeColor = NSColor.systemOrange.cgColor
@@ -153,6 +154,12 @@ private final class NativePiPLiveView: NSView {
         needsLayout = true
     }
 
+    func hideInteraction() {
+        pointerLayer.opacity = 0
+        pointerLayer.removeAllAnimations()
+        rippleLayer.removeAllAnimations()
+    }
+
     func animateInteraction(_ payload: [String: Any]) {
         guard let kind = payload["kind"] as? String,
               let x = payload["x"] as? Double,
@@ -161,6 +168,7 @@ private final class NativePiPLiveView: NSView {
             x: min(1, max(0, payload["to_x"] as? Double ?? x)),
             y: min(1, max(0, payload["to_y"] as? Double ?? y))
         )
+        pointerLayer.opacity = 1
         let from = pointerPoint(pointerPosition)
         let to = pointerPoint(destination)
         pointerPosition = destination
@@ -170,13 +178,14 @@ private final class NativePiPLiveView: NSView {
         animation.keyTimes = [0, 0.52, 1]
         animation.duration = 0.52
         animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.8, 0.24, 1)
-        pointerLayer.add(animation, forKey: "move")
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { pointerLayer.add(animation, forKey: "move") }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         pointerLayer.position = to
         rippleLayer.position = to
         CATransaction.commit()
 
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         switch kind {
         case "click": animateClick()
         case "scroll": animateNudge(key: "scroll", y: 8)
@@ -238,6 +247,13 @@ private final class NativePiPView: NSView {
     private let iconView = NSImageView()
     private let live = NativePiPLiveView()
     private let closeButton = NSButton()
+    private let controls = NSView()
+    private let stateLabel = NSTextField(labelWithString: "")
+    private let controlButton = NSButton()
+    private let stopButton = NSButton()
+    private var userControlled = false
+    private let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+    var onControl: ((String) -> Void)?
     private var trackingArea: NSTrackingArea?
     private var isLive = false
     var onClose: (() -> Void)?
@@ -273,11 +289,32 @@ private final class NativePiPView: NSView {
         closeButton.wantsLayer = true
         closeButton.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.88).cgColor
         closeButton.layer?.cornerRadius = 8
-        closeButton.alphaValue = 0
+        closeButton.alphaValue = 1
         closeButton.target = self
         closeButton.action = #selector(closePressed)
+        closeButton.toolTip = chinese ? "关闭预览" : "Close preview"
+        closeButton.setAccessibilityLabel(closeButton.toolTip)
         addSubview(closeButton)
 
+        controls.wantsLayer = true
+        controls.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        addSubview(controls)
+        stateLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        stateLabel.textColor = .secondaryLabelColor
+        stateLabel.lineBreakMode = .byTruncatingTail
+        controls.addSubview(stateLabel)
+        for button in [controlButton, stopButton] {
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.contentTintColor = .labelColor
+            button.font = .systemFont(ofSize: 11, weight: .medium)
+            button.target = self
+            controls.addSubview(button)
+        }
+        controlButton.action = #selector(controlPressed)
+        stopButton.title = chinese ? "停止" : "Stop"
+        stopButton.action = #selector(stopPressed)
+        updateActivity(["state": "starting", "controller": "agent"])
         startPlaceholderPulse()
     }
 
@@ -305,11 +342,24 @@ private final class NativePiPView: NSView {
         live.frame = bounds
         let side = max(28, min(bounds.width, bounds.height) * 0.42)
         iconView.frame = CGRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
-        closeButton.frame = CGRect(x: bounds.maxX - 34, y: bounds.maxY - 34, width: 26, height: 26)
+        closeButton.frame = CGRect(x: bounds.maxX - 30, y: bounds.maxY - 30, width: 22, height: 22)
+        controls.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 30)
+        stopButton.frame = CGRect(x: bounds.width - 48, y: 4, width: 40, height: 22)
+        controlButton.frame = CGRect(x: bounds.width - 112, y: 4, width: 60, height: 22)
+        stateLabel.frame = CGRect(x: 10, y: 8, width: max(20, bounds.width - 128), height: 14)
         CATransaction.commit()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            closeButton.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.88).cgColor
+            controls.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        }
+    }
+
     private func startPlaceholderPulse() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         let pulse = CABasicAnimation(keyPath: "opacity")
         pulse.fromValue = 0.85
         pulse.toValue = 0.4
@@ -325,7 +375,7 @@ private final class NativePiPView: NSView {
         isLive = true
         iconView.layer?.removeAnimation(forKey: "pulse")
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.28
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.28
             live.animator().alphaValue = 1
             iconView.animator().alphaValue = 0
         }
@@ -336,7 +386,7 @@ private final class NativePiPView: NSView {
         isLive = false
         iconView.alphaValue = 1
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
             live.animator().alphaValue = 0
         }
         startPlaceholderPulse()
@@ -359,9 +409,35 @@ private final class NativePiPView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        NSAnimationContext.runAnimationGroup { _ in closeButton.animator().alphaValue = 0 }
+        closeButton.alphaValue = 1
     }
 
+    func updateActivity(_ payload: [String: Any]) {
+        let state = payload["state"] as? String ?? "starting"
+        userControlled = payload["controller"] as? String == "user"
+        let stopped = state == "stopped"
+        let error = payload["error"] as? String ?? ""
+        stateLabel.stringValue = !error.isEmpty ? (chinese ? "操作失败" : "Action failed")
+            : stopped ? (chinese ? "已停止" : "Stopped")
+            : userControlled ? (chinese ? "你在控制" : "Your control")
+            : (chinese ? "Agent 控制" : "Agent control")
+        stateLabel.toolTip = error.isEmpty ? nil : error
+        controlButton.title = userControlled ? (chinese ? "交还" : "Release") : (chinese ? "接管" : "Take over")
+        controlButton.setAccessibilityLabel(controlButton.title)
+        controlButton.isEnabled = !stopped
+        stopButton.isEnabled = !stopped
+        if stopped || userControlled { live.hideInteraction() }
+    }
+
+    private func requestControl(_ action: String) {
+        controlButton.isEnabled = false
+        stopButton.isEnabled = false
+        stateLabel.stringValue = chinese ? "正在处理" : "Working"
+        onControl?(action)
+    }
+
+    @objc private func controlPressed() { requestControl(userControlled ? "release" : "takeover") }
+    @objc private func stopPressed() { requestControl("stop") }
     @objc private func closePressed() { onClose?() }
 }
 
@@ -373,6 +449,10 @@ private final class NativePiPWindowController: NSObject, NSWindowDelegate {
     private let desktopTop: CGFloat
     private var shown = false
     private var requestedVisible = true
+    private var requestedLive = true
+    private var lastController = "agent"
+    private var lastState = "starting"
+    var shouldCapture: Bool { requestedVisible && requestedLive }
     private var captureAvailable = false
 
     init(configuration: NativePiPConfiguration, writer: PiPEventWriter) {
@@ -408,6 +488,7 @@ private final class NativePiPWindowController: NSObject, NSWindowDelegate {
         panel.minSize = CGSize(width: 220, height: 140)
         panel.maxSize = CGSize(width: 720, height: 800)
         panel.contentAspectRatio = configuration.frame.size
+        content.onControl = { [weak self] action in self?.writer.send("control", fields: ["action": action]) }
         content.onClose = { [weak self] in
             self?.requestedVisible = false
             self?.writer.send("user_close")
@@ -435,6 +516,19 @@ private final class NativePiPWindowController: NSObject, NSWindowDelegate {
         if visible { panel.orderFrontRegardless() } else { panel.orderOut(nil) }
     }
 
+    func setAppearance(dark: Bool) {
+        panel.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    }
+    func setLive(_ live: Bool) { requestedLive = live }
+    func updateActivity(_ payload: [String: Any]) { content.updateActivity(payload) }
+    func needsRestoration(_ payload: [String: Any]) -> Bool {
+        let nextController = payload["controller"] as? String ?? "agent"
+        let nextState = payload["state"] as? String ?? "active"
+        let restore = (nextController == "user" && lastController != "user") || (nextState == "stopped" && lastState != "stopped")
+        lastController = nextController
+        lastState = nextState
+        return restore
+    }
     func setIcon(_ image: NSImage?) { content.setIcon(image) }
 
     func markCaptureUnavailable() {
@@ -1124,7 +1218,7 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
     }
     let normalized = configuration.target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard let app = NSWorkspace.shared.runningApplications.first(where: {
-        if let processID = configuration.processID { return !$0.isTerminated && $0.processIdentifier == processID }
+        if let processID = configuration.processID { return !$0.isTerminated && $0.processIdentifier == processID && ($0.bundleIdentifier?.lowercased() == normalized || $0.localizedName?.lowercased() == normalized || $0.bundleURL?.path.lowercased() == normalized) }
         return !$0.isTerminated && ($0.bundleIdentifier?.lowercased() == normalized || $0.localizedName?.lowercased() == normalized || $0.bundleURL?.path.lowercased() == normalized)
     }) else { throw ComputerError.appNotFound(configuration.target) }
 
@@ -1137,6 +1231,14 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
         focusedFrame: focusedWindowFrame(processID: app.processIdentifier)
     )
     defer { windowStage.restore() }
+    let terminationSignals = [SIGTERM, SIGINT].map { code in
+        signal(code, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: code, queue: .main)
+        source.setEventHandler { windowStage.restore(); exit(0) }
+        source.resume()
+        return source
+    }
+    defer { for source in terminationSignals { source.cancel() } }
 
     // Install the command reader before staging or capture work. Both staging
     // retries and stream startup suspend instead of blocking the main actor, so
@@ -1158,6 +1260,23 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
                       let type = command["type"] as? String else { return }
                 switch type {
                 case "visible": controller.setVisible(command["visible"] as? Bool == true)
+                case "live": controller.setLive(command["live"] as? Bool == true)
+                case "appearance": controller.setAppearance(dark: command["dark"] as? Bool == true)
+                case "activity":
+                    controller.updateActivity(command)
+                    let nextController = command["controller"] as? String ?? "agent"
+                    if controller.needsRestoration(command) {
+                        windowStage.restore()
+                        let pid = app.processIdentifier
+                        do {
+                            try await Task.detached { try WindowRestorationJournal.restoreForUser(processID: pid) }.value
+                            if nextController == "user" { app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) }
+                        } catch {
+                            var failed = command
+                            failed["error"] = error.localizedDescription
+                            controller.updateActivity(failed)
+                        }
+                    }
                 case "interaction": controller.animateInteraction(command)
                 case "close":
                     controller.panel.orderOut(nil)
@@ -1187,6 +1306,21 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
     var lastSafetyRefresh = Date.distantPast
 
     while !app.isTerminated && processIsAlive(configuration.parentProcessID) {
+        if !controller.shouldCapture {
+            if let existing = stream, let existingOutput = output {
+                try? existing.removeStreamOutput(existingOutput, type: .screen)
+                try? await existing.stopCapture()
+                writer.send("capture_status", fields: ["status": "stopped"])
+            }
+            stream = nil
+            output = nil
+            try await Task.sleep(for: .milliseconds(100))
+            continue
+        }
+        if establishFailures >= 4 {
+            writer.send("capture_status", fields: ["status": "error", "message": "capture recovery exhausted"])
+            break
+        }
         // Establish (or re-establish) the capture stream whenever we do not have
         // a live one. Failures are non-fatal: the frosted placeholder stays up
         // and we back off and retry, matching how the reference implementation
@@ -1205,8 +1339,9 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
                 try await Task.sleep(for: .milliseconds(250 * (1 << min(5, establishFailures))))
             }
             guard let content = await shareableContent(timeout: 3),
-                  let target = configuration.windowID.flatMap({ requested in content.windows.first(where: { $0.windowID == requested }) })
-                    ?? preferredStreamWindow(in: content, processID: app.processIdentifier) else {
+                  let target = (configuration.windowID != nil
+                    ? content.windows.first(where: { $0.windowID == configuration.windowID && $0.owningApplication?.processID == app.processIdentifier })
+                    : preferredStreamWindow(in: content, processID: app.processIdentifier)) else {
                 establishFailures += 1
                 continue
             }

@@ -171,7 +171,7 @@ import type {
 } from "../shared/protocol";
 import { AppServerClientPool } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator } from "./cuaActivityWindows";
+import { ObservationCoordinator, activityControlMethod } from "./cuaActivityWindows";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
 import {
@@ -390,7 +390,14 @@ const observationCoordinator = new ObservationCoordinator(
     return result.activities ?? [];
   },
   createObservationPiPFactory({ browserHost: browserHostCoordinator, isPackaged: app.isPackaged }),
+  async (activity, action) => {
+    const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
+      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id },
+    );
+    return result.activity;
+  },
 );
+observationCoordinator.setAppearance(resolvedThemeIsDark());
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden or minimized. Its
 // right-click menu disables the setting, which also tears the window down.
@@ -907,6 +914,7 @@ function microphonePermissionStatus(): VoicePermissionStatus {
 function syncThemeAcrossWindows(): void {
   syncNativeThemeSource();
   syncThemedWindowChrome();
+  observationCoordinator.setAppearance(resolvedThemeIsDark());
   broadcastThemePreference();
 }
 

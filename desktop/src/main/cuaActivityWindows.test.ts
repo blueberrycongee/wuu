@@ -20,6 +20,8 @@ function activity(overrides: Partial<ActivitySession> = {}): ActivitySession {
     workdir: "/repo",
     plugin_id: "cua-mac",
     target: "com.apple.TextEdit",
+    process_id: 42,
+    window_id: 99,
     state: "active",
     controller: "agent",
     created_at: "2026-07-10T10:00:00Z",
@@ -72,14 +74,29 @@ describe("CUA native picture-in-picture", () => {
     expect(activityControlMethod("stop")).toBe("activity/stop");
   });
 
-  it("keys an observation by session and target, ignoring window identity", () => {
-    expect(observationKey(activity({ target: "com.apple.TextEdit" })))
-      .toBe("thread-1:com.apple.TextEdit");
-    // Window identity is 0/0 on `started` and resolved on `updated`; a refinement
-    // must not change the key, or a second helper would race the first on the
-    // same window and trip a ScreenCaptureKit connection error.
-    expect(observationKey(activity({ target: "com.apple.TextEdit", process_id: 0, window_id: 0 })))
-      .toBe(observationKey(activity({ target: "com.apple.TextEdit", process_id: 42, window_id: 99 })));
+  it("rebinds native preview when resolved process or window changes", () => {
+    expect(observationKey(activity({ process_id: 42 }))).not.toBe(observationKey(activity({ process_id: 43 })));
+    expect(observationKey(activity({ window_id: 99 }))).not.toBe(observationKey(activity({ window_id: 100 })));
+  });
+
+  it("routes native control to the owning workdir and waits for authoritative state", async () => {
+    let emit: ((event: CUANativePiPEvent) => void) | undefined;
+    const updateActivity = vi.fn();
+    const control = vi.fn(async (current: ActivitySession) => ({ ...current, controller: "user" as const, state: "user_controlled" as const, updated_at: "2026-07-10T10:00:02Z" }));
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry, undefined,
+      (_activity, _key, sink) => {
+        emit = sink.onEvent;
+        return { start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity, animateInteraction: vi.fn(), stop: vi.fn() };
+      }, control,
+    );
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(activity({ plugin_id: "community-driver", process_id: 0 }));
+    expect(emit).toBeUndefined();
+    coordinator.update(activity({ plugin_id: "community-driver" }));
+    emit?.({ event: "control", action: "takeover" });
+    await vi.waitFor(() => expect(updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ controller: "user" })));
+    expect(control).toHaveBeenCalledWith(expect.objectContaining({ workdir: "/repo", id: "activity-1" }), "takeover");
   });
 
   it("waits for the outgoing helper to close and coalesces replacements", () => {
@@ -228,7 +245,7 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
 
-  it("freezes frame production on stop without tearing the surface down, and resumes on new activity", () => {
+  it("keeps a stopped surface frozen across reconciliation and resumes only a new activity", () => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
@@ -237,8 +254,11 @@ describe("browser observation surface", () => {
     expect(surfaces).toHaveLength(1); // kept, CUA observation semantics
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
-    expect(surfaces[0].setLive).toHaveBeenLastCalledWith(true);
-    expect(surfaces[0].updateActivity).toHaveBeenCalled();
+    coordinator.setActiveThread(undefined);
+    coordinator.setActiveThread("thread-1");
+    expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
+    coordinator.update(browserActivity({ id: "next-activity", updated_at: "2026-07-10T10:00:04Z" }));
+    expect(surfaces[1].setLive).toHaveBeenLastCalledWith(true);
   });
 
   it("swaps the surface on tab switch through the serialized replacement", () => {
