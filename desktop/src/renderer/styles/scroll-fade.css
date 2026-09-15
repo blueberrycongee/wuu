@@ -20,7 +20,9 @@
 
 @supports (animation-timeline: scroll(self y)) and (animation-range: 0px 1px) {
   [data-scroll-fade] {
-    --scroll-fade-size: 16px;
+    /* About one row of UI text at the 14px baseline: a shorter ramp only
+     * softens the boundary instead of reading as a gradient across a row. */
+    --scroll-fade-size: 24px;
     /* This is alpha, not a surface color: it works on glass and all themes. */
     --scroll-fade-opaque: #000;
     mask-image: linear-gradient(
@@ -40,7 +42,7 @@
       calc(100% - var(--scroll-fade-size)) 100%;
   }
 
-  [data-scroll-fade="compact"] { --scroll-fade-size: 12px; }
+  [data-scroll-fade="compact"] { --scroll-fade-size: 18px; }
 
   @keyframes scroll-fade-top {
     from { --scroll-fade-top: 0px; }
