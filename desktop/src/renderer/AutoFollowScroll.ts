@@ -395,16 +395,34 @@ export function useAutoFollowScrollContainer({
       return undefined;
     }
     const windowResizeScroll = createWindowResizeSettleScheduler(scrollToBottom);
+    let liveResizeFrame: number | undefined;
+    const scheduleLiveResizeScroll = (): void => {
+      if (!autoFollowRef.current || liveResizeFrame !== undefined) return;
+      liveResizeFrame = window.requestAnimationFrame(() => {
+        liveResizeFrame = undefined;
+        if (!isWindowResizing() || !autoFollowRef.current) return;
+        // Match the main conversation: keep the bottom anchored during the
+        // drag, not only after it settles. Chromium clamps this target without
+        // needing scrollHeight/clientHeight reads on every resize frame.
+        node.scrollTop = Number.MAX_SAFE_INTEGER;
+        programmaticScrollTopRef.current = node.scrollTop;
+        lastScrollTopRef.current = node.scrollTop;
+      });
+    };
     const resizeObserver = new ResizeObserver(() => {
       refreshPointerScrollGestureLayout(node);
       if (isWindowResizing()) {
+        scheduleLiveResizeScroll();
         windowResizeScroll.schedule();
         return;
       }
       scrollToBottom();
     });
     observeAutoFollowResizeTargets(node, resizeObserver);
+    window.addEventListener("resize", scheduleLiveResizeScroll);
     return () => {
+      window.removeEventListener("resize", scheduleLiveResizeScroll);
+      if (liveResizeFrame !== undefined) window.cancelAnimationFrame(liveResizeFrame);
       windowResizeScroll.cancel();
       resizeObserver.disconnect();
     };
