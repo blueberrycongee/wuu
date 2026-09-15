@@ -131,6 +131,7 @@ func run(ctx context.Context, args []string, output io.Writer, requireAccounts b
 		mux := http.NewServeMux()
 		mux.Handle("/v1/", handler)
 		mux.Handle("/healthz", handler)
+		mux.Handle("/readyz", handler)
 		mux.Handle("/", remoteWebHandler(*webRoot))
 		handler = mux
 	}

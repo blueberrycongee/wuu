@@ -31,6 +31,12 @@ services:
     volumes:
       - accounts:/data
     networks: [remote]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:8787/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
   proxy:
     image: caddy:2.10.2
     restart: unless-stopped
@@ -44,7 +50,9 @@ services:
     networks:
       remote:
         ipv4_address: 172.30.87.2
-    depends_on: [accounts]
+    depends_on:
+      accounts:
+        condition: service_healthy
 volumes:
   postgres:
   accounts:
