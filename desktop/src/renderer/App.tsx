@@ -5579,6 +5579,7 @@ export function App(): JSX.Element {
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}
+            data-scroll-fade={splitConversation ? undefined : "spacious"}
             onScroll={(event) => handleConversationScroll(event.currentTarget)}
             ref={conversationScrollRef}
           >

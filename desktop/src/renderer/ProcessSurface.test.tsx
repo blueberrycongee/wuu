@@ -852,6 +852,8 @@ describe("ProcessSurface", () => {
       });
       const body = container.querySelector(".process-surface-body");
       expect(body).toBeTruthy();
+      expect(body?.getAttribute("data-scroll-fade")).toBe("compact");
+      expect(body?.parentElement?.hasAttribute("data-scroll-fade")).toBe(false);
       const items = body?.querySelectorAll(
         ".process-surface-reasoning-item",
       );

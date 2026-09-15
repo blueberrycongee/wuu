@@ -96,7 +96,7 @@ export function CollaborationSidebar({
               aria-label={t("channels.searchConversations")} onChange={(event) => setQuery(event.currentTarget.value)} />
           </label>
         </div> : null}
-        <nav className="collaboration-sidebar-main" aria-label={t("channels.conversations")}>
+        <nav className="collaboration-sidebar-main" data-scroll-fade="" aria-label={t("channels.conversations")}>
           {draftAgent ? <button type="button" className={`collaboration-contact-row${draftSelected ? " active" : ""}`} aria-current={draftSelected ? "page" : undefined} onClick={onSelectDraft} aria-label={draftAgent.name || t("channels.newAgent")}>
             <span className="collaboration-contact-avatar" aria-hidden="true"><AgentOnboardingAvatar avatarKey={draftAgent.avatarKey} /></span>
             <span className="collaboration-contact-copy"><span className="collaboration-contact-heading"><strong>{draftAgent.name || t("channels.newAgent")}</strong></span></span>

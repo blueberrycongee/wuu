@@ -148,6 +148,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
         <div
           ref={bodyScroll.scrollRef}
           className="side-thread-panel__body"
+          data-scroll-fade=""
           role="log"
           aria-live="polite"
         >

@@ -209,6 +209,9 @@ describe("AppSidebar layout", () => {
     expect(primaryNav?.parentElement).toBe(content);
     expect(scrollRegion?.contains(primaryNav)).toBe(false);
     expect(scrollRegion?.querySelector(".project-section")).not.toBeNull();
+    expect(scrollRegion?.hasAttribute("data-scroll-fade")).toBe(true);
+    expect(primaryNav?.closest("[data-scroll-fade]")).toBeNull();
+    expect(content?.hasAttribute("data-scroll-fade")).toBe(false);
   });
 
   it("keeps the workspace add action visible and collaboration controls out of Harness", () => {

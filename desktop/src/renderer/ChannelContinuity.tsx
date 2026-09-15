@@ -69,7 +69,7 @@ export function ChannelContinuity({ roomId, agents }: { roomId: string; agents: 
   return <>
     <button type="button" className="icon-button channel-continuity-launcher" aria-label={t("channels.continuity.title")} title={t("channels.continuity.title")} onClick={() => setOpen(true)}><Clock3 className="icon" /></button>
     <SidebarNameDialog open={open} title="" onTitleChange={() => {}} onSubmit={() => {}} onClose={() => setOpen(false)} dialogTitle={t("channels.continuity.title")} dialogTitleId="channel-continuity-title" fieldLabel="" fieldAriaLabel="" placeholder="" icon={Clock3} submitLabel="" cancelLabel="" variant="drawer" hideActions dialogClassName="channel-sessions-dialog channel-continuity-dialog"
-      content={<div className="channel-sessions-body channel-continuity-body">
+      content={<div className="channel-sessions-body channel-continuity-body" data-scroll-fade="">
         <button type="button" className="icon-button channel-sessions-close" aria-label={t("common.close")} onClick={() => setOpen(false)}><X className="icon" /></button>
         <nav className="channel-continuity-tabs" aria-label={t("channels.continuity.title")}>
           <button type="button" aria-pressed={tab === "list"} onClick={() => setTab("list")}><Clock3 className="icon" />{t("channels.continuity.arrangements")}</button>

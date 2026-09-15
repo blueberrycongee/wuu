@@ -1844,7 +1844,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             }}
           />
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
-        <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
+        <div ref={messageScroll.scrollRef} className="channel-message-stream" data-scroll-fade="spacious" role="log" aria-live="polite">
           {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}
           {channelTimeline.map((item, index) => {
             if (item.kind === "orchestration" && selectedRoom) {

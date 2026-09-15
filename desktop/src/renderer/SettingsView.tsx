@@ -1050,7 +1050,7 @@ export function SettingsView({
             <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
           </button>
         </div>
-        <div ref={settingsScrollRef} className="settings-scroll">
+        <div ref={settingsScrollRef} className="settings-scroll" data-scroll-fade="spacious">
           <div
             className={`settings-page${activePage === "archive" ? " settings-page-archive" : ""}${activePage === "providers" ? " settings-page-providers" : ""}`}
             data-wuu-component="settings-page"

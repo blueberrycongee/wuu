@@ -1552,6 +1552,7 @@ export function AppSidebar({
         {unreadViewOpen ? (
           <section
             className="sidebar-unread-view scrollbar-hidden"
+            data-scroll-fade=""
             aria-label={t("sidebar.attentionConversations")}
           >
             {runningThreads.length > 0 ? (
@@ -1654,7 +1655,7 @@ export function AppSidebar({
           </button>
         </nav>
 
-        <div className="sidebar-main scrollbar-hidden">
+        <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
           {pluginNavigationEntries.length > 0 ? (
             <section
               className="sidebar-functional-group plugin-navigation-group"

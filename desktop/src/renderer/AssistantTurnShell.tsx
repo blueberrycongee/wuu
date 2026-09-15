@@ -731,6 +731,7 @@ function ReasoningFold({
         <div className="turn-reasoning-body-inner">
           <div
             className="turn-reasoning-scroll"
+            data-scroll-fade="compact"
             ref={reasoningScroll.scrollRef}
             {...{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
           >
