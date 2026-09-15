@@ -8,7 +8,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.2] - 2026-09-15
+
 ### Changed
+
+- Bundled macOS Computer Use with persistent self-signed release identity checks
+  and guidance for manual upgrades from GitHub Releases.
+- Waited for core and computer-use preview processes to stop before desktop exit.
 
 - Unified skill and plugin catalog artwork with original, theme-aware capability
   icons while preserving custom plugin artwork; removed the Herbarium test theme.
