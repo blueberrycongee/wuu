@@ -25,6 +25,7 @@ export type TurnArtifact = Readonly<{
   data?: string;
   remoteRef?: string;
   text?: string;
+  foldText?: boolean;
   uri?: string;
   resource?: unknown;
   placement: "inline" | "turn_end";
@@ -160,7 +161,7 @@ function ArtifactRenderer({
 }): JSX.Element {
   const fallback = artifact.type === "text" ? (
     <div className="turn-artifact-text-part">
-      <ToolResultText text={artifact.text ?? ""} cwd={cwd} onOpenFile={onOpenFile} />
+      <ToolResultText text={artifact.text ?? ""} folded={artifact.foldText} cwd={cwd} onOpenFile={onOpenFile} />
     </div>
   ) : variant === "inline" && artifact.mimeType.startsWith("image/") ? (
     <InlineArtifact artifact={artifact} cwd={cwd} />
@@ -199,7 +200,7 @@ function ArtifactRenderer({
   );
 }
 
-function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string; onOpenFile?: (path: string) => void }): JSX.Element {
+function ToolResultText({ text, folded, cwd, onOpenFile }: { text: string; folded?: boolean; cwd?: string; onOpenFile?: (path: string) => void }): JSX.Element {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const structured = useMemo(() => {
@@ -208,13 +209,13 @@ function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string;
       return value !== null && typeof value === "object" ? JSON.stringify(value, null, 2) : undefined;
     } catch { return undefined; }
   }, [text]);
-  // Mixed image/data results retain every part, but machine-readable metadata
-  // must not turn into a page of answer prose merely because an image follows.
-  if (structured === undefined) return <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />;
+  // Tool observations are not answer prose, even when their metadata is plain
+  // text. Explicitly presented artifacts can still carry visible captions.
+  if (!folded && structured === undefined) return <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />;
   return <div className="process-surface tool-result-data">
     <ProcessSurfaceFold open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}
       summary={<span className="process-surface-summary-line">{t("artifacts.structuredData")}</span>}>
-      {expanded ? <pre className="tool-result-data-json">{structured}</pre> : null}
+      {expanded ? <pre className="tool-result-data-json">{structured ?? text}</pre> : null}
     </ProcessSurfaceFold>
   </div>;
 }
@@ -465,6 +466,7 @@ function artifactFromContentPart(
     remoteRef: part.remote_ref,
     data,
     text,
+    foldText: part.type === "text" && !part.artifact?.placement,
     uri,
     resource: part.resource,
     placement,
