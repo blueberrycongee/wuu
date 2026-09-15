@@ -97,4 +97,44 @@ describe("turn item ordering", () => {
       ]).map((entry) => entry.id),
     ).toEqual(["custom-b", "thread-turn-0001-item-1", "custom-a"]);
   });
+
+  it.each(["completed", "interrupted", "failed"] as const)(
+    "replaces obsolete local items with the full %s snapshot",
+    (status) => {
+      const oldAnswer: ThreadItem = {
+        ...item("thread-turn-0001-item-9", "agent_message"),
+        status: "completed",
+        terminal: true,
+        text: "已完成。\n\n测试通过，尚未提交。",
+      };
+      const answer = { ...oldAnswer, id: "thread-turn-0001-item-8" };
+      const user = item("thread-turn-0001-item-1", "user_message");
+      const previous = turn([user, oldAnswer]);
+      const next: Turn = { ...turn([user, answer]), status };
+
+      expect(mergeTurnItemsInOrder(previous, next)).toEqual([user, answer]);
+      expect(previous.items).toEqual([user, oldAnswer]);
+    },
+  );
+
+  it("retains local items while an in-progress snapshot is catching up", () => {
+    const user = item("thread-turn-0001-item-1", "user_message");
+    const live = item("thread-turn-0001-item-2", "agent_message");
+    expect(mergeTurnItemsInOrder(turn([user, live]), turn([user]))).toEqual([
+      user,
+      live,
+    ]);
+  });
+
+  it("preserves intentional repeated text in the authoritative completed snapshot", () => {
+    const first: ThreadItem = {
+      ...item("thread-turn-0001-item-2", "agent_message"),
+      status: "completed",
+      terminal: true,
+      text: "已完成。",
+    };
+    const second = { ...first, id: "thread-turn-0001-item-3" };
+    const next: Turn = { ...turn([first, second]), status: "completed" };
+    expect(mergeTurnItemsInOrder(turn([first]), next)).toEqual([first, second]);
+  });
 });
