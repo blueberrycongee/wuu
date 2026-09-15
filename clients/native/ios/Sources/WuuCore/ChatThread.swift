@@ -91,6 +91,10 @@ public struct ChatThread: Identifiable, Sendable {
     private static func project(_ turn: JSONValue) -> [ChatMessage] {
             var messages: [ChatMessage] = turn["items"].array.compactMap { item in
                 guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call"].contains(type) else { return nil }
+                let sessionMessage = item["origin"].string == "plugin" && item["presentation_kind"].string == "session_message"
+                // Host-marked model notifications are not user messages; attributed peer messages remain visible.
+                if type == "user_message", !sessionMessage,
+                   ["wuu_process_notification", "wuu_agent_notification"].contains(item["name"].string ?? "") { return nil }
                 return ChatMessage(id: (turn["id"].string ?? "") + ":" + (item["id"].string ?? ""),
                     role: type == "user_message" ? "user" : type == "error" ? "error" : type == "tool_call" ? "tool" : "assistant",
                     text: item["text"].string ?? item["error"].string ?? "", contentRef: item["remote_content_ref"].string ?? "",
@@ -99,7 +103,7 @@ public struct ChatThread: Identifiable, Sendable {
                             ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"]]
                         },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil,
-                    sourceSessionID: item["origin"].string == "plugin" && item["presentation_kind"].string == "session_message" ? item["related_session_id"].string ?? "" : "",
+                    sourceSessionID: sessionMessage ? item["related_session_id"].string ?? "" : "",
                     sourceSessionName: item["name"].string ?? "")
             }
             let cancelled = turn["status"].string == "interrupted" && turn["error"]["category"].string == "cancelled"

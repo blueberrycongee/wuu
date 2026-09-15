@@ -2,6 +2,26 @@ import XCTest
 @testable import WuuCore
 
 final class ChatPagingTests: XCTestCase {
+    func testInternalNotificationsStayOutOfLiveAndPagedConversationWithoutHidingPeerMessages() {
+        let envelope = "<process_notification>{\"process_id\":\"p1\"}</process_notification>"
+        let items: [JSONValue] = [
+            ["id": "user", "type": "user_message", "text": "Check the background command"],
+            ["id": "process", "type": "user_message", "name": "wuu_process_notification", "text": .string(envelope)],
+            ["id": "agent", "type": "user_message", "name": "wuu_agent_notification", "text": "Internal handoff"],
+            ["id": "peer", "type": "user_message", "name": "wuu_process_notification", "text": .string(envelope),
+             "origin": "plugin", "presentation_kind": "session_message", "related_session_id": "source"],
+            ["id": "answer", "type": "agent_message", "text": "The command completed"]]
+        var live = ChatThread(["id": "t", "turns": [["id": "turn", "items": []]]])
+        for item in items { live.apply("item/completed", ["thread_id": "t", "turn_id": "turn", "item": item]) }
+        var paged = ChatThread(["id": "t", "history_cursor": "older", "turns": []])
+        paged.prependHistory(["thread_id": "t", "cursor": "older", "turns": [["id": "turn", "items": .array(items)]]])
+        XCTAssertEqual(live.messages.map(\.id), ["turn:user", "turn:peer", "turn:answer"])
+        XCTAssertEqual(paged.rows.flatMap(\.messages), live.messages)
+        XCTAssertEqual(live.messages[1].sourceSessionID, "source")
+        XCTAssertEqual(live.messages[1].text, envelope)
+        XCTAssertEqual(live.turns.first?["items"].array.count, items.count)
+    }
+
     func testCachedRowsFollowTextToolStatusRemovalAndHistory() {
         var thread = ChatThread(["id": "t", "history_cursor": "older", "turns": [["id": "turn", "status": "in_progress", "items": [
             ["id": "answer", "type": "agent_message", "text": "start"]]]]])
