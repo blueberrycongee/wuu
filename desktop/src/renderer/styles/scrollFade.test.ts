@@ -21,7 +21,7 @@ describe("scroll fade stylesheet contract", () => {
     expect(registration).toContain("initial-value: 0px");
   });
 
-  it("uses pixel ranges at both ends instead of fading a percentage of a long conversation", () => {
+  it("uses pixel ranges at both ends instead of fading a percentage of a long list", () => {
     expect(css).toMatch(/animation-range:\s*0px var\(--scroll-fade-size\),\s*calc\(100% - var\(--scroll-fade-size\)\) 100%/);
     expect(css).toMatch(/@keyframes scroll-fade-top\s*\{\s*from \{ --scroll-fade-top: 0px; \}\s*to \{ --scroll-fade-top: var\(--scroll-fade-size\); \}/);
     expect(css).toMatch(/@keyframes scroll-fade-bottom\s*\{\s*from \{ --scroll-fade-bottom: var\(--scroll-fade-size\); \}\s*to \{ --scroll-fade-bottom: 0px; \}/);
@@ -40,5 +40,21 @@ describe("scroll fade stylesheet contract", () => {
   it("removes the mask for accessibility and print rather than freezing a fade", () => {
     expect(css).toMatch(/:root\[data-appearance-motion="reduce"\] \[data-scroll-fade\]\s*\{\s*animation: none;\s*mask-image: none;/);
     expect(css).toMatch(/@media \(forced-colors: active\), \(prefers-reduced-motion: reduce\), print\s*\{\s*\[data-scroll-fade\]\s*\{\s*animation: none;\s*mask-image: none;/);
+  });
+});
+
+describe("scroll fade adoption scope", () => {
+  // Reading surfaces stay unmasked. Bounded tool/reasoning folds opt in
+  // within their own components, even when rendered inside these views.
+  it.each([
+    "App.tsx",
+    "ConversationSplitPane.tsx",
+    "SideThreadPanel.tsx",
+    "ChannelView.tsx",
+    "ChannelSessionInspector.tsx",
+    "SettingsView.tsx",
+  ])("keeps %s free of a page-level fade", (file) => {
+    const source = readFileSync(resolve(__dirname, "..", file), "utf8");
+    expect(source).not.toContain("data-scroll-fade");
   });
 });

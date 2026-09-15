@@ -1,4 +1,6 @@
-/* Opt in on the actual vertical scroll owner, never on an outer wrapper.
+/* Only for bounded inspection strips and navigation lists, not primary
+ * reading surfaces (message streams, settings pages, or document views).
+ * Opt in on the actual vertical scroll owner, never on an outer wrapper.
  * No extra DOM, scroll listeners, or React updates. The two self timelines
  * also follow programmatic scrolls, streaming content and viewport resizes.
  * An inactive timeline (no overflow / a closed details) leaves both lengths
@@ -39,7 +41,6 @@
   }
 
   [data-scroll-fade="compact"] { --scroll-fade-size: 12px; }
-  [data-scroll-fade="spacious"] { --scroll-fade-size: 24px; }
 
   @keyframes scroll-fade-top {
     from { --scroll-fade-top: 0px; }

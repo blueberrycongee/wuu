@@ -155,7 +155,6 @@ export function ConversationSplitPane({
       <div
         ref={onBodyRef}
         className="conversation-split-body"
-        data-scroll-fade="spacious"
         onScroll={(event) => onScroll(event.currentTarget)}
       >
         <div className="conversation-width conversation-split-width session-flow">

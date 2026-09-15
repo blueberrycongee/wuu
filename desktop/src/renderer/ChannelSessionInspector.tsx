@@ -101,7 +101,7 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
     {!detail && !error ? <p role="status">{t("channels.sessions.loading")}</p> : null}
     {detail && turnID && !targetTurn ? <p role="status">{t("channels.traceTurnUnavailable")}</p> : null}
     {detail && !turns.length ? <p>{t("channels.sessions.noHistory")}</p> : null}
-    <div className="scroll-region session-inspector-history" data-scroll-fade="" ref={history} tabIndex={0}
+    <div className="scroll-region session-inspector-history" ref={history} tabIndex={0}
       onWheelCapture={() => { anchorTurn.current = undefined; }}
       onPointerDownCapture={() => { anchorTurn.current = undefined; }}
       onTouchStartCapture={() => { anchorTurn.current = undefined; }}
