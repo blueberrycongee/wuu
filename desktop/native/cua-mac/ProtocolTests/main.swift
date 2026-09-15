@@ -56,9 +56,9 @@ private func testInitializesAndAdvertisesFullComputerTool() throws {
     let actions = action?["enum"] as? [String]
     let app = properties?["app"] as? [String: Any]
     try expect(actions == [
-        "permission_status", "request_permissions", "list_apps", "observe",
+        "permission_status", "request_permissions", "list_apps", "observe", "query_snapshot",
         "click", "drag", "press_key", "press_keys", "scroll", "set_value", "type_text",
-        "select_text", "perform_action", "wait_for_change",
+        "select_text", "perform_action", "wait_for_change", "wait_for",
         "sequence",
         "activate_control",
         "conceal_app", "reveal_app",

@@ -19,6 +19,8 @@ struct AXElementDescriptor: Equatable {
     let title: String
     let description: String
     let frame: CGRect?
+    let identifier: String
+    let value: String?
 }
 
 final class AXSnapshotter {
@@ -36,22 +38,9 @@ final class AXSnapshotter {
         truncated = false
         walk(application, depth: 0, lines: &lines, visited: &visited)
         if truncated {
-            lines.append("… accessibility tree truncated at \(maxElements) elements; narrow with activate_control or observe a subview for the rest.")
+            lines.append("… accessibility tree truncated at \(maxElements) elements; use observe with root_element_id and snapshot_id to inspect a subtree.")
         }
-        let controls = descriptors.sorted { left, right in
-            let leftPriority = left.value.role == kAXButtonRole as String ? 0 : left.value.role == kAXMenuItemRole as String ? 2 : 1
-            let rightPriority = right.value.role == kAXButtonRole as String ? 0 : right.value.role == kAXMenuItemRole as String ? 2 : 1
-            return leftPriority == rightPriority ? left.key < right.key : leftPriority < rightPriority
-        }.compactMap { id, descriptor -> String? in
-            guard let element = elements[id], axActions(element).contains(kAXPressAction as String) else { return nil }
-            var labels: [String] = []
-            if !descriptor.title.isEmpty { labels.append("title=\"\(descriptor.title)\"") }
-            if !descriptor.description.isEmpty { labels.append("description=\"\(descriptor.description)\"") }
-            guard !labels.isEmpty else { return nil }
-            return "[\(id)] \(descriptor.role) " + labels.joined(separator: " ")
-        }
-        let prefix = controls.isEmpty ? "" : "Actionable controls (prefer activate_control with an exact label):\n" + controls.prefix(160).joined(separator: "\n") + "\nAccessibility tree:\n"
-        return AXSnapshot(text: prefix + lines.joined(separator: "\n"), elements: elements, truncated: truncated)
+        return AXSnapshot(text: lines.joined(separator: "\n"), elements: elements, truncated: truncated)
     }
 
     func element(id: Int) -> AXUIElement? {
@@ -61,6 +50,11 @@ final class AXSnapshotter {
     func clear() {
         elements.removeAll(keepingCapacity: true)
         descriptors.removeAll(keepingCapacity: true)
+    }
+
+    func isCurrent(id: Int) -> Bool {
+        guard let element = elements[id], let saved = descriptors[id] else { return false }
+        return descriptor(element) == saved
     }
 
     func descriptor(id: Int) -> AXElementDescriptor? { descriptors[id] }
@@ -99,7 +93,9 @@ final class AXSnapshotter {
             role: axString(element, kAXRoleAttribute as String) ?? "",
             title: axString(element, kAXTitleAttribute as String) ?? "",
             description: axString(element, kAXDescriptionAttribute as String) ?? "",
-            frame: axFrame(element)
+            frame: axFrame(element),
+            identifier: axString(element, kAXIdentifierAttribute as String) ?? "",
+            value: axDisplayValue(element, kAXValueAttribute as String)
         )
     }
 

@@ -1,7 +1,7 @@
 {
   "id": "cua-mac",
   "name": "cua-mac",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Control macOS apps through Accessibility, ScreenCaptureKit, and native input.",
   "icon": "layout-grid",
   "author": {

@@ -6,6 +6,7 @@ public final class ComputerExecution: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var units = 0
+    private var delivered = false
     private var inputGuard: (() throws -> Void)?
     private let deadline: Date
     private static let threadKey = "wuu.cua.execution"
@@ -30,9 +31,11 @@ public final class ComputerExecution: @unchecked Sendable {
         units += 1
     }
 
+    func finishInput() { lock.lock(); delivered = true; lock.unlock() }
+
     public var evidence: [String: Any] {
         lock.lock(); defer { lock.unlock() }
-        return ["delivery": units == 0 ? "not_delivered" : "unknown", "input_units_attempted": units,
+        return ["delivery": delivered ? "delivered" : units == 0 ? "not_delivered" : "unknown", "input_units_attempted": units,
                 "verification": "not_requested"]
     }
 

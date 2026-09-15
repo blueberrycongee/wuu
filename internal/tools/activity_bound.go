@@ -211,7 +211,7 @@ func (t *Toolkit) runRiskSequence(ctx context.Context, tool Tool, threadID, acti
 		if err != nil {
 			return hooks.build("failed", completed, index, lastImage), "failed", err
 		}
-		stepResult, err := t.executeKnownToolResult(ctx, providers.ToolCall{Name: tool.Name(), Arguments: string(encoded)}, tool)
+		stepResult, err := t.executeKnownToolResultWithRepeatPolicy(ctx, providers.ToolCall{Name: tool.Name(), Arguments: string(encoded)}, tool, label == "CUA sequence" && cuaObservationAction(string(encoded)))
 		if hooks.observe != nil {
 			hooks.observe(string(encoded), stepResult)
 		}
