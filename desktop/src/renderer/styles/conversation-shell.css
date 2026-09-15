@@ -739,6 +739,16 @@
   background-clip: content-box;
 }
 
+/* The compact titlebar is still a native Electron drag region. Keep the
+ * sidebar control explicitly above that region: at narrow desktop widths the
+ * titlebar's grid can otherwise leave the button looking clickable while the
+ * native window drag handler consumes the press. */
+.app-shell.compact-navigation .titlebar .sidebar-toggle-button {
+  position: relative;
+  z-index: 150;
+  -webkit-app-region: no-drag;
+}
+
 .compact-conversation-actions > .icon-button:disabled {
   color: var(--ink-tertiary);
   cursor: default;
