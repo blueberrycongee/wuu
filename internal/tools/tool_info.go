@@ -189,7 +189,7 @@ func isDirectMCPToolCandidate(tool Tool) bool {
 
 func classifyToolKind(name string) ToolKind {
 	switch name {
-	case "read_file", "write_file", "list_files", "edit_file", "apply_patch":
+	case "read_file", "write_file", "list_files", "edit_file", "apply_patch", "present_artifact":
 		return ToolKindFile
 	case "grep", "glob":
 		return ToolKindSearch

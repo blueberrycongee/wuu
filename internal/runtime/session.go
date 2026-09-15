@@ -455,6 +455,7 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, newErr
 		}
 		kit.SetStateDir(workspaceStateDir)
+		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetWorkspaceID(workspaceID)
 		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
@@ -1350,6 +1351,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			return nil, err
 		}
 		kit.SetStateDir(stateDir)
+		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkills(s.Skills)
 		ConfigureToolkitPermissions(kit, s.Permissions)

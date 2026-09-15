@@ -34,6 +34,7 @@ export type TurnArtifact = Readonly<{
 
 export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
   const artifacts: TurnArtifact[] = [];
+  const presented = new Map<string, string>();
   for (const item of turn.items) {
     if (item.type !== "tool_call" || !item.result_detail?.content) continue;
     const content = item.result_detail.content;
@@ -43,7 +44,16 @@ export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
     if (!content.some((part) => part.type !== "text")) continue;
     content.forEach((part, index) => {
       const artifact = artifactFromContentPart(item, part, index, contentPartPlacement(content, index));
-      if (artifact) artifacts.push(artifact);
+      if (!artifact) return;
+      // Re-publishing an unchanged snapshot in the same turn should not repeat
+      // its preview. Preserve ordered mixed results and different file versions.
+      if (artifact.type !== "text" && artifact.sha256) {
+        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement]);
+        const owner = presented.get(key);
+        if (owner && owner !== item.id) return;
+        presented.set(key, item.id);
+      }
+      artifacts.push(artifact);
     });
   }
   return artifacts;
@@ -211,11 +221,13 @@ function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string;
 function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: string }): JSX.Element {
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
+  const [failedSource, setFailedSource] = useState<string>();
   const source = artifactSource(artifact, cwd);
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) {
-    return <figure className="composer-image-attachment turn-artifact-inline-image">
+    return <figure className="turn-artifact-inline-image">
       <AttachmentImage image={{media_type:artifact.mimeType,data:artifact.data ?? "",remote_ref:artifact.remoteRef}} label={t("composer.imageNumber", { number: artifact.index + 1 })}
         onOpen={src => openPreview({src,alt:artifact.name,title:artifact.name})} />
+      <figcaption>{artifact.name}</figcaption>
     </figure>;
   }
   if (!source || !artifact.mimeType.startsWith("image/")) {
@@ -223,14 +235,19 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   }
   const open = (): void => openPreview({ src: source, alt: artifact.name, title: artifact.name });
   return (
-    <figure className="composer-image-attachment turn-artifact-inline-image">
+    <figure className="turn-artifact-inline-image">
       <button
         type="button"
         onClick={open}
         aria-label={t("artifacts.previewNamed", { name: artifact.name })}
       >
-        <img src={source} alt={artifact.name} />
+        {failedSource === source ? (
+          <span className="turn-artifact-unavailable">{artifact.name}</span>
+        ) : (
+          <img src={source} alt={artifact.name} loading="lazy" onError={() => setFailedSource(source)} />
+        )}
       </button>
+      <figcaption>{artifact.name}</figcaption>
     </figure>
   );
 }

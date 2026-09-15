@@ -256,6 +256,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		// precedent below is the same hazard).
 		BrowserBridge:             t.env.BrowserBridge,
 		BrowserTabs:               t.env.BrowserTabs,
+		ArtifactPublisher:         t.env.ArtifactPublisher,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
 		Skills:                    t.env.Skills,
 		OnFileChanged:             t.env.OnFileChanged,
@@ -343,6 +344,9 @@ func (t *Toolkit) rebuildRegistry() {
 		NewBrowserTool(e),
 		// Deferred tool discovery
 		NewToolSearchTool(t),
+	}
+	if e.ArtifactPublisher != nil {
+		registered = append(registered, NewPresentArtifactTool(e))
 	}
 	if e.ChatAgent != nil {
 		registered = append(registered, NewYieldTurnTool())

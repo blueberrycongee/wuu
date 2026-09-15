@@ -2,11 +2,56 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { collectTurnArtifacts, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
-import type { Turn } from "../shared/protocol";
+import type { ThreadItem, Turn } from "../shared/protocol";
+const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
 vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
 vi.mock("./plugins/Workbench", () => ({WorkbenchContentRenderer:({fallback}:{fallback:React.ReactNode})=>fallback}));
 vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key})}));
-vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview:vi.fn()})}));
+vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
+
+function presentedImage(id: string, hash: string, name = "chart.svg"): ThreadItem {
+  return { id, type: "tool_call", name: "present_artifact", status: "completed", result_detail: { content: [{
+    type: "image", mime_type: "image/svg+xml", name,
+    uri: `wuu-artifact://workspace/thread/${id}/${name}?sha256=${hash}`,
+    artifact: { ref: id, sha256: hash, placement: "inline", size_bytes: 100 },
+  }] } };
+}
+
+it("deduplicates identical published snapshots per turn without hiding new versions or other named outputs", () => {
+  const first = presentedImage("first", "old");
+  const turn = { id: "turn", items: [first, presentedImage("repeat", "old"), presentedImage("revision", "new"), presentedImage("other", "old", "other.svg")] } as Turn;
+  expect(collectTurnArtifacts(turn).map(a => a.itemId)).toEqual(["first", "revision", "other"]);
+  expect(collectTurnArtifacts({ ...turn, id: "next", items: [first] })).toHaveLength(1);
+  const mixed: ThreadItem = { ...first, result_detail: { content: [first.result_detail!.content![0], { type: "text", text: "Compared with itself" }, first.result_detail!.content![0]] } };
+  expect(collectTurnArtifacts({ ...turn, items: [mixed] }).map(a => a.type)).toEqual(["image", "text", "image"]);
+});
+
+it("does not infer artifacts from file diffs, file links, or inspection text", () => {
+  const turn = { id: "turn", items: [
+    { id: "edit", type: "tool_call", name: "write_file", result: '{"path":"chart.svg","diff":{"new_file":true,"lines":3}}' },
+    { id: "read", type: "tool_call", name: "read_file", result_detail: { content: [{ type: "text", text: "<svg/>" }] } },
+    { id: "answer", type: "agent_message", text: "[chart](chart.svg)" },
+  ] } as Turn;
+  expect(collectTurnArtifacts(turn)).toEqual([]);
+});
+
+it("renders the managed SVG snapshot as an image with its filename and opens that exact snapshot", async () => {
+  const turn = { id: "turn", items: [presentedImage("first", "old")] } as Turn;
+  const artifact = collectTurnArtifacts(turn)[0];
+  const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+  openPreview.mockClear();
+  try {
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={[artifact]} />));
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(artifact.uri);
+    expect(container.querySelector("figcaption")?.textContent).toBe("chart.svg");
+    expect(container.querySelector(".composer-image-attachment")).toBeNull();
+    expect(container.querySelector("svg, iframe")).toBeNull();
+    await act(async () => container.querySelector("button")!.click());
+    expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" });
+    await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
+    expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("chart.svg");
+  } finally { act(() => root.unmount()); container.remove(); }
+});
 
 it("folds machine-readable data beside images without hiding captions or losing the full result", async () => {
   const data = { messages: Array.from({ length: 100 }, (_, seq) => ({ seq, body: `Message ${seq}` })) };

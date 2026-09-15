@@ -395,6 +395,30 @@ describe("TurnView", () => {
     expect(agentBlock?.querySelector(".turn-edit-summary-card")).toBeTruthy();
   });
 
+  it("keeps explicit artifact previews separate from the unchanged file-diff summary", () => {
+    const uri = "wuu-artifact://workspace/thread/artifact/chart.svg?sha256=old";
+    const turn = makeTurn("completed", [
+      { id: "write-chart", type: "tool_call", name: "write_file", status: "completed",
+        result: JSON.stringify({ path: "chart.svg", diff: { new_file: true, lines: 68 } }) },
+      { id: "present-chart", type: "tool_call", name: "present_artifact", status: "completed",
+        result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", name: "chart.svg", uri,
+          artifact: { ref: "artifact", sha256: "old", placement: "inline" } }] } },
+      makeFinalAnswer("图已生成。"),
+    ]);
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+    const preview = container.querySelector('[data-wuu-component="turn-artifacts-inline"]')!;
+    const diff = container.querySelector(".turn-edit-summary-card")!;
+    expect(preview.querySelector("img")?.getAttribute("src")).toBe(uri);
+    expect(diff.textContent).toContain("本轮修改 1 个文件");
+    expect(diff.textContent).toContain("chart.svg");
+    expect(diff.textContent).toContain("68");
+    expect(diff.contains(preview)).toBe(false);
+    expect(preview.contains(diff)).toBe(false);
+    expect(container.querySelector(".agent-block")?.contains(diff)).toBe(true);
+    expect(preview.closest(".turn-process-fold")).toBeNull();
+  });
+
   it("buffers structural process changes briefly while keeping the current text visible", () => {
     vi.useFakeTimers();
     const view = render(

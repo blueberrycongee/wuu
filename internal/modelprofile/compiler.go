@@ -110,6 +110,9 @@ func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	if kind.includesSessionWorkspace() {
 		addSessionWorkspaceTool(b)
 	}
+	// Presentation reads into host-owned storage, without editing the workspace.
+	// Room coordinators above deliberately do not publish execution outputs.
+	b.addVisible("present_artifact", capability.CapabilityArtifactPresent)
 	if kind.includesContextWindows() {
 		addContextWindowTools(b)
 	}
