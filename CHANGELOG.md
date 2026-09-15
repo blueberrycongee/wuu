@@ -15,6 +15,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   typography across messages, composers, and process rows.
 - Let conversation inputs grow with their contents up to the same height as
   manual expansion, shrink when text is removed, and scroll once full.
+- Simplified the native iOS conversation directory with secondary archive/history
+  actions in its menu and project names instead of full workspace paths.
+- Kept native iOS tab switching on directory pages. Conversation pages, including
+  empty sessions, use native back navigation and reserve the bottom edge for the
+  composer; directory search also hides the tab bar.
+- Matched native iOS connection feedback to the desktop bouncing Wuu letters and
+  blinking caret, with green branding, typed status text, and reduced-motion support.
 
 ### Fixed
 
@@ -30,17 +37,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   original identifiers or numeric precision.
 - Positioned Collaboration message history before paint to avoid a visible scroll
   jump on entry, while preserving the reading position during message updates.
-
-### Changed
-
-- Simplified the native iOS conversation drawer with one set of header controls,
-  adaptive width, and secondary archive/history actions in its menu. Workspace
-  selectors show project names instead of full paths.
-- Kept native iOS tab switching on directory pages. Conversation pages, including
-  empty sessions, use native back navigation and reserve the bottom edge for the
-  composer; directory search also hides the tab bar.
-- Matched native iOS connection feedback to the desktop bouncing Wuu letters and
-  blinking caret, with green branding, typed status text, and reduced-motion support.
 
 ## [2026.9.2] - 2026-09-15
 
