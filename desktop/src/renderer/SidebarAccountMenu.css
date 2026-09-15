@@ -10,7 +10,8 @@
   align-items: center;
   gap: var(--sidebar-nav-column-gap, 8px);
   width: 100%;
-  min-height: 46px;
+  min-height: 40px;
+  font-size: var(--sidebar-label-size, var(--font-ui));
   padding: 7px var(--sidebar-row-pad-x);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -63,7 +64,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: var(--weight-medium);
+  font-weight: var(--sidebar-label-weight, 500);
 }
 
 .sidebar-account-trigger > svg { flex-shrink: 0; color: var(--ink-muted); }

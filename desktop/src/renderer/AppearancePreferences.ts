@@ -1,12 +1,12 @@
 export interface AppearancePreferences {
-  uiSize: number;
+  codeSize: number;
   uiFont: string;
   codeFont: string;
   motion: "system" | "reduce";
 }
 
 export const appearanceDefaults: AppearancePreferences = {
-  uiSize: 13,
+  codeSize: 11,
   uiFont: "", codeFont: "", motion: "system",
 };
 const storageKey = "wuu.appearance.v1";
@@ -14,14 +14,14 @@ const changeEvent = "wuu-appearance-change";
 
 export function normalizeAppearance(value: unknown): AppearancePreferences {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const size = (key: "uiSize", min: number, max: number) => {
+  const size = (key: "codeSize", min: number, max: number) => {
     const value = input[key];
     return typeof value === "number" && Number.isFinite(value)
       ? Math.min(max, Math.max(min, Math.round(value))) : appearanceDefaults[key];
   };
   const font = (key: string) => typeof input[key] === "string" ? input[key].trim().slice(0, 120) : "";
   return {
-    uiSize: size("uiSize", 12, 16), uiFont: font("uiFont"),
+    codeSize: size("codeSize", 9, 24), uiFont: font("uiFont"),
     codeFont: font("codeFont"),
     motion: input.motion === "reduce" ? "reduce" : "system",
   };
@@ -38,7 +38,7 @@ export function fontFamily(name: string, fallback: string): string {
 
 export function codeEditorTypography(): { fontFamily: string; fontSize: number; lineHeight: number } {
   const preferences = readAppearance();
-  const fontSize = Number.parseFloat(document.documentElement.style.getPropertyValue("--conversation-message-font-size")) || 14;
+  const fontSize = preferences.codeSize;
   return {
     fontFamily: fontFamily(preferences.codeFont, 'ui-monospace, "SFMono-Regular", Consolas, monospace'),
     fontSize,
@@ -49,8 +49,12 @@ export function codeEditorTypography(): { fontFamily: string; fontSize: number; 
 export function applyAppearance(value: AppearancePreferences): void {
   const preferences = normalizeAppearance(value);
   const root = document.documentElement;
-  root.style.setProperty("--appearance-ui-size", `${preferences.uiSize}px`);
-  root.style.setProperty("--appearance-scale", String(preferences.uiSize / 13));
+  // Keep the existing persisted reading size as the unified UI preference.
+  // The retired local uiSize must not override it after an upgrade.
+  root.style.removeProperty("--appearance-ui-size");
+  const uiSize = Number.parseFloat(root.style.getPropertyValue("--conversation-message-font-size")) || 14;
+  root.style.setProperty("--appearance-scale", String(uiSize / 14));
+  root.style.setProperty("--appearance-code-size", `${preferences.codeSize}px`);
   root.style.setProperty("--appearance-ui-font", fontFamily(preferences.uiFont, "system-ui, sans-serif"));
   root.style.setProperty("--appearance-content-font", "var(--appearance-ui-font)");
   root.style.setProperty("--appearance-code-font", fontFamily(preferences.codeFont, 'ui-monospace, "SFMono-Regular", Consolas, monospace'));

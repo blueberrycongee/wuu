@@ -331,25 +331,31 @@
 }
 
 .sidebar-content {
-  --sidebar-row-pad-x: 8px;
-  /* Keep the 32px hit target, but tighten the visual tree: 16px glyphs sit in
-   * an 18px slot, with an 8px label gap and a compact 26px child indent. */
+  --sidebar-row-pad-x: 12px;
+  --sidebar-label-weight: 400;
+  --sidebar-selected-weight: 500;
+  --sidebar-label-size: var(--conversation-message-font-size, 14px);
+  --sidebar-heading-size: max(12px, calc(var(--sidebar-label-size) - 2px));
+  --sidebar-row-height: max(32px, calc(var(--sidebar-label-size) * 2.25));
+  /* One icon and text axis for navigation, projects, and account controls. */
   --sidebar-primary-icon-size: 16px;
   --sidebar-nav-icon-col: 18px;
-  --sidebar-nav-column-gap: 8px;
+  --sidebar-nav-column-gap: 10px;
   --sidebar-tree-toggle-col: 14px;
   --sidebar-tree-icon-col: 16px;
   --sidebar-tree-column-gap: 4px;
   --sidebar-row-action-size: 24px;
+  --sidebar-accessory-gap: 8px;
+  --sidebar-fork-icon-size: calc(var(--sidebar-primary-icon-size) - 2px);
+  --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + 3px);
   --sidebar-row-control-pad-x: 8px;
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
-  /* Functional grouping uses a 4px base rhythm: rows stay close inside a
-   * group, headings get one 8px beat, and unrelated groups get 20px. */
-  --sidebar-functional-row-gap: 4px;
-  --sidebar-functional-heading-gap: 8px;
-  --sidebar-functional-group-gap: 20px;
-  --sidebar-section-body-gap: 5px;
-  --sidebar-row-gap: 3px;
+  /* Shared row spacing separates hit surfaces without stretching their contents. */
+  --sidebar-functional-row-gap: var(--sidebar-row-gap);
+  --sidebar-functional-heading-gap: 4px;
+  --sidebar-functional-group-gap: max(20px, calc(var(--sidebar-label-size) * 1.5));
+  --sidebar-section-body-gap: 8px;
+  --sidebar-row-gap: max(2px, calc(var(--sidebar-label-size) * 0.2));
   --sidebar-list-pad-y: 2px;
   --sidebar-child-indent: 8px;
   --sidebar-session-status-col: var(--sidebar-nav-icon-col);
@@ -367,7 +373,7 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  padding: 0 12px 16px;
+  padding: 0 8px 8px;
   transform: translate3d(0, 0, 0) scale(1);
   transform-origin: left center;
   opacity: 1;
@@ -788,15 +794,16 @@
 .sidebar-brand {
   display: flex;
   flex-shrink: 0;
-  align-items: flex-end;
-  gap: 6px;
-  padding: 2px 8px 10px;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 var(--sidebar-row-pad-x) 8px;
   color: var(--sidebar-brand-wordmark-color);
 }
 
 .sidebar-brand-wordmark {
   font-family: var(--empty-home-title-font);
-  font-size: 34px;
+  font-size: 28px;
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;
@@ -810,7 +817,7 @@
   justify-content: center;
   gap: 1px;
   margin-right: 10px;
-  transform: translateY(-5px);
+  transform: none;
   -webkit-app-region: no-drag;
 }
 
@@ -824,7 +831,7 @@
   color: var(--ink-strong);
   font-size: 11px;
   font-weight: var(--weight-medium);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.03em;
   line-height: 1.05;
   opacity: 0.32;
   text-overflow: ellipsis;
@@ -851,7 +858,7 @@
 .sidebar-brand-descriptor {
   font-size: 11px;
   font-weight: var(--weight-medium);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.03em;
   line-height: 1;
 }
 
@@ -872,7 +879,7 @@
   cursor: pointer;
   line-height: 0;
   -webkit-app-region: no-drag;
-  transform: translateY(6px);
+  transform: none;
   /* keep in sync with CLEAR_UNREAD_HOLD_MS in AppModeSwitch.tsx */
   --hold-duration: 600ms;
   transition:
@@ -924,7 +931,7 @@
 .sidebar-notifications-button[data-holding="true"] {
   background: var(--wuu-nav-item-hover-background, var(--sidebar-glass-hover));
   color: var(--accent-warm);
-  transform: translateY(6px) scale(0.94);
+  transform: scale(0.94);
 }
 
 .sidebar-notifications-button[data-holding="true"]::before {
@@ -963,7 +970,7 @@
 }
 
 .sidebar-notifications-button:active {
-  transform: translateY(6px) scale(0.96);
+  transform: scale(0.96);
 }
 
 @keyframes sidebar-notifications-hold {
@@ -1320,7 +1327,8 @@
 }
 
 .collaboration-contact-heading strong {
-  font-size: var(--font-ui);
+  font-size: var(--sidebar-label-size);
+  line-height: 1.45;
   font-weight: var(--weight-medium);
 }
 
@@ -1332,7 +1340,7 @@
 }
 
 .collaboration-contact-preview {
-  font-size: var(--font-sm);
+  font-size: var(--sidebar-heading-size);
   line-height: 1.4;
   color: var(--ink-soft);
 }
@@ -1486,12 +1494,12 @@
    * other decorative marks. */
   color: var(--ink-soft);
   cursor: pointer;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  /* Row height is pinned to 32px, so the line box can afford real
+  font-size: var(--sidebar-label-size, var(--font-ui));
+  font-weight: var(--sidebar-label-weight, 500);
+  /* Rows start at 32px and grow with the text size, leaving real
    * leading. line-height: 1 clipped descenders (g / y / p) inside the
    * ellipsized label spans, which need overflow: hidden. */
-  line-height: var(--line-ui);
+  line-height: 1.45;
   padding: 0 var(--sidebar-row-pad-x);
   text-align: left;
   transition:
@@ -1597,7 +1605,7 @@
 .thread-row.active {
   background: var(--sidebar-row-selected-bg);
   color: var(--ink-strong);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--sidebar-selected-weight, var(--weight-semibold));
   transform: none;
 }
 
@@ -1668,8 +1676,8 @@
   flex: 1;
   overflow: hidden;
   color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1701,12 +1709,11 @@
   opacity: 1;
 }
 
-.sidebar-functional-heading-chevron {
-  position: absolute;
-  right: 100%;
-  width: 13px;
-  height: 13px;
-  margin-right: 3px;
+.sidebar-content .sidebar-functional-heading-toggle > .sidebar-functional-heading-chevron {
+  order: 2;
+  width: 12px;
+  height: 12px;
+  margin: 0 4px 0 8px;
   flex: 0 0 auto;
   color: var(--ink-muted);
   transition: transform var(--motion-fast) var(--ease-out);
@@ -1876,8 +1883,13 @@
 
 .pinned-append-drop-zone {
   position: relative;
-  height: 28px;
-  flex: 0 0 28px;
+  height: var(--sidebar-functional-group-gap);
+  flex: 0 0 var(--sidebar-functional-group-gap);
+}
+
+/* The append target occupies the group break instead of adding a blank row. */
+.sidebar-functional-group:has(.pinned-append-drop-zone) + .sidebar-functional-group {
+  margin-top: 0;
 }
 
 .pinned-append-drop-zone[data-drop-over="true"]::after {
@@ -2086,7 +2098,7 @@
   column-gap: var(--sidebar-nav-column-gap);
   color: var(--ink-soft);
   padding-right: var(--sidebar-row-pad-x);
-  font-weight: var(--weight-medium);
+  font-weight: var(--sidebar-label-weight, 500);
 }
 
 /* The chevron mirrors the section motion tokens so it settles in the same
@@ -2369,7 +2381,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 2px;
+  margin-top: 8px;
   /* Land the button text on the same column-2 x as the section body's
    * .sidebar-section-empty-note placeholder so "展开 / 收起" reads as a
    * footer hint, not as a half-row off to the left. We use the *nav*
@@ -2396,7 +2408,7 @@
   color: var(--ink-muted);
   cursor: pointer;
   font: inherit;
-  font-size: var(--font-sm);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
   font-weight: var(--weight-medium);
   padding: 0 var(--sidebar-row-control-pad-x);
   text-align: left;
@@ -2425,7 +2437,7 @@
   color: var(--ink-muted);
   cursor: pointer;
   font: inherit;
-  font-size: var(--font-sm);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
   font-weight: var(--weight-medium);
   padding: 0 var(--sidebar-row-control-pad-x);
   white-space: nowrap;
@@ -2448,8 +2460,8 @@
   border-radius: var(--radius-xs);
   column-gap: var(--sidebar-nav-column-gap);
   color: var(--ink-soft);
-  font-size: var(--font-ui);
-  font-weight: 500;
+  font-size: var(--sidebar-label-size, var(--font-ui));
+  font-weight: var(--sidebar-label-weight, 500);
   padding-left: var(--sidebar-row-pad-x);
 }
 
@@ -2718,46 +2730,27 @@
   transition: padding-right var(--motion-base) var(--ease-out);
 }
 
-/* When the row carries a fork icon, reserve space at the right of the
- * title so the truncated text (with its ellipsis) doesn't overlap with
- * the icon. The icon's footprint shifts on hover, so the title's
- * padding-right also shifts:
- *   - Default: icon at right: var(--sidebar-row-pad-x) = 8px (14px
- *     wide → left edge at right: 22px); padding-right: 24px leaves a
- *     2px gap.
- *   - Hover: icon slides to right: 62px (left edge at right: 76px); the
- *     hover-specific rule below bumps padding-right to 78px (2px gap on
- *     the other side of the icon). The base `.thread-row:hover` rule
- *     in between still applies for non-forked rows (54px, just enough
- *     to clear the action overlay). */
+/* Reserve the actual accessory footprint plus a reading gap at every size. */
 .thread-row:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
-  padding-right: 24px;
+  padding-right: calc(var(--sidebar-fork-icon-size) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:is(.running, .has-unread) .thread-row-main > .thread-row-title {
-  padding-right: 18px;
+  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
-  padding-right: 42px;
+  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-fork-icon-size) + var(--sidebar-accessory-gap) * 2);
 }
 
 .thread-row:hover .thread-row-main > .thread-row-title,
 .thread-row:has(.thread-row-action:focus-visible) .thread-row-main > .thread-row-title {
-  padding-right: 54px;
+  padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
 }
 
-/* Hover-specific override for forked rows. The icon sits at right: 62px
- * on hover (14px wide → left edge at right: 76px), so the title needs
- * 78px of right padding to leave a 2px gap between the truncated text
- * and the icon. Nesting `:has(.thread-row-fork-icon)` under `:hover`
- * gives this selector one more class than the plain hover rule above,
- * so it wins without `!important`. The base `padding-right` transition
- * above animates the bump from 24px → 78px as the row enters hover,
- * and 78px → 24px as it leaves. */
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
 .thread-row:has(.thread-row-action:focus-visible):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
-  padding-right: 78px;
+  padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-fork-icon-size) + var(--sidebar-accessory-gap) * 2);
 }
 
 .thread-row-main > .thread-row-title[data-title-swap] {
@@ -2775,30 +2768,10 @@
   }
 }
 
-/*
- * Forked-thread status icon. Sits as a sibling of the row's main button
- * and is always visible — unlike the hover-only pin/archive actions, it
- * is a persistent status indicator, not an action. The icon uses the
- * same `icon-sm` class as the action icons (14px, matching the
- * pin/archive glyphs exactly) and the default lucide-react stroke
- * width, so the three icons share one size and weight.
- *
- * Layout: by default it sits at `right: var(--sidebar-row-pad-x)` —
- * the same offset as the action overlay, but the actions are hidden
- * by default so there's no visual conflict. On hover, the icon moves
- * directly to `right: 62px`, stopping 3px left of the pin button.
- * The 3px gap matches the gap the
- * pin/archive pair uses internally, so the three controls read as one
- * rhythmic group on the right edge of the row. The title's own
- * `padding-right: 54px` on hover pushes the text leftward, keeping it
- * clear of the icon.
- *
- * `pointer-events: none` keeps the icon from intercepting clicks
- * intended for the row or the action overlay. The icon is purely
- * decorative — the row's `aria-label` already announces the fork, and
- * the icon is `aria-hidden`.
- */
+/* The fork marker stays between the title and right-edge accessories. */
 .thread-row-fork-icon {
+  width: var(--sidebar-fork-icon-size);
+  height: var(--sidebar-fork-icon-size);
   position: absolute;
   right: var(--sidebar-row-pad-x, 8px);
   top: 50%;
@@ -2817,12 +2790,12 @@
 /* Keep the persistent fork marker beside, rather than underneath, a right-edge
  * running/unread indicator. */
 .thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-fork-icon {
-  right: 24px;
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
-.thread-row:hover .thread-row-fork-icon,
+.thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
 .thread-row:has(.thread-row-action:focus-visible) .thread-row-fork-icon {
-  right: 62px;
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
   opacity: 0.95;
 }
 
@@ -2932,10 +2905,7 @@
   flex-direction: column;
   gap: 2px;
   margin-top: 16px;
-  /* Combined with `.sidebar-content`'s 16px bottom padding, this matches
-   * `.composer-wrap`'s 24px bottom inset so both bottom edges share a
-   * horizontal baseline. */
-  padding-bottom: 8px;
+  padding-bottom: 0;
   flex-shrink: 0;
 }
 
@@ -3122,7 +3092,7 @@
 /* Unified empty-note row for sections that have no children. */
 .sidebar-section-empty-note {
   color: var(--ink-muted);
-  font-size: var(--font-sm);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
   line-height: 1.4;
   padding: 4px var(--sidebar-row-pad-x) 4px
     calc(

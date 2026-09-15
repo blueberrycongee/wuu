@@ -1,7 +1,7 @@
 /* Keep layout in CSS pixels: page zoom also scales embedded browsers. */
 :root {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  --font-ui: var(--appearance-ui-size, 13px);
+  --font-ui: var(--conversation-message-font-size, 14px);
   --font-xs: calc(var(--font-ui) - 2px);
   --font-sm: calc(var(--font-ui) - 1px);
   --font-body: calc(var(--font-ui) + 1px);
@@ -10,7 +10,7 @@
   --font-display: calc(var(--font-ui) + 11px);
   --font-mono: var(--appearance-code-font, ui-monospace, monospace);
   --conversation-message-font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  --appearance-code-size: var(--conversation-message-font-size, 14px);
+  --appearance-code-size: 11px;
   --icon-size: calc(16px * var(--appearance-scale, 1));
   --icon-size-sm: calc(14px * var(--appearance-scale, 1));
   --icon-size-xs: calc(12px * var(--appearance-scale, 1));
@@ -18,17 +18,24 @@
   --icon-size-xl: calc(20px * var(--appearance-scale, 1));
 }
 .sidebar, .settings-sidebar, .sidebar-content {
-  --font-ui: var(--appearance-ui-size, 13px);
+  --font-ui: var(--conversation-message-font-size, 14px);
   --font-xs: calc(var(--font-ui) - 2px);
   --font-sm: calc(var(--font-ui) - 1px);
-  --sidebar-primary-icon-size: calc(var(--font-ui) * 16 / 13);
-  --sidebar-nav-icon-col: calc(var(--font-ui) * 18 / 13);
-  --sidebar-tree-icon-col: calc(var(--font-ui) * 16 / 13);
-  --sidebar-row-action-size: calc(var(--font-ui) * 24 / 13);
+  --sidebar-primary-icon-size: calc(var(--font-ui) * 16 / 14);
+  --sidebar-nav-icon-col: calc(var(--font-ui) * 18 / 14);
+  --sidebar-tree-icon-col: calc(var(--font-ui) * 16 / 14);
+  --sidebar-row-action-size: calc(var(--font-ui) * 24 / 14);
   font-size: var(--font-ui);
 }
+/* Reading labels and chrome share the UI size.
+ * Limit icon growth so large reading text does not turn the rail into a toolbar. */
+.sidebar-content {
+  --sidebar-primary-icon-size: clamp(16px, calc(var(--sidebar-label-size) + 2px), 20px);
+  --sidebar-nav-icon-col: calc(var(--sidebar-primary-icon-size) + 2px);
+  --sidebar-tree-icon-col: var(--sidebar-primary-icon-size);
+}
 .sidebar :is(.nav-item, .project-row, .thread-row), .settings-sidebar .nav-item {
-  min-height: 2.5em;
+  min-height: var(--sidebar-row-height, 2.5em);
   height: auto;
   padding-block: 0.35em;
 }

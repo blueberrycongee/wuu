@@ -27,7 +27,8 @@ function formatSize(size: number): string {
  * Stamp --conversation-message-font-size on <html> from the chosen px
  * value. The inline style on the document element wins over the
  * `:root` declaration in conversation-shell.css so the change cascades
- * through every message-flow surface. Mirrors the applyThemePreference
+ * through UI text and message-flow surfaces. The persisted field and IPC
+ * names remain unchanged so existing reading preferences survive upgrades. Mirrors the applyThemePreference
  * shape — caller-friendly side-effect helper.
  */
 export function applyMessageFlowFontSize(size: MessageFlowFontSize): void {
@@ -123,7 +124,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
       onChange={onChange}
       onBlur={(event) => commit(event.currentTarget.value)}
       onKeyDown={onKeyDown}
-      aria-label={t("settings.contentSize")}
+      aria-label={t("settings.uiSize")}
       data-testid="settings-message-flow-font-size-input"
     />
   );
