@@ -33,6 +33,22 @@ public final class AppActionLock {
         return AppActionLock(descriptor: descriptor)
     }
 
+    var revision: String {
+        var bytes = [UInt8](repeating: 0, count: 64)
+        let count = pread(descriptor, &bytes, bytes.count, 0)
+        return count > 0 ? String(decoding: bytes.prefix(count), as: UTF8.self) : "initial"
+    }
+
+    func advanceRevision() throws -> String {
+        let next = UUID().uuidString
+        let data = Array(next.utf8)
+        guard pwrite(descriptor, data, data.count, 0) == data.count,
+              ftruncate(descriptor, off_t(data.count)) == 0 else {
+            throw ComputerError.operationFailed("could not advance the app state revision")
+        }
+        return next
+    }
+
     deinit {
         if descriptor >= 0 {
             flock(descriptor, LOCK_UN)

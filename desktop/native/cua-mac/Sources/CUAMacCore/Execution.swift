@@ -65,6 +65,7 @@ private struct RequestMessage: @unchecked Sendable { let value: [String: Any] }
 public final class MCPRequestQueue: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [String: ComputerExecution] = [:]
+    private var closing = false
     private let server: MCPServer
     private let queue: DispatchQueue
 
@@ -84,6 +85,11 @@ public final class MCPRequestQueue: @unchecked Sendable {
         let execution = ComputerExecution()
         let key = request["id"].map(Self.key)
         lock.lock()
+        if closing || pending.count >= 64 || key.map({ pending[$0] != nil }) == true {
+            lock.unlock()
+            reply(["jsonrpc": "2.0", "id": request["id"] ?? NSNull(), "error": ["code": -32000, "message": "request queue unavailable or duplicate request id"]])
+            return
+        }
         if let key { pending[key] = execution }
         lock.unlock()
         let message = RequestMessage(value: request)
@@ -99,7 +105,7 @@ public final class MCPRequestQueue: @unchecked Sendable {
     }
 
     public func shutdown(completion: @escaping @Sendable () -> Void) {
-        lock.lock(); for execution in pending.values { execution.cancel() }; lock.unlock()
+        lock.lock(); closing = true; for execution in pending.values { execution.cancel() }; lock.unlock()
         queue.async { [self] in server.shutdown(); completion() }
     }
 

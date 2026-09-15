@@ -102,6 +102,10 @@ func (t *Toolkit) runActivityBoundAction(ctx context.Context, spec activitySpec,
 	// Preserve partial evidence, but prevent chaining another action after takeover.
 	if controlErr := t.activityRegistry.CheckControl(spec.ThreadID, session.ID, lease.Token); controlErr != nil {
 		result.IsError = true
+		if len(result.StructuredContent) == 0 {
+			// MCP cancellation does not wait for a delivery acknowledgement.
+			result.StructuredContent = json.RawMessage(`{"delivery":"unknown","control":"revoked"}`)
+		}
 		result.Content = append(result.Content, toolresult.ContentPart{Type: toolresult.ContentTypeText,
 			Text: "Control revoked. The action may have partially executed; do not replay it. Observe again after control is released."})
 		return result, controlErr

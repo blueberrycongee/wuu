@@ -1,6 +1,7 @@
 import AppKit
 import CUAMacCore
 import Foundation
+import Darwin
 
 _ = NSApplication.shared
 if CommandLine.arguments.count >= 8, CommandLine.arguments[1] == "--native-pip" {
@@ -37,6 +38,14 @@ if CommandLine.arguments.count >= 8, CommandLine.arguments[1] == "--native-pip" 
     exit(0)
 }
 let requests = MCPRequestQueue(backend: MacComputerBackend())
+let outputLock = NSLock()
+let terminationSignals = [SIGTERM, SIGINT].map { code in
+    signal(code, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: code, queue: .global())
+    source.setEventHandler { requests.shutdown { exit(0) } }
+    source.resume()
+    return source
+}
 DispatchQueue.global(qos: .userInitiated).async {
     while let line = readLine(strippingNewline: true) {
         guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -56,6 +65,8 @@ NSApplication.shared.run()
 @Sendable func writeResponse(_ response: [String: Any]) {
     if var data = try? JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]) {
         data.append(0x0A)
+        outputLock.lock()
         FileHandle.standardOutput.write(data)
+        outputLock.unlock()
     }
 }

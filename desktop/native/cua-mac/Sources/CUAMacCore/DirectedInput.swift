@@ -111,7 +111,8 @@ func postDragToPid(_ pid: pid_t, from start: CGPoint, to end: CGPoint) throws {
     }
     try ComputerExecution.input()
     down.postToPid(pid)
-    defer { up.postToPid(pid) }
+    var lastPoint = start
+    defer { up.location = lastPoint; up.postToPid(pid) }
     for step in 1...12 {
         try ComputerExecution.checkpoint()
         let progress = Double(step) / 12
@@ -121,6 +122,7 @@ func postDragToPid(_ pid: pid_t, from start: CGPoint, to end: CGPoint) throws {
         )
         if let dragged = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)) {
             dragged.postToPid(pid)
+            lastPoint = point
         }
         usleep(8_000)
     }

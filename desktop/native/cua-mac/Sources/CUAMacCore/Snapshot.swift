@@ -5,13 +5,17 @@ struct SnapshotTicket {
     let processID: Int32
     let launchTime: TimeInterval
     let controlEpoch: String
+    var resourceRevision: String = ""
     private(set) var consumed = false
 
-    mutating func invalidate() { consumed = true }
+    mutating func invalidate(resourceRevision: String? = nil) {
+        consumed = true
+        if let resourceRevision { self.resourceRevision = resourceRevision }
+    }
 
-    func validate(reference: String?, processID: Int32, launchTime: TimeInterval, epoch: String, requiresReference: Bool) throws {
-        guard self.processID == processID, self.launchTime == launchTime, controlEpoch == epoch else {
-            throw ComputerError.staleSnapshot("app or control ownership changed")
+    func validate(reference: String?, processID: Int32, launchTime: TimeInterval, epoch: String, requiresReference: Bool, resourceRevision: String = "") throws {
+        guard self.processID == processID, self.launchTime == launchTime, controlEpoch == epoch, self.resourceRevision == resourceRevision else {
+            throw ComputerError.staleSnapshot("app, control ownership, or shared state revision changed")
         }
         if requiresReference || reference != nil {
             guard reference == id, !consumed else {

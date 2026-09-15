@@ -26,6 +26,7 @@ private final class ApplicationBox: @unchecked Sendable {
 public final class MacComputerBackend: ComputerBackend {
     private let snapshotter = AXSnapshotter()
     private var snapshotTicket: SnapshotTicket?
+    private var resourceRevision = ""
     private var snapshotWindows: [CGWindowID: CGRect] = [:]
     private var storedSnapshotText = ""
     private var snapshotProcessID: pid_t?
@@ -36,16 +37,16 @@ public final class MacComputerBackend: ComputerBackend {
     private var lastCaptureGeometry: [pid_t: CaptureGeometry] = [:]
     private var lastWindowIDs: [pid_t: CGWindowID] = [:]
     private var foregroundCaptureProcessIDs = Set<pid_t>()
-    private var concealedWindowOrigins: [pid_t: [CGPoint]] = [:]
+    private var restoration: WindowRestorationJournal?
 
-    public init() {}
+    public init() {
+        restoration = try? WindowRestorationJournal()
+        restoration?.recoverAbandoned(using: restoreWindow)
+    }
 
     public func shutdown() {
-        for pid in Array(concealedWindowOrigins.keys) {
-            if let app = NSRunningApplication(processIdentifier: pid) {
-                restoreConcealedWindows(app: app, application: AXUIElementCreateApplication(pid))
-            }
-        }
+        _ = try? restoration?.restore(using: restoreWindow)
+        restoration?.finish()
     }
 
     public func perform(_ command: ComputerCommand) throws -> ComputerResult {
@@ -68,6 +69,7 @@ public final class MacComputerBackend: ComputerBackend {
         let app = try resolveApplication(target, launch: !command.isMutation)
         let appActionLock = try AppActionLock.acquire(processID: app.processIdentifier)
         defer { withExtendedLifetime(appActionLock) {} }
+        resourceRevision = appActionLock.revision
         try ComputerExecution.checkpoint()
         let axApplication = AXUIElementCreateApplication(app.processIdentifier)
         enableElectronAccessibility(axApplication)
@@ -76,7 +78,8 @@ public final class MacComputerBackend: ComputerBackend {
         }
         if command.isMutation {
             try validateSnapshot(command, app: app)
-            snapshotTicket?.invalidate()
+            resourceRevision = try appActionLock.advanceRevision()
+            snapshotTicket?.invalidate(resourceRevision: resourceRevision)
         }
         if command.foregroundPolicy == .require {
             try ForegroundInputLock.withLock {
@@ -442,7 +445,7 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func observe(_ command: ComputerCommand, app: NSRunningApplication, axApplication: AXUIElement) throws -> ComputerResult {
-        var root = axApplication
+        var root = command.scope == .window ? preferredAXWindow(axApplication) ?? axApplication : axApplication
         if let rootID = command.rootElementID {
             try validateSnapshot(command, app: app)
             guard snapshotter.isCurrent(id: rootID), let element = snapshotter.element(id: rootID) else { throw ComputerError.staleSnapshot("subtree changed") }
@@ -483,7 +486,8 @@ public final class MacComputerBackend: ComputerBackend {
             if command.scope == .window {
                 // Legacy single-window path: unchanged so scope=window (the default)
                 // stays byte-for-byte identical to the pre-composite behaviour.
-                let capture = try captureWindowWithForegroundFallback(command, app: app)
+                let rootWindow = axString(root, kAXRoleAttribute as String) == kAXWindowRole as String ? root : (axValue(root, kAXWindowAttribute as String) as! AXUIElement?)
+                let capture = try captureWindowWithForegroundFallback(command, app: app, preferredFrame: rootWindow.flatMap(axFrame))
                 screenshot = capture.data
                 if lastScreenshotData[app.processIdentifier] != capture.data {
                     visualRevisions[app.processIdentifier, default: 0] += 1
@@ -556,9 +560,13 @@ public final class MacComputerBackend: ComputerBackend {
             header += " Screenshot=\(geometry.imageWidth)×\(geometry.imageHeight) pixels maps to window_frame=(\(Int(geometry.windowFrame.origin.x)),\(Int(geometry.windowFrame.origin.y)),\(Int(geometry.windowFrame.width)),\(Int(geometry.windowFrame.height))). Prefer coordinate_space=\"normalized\" (0-1000) for visual targets so provider image resizing does not affect clicks; use coordinate_space=\"screenshot\" only for original image pixels."
         }
         let changes = previousText.map { snapshotChanges(from: $0, to: snapshot.text) } ?? []
-        let ticket = SnapshotTicket(processID: app.processIdentifier, launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, controlEpoch: command.controlEpoch)
+        let ticket = SnapshotTicket(processID: app.processIdentifier, launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, controlEpoch: command.controlEpoch, resourceRevision: resourceRevision)
         snapshotTicket = ticket
         snapshotWindows = currentWindowFrames(processID: app.processIdentifier)
+        if structured["window_id"] == nil, let frame = axFrame(root) {
+            let matches = snapshotWindows.filter { $0.value == frame }.map(\.key)
+            if matches.count == 1 { structured["window_id"] = Int(matches[0]) }
+        }
         storedSnapshotText = snapshot.text
         let page = SnapshotPage(text: snapshot.text, query: nil, offset: command.offset, limit: command.limit)
         structured["snapshot_id"] = ticket.id
@@ -592,7 +600,7 @@ public final class MacComputerBackend: ComputerBackend {
         return try captureAppCompositePNG(processID: app.processIdentifier, scope: command.scope)
     }
 
-    private func captureWindowWithForegroundFallback(_ command: ComputerCommand, app: NSRunningApplication) throws -> WindowCapture {
+    private func captureWindowWithForegroundFallback(_ command: ComputerCommand, app: NSRunningApplication, preferredFrame: CGRect? = nil) throws -> WindowCapture {
         guard #available(macOS 14.0, *) else {
             throw ComputerError.unsupported("window screenshots require macOS 14 or newer")
         }
@@ -600,7 +608,7 @@ public final class MacComputerBackend: ComputerBackend {
         // this Core Graphics call through the system capture service; the PiP's
         // separate executable path keeps that proxy connection from replacing the
         // live stream's client identity.
-        if let background = try? captureForegroundWindowPNG(processID: app.processIdentifier) {
+        if let background = try? captureForegroundWindowPNG(processID: app.processIdentifier, preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier)) {
             return background
         }
         // Test-only isolation switch: skip the explicit SCScreenshotManager path.
@@ -611,19 +619,19 @@ public final class MacComputerBackend: ComputerBackend {
         }
         if foregroundCaptureProcessIDs.contains(app.processIdentifier) {
             return try withForegroundInput(command, app: app) {
-                try captureForegroundWindowPNG(processID: app.processIdentifier)
+                try captureForegroundWindowPNG(processID: app.processIdentifier, preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier))
             }
         }
         do {
             return try captureWindowPNG(
                 processID: app.processIdentifier,
-                preferredWindowFrame: focusedWindowFrame(processID: app.processIdentifier)
+                preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier)
             )
         } catch let backgroundError {
             foregroundCaptureProcessIDs.insert(app.processIdentifier)
             do {
                 return try withForegroundInput(command, app: app) {
-                    try captureForegroundWindowPNG(processID: app.processIdentifier)
+                    try captureForegroundWindowPNG(processID: app.processIdentifier, preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier))
                 }
             } catch let foregroundError {
                 throw ComputerError.operationFailed(
@@ -633,12 +641,19 @@ public final class MacComputerBackend: ComputerBackend {
         }
     }
 
+    private func preferredAXWindow(_ application: AXUIElement) -> AXUIElement? {
+        if let focused = axValue(application, kAXFocusedWindowAttribute as String), CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            return (focused as! AXUIElement)
+        }
+        return appWindows(application).max {
+            let left = axFrame($0) ?? .zero
+            let right = axFrame($1) ?? .zero
+            return left.width * left.height < right.width * right.height
+        }
+    }
+
     private func focusedWindowFrame(processID: pid_t) -> CGRect? {
-        let application = AXUIElementCreateApplication(processID)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &value) == .success,
-              let window = value as! AXUIElement? else { return nil }
-        return axFrame(window)
+        preferredAXWindow(AXUIElementCreateApplication(processID)).flatMap(axFrame)
     }
 
     private func element(_ command: ComputerCommand, app: NSRunningApplication) throws -> AXUIElement {
@@ -706,23 +721,14 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func currentWindowFrames(processID: pid_t) -> [CGWindowID: CGRect] {
-        let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
-        var frames: [CGWindowID: CGRect] = [:]
-        for window in windows {
-            guard window[kCGWindowOwnerPID as String] as? Int32 == processID,
-                  let id = window[kCGWindowNumber as String] as? UInt32,
-                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: bounds) else { continue }
-            frames[id] = frame
-        }
-        return frames
+        windowFrames(processID: processID)
     }
 
     private func validateSnapshot(_ command: ComputerCommand, app: NSRunningApplication) throws {
         guard let ticket = snapshotTicket else { throw ComputerError.staleSnapshot("observe the target first") }
         try ticket.validate(reference: command.snapshotID, processID: app.processIdentifier,
             launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, epoch: command.controlEpoch,
-            requiresReference: command.referencesSnapshot || command.action == .querySnapshot)
+            requiresReference: command.referencesSnapshot || command.action == .querySnapshot, resourceRevision: resourceRevision)
         if command.referencesSnapshot {
             guard currentWindowFrames(processID: app.processIdentifier) == snapshotWindows else {
                 throw ComputerError.staleSnapshot("target window geometry or identity changed")
@@ -814,26 +820,32 @@ public final class MacComputerBackend: ComputerBackend {
             throw ComputerError.operationFailed("no window to conceal yet; observe the app or wait for its window before concealing")
         }
         let target = offscreenOrigin()
-        var origins = concealedWindowOrigins[app.processIdentifier] ?? []
+        guard let restoration else { throw ComputerError.operationFailed("window restoration journal is unavailable") }
+        let frames = currentWindowFrames(processID: app.processIdentifier)
         var concealed = 0
         var clamped = 0
         for (index, window) in windows.enumerated() {
-            let current = axFrame(window)?.origin ?? .zero
-            // Only record an original that is still on-screen so a re-conceal does not
-            // overwrite the saved position with the off-screen one.
-            if index < origins.count {
-                if current.x < target.x - 1 { origins[index] = current }
-            } else {
-                origins.append(current)
+            try ComputerExecution.checkpoint()
+            guard let frame = axFrame(window) else { clamped += 1; continue }
+            let ids = frames.filter { $0.value == frame }.map(\.key)
+            guard ids.count == 1 else { clamped += 1; continue }
+            let parked = CGPoint(x: target.x + CGFloat(index) * 32, y: target.y + CGFloat(index) * 32)
+            if let previous = restoration.records.first(where: { $0.processID == app.processIdentifier && $0.windowID == ids[0] }) {
+                if previous.parked == frame { concealed += 1; continue }
+                try restoration.discard(processID: app.processIdentifier, windowID: ids[0])
             }
-            guard setWindowOrigin(window, to: target) else { continue }
-            if (axFrame(window)?.origin.x ?? current.x) >= target.x - 1 {
-                concealed += 1
-            } else {
-                clamped += 1
-            }
+            try restoration.record(WindowRestorationRecord(processID: app.processIdentifier,
+                launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, windowID: ids[0],
+                identifier: axString(window, kAXIdentifierAttribute as String) ?? "", original: frame,
+                parked: CGRect(origin: parked, size: frame.size)))
+            try ComputerExecution.input()
+            guard setWindowOrigin(window, to: parked) else { clamped += 1; continue }
+            if let actual = axFrame(window) {
+                try restoration.updateParked(processID: app.processIdentifier, windowID: ids[0], frame: actual)
+                if abs(actual.minX - parked.x) < 2, abs(actual.minY - parked.y) < 2 { concealed += 1 }
+                else { clamped += 1 }
+            } else { clamped += 1 }
         }
-        concealedWindowOrigins[app.processIdentifier] = origins
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? String(app.processIdentifier)
         var text = "Concealed \(concealed) window(s) for app=\"\(canonicalTarget)\" off-screen; Accessibility control and live capture continue."
         if clamped > 0 {
@@ -871,14 +883,7 @@ public final class MacComputerBackend: ComputerBackend {
 
     @discardableResult
     private func restoreConcealedWindows(app: NSRunningApplication, application: AXUIElement) -> Int {
-        guard let origins = concealedWindowOrigins[app.processIdentifier] else { return 0 }
-        let windows = appWindows(application)
-        var restored = 0
-        for (index, window) in windows.enumerated() where index < origins.count {
-            if setWindowOrigin(window, to: origins[index]) { restored += 1 }
-        }
-        concealedWindowOrigins[app.processIdentifier] = nil
-        return restored
+        (try? restoration?.restore(processID: app.processIdentifier, using: restoreWindow)) ?? 0
     }
 
     private func click(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -966,7 +971,8 @@ public final class MacComputerBackend: ComputerBackend {
         }
         try ComputerExecution.input()
         down.post(tap: .cghidEventTap)
-        defer { up.post(tap: .cghidEventTap) }
+        var lastPoint = start
+        defer { up.location = lastPoint; up.post(tap: .cghidEventTap) }
         for step in 1...12 {
             try ComputerExecution.input()
             let progress = Double(step) / 12
@@ -974,7 +980,10 @@ public final class MacComputerBackend: ComputerBackend {
                 x: start.x + (end.x - start.x) * progress,
                 y: start.y + (end.y - start.y) * progress
             )
-            markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left))?.post(tap: .cghidEventTap)
+            if let dragged = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)) {
+                dragged.post(tap: .cghidEventTap)
+                lastPoint = point
+            }
             usleep(8_000)
         }
     }

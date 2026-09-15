@@ -32,7 +32,7 @@ Use the `computer` tool from the `cua-mac` plugin for native macOS app interacti
 
 Wuu supplies the current control generation and defaults observation to `mode="ax"` for text-only BYOK models. Multimodal models can choose `ax`, `vision`, or `both`. This contract is identical in Direct and Code Mode; use the current nested tool catalog in Code Mode.
 
-`observe` returns `snapshot_id` and a bounded page of AX text. Use `query_snapshot` with that ID plus `offset` or `query` to retrieve more of the stored tree without changing element IDs. If traversal was truncated, observe a `root_element_id` from that snapshot to expand a subtree. A new observation replaces the old snapshot.
+`observe` returns `snapshot_id` and a bounded page of AX text. The default window scope keeps AX and screenshots on the same document window; use `scope="app", mode="ax"` when you need menus or the whole application tree. Use `query_snapshot` with that ID plus `offset` or `query` to retrieve more of the stored tree without changing element IDs. If traversal was truncated, observe a `root_element_id` from that snapshot to expand a subtree. A new observation replaces the old snapshot.
 
 Pass `snapshot_id` whenever using `element_id`, `root_element_id`, or coordinates. Input consumes those references. A stale snapshot, changed process, changed window geometry, or released control requires a new observation. Keyboard sequences and fresh exact-label selectors can continue without carrying consumed IDs. You choose when to observe; `after="ax"`, `"vision"`, or `"both"` can attach a new observation to an input result. In a `sequence`, Wuu supplies the latest observation's snapshot to subsequent steps unless a step explicitly supplies one.
 
