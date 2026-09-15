@@ -13,6 +13,25 @@ import CryptoKit
 }
 
 final class CollaborationLifecycleTests: XCTestCase {
+    @MainActor func testRefreshTransfersOnlyNewRowsAndDoesNotRepeatReadWrites() async throws {
+        let model = CollaborationModel(), fixture = ChannelFixture()
+        model.select("room")
+        var timeline = CollaborationTimeline()
+        timeline.merge(["messages": [["id": "old", "seq": 1, "body": "old"], ["id": "tail", "seq": 40, "body": "tail"]]])
+        model.timelines["room"] = timeline
+        fixture.handle = { method, params in
+            if method == "channel/room/read" { return [:] }
+            XCTAssertEqual(params["after_seq"].number, 39)
+            XCTAssertTrue(params["latest"].bool)
+            return ["messages": [["id": "tail", "seq": 40, "body": "tail"]], "responses": [["id": "stream", "state": "thinking"]]]
+        }
+        try await model.refreshRoom("room", app: fixture)
+        try await model.refreshRoom("room", app: fixture)
+        XCTAssertEqual(model.timeline.messages.map(\.id), ["old", "tail"])
+        XCTAssertEqual(model.timeline.responses.count, 1)
+        XCTAssertEqual(fixture.calls.filter { $0.0 == "channel/room/read" }.count, 1)
+    }
+
     @MainActor func testResumeUsesCurrentPublicReplyAndRejectsStaleSelection() async throws {
         let model = CollaborationModel(), fixture = ChannelFixture()
         let reply: JSONValue = ["id": "reply", "session_ref": "session", "turn_id": "turn", "state": "failed"]

@@ -26,6 +26,7 @@ import Observation
     private var mutation = 0
     private var removedRooms: Set<String> = []
     private var taskRefreshOffset: [String: Int] = [:]
+    private var readSequences: [String: Int] = [:]
     public var room: CollaborationRoom? { rooms.first { $0.id == roomID } }
     public var timeline: CollaborationTimeline { timelines[roomID ?? ""] ?? CollaborationTimeline() }
     public init() {}
@@ -34,33 +35,40 @@ import Observation
         revision = UUID(); selection = UUID(); mutation += 1
         agents = []; rooms = []; roomID = nil; timelines = [:]; drafts = [:]; attachments = [:]; positions = [:]; followingLatest = [:]
         hasOlder = [:]; loadingOlder = false
-        removedRooms = []; taskRefreshOffset = [:]
+        removedRooms = []; taskRefreshOffset = [:]; readSequences = [:]
         error = nil; loading = false; sending = false; creating = false
     }
-    public func select(_ id: String?) { selection = UUID(); roomID = id }
+    public func select(_ id: String?) { selection = UUID(); roomID = id; if let id { readSequences[id] = nil } }
 
     public func poll(app: any CollaborationConnection) async {
         let stamp = revision
+        var directoryTick = 0
         loading = rooms.isEmpty
         defer { if revision == stamp { loading = false } }
         while !Task.isCancelled, revision == stamp, app.connected {
             do {
-                let version = mutation
-                let directory = try await app.channelCall("channel/bootstrap", [:])
-                try Task.checkCancellation()
-                guard revision == stamp else { return }
-                if version == mutation {
+                // While reading a room, refresh its replies frequently but not the entire roster.
+                if roomID == nil || directoryTick == 0 {
+                    let version = mutation
+                    let directory = try await app.channelCall("channel/bootstrap", [:])
+                    try Task.checkCancellation()
+                    guard revision == stamp else { return }
+                    if version == mutation {
                     let nextIDs = Set(directory["rooms"].array.compactMap { $0["id"].string })
                     for id in rooms.map(\.id) where !nextIDs.contains(id) {
                         removedRooms.insert(id)
                         timelines[id] = nil; drafts[id] = nil; attachments[id] = nil; positions[id] = nil; followingLatest[id] = nil
-                        hasOlder[id] = nil; taskRefreshOffset[id] = nil
+                        hasOlder[id] = nil; taskRefreshOffset[id] = nil; readSequences[id] = nil
                     }
                     removedRooms.subtract(nextIDs)
-                    agents = directory["agents"].array.map(CollaborationAgent.init)
-                    rooms = directory["rooms"].array.map(CollaborationRoom.init).sorted { $0.updated > $1.updated }
+                    let nextAgents = directory["agents"].array.map(CollaborationAgent.init)
+                    let nextRooms = directory["rooms"].array.map(CollaborationRoom.init).sorted { $0.updated > $1.updated }
+                    if agents != nextAgents { agents = nextAgents }
+                    if rooms != nextRooms { rooms = nextRooms }
                     if let id = roomID, !rooms.contains(where: { $0.id == id }) { select(nil) }
+                    }
                 }
+                directoryTick = (directoryTick + 1) % 5
                 loading = false
                 if let id = roomID { try await refreshRoom(id, app: app) }
                 error = nil
@@ -98,14 +106,15 @@ import Observation
     public func refreshRoom(_ id: String, app: any CollaborationConnection) async throws {
         let stamp = revision, version = mutation
         let previous = timelines[id]?.messages.last?.seq
-        let result = try await app.channelCall("channel/message/list", pageParams(id))
+        // Durable text is append-only. Keep one overlapping row and separately refresh mutable tasks/proposals.
+        let result = try await app.channelCall("channel/message/list", pageParams(id, after: max(0, (previous ?? 1) - 1)))
         try Task.checkCancellation()
         guard revision == stamp else { return }
         let first = Int(result["messages"].array.first?["seq"].number ?? 0)
         var gap: [JSONValue] = []
         // Older loaded tasks remain live without rereading the entire history.
         // Rotate at most two per poll to bound cost for long rooms.
-        let tasks = timelines[id]?.messages.filter { !$0.taskTitle.isEmpty && $0.seq < first } ?? []
+        let tasks = timelines[id]?.messages.filter { (!$0.taskTitle.isEmpty || $0.value["agent_creation_proposal"] != .null) && $0.seq < first } ?? []
         if !tasks.isEmpty {
             let start = (taskRefreshOffset[id] ?? 0) % tasks.count
             for index in 0..<min(2, tasks.count) {
@@ -129,13 +138,16 @@ import Observation
                 if rows.count < 30 { break }
             }
         }
-        guard version == mutation else { return }
+        guard version == mutation, !removedRooms.contains(id) else { return }
         var timeline = timelines[id] ?? CollaborationTimeline()
         timeline.merge(["messages": .array(gap)])
         timeline.merge(result)
-        timelines[id] = timeline
+        if timelines[id] != timeline { timelines[id] = timeline }
         if hasOlder[id] == nil { hasOlder[id] = result["messages"].array.count == 30 }
-        if roomID == id { _ = try await app.channelCall("channel/room/read", ["room_id": .string(id)]) }
+        if roomID == id, let sequence = timeline.messages.last?.seq, readSequences[id] != sequence {
+            _ = try await app.channelCall("channel/room/read", ["room_id": .string(id)])
+            if revision == stamp, roomID == id { readSequences[id] = sequence }
+        }
     }
 
     public func loadOlder(app: any CollaborationConnection) async throws {
