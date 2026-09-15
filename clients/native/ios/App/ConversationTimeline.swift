@@ -61,13 +61,16 @@ private struct ToolGroupView: View {
     let settings: ThreadSettings?
     let active: Bool
     @Environment(\.mobileTextSize) private var fontSize
+    @State private var measuredHeight: CGFloat?
+    private var height: CGFloat { measuredHeight ?? max(36, fontSize * 3 + 4) }
     var body: some View {
         GeometryReader { geometry in
             SharedAvatar(value: ["tools": .array(messages.compactMap { $0.tool?.presentation }),
                 "active": .bool(active), "fontSize": .number(fontSize),
                 "provider": .string(settings?.provider ?? ""), "model": .string(settings?.model ?? "")],
-                size: max(36, fontSize * 3 + 4), width: geometry.size.width, accessible: true)
-        }.frame(height: max(36, fontSize * 3 + 4)).accessibilityIdentifier("tool-group")
+                size: height, width: geometry.size.width, accessible: true,
+                onHeightChange: { measuredHeight = $0 })
+        }.frame(height: height).accessibilityIdentifier("tool-group")
     }
 }
 

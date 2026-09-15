@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { AgentAvatarMark, type AgentAvatarStatus } from "../../../../desktop/src/renderer/AgentAvatarMark";
 import { ChannelGroupAvatar } from "../../../../desktop/src/renderer/ChannelGroupAvatar";
 import { WuuMascot, type WuuMascotActivity } from "../../../../desktop/src/renderer/WuuMascot";
@@ -60,7 +61,7 @@ window.renderWuuAvatar = (props: AvatarProps) => {
   const current = [...segments].reverse().find(segment => segment.status === "running") ?? segments.at(-1);
   const summary = condensedToolActivityText(segments, props.tools?.length ?? 0, false);
   // A reduced-motion change remounts the effects so they observe the new setting.
-  root.render(<div className="native-avatar" key={String(reducedMotion)}>
+  flushSync(() => root.render(<div className="native-avatar" key={String(reducedMotion)}>
     {props.tools ? <div className="native-process" style={{ fontSize: props.fontSize ?? 14 }}>
       {props.active && <WuuMascot visible size={28} activity={mascotActivityForToolKind(current?.kind)} provider={props.provider} model={props.model} />}
       <span style={{ color: segments.some(segment => segment.status === "failed") ? "var(--status-error, #c33)" : undefined }}>{summary}</span>
@@ -68,6 +69,7 @@ window.renderWuuAvatar = (props: AvatarProps) => {
       room && room.kind !== "dm" ? <ChannelGroupAvatar room={{ ...room, avatar_image: embeddedImage(room.avatar_image) }} agents={agents} /> :
       <AgentAvatarMark seed={agent?.id ?? "wuu"} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image}
         status={status} motion={props.subtle ? "subtle" : "expressive"} turnSignal={props.turnSignal ?? 0} />}
-  </div>);
+  </div>));
+  return document.querySelector(".native-process")?.getBoundingClientRect().height ?? size;
 };
-declare global { interface Window { renderWuuAvatar: (props: AvatarProps) => void } }
+declare global { interface Window { renderWuuAvatar: (props: AvatarProps) => number } }
