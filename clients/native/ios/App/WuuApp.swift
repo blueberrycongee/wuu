@@ -160,8 +160,9 @@ struct DevicesView: View {
 struct ConversationView: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var drawer = true
-    @FocusState private var composerFocused: Bool
+    @State private var conversationPresented = false
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
     @State private var drafts: [String: String] = [:]
     @State private var attachmentDrafts: [String: [InputAttachment]] = [:]
     @State private var consent = false
@@ -175,7 +176,7 @@ struct ConversationView: View {
     @State private var settingsThread: ChatThread?
     init(model: AppModel) {
         self.model = model
-        _drawer = State(initialValue: model.activeID == nil)
+        _conversationPresented = State(initialValue: model.activeID != nil)
     }
     private var draftKey: String { (model.host?.pub ?? "") + ":" + (model.activeID ?? "new") }
     private var draft: Binding<String> {
@@ -186,26 +187,20 @@ struct ConversationView: View {
         return Binding(get: { attachmentDrafts[key] ?? [] }, set: { attachmentDrafts[key] = $0 })
     }
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // The drawer owns its controls; nesting navigation stacks merges their toolbars.
-                conversation
-                    .allowsHitTesting(!drawer)
-                    .accessibilityHidden(drawer)
-                if drawer {
-                    Color.black.opacity(0.3).ignoresSafeArea()
-                        .onTapGesture { drawer = false }
-                        .accessibilityHidden(true)
-                    conversationList
-                        .frame(width: min(380, geometry.size.width - 44))
-                        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
-                        .transition(.move(edge: .leading))
-                        .accessibilityAction(.escape) { drawer = false }
+        NavigationStack {
+            conversationList
+                .navigationTitle("会话")
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(isPresented: $conversationPresented) {
+                    conversation
+                        .toolbar(.visible, for: .navigationBar)
                 }
-            }
         }
-        .toolbar(drawer ? .hidden : .visible, for: .tabBar)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: drawer)
+        .toolbar(conversationPresented || searching ? .hidden : .visible, for: .tabBar)
+        .onChange(of: conversationPresented) { _, presented in
+            if !presented { searching = !model.search.isEmpty }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: searching)
         .confirmationDialog("同步对话到服务器？", isPresented: $consent, titleVisibility: .visible) {
             Button("开启文字历史同步") { model.perform { try await model.setHistory(true) } }
         } message: { Text("服务器将保存可读取的用户消息和助手回复，电脑离线时仍可查看。不包含附件或工具输出。关闭后删除服务器副本。") }
@@ -225,78 +220,82 @@ struct ConversationView: View {
         }
         .sheet(item: $settingsThread) { thread in ThreadSettingsView(model: model, thread: thread) }
     }
+    private var conversationTitle: String {
+        let title = model.live?.title ?? model.saved?.title ?? ""
+        return title.isEmpty ? "新会话" : title
+    }
     private var conversation: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if !model.connected {
-                    HStack {
-                        Text(model.connecting ? "正在连接电脑…" : "电脑未连接 · 历史记录只读")
-                            .accessibilityHint(model.connectionStatus)
-                        Spacer()
-                        Button("重连") { Task { await model.connect() } }.disabled(model.connecting)
-                    }.font(.caption).padding(12).background(.secondary.opacity(0.08))
-                }
-                if model.activeID == nil {
-                    ContentUnavailableView("继续你的对话", systemImage: "bubble.left.and.bubble.right", description: Text("打开会话列表，或新建会话。"))
-                } else {
-                    ConversationTimeline(model: model).id(model.activeID)
-                }
-                if let request = model.pendingApproval {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("电脑需要处理请求：" + (request["method"].string ?? "")).font(.caption)
-                        Button("拒绝并返回对话") { model.perform { try await model.rejectRequest() } }
-                    }.padding()
-                }
-                if let request = model.questions.first(where: { $0["thread_id"].string == model.activeID }) {
-                    QuestionView(model: model, request: request).id(request["request_id"].string)
-                }
-                MobileComposer(text: draft, attachments: attachments, model: model,
-                    enabled: model.connected && model.live != nil && model.live?.readOnly != true && model.live?.archived != true,
-                    sending: model.sending, placeholder: model.live?.running == true ? "添加后续消息" : "发送消息", identifier: "harness-composer",
-                    stop: model.live?.running == true ? { model.perform { try await model.stop() } } : nil) {
-                        let key = draftKey
-                        let original = drafts[key] ?? ""
-                        let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let files = attachmentDrafts[key] ?? []
-                        model.perform {
-                            try await model.send(text, attachments: files)
-                            if drafts[key] == original { drafts[key] = "" }
-                            attachmentDrafts[key]?.removeAll { file in files.contains { $0.id == file.id } }
-                        }
-                }
-            }.navigationTitle(model.live?.title ?? model.saved?.title ?? "Wuu").navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbar {
-                    if !drawer {
-                        ToolbarItem(placement: .topBarLeading) { Button { drawer.toggle() } label: { Image(systemName: "sidebar.left") }.accessibilityLabel(drawer ? "关闭会话列表" : "会话列表") }
-                        ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread(); drawer = false } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Menu {
-                                Button("会话设置", systemImage: "slider.horizontal.3") { settingsThread = model.live }
-                                    .disabled(!model.connected || model.live == nil)
-                                Button("重命名") {
-                                    renameID = model.activeID ?? ""; renameTitle = model.live?.title ?? ""; renaming = true
-                                }.disabled(!model.connected || model.live == nil)
-                                Button(model.live?.historyCursor.isEmpty == false || model.messages.contains(where: { !$0.contentRef.isEmpty }) ? "导出已加载文本" : "导出对话文本", systemImage: "square.and.arrow.up") {
-                                    exportDocument = ConversationDocument(text: model.messages.filter { $0.tool == nil }.map { "## \($0.role)\n\n\($0.text)" }.joined(separator: "\n\n"))
-                                    exporting = true
-                                }
-                            } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("会话操作")
-                        }
+        VStack(spacing: 0) {
+            if !model.connected {
+                HStack {
+                    Text(model.connecting ? "正在连接电脑…" : "电脑未连接 · 历史记录只读")
+                        .accessibilityHint(model.connectionStatus)
+                    Spacer()
+                    Button("重连") { Task { await model.connect() } }.disabled(model.connecting)
+                }.font(.caption).padding(12).background(.secondary.opacity(0.08))
+            }
+            if model.activeID == nil {
+                ContentUnavailableView("继续你的对话", systemImage: "bubble.left.and.bubble.right", description: Text("打开会话列表，或新建会话。"))
+            } else {
+                ConversationTimeline(model: model).id(model.activeID)
+            }
+            if let request = model.pendingApproval {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("电脑需要处理请求：" + (request["method"].string ?? "")).font(.caption)
+                    Button("拒绝并返回对话") { model.perform { try await model.rejectRequest() } }
+                }.padding()
+            }
+            if let request = model.questions.first(where: { $0["thread_id"].string == model.activeID }) {
+                QuestionView(model: model, request: request).id(request["request_id"].string)
+            }
+            MobileComposer(text: draft, attachments: attachments, model: model,
+                enabled: model.connected && model.live != nil && model.live?.readOnly != true && model.live?.archived != true,
+                sending: model.sending, placeholder: model.live?.running == true ? "添加后续消息" : "发送消息", identifier: "harness-composer",
+                stop: model.live?.running == true ? { model.perform { try await model.stop() } } : nil) {
+                    let key = draftKey
+                    let original = drafts[key] ?? ""
+                    let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let files = attachmentDrafts[key] ?? []
+                    model.perform {
+                        try await model.send(text, attachments: files)
+                        if drafts[key] == original { drafts[key] = "" }
+                        attachmentDrafts[key]?.removeAll { file in files.contains { $0.id == file.id } }
                     }
+            }
+        }.navigationTitle(conversationTitle).navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread() } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("会话设置", systemImage: "slider.horizontal.3") { settingsThread = model.live }
+                            .disabled(!model.connected || model.live == nil)
+                        Button("重命名") {
+                            renameID = model.activeID ?? ""; renameTitle = model.live?.title ?? ""; renaming = true
+                        }.disabled(!model.connected || model.live == nil)
+                        Button(model.live?.historyCursor.isEmpty == false || model.messages.contains(where: { !$0.contentRef.isEmpty }) ? "导出已加载文本" : "导出对话文本", systemImage: "square.and.arrow.up") {
+                            exportDocument = ConversationDocument(text: model.messages.filter { $0.tool == nil }.map { "## \($0.role)\n\n\($0.text)" }.joined(separator: "\n\n"))
+                            exporting = true
+                        }
+                    } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("会话操作")
                 }
-        }
+            }
     }
     private var conversationList: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                MobileCircleButton(symbol: "xmark", label: "关闭会话列表") { drawer = false }
+                MobileCircleButton(symbol: searching ? "xmark" : "magnifyingglass", label: searching ? "关闭搜索" : "搜索会话") {
+                    searching.toggle()
+                    if !searching { model.search = ""; searchFocused = false }
+                    else { searchFocused = true }
+                }
                 Text(model.archivedList && model.connected ? "已归档" : "会话")
                     .font(.headline).lineLimit(1).frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.isHeader)
                 MobileCircleButton(symbol: "square.and.pencil", label: "新会话") {
-                    model.perform { try await model.startThread(); drawer = false }
+                    searchFocused = false
+                    model.perform { try await model.startThread(); conversationPresented = true }
                 }.disabled(!model.connected)
                 Menu {
                     if !model.connected {
@@ -319,20 +318,23 @@ struct ConversationView: View {
                         .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
                 }.accessibilityLabel("会话列表选项")
             }.padding(.horizontal, 16).padding(.vertical, 8)
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(model.connected ? "搜索全部会话内容" : "搜索历史标题", text: $model.search)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
-                    .accessibilityLabel("搜索会话")
-                if !model.search.isEmpty {
-                    Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .accessibilityLabel("清除搜索")
-                }
-            }.padding(12).background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal, 16).padding(.bottom, 8)
+            if searching {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField(model.connected ? "搜索全部会话内容" : "搜索历史标题", text: $model.search)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
+                        .accessibilityLabel("搜索会话")
+                        .focused($searchFocused).onSubmit { searchFocused = false }
+                    if !model.search.isEmpty {
+                        Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .accessibilityLabel("清除搜索")
+                    }
+                }.padding(12).background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16).padding(.bottom, 8)
+            }
             List {
                 Section {
-                    Button { model.perform { await model.leaveHost(); model.foreground(); drawer = false } } label: {
+                    Button { model.perform { await model.leaveHost(); model.foreground() } } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(model.host?.name ?? "电脑").lineLimit(2)
@@ -366,7 +368,7 @@ struct ConversationView: View {
                 }
                 Section {
                     ForEach((model.connected ? model.threads : []).sorted { $0.pinned != $1.pinned ? $0.pinned : $0.updatedAt > $1.updatedAt }) { thread in
-                        Button { drawer = false; model.perform { try await model.open(thread.id) } } label: {
+                        Button { conversationPresented = true; searchFocused = false; model.perform { try await model.open(thread.id) } } label: {
                             HStack { if thread.pinned { Image(systemName: "pin.fill").font(.caption) }; Text(thread.title.isEmpty ? "新会话" : thread.title).lineLimit(2); Spacer(); if thread.running { ProgressView() } }.padding(.vertical, 8)
                         }.swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(thread.archived ? "恢复" : "归档", systemImage: "archivebox") { archiveTarget = thread }
@@ -374,7 +376,7 @@ struct ConversationView: View {
                         }
                     }
                     ForEach(model.connected ? [] : model.entries.filter { model.search.isEmpty || $0.title.localizedCaseInsensitiveContains(model.search) }) { entry in
-                        Button { drawer = false; model.perform { try await model.open(entry.id) } } label: { Label(entry.title.isEmpty ? "新会话" : entry.title, systemImage: "clock").padding(.vertical, 8) }
+                        Button { conversationPresented = true; searchFocused = false; model.perform { try await model.open(entry.id) } } label: { Label(entry.title.isEmpty ? "新会话" : entry.title, systemImage: "clock").padding(.vertical, 8) }
                     }
                 }
             }

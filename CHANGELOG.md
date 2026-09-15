@@ -36,6 +36,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Simplified the native iOS conversation drawer with one set of header controls,
   adaptive width, and secondary archive/history actions in its menu. Workspace
   selectors show project names instead of full paths.
+- Kept native iOS tab switching on directory pages. Conversation pages, including
+  empty sessions, use native back navigation and reserve the bottom edge for the
+  composer; directory search also hides the tab bar.
 
 ## [2026.9.2] - 2026-09-15
 

@@ -45,6 +45,7 @@ struct CollaborationView: View {
                 directory
             }
             .navigationTitle("协作").navigationBarTitleDisplayMode(.inline)
+            .toolbar(searching ? .hidden : .visible, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { account = true } label: { Image(systemName: "person.crop.circle") }.accessibilityLabel("账号设置")
