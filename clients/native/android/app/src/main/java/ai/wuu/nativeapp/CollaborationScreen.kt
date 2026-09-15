@@ -54,7 +54,11 @@ import org.json.JSONObject
                 if (state.visible) CollaborationScreen(model) else conversation()
             }
         }
-        if (!WindowInsets.isImeVisible && (!state.visible || state.selectedID == null)) {
+        // Hide host tabs in concrete chat surfaces (open collab room or open session),
+        // and while the IME is up. Keep tabs on collab list / empty 「新会话」.
+        val sessionOpen = !state.visible && model.activeID != null
+        val roomOpen = state.visible && state.selectedID != null
+        if (!WindowInsets.isImeVisible && !sessionOpen && !roomOpen) {
             Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 40.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 listOf(true to "协作", false to "会话").forEach { (collaboration, label) ->
                     TextButton(onClick = { state.mode(collaboration) }, modifier = Modifier.weight(1f)) {
