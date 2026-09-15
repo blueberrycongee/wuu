@@ -74,8 +74,16 @@ export function useViewSwitchState({
   );
 
   const beginInstantThreadSwitch = useCallback(
-    (targetID = ""): number => beginViewSwitch("thread", targetID),
-    [beginViewSwitch],
+    (targetID = ""): number => {
+      const requestID = viewSwitchRequestRef.current + 1;
+      viewSwitchRequestRef.current = requestID;
+      clearViewSwitchDelay();
+      // Cached content is already visible. Background resume/runtime selection
+      // must still block sends, but must never cover that content with loading UI.
+      setPendingViewSwitch({ kind: "thread", targetID, visible: false });
+      return requestID;
+    },
+    [clearViewSwitchDelay],
   );
 
   const finishViewSwitch = useCallback(
