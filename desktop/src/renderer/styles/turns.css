@@ -4878,38 +4878,6 @@ pre {
   object-fit: contain;
 }
 
-.turn-artifact-inline-image figcaption {
-  /* The filename must not stretch a square/portrait preview into a wide card. */
-  contain: inline-size;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 0 0;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  line-height: 1.4;
-}
-
-.turn-artifact-image-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.turn-artifact-inline-image figcaption .icon {
-  flex: 0 0 auto;
-  width: 13px;
-  height: 13px;
-}
-
-.turn-artifact-inline-image:hover figcaption .icon,
-.turn-artifact-inline-image:focus-within figcaption .icon {
-  color: var(--ink);
-}
-
 .turn-artifact-inline-image button {
   display: block;
   max-width: 100%;

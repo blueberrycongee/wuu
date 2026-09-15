@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, ExternalLink, X, ZoomIn } from "lucide-react";
+import { Download, ExternalLink, X } from "lucide-react";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview } from "./ImagePreview";
@@ -9,7 +9,6 @@ import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
 import { AttachmentImage } from "./AttachmentImage";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
-import { Tooltip } from "./Tooltip";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -40,9 +39,8 @@ export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
   for (const item of turn.items) {
     if (item.type !== "tool_call" || !item.result_detail?.content) continue;
     const content = item.result_detail.content;
-    // Text-only results remain in process presentation. Once a result contains
-    // media or a resource, retain every part so [image, text, image] cannot be
-    // silently projected as [image, image].
+    // Retain ordered mixed results here. Presentation decides which parts belong
+    // in the image stream or document output, without modifying the tool result.
     if (!content.some((part) => part.type !== "text")) continue;
     content.forEach((part, index) => {
       const artifact = artifactFromContentPart(item, part, index, contentPartPlacement(content, index));
@@ -71,7 +69,8 @@ export function TurnInlineArtifactOutputs({
   onOpenFile?: (path: string) => void;
 }): JSX.Element | null {
   const [preview, setPreview] = useState<TurnArtifact>();
-  const inline = artifacts.filter((artifact) => artifact.placement === "inline");
+  // The image stream is visual output, not another tool-result inspector.
+  const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text");
   if (inline.length === 0) return null;
   return (
     <>
@@ -230,12 +229,12 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
     image = (
       <AttachmentImage
         image={{ media_type: artifact.mimeType, data: artifact.data ?? "", remote_ref: artifact.remoteRef }}
-        label={artifact.name}
+        label={t("imagePreview.label")}
         onOpen={src => openPreview({ src, alt: artifact.name, title: artifact.name })}
       />
     );
   } else if (!source || !artifact.mimeType.startsWith("image/")) {
-    return <div className="turn-artifact-unavailable">{artifact.name}</div>;
+    return <div className="turn-artifact-unavailable">{t("imagePreview.loadFailed")}</div>;
   } else {
     image = (
       <button
@@ -255,12 +254,6 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   return (
     <figure className="turn-artifact-inline-image">
       <div className="turn-artifact-image-preview">{image}</div>
-      <figcaption>
-        <Tooltip content={artifact.name}>
-          <span className="turn-artifact-image-name">{artifact.name}</span>
-        </Tooltip>
-        {(!source || failedSource !== source) && <ZoomIn className="icon" aria-hidden="true" />}
-      </figcaption>
     </figure>
   );
 }

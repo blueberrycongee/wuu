@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { collectTurnArtifacts, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
+import { collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
 import type { ThreadItem, Turn } from "../shared/protocol";
 const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
 vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
@@ -35,7 +35,7 @@ it("does not infer artifacts from file diffs, file links, or inspection text", (
   expect(collectTurnArtifacts(turn)).toEqual([]);
 });
 
-it("renders the managed SVG snapshot as an image with its filename and opens that exact snapshot", async () => {
+it("renders only the managed SVG image and opens that exact snapshot", async () => {
   const turn = { id: "turn", items: [presentedImage("first", "old")] } as Turn;
   const artifact = collectTurnArtifacts(turn)[0];
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
@@ -43,32 +43,32 @@ it("renders the managed SVG snapshot as an image with its filename and opens tha
   try {
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={[artifact]} />));
     expect(container.querySelector("img")?.getAttribute("src")).toBe(artifact.uri);
-    expect(container.querySelector("figcaption")?.textContent).toBe("chart.svg");
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("img")?.alt).toBe(artifact.name);
     expect(container.querySelector(".composer-image-attachment")).toBeNull();
     expect(container.querySelector(".turn-artifact-image-preview svg, iframe")).toBeNull();
-    expect(container.querySelector("figcaption .lucide-zoom-in")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => container.querySelector("button")!.click());
     expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" });
     await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
     expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("imagePreview.loadFailed");
     expect(container.querySelector("button")?.disabled).toBe(true);
-    expect(container.querySelector("figcaption .lucide-zoom-in")).toBeNull();
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
-it("folds machine-readable data beside images without hiding captions or losing the full result", async () => {
+it("keeps document output data inspectable without projecting it into the image stream", async () => {
   const data = { messages: Array.from({ length: 100 }, (_, seq) => ({ seq, body: `Message ${seq}` })) };
   const turn = { id: "turn", items: [{ id: "chat-read", type: "tool_call", name: "chat_read", result_detail: { content: [
     { type: "text", text: JSON.stringify(data) },
-    { type: "text", text: "Screenshot of the current conversation", artifact: { placement: "inline" } },
-    { type: "image", mime_type: "image/png", data: "aW1hZ2U=", name: "Screenshot" },
+    { type: "file", mime_type: "application/pdf", uri: "report.pdf", name: "Report" },
   ] } }] } as Turn;
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
   try {
-    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
-    expect(container.textContent).toContain("Screenshot of the current conversation");
+    const artifacts = collectTurnArtifacts(turn);
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
+    expect(container.childElementCount).toBe(0);
+    await act(async () => root.render(<TurnEndArtifactOutputs artifacts={artifacts} />));
+    expect(container.textContent).toContain("Report");
     expect(container.textContent).not.toContain("Message 99");
-    expect(container.querySelector("img")).not.toBeNull();
     const fold = container.querySelector<HTMLDetailsElement>(".tool-result-data details")!;
     expect(fold.open).toBe(false);
     await act(async () => { fold.open = true; fold.dispatchEvent(new Event("toggle")); });
@@ -78,26 +78,27 @@ it("folds machine-readable data beside images without hiding captions or losing 
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
-it("keeps plain-text observation metadata folded while preserving image order and the full result", async () => {
+it("omits image-stream text and inspector controls without changing image order or the underlying result", async () => {
   const metadata = 'Application observation: frame=(100,200,800,600); coordinate space=normalized';
   const turn = { id: "turn", items: [{ id: "observe", type: "tool_call", result_detail: { content: [
     { type: "image", mime_type: "image/png", data: "Zmlyc3Q=", name: "Before" },
+    { type: "text", text: JSON.stringify({ frame: [100, 200, 800, 600] }) },
     { type: "text", text: metadata },
+    { type: "text", text: "Screenshot caption", artifact: { placement: "inline" } },
     { type: "image", mime_type: "image/png", data: "c2Vjb25k", name: "After" },
   ] } }] } as Turn;
   const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
   try {
-    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
-    expect(container.textContent).not.toContain(metadata);
+    const original = JSON.stringify(turn);
+    const artifacts = collectTurnArtifacts(turn);
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
+    expect(container.textContent).toBe("");
     expect(Array.from(container.querySelectorAll("img"), image => image.alt)).toEqual(["Before", "After"]);
-    const fold = container.querySelector<HTMLDetailsElement>("details")!;
-    expect(fold.open).toBe(false);
-    await act(async () => { fold.open = true; fold.dispatchEvent(new Event("toggle")); });
-    expect(container.querySelector("pre")?.textContent).toBe(metadata);
-    const parts = container.querySelector(".turn-artifact-inline-list")!;
-    expect(parts.children[0].querySelector("img")?.alt).toBe("Before");
-    expect(parts.children[1].textContent).toContain(metadata);
-    expect(parts.children[2].querySelector("img")?.alt).toBe("After");
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(2);
+    expect(artifacts.filter(artifact => artifact.type === "text").map(artifact => artifact.text))
+      .toEqual(turn.items[0].result_detail!.content!.filter(part => part.type === "text").map(part => part.text));
+    expect(JSON.stringify(turn)).toBe(original);
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
@@ -111,11 +112,11 @@ it("renders deferred tool-result images as loadable attachments instead of unava
     await act(async()=>root.render(<TurnInlineArtifactOutputs artifacts={artifacts}/>));
     expect(container.querySelector(".turn-artifact-unavailable")).toBeNull();
     expect(window.wuu.readRemoteAttachment).not.toHaveBeenCalled();
-    expect(container.querySelector(".turn-artifact-image-preview button")?.textContent).toBe("Screenshot");
-    expect(container.querySelector(".turn-artifact-image-name")?.textContent).toBe("Screenshot");
+    expect(container.textContent).not.toContain("Screenshot");
+    expect(container.querySelector("button")).not.toBeNull();
     await act(async()=>container.querySelector("button")!.click());
     expect(window.wuu.readRemoteAttachment).toHaveBeenCalledWith("thread:source");
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
-    expect(container.querySelector(".turn-artifact-image-preview img")?.getAttribute("alt")).toBe("Screenshot");
+    expect(container.textContent).toBe("");
   } finally {act(()=>root.unmount());container.remove();window.wuu=prior;}
 });
