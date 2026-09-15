@@ -1219,7 +1219,7 @@ export function Composer({
                     owner="composer-runtime"
                     placement="above"
                     align="left"
-                    width={300}
+                    width={280}
                     mobileSheet={{ label: t("composer.switchProject", { project: projectPillLabel }), onClose: onToggleMenu }}
                   >
                     <ProjectPickerMenu

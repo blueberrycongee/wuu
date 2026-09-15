@@ -2176,7 +2176,7 @@
   bottom: 42px;
   z-index: 30;
   display: grid;
-  width: 300px;
+  width: 280px;
   max-height: min(360px, calc(100vh - 180px));
   overflow: hidden;
   border: 1px solid var(--menu-border);
@@ -2366,7 +2366,8 @@
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: 400;
+  line-height: var(--line-ui);
   padding: 0 9px;
   text-align: left;
 }
@@ -2432,11 +2433,7 @@
     var(--floating-menu-available-height, calc(100vh - 180px))
   );
   gap: 0;
-  padding: 4px;
-  border-color: var(--hairline-soft);
-  border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--paper);
-  box-shadow: var(--composer-frame-shadow);
+  padding: var(--menu-inset);
   overscroll-behavior: contain;
 }
 
@@ -2455,11 +2452,11 @@
 
 .composer-context-menu.composer-plus-menu button {
   height: auto;
-  min-height: 28px;
+  min-height: 32px;
   gap: 8px;
-  padding: 5px 8px;
+  padding: 6px 9px;
   line-height: 18px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-xs);
   color: var(--ink-soft);
   font-weight: 400;
 }
@@ -2538,12 +2535,13 @@
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: 400;
+  line-height: var(--line-ui);
   padding: 0 9px;
   text-align: left;
 }
 
-.composer-project-menu button:hover {
+.composer-project-menu button:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
@@ -2560,6 +2558,12 @@
   height: 16px;
   color: var(--composer-project-menu-icon);
   flex: 0 0 auto;
+}
+
+.composer-project-menu .menu-search {
+  gap: 8px;
+  font-weight: 400;
+  line-height: var(--line-ui);
 }
 
 .project-picker-empty {
@@ -2880,14 +2884,13 @@
 .composer-branch-menu {
   width: 280px;
   max-height: min(280px, calc(100vh - 120px));
-  padding: 4px;
 }
 
 .composer-branch-menu .project-picker-list button {
   width: 100%;
   height: auto;
-  min-height: 30px;
-  padding: 4px 7px;
+  min-height: 34px;
+  padding: 6px 9px;
 }
 
 .composer-branch-menu small {
@@ -2942,20 +2945,17 @@
     flex-basis: 14px;
   }
 
-  .composer-branch-menu button,
-  .composer-branch-menu input {
-    font-size: var(--font-sm);
+  .composer-project-menu button,
+  .composer-context-menu button {
+    height: 32px;
   }
 
-  .composer-branch-menu .menu-search {
-    height: 30px;
-    min-height: 30px;
-    margin: 0 0 3px;
-    padding: 4px 7px;
+  .composer-branch-menu .project-picker-list button {
+    height: auto;
+    min-height: 32px;
   }
 
-  .composer-branch-menu svg {
-    width: 14px;
-    height: 14px;
+  .composer-project-menu .menu-search {
+    height: 32px;
   }
 }

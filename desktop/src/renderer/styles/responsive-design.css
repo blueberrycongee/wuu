@@ -66,11 +66,6 @@
     min-width: 0;
   }
 
-  .permission-menu-anchor {
-    max-width: 120px;
-    flex-basis: 92px;
-  }
-
   .codex-runtime-anchor {
     max-width: 240px;
     flex: 0 1 auto;
