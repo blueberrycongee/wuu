@@ -4,6 +4,7 @@ import type { GitStatusResult } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
+import { showErrorToast } from "./Toast";
 
 export function ComposerBranchPicker({
   gitStatus, disabled, open, onToggle, onSelect, onCreate,
@@ -28,7 +29,7 @@ export function ComposerBranchPicker({
     }}>
       <button type="button" className="hero-project-pill" aria-haspopup="menu"
         aria-expanded={open && !disabled} aria-label={t("composer.switchBranch", { branch })}
-        title={disabled ? t("git.checkoutBlockedByRunningThread") : branch}
+        title={branch}
         disabled={disabled} onClick={onToggle}>
         <GitBranch className="hero-project-pill-icon" />
         <span className="hero-project-pill-text">{branch}</span>
@@ -54,7 +55,6 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
   const inFlight = useRef(false);
   const branches = [...new Set([...(gitStatus.branch ? [gitStatus.branch] : []), ...(gitStatus.branches ?? [])])]
     .filter((branch) => branch.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
@@ -63,11 +63,10 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
     if (inFlight.current) return;
     inFlight.current = true;
     setPending(true);
-    setError("");
     try {
       await action();
     } catch (error) {
-      setError(error instanceof Error ? error.message : t("git.checkoutFailed"));
+      showErrorToast(error, t("git.checkoutFailed"));
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -113,7 +112,6 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
           <Plus /><span>{t("composer.createBranch")}</span>
         </button>}
       </> : null}
-      {error ? <div className="environment-side-error" role="alert">{error}</div> : null}
     </div>
   );
 }

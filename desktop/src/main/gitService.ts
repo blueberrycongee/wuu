@@ -129,10 +129,32 @@ export class GitService {
 }
 
 export function gitWorktreeRoot(cwd: string): string {
+  const root = resolveGitWorktreeRoot(cwd);
+  if (!root) {
+    throw new Error("working directory is not a Git working tree");
+  }
+  return root;
+}
+
+// Only a confirmed non-repository is safe to ignore when checking other
+// sessions. Missing/inaccessible directories and other Git failures stay locked.
+function resolveGitWorktreeRoot(cwd: string): string | undefined {
   if (cwd === "") {
     throw new Error("working directory is required");
   }
-  const root = gitRun(cwd, ["rev-parse", "--show-toplevel"]);
+  const result = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C", LANGUAGE: "C" },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    if (result.status === 128 && /^fatal: not a git repository \(or any (?:of the )?parent/.test(result.stderr)) {
+      return undefined;
+    }
+    throw new Error(result.stderr.trim() || "failed to resolve Git working tree root");
+  }
+  const root = result.stdout.trim();
   if (!root) {
     throw new Error("failed to resolve Git working tree root");
   }
@@ -154,8 +176,8 @@ export function gitWorkingTreeBusy(
   }
   for (const runningCwd of runningThreadCwds) {
     try {
-      const runningRoot = gitWorktreeRoot(runningCwd);
-      if (sameGitWorktreeRoot(targetRoot, runningRoot)) {
+      const runningRoot = resolveGitWorktreeRoot(runningCwd);
+      if (runningRoot && sameGitWorktreeRoot(targetRoot, runningRoot)) {
         return true;
       }
     } catch {

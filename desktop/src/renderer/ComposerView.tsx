@@ -151,7 +151,7 @@ export function Composer({
   initialized,
   projects,
   gitStatus,
-  gitBusy = running,
+  branchPickerDisabled = false,
   branchMenuOpen,
   onToggleBranchMenu,
   onSelectGitBranch,
@@ -254,7 +254,7 @@ export function Composer({
   readOnly: boolean;
   initialized?: InitializeResult;
   gitStatus?: GitStatusResult;
-  gitBusy?: boolean;
+  branchPickerDisabled?: boolean;
   onCreateGitBranch?: (branch: string) => Promise<void>;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -1239,7 +1239,7 @@ export function Composer({
                 <ComposerBranchPicker
                   key={activeContext?.cwd}
                   gitStatus={gitStatus}
-                  disabled={gitBusy || readOnly}
+                  disabled={branchPickerDisabled || readOnly}
                   open={branchMenuOpen}
                   onToggle={onToggleBranchMenu}
                   onSelect={onSelectGitBranch}

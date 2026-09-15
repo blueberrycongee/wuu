@@ -3,10 +3,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { translateCurrent as t } from "./i18n";
+import { clearToasts, ToastViewport } from "./Toast";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
+  clearToasts();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -14,6 +17,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  clearToasts();
+  vi.useRealTimers();
 });
 function render(props: Partial<Parameters<typeof ComposerBranchPicker>[0]> = {}) {
   function Harness() {
@@ -21,7 +26,7 @@ function render(props: Partial<Parameters<typeof ComposerBranchPicker>[0]> = {})
     return <ComposerBranchPicker gitStatus={{ is_repo: true, branch: "main", branches: ["feature/one", "main", "feature/two"], dirty_count: 3 }}
       disabled={false} open={open} onToggle={() => setOpen(!open)} onSelect={vi.fn()} onCreate={vi.fn()} {...props} />;
   }
-  act(() => root.render(<Harness />));
+  act(() => root.render(<WuuUIRoot><Harness /><ToastViewport /></WuuUIRoot>));
 }
 function input(label: string, value: string) {
   const element = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
@@ -52,6 +57,7 @@ describe("composer branch picker", () => {
   });
 
   it("retains the new branch name after a failed creation and permits retry", async () => {
+    vi.useFakeTimers();
     const onCreate = vi.fn().mockRejectedValueOnce(new Error("branch already exists")).mockResolvedValueOnce(undefined);
     render({ onCreate });
     act(() => document.querySelector<HTMLButtonElement>('button[role="menuitem"]')!.click());
@@ -59,14 +65,29 @@ describe("composer branch picker", () => {
     const submit = () => document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await act(async () => { submit(); });
     expect(onCreate).toHaveBeenCalledWith("feature/new");
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe("branch already exists");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("branch already exists");
+    expect(document.querySelector('[role="alert"]')?.closest('[data-wuu-layer="notice"]')).not.toBeNull();
+    expect(document.querySelector('.environment-side-error')).toBeNull();
     expect(document.querySelector<HTMLInputElement>(`input[aria-label="${t("environment.newBranchName")}"]`)?.value).toBe(" feature/new ");
+    act(() => document.querySelector<HTMLButtonElement>(`button[aria-label="${t("common.closeNotice")}"]`)!.click());
+    act(() => vi.advanceTimersByTime(200));
     await act(async () => { submit(); });
     expect(onCreate).toHaveBeenCalledTimes(2);
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("blocks opening and mutations while the working tree is busy", () => {
+  it("shows checkout conflicts through the shared notice and permits retry", async () => {
+    const onSelect = vi.fn().mockRejectedValueOnce(new Error(t("git.checkoutBlockedByRunningThread"))).mockResolvedValueOnce(undefined);
+    render({ onSelect });
+    await act(async () => branchButton("feature/one").click());
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(t("git.checkoutBlockedByRunningThread"));
+    expect(document.querySelector('.environment-side-error')).toBeNull();
+    expect(branchButton("feature/one").disabled).toBe(false);
+    await act(async () => branchButton("feature/one").click());
+    expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks opening and mutations when explicitly disabled", () => {
     const onSelect = vi.fn();
     render({ disabled: true, onSelect });
     const trigger = container.querySelector<HTMLButtonElement>("button")!;

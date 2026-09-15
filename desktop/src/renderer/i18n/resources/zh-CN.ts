@@ -2287,7 +2287,7 @@ export const zhCN = {
   "onboarding.finishFailed": "无法保存首次设置",
   "project.relocateFailed": "重新定位工作区失败",
   "git.checkoutFailed": "切换分支失败",
-  "git.checkoutBlockedByRunningThread": "当前工作区有任务正在运行，无法切换分支",
+  "git.checkoutBlockedByRunningThread": "当前工作区有任务正在运行，切换分支会影响该任务。请等待任务结束或停止任务后重试；如需并行开发，请使用独立工作区。",
   "git.refreshFailed": "刷新 Git 状态失败",
   "thread.pinFailed": "更新会话置顶状态失败",
   "thread.memberAdd.failed": "添加 Thread 成员失败",

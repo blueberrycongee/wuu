@@ -22,6 +22,7 @@ import type {
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import { showErrorToast } from "./Toast";
 
 export type EnvironmentPanelMenu = "branch" | "file" | null;
 export type EnvironmentPanelMotionState = "open" | "closing";
@@ -206,7 +207,6 @@ function EnvironmentBranchMenu({
   const [query, setQuery] = useState("");
   const [newBranch, setNewBranch] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const branches = (gitStatus.branches ?? []).filter((branch) =>
     normalizedQuery ? branch.toLocaleLowerCase().includes(normalizedQuery) : true
@@ -219,16 +219,11 @@ function EnvironmentBranchMenu({
       return;
     }
     setSubmitting(true);
-    setError("");
     try {
       await onCreateBranch(branch);
       setNewBranch("");
     } catch (createError) {
-      setError(
-        createError instanceof Error
-          ? createError.message
-          : t("environment.createBranchFailed"),
-      );
+      showErrorToast(createError, t("environment.createBranchFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -262,7 +257,6 @@ function EnvironmentBranchMenu({
           <Plus className="icon" />
         </button>
       </form>
-      {error ? <div className="environment-side-error">{error}</div> : null}
     </div>
   );
 }

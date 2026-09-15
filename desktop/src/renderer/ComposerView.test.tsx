@@ -104,7 +104,7 @@ function renderComposer(props: {
   variant?: ComposerVariant;
   canSelectProject?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
-  gitBusy?: boolean;
+  branchPickerDisabled?: boolean;
   onToggleBranchMenu?: () => void;
   onToggleMenu?: () => void;
   mainConversation?: boolean;
@@ -174,7 +174,7 @@ function renderComposer(props: {
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           gitStatus={props.gitStatus}
-          gitBusy={props.gitBusy}
+          branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
           activeProject={props.activeProject}
@@ -1728,6 +1728,26 @@ describe("Composer send control", () => {
     act(() => branch?.click());
     expect(onToggleBranchMenu).toHaveBeenCalledOnce();
     expect(onToggleMenu).not.toHaveBeenCalled();
+  });
+
+  it.each(["hero", "dock"] as const)("keeps the %s branch picker accessible while tasks run", (variant) => {
+    const onToggleBranchMenu = vi.fn();
+    renderComposer({ variant, canSelectProject: true, running: true,
+      gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu });
+    const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
+    expect(branch.disabled).toBe(false);
+    act(() => branch.click());
+    expect(onToggleBranchMenu).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ readOnly: true }, { branchPickerDisabled: true }])("blocks the branch picker for a read-only or switching context: %j", (props) => {
+    const onToggleBranchMenu = vi.fn();
+    renderComposer({ variant: "hero", canSelectProject: true,
+      gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu, ...props });
+    const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
+    expect(branch.disabled).toBe(true);
+    act(() => branch.click());
+    expect(onToggleBranchMenu).not.toHaveBeenCalled();
   });
 
   it("opens project selection from a new session's bottom composer", () => {

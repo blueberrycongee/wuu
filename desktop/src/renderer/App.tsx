@@ -903,10 +903,6 @@ export function App(): JSX.Element {
   const dismissArchiveTip = useCallback(() => {
     setArchiveTip(null);
   }, []);
-  const [checkoutErrorTip, setCheckoutErrorTip] = useState<string | null>(null);
-  const dismissCheckoutErrorTip = useCallback(() => {
-    setCheckoutErrorTip(null);
-  }, []);
   const [modelCatalogTip, setModelCatalogTip] = useState<{
     message: string;
     isError: boolean;
@@ -3032,7 +3028,7 @@ export function App(): JSX.Element {
           }
         }}
         gitStatus={state.gitStatus}
-        gitBusy={environmentGitBusy}
+        branchPickerDisabled={viewContextSwitchPending}
         projects={state.projects}
         activeContext={state.activeContext}
         activeProject={activeProject}
@@ -3117,13 +3113,7 @@ export function App(): JSX.Element {
         onOpenSkillsCatalog={openSkillsTab}
         onSelectProject={(id) => void selectProjectForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
-        onSelectGitBranch={async (branch) => {
-          try {
-            await checkoutBranch(branch);
-          } catch (error) {
-            setCheckoutErrorTip(error instanceof Error ? error.message : t("git.checkoutFailed"));
-          }
-        }}
+        onSelectGitBranch={checkoutBranch}
         onCreateGitBranch={async (branch) => {
           await createAndCheckoutBranch(branch);
           setBranchMenuOpen(false);
@@ -3252,7 +3242,6 @@ export function App(): JSX.Element {
         activeThreadForState(appStateRef.current),
       )?.cwd,
     setAppState: setState,
-    getAnyThreadIsRunning: () => environmentGitBusy,
     closeProjectMenus,
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
@@ -4954,18 +4943,6 @@ export function App(): JSX.Element {
     </UILayerPortal>
   ) : null;
 
-  const checkoutErrorTipNode = checkoutErrorTip ? (
-    <UILayerPortal layer="notice">
-      <TopNotice
-        message={checkoutErrorTip}
-        icon={CircleAlert}
-        onDismiss={dismissCheckoutErrorTip}
-        isError
-        dismissAriaLabel={t("common.closeNotice")}
-      />
-    </UILayerPortal>
-  ) : null;
-
   const modelCatalogTipNode = modelCatalogTip ? (
     <UILayerPortal layer="notice">
       <TopNotice
@@ -4997,7 +4974,6 @@ export function App(): JSX.Element {
     return (
       <>
         {archiveTipNode}
-        {checkoutErrorTipNode}
         {modelCatalogTipNode}
         <SettingsShellRenderer
           initialized={state.initialized}
@@ -5114,7 +5090,6 @@ export function App(): JSX.Element {
       model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
     >
       {archiveTipNode}
-      {checkoutErrorTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
         <div
@@ -5553,11 +5528,7 @@ export function App(): JSX.Element {
             try {
               await checkoutBranch(branch);
             } catch (error) {
-              setCheckoutErrorTip(
-                error instanceof Error
-                  ? error.message
-                  : t("git.checkoutFailed"),
-              );
+              showErrorToast(error, t("git.checkoutFailed"));
             }
           }}
           onCreateBranch={(branch) => createAndCheckoutBranch(branch)}

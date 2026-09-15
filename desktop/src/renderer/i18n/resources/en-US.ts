@@ -2289,7 +2289,7 @@ export const enUS = {
   "onboarding.finishFailed": "Could not save first-run setup",
   "project.relocateFailed": "Failed to relocate workspace",
   "git.checkoutFailed": "Failed to switch branches",
-  "git.checkoutBlockedByRunningThread": "Cannot switch branches while a task is running in this workspace",
+  "git.checkoutBlockedByRunningThread": "Switching branches would affect a task running in this workspace. Wait for it to finish or stop it before retrying, or use a separate worktree to work in parallel.",
   "git.refreshFailed": "Failed to refresh Git status",
   "thread.pinFailed": "Failed to update conversation pin",
   "thread.memberAdd.failed": "Failed to add Thread member",
