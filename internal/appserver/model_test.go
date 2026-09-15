@@ -380,28 +380,54 @@ func TestThreadStateLeavesUnresolvedTextPhaseUnknown(t *testing.T) {
 	}
 }
 
-func TestThreadStateUsesProviderPhaseOnStreamingText(t *testing.T) {
-	now := time.Unix(0, 0).UTC()
-	th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
-	th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
-
-	out := th.applyStreamEventLocked("turn", providers.StreamEvent{
-		Type:    providers.EventContentDelta,
-		Content: "The result is clear.",
-		Phase:   providers.MessagePhaseFinalAnswer,
-	}, now)
-
-	turn := th.ensureTurnLocked("turn", now)
-	if len(turn.Items) != 2 {
-		t.Fatalf("expected user and live assistant items, got %+v", turn.Items)
-	}
-	live := turn.Items[1]
-	if !live.Terminal {
-		t.Fatalf("final_answer phase text should mark the streaming item terminal so the front end can collapse the process fold, got %+v", live)
-	}
-	started, ok := out[0].params.(ItemStartedNotification)
-	if !ok || !started.Item.Terminal {
-		t.Fatalf("started notification should mark a final_answer phase item terminal, got %#v", out[0].params)
+func TestThreadStateDoesNotPromoteProvisionalFinalAnswer(t *testing.T) {
+	for _, eventType := range []providers.StreamEventType{providers.EventContentDelta, providers.EventContentReplace} {
+		t.Run(string(eventType), func(t *testing.T) {
+			now := time.Unix(0, 0).UTC()
+			th := newThreadState("thread", nil, "provider", "model", "/repo", false, now)
+			th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "inspect"}, now)
+			// DeepSeek Responses labels the live message final_answer, then
+			// revises it to commentary when the following tool call is known.
+			out := th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type: eventType, Content: "I will read the version first.", Phase: providers.MessagePhaseFinalAnswer,
+			}, now)
+			started, ok := out[0].params.(ItemStartedNotification)
+			if !ok || started.Item.Terminal {
+				t.Fatalf("provisional phase must not request answer handoff: %#v", out)
+			}
+			itemID := started.Item.ID
+			th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type: providers.EventContentDelta, Phase: providers.MessagePhaseCommentary,
+			}, now)
+			call := providers.ToolCall{ID: "read-1", Name: "read_file"}
+			th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type: providers.EventToolUseStart, ToolCall: &call,
+			}, now)
+			item, ok := th.itemLocked("turn", itemID)
+			if !ok || item.Terminal || item.Text != "I will read the version first." {
+				t.Fatalf("tool handoff lost or promoted process text: %+v", item)
+			}
+			th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type:    providers.EventMessage,
+				Message: &providers.ChatMessage{Role: "assistant", Content: item.Text, Phase: providers.MessagePhaseCommentary, ToolCalls: []providers.ToolCall{call}},
+			}, now)
+			th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type: providers.EventContentDelta, Content: "The version is current.", Phase: providers.MessagePhaseFinalAnswer,
+			}, now)
+			turn := th.ensureTurnLocked("turn", now)
+			if turn.AnswerReadyAt != nil || turn.Items[len(turn.Items)-1].Terminal {
+				t.Fatalf("answer handoff happened before message completion: %+v", turn)
+			}
+			th.applyStreamEventLocked("turn", providers.StreamEvent{
+				Type:    providers.EventMessage,
+				Message: &providers.ChatMessage{Role: "assistant", Content: "The version is current.", Phase: providers.MessagePhaseFinalAnswer},
+			}, now)
+			turn = th.ensureTurnLocked("turn", now)
+			answer := turn.Items[len(turn.Items)-1]
+			if !answer.Terminal || answer.Status != ThreadItemStatusCompleted || turn.AnswerReadyAt == nil {
+				t.Fatalf("confirmed answer did not hand off: %+v", turn)
+			}
+		})
 	}
 }
 

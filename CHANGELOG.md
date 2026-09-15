@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Kept streaming process text visible when providers revise a provisional final
+  answer into commentary before tool calls, including DeepSeek V4 Pro.
 - Positioned Collaboration message history before paint to avoid a visible scroll
   jump on entry, while preserving the reading position during message updates.
 
