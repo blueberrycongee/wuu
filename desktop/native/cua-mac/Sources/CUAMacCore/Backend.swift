@@ -37,7 +37,16 @@ public final class MacComputerBackend: ComputerBackend {
 
     public init() {}
 
+    public func shutdown() {
+        for pid in Array(concealedWindowOrigins.keys) {
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                restoreConcealedWindows(app: app, application: AXUIElementCreateApplication(pid))
+            }
+        }
+    }
+
     public func perform(_ command: ComputerCommand) throws -> ComputerResult {
+        try ComputerExecution.checkpoint()
         switch command.action {
         case .permissionStatus:
             return permissionStatus()
@@ -56,6 +65,7 @@ public final class MacComputerBackend: ComputerBackend {
         let app = try resolveApplication(target)
         let appActionLock = try AppActionLock.acquire(processID: app.processIdentifier)
         defer { withExtendedLifetime(appActionLock) {} }
+        try ComputerExecution.checkpoint()
         let axApplication = AXUIElementCreateApplication(app.processIdentifier)
         enableElectronAccessibility(axApplication)
         if command.foregroundPolicy == .require {
@@ -122,6 +132,8 @@ public final class MacComputerBackend: ComputerBackend {
         let frontmostAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? target
         var structured: [String: Any] = [
+            "delivery": "delivered",
+            "verification": "not_requested",
             "action": command.action.rawValue,
             "app": canonicalTarget,
             "display_name": app.localizedName ?? "Unknown",
@@ -662,6 +674,7 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func activate(_ app: NSRunningApplication) throws {
+        try ComputerExecution.input()
         app.unhide()
         guard app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) else {
             throw ComputerError.operationFailed("could not activate \(app.localizedName ?? "target app")")
@@ -692,7 +705,12 @@ public final class MacComputerBackend: ComputerBackend {
         return try ForegroundInputLock.withLock {
             restoreConcealedWindows(app: app, application: AXUIElementCreateApplication(app.processIdentifier))
             try activate(app)
-            return try body()
+            guard let execution = ComputerExecution.current else { return try body() }
+            return try execution.withInputGuard({
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+                    throw ComputerError.cancelled("foreground focus changed; input interrupted")
+                }
+            }, body: body)
         }
     }
 
@@ -839,6 +857,7 @@ public final class MacComputerBackend: ComputerBackend {
         case "middle": button = .center; downType = .otherMouseDown; upType = .otherMouseUp
         default: button = .left; downType = .leftMouseDown; upType = .leftMouseUp
         }
+        try ComputerExecution.input()
         markSynthetic(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button))?.post(tap: .cghidEventTap)
         usleep(20_000)
         for click in 1...max(1, min(count, 3)) {
@@ -848,6 +867,7 @@ public final class MacComputerBackend: ComputerBackend {
             }
             down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+            try ComputerExecution.input()
             down.post(tap: .cghidEventTap)
             usleep(35_000)
             up.post(tap: .cghidEventTap)
@@ -874,8 +894,11 @@ public final class MacComputerBackend: ComputerBackend {
               let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)) else {
             throw ComputerError.operationFailed("could not create drag event")
         }
+        try ComputerExecution.input()
         down.post(tap: .cghidEventTap)
+        defer { up.post(tap: .cghidEventTap) }
         for step in 1...12 {
+            try ComputerExecution.input()
             let progress = Double(step) / 12
             let point = CGPoint(
                 x: start.x + (end.x - start.x) * progress,
@@ -884,7 +907,6 @@ public final class MacComputerBackend: ComputerBackend {
             markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left))?.post(tap: .cghidEventTap)
             usleep(8_000)
         }
-        up.post(tap: .cghidEventTap)
     }
 
     private func inputPoint(x: Double, y: Double, coordinateSpace: String?, app: NSRunningApplication) throws -> CGPoint {
@@ -949,6 +971,7 @@ public final class MacComputerBackend: ComputerBackend {
         }
         down.flags = chord.modifiers.eventFlags
         up.flags = chord.modifiers.eventFlags
+        try ComputerExecution.input()
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
     }
@@ -992,12 +1015,14 @@ public final class MacComputerBackend: ComputerBackend {
 
     private func postScrollGlobal(vertical: Int32, horizontal: Int32, steps: Int, at point: CGPoint?) throws {
         if let point {
+            try ComputerExecution.input()
             markSynthetic(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left))?.post(tap: .cghidEventTap)
         }
         for _ in 0..<max(1, steps) {
             guard let event = markSynthetic(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: vertical, wheel2: horizontal, wheel3: 0)) else {
                 throw ComputerError.operationFailed("could not create scroll event")
             }
+            try ComputerExecution.input()
             event.post(tap: .cghidEventTap)
             usleep(16_000)
         }
@@ -1018,12 +1043,14 @@ public final class MacComputerBackend: ComputerBackend {
         if command.elementID != nil {
             let resolved = try element(command, app: app)
             target = resolved
+            try ComputerExecution.input()
             _ = AXUIElementSetAttributeValue(resolved, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         }
         return try performDirectedOrForeground(command, app: app,
             directed: { try postUnicodeToPid(pid, text: text) },
             foreground: {
                 if let target {
+                    try ComputerExecution.input()
                     _ = AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                 }
                 try self.postUnicodeGlobal(text: text)
@@ -1031,19 +1058,21 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func postUnicodeGlobal(text: String) throws {
-        let units = Array(text.utf16)
-        if units.isEmpty { return }
-        guard let down = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)),
-              let up = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)) else {
-            throw ComputerError.operationFailed("could not create text input event")
+        for units in unicodeChunks(text) {
+            guard let down = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)),
+                  let up = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)) else {
+                throw ComputerError.operationFailed("could not create text input event")
+            }
+            units.withUnsafeBufferPointer { buffer in
+                guard let baseAddress = buffer.baseAddress else { return }
+                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+            }
+            try ComputerExecution.input()
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            usleep(4_000)
         }
-        units.withUnsafeBufferPointer { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
-            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-        }
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
     }
 
     private func selectText(_ command: ComputerCommand, app: NSRunningApplication) throws {

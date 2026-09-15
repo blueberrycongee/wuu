@@ -125,6 +125,7 @@ func waitForAccessibilityChange(application: AXUIElement, processID: pid_t, time
     }
     let deadline = Date(timeIntervalSinceNow: timeout)
     while !waiter.changed(), Date() < deadline {
+        try ComputerExecution.checkpoint()
         CFRunLoopRunInMode(.defaultMode, min(0.1, deadline.timeIntervalSinceNow), true)
     }
     return waiter.changed()

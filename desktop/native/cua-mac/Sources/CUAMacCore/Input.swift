@@ -11,9 +11,7 @@ public enum ForegroundInputLock {
             throw ComputerError.operationFailed("could not open the global foreground input lock")
         }
         defer { close(descriptor) }
-        guard flock(descriptor, LOCK_EX) == 0 else {
-            throw ComputerError.operationFailed("could not acquire the global foreground input lock")
-        }
+        try acquireCancellableLock(descriptor)
         defer { flock(descriptor, LOCK_UN) }
         return try body()
     }
@@ -27,10 +25,11 @@ public final class AppActionLock {
     public static func acquire(processID: pid_t) throws -> AppActionLock {
         let path = "/tmp/wuu-cua-app-\(getuid())-\(processID).lock"
         let descriptor = open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-        guard descriptor >= 0, flock(descriptor, LOCK_EX) == 0 else {
+        guard descriptor >= 0 else {
             if descriptor >= 0 { close(descriptor) }
             throw ComputerError.operationFailed("could not acquire the target app action lock")
         }
+        do { try acquireCancellableLock(descriptor) } catch { close(descriptor); throw error }
         return AppActionLock(descriptor: descriptor)
     }
 
@@ -149,3 +148,14 @@ private let keyCodes: [String: CGKeyCode] = [
     "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
     "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
 ]
+
+private func acquireCancellableLock(_ descriptor: Int32) throws {
+    while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+        guard errno == EWOULDBLOCK || errno == EINTR else {
+            throw ComputerError.operationFailed("could not acquire input lock")
+        }
+        try ComputerExecution.checkpoint()
+        usleep(10_000)
+    }
+    do { try ComputerExecution.checkpoint() } catch { flock(descriptor, LOCK_UN); throw error }
+}

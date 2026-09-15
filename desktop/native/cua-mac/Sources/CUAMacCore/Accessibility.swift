@@ -177,6 +177,7 @@ func axFrame(_ element: AXUIElement) -> CGRect? {
 }
 
 func setAXValue(_ element: AXUIElement, attribute: String, value: CFTypeRef) throws {
+    try ComputerExecution.input()
     let error = AXUIElementSetAttributeValue(element, attribute as CFString, value)
     guard error == .success else {
         throw ComputerError.operationFailed("set \(attribute) failed with AX error \(error.rawValue)")
@@ -188,6 +189,7 @@ func performAXAction(_ element: AXUIElement, action: String) throws {
     guard available.contains(action) else {
         throw ComputerError.unsupported("AX element does not expose \(action); available actions: \(available.joined(separator: ", "))")
     }
+    try ComputerExecution.input()
     let error = AXUIElementPerformAction(element, action as CFString)
     guard error == .success else {
         throw ComputerError.operationFailed("AX action \(action) failed with error \(error.rawValue)")

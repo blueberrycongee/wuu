@@ -143,7 +143,10 @@ public struct ComputerResult: @unchecked Sendable {
 
 public protocol ComputerBackend: AnyObject {
     func perform(_ command: ComputerCommand) throws -> ComputerResult
+    func shutdown()
 }
+
+public extension ComputerBackend { func shutdown() {} }
 
 public enum ComputerError: LocalizedError, Equatable {
     case invalidArguments(String)
@@ -153,6 +156,8 @@ public enum ComputerError: LocalizedError, Equatable {
     case unsupported(String)
     case requiresForeground(String)
     case operationFailed(String)
+    case cancelled(String)
+    case staleSnapshot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -162,6 +167,8 @@ public enum ComputerError: LocalizedError, Equatable {
         case let .elementNotFound(id): "element_not_found: \(id); observe again for fresh element ids"
         case let .unsupported(message): "unsupported_action: \(message)"
         case let .requiresForeground(message): "requires_foreground: \(message)"
+        case let .cancelled(message): "cancelled: \(message)"
+        case let .staleSnapshot(message): "stale_snapshot: \(message); observe again"
         case let .operationFailed(message): "operation_failed: \(message)"
         }
     }
@@ -175,7 +182,9 @@ public final class MCPServer {
         self.backend = backend
     }
 
-    public func handle(_ request: [String: Any]) throws -> [String: Any]? {
+    public func shutdown() { backend.shutdown() }
+
+    public func handle(_ request: [String: Any], execution: ComputerExecution = ComputerExecution()) throws -> [String: Any]? {
         let method = request["method"] as? String ?? ""
         let id = request["id"]
         if id == nil && method.hasPrefix("notifications/") {
@@ -196,20 +205,23 @@ public final class MCPServer {
         case "tools/list":
             return response(id: id, result: ["tools": [toolDefinition()]])
         case "tools/call":
-            return callTool(id: id, params: request["params"] as? [String: Any])
+            return callTool(id: id, params: request["params"] as? [String: Any], execution: execution)
         default:
             return rpcError(id: id, code: -32601, message: "method not found: \(method)")
         }
     }
 
-    private func callTool(id: Any?, params: [String: Any]?) -> [String: Any] {
+    private func callTool(id: Any?, params: [String: Any]?, execution: ComputerExecution) -> [String: Any] {
         guard params?["name"] as? String == "computer" else {
             return rpcError(id: id, code: -32602, message: "unknown tool")
         }
         do {
             let arguments = params?["arguments"] as? [String: Any] ?? [:]
             let command = try ComputerCommand(arguments: arguments)
-            let result = try backend.perform(command)
+            let result = try execution.run {
+                try execution.check()
+                return try backend.perform(command)
+            }
             var content: [[String: Any]] = [["type": "text", "text": result.text]]
             if let screenshot = result.screenshot,
                let mimeType = result.screenshotMIMEType,
@@ -230,7 +242,7 @@ public final class MCPServer {
             let code = errorCode(error)
             return response(id: id, result: [
                 "content": [["type": "text", "text": message]],
-                "structuredContent": ["error": message, "error_code": code],
+                "structuredContent": execution.evidence.merging(["error": message, "error_code": code]) { _, new in new },
                 "isError": true,
             ])
         }
@@ -246,6 +258,8 @@ public final class MCPServer {
         case .unsupported: "unsupported_action"
         case .requiresForeground: "requires_foreground"
         case .operationFailed: "operation_failed"
+        case .cancelled: "cancelled"
+        case .staleSnapshot: "stale_snapshot"
         }
     }
 
