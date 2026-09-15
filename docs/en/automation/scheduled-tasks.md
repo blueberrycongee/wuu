@@ -10,9 +10,9 @@ not a cloud cron service running independently.
    the navigation entry contributed by the plugin.
 2. Use the **Workspace** selector at the top of the page to choose the project workspace
    where the task should run. This does not switch the conversation currently open in Desktop.
-3. Choose **New automation**, and fill in the name and the task content.
-4. Fill in the five-field Cron expression and an IANA timezone, and choose whether it
-   repeats.
+3. Choose **Create** and fill in the name and task content in the detail panel, or start from a **Suggestion**.
+4. Choose Daily, Weekdays, or Weekly, then set the time and timezone. Use **Custom**
+   for a five-field Cron expression. Enable **Once at the next scheduled time** for a one-shot task.
 5. Choose **Create** to save. The request is routed to the selected workspace's plugin
    runtime, and the task records its workspace ID and root. Task state, next execution time, and run records
    are stored in the plugin's workspace storage.
@@ -28,7 +28,7 @@ say there is no change.
 
 ## Set the time
 
-The plugin accepts five-field Cron expressions directly, for example `0 9 * * 1-5`
+Time controls use wall-clock time in the task timezone. Custom schedules accept five-field Cron expressions, for example `0 9 * * 1-5`
 means 9:00 on weekdays. The timezone uses an IANA name, such as `Asia/Shanghai`; the
 system timezone is used by default at creation. The plugin checks for due tasks about
 every 15 seconds, so a trigger may be delayed by up to one check cycle; no extra
@@ -56,7 +56,7 @@ only; a `thread_heartbeat` target session already has its own workspace binding.
 
 The plugin's `cron` tool can also create `thread_heartbeat` tasks that deliver the
 generated ordinary query to an existing session. This suits following up in the same
-context, but the current Desktop form does not edit this mode directly. It has two
+context. The Desktop **Runs in** picker searches existing workspace chats. It has two
 limitations:
 
 - the session must still exist and be loadable in the current Wuu data;
@@ -65,18 +65,23 @@ limitations:
 
 ## Manage tasks
 
-The workspace selector also controls which workspace's tasks the list displays. The
-automation list shows the task content, Cron, timezone, and session mode, and
-supports pausing, resuming, or deleting. The current page does not offer search,
-in-place editing, or manual immediate runs; to change task content, delete and
-recreate it.
+The workspace selector controls which workspace's tasks are displayed. Search titles and
+prompts, or filter by All, Active, Paused, and Completed. Selecting a task opens the
+shared creation and editing panel. Edit the name, prompt, schedule, timezone, target
+chat, and isolation, then choose **Save changes**. Failed saves retain the draft;
+closing or switching tasks discards unsaved changes. Pause and Resume take effect
+immediately; Delete is in the more-actions menu. Narrow windows show the detail panel
+on its own; closing it returns to the list.
+
+Completed contains read-only snapshots of successful one-shot tasks from retained run
+records. A successful recurring run does not complete its task. The detail panel shows
+the five most recent runs with status, time, and any failure details.
 
 Each workspace stores at most 100 automation tasks and the latest 500 run records.
 Deleting a task is irreversible, but it does not delete the sessions the task created
 or woke.
 
-The current desktop page has no "run now" button and does not show a separate
-automation run history. `New session` results appear in the normal session list;
+The current desktop page has no "run now" button. `New session` results appear in the normal session list;
 `Continue a specific session` results are written into the target session.
 
 ## Run conditions and lifecycle

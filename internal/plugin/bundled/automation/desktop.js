@@ -1,9 +1,16 @@
 export async function activate(api) {
   const React = api.react;
   const h = React.createElement;
-  const { Page, Stack, Row, Button, Select, Checkbox, EmptyState } = api.ui;
+  const { Page, Button, Select, Checkbox, EmptyState } = api.ui;
 
   api.registerLocale({ id: "automation-en", locale: "en-US", entries: {
+    "automation.save": "Save changes", "automation.saved": "Saved", "automation.unsaved": "Unsaved changes",
+    "automation.custom": "Custom", "automation.once": "Once at the next scheduled time", "automation.day": "Day",
+    "automation.suggestions": "Suggestions", "automation.history": "Recent runs", "automation.more": "More actions",
+    "automation.template.brief": "Morning briefing", "automation.template.brief.prompt": "Summarize recent changes in this project, pending work, and anything that needs my attention today.",
+    "automation.template.review": "Weekly review", "automation.template.review.prompt": "Review this week's project progress. Summarize completed work, outstanding issues, and priorities for next week.",
+    "automation.template.check": "Follow up", "automation.template.check.prompt": "Check the progress of pending work in this project. Report meaningful changes, blockers, and decisions that need my attention.",
+
     "automation.title": "Automations", "automation.subtitle": "Scheduled prompts and recurring work.",
     "automation.new": "New automation", "automation.empty": "No automations yet",
     "automation.emptyHelp": "Scheduled prompts will show up here.",
@@ -25,6 +32,13 @@ export async function activate(api) {
     "automation.placeholder.name": "Task title", "automation.placeholder.prompt": "What should this automation do?", "automation.placeholder.schedule": "0 9 * * 1-5",
   }});
   api.registerLocale({ id: "automation-zh", locale: "zh-CN", entries: {
+    "automation.save": "保存修改", "automation.saved": "已保存", "automation.unsaved": "修改未保存",
+    "automation.custom": "自定义", "automation.once": "仅下次计划时间执行", "automation.day": "星期",
+    "automation.suggestions": "建议", "automation.history": "最近运行", "automation.more": "更多操作",
+    "automation.template.brief": "每日简报", "automation.template.brief.prompt": "汇总这个项目最近的变更、待办工作，以及今天需要我关注的事项。",
+    "automation.template.review": "每周回顾", "automation.template.review.prompt": "回顾这个项目本周的进展，整理已完成的工作、尚未解决的问题和下周的重点。",
+    "automation.template.check": "跟进监控", "automation.template.check.prompt": "检查这个项目待办工作的进展，报告有意义的变化、阻碍和需要我决定的事项。",
+
     "automation.title": "自动化", "automation.subtitle": "按计划运行的提示词与周期性任务。",
     "automation.new": "新建自动化", "automation.empty": "还没有自动化任务",
     "automation.emptyHelp": "按时间执行的提示词会显示在这里。",
@@ -46,119 +60,73 @@ export async function activate(api) {
     "automation.placeholder.name": "任务标题", "automation.placeholder.prompt": "描述这次自动化要做什么", "automation.placeholder.schedule": "0 9 * * 1-5",
   }});
   api.registerStyle({ id: "automation-catalog", css: `
-    .plugin-automation { height:100%; overflow:auto; container-type:inline-size; color:var(--wuu-color-text, var(--ink, #181818)); background:var(--wuu-color-canvas, var(--paper, #fff)); }
-    .plugin-automation .plugin-ui-page { padding-top:calc(var(--wuu-space-unit,4px) * 10 * var(--wuu-space-density,1)); }
-
-    /* Catalog header: a display title + one-line subtitle on the left and the
-     * page's single primary action pinned to the right edge. */
-    .plugin-automation-head { align-items:flex-start; justify-content:space-between; gap:16px; }
-    .plugin-automation-heading { flex:1; min-width:0; display:grid; gap:8px; }
-    .plugin-automation-title { margin:0; color:var(--wuu-color-text-strong, var(--ink-strong, var(--ink))); font-size:28px; font-weight:var(--weight-semibold,600); letter-spacing:-0.02em; line-height:1.15; }
-    .plugin-automation-subtitle { margin:0; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-body,14px); line-height:1.45; }
-    .plugin-automation-new { flex:none; margin-top:4px; }
-
-    /* Toolbar: full-width search on the left, the workspace switcher as one
-     * inline settings row on the right — a quiet 12px label beside the
-     * shared 32px select, not a stacked field block. */
-    .plugin-automation-toolbar { align-items:center; gap:12px; flex-wrap:nowrap; }
-    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:36px; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:10px; padding:0 12px; background:var(--wuu-control-field-background, var(--surface-1)); color:var(--wuu-color-text-muted, var(--ink-muted)); transition:border-color var(--motion-fast,120ms) ease, box-shadow var(--motion-fast,120ms) ease; }
-    .plugin-automation-search:focus-within { border-color:var(--wuu-color-border-strong, var(--gray-350)); box-shadow:0 0 0 3px var(--ink-overlay-8, rgba(127,127,127,0.18)); }
-    .plugin-automation-search svg { width:15px; height:15px; flex:none; }
-    .plugin-automation-search input { flex:1; min-width:0; border:0; outline:0; padding:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); }
-    .plugin-automation-search input::placeholder { color:var(--wuu-color-text-muted, var(--ink-faint)); }
-    .plugin-automation-workspace-picker { flex:none; display:flex; align-items:center; gap:8px; min-width:0; }
+    .plugin-automation { height:100%; min-height:0; container-type:inline-size; color:var(--wuu-color-text, var(--ink)); background:var(--wuu-color-canvas, var(--paper)); }
+    .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
+    .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; }
+    .plugin-automation-body { display:flex; height:100%; min-height:0; }
+    .plugin-automation-main { flex:1; min-width:0; overflow:auto; padding:28px 32px; }
+    .plugin-automation-body[data-panel="true"] .plugin-automation-main { padding:20px; }
+    .plugin-automation-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
+    .plugin-automation-title { font-size:20px; line-height:1.4; margin:0; font-weight:600; }
+    .plugin-automation-filters { display:flex; flex-wrap:wrap; gap:2px; }
+    .plugin-automation-filter { border:0; border-radius:7px; padding:5px 9px; background:transparent; color:var(--wuu-color-text-muted, var(--ink-muted)); cursor:pointer; font:inherit; font-size:12px; }
+    .plugin-automation-filter[aria-pressed="true"], .plugin-automation-filter:hover { background:var(--wuu-color-surface-muted, var(--surface-1)); color:var(--wuu-color-text, var(--ink)); }
+    .plugin-automation-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
+    .plugin-automation-search { flex:1 1 180px; display:flex; align-items:center; gap:8px; height:32px; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:9px; padding:0 10px; color:var(--wuu-color-text-muted, var(--ink-muted)); }
+    .plugin-automation-search svg { width:14px; height:14px; flex:none; }
+    .plugin-automation-search input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:13px; }
+    .plugin-automation-workspace-picker { flex:none; max-width:100%; }
+    .plugin-automation-workspace-picker .plugin-ui-field-label { flex:none; white-space:nowrap; font-size:12px; color:var(--wuu-color-text-muted, var(--ink-muted)); }
     .plugin-automation-workspace-picker .plugin-ui-field { display:flex; align-items:center; gap:8px; }
-    .plugin-automation-workspace-picker .plugin-ui-field-label { flex:none; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); font-weight:400; white-space:nowrap; }
-    .plugin-automation-workspace-picker .plugin-ui-select { width:min(200px, 32cqi); flex:none; }
-
-    /* Status tabs: quiet text pills, the selected one lifted on a soft fill. */
-    .plugin-automation-filters { display:flex; gap:2px; }
-    .plugin-automation-filter { border:0; border-radius:var(--radius-pill,999px); padding:4px 12px; background:transparent; color:var(--wuu-color-text-muted, var(--ink-muted)); cursor:pointer; font:inherit; font-size:var(--font-sm,12px); font-weight:var(--weight-medium,500); line-height:1.6; transition:background-color var(--motion-fast,120ms) ease, color var(--motion-fast,120ms) ease; }
-    .plugin-automation-filter:not(:disabled):hover { color:var(--wuu-color-text, var(--ink)); }
-    .plugin-automation-filter[aria-pressed="true"] { background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--wuu-color-text, var(--ink)); }
-
-    /* Create form: a title + prompt, then inset-grouped cards whose rows
-     * share one large radius and split on hairlines, like native settings. */
-    .plugin-automation-form { display:flex; flex-direction:column; gap:calc(var(--wuu-space-unit,4px) * 5 * var(--wuu-space-density,1)); }
-    .plugin-automation-form-title { margin:0; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); font-weight:400; line-height:1.3; }
-    .plugin-automation-form-identity { display:flex; flex-direction:column; gap:12px; }
-    .plugin-automation-form-name { width:100%; min-width:0; border:0; outline:0; padding:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:22px; font-weight:var(--weight-semibold,600); letter-spacing:-0.02em; line-height:1.25; }
-    .plugin-automation-form-name:focus-visible, .plugin-automation-form-cron:focus-visible, .plugin-automation-form-timezone:focus-visible { outline:0; box-shadow:none; }
-    .plugin-automation-form-name::placeholder { color:var(--wuu-color-text-muted, var(--ink-faint)); font-weight:var(--weight-semibold,600); }
-    .plugin-automation-form-prompt { box-sizing:border-box; width:100%; min-width:0; min-height:88px; resize:vertical; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:var(--wuu-radius-panel, var(--radius-md, 22px)); padding:14px 16px; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); line-height:1.5; }
-    .plugin-automation-form-prompt::placeholder { color:var(--wuu-color-text-muted, var(--ink-faint)); }
-    .plugin-automation-form-prompt:focus-visible { outline:0; border-color:var(--wuu-color-border-strong, var(--gray-350)); box-shadow:0 0 0 3px var(--ink-overlay-8, rgba(127,127,127,0.18)); }
-    .plugin-automation-form-group { display:flex; flex-direction:column; gap:8px; }
-    .plugin-automation-form-group-title { margin:0; padding:0 4px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); font-weight:400; line-height:1.3; }
-    .plugin-automation-form-card { display:flex; flex-direction:column; min-width:0; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:var(--wuu-radius-panel, var(--radius-md, 22px)); padding:0 16px; background:var(--wuu-color-canvas, var(--paper, #fff)); }
-    .plugin-automation-form-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; min-height:48px; border-bottom:1px solid var(--hairline-soft, var(--wuu-color-border-subtle, var(--hairline))); }
-    .plugin-automation-form-row:last-child { border-bottom:0; }
-    .plugin-automation-form-row-label { color:var(--wuu-color-text, var(--ink)); font-size:var(--font-ui,13px); font-weight:var(--weight-medium,500); line-height:1.4; }
-    .plugin-automation-form-row-control { min-width:0; display:flex; justify-content:flex-end; }
-    .plugin-automation-form-row-value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; color:var(--wuu-color-text, var(--ink)); font-size:var(--font-ui,13px); }
-    .plugin-automation-form-row-control .plugin-automation-target-button { padding-right:0; }
-    .plugin-automation-form-cron { width:min(220px, 42cqi); min-width:0; height:32px; border:0; outline:0; padding:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); text-align:right; }
-    .plugin-automation-form-cron::placeholder { color:var(--wuu-color-text-muted, var(--ink-faint)); }
-    .plugin-automation-form-timezone { width:min(180px, 36cqi); min-width:0; height:32px; border:0; outline:0; padding:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); text-align:right; }
-    .plugin-automation-form-row:has(.plugin-ui-checkbox) { grid-template-columns:minmax(0,1fr); }
-    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; min-height:48px; gap:16px; }
-    .plugin-automation-form-row .plugin-ui-field-label { font-weight:var(--weight-medium,500); }
-    .plugin-automation-form-actions { justify-content:flex-end; gap:8px; }
-
-    /* Task rows are borderless and open: a status dot, a two-line text block
-     * and a right-hand state column. Grouping comes from whitespace rhythm
-     * and the hover wash, not from card boxes. */
-    .plugin-automation-list { display:flex; flex-direction:column; gap:2px; margin:0 -8px; }
-    .plugin-automation-item { display:flex; align-items:center; gap:12px; min-width:0; padding:10px 8px; border-radius:10px; transition:background-color var(--motion-fast,120ms) ease; }
-    .plugin-automation-item:hover { background:var(--wuu-color-surface-muted, var(--surface-1)); }
+    .plugin-automation-workspace-picker select { max-width:180px; }
+    .plugin-automation-list { display:flex; flex-direction:column; gap:3px; }
+    .plugin-automation-item { width:100%; display:flex; align-items:flex-start; gap:10px; min-width:0; padding:11px 10px; border:0; border-radius:9px; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    .plugin-automation-item:hover, .plugin-automation-item[data-selected="true"] { background:var(--wuu-color-surface-muted, var(--surface-1)); }
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-main { opacity:0.55; }
-    .plugin-automation-item-dot { width:8px; height:8px; flex:none; border-radius:50%; background:var(--wuu-color-text-muted, var(--ink-faint)); }
-    .plugin-automation-item-dot[data-run="completed"] { background:var(--success, #1f9d55); }
-    .plugin-automation-item-dot[data-run="failed"] { background:var(--danger, #b42318); }
-    .plugin-automation-item-dot[data-run="running"], .plugin-automation-item-dot[data-run="queued"] { background:var(--accent-warm, #ef5b18); }
-    .plugin-automation-item-main { flex:1; min-width:0; display:grid; gap:2px; }
-    .plugin-automation-item-title-row { display:flex; align-items:center; gap:8px; min-width:0; }
-    .plugin-automation-item-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wuu-color-text, var(--ink)); font-size:var(--font-ui,13px); font-weight:var(--weight-semibold,600); line-height:1.4; }
-    .plugin-automation-badge { flex:none; padding:1px 8px; border-radius:var(--radius-pill,999px); background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:11px; font-weight:var(--weight-medium,500); line-height:1.7; }
-    .plugin-automation-item-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); line-height:1.5; }
-    .plugin-automation-item { cursor:pointer; }
-    .plugin-automation-item[data-selected="true"] { background:var(--wuu-color-surface-muted, var(--surface-1)); }
-    .plugin-automation-item:focus-visible { outline:2px solid var(--wuu-color-border-strong, var(--gray-350)); outline-offset:-2px; }
-    .plugin-automation-item-side { flex:none; display:flex; align-items:center; gap:10px; }
-    .plugin-automation-item-next { color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); white-space:nowrap; }
-    .plugin-automation-item-next .plugin-automation-status-label { color:var(--wuu-color-text-muted, var(--ink-faint)); }
-    .plugin-automation-filtered-empty { margin:0; padding:calc(var(--wuu-space-unit,4px) * 8 * var(--wuu-space-density,1)) 0; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-ui,13px); text-align:center; }
-
-    /* When nothing is scheduled the empty state owns the page: it fills the
-     * visible region instead of floating directly under the header. */
-    .plugin-automation-empty { min-height:min(52vh, 480px); }
-    .plugin-automation-error { color:var(--wuu-color-danger, var(--danger, #b42318)); font-size:var(--font-ui,13px); }
-    .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-
-    /* With a task selected the page splits in two: the catalog keeps its
-     * column on the left and the detail panel docks at the right edge,
-     * separated by a hairline instead of a card box. */
-    .plugin-automation-body { display:flex; align-items:flex-start; gap:calc(var(--wuu-space-unit,4px) * 8 * var(--wuu-space-density,1)); min-width:0; }
-    .plugin-automation-main { flex:1; min-width:0; }
-    .plugin-automation-detail-backdrop { display:none; }
-    .plugin-automation-detail { flex:none; box-sizing:border-box; width:min(380px, 40cqi); display:flex; flex-direction:column; gap:calc(var(--wuu-space-unit,4px) * 4 * var(--wuu-space-density,1)); border-left:1px solid var(--wuu-color-border-subtle, var(--hairline)); padding-left:calc(var(--wuu-space-unit,4px) * 8 * var(--wuu-space-density,1)); }
-    .plugin-automation-detail-head { display:flex; align-items:center; gap:6px; min-width:0; }
-    .plugin-automation-detail-status { flex:1; min-width:0; display:flex; align-items:center; gap:8px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); }
-    .plugin-automation-detail-close { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; flex:none; border:0; border-radius:8px; padding:0; background:transparent; color:var(--wuu-color-text-muted, var(--ink-muted)); cursor:pointer; transition:background-color var(--motion-fast,120ms) ease, color var(--motion-fast,120ms) ease; }
-    .plugin-automation-detail-close:hover { background:var(--wuu-color-surface-muted, var(--surface-2)); color:var(--wuu-color-text, var(--ink)); }
+    .plugin-automation-item-dot { width:12px; height:12px; margin-top:3px; flex:none; border:1.5px solid var(--wuu-color-text-muted, var(--ink-muted)); border-radius:50%; }
+    .plugin-automation-item-dot[data-run="failed"] { border-color:var(--wuu-color-danger, var(--danger)); }
+    .plugin-automation-item-dot[data-run="running"] { background:var(--wuu-color-text-muted, var(--ink-muted)); }
+    .plugin-automation-item-main { min-width:0; display:grid; gap:3px; flex:1; }
+    .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:500; line-height:1.4; }
+    .plugin-automation-item-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:12px; line-height:1.5; }
+    .plugin-automation-suggestions { margin-top:24px; padding-top:20px; border-top:1px solid var(--wuu-color-border-subtle, var(--hairline)); }
+    .plugin-automation-group-title { margin:0 0 10px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:12px; font-weight:500; }
+    .plugin-automation-empty { min-height:160px; }
+    .plugin-automation-error { color:var(--wuu-color-danger, var(--danger)); font-size:13px; overflow-wrap:anywhere; }
+    .plugin-automation-filtered-empty { padding:24px 0; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:13px; text-align:center; }
+    .plugin-automation-detail { flex:0 0 46%; width:46%; min-width:340px; max-width:520px; overflow:auto; padding:20px 24px; border-left:1px solid var(--wuu-color-border-subtle, var(--hairline)); }
+    .plugin-automation-detail-head { display:flex; align-items:center; gap:8px; margin-bottom:18px; }
+    .plugin-automation-detail-status { flex:1; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:12px; }
+    .plugin-automation-detail-close { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:0; border-radius:7px; background:transparent; color:var(--wuu-color-text-muted, var(--ink-muted)); cursor:pointer; }
+    .plugin-automation-detail-close:hover { background:var(--wuu-color-surface-muted, var(--surface-1)); }
     .plugin-automation-detail-close svg { width:14px; height:14px; }
-    .plugin-automation-detail-title { margin:0; color:var(--wuu-color-text-strong, var(--ink-strong, var(--ink))); font-size:16px; font-weight:var(--weight-semibold,600); line-height:1.35; overflow-wrap:anywhere; }
-    .plugin-automation-detail-prompt { max-height:220px; overflow:auto; border-radius:12px; background:var(--wuu-color-surface-muted, var(--surface-1)); padding:12px 14px; color:var(--wuu-color-text, var(--ink)); font-size:var(--font-ui,13px); line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .plugin-automation-detail-group { display:grid; gap:1px; }
-    .plugin-automation-detail-group-title { margin:0 0 4px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); font-weight:400; line-height:1.3; }
-    .plugin-automation-detail-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:32px; }
-    .plugin-automation-detail-row-label { flex:none; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-ui,13px); }
-    .plugin-automation-detail-row-value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; color:var(--wuu-color-text, var(--ink)); font-size:var(--font-ui,13px); }
-    .plugin-automation-detail-row .plugin-ui-checkbox { flex:1; min-width:0; min-height:32px; flex-direction:row-reverse; align-items:center; justify-content:space-between; }
-    .plugin-automation-detail-row .plugin-ui-field-label { color:var(--wuu-color-text-muted, var(--ink-muted)); font-weight:400; }
-
-    /* Run-target picker: a quiet value button whose menu floats beneath it,
-     * listing "new chat each run" above the workspace's live conversations. */
+    .plugin-automation-form { display:flex; flex-direction:column; gap:24px; }
+    .plugin-automation-form-identity { display:grid; gap:14px; }
+    .plugin-automation-form-name { width:100%; border:0; background:transparent; color:inherit; font:inherit; font-size:17px; font-weight:600; padding:4px 0; }
+    .plugin-automation-form-prompt { width:100%; min-height:100px; resize:vertical; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:12px; background:transparent; color:inherit; font:inherit; font-size:13px; line-height:1.6; padding:12px; }
+    .plugin-automation-form-group { min-width:0; }
+    .plugin-automation-form-card { border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:12px; padding:0 12px; }
+    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:43px; border-bottom:1px solid var(--wuu-color-border-subtle, var(--hairline)); font-size:13px; }
+    .plugin-automation-form-row:last-child { border:0; }
+    .plugin-automation-form-row > span:first-child { flex:none; }
+    .plugin-automation-form-row-control { display:flex; justify-content:flex-end; min-width:0; max-width:72%; }
+    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; flex-direction:row-reverse; justify-content:space-between; }
+    .plugin-automation-field { min-width:0; max-width:100%; width:180px; border:0; border-radius:6px; padding:6px 2px; background:var(--wuu-color-canvas, var(--paper)); color:inherit; font:inherit; text-align:right; }
+    select.plugin-automation-field { width:auto; text-align-last:right; }
+    .plugin-automation-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
+    .plugin-automation-history { display:grid; gap:10px; margin-top:24px; font-size:12px; }
+    .plugin-automation-history-row { display:flex; justify-content:space-between; gap:12px; color:var(--wuu-color-text-muted, var(--ink-muted)); }
+    .plugin-automation-more { position:relative; }
+    .plugin-automation-more summary { list-style:none; cursor:pointer; padding:4px 8px; }
+    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; padding:6px; background:var(--wuu-color-canvas, var(--paper)); border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:9px; }
+    .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+    .plugin-automation input:focus-visible, .plugin-automation textarea:focus-visible, .plugin-automation button:focus-visible, .plugin-automation select:focus-visible, .plugin-automation summary:focus-visible { outline:2px solid var(--wuu-color-text-muted, var(--ink-muted)); outline-offset:2px; }
+    @container (max-width: 720px) {
+      .plugin-automation-body[data-panel="true"] .plugin-automation-main { display:none; }
+      .plugin-automation-detail { flex:1; width:100%; max-width:none; min-width:0; border:0; padding:20px; }
+      .plugin-automation-main { padding:20px; }
+      .plugin-automation-head { flex-wrap:wrap; }
+    }
     .plugin-automation-target { position:relative; display:inline-flex; min-width:0; max-width:100%; }
     .plugin-automation-target-button { display:inline-flex; align-items:center; gap:6px; max-width:100%; min-height:28px; border:0; border-radius:8px; padding:3px 8px; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); cursor:pointer; transition:background-color var(--motion-fast,120ms) ease; }
     .plugin-automation-target-button:not(:disabled):hover { background:var(--wuu-color-surface-muted, var(--surface-2)); }
@@ -180,26 +148,6 @@ export async function activate(api) {
     .plugin-automation-target-section { padding:6px 8px 2px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:11px; }
     .plugin-automation-target-empty { margin:0; padding:8px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); text-align:center; }
 
-    /* Below 900px the panel leaves the flow and floats over the page as a
-     * right-hand sheet on a dimmed backdrop. */
-    @container (max-width: 899px) {
-      .plugin-automation-detail-backdrop { display:block; position:fixed; inset:0; z-index:60; background:var(--ink-overlay-24, rgba(18,18,18,0.32)); }
-      .plugin-automation-detail { position:fixed; top:0; right:0; bottom:0; z-index:61; width:min(400px, 94vw); overflow:auto; background:var(--wuu-color-canvas, var(--paper, #fff)); padding:calc(var(--wuu-space-unit,4px) * 5 * var(--wuu-space-density,1)); box-shadow:-24px 0 48px var(--ink-overlay-12, rgba(18,18,18,0.14)); }
-    }
-
-    @container (max-width: 640px) {
-      .plugin-automation-head { flex-direction:column; }
-      .plugin-automation-new { margin-top:0; }
-      .plugin-automation-toolbar { flex-wrap:wrap; }
-      .plugin-automation-search { flex:1 1 100%; }
-      .plugin-automation-workspace-picker, .plugin-automation-workspace-picker .plugin-ui-field { flex:1; }
-      .plugin-automation-workspace-picker .plugin-ui-select { flex:1; width:auto; min-width:0; }
-      .plugin-automation-form-row { grid-template-columns:minmax(0,1fr); align-items:start; gap:6px; padding:12px 0; }
-      .plugin-automation-form-row:has(.plugin-ui-checkbox) { padding:0; }
-      .plugin-automation-form-row-control { justify-content:flex-start; width:100%; }
-      .plugin-automation-form-row-value { text-align:left; }
-      .plugin-automation-form-cron, .plugin-automation-form-timezone { width:100%; text-align:left; }
-    }
   ` });
 
   function shortTimezone(timezone) {
@@ -224,14 +172,9 @@ export async function activate(api) {
     }
   }
 
-  function formatTime(hour, minute, timezone) {
-    const date = new Date(Date.UTC(2026, 0, 4, hour, minute));
-    const options = { hour: "numeric", minute: "2-digit" };
-    try {
-      return new Intl.DateTimeFormat(undefined, { ...options, timeZone: timezone || undefined }).format(date);
-    } catch {
-      return new Intl.DateTimeFormat(undefined, options).format(date);
-    }
+  // Cron fields already represent wall-clock time in the task's timezone.
+  function formatTime(hour, minute) {
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   }
 
   const WEEKDAY_REFERENCE = ["2026-01-04", "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09", "2026-01-10"];
@@ -272,23 +215,23 @@ export async function activate(api) {
 
   function SearchIcon() {
     return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
-      h("circle", { cx: "7", cy: "7", r: "4.5", stroke: "currentColor", "stroke-width": "1.5" }),
-      h("path", { d: "m13.5 13.5-3-3", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round" }));
+      h("circle", { cx: "7", cy: "7", r: "4.5", stroke: "currentColor", strokeWidth: "1.5" }),
+      h("path", { d: "m13.5 13.5-3-3", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
   }
 
   function CloseIcon() {
     return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
-      h("path", { d: "m4 4 8 8m0-8-8 8", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round" }));
+      h("path", { d: "m4 4 8 8m0-8-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
   }
 
   function CheckIcon() {
     return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
-      h("path", { d: "m3 8.5 3.5 3.5L13 5", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" }));
+      h("path", { d: "m3 8.5 3.5 3.5L13 5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
   }
 
   function ChevronIcon() {
     return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
-      h("path", { d: "m4.5 6.5 3.5 3.5 3.5-3.5", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" }));
+      h("path", { d: "m4.5 6.5 3.5 3.5 3.5-3.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
   }
 
   // Shared "runs in" picker: "new chat each run" plus the workspace's live
@@ -372,321 +315,197 @@ export async function activate(api) {
       : null);
   }
 
+  function scheduleParts(cron) {
+    const fields = String(cron || "").trim().split(/\s+/);
+    const [minute, hour, day, month, weekday] = fields;
+    if (fields.length === 5 && /^\d+$/.test(minute) && Number(minute) < 60 && /^\d+$/.test(hour) && Number(hour) < 24 && day === "*" && month === "*") {
+      const frequency = weekday === "*" ? "daily" : weekday === "1-5" ? "weekdays" : /^[0-7]$/.test(weekday) ? "weekly" : "custom";
+      return { frequency, time: formatTime(Number(hour), Number(minute)), day: /^[0-7]$/.test(weekday) ? String(Number(weekday) % 7) : "1" };
+    }
+    return { frequency: "custom", time: "09:00", day: "1" };
+  }
+
+  function ScheduleFields({ tr, draft, onChange }) {
+    const parts = scheduleParts(draft.schedule);
+    const update = (patch) => {
+      const value = { ...parts, ...patch };
+      const [hour, minute] = value.time.split(":").map(Number);
+      const dow = value.frequency === "weekdays" ? "1-5" : value.frequency === "weekly" ? value.day : "*";
+      onChange({ ...draft, schedule: `${minute} ${hour} * * ${dow}` });
+    };
+    const [custom, setCustom] = React.useState(parts.frequency === "custom");
+    return h(React.Fragment, null,
+      h(FieldRow, { label: tr("automation.recurring") }, h("select", {
+        className: "plugin-automation-field", "aria-label": tr("automation.recurring"), value: custom ? "custom" : parts.frequency,
+        onChange: (event) => { const frequency = event.target.value; setCustom(frequency === "custom"); if (frequency !== "custom") update({ frequency }); },
+      }, ["daily", "weekdays", "weekly", "custom"].map((value) => h("option", { key: value, value }, tr(value === "custom" ? "automation.custom" : `automation.schedule.${value}`))))),
+      custom ? h(FieldRow, { label: tr("automation.schedule") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.schedule"), value: draft.schedule, required: true, onChange: (event) => onChange({ ...draft, schedule: event.target.value }) }))
+        : h(React.Fragment, null,
+          parts.frequency === "weekly" ? h(FieldRow, { label: tr("automation.day") }, h("select", { className: "plugin-automation-field", "aria-label": tr("automation.day"), value: parts.day, onChange: (event) => update({ day: event.target.value }) }, [1, 2, 3, 4, 5, 6, 0].map((day) => h("option", { key: day, value: String(day) }, weekdayName(day))))) : null,
+          h(FieldRow, { label: tr("automation.field.time") }, h("input", { className: "plugin-automation-field", type: "time", required: true, "aria-label": tr("automation.field.time"), value: parts.time, onChange: (event) => { if (event.target.value) update({ time: event.target.value }); } }))),
+      h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => onChange({ ...draft, timezone: event.target.value }) })),
+      h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => onChange({ ...draft, recurring: !event.target.checked }) })));
+  }
+
+  function FieldRow({ label, children }) {
+    return h("label", { className: "plugin-automation-form-row" }, h("span", null, label), h("span", { className: "plugin-automation-form-row-control" }, children));
+  }
+
+  function Group({ title, children }) {
+    return h("section", { className: "plugin-automation-form-group" }, h("h3", { className: "plugin-automation-group-title" }, title), h("div", { className: "plugin-automation-form-card" }, children));
+  }
+
+  function draftFor(task) {
+    return { title: task?.title || "", prompt: task?.prompt || "", schedule: task?.cron || "0 9 * * 1-5", timezone: task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", mode: task?.mode || "new_thread", heartbeat_thread_id: task?.heartbeat_thread_id || "", recurring: task ? task.recurring === true : true, workspace: task?.workspace_mode || "shared" };
+  }
+
+  function Editor({ tr, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly }) {
+    const [draft, setDraft] = React.useState(() => initial || draftFor(task));
+    const [saved, setSaved] = React.useState(() => initial || draftFor(task));
+    const [localError, setLocalError] = React.useState("");
+    const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+    const panelRef = React.useRef(null);
+    React.useEffect(() => {
+      const previous = document.activeElement;
+      panelRef.current?.querySelector("input, button")?.focus();
+      return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+    }, []);
+    const save = async (event) => {
+      event.preventDefault();
+      setLocalError("");
+      if (!draft.prompt.trim()) return;
+      try { new Intl.DateTimeFormat(undefined, { timeZone: draft.timezone }); }
+      catch { setLocalError(`${tr("automation.timezone")}: ${draft.timezone}`); return; }
+      const normalized = { ...draft, title: draft.title.trim() || draft.prompt.trim() };
+      if (await onSave(normalized)) { setSaved(normalized); setDraft(normalized); }
+    };
+    return h("aside", { className: "plugin-automation-detail", ref: panelRef, "aria-label": task?.title || tr("automation.new"), onKeyDown: (event) => { if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); } } },
+      h("div", { className: "plugin-automation-detail-head" },
+        h("span", { className: "plugin-automation-detail-status" }, !task ? tr("automation.new") : readOnly ? tr("automation.run.completed") : tr(task.paused ? "automation.paused" : "automation.filter.active")),
+        task && !readOnly ? h(React.Fragment, null,
+          h(Button, { variant: "ghost", disabled: busy, onClick: onPause }, tr(task.paused ? "automation.resume" : "automation.pause")),
+          h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
+        h("button", { type: "button", className: "plugin-automation-detail-close", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
+      h("form", { className: "plugin-automation-form", onSubmit: save },
+        h("fieldset", { disabled: busy || readOnly, style: { border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" } },
+          h("div", { className: "plugin-automation-form-identity" },
+            h("label", null, h("span", { className: "plugin-automation-sr" }, tr("automation.name")), h("input", { className: "plugin-automation-form-name", placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) })),
+            h("label", null, h("span", { className: "plugin-automation-sr" }, tr("automation.prompt")), h("textarea", { className: "plugin-automation-form-prompt", required: true, rows: 4, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) }))),
+          h(Group, { title: tr("automation.group.details") },
+            h("div", { className: "plugin-automation-form-row" }, h("span", null, tr("automation.field.target")), h("span", { className: "plugin-automation-form-row-control" }, h(TargetPicker, {
+              tr, threads, disabled: busy || readOnly,
+              value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
+              onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
+            }))),
+            h("div", { className: "plugin-automation-form-row" }, h("span", null, tr("automation.field.project")), h("span", { className: "plugin-automation-item-meta", title: workspace.root }, workspace.name || workspaceName(workspace.root))),
+            h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", disabled: draft.mode === "thread_heartbeat", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) }))),
+          h(Group, { title: tr("automation.group.schedule") }, h(ScheduleFields, { tr, draft, onChange: setDraft }))),
+        error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
+        !readOnly ? h("div", { className: "plugin-automation-form-actions" },
+          task ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr(dirty ? "automation.unsaved" : "automation.saved")) : null,
+          h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
+          h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
+      runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h("span", null, tr(`automation.run.${runStatus(run)}`)), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null);
+  }
+
   function Catalog(props) {
     const tr = props.translate;
     const [tasks, setTasks] = React.useState([]);
     const [runs, setRuns] = React.useState([]);
     const [workspaces, setWorkspaces] = React.useState([]);
-    const [selectedWorkspaceID, setSelectedWorkspaceID] = React.useState("");
-    const [creating, setCreating] = React.useState(false);
+    const [workspaceID, setWorkspaceID] = React.useState("");
+    const [selection, setSelection] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
     const [filter, setFilter] = React.useState("all");
-    const [selectedID, setSelectedID] = React.useState(null);
-    const [draft, setDraft] = React.useState({ title: "", prompt: "", schedule: "0 9 * * 1-5", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", mode: "new_thread", heartbeat_thread_id: "", heartbeat_thread_title: "", recurring: true, workspace: "shared" });
     const [threads, setThreads] = React.useState([]);
-    const refreshEpoch = React.useRef(0);
-    const availableWorkspaces = workspaces.filter((candidate) => candidate.available !== false);
-    const selectedWorkspace = availableWorkspaces.find((candidate) => candidate.id === selectedWorkspaceID);
-    const loadWorkspaces = React.useCallback(async () => {
-      setError("");
+    const epoch = React.useRef(0);
+    const workspace = workspaces.find((item) => item.id === workspaceID);
+    const refresh = React.useCallback(async (id) => {
+      const current = ++epoch.current;
+      if (!id) return;
       try {
-        const snapshot = await api.listWorkspaces();
-        const items = Array.isArray(snapshot?.workspaces) ? snapshot.workspaces : [];
-        const available = items.filter((candidate) => candidate?.available !== false && candidate?.id);
+        const [list, history] = await Promise.all([api.invokeRuntime("automation.list", {}, { workspaceId: id }), api.invokeRuntime("automation.run.list", {}, { workspaceId: id })]);
+        if (current !== epoch.current) return;
+        if (list?.workspace?.id !== id) throw new Error("Automation runtime returned a different workspace");
+        setTasks(Array.isArray(list.tasks) ? list.tasks : []);
+        setRuns(Array.isArray(history?.runs) ? history.runs : []);
+      } catch (reason) { if (current === epoch.current) setError(String(reason)); }
+    }, []);
+    React.useEffect(() => {
+      let cancelled = false;
+      api.listWorkspaces().then((snapshot) => {
+        if (cancelled) return;
+        const items = (snapshot?.workspaces || []).filter((item) => item.available !== false && item.id);
         setWorkspaces(items);
-        setSelectedWorkspaceID((current) => {
-          if (available.some((candidate) => candidate.id === current)) return current;
-          if (available.some((candidate) => candidate.id === snapshot?.activeWorkspaceId)) return snapshot.activeWorkspaceId;
-          return available[0]?.id || "";
-        });
-      } catch (reason) {
-        setWorkspaces([]);
-        setSelectedWorkspaceID("");
-        setError(String(reason));
-      }
+        setWorkspaceID(items.find((item) => item.id === snapshot.activeWorkspaceId)?.id || items[0]?.id || "");
+      }).catch((reason) => { if (!cancelled) setError(String(reason)); });
+      return () => { cancelled = true; epoch.current++; };
     }, []);
-    const refresh = React.useCallback(async (workspaceID) => {
-      const epoch = ++refreshEpoch.current;
-      if (!workspaceID) {
-        setTasks([]);
-        setRuns([]);
-        return;
-      }
-      setError("");
-      try {
-        const options = { workspaceId: workspaceID };
-        const [list, runList] = await Promise.all([
-          api.invokeRuntime("automation.list", {}, options),
-          api.invokeRuntime("automation.run.list", {}, options).catch(() => null),
-        ]);
-        if (epoch !== refreshEpoch.current) return;
-        if (list?.workspace?.id !== workspaceID) throw new Error("Automation runtime returned a different workspace");
-        setTasks(Array.isArray(list?.tasks) ? list.tasks : []);
-        setRuns(Array.isArray(runList?.runs) ? runList.runs : []);
-      } catch (reason) {
-        if (epoch !== refreshEpoch.current) return;
-        setTasks([]);
-        setRuns([]);
-        setError(String(reason));
-      }
-    }, []);
-    React.useEffect(() => { void loadWorkspaces(); }, [loadWorkspaces]);
-    React.useEffect(() => { void refresh(selectedWorkspaceID); }, [refresh, selectedWorkspaceID]);
-    // The detail panel follows the task list: a task that disappears (deleted
-    // here or elsewhere, or filtered out by a workspace switch) closes it.
     React.useEffect(() => {
-      if (selectedID && !tasks.some((task) => task.id === selectedID)) setSelectedID(null);
-    }, [tasks, selectedID]);
-    React.useEffect(() => {
-      if (!selectedID) return undefined;
-      const onKeyDown = (event) => { if (event.key === "Escape") setSelectedID(null); };
-      document.addEventListener("keydown", onKeyDown);
-      return () => document.removeEventListener("keydown", onKeyDown);
-    }, [selectedID]);
-    // Live conversations of the selected workspace, for the run-target
-    // picker. Hosts without the capability (or a failing bridge) degrade
-    // to the "new chat each run" option only.
+      void refresh(workspaceID);
+      const timer = setInterval(() => { if (!document.hidden) void refresh(workspaceID); }, 15000);
+      return () => { clearInterval(timer); epoch.current++; };
+    }, [refresh, workspaceID]);
     React.useEffect(() => {
       let cancelled = false;
       setThreads([]);
-      const root = selectedWorkspace?.root;
-      if (!root || typeof api.listThreads !== "function") return undefined;
-      api.listThreads(root)
-        .then((list) => { if (!cancelled) setThreads(Array.isArray(list) ? list : []); })
-        .catch(() => { if (!cancelled) setThreads([]); });
+      if (workspace?.root && typeof api.listThreads === "function") api.listThreads(workspace.root).then((items) => { if (!cancelled) setThreads(items || []); }).catch(() => {});
       return () => { cancelled = true; };
-    }, [selectedWorkspace?.root]);
+    }, [workspace?.root]);
     const act = async (method, input) => {
-      if (!selectedWorkspace) {
-        setError(tr("automation.workspaceNone"));
-        return false;
-      }
-      setBusy(true);
-      setError("");
+      if (!workspace || busy) return null;
+      setBusy(true); setError("");
       try {
-        await api.invokeRuntime(method, {
-          ...input,
-          workspace_id: selectedWorkspace.id,
-          workspace_root: selectedWorkspace.root,
-        }, { workspaceId: selectedWorkspace.id });
-        await refresh(selectedWorkspace.id);
-        return true;
-      } catch (reason) {
-        setError(String(reason));
-        return false;
-      } finally {
-        setBusy(false);
-      }
+        const result = await api.invokeRuntime(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
+        await refresh(workspace.id);
+        return result;
+      } catch (reason) { setError(String(reason)); return null; }
+      finally { setBusy(false); }
     };
-    const lastRunFor = (task) => runs
-      .filter((run) => run.task_id === task.id)
-      .sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at))[0];
-    const normalizedQuery = query.trim().toLowerCase();
-    const visibleTasks = tasks.filter((task) => {
-      if (filter === "active" && task.paused) return false;
-      if (filter === "paused" && !task.paused) return false;
-      if (normalizedQuery) {
-        const haystack = `${task.title || ""}\n${task.prompt || ""}`.toLowerCase();
-        if (!haystack.includes(normalizedQuery)) return false;
-      }
-      return true;
-    });
-    const selectedTask = tasks.find((task) => task.id === selectedID) || null;
-    return h("main", { className: "plugin-automation" }, h(Page, null, h(Stack, { gap: "large" },
-      h(Row, { className: "plugin-automation-head" },
-        h("div", { className: "plugin-automation-heading" },
-          h("h1", { className: "plugin-automation-title" }, tr("automation.title")),
-          h("p", { className: "plugin-automation-subtitle" }, tr("automation.subtitle"))),
-        h(Button, { className: "plugin-automation-new", variant: "primary", disabled: busy || creating || !selectedWorkspace, onClick: () => setCreating(true) }, tr("automation.new"))),
-      h("div", { className: "plugin-automation-body" },
-        h(Stack, { gap: "large", className: "plugin-automation-main" },
-      h(Row, { className: "plugin-automation-toolbar" },
-        tasks.length > 0
-          ? h("label", { className: "plugin-automation-search" },
-              h("span", { className: "plugin-automation-sr" }, tr("automation.search")),
-              h(SearchIcon),
-              h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) }))
-          : null,
-        h("div", { className: "plugin-automation-workspace-picker" },
-          h(Select, {
-            label: tr("automation.workspace"),
-            title: tr("automation.workspaceHelp"),
-            value: selectedWorkspaceID,
-            disabled: busy || availableWorkspaces.length === 0,
-            onChange: (event) => setSelectedWorkspaceID(event.target.value),
-          }, availableWorkspaces.length === 0
-            ? h("option", { value: "" }, tr("automation.workspaceNone"))
-            : availableWorkspaces.map((candidate) => h("option", { key: candidate.id, value: candidate.id }, candidate.name || workspaceName(candidate.root)))))),
-      tasks.length > 0
-        ? h("div", { className: "plugin-automation-filters", role: "group" },
-            [["all", tr("automation.filter.all")], ["active", tr("automation.filter.active")], ["paused", tr("automation.paused")]].map(([value, label]) =>
-              h("button", { key: value, type: "button", className: "plugin-automation-filter", "aria-pressed": filter === value ? "true" : "false", onClick: () => setFilter(value) }, label)))
-        : null,
-      creating ? h("div", { className: "plugin-automation-form" },
-        h("h2", { className: "plugin-automation-form-title" }, tr("automation.new")),
-        h("div", { className: "plugin-automation-form-identity" },
-          h("label", { className: "plugin-ui-field" },
-            h("span", { className: "plugin-automation-sr" }, tr("automation.name")),
-            h("input", { className: "plugin-automation-form-name", type: "text", placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) })),
-          h("label", { className: "plugin-ui-field" },
-            h("span", { className: "plugin-automation-sr" }, tr("automation.prompt")),
-            h("textarea", { className: "plugin-automation-form-prompt", rows: 4, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) }))),
-        h("section", { className: "plugin-automation-form-group" },
-          h("h3", { className: "plugin-automation-form-group-title" }, tr("automation.group.details")),
-          h("div", { className: "plugin-automation-form-card" },
-            h("div", { className: "plugin-automation-form-row" },
-              h("span", { className: "plugin-automation-form-row-label" }, tr("automation.field.project")),
-              h("span", { className: "plugin-automation-form-row-value" }, selectedWorkspace ? selectedWorkspace.name || workspaceName(selectedWorkspace.root) : "—")),
-            h("div", { className: "plugin-automation-form-row" },
-              h("span", { className: "plugin-automation-form-row-label" }, tr("automation.field.target")),
-              h("div", { className: "plugin-automation-form-row-control" },
-                h(TargetPicker, {
-                  tr,
-                  threads,
-                  value: draft.mode === "thread_heartbeat"
-                    ? { mode: "thread_heartbeat", threadId: draft.heartbeat_thread_id, threadTitle: draft.heartbeat_thread_title }
-                    : { mode: "new_thread" },
-                  onSelect: (target) => setDraft(target.mode === "thread_heartbeat"
-                    ? { ...draft, mode: "thread_heartbeat", heartbeat_thread_id: target.threadId, heartbeat_thread_title: target.threadTitle, workspace: "shared" }
-                    : { ...draft, mode: "new_thread", heartbeat_thread_id: "", heartbeat_thread_title: "" }),
-                }))),
-            h("div", { className: "plugin-automation-form-row" },
-              h(Checkbox, {
-                label: tr("automation.field.isolation"),
-                title: tr("automation.isolationHelp"),
-                checked: draft.workspace === "worktree",
-                disabled: draft.mode === "thread_heartbeat",
-                onChange: (event) => setDraft(event.target.checked
-                  ? { ...draft, workspace: "worktree", mode: "new_thread", heartbeat_thread_id: "", heartbeat_thread_title: "" }
-                  : { ...draft, workspace: "shared" }),
-              })))),
-        h("section", { className: "plugin-automation-form-group" },
-          h("h3", { className: "plugin-automation-form-group-title" }, tr("automation.group.schedule")),
-          h("div", { className: "plugin-automation-form-card" },
-            h("div", { className: "plugin-automation-form-row" },
-              h(Checkbox, {
-                label: tr("automation.recurring"),
-                checked: draft.recurring,
-                onChange: (event) => setDraft({ ...draft, recurring: event.target.checked }),
-              })),
-            h("label", { className: "plugin-automation-form-row" },
-              h("span", { className: "plugin-automation-form-row-label" }, tr("automation.schedule")),
-              h("input", { className: "plugin-automation-form-cron", type: "text", placeholder: tr("automation.placeholder.schedule"), value: draft.schedule, onChange: (event) => setDraft({ ...draft, schedule: event.target.value }) })),
-            h("label", { className: "plugin-automation-form-row" },
-              h("span", { className: "plugin-automation-form-row-label" }, tr("automation.timezone")),
-              h("input", { className: "plugin-automation-form-timezone", type: "text", value: draft.timezone, onChange: (event) => setDraft({ ...draft, timezone: event.target.value }) })))),
-        h(Row, { className: "plugin-automation-form-actions" },
-          h(Button, { variant: "ghost", onClick: () => setCreating(false) }, tr("automation.cancel")),
-          h(Button, { variant: "primary", disabled: busy || !selectedWorkspace || !draft.prompt.trim(), onClick: async () => { if (await act("automation.create", { ...draft, durable: true })) setCreating(false); } }, tr("automation.create")))) : null,
-      error ? h("div", { className: "plugin-automation-error", role: "alert" }, error) : null,
-      tasks.length === 0
-        ? (creating ? null : h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: selectedWorkspace ? tr("automation.emptyHelp") : tr("automation.workspaceNone") }))
-        : visibleTasks.length === 0
-          ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.filter.empty"))
-          : h("div", { className: "plugin-automation-list" }, visibleTasks.map((task) => {
-              const title = task.title || task.prompt;
-              const status = runStatus(lastRunFor(task));
-              const next = task.paused ? null : formatDateTime(task.next_run_at, task.timezone);
-              const meta = [
-                describeSchedule(task.cron, task.timezone, tr) || task.cron,
-                tr(task.mode === "thread_heartbeat" ? "automation.mode.wake" : "automation.mode.new"),
-                task.workspace_mode === "worktree" ? tr("automation.mode.worktree") : null,
-                shortTimezone(task.timezone),
-              ].filter(Boolean).join(" · ");
-              const selected = task.id === selectedID;
-              return h("article", {
-                className: "plugin-automation-item",
-                key: task.id,
-                role: "button",
-                tabIndex: 0,
-                "aria-pressed": selected ? "true" : "false",
-                "data-paused": task.paused ? "true" : "false",
-                "data-selected": selected ? "true" : "false",
-                onClick: () => setSelectedID(task.id),
-                onKeyDown: (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setSelectedID(task.id);
-                  }
-                },
-              },
-                h("span", { className: "plugin-automation-item-dot", "data-run": status || undefined, title: status ? tr("automation.run." + status) : tr("automation.run.never") }),
-                h("div", { className: "plugin-automation-item-main" },
-                  h("div", { className: "plugin-automation-item-title-row" },
-                    h("span", { className: "plugin-automation-item-title", title }, title),
-                    task.paused ? h("span", { className: "plugin-automation-badge" }, tr("automation.paused")) : null),
-                  h("div", { className: "plugin-automation-item-meta", title: task.cron }, meta)),
-                h("div", { className: "plugin-automation-item-side" },
-                  next ? h("span", { className: "plugin-automation-item-next" }, h("span", { className: "plugin-automation-status-label" }, tr("automation.next")), " ", next) : null));
-            }))
-        ),
-        selectedTask ? h(React.Fragment, null,
-          h("div", { className: "plugin-automation-detail-backdrop", onClick: () => setSelectedID(null) }),
-          h("aside", { className: "plugin-automation-detail", "aria-label": selectedTask.title || selectedTask.prompt },
-            h("div", { className: "plugin-automation-detail-head" },
-              h("span", { className: "plugin-automation-detail-status" },
-                h("span", { className: "plugin-automation-item-dot", "data-run": runStatus(lastRunFor(selectedTask)) || undefined }),
-                selectedTask.paused ? tr("automation.paused") : tr("automation.filter.active")),
-              h(Button, { variant: "ghost", disabled: busy, onClick: () => act("automation.update", { ...selectedTask, paused: !selectedTask.paused }) }, tr(selectedTask.paused ? "automation.resume" : "automation.pause")),
-              h(Button, { variant: "danger", disabled: busy, onClick: async () => { if (await act("automation.remove", { id: selectedTask.id })) setSelectedID(null); } }, tr("automation.remove")),
-              h("button", { type: "button", className: "plugin-automation-detail-close", "aria-label": tr("automation.close"), onClick: () => setSelectedID(null) }, h(CloseIcon))),
-            h("h2", { className: "plugin-automation-detail-title" }, selectedTask.title || selectedTask.prompt),
-            h("div", { className: "plugin-automation-detail-prompt" }, selectedTask.prompt),
-            h("section", { className: "plugin-automation-detail-group" },
-              h("h3", { className: "plugin-automation-detail-group-title" }, tr("automation.group.details")),
-              h("div", { className: "plugin-automation-detail-row" },
-                h("span", { className: "plugin-automation-detail-row-label" }, tr("automation.field.target")),
-                h(TargetPicker, {
-                  tr,
-                  threads,
-                  disabled: busy,
-                  value: selectedTask.mode === "thread_heartbeat"
-                    ? { mode: "thread_heartbeat", threadId: selectedTask.heartbeat_thread_id || "", threadTitle: threads.find((thread) => thread.id === selectedTask.heartbeat_thread_id)?.title || "" }
-                    : { mode: "new_thread" },
-                  onSelect: (target) => {
-                    if (target.mode === "thread_heartbeat") {
-                      // The backend rejects worktree + thread_heartbeat, so
-                      // targeting a chat also returns the task to the shared
-                      // workspace (the isolation toggle shows this as off).
-                      act("automation.update", { ...selectedTask, mode: "thread_heartbeat", heartbeat_thread_id: target.threadId, workspace: "shared" });
-                    } else {
-                      act("automation.update", { ...selectedTask, mode: "new_thread" });
-                    }
-                  },
-                })),
-              h("div", { className: "plugin-automation-detail-row" },
-                h("span", { className: "plugin-automation-detail-row-label" }, tr("automation.field.project")),
-                h("span", { className: "plugin-automation-detail-row-value" }, selectedWorkspace ? selectedWorkspace.name || workspaceName(selectedWorkspace.root) : "—")),
-              h("div", { className: "plugin-automation-detail-row" },
-                h(Checkbox, {
-                  label: tr("automation.field.isolation"),
-                  title: tr("automation.isolationHelp"),
-                  checked: selectedTask.workspace_mode === "worktree",
-                  disabled: busy || selectedTask.mode === "thread_heartbeat",
-                  onChange: (event) => act("automation.update", { ...selectedTask, workspace: event.target.checked ? "worktree" : "shared" }),
-                }))),
-            h("section", { className: "plugin-automation-detail-group" },
-              h("h3", { className: "plugin-automation-detail-group-title" }, tr("automation.group.schedule")),
-              h("div", { className: "plugin-automation-detail-row" },
-                h(Checkbox, {
-                  label: tr("automation.recurring"),
-                  checked: selectedTask.recurring === true,
-                  disabled: busy,
-                  onChange: (event) => act("automation.update", { ...selectedTask, recurring: event.target.checked }),
-                })),
-              h("div", { className: "plugin-automation-detail-row" },
-                h("span", { className: "plugin-automation-detail-row-label" }, tr("automation.field.time")),
-                h("span", { className: "plugin-automation-detail-row-value", title: selectedTask.cron }, describeSchedule(selectedTask.cron, selectedTask.timezone, tr) || selectedTask.cron)),
-              h("div", { className: "plugin-automation-detail-row" },
-                h("span", { className: "plugin-automation-detail-row-label" }, tr("automation.timezone")),
-                h("span", { className: "plugin-automation-detail-row-value" }, selectedTask.timezone || "—")),
-              h("div", { className: "plugin-automation-detail-row" },
-                h("span", { className: "plugin-automation-detail-row-label" }, tr("automation.next")),
-                h("span", { className: "plugin-automation-detail-row-value" }, selectedTask.paused ? "—" : formatDateTime(selectedTask.next_run_at, selectedTask.timezone) || "—")))))
-          : null))
-    ));
+    const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
+    // One-shot tasks leave the schedule on dispatch. Their retained snapshots
+    // keep completed work reachable without changing scheduler persistence.
+    const completed = sortedRuns.filter((run) => !run.task?.recurring && run.status === "completed" && !tasks.some((task) => task.id === run.task_id));
+    const completedTasks = [...new Map(completed.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
+    const candidates = filter === "completed" ? completedTasks : filter === "all" ? [...tasks, ...completedTasks] : tasks.filter((task) => filter === "paused" ? task.paused : !task.paused);
+    const visible = candidates.filter((task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase()));
+    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || completedTasks.find((task) => task.id === selection.id) : null;
+    const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
+    const create = (template) => { setError(""); setSelection({ kind: "new", key: String(Date.now()), draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: template === "review" ? "0 16 * * 5" : "0 9 * * 1-5" } : {}) } }); };
+    return h("main", { className: "plugin-automation" }, h(Page, null,
+      h("div", { className: "plugin-automation-body", "data-panel": panelOpen ? "true" : "false" },
+        h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
+          h("div", { className: "plugin-automation-head" }, panelOpen ? null : h("h1", { className: "plugin-automation-title" }, tr("automation.title")),
+            panelOpen ? h("div", { className: "plugin-automation-filters" }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))) : null,
+            h(Button, { variant: "primary", disabled: busy || !workspace, onClick: () => create() }, tr("automation.create"))),
+          h("div", { className: "plugin-automation-toolbar" },
+            h("label", { className: "plugin-automation-search" }, h(SearchIcon), h("span", { className: "plugin-automation-sr" }, tr("automation.search")), h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
+            h("div", { className: "plugin-automation-workspace-picker" }, h(Select, { label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length, onChange: (event) => { epoch.current++; setWorkspaceID(event.target.value); setSelection(null); setTasks([]); setRuns([]); setError(""); } }, workspaces.length ? workspaces.map((item) => h("option", { key: item.id, value: item.id }, item.name || workspaceName(item.root))) : h("option", { value: "" }, tr("automation.workspaceNone"))))),
+          !panelOpen ? h("div", { className: "plugin-automation-filters", style: { marginBottom: 14 } }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))) : null,
+          error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
+          !tasks.length && !completedTasks.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: workspace ? undefined : tr("automation.workspaceNone") }) : !visible.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.filter.empty")) : h("div", { className: "plugin-automation-list" }, visible.map((task) => {
+            const done = !tasks.some((item) => item.id === task.id);
+            const meta = [describeSchedule(task.cron, task.timezone, tr) || task.cron, done ? tr("automation.run.completed") : task.paused ? tr("automation.paused") : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].join(" · ");
+            return h("button", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": task.paused, "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setSelection({ kind: "task", id: task.id }); } },
+              h("span", { className: "plugin-automation-item-dot", "data-run": runStatus(sortedRuns.find((run) => run.task_id === task.id)) }),
+              h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, task.title || task.prompt), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta)));
+          })),
+          workspace ? h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, className: "plugin-automation-item", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))) : null),
+        panelOpen ? h(Editor, {
+          key: `${workspaceID}:${selection.id || selection.key}`, tr, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
+          readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
+          runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: () => { setSelection(null); setError(""); },
+          onPause: () => act("automation.update", { id: selectedTask.id, paused: !selectedTask.paused }),
+          onRemove: async () => { if (await act("automation.remove", { id: selectedTask.id })) setSelection(null); },
+          onSave: async (draft) => {
+            const result = await act(selectedTask ? "automation.update" : "automation.create", { ...draft, ...(selectedTask ? { id: selectedTask.id } : { durable: true }) });
+            if (!result) return false;
+            if (!selectedTask) setSelection({ kind: "task", id: result.id });
+            return true;
+          },
+        }) : null)));
   }
 
   api.registerViewType({ id: "automation.catalog", title: "Automations", icon: "clock", defaultRegion: "primary", persistence: "durable", render: (props) => h(Catalog, props) });
