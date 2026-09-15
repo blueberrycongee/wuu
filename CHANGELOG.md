@@ -12,6 +12,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Kept streaming process text visible when providers revise a provisional final
   answer into commentary before tool calls, including DeepSeek V4 Pro.
+- Corrected external-engine token accounting for reasoning, cache writes, and
+  replayed usage notifications.
+- Preserved terminal failure details and distinguished interrupted external turns
+  from successful completion.
+- Read stream-result error arrays and limit subtypes, and rejected malformed
+  terminal payloads instead of reporting success.
+- Answered reverse-RPC requests with string identifiers without losing their
+  original identifiers or numeric precision.
 - Positioned Collaboration message history before paint to avoid a visible scroll
   jump on entry, while preserving the reading position during message updates.
 

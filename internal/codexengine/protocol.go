@@ -93,14 +93,13 @@ type InitializeResponse struct {
 	PlatformOS     string `json:"platformOs,omitempty"`
 }
 
-// ApprovalPolicy controls interactive approval routing. Wire values are
-// kebab-case (untrusted/on-request/granular/never).
+// ApprovalPolicy covers the string-valued interactive approval modes.
+// Granular approval uses an object and is not configured by this adapter.
 type ApprovalPolicy string
 
 const (
 	ApprovalUntrusted ApprovalPolicy = "untrusted"
 	ApprovalOnRequest ApprovalPolicy = "on-request"
-	ApprovalGranular  ApprovalPolicy = "granular"
 	ApprovalNever     ApprovalPolicy = "never"
 )
 
@@ -274,13 +273,6 @@ type ItemStartedNotificationParams struct {
 	Item     ItemEnvelope `json:"item"`
 }
 
-// ItemUpdatedNotificationParams accompanies item/updated.
-type ItemUpdatedNotificationParams struct {
-	ThreadID string       `json:"threadId"`
-	TurnID   string       `json:"turnId"`
-	Item     ItemEnvelope `json:"item"`
-}
-
 // ItemCompletedNotificationParams accompanies item/completed.
 type ItemCompletedNotificationParams struct {
 	ThreadID string       `json:"threadId"`
@@ -321,7 +313,7 @@ type ReasoningSummaryTextDeltaNotificationParams struct {
 }
 
 // TokenUsageBreakdown is one usage bucket. "total" is the thread lifetime
-// cumulative; "last" is the current turn's increment.
+// cumulative; "last" is the most recent model call, not the entire turn.
 type TokenUsageBreakdown struct {
 	TotalTokens           int `json:"totalTokens"`
 	InputTokens           int `json:"inputTokens"`

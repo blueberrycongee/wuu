@@ -31,14 +31,6 @@ type incomingMessage struct {
 	Error  *RPCError       `json:"error"`
 }
 
-// ServerRequest is an inbound request the app-server expects a response to
-// (approval prompts etc.). The handler must return a result or an error.
-type ServerRequest struct {
-	ID     int64
-	Method string
-	Params json.RawMessage
-}
-
 // Client is the JSON-RPC NDJSON client over a codex app-server Transport.
 type Client struct {
 	transport   *Transport
@@ -233,14 +225,14 @@ func (c *Client) handleLine(line string) {
 	switch {
 	case len(msg.ID) > 0 && msg.Method != "":
 		// Inbound server request: must answer.
-		var id int64
-		if err := json.Unmarshal(msg.ID, &id); err != nil {
-			// string ids are not used by the codex app-server; ignore.
+		var number int64
+		var text string
+		if string(msg.ID) == "null" || (json.Unmarshal(msg.ID, &number) != nil && json.Unmarshal(msg.ID, &text) != nil) {
 			return
 		}
 		// Approval handlers may wait minutes for a user decision. Keep the
 		// stdout reader free so notifications and other threads continue.
-		go c.dispatchServerRequest(id, msg.Method, msg.Params)
+		go c.dispatchServerRequest(msg.ID, msg.Method, msg.Params)
 	case len(msg.ID) > 0:
 		// Response to one of our requests.
 		c.dispatchResponse(msg.ID, msg.Result, msg.Error)
@@ -284,7 +276,7 @@ func (c *Client) dispatchNotification(method string, params json.RawMessage) {
 	}
 }
 
-func (c *Client) dispatchServerRequest(id int64, method string, params json.RawMessage) {
+func (c *Client) dispatchServerRequest(id json.RawMessage, method string, params json.RawMessage) {
 	c.mu.Lock()
 	handlers := append([]*requestHandler(nil), c.requests[method]...)
 	c.mu.Unlock()
@@ -312,7 +304,7 @@ func (c *Client) dispatchServerRequest(id int64, method string, params json.RawM
 	c.writeError(id, &RPCError{Code: -32601, Message: "no handler registered for " + method})
 }
 
-func (c *Client) writeResult(id int64, result any) {
+func (c *Client) writeResult(id json.RawMessage, result any) {
 	payload, err := json.Marshal(map[string]any{"id": id, "result": result})
 	if err != nil {
 		return
@@ -320,7 +312,7 @@ func (c *Client) writeResult(id int64, result any) {
 	_ = c.transport.WriteLine(context.Background(), string(payload))
 }
 
-func (c *Client) writeError(id int64, rpcErr *RPCError) {
+func (c *Client) writeError(id json.RawMessage, rpcErr *RPCError) {
 	payload, err := json.Marshal(map[string]any{"id": id, "error": rpcErr})
 	if err != nil {
 		return

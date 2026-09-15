@@ -38,13 +38,11 @@ func main() {
 		resumeID = "fake-session-1"
 	}
 	send(map[string]any{
-		"type":    "system",
-		"subtype": "init",
-		"message": map[string]any{
-			"session_id":          resumeID,
-			"claude_code_version": "2.1.226 (fake)",
-			"model":               "claude-sonnet-4",
-		},
+		"type":                "system",
+		"subtype":             "init",
+		"session_id":          resumeID,
+		"claude_code_version": "2.1.226 (fake)",
+		"model":               "claude-sonnet-4",
 	})
 
 	scanner := bufio.NewScanner(os.Stdin)

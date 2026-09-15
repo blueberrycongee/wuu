@@ -102,8 +102,8 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 	if messageIndex < 0 || doneIndex < 0 || messageIndex >= doneIndex {
 		t.Fatalf("event order message=%d done=%d, want completed message before turn done", messageIndex, doneIndex)
 	}
-	if result.Result.InputTokens != 60 || result.Result.OutputTokens != 25 || result.Result.CacheReadTokens != 40 {
-		t.Fatalf("usage = in %d out %d cache %d, want 60/25/40",
+	if result.Result.InputTokens != 60 || result.Result.OutputTokens != 20 || result.Result.CacheReadTokens != 40 {
+		t.Fatalf("usage = in %d out %d cache %d, want 60/20/40",
 			result.Result.InputTokens, result.Result.OutputTokens, result.Result.CacheReadTokens)
 	}
 
