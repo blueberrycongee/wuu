@@ -2,6 +2,20 @@ import XCTest
 @testable import WuuCore
 
 final class ChatPagingTests: XCTestCase {
+    func testCachedRowsFollowTextToolStatusRemovalAndHistory() {
+        var thread = ChatThread(["id": "t", "history_cursor": "older", "turns": [["id": "turn", "status": "in_progress", "items": [
+            ["id": "answer", "type": "agent_message", "text": "start"]]]]])
+        thread.apply("item/agentMessage/delta", ["thread_id": "t", "turn_id": "turn", "item_id": "answer", "delta": " streamed"])
+        thread.apply("item/started", ["thread_id": "t", "turn_id": "turn", "item": ["id": "tool", "type": "tool_call", "name": "read_file", "status": "in_progress"]])
+        XCTAssertEqual(thread.rows.flatMap(\.messages), thread.messages)
+        XCTAssertEqual(thread.rows.first?.messages.first?.text, "start streamed")
+        XCTAssertEqual(thread.rows.last?.messages.first?.tool?.status, "in_progress")
+        thread.apply("item/removed", ["thread_id": "t", "turn_id": "turn", "item_id": "tool"])
+        thread.prependHistory(["thread_id": "t", "cursor": "older", "turns": [["id": "old", "items": [["id": "user", "type": "user_message", "text": "older"]]]]])
+        XCTAssertEqual(thread.rows.flatMap(\.messages), thread.messages)
+        XCTAssertEqual(thread.messages.map(\.text), ["older", "start streamed"])
+    }
+
     func testSessionMessageSourceSurvivesLiveDeliveryAndReload() {
         let item: JSONValue = ["id": "message", "type": "user_message", "text": "Coordination update",
             "input_text": "Internal delivery context", "origin": "plugin", "presentation_kind": "session_message",

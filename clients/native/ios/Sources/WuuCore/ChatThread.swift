@@ -69,6 +69,9 @@ public struct ChatThread: Identifiable, Sendable {
     public private(set) var turns: [JSONValue]
     public private(set) var pending: [PendingMessage]
     public private(set) var historyCursor: String
+    public private(set) var messages: [ChatMessage] = []
+    public private(set) var rows: [ConversationRow] = []
+    private var projectedTurns: [String: [ChatMessage]] = [:]
     private var removedItems: Set<String> = []
     public init(_ value: JSONValue, pending: [JSONValue] = [], held: [JSONValue] = []) {
         self.pending = pending.map { PendingMessage($0, held: false) } + held.map { PendingMessage($0, held: true) }
@@ -83,9 +86,9 @@ public struct ChatThread: Identifiable, Sendable {
         engine = value["engine_id"].string ?? "wuu"
         turns = value["turns"].array
         historyCursor = value["history_cursor"].string ?? ""
+        rebuildProjection()
     }
-    public var messages: [ChatMessage] {
-        let completed: [ChatMessage] = turns.flatMap { turn in
+    private static func project(_ turn: JSONValue) -> [ChatMessage] {
             var messages: [ChatMessage] = turn["items"].array.compactMap { item in
                 guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call"].contains(type) else { return nil }
                 return ChatMessage(id: (turn["id"].string ?? "") + ":" + (item["id"].string ?? ""),
@@ -103,9 +106,17 @@ public struct ChatThread: Identifiable, Sendable {
             if let error = turn["error"]["message"].string, !cancelled, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {
                 messages.append(ChatMessage(id: (turn["id"].string ?? "") + ":error", role: "error", text: error))
             }
-            return messages
+        return messages
+    }
+    private mutating func rebuildProjection(changed turn: JSONValue? = nil) {
+        if let turn {
+            projectedTurns[turn["id"].string ?? ""] = Self.project(turn)
+        } else {
+            projectedTurns = Dictionary(turns.map { ($0["id"].string ?? "", Self.project($0)) }, uniquingKeysWith: { _, new in new })
         }
-        return completed
+        // Reads during layout must be O(1); unchanged turns keep their parsed tool payloads.
+        messages = turns.flatMap { projectedTurns[$0["id"].string ?? ""] ?? [] }
+        rows = ConversationRow.grouped(messages)
     }
     /// Older pages can split a turn. Retain live updates and deletions received while fetching.
     public mutating func prependHistory(_ page: JSONValue) {
@@ -125,6 +136,7 @@ public struct ChatThread: Identifiable, Sendable {
         }
         turns = older + turns.filter { current in !older.contains { $0["id"] == current["id"] } }
         historyCursor = page["history_cursor"].string ?? ""
+        rebuildProjection()
     }
     public mutating func expandContent(_ ref: String, item: JSONValue) {
         for t in turns.indices {
@@ -132,6 +144,7 @@ public struct ChatThread: Identifiable, Sendable {
             var items = turn["items"]?.array ?? []
             guard let i = items.firstIndex(where: { $0["remote_content_ref"].string == ref && $0["id"] == item["id"] }) else { continue }
             items[i] = item; turn["items"] = .array(items); turns[t] = .object(turn)
+            rebuildProjection(changed: turns[t])
         }
     }
     public mutating func apply(_ method: String, _ params: JSONValue) {
@@ -158,13 +171,16 @@ public struct ChatThread: Identifiable, Sendable {
             pending.removeAll { $0.id == removed }; return
         }
         defer {
-            let materialized = Set(turns.flatMap { $0["items"].array }.compactMap { $0["client_id"].string })
-            pending.removeAll { materialized.contains($0.id) }
+            if !pending.isEmpty {
+                let materialized = Set(turns.flatMap { $0["items"].array }.compactMap { $0["client_id"].string })
+                pending.removeAll { materialized.contains($0.id) }
+            }
         }
         if params["turn"] != .null {
             let turn = params["turn"]
             if let i = turns.firstIndex(where: { $0["id"] == turn["id"] }) { turns[i] = turn }
             else { turns.append(turn) }
+            rebuildProjection(changed: turn)
             if method == "turn/started" { running = true }
             if ["turn/completed", "turn/interrupted", "turn/error"].contains(method) { running = false }
             return
@@ -186,8 +202,9 @@ public struct ChatThread: Identifiable, Sendable {
                   case .object(var item) = items[i] {
             item["text"] = method == "item/agentMessage/replace" ? params["text"] : .string((item["text"]?.string ?? "") + (params["delta"].string ?? ""))
             items[i] = .object(item)
-        }
+        } else { return }
         turn["items"] = .array(items)
         turns[t] = .object(turn)
+        rebuildProjection(changed: turns[t])
     }
 }

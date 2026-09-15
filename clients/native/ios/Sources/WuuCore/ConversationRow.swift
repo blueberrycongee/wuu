@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ConversationRow: Identifiable {
+public struct ConversationRow: Identifiable, Sendable, Equatable {
     public var id: String { messages[0].id }
     public var messages: [ChatMessage]
     public var isToolGroup: Bool { messages[0].tool != nil }
