@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
@@ -60,6 +61,7 @@ import androidx.compose.ui.unit.dp
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(end = 3.dp)) {
                 key(draftKey) {
                     BasicTextField(value, onChange, enabled = enabled, maxLines = 6,
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
                         modifier = Modifier.weight(1f).heightIn(min = 44.dp).padding(start = 15.dp, end = 4.dp, top = 11.dp, bottom = 11.dp).testTag("native-composer"),

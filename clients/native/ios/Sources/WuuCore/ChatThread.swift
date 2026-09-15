@@ -88,7 +88,8 @@ public struct ChatThread: Identifiable, Sendable {
                         },
                     tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil)
             }
-            if let error = turn["error"]["message"].string, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {
+            let cancelled = turn["status"].string == "interrupted" && turn["error"]["category"].string == "cancelled"
+            if let error = turn["error"]["message"].string, !cancelled, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {
                 messages.append(ChatMessage(id: (turn["id"].string ?? "") + ":error", role: "error", text: error))
             }
             return messages

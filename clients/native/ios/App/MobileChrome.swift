@@ -92,6 +92,7 @@ struct MobileComposer: View {
                 AttachmentPicker(attachments: $attachments, model: model).disabled(!enabled || sending)
                 HStack(alignment: .bottom, spacing: 4) {
                     TextField(enabled ? placeholder : "连接电脑后发送", text: $text, axis: .vertical)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.system(size: 15)).lineLimit(1...6)
                         .padding(.leading, 15).padding(.vertical, 12).disabled(!enabled)
                         .accessibilityIdentifier(identifier)

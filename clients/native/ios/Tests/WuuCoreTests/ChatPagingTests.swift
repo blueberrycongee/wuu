@@ -2,6 +2,21 @@ import XCTest
 @testable import WuuCore
 
 final class ChatPagingTests: XCTestCase {
+    func testUserStopPreservesPartialAnswerWithoutSynthesizingFailure() {
+        for (status, category, isFailure) in [("interrupted", "cancelled", false), ("failed", "provider", true), ("interrupted", "provider", true)] {
+            let turn: JSONValue = ["id": "turn", "status": .string(status),
+                "error": ["message": "diagnostic", "category": .string(category)],
+                "items": [["id": "answer", "type": "agent_message", "text": "partial answer"]]]
+            var live = ChatThread(["id": "t", "status": "in_progress", "turns": []])
+            live.apply("turn/error", ["thread_id": "t", "turn": turn])
+            let restored = ChatThread(["id": "t", "status": "idle", "turns": [turn]])
+            XCTAssertFalse(live.running)
+            XCTAssertEqual(live.messages, restored.messages)
+            XCTAssertEqual(live.messages.first?.role, "assistant")
+            XCTAssertEqual(live.messages.contains { $0.role == "error" }, isFailure)
+        }
+    }
+
     func testToolCompletionWinsOverStaleExpansionAndHistory() {
         var thread = ChatThread(["id": "t", "history_cursor": "page", "turns": [["id": "turn", "status": "in_progress", "items": []]]])
         let started: JSONValue = ["id": "tool", "type": "tool_call", "name": "read_file", "status": "in_progress", "remote_content_ref": "old"]

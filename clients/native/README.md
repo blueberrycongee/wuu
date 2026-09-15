@@ -10,7 +10,7 @@ iOS 使用 Swift 与 SwiftUI；Android 使用 Kotlin 与 Jetpack Compose。聊�
 
 ## 当前能力
 
-进入电脑后可在底部切换“会话”和“协作”，默认打开协作。两种模式共用加密连接，独立保留当前对话、草稿和阅读位置；切换页面不停止电脑任务。协作支持查看房间、与已有 Agent 私聊、创建群聊、收发文字和发送图片/PDF、系统拍照，成员与已加载任务在详情页查看。工作状态使用共享小球表示，失败或中断后可以继续原会话；收到的图片自动显示缩略图，点击可查看原图；Agent 配置和创建申请处理仍需在电脑完成，手机会显示相应入口限制。
+进入电脑后可在底部切换“会话”和“协作”，默认打开协作。两种模式共用加密连接，独立保留当前对话、草稿和阅读位置；App 重启后恢复上次的电脑、工作区、模式和会话或房间，恢复位置仅对原登录及仍有权限的电脑有效；切换页面不停止电脑任务。协作支持查看房间、与已有 Agent 私聊、创建群聊、收发文字和发送图片/PDF、系统拍照，成员与已加载任务在详情页查看。工作状态使用共享小球表示，失败或中断后可以继续原会话；收到的图片自动显示缩略图，点击可查看原图；Agent 配置和创建申请处理仍需在电脑完成，手机会显示相应入口限制。
 
 协作仅在前台选中该模式时刷新公开房间消息，不把 Agent 私有执行事件正文放进群聊。每次读取最近 30 条，支持向前翻页和重连补齐缺失消息；已加载的较早任务会轮流刷新状态。离线保留本次已加载的内容只读，不新增账号服务器同步副本；退出电脑、退出账号或失去房间访问后清理相关内容。发送失败不自动重试，请先检查房间是否已有该消息。
 
@@ -36,7 +36,7 @@ iOS 使用 Swift 与 SwiftUI；Android 使用 Kotlin 与 Jetpack Compose。聊�
 
 屏幕内的消息图片自动读取最长边 384 像素的缩略图，每端最多同时读取两张、缓存 48 张。点击图片才分块读取原图并校验摘要，单个附件最多读取约 12 MB。图片在解码前检查像素上限并缩小；iOS 使用 Quick Look 查看图片和 PDF，Android 使用支持缩放的原生图片组件并交给设备上的阅读器打开 PDF。两端支持保存或分享原文件；切换会话或账号后，过期读取不会打开旧附件。
 
-服务器历史与电脑实时会话合并展示。同步有明确的开启说明和关闭确认，本地缓存按服务器、账号、手机身份和电脑隔离；代际重置、删除记录、过期响应不会恢复已经清除的记录。恢复快照与后续实时通知按同一通道顺序更新界面。发送超时不自动重发，避免重复执行。
+服务器历史与电脑实时会话合并展示。同步有明确的开启说明和关闭确认，本地缓存按服务器、账号、手机身份和电脑隔离；代际重置、删除记录、过期响应不会恢复已经清除的记录。恢复快照与后续实时通知按同一通道顺序更新界面。历史同步与执行连接分别恢复，慢历史请求不会阻塞发消息；重新连接保留已显示内容，单个会话读取失败不会主动关闭整条连接。发送超时不自动重发，避免重复执行。
 
 ## 构建
 
@@ -49,13 +49,15 @@ node clients/native/shared-ui/build.mjs --check
 
 两端构建会检查共享资源与实际组件源文件的摘要，过期时提示重新生成。入口与边界见 [shared-ui](shared-ui/README.md)。
 
-iOS App 最低 iOS 17，使用 Xcode 打开 [ios/Wuu.xcodeproj](ios/Wuu.xcodeproj)，选择 `Wuu` scheme。模拟器构建不需要签名；真机安装需要在 Xcode 配置自己的开发团队。Swift Package 是可单独测试的通信与缓存模块，不是另一个 App。
+iOS App 最低 iOS 17，使用 Xcode 打开 [ios/Wuu.xcodeproj](ios/Wuu.xcodeproj)，选择 `Wuu` scheme。模拟器运行使用 Xcode 自动生成的本地临时签名，无需开发团队；真机安装需要在 Xcode 配置自己的开发团队。Swift Package 是可单独测试的通信与缓存模块，不是另一个 App。
 
 ```sh
 xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
   -sdk iphonesimulator -derivedDataPath clients/native/ios/.build-xcode \
-  CODE_SIGNING_ALLOWED=NO build
+  build
 ```
+
+仅检查编译时可以添加 `CODE_SIGNING_ALLOWED=NO`；该未签名产物不能用于完整模拟器验收，系统钥匙串访问会失败。
 
 Android 最低 Android 9 / API 28，需要 JDK 17、Android SDK 36，配置 `JAVA_HOME` 和 `ANDROID_HOME`，或用 Android Studio 打开 [android](android)。APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。
 
@@ -89,6 +91,8 @@ bash clients/native/verify.sh all
 `testaccount` 使用生产账号 HTTP handler 和 PostgreSQL，覆盖注册、修改密码、恢复密钥轮换、全部设备撤销和服务器退出，以及历史跨页同步、磁盘恢复、编辑失效、删除与延迟响应、跨账号隔离。OAuth 测试仅替代外部 GitHub 响应，实际执行服务器的浏览器 cookie、PKCE、账号绑定和设备签名验证，并覆盖取消、拒绝、恢复和重复完成。
 
 也可以分别执行 `swift test --package-path clients/native/ios` 和 Gradle 的 `:app:testDebugUnitTest`。独立运行的集成测试需要 `WUU_NATIVE_TESTHOST`、`WUU_NATIVE_TESTACCOUNT` 可执行文件路径和临时数据库；缺少环境会明确跳过对应集成测试，完整验收请使用上述脚本。
+
+`testaccount -live` 可启动供模拟器登录的隔离账号与主机，但默认独立执行模式的任务由手机 app-server 连接持有，不能据此验收桌面任务的后台持续运行。验证桌面生命周期时，先启动仓库的 `desktop/test-fixtures/sharedRemoteHost.ts` 共享服务池，再使用 `testaccount -live -desktop`，显式传入其 `WUU_DESKTOP_APP_SERVER_ADDR`、`WUU_DESKTOP_APP_SERVER_TOKEN` 和临时 `WUU_TEST_WORKSPACE`。模型仍可使用本地受控服务；服务池、远程桥接、执行、持久化和原生 UI 使用产品代码。未指定 `-desktop` 时忽略环境中的桌面端点，避免测试连接到日常桌面。
 
 模拟器上的整段登录/发送/前后台流程会跟着界面一起变，不适合作为日常门禁。CI 只跑核心集成、未签名 Release 构建和 Android lint。
 

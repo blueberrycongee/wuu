@@ -19,6 +19,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Native conversation views no longer present an explicitly cancelled, interrupted turn as a new failure; partial answers and actual execution failures remain visible.
+
+- Native agent composers preserve command text instead of applying keyboard spelling corrections or iOS sentence capitalization.
+
+- Enabled desktop phone access recovers after temporary startup failures or a remote-host exit, while respecting explicit disablement, account changes, and app shutdown.
+
+- Remote hosts sharing one Wuu home now hold a process lock, preventing Dev and packaged desktops from repeatedly replacing each other at the relay. The lock is released by the OS after an exit or crash.
+
+- Native phones reconnect independently of history synchronization, retain visible messages during recovery, and keep a healthy connection when a saved conversation is unavailable.
+
+- Restored the last authorized computer, workspace, conversation, and collaboration
+  room after restarting the native iOS and Android apps.
+
 - Bundled macOS Computer Use with persistent self-signed release identity checks
   and guidance for manual upgrades from GitHub Releases.
 - Waited for core and computer-use preview processes to stop before desktop exit.

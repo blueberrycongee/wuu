@@ -39,8 +39,7 @@ import org.json.JSONObject
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun HostScreen(model: AppModel, conversation: @Composable () -> Unit) {
     val state = model.collaboration
-    var initialized by rememberSaveable(model.host?.optString("pub")) { mutableStateOf(false) }
-    LaunchedEffect(Unit) { if (!initialized) { state.mode(true); initialized = true } }
+    LaunchedEffect(state.visible, state.selectedID, model.activeID, model.workspace) { model.rememberLocation() }
     val saved = rememberSaveableStateHolder()
     val owner = LocalLifecycleOwner.current
     LaunchedEffect(state.visible, state.selectedID, model.connected, owner) {

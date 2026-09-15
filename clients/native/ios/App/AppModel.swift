@@ -10,7 +10,8 @@ import CryptoKit
     var host: AccountDevice?
     var entries: [HistoryEntry] = []
     var threads: [ChatThread] = []
-    var activeID: String?
+    var activeID: String? { didSet { rememberLocation() } }
+    var mode = "collaboration" { didSet { rememberLocation() } }
     var live: ChatThread?
     var saved: HistoryThread?
     var connected = false
@@ -28,7 +29,7 @@ import CryptoKit
     var connectionStatus = ""
     var error: String?
     var workspaces: [JSONValue] = []
-    var workspace = ""
+    var workspace = "" { didSet { rememberLocation() } }
     var pendingApproval: JSONValue?
     var questions: [JSONValue] = []
     private var questionRevision = 0
@@ -45,6 +46,7 @@ import CryptoKit
     private var history: ConversationHistory?
     private var events: Task<Void, Never>?
     private var refresh: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private var loginTask: Task<Void, Never>?
     private var epoch = UUID()
     private var authEpoch = UUID()
@@ -64,10 +66,23 @@ import CryptoKit
             resetRecovery = try vault.load("recovery", as: String.self)
             if let account, let directory = try vault.load("directory", as: RememberedDirectory.self)?.restore(account: account) {
                 devices = directory.devices; authMethod = directory.auth_method; directoryCached = true
+                if let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
+                    host = devices.first { $0.pub == location.host }
+                    activeID = location.thread; workspace = location.workspace; mode = location.mode
+                    collaboration.select(location.room)
+                    history = try ConversationHistory(account: account, host: location.host, directory: cacheDirectory)
+                }
             }
         }
         catch { self.error = error.localizedDescription }
         push.bind(account)
+    }
+    func rememberLocation() {
+        guard let account, let host else { return }
+        do {
+            try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace,
+                thread: activeID, room: collaboration.roomID, mode: mode), key: "location")
+        } catch { self.error = error.localizedDescription }
     }
     func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         let stamp = epoch
@@ -219,6 +234,7 @@ import CryptoKit
         guard opening == selection, let account, account == session,
               devices.contains(where: { $0.pub == device.pub && $0.role == "host" }) else { return }
         host = device
+        rememberLocation()
         let store = try ConversationHistory(account: account, host: device.pub, directory: cacheDirectory)
         history = store
         let cached = await store.current()
@@ -246,7 +262,19 @@ import CryptoKit
         guard refresh == nil else { return }
         Task { await push.refresh() }
         let stamp = epoch
+        // History HTTP requests must never hold up the encrypted execution channel.
+        reconnectTask = Task {
+            while !Task.isCancelled, epoch == stamp {
+                if !connected && !connecting { await connect() }
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            }
+        }
         refresh = Task {
+            if let history {
+                let cached = await history.current()
+                guard epoch == stamp else { return }
+                show(cached)
+            }
             while !Task.isCancelled, epoch == stamp {
                 do {
                     try await loadDevices()
@@ -255,10 +283,9 @@ import CryptoKit
                 } catch is CancellationError { return } catch {
                     guard epoch == stamp else { return }
                     if case NativeError.http(401, _) = error { report(error) }
-                    connectionStatus = error.localizedDescription
+                    if !connected { connectionStatus = error.localizedDescription }
                 }
                 guard !Task.isCancelled, epoch == stamp else { return }
-                if !connected && !connecting { await connect() }
                 do { try await Task.sleep(for: .seconds(10)) } catch { return }
             }
         }
@@ -267,6 +294,7 @@ import CryptoKit
         isForeground = false
         epoch = UUID()
         refresh?.cancel(); refresh = nil
+        reconnectTask?.cancel(); reconnectTask = nil
         loginTask?.cancel()
         events?.cancel(); events = nil
         let oldRemote = remote; remote = nil
@@ -276,10 +304,12 @@ import CryptoKit
         await oldRemote?.disconnect()
     }
     @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
+        try? vault.delete("location")
+        host = nil
         collaboration.reset()
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
-        workspace = ""; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
+        workspace = ""; mode = "collaboration"; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
         let selection = opening
         await background()
         try? await oldHistory?.invalidate(removeCache: removeCache)
@@ -350,7 +380,7 @@ import CryptoKit
             events?.cancel()
             events = Task {
                 for await event in connection.events {
-                    guard !Task.isCancelled, epoch == stamp else { return }
+                    guard !Task.isCancelled, epoch == stamp, remote === connection else { return }
                     switch event {
                     case .snapshot(let tag, let result):
                         if opening.uuidString == tag {
@@ -380,20 +410,28 @@ import CryptoKit
             _ = try await connection.call("initialize")
             guard epoch == stamp else { await connection.disconnect(); return }
             connected = true
-            try await loadQuestions()
-            let result = try await connection.call("workspace/list")
-            guard epoch == stamp else { return }
-            workspaces = result["workspaces"].array
-            if workspace.isEmpty { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
-            try await loadThreads()
-            guard epoch == stamp else { return }
-            if let id = activeID { try await open(id) }
+            connectionStatus = ""
         } catch {
             if epoch == stamp {
                 let old = remote; remote = nil; connected = false; events?.cancel(); events = nil
                 if !(error is CancellationError) { connectionStatus = error.localizedDescription }
                 await old?.disconnect()
             }
+            return
+        }
+        // A missing conversation or failed directory read is not a transport failure.
+        guard let connection = remote, epoch == stamp else { return }
+        do {
+            try await loadQuestions()
+            let result = try await connection.call("workspace/list")
+            guard epoch == stamp else { return }
+            workspaces = result["workspaces"].array
+            if !workspaces.contains(where: { $0["path"].string == workspace }) { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
+            try await loadThreads()
+            guard epoch == stamp else { return }
+            if let id = activeID { try await open(id, preservingContent: true) }
+        } catch is CancellationError {} catch {
+            if epoch == stamp, remote === connection { report(error) }
         }
     }
     func loadThreads() async throws {
@@ -409,9 +447,10 @@ import CryptoKit
               search.trimmingCharacters(in: .whitespacesAndNewlines) == query, archivedList == archived else { return }
         threads = (query.isEmpty ? result["threads"].array : result["results"].array.map { $0["thread"] }).map { ChatThread($0) }
     }
-    func open(_ id: String) async throws {
+    func open(_ id: String, preservingContent: Bool = false) async throws {
         opening = UUID(); let selection = opening
-        activeID = id; live = nil; saved = nil; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        if !preservingContent || activeID != id { live = nil; saved = nil }
+        activeID = id; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         let stamp = epoch
         if connected, let remote {
             _ = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true], snapshotTag: selection.uuidString)

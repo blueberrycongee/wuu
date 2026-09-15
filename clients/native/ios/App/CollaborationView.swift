@@ -3,19 +3,19 @@ import WuuCore
 
 struct HostView: View {
     @Bindable var model: AppModel
-    @State private var mode = "collaboration"
     @Environment(\.scenePhase) private var phase
-    private var pollKey: String { "\(mode)-\(phase == .active)-\(model.connected)-\(model.collaboration.roomID ?? "")" }
+    private var pollKey: String { "\(model.mode)-\(phase == .active)-\(model.connected)-\(model.collaboration.roomID ?? "")" }
     var body: some View {
-        TabView(selection: $mode) {
+        TabView(selection: $model.mode) {
             CollaborationView(app: model, model: model.collaboration)
                 .tabItem { Label("协作", systemImage: "bubble.left.and.bubble.right") }.tag("collaboration")
             ConversationView(model: model)
                 .tabItem { Label("会话", systemImage: "terminal") }.tag("harness")
         }
         .task(id: pollKey) {
-            if mode == "collaboration", phase == .active, model.connected { await model.collaboration.poll(app: model) }
+            if model.mode == "collaboration", phase == .active, model.connected { await model.collaboration.poll(app: model) }
         }
+        .onChange(of: model.collaboration.roomID) { _, _ in model.rememberLocation() }
     }
 }
 

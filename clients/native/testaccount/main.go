@@ -34,7 +34,11 @@ func must(err error) {
 func main() {
 	github := flag.Bool("github", false, "enable a local simulated GitHub provider")
 	live := flag.Bool("live", false, "start an isolated execution computer for simulator UI tests")
+	desktop := flag.Bool("desktop", false, "use an explicitly supplied shared desktop execution endpoint with -live")
 	flag.Parse()
+	if *desktop && !*live {
+		panic("-desktop requires -live")
+	}
 	if *github && *live {
 		panic("-github and -live are separate fixture modes")
 	}
@@ -129,7 +133,7 @@ func main() {
 	server.Start()
 	defer server.Close()
 	if *live {
-		stop := startUIComputer(root, computer, server.URL, hostSession)
+		stop := startUIComputer(root, computer, server.URL, hostSession, *desktop)
 		defer stop()
 	}
 	must(json.NewEncoder(os.Stdout).Encode(map[string]string{"server": server.URL, "username": user, "password": password,

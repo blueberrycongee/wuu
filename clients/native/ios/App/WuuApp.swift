@@ -172,6 +172,10 @@ struct ConversationView: View {
     @State private var exporting = false
     @State private var exportDocument = ConversationDocument(text: "")
     @State private var settingsThread: ChatThread?
+    init(model: AppModel) {
+        self.model = model
+        _drawer = State(initialValue: model.activeID == nil)
+    }
     private var draftKey: String { (model.host?.pub ?? "") + ":" + (model.activeID ?? "new") }
     private var draft: Binding<String> {
         Binding(get: { drafts[draftKey] ?? "" }, set: { drafts[draftKey] = $0 })

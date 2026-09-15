@@ -5,6 +5,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ChatPagingTest {
+    @Test fun userStopPreservesPartialAnswerWithoutSynthesizingFailure() {
+        for ((status, category, failure) in listOf(Triple("interrupted", "cancelled", false), Triple("failed", "provider", true), Triple("interrupted", "provider", true))) {
+            val turn = json("id" to "turn", "status" to status, "error" to json("message" to "diagnostic", "category" to category),
+                "items" to org.json.JSONArray().put(json("id" to "answer", "type" to "agent_message", "text" to "partial answer")))
+            val live = ChatThread(json("id" to "t", "status" to "in_progress"))
+            live.apply("turn/error", json("thread_id" to "t", "turn" to turn))
+            val restored = ChatThread(json("id" to "t", "status" to "idle", "turns" to org.json.JSONArray().put(turn)))
+            assertFalse(live.running)
+            assertEquals(restored.messages, live.messages)
+            assertEquals("assistant", live.messages.first().role)
+            assertEquals(failure, live.messages.any { it.role == "error" })
+        }
+    }
+
     @Test fun toolCompletionWinsOverStaleExpansionAndHistory() {
         val thread = ChatThread(JSONObject("""{"id":"t","history_cursor":"page","turns":[{"id":"turn","status":"in_progress","items":[]}]}"""))
         val started = json("id" to "tool", "type" to "tool_call", "name" to "read_file", "status" to "in_progress", "remote_content_ref" to "old")

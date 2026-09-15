@@ -50,7 +50,8 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
                 if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"))
         }
         val error = turn.optJSONObject("error")?.optString("message").orEmpty()
-        if (error.isNotEmpty() && messages.none { it.role == "error" }) messages + ChatMessage(turn.getString("id") + ":error", "error", error) else messages
+        val cancelled = turn.optString("status") == "interrupted" && turn.optJSONObject("error")?.optString("category") == "cancelled"
+        if (!cancelled && error.isNotEmpty() && messages.none { it.role == "error" }) messages + ChatMessage(turn.getString("id") + ":error", "error", error) else messages
     }
     // Pages may split a turn. Live fields and item deletions take precedence over older history.
     fun prependHistory(page: JSONObject) {

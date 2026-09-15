@@ -70,7 +70,7 @@ func (uiProvider) StreamChat(ctx context.Context, request providers.ChatRequest)
 	return events, nil
 }
 
-func startUIComputer(root string, store *host.Store, server string, login account.Session) func() {
+func startUIComputer(root string, store *host.Store, server string, login account.Session, desktop bool) func() {
 	must(store.SetAccount(&account.Credentials{Server: server, Username: login.Username, Token: login.Token}))
 	kit, err := tools.New(root)
 	must(err)
@@ -86,8 +86,18 @@ func startUIComputer(root string, store *host.Store, server string, login accoun
 	seedUICollaboration(rt.WuuHome)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	h, err := host.New(host.Options{Runtime: rt, Store: store, RelayURL: "ws" + strings.TrimPrefix(server, "http") + "/v1/connect",
-		Pusher: host.LogHostPusher{}, Logf: log.Printf})
+	opts := host.Options{Runtime: rt, Store: store, RelayURL: "ws" + strings.TrimPrefix(server, "http") + "/v1/connect",
+		Pusher: host.LogHostPusher{}, Logf: log.Printf}
+	if desktop {
+		// Opt in explicitly so ambient desktop credentials never affect fixtures.
+		opts.AppServer, err = host.DesktopAppServer(os.Getenv("WUU_DESKTOP_APP_SERVER_ADDR"), os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN"))
+		must(err)
+		opts.Workdir = os.Getenv("WUU_TEST_WORKSPACE")
+		if opts.Workdir == "" {
+			panic("-desktop requires WUU_TEST_WORKSPACE")
+		}
+	}
+	h, err := host.New(opts)
 	must(err)
 	go func() { defer close(done); _ = h.Run(ctx) }()
 	// Account-backed relays intentionally reject pairing. Observe the same
