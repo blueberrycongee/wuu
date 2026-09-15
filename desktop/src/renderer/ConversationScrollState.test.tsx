@@ -691,15 +691,17 @@ describe("useConversationScrollState — dock composer height", () => {
     });
   }
 
-  it("includes the expanded composer offset in the dock composer height token", () => {
+  it("includes the expanded composer offset in the dock composer height token", async () => {
     const { pane, dockComposer, frame } = mountDockComposerProbe();
     stubRectHeight(dockComposer, 168);
 
     flushResizeObserversFor(dockComposer);
+    await act(async () => { await new Promise(requestAnimationFrame); });
     expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("168px");
 
     frame.style.setProperty("--composer-expanded-offset", "284px");
     flushResizeObserversFor(frame);
+    await act(async () => { await new Promise(requestAnimationFrame); });
 
     expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("452px");
   });

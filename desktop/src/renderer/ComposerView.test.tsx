@@ -2937,33 +2937,21 @@ describe("ComposerTokenGauge", () => {
 });
 
 describe("Composer expand button", () => {
-  it("anchors the expanded frame to the original bottom edge in the hero composer", () => {
-    renderComposer({ variant: "hero" });
-    const stack = container.querySelector(".composer-stack");
-    const frame = container.querySelector<HTMLDivElement>(".composer-frame");
+  it("keeps manual expansion through draft replacement and send-clear", () => {
+    const { replacePrompt } = renderStatefulComposer({});
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-    expect(stack).not.toBeNull();
-    expect(frame).not.toBeNull();
-    expect(button).not.toBeNull();
-
-    Object.defineProperty(frame!, "offsetHeight", {
-      configurable: true,
-      get: () => (stack?.classList.contains("is-expanded") ? 420 : 136),
-    });
-
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-
-    expect(stack?.classList.contains("is-expanded")).toBe(true);
-    expect(frame?.style.getPropertyValue("--composer-expanded-offset")).toBe("284px");
-
+    act(() => replacePrompt("Replacement draft"));
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(textarea.value).toBe("Replacement draft");
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
     act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
-
-    expect(stack?.classList.contains("is-expanded")).toBe(false);
-    expect(frame?.style.getPropertyValue("--composer-expanded-offset")).toBe("");
+    expect(textarea.value).toBe("");
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("renders the expand button inside the composer input area", () => {

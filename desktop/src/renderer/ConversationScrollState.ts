@@ -980,7 +980,13 @@ export function useConversationScrollState({
 
     windowResizeHeight = createWindowResizeSettleScheduler(updateHeight);
     updateHeight();
-    const resizeObserver = new ResizeObserver(updateHeight);
+    // The height token changes ancestor layout. Applying it inside observer
+    // delivery can invalidate the growing composer's own resize notifications.
+    let heightFrame = 0;
+    const resizeObserver = new ResizeObserver(() => {
+      window.cancelAnimationFrame(heightFrame);
+      heightFrame = window.requestAnimationFrame(updateHeight);
+    });
     resizeObserver.observe(node);
     const frame = node.querySelector<HTMLElement>(".composer-frame");
     if (frame) {
@@ -988,6 +994,7 @@ export function useConversationScrollState({
     }
     return () => {
       windowResizeHeight?.cancel();
+      window.cancelAnimationFrame(heightFrame);
       resizeObserver.disconnect();
     };
   }, [

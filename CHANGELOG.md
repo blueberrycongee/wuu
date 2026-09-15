@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Let conversation inputs grow with their contents up to the same height as
+  manual expansion, shrink when text is removed, and scroll once full.
+
 ### Fixed
 
 - Kept streaming process text visible when providers revise a provisional final

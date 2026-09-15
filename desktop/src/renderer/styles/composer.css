@@ -506,8 +506,8 @@
 
 .composer-stack {
   --composer-collapsed-min-height: 100px;
-  --composer-expanded-min-height: clamp(240px, 44vh, 420px);
-  --composer-expanded-delta: calc(var(--composer-expanded-min-height) - var(--composer-collapsed-min-height));
+  --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
+  --composer-expanded-offset: var(--composer-input-growth, 0px);
   display: flex;
   width: min(
     var(--session-composer-width),
@@ -726,19 +726,13 @@
   overflow: visible;
 }
 
-.composer-stack.is-expanded .composer-frame-shell {
-  margin-bottom: calc(var(--composer-expanded-offset, var(--composer-expanded-delta)) * -1);
-  transform: translateY(calc(var(--composer-expanded-offset, var(--composer-expanded-delta)) * -1));
+.composer-stack .composer-frame-shell {
+  margin-bottom: calc(var(--composer-expanded-offset) * -1);
+  transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
-.composer-stack.is-expanded .composer-pending-drawer {
-  transform: translateY(calc(var(--composer-expanded-offset, var(--composer-expanded-delta)) * -1));
-}
-
-.composer-stack.is-expanded .composer {
-  display: flex;
-  flex-direction: column;
-  min-height: var(--composer-expanded-min-height);
+.composer-stack .composer-pending-drawer {
+  transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
 .hero-composer-wrap .composer {
@@ -1137,6 +1131,8 @@
   width: 100%;
   height: 60px;
   min-height: 60px;
+  max-height: calc(var(--composer-expanded-min-height) - var(--composer-chrome-height, 40px));
+  overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;
@@ -1159,12 +1155,6 @@
   top: 14px;
 }
 
-.composer-stack.is-expanded .composer textarea {
-  flex: 1 1 0;
-  height: auto;
-  min-height: clamp(180px, 34vh, 320px);
-}
-
 .composer.has-collapsed-prompt textarea {
   height: 52px;
   min-height: 52px;
@@ -1175,10 +1165,6 @@
   height: 56px;
   min-height: 56px;
   padding-top: 8px;
-}
-
-.composer-stack.is-expanded .composer.has-collapsed-prompt textarea {
-  min-height: clamp(120px, 24vh, 240px);
 }
 
 .document-composer-wrap .composer-stack {
@@ -1213,7 +1199,7 @@
   box-shadow: var(--shadow-tray);
 }
 
-.document-composer-wrap .composer-stack:not(.is-expanded) .composer textarea {
+.document-composer-wrap .composer-stack .composer textarea {
   height: 44px;
   min-height: 44px;
   /* Match the canonical dock first-row axis: 10px + half of the 24px line

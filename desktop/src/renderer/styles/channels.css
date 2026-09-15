@@ -1246,7 +1246,7 @@
 }
 
 .channel-composer .composer-stack { --composer-collapsed-min-height: 80px; }
-.channel-composer .composer-stack:not(.is-expanded) textarea {
+.channel-composer .composer-stack textarea {
   height: 40px;
   min-height: 40px;
   padding-top: 8px;
@@ -1260,6 +1260,7 @@
 
 .channel-composer-inline .composer-stack {
   --composer-collapsed-min-height: 46px;
+  --composer-expanded-offset: 0px;
   width: 100%;
 }
 .channel-composer-inline .composer-frame { border-radius: var(--channel-composer-radius, 24px); }
@@ -1279,11 +1280,11 @@
   padding: 5px 2px 5px 0;
 }
 .channel-composer-inline .composer-collapsed-prompt-list { grid-area: collapsed; }
-.channel-composer-inline .composer-stack:not(.is-expanded) textarea {
+.channel-composer-inline .composer-stack textarea {
   grid-area: input;
   height: 32px;
   min-height: 32px;
-  max-height: 160px;
+  max-height: min(160px, 60dvh);
   padding: 4px 2px;
   overflow-y: auto;
 }

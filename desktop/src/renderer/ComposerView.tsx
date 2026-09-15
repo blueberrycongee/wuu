@@ -22,7 +22,7 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -106,6 +106,7 @@ import { ComposerPresentation } from "./plugins/ComposerPresentation";
 import { ComposerVoiceInput, type ComposerVoiceInputHandle } from "./ComposerVoiceInput";
 import { ENABLE_VOICE_INPUT } from "./FeatureFlags";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
+import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import type { TurnContextUsage } from "./AppState";
 
@@ -446,7 +447,6 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
-  const collapsedComposerFrameHeightRef = useRef<number | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
@@ -679,32 +679,6 @@ export function Composer({
     }
   }, [readOnly]);
 
-  useLayoutEffect(() => {
-    const frame = composerFrameRef.current;
-    if (!frame) {
-      return;
-    }
-    if (!isComposerExpanded) {
-      frame.style.removeProperty("--composer-expanded-offset");
-      return;
-    }
-    const collapsedHeight = collapsedComposerFrameHeightRef.current;
-    if (!collapsedHeight) {
-      frame.style.removeProperty("--composer-expanded-offset");
-      return;
-    }
-    const expandedHeight = Math.ceil(frame.offsetHeight);
-    const offset = Math.max(0, expandedHeight - collapsedHeight);
-    frame.style.setProperty("--composer-expanded-offset", `${offset}px`);
-  }, [
-    files.length,
-    guideMessages.length,
-    images.length,
-    isComposerExpanded,
-    queuedMessages.length,
-    activeCollapsedPromptBlocks.length
-  ]);
-
   function focusComposerSoon(): void {
     focusComposerTextarea(textareaRef.current);
   }
@@ -735,14 +709,7 @@ export function Composer({
     if (readOnly) {
       return;
     }
-    setIsComposerExpanded((expanded) => {
-      if (!expanded) {
-        collapsedComposerFrameHeightRef.current = composerFrameRef.current
-          ? Math.ceil(composerFrameRef.current.offsetHeight)
-          : null;
-      }
-      return !expanded;
-    });
+    setIsComposerExpanded((expanded) => !expanded);
     focusComposerSoon();
   }
 
@@ -1313,6 +1280,7 @@ export function Composer({
             ) : null}
             <ComposerTextarea
               ref={textareaRef}
+              expanded={isComposerExpanded}
               value={visiblePromptValue}
               valueRevision={promptRevision}
               submissionClearRevision={submissionClearRevision}
@@ -1606,6 +1574,7 @@ export function Composer({
 }
 
 type ComposerTextareaProps = {
+  expanded: boolean;
   value: string;
   valueRevision: number;
   submissionClearRevision: number;
@@ -1627,6 +1596,7 @@ type ComposerTextareaProps = {
 // and the surrounding chrome update in an interruptible transition.
 const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
   function ComposerTextarea({
+    expanded,
     value: committedValue,
     valueRevision,
     submissionClearRevision,
@@ -1642,7 +1612,10 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     onKeyDown,
     onContextMenu,
   }, ref): JSX.Element {
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    useImperativeHandle(ref, () => inputRef.current!, []);
     const [value, setValue] = useState(committedValue);
+    useComposerHeight(inputRef, expanded, value);
     const [lastCommittedValue, setLastCommittedValue] = useState(committedValue);
     const [lastValueRevision, setLastValueRevision] = useState(valueRevision);
     const [lastSubmissionClearRevision, setLastSubmissionClearRevision] = useState(
@@ -1683,7 +1656,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
 
     return (
       <textarea
-        ref={ref}
+        ref={inputRef}
         data-wuu-component="composer-input"
         value={value}
         placeholder={placeholder}

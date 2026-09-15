@@ -37,6 +37,7 @@
     "test:e2e:window-resize": "npm run build && electron scripts/window-resize-perf-e2e.cjs",
     "test:e2e:document-composer-width": "npm run build && electron scripts/document-composer-width-e2e.cjs",
     "test:e2e:session-composer-width": "npm run build && electron scripts/session-composer-width-e2e.cjs",
+    "test:e2e:composer-height": "npm run build && electron scripts/composer-height-e2e.cjs",
     "test:e2e:sidebar-touch": "npm run build && electron scripts/sidebar-touch-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
