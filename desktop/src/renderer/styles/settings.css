@@ -654,9 +654,9 @@
   background: var(--danger-border);
 }
 
-/* Square icon-only variant, same 32px box. */
+/* Match the field height after appearance font scaling. */
 .settings-icon-button {
-  width: 32px;
+  width: max(32px, 2.6em);
   flex: 0 0 auto;
   padding: 0;
 }

@@ -517,8 +517,8 @@
 .workspace-panel-sidebar,
 .workspace-panel-add,
 .workspace-panel-globalize {
-  width: 30px;
-  height: 30px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   flex: 0 0 auto;
 }
 

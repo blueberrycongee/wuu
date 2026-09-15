@@ -1,0 +1,88 @@
+/* Shared icon-button optics. Load after appearance.css so utility sizes do not
+ * override these role-based sizes. Business colors and activation stay local. */
+:root {
+  --control-size-inline: 24px;
+  --control-size-toolbar: 30px;
+  --control-size-roomy: 34px;
+  --control-size-touch: 44px;
+  --control-toolbar-gap: 10px;
+}
+
+:is(.icon-button, .settings-icon-button, .composer-tool-button,
+    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) {
+  --control-icon-size: var(--icon-size);
+  --control-icon-stroke: var(--icon-stroke);
+}
+
+:is(.sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) {
+  --control-icon-size: var(--icon-size-sm);
+}
+
+:is(.icon-button, .settings-icon-button, .composer-tool-button,
+    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) > svg.lucide {
+  display: block;
+  flex: 0 0 auto;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  stroke-width: var(--control-icon-stroke);
+}
+
+/* Increase sparse glyphs' span, inversely scaling their stroke so the rendered
+ * line weight stays equal to enclosed glyphs at every appearance scale. */
+:is(.icon-button, .settings-icon-button, .composer-tool-button,
+    .sidebar-row-icon-button) > svg.lucide-plus {
+  width: calc(var(--control-icon-size) * 10 / 9);
+  height: calc(var(--control-icon-size) * 10 / 9);
+  stroke-width: calc(var(--control-icon-stroke) * 0.9);
+}
+
+:is(.icon-button, .settings-icon-button, .composer-tool-button,
+    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) > svg.lucide-x {
+  width: calc(var(--control-icon-size) * 7 / 6);
+  height: calc(var(--control-icon-size) * 7 / 6);
+  stroke-width: calc(var(--control-icon-stroke) * 6 / 7);
+}
+
+:is(.session-tab-close, .workspace-tool-tab-close) {
+  width: var(--control-size-inline);
+  height: var(--control-size-inline);
+  color: var(--ink-tertiary);
+}
+
+.title-actions,
+.workspace-panel-tabbar {
+  gap: var(--control-toolbar-gap);
+}
+
+.icon-button {
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.icon-button:hover:not(:disabled),
+.icon-button.active:not(:disabled),
+.workspace-toggle-button[aria-pressed="true"] {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+:is(.icon-button, .composer-tool-button, .sidebar-row-icon-button,
+    .session-tab-close, .workspace-tool-tab-close):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Native disabled buttons retain their cursor and never gain hover emphasis. */
+.icon-button:disabled {
+  background: transparent;
+  color: var(--ink-tertiary);
+}
+
+@media (pointer: coarse) {
+  :is(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
+  .globalized-sidebar-toggle-region .globalized-sidebar-toggle {
+    min-width: var(--control-size-touch);
+    min-height: var(--control-size-touch);
+  }
+}

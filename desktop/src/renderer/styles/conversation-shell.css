@@ -675,8 +675,8 @@
 
 .icon-button {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: var(--control-size-roomy);
+  height: var(--control-size-roomy);
   place-items: center;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -797,40 +797,11 @@
   height: 36px;
 }
 
-/* Titlebar icon buttons (left/right sidebar, task board, info panel, new thread):
- * uniform 26×26 visible size with a 30×30 click hit area. The padding
- * is transparent because `background-clip: content-box` restricts the
- * hover and pressed backgrounds to the inner 26×26, so the icon reads
- * as a tight, proportional control and the titlebar keeps clear
- * top/bottom breathing room. The 30×30 hit area sits below the
- * original 34×34 `.icon-button` base, so the flakiness-fix margin
- * from commit 4e69bef7 is no longer guaranteed — this is a deliberate
- * trade toward visual proportion; if titlebar click reliability
- * regresses we can revisit. */
-.titlebar .sidebar-toggle-button,
-.settings-titlebar .sidebar-toggle-button,
-.titlebar .side-panel-toggle-button,
-.titlebar .environment-toggle-button,
-.titlebar .task-board-button {
-  width: 30px;
-  height: 30px;
-  padding: 2px;
-  background-clip: content-box;
-}
-
-/* The four top toolbar buttons (task board, info panel toggle, right
- * panel toggle, "+" new conversation) form one visual cluster at
- * the top of the conversation area. They share a uniform 30×30
- * hit-area and 30×30 background — no titlebar inset — so the visible
- * spacing between any two of them is the same. The other titlebar
- * buttons (sidebar-toggle etc.) keep the inset because they sit in a
- * different cluster on the left. The "+" shares `.workspace-panel-add`
- * with the right-panel "select tool" `+`, which keeps the two `+`
- * controls visually identical across surfaces. */
-.titlebar .task-board-button,
-.titlebar .environment-toggle-button,
-.titlebar .side-panel-toggle-button,
-.workspace-panel-add.session-tab-new {
+/* Main and tool-panel headers share the toolbar control geometry. */
+:where(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
+.globalized-sidebar-toggle-region .globalized-sidebar-toggle {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   padding: 0;
   background-clip: border-box;
 }
@@ -840,17 +811,6 @@
   color: var(--ink-tertiary);
   cursor: default;
   opacity: 0.38;
-}
-
-.icon-button:hover {
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.icon-button.active,
-.workspace-toggle-button[aria-pressed="true"] {
-  background: var(--surface-3);
-  color: var(--ink);
 }
 
 .side-panel-toggle-button[aria-pressed="true"] {
@@ -872,20 +832,12 @@
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.45;
-}
-
-.side-panel-toggle-frame {
-  opacity: 0.62;
-}
-
-.side-panel-toggle-divider {
-  opacity: 0.42;
+  stroke-width: var(--icon-stroke);
 }
 
 .side-panel-toggle-pane {
   fill: currentColor;
-  opacity: 0.18;
+  opacity: 0;
   transition: opacity var(--motion-base) var(--ease-out);
 }
 
@@ -1734,4 +1686,3 @@ button.conversation-status-capsule,
     transform: none;
   }
 }
-
