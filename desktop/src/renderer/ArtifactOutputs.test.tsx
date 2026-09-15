@@ -45,11 +45,14 @@ it("renders the managed SVG snapshot as an image with its filename and opens tha
     expect(container.querySelector("img")?.getAttribute("src")).toBe(artifact.uri);
     expect(container.querySelector("figcaption")?.textContent).toBe("chart.svg");
     expect(container.querySelector(".composer-image-attachment")).toBeNull();
-    expect(container.querySelector("svg, iframe")).toBeNull();
+    expect(container.querySelector(".turn-artifact-image-preview svg, iframe")).toBeNull();
+    expect(container.querySelector("figcaption .lucide-zoom-in")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => container.querySelector("button")!.click());
     expect(openPreview).toHaveBeenCalledWith({ src: artifact.uri, alt: "chart.svg", title: "chart.svg" });
     await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
-    expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("chart.svg");
+    expect(container.querySelector(".turn-artifact-unavailable")?.textContent).toBe("imagePreview.loadFailed");
+    expect(container.querySelector("button")?.disabled).toBe(true);
+    expect(container.querySelector("figcaption .lucide-zoom-in")).toBeNull();
   } finally { act(() => root.unmount()); container.remove(); }
 });
 
@@ -85,8 +88,11 @@ it("renders deferred tool-result images as loadable attachments instead of unava
     await act(async()=>root.render(<TurnInlineArtifactOutputs artifacts={artifacts}/>));
     expect(container.querySelector(".turn-artifact-unavailable")).toBeNull();
     expect(window.wuu.readRemoteAttachment).not.toHaveBeenCalled();
+    expect(container.querySelector(".turn-artifact-image-preview button")?.textContent).toBe("Screenshot");
+    expect(container.querySelector(".turn-artifact-image-name")?.textContent).toBe("Screenshot");
     await act(async()=>container.querySelector("button")!.click());
     expect(window.wuu.readRemoteAttachment).toHaveBeenCalledWith("thread:source");
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
+    expect(container.querySelector(".turn-artifact-image-preview img")?.getAttribute("alt")).toBe("Screenshot");
   } finally {act(()=>root.unmount());container.remove();window.wuu=prior;}
 });

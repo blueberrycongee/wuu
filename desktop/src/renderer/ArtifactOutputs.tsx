@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, ExternalLink, X } from "lucide-react";
+import { Download, ExternalLink, X, ZoomIn } from "lucide-react";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview } from "./ImagePreview";
@@ -9,6 +9,7 @@ import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
 import { AttachmentImage } from "./AttachmentImage";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
+import { Tooltip } from "./Tooltip";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -223,31 +224,42 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
   const source = artifactSource(artifact, cwd);
+  let image: ReactNode;
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) {
-    return <figure className="turn-artifact-inline-image">
-      <AttachmentImage image={{media_type:artifact.mimeType,data:artifact.data ?? "",remote_ref:artifact.remoteRef}} label={t("composer.imageNumber", { number: artifact.index + 1 })}
-        onOpen={src => openPreview({src,alt:artifact.name,title:artifact.name})} />
-      <figcaption>{artifact.name}</figcaption>
-    </figure>;
-  }
-  if (!source || !artifact.mimeType.startsWith("image/")) {
+    image = (
+      <AttachmentImage
+        image={{ media_type: artifact.mimeType, data: artifact.data ?? "", remote_ref: artifact.remoteRef }}
+        label={artifact.name}
+        onOpen={src => openPreview({ src, alt: artifact.name, title: artifact.name })}
+      />
+    );
+  } else if (!source || !artifact.mimeType.startsWith("image/")) {
     return <div className="turn-artifact-unavailable">{artifact.name}</div>;
-  }
-  const open = (): void => openPreview({ src: source, alt: artifact.name, title: artifact.name });
-  return (
-    <figure className="turn-artifact-inline-image">
+  } else {
+    image = (
       <button
         type="button"
-        onClick={open}
+        onClick={() => openPreview({ src: source, alt: artifact.name, title: artifact.name })}
         aria-label={t("artifacts.previewNamed", { name: artifact.name })}
+        disabled={failedSource === source}
       >
         {failedSource === source ? (
-          <span className="turn-artifact-unavailable">{artifact.name}</span>
+          <span className="turn-artifact-unavailable">{t("imagePreview.loadFailed")}</span>
         ) : (
           <img src={source} alt={artifact.name} loading="lazy" onError={() => setFailedSource(source)} />
         )}
       </button>
-      <figcaption>{artifact.name}</figcaption>
+    );
+  }
+  return (
+    <figure className="turn-artifact-inline-image">
+      <div className="turn-artifact-image-preview">{image}</div>
+      <figcaption>
+        <Tooltip content={artifact.name}>
+          <span className="turn-artifact-image-name">{artifact.name}</span>
+        </Tooltip>
+        {(!source || failedSource !== source) && <ZoomIn className="icon" aria-hidden="true" />}
+      </figcaption>
     </figure>
   );
 }

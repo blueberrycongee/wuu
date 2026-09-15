@@ -4814,41 +4814,84 @@ pre {
 }
 
 .turn-artifact-inline-image {
+  align-self: flex-start;
   margin: 0;
-  width: min(100%, 620px);
-  min-width: 0;
+  width: fit-content;
+  max-width: min(100%, 480px);
+  min-width: min(100%, 160px);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-media);
-  background: var(--surface-1);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.turn-artifact-image-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 80px;
+  padding: 10px;
 }
 
 .turn-artifact-inline-image img {
   display: block;
-  width: 100%;
+  width: auto;
   height: auto;
-  max-height: 420px;
+  max-width: 100%;
+  max-height: 280px;
+  border-radius: var(--radius-xs);
   object-fit: contain;
 }
 
 .turn-artifact-inline-image figcaption {
-  padding: 8px 12px;
+  /* The filename must not stretch a square/portrait preview into a wide card. */
+  contain: inline-size;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 10px 10px;
+  color: var(--ink-muted);
+  font-size: var(--font-xs);
+  line-height: 1.4;
+}
+
+.turn-artifact-image-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-artifact-inline-image figcaption .icon {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+}
+
+.turn-artifact-inline-image:hover figcaption .icon,
+.turn-artifact-inline-image:focus-within figcaption .icon {
+  color: var(--ink);
+}
+
+.turn-artifact-inline-image button {
+  display: block;
+  max-width: 100%;
+  min-height: 58px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  background: transparent;
   color: var(--ink-muted);
   font-size: var(--font-xs);
   overflow-wrap: anywhere;
 }
 
-.turn-artifact-inline-image button {
-  display: block;
-  width: 100%;
-  min-height: 58px;
-  padding: 0;
-  border: 0;
-  border-radius: inherit;
-  overflow: hidden;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-xs);
-  overflow-wrap: anywhere;
+.turn-artifact-inline-image button:not(:disabled),
+.turn-artifact-inline-image img[role="button"] {
   cursor: zoom-in;
 }
 
