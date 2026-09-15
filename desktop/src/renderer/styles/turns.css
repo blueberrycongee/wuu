@@ -2558,6 +2558,44 @@
   margin-right: 8px;
 }
 
+/* Align the painted silhouette, not the SVG's transparent padding. Keep the
+ * layout slot fixed so morphing never moves the summary text. Insets follow
+ * each shape's motion envelope rather than chasing its edge on every frame. */
+:is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
+  translate: calc(-1 * var(--process-mascot-inset, 4px)) 0;
+  transition: translate 280ms ease-out;
+}
+
+.process-surface-blobatar:is([data-wuu-mascot-morph="radar"], [data-wuu-mascot-morph="gather"]) {
+  --process-mascot-inset: 2px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="orbit"] {
+  --process-mascot-inset: 3px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="progress"] {
+  --process-mascot-inset: 5px;
+}
+
+.process-surface-blobatar:is([data-wuu-mascot-morph="scan"], [data-wuu-mascot-morph="standby"]) {
+  --process-mascot-inset: 6px;
+}
+
+.process-surface-blobatar:is([data-wuu-mascot-morph="pencil"], [data-wuu-mascot-morph="terminal"], [data-wuu-mascot-morph="send"]) {
+  --process-mascot-inset: 7px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="bang"] {
+  --process-mascot-inset: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
+    transition: none;
+  }
+}
+
 .process-surface-condensed-summary {
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
