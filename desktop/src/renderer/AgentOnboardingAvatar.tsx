@@ -11,5 +11,5 @@ export function AgentOnboardingAvatar({ avatarKey, seed = "draft-agent" }: { ava
     const timer = window.setTimeout(() => setGathering(false), AGENT_FORMATION_MS);
     return () => window.clearTimeout(timer);
   }, []);
-  return <AgentAvatarMark seed={seed} avatarKey={avatarKey} morph={gathering ? "gather" : "idle"} />;
+  return <AgentAvatarMark seed={seed} avatarKey={avatarKey} morph={gathering ? "gather" : "idle"} motion="expressive" />;
 }

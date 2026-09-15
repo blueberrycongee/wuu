@@ -31,9 +31,9 @@ describe("AgentAvatarMark", () => {
     },
   );
 
-  it("keeps idle avatars still and lets only working avatars animate", () => {
+  it("opts sidebar avatars into idle attention and working animation", () => {
     renderToStaticMarkup(
-      <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="idle" />,
+      <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="idle" motion="expressive" />,
     );
     expect(blobatarProps.mock.calls[0][0]).toEqual(
       expect.objectContaining({ animate: "hover" }),
@@ -41,7 +41,7 @@ describe("AgentAvatarMark", () => {
 
     blobatarProps.mockClear();
     renderToStaticMarkup(
-      <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="thinking" />,
+      <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="thinking" motion="expressive" />,
     );
     expect(blobatarProps.mock.calls[0][0]).toEqual(
       expect.objectContaining({ animate: "always" }),
@@ -49,11 +49,23 @@ describe("AgentAvatarMark", () => {
 
     blobatarProps.mockClear();
     renderToStaticMarkup(
-      <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="sending" />,
+      <AgentAvatarMark seed="agent-1" avatarKey="abstract-1" status="sending" motion="expressive" />,
     );
     expect(blobatarProps.mock.calls[0][0]).toEqual(
       expect.objectContaining({ animate: "always" }),
     );
+  });
+
+  it("keeps identity avatars in their resting pose across work and recovery", () => {
+    for (const status of ["idle", "thinking", "responding", "failed", "idle"] as const) {
+      renderToStaticMarkup(<AgentAvatarMark seed="identity" avatarKey="abstract-1" status={status} activity="search" />);
+    }
+    const faces = blobatarProps.mock.calls.map(([props]) => props);
+    for (const face of faces) {
+      expect(face["data-wuu-mascot-morph"]).toBe("idle");
+      expect(face.expression).toEqual(faces[0].expression);
+      expect(face.traits).toEqual(faces[0].traits);
+    }
   });
 
   it("updates one identity through a reply without changing the other avatar or its identity", async () => {
@@ -62,7 +74,7 @@ describe("AgentAvatarMark", () => {
     const faceFor = (key: string) => blobatarProps.mock.calls.map(([props]) => props).reverse().find(props => props.name === `agent-avatar:${key}`);
     const render = async (status: "thinking" | "responding" | "idle"): Promise<void> => {
       await act(async () => root.render(<>
-        <AgentAvatarMark seed="active-agent" avatarKey="abstract-1" status={status} />
+        <AgentAvatarMark seed="active-agent" avatarKey="abstract-1" status={status} motion="expressive" />
         <AgentAvatarMark seed="other-agent" avatarKey="abstract-2" status="idle" />
       </>));
     };
@@ -88,9 +100,9 @@ describe("AgentAvatarMark", () => {
   });
 
   it("preserves tool activity and identity instead of collapsing it into thinking", () => {
-    renderToStaticMarkup(<AgentAvatarMark seed="live" avatarKey="abstract-1" status="thinking" activity="search" />);
+    renderToStaticMarkup(<AgentAvatarMark seed="live" avatarKey="abstract-1" status="thinking" activity="search" motion="expressive" />);
     const search = blobatarProps.mock.calls.at(-1)![0];
-    renderToStaticMarkup(<AgentAvatarMark seed="live" avatarKey="abstract-1" status="thinking" activity="edit" />);
+    renderToStaticMarkup(<AgentAvatarMark seed="live" avatarKey="abstract-1" status="thinking" activity="edit" motion="expressive" />);
     const edit = blobatarProps.mock.calls.at(-1)![0];
     expect(search["data-wuu-mascot-activity"]).toBe("search");
     expect(edit["data-wuu-mascot-activity"]).toBe("edit");
@@ -121,7 +133,7 @@ describe("AgentAvatarMark", () => {
   it("keeps queued, waiting and interrupted sessions distinct from active inference", () => {
     const faces: unknown[] = [];
     for (const status of ["queued", "waiting", "interrupted"] as const) {
-      renderToStaticMarkup(<AgentAvatarMark seed="agent" avatarKey="abstract-1" status={status} />);
+      renderToStaticMarkup(<AgentAvatarMark seed="agent" avatarKey="abstract-1" status={status} motion="expressive" />);
       const face = blobatarProps.mock.calls.at(-1)![0];
       expect(face.animate).toBe("hover");
       faces.push(face.expression);
@@ -131,7 +143,7 @@ describe("AgentAvatarMark", () => {
 
   it("keeps eyes separated and inside the body across reply and recovery expressions", () => {
     for (const status of ["idle", "thinking", "responding", "sending", "queued", "waiting", "failed", "interrupted"] as const) {
-      renderToStaticMarkup(<AgentAvatarMark seed="agent" avatarKey="abstract-1" status={status} />);
+      renderToStaticMarkup(<AgentAvatarMark seed="agent" avatarKey="abstract-1" status={status} motion="expressive" />);
       const face = blobatarProps.mock.calls.at(-1)![0];
       const authored = _layout(face.name, { traits: face.traits });
       const posed = face.expression.bake(authored, face.expression.p).l;

@@ -2170,7 +2170,7 @@ describe("ChannelView", () => {
       expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
       expect(container.querySelector(".channel-activity-slot:not([inert]) .channel-response-status")).toBeNull();
       expect(container.querySelector(".channel-message-bubble")?.textContent).toContain("the answer");
-      expect(container.querySelector('.channel-message [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-state")).toBe("idle");
+      expect(container.querySelector('.channel-message [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-motion")).toBe("static");
     } finally {
       vi.useRealTimers();
     }

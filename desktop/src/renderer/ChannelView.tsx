@@ -79,7 +79,7 @@ export function formatChannelUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(Math.max(0, count));
 }
 
-function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, expressive = false, focusable = true }: {
+function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, focusable = true }: {
   id: string;
   name: string;
   avatarKey: string;
@@ -89,13 +89,12 @@ function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, mod
   model?: string;
   modelLabel: string;
   compact?: boolean;
-  expressive?: boolean;
   focusable?: boolean;
 }): JSX.Element {
   const accessibleDescription = model ? `${name}: ${statusText}, ${modelLabel}: ${model}` : `${name}: ${statusText}`;
   return (
     <span className={`channel-agent-avatar${compact ? " compact" : ""}`} tabIndex={focusable ? 0 : undefined} aria-label={accessibleDescription}>
-      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={expressive ? status : "idle"} motion={expressive ? "expressive" : "subtle"} />
+      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={status} />
       <span className="channel-agent-status-card" role="tooltip">
         <span>{statusText}</span>
         {model ? <span className="channel-agent-model">{model}</span> : null}
@@ -369,7 +368,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
         title={`${agent?.name ?? agentID} · ${status}`}
         aria-label={`${agent?.name ?? agentID} · ${status} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
-        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} />
+        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} motion="expressive" />
       </span>
       <span className="channel-response-status-copy channel-activity-accessible">
         <strong>{agent?.name ?? agentID}</strong>
@@ -2089,7 +2088,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               return (
                 <div className={`channel-directory-row channel-agent-directory-row${selectedAgentID === agent.id ? " selected" : ""}`} key={agent.id}>
                   <button className="channel-directory-avatar" type="button" aria-label={t("channels.viewAgent", { name: agent.name })} onClick={() => selectAgentDetails(agent)}>
-                    <AgentAvatar id={agent.id} name={agent.name} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={status} statusText={activityText(status)} model={agent.model_override || initialized?.model} modelLabel={t("channels.model")} expressive />
+                    <AgentAvatar id={agent.id} name={agent.name} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={status} statusText={activityText(status)} model={agent.model_override || initialized?.model} modelLabel={t("channels.model")} />
                   </button>
                   <button className="channel-directory-identity channel-agent-directory-identity" type="button" aria-current={selectedAgentID === agent.id ? "page" : undefined} onClick={() => selectAgentDetails(agent)}>
                     <span><strong>{agent.name}</strong><small>{agent.role || model} · {t("channels.agentRoomCount", { count: roomCount })}</small></span>

@@ -130,7 +130,7 @@ export function CollaborationSidebar({
               }}
               onClick={() => { if (room) onSelectRoom(room.id); else if (agent) onSelectAgent(agent.id); }}>
               <span className="collaboration-contact-avatar" aria-hidden="true">
-                {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={avatarThinking ? "thinking" : "idle"} />
+                {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={avatarThinking ? "thinking" : "idle"} motion="expressive" />
                   : room ? <ChannelGroupAvatar room={room} agents={agents} /> : null}
               </span>
               {collapsed && unread > 0 ? <span className="collaboration-rail-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}
