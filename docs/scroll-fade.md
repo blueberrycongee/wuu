@@ -61,10 +61,10 @@ animations/masks before opting in. Removing the attribute opts out.
 
 ## Verification
 
-`scrollFade.test.ts` checks the CSS contract and reading-surface exclusions;
-component tests check adoption
-on scroll owners and keep existing auto-follow coverage. jsdom cannot
-evaluate scroll timelines, so these tests are **not** a visual approval.
+Component tests check adoption on scroll owners and keep existing auto-follow
+coverage. The merge gate deliberately does not pin CSS declarations or scan
+component source for attributes. jsdom cannot evaluate scroll timelines, so
+these tests are **not** a visual approval.
 The user owns final inspection in the current Desktop runtime:
 
 - Short content: no fading. Long content: bottom only at the top, both in

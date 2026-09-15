@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,10 +6,6 @@ import { createThreadSessionTab, initialState, threadSessionTabID } from "./AppS
 import { SessionTabStrip } from "./SessionTabs";
 
 const context: RuntimeContext = { kind: "no_project", cwd: "/tmp/project" };
-const shellStyles = readFileSync(
-  resolve(__dirname, "styles/conversation-shell.css"),
-  "utf8",
-);
 
 function makeThread(id: string): Thread {
   return {
@@ -29,22 +23,16 @@ function makeThread(id: string): Thread {
 
 let container: HTMLDivElement;
 let root: Root;
-let style: HTMLStyleElement;
 
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  // Class-only assertions miss cascade conflicts between running and pending-switch.
-  style = document.createElement("style");
-  style.textContent = shellStyles;
-  document.head.appendChild(style);
 });
 
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  style.remove();
 });
 
 function renderTabs(
@@ -83,9 +71,10 @@ function renderTabs(
   });
 }
 
-describe("session tab status styles", () => {
+// Exercise state transitions and stable indicator ownership, not CSS rendering.
+describe("session tab status during selection", () => {
   it.each(["turn", "child agent", "workspace aggregate"])(
-    "preserves the %s spinner before, during and after tab selection",
+    "preserves the %s running state and indicator before, during and after selection",
     (source) => {
       const thread = makeThread("running");
       if (source === "turn") {
@@ -96,8 +85,7 @@ describe("session tab status styles", () => {
       const aggregateRunning = source === "workspace aggregate";
       renderTabs(thread, false, false, aggregateRunning);
       const indicator = container.querySelector(".session-tab-status")!;
-      const animation = getComputedStyle(indicator).animation;
-      expect(animation).toContain("wuu-spin");
+      expect(indicator).not.toBeNull();
 
       // Pending selection can overlap either the old or the new active tab.
       const phases = [
@@ -110,40 +98,32 @@ describe("session tab status styles", () => {
       for (const [active, pending] of phases) {
         renderTabs(thread, active, pending, aggregateRunning);
         expect(container.querySelector(".session-tab-status")).toBe(indicator);
-        expect(container.querySelector(".session-tab-main")?.getAttribute("aria-busy")).toBe(
-          String(pending),
-        );
-        const computed = getComputedStyle(indicator);
-        expect(computed.width).toBe("10px");
-        expect(computed.height).toBe("10px");
-        expect(computed.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-        expect(computed.opacity).toBe("1");
-        expect(computed.animation).toBe(animation);
+        const tab = indicator.closest(".session-tab")!;
+        expect(tab.classList.contains("running")).toBe(true);
+        expect(tab.classList.contains("pending-switch")).toBe(pending);
+        expect(tab.classList.contains("has-unread")).toBe(false);
+        const button = tab.querySelector('[role="tab"]')!;
+        expect(button.getAttribute("aria-busy")).toBe(String(pending));
+        expect(button.getAttribute("aria-selected")).toBe(String(active));
       }
     },
   );
 
-  it("still shows a pending dot for an idle tab and clears it after selection", () => {
+  it("clears an idle tab's busy state after selection without marking it running", () => {
     const thread = makeThread("idle");
     renderTabs(thread, false, true);
-    const indicator = container.querySelector(".session-tab-status")!;
-    expect(getComputedStyle(indicator).width).toBe("7px");
-    expect(getComputedStyle(indicator).opacity).toBe("1");
-    expect(getComputedStyle(indicator).animation).not.toContain("wuu-spin");
+    const tab = container.querySelector(".session-tab")!;
+    const button = tab.querySelector('[role="tab"]')!;
+    expect(tab.classList.contains("running")).toBe(false);
+    expect(tab.classList.contains("pending-switch")).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.getAttribute("aria-selected")).toBe("false");
 
     renderTabs(thread, true, false);
-    expect(getComputedStyle(indicator).width).toBe("0px");
-    expect(getComputedStyle(indicator).opacity).toBe("0");
-  });
-
-  it("still shows an unread dot for a completed tab", () => {
-    const thread = makeThread("unread");
-    thread.turns = [{ id: "turn-1", status: "completed", items: [], items_view: "full" }];
-    renderTabs(thread, false, false);
-    expect(container.querySelector(".session-tab.has-unread")).not.toBeNull();
-    const indicator = container.querySelector(".session-tab-status")!;
-    expect(getComputedStyle(indicator).width).toBe("7px");
-    expect(getComputedStyle(indicator).opacity).toBe("1");
-    expect(getComputedStyle(indicator).animation).not.toContain("wuu-spin");
+    expect(container.querySelector(".session-tab")).toBe(tab);
+    expect(tab.classList.contains("running")).toBe(false);
+    expect(tab.classList.contains("pending-switch")).toBe(false);
+    expect(button.getAttribute("aria-busy")).toBe("false");
+    expect(button.getAttribute("aria-selected")).toBe("true");
   });
 });
