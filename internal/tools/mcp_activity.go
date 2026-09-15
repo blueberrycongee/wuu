@@ -109,19 +109,7 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 			return t.persistActivityPreview(session.ID, result)
 		},
 	}
-	result, err := t.runActivityBoundAction(ctx, spec, hooks)
-	if err == nil && cuaActionIsDeliveryOnly(call.Arguments) {
-		// Input delivery is intentionally not treated as proof that the app
-		// accepted the action. Keep the model-facing result non-empty, though:
-		// provider protocols require every tool call to have a result payload.
-		result.Content = []toolresult.ContentPart{{
-			Type: toolresult.ContentTypeText,
-			Text: "Input delivered. Call observe when the outcome matters.",
-		}}
-		result.StructuredContent = nil
-		result.Meta = nil
-	}
-	return result, err
+	return t.runActivityBoundAction(ctx, spec, hooks)
 }
 
 func cuaActivityWindowIdentity(result toolresult.Result) (int, uint32) {
@@ -147,21 +135,6 @@ func cuaActionIsGlobal(arguments string) bool {
 	case "list_apps":
 		return strings.TrimSpace(input.App) == ""
 	case "permission_status", "request_permissions":
-		return true
-	default:
-		return false
-	}
-}
-
-func cuaActionIsDeliveryOnly(arguments string) bool {
-	var input struct {
-		Action string `json:"action"`
-	}
-	if json.Unmarshal([]byte(arguments), &input) != nil {
-		return false
-	}
-	switch input.Action {
-	case "click", "drag", "press_key", "press_keys", "scroll", "set_value", "type_text", "select_text", "perform_action", "activate_control":
 		return true
 	default:
 		return false
@@ -320,7 +293,7 @@ func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, a
 			if err := t.activityRegistry.CheckControl(threadID, activityID, leaseToken); err != nil {
 				return "control_revoked", err
 			}
-			if _, err := t.activityRegistry.Update(threadID, activityID, activity.UpdateOptions{Interaction: interaction}); err != nil {
+			if _, err := t.activityRegistry.UpdateWithLease(activity.Lease{ThreadID: threadID, ActivityID: activityID, Token: leaseToken}, activity.UpdateOptions{Interaction: interaction}); err != nil {
 				return "partial", err
 			}
 			return "", nil

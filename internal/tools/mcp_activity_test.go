@@ -291,12 +291,13 @@ func TestExecuteActivityBoundToolCreatesRefAndHonorsTakeover(t *testing.T) {
 	}
 }
 
-func TestCUAInputActionPublishesActivityButReturnsNeutralReceipt(t *testing.T) {
+func TestCUAInputActionPreservesEvidenceAndPublishesActivity(t *testing.T) {
 	registry := activity.NewRegistry()
 	tool := &activityTestTool{structuredContent: json.RawMessage(`{
-		"status":"verified_visual",
+		"delivery":"delivered",
+		"verification":"not_requested",
 		"mechanism":"background_directed",
-		"changes":["stale inferred change"],
+		"snapshot_id":"snapshot-1",
 		"interaction":{"kind":"click","x":0.25,"y":0.75}
 	}`)}
 	kit := &Toolkit{
@@ -312,11 +313,8 @@ func TestCUAInputActionPublishesActivityButReturnsNeutralReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute click: %v", err)
 	}
-	if got := result.TextProjection(); got != "Input delivered. Call observe when the outcome matters." {
-		t.Fatalf("input action receipt = %q", got)
-	}
-	if len(result.StructuredContent) != 0 || len(result.Meta) != 0 {
-		t.Fatalf("input action leaked inferred state to model: %+v", result)
+	if string(result.StructuredContent) != string(tool.structuredContent) {
+		t.Fatalf("input evidence lost: %+v", result)
 	}
 	if result.Activity == nil || result.Activity.Kind != string(activity.KindCUA) {
 		t.Fatalf("activity reference missing: %+v", result.Activity)

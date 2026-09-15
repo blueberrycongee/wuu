@@ -24,7 +24,7 @@ type activitySpec struct {
 
 // activityHooks injects the parts of an activity-bound action that legitimately
 // differ between callers (CUA vs browser). The lease lifecycle itself — Acquire,
-// the before/after CheckControl that discards a taken-over result, the target
+// lease cancellation and guarded result publication, the target
 // re-Update, the state/preview/error Update, and the ActivityRef attach — is
 // owned by runActivityBoundAction and identical for every caller, which is the
 // whole point of extracting it: the two families cannot drift on the discipline
@@ -54,9 +54,8 @@ type activityHooks struct {
 // (executeBrowserToolResult).
 //
 // The critical, non-negotiable discipline lives here so neither caller can lose
-// it: CheckControl runs both before AND after the work so a user Takeover that
-// lands mid-flight discards the result entirely rather than letting the agent
-// chain another action off stale UI, and Acquire's ErrStopped/ErrControlRevoked
+// it: A revoked lease cancels the action and rejects subsequent updates while
+// preserving any partial execution evidence. Acquire's ErrStopped/ErrControlRevoked
 // are returned verbatim (never silently rebuilt).
 func (t *Toolkit) runActivityBoundAction(ctx context.Context, spec activitySpec, hooks activityHooks) (toolresult.Result, error) {
 	if t == nil || t.activityRegistry == nil {
@@ -83,7 +82,7 @@ func (t *Toolkit) runActivityBoundAction(ctx context.Context, spec activitySpec,
 	// browser switches tabs). ClearWindowIdentity drops the stale OS-window
 	// binding; browser tabs carry none, so it is a no-op for them.
 	if spec.Target != "" && spec.Target != session.Target {
-		updated, updateErr := t.activityRegistry.Update(spec.ThreadID, session.ID, activity.UpdateOptions{
+		updated, updateErr := t.activityRegistry.UpdateWithLease(lease, activity.UpdateOptions{
 			Target:              spec.Target,
 			ClearWindowIdentity: true,
 		})
@@ -93,12 +92,19 @@ func (t *Toolkit) runActivityBoundAction(ctx context.Context, spec activitySpec,
 		session = updated
 	}
 
-	result, sequenceStatus, callErr := hooks.run(ctx, session, lease)
+	actionCtx, cancel, err := t.activityRegistry.BindControl(ctx, lease)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	defer cancel()
+	result, sequenceStatus, callErr := hooks.run(actionCtx, session, lease)
 
-	// A Takeover that happened while the helper was running invalidates the
-	// result and prevents the agent from chaining another action from stale UI.
+	// Preserve partial evidence, but prevent chaining another action after takeover.
 	if controlErr := t.activityRegistry.CheckControl(spec.ThreadID, session.ID, lease.Token); controlErr != nil {
-		return toolresult.Result{}, controlErr
+		result.IsError = true
+		result.Content = append(result.Content, toolresult.ContentPart{Type: toolresult.ContentTypeText,
+			Text: "Control revoked. The action may have partially executed; do not replay it. Observe again after control is released."})
+		return result, controlErr
 	}
 
 	state := activity.StateBackgroundControlled
@@ -129,7 +135,7 @@ func (t *Toolkit) runActivityBoundAction(ctx context.Context, spec activitySpec,
 			update.Interaction = hooks.interaction(result)
 		}
 	}
-	if updated, updateErr := t.activityRegistry.Update(spec.ThreadID, session.ID, update); updateErr == nil {
+	if updated, updateErr := t.activityRegistry.UpdateWithLease(lease, update); updateErr == nil {
 		session = updated
 	} else if callErr == nil {
 		callErr = fmt.Errorf("update activity: %w", updateErr)
@@ -210,7 +216,7 @@ func (t *Toolkit) runRiskSequence(ctx context.Context, tool Tool, threadID, acti
 			hooks.observe(string(encoded), stepResult)
 		}
 		if err != nil || stepResult.IsError {
-			completed = append(completed, map[string]any{"index": index, "action": action, "status": "failed"})
+			completed = append(completed, sequenceStepEvidence(index, action, "failed", stepResult))
 			if err == nil {
 				err = errors.New(stepResult.TextProjection())
 			}
@@ -222,7 +228,7 @@ func (t *Toolkit) runRiskSequence(ctx context.Context, tool Tool, threadID, acti
 				lastImage = &part
 			}
 		}
-		completed = append(completed, map[string]any{"index": index, "action": action, "status": "completed"})
+		completed = append(completed, sequenceStepEvidence(index, action, "completed", stepResult))
 		if hooks.afterStep != nil {
 			if status, aerr := hooks.afterStep(index, stepResult); status != "" {
 				return hooks.build(status, completed, index+1, lastImage), status, aerr
@@ -230,4 +236,14 @@ func (t *Toolkit) runRiskSequence(ctx context.Context, tool Tool, threadID, acti
 		}
 	}
 	return hooks.build("completed", completed, len(steps), lastImage), "completed", nil
+}
+
+// Keep receipts and observations in batches as well as individual invocations.
+// A failed step may already have delivered input; its evidence is needed to recover.
+func sequenceStepEvidence(index int, action, status string, result toolresult.Result) map[string]any {
+	entry := map[string]any{"index": index, "action": action, "status": status, "text": result.TextProjection()}
+	if json.Valid(result.StructuredContent) {
+		entry["result"] = result.StructuredContent
+	}
+	return entry
 }

@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -23,6 +24,8 @@ var (
 type registryEntry struct {
 	session    Session
 	leaseToken string
+	control    context.Context
+	revoke     context.CancelCauseFunc
 }
 
 type Registry struct {
@@ -98,11 +101,12 @@ func (r *Registry) Start(options StartOptions) (Session, Lease, error) {
 		r.mu.Unlock()
 		return Session{}, Lease{}, ErrAlreadyExists
 	}
-	if r.targetBusyLocked(session.Target, session.Kind, session.PluginID, session.ID) {
+	if r.targetBusyLocked(session.Target, session.Kind, session.ID) {
 		r.mu.Unlock()
 		return Session{}, Lease{}, ErrTargetBusy
 	}
-	r.entries[id] = &registryEntry{session: session, leaseToken: token}
+	control, revoke := context.WithCancelCause(context.Background())
+	r.entries[id] = &registryEntry{session: session, leaseToken: token, control: control, revoke: revoke}
 	r.mu.Unlock()
 	r.emit(Event{Type: EventStarted, Activity: session})
 	return session, Lease{ActivityID: id, ThreadID: options.ThreadID, Token: token}, nil
@@ -139,7 +143,7 @@ func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
 	}
 	if current != nil {
 		session := current.session
-		if r.targetBusyLocked(requestedTarget, options.Kind, options.PluginID, session.ID) {
+		if r.targetBusyLocked(requestedTarget, options.Kind, session.ID) {
 			r.mu.Unlock()
 			return Session{}, Lease{}, ErrTargetBusy
 		}
@@ -156,7 +160,7 @@ func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
 			return session, lease, nil
 		}
 	}
-	if r.targetBusyLocked(requestedTarget, options.Kind, options.PluginID, "") {
+	if r.targetBusyLocked(requestedTarget, options.Kind, "") {
 		r.mu.Unlock()
 		return Session{}, Lease{}, ErrTargetBusy
 	}
@@ -195,7 +199,8 @@ func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	r.entries[id] = &registryEntry{session: session, leaseToken: token}
+	control, revoke := context.WithCancelCause(context.Background())
+	r.entries[id] = &registryEntry{session: session, leaseToken: token, control: control, revoke: revoke}
 	r.mu.Unlock()
 	r.emit(Event{Type: EventStarted, Activity: session})
 	return session, Lease{ActivityID: id, ThreadID: options.ThreadID, Token: token}, nil
@@ -249,11 +254,27 @@ func (r *Registry) ListByKind(kind Kind) []Session {
 }
 
 func (r *Registry) Update(threadID, activityID string, options UpdateOptions) (Session, error) {
+	return r.update(threadID, activityID, "", options)
+}
+
+// UpdateWithLease prevents a completed action from overwriting a concurrent takeover.
+func (r *Registry) UpdateWithLease(lease Lease, options UpdateOptions) (Session, error) {
+	if lease.Token == "" {
+		return Session{}, ErrControlRevoked
+	}
+	return r.update(lease.ThreadID, lease.ActivityID, lease.Token, options)
+}
+
+func (r *Registry) update(threadID, activityID, token string, options UpdateOptions) (Session, error) {
 	r.mu.Lock()
 	entry, err := r.entryLocked(threadID, activityID)
 	if err != nil {
 		r.mu.Unlock()
 		return Session{}, err
+	}
+	if token != "" && (entry.leaseToken != token || entry.session.Controller != ControllerAgent) {
+		r.mu.Unlock()
+		return Session{}, ErrControlRevoked
 	}
 	if entry.session.State == StateStopped {
 		r.mu.Unlock()
@@ -266,13 +287,14 @@ func (r *Registry) Update(threadID, activityID string, options UpdateOptions) (S
 		}
 		entry.session.State = options.State
 		if options.State == StateStopped {
+			entry.revoke(ErrControlRevoked)
 			entry.leaseToken = ""
 			entry.session.Controller = ControllerNone
 		}
 	}
 	if options.Target != "" {
 		target := strings.TrimSpace(options.Target)
-		if r.targetBusyLocked(target, entry.session.Kind, entry.session.PluginID, entry.session.ID) {
+		if r.targetBusyLocked(target, entry.session.Kind, entry.session.ID) {
 			r.mu.Unlock()
 			return Session{}, ErrTargetBusy
 		}
@@ -311,17 +333,13 @@ func (r *Registry) Update(threadID, activityID string, options UpdateOptions) (S
 	return session, nil
 }
 
-func (r *Registry) targetBusyLocked(target string, kind Kind, pluginID, exceptActivityID string) bool {
+func (r *Registry) targetBusyLocked(target string, kind Kind, exceptActivityID string) bool {
 	target = strings.ToLower(strings.TrimSpace(target))
 	if target == "" || kind != KindCUA {
 		return false
 	}
-	pluginID = strings.TrimSpace(pluginID)
 	for id, entry := range r.entries {
 		if id == exceptActivityID || entry.session.Kind != kind || entry.session.State == StateStopped {
-			continue
-		}
-		if pluginID != "" && entry.session.PluginID != pluginID {
 			continue
 		}
 		if strings.ToLower(strings.TrimSpace(entry.session.Target)) == target {
@@ -342,6 +360,7 @@ func (r *Registry) Takeover(threadID, activityID string) (Session, error) {
 		r.mu.Unlock()
 		return Session{}, ErrStopped
 	}
+	entry.revoke(ErrControlRevoked)
 	entry.leaseToken = ""
 	entry.session.Controller = ControllerUser
 	entry.session.State = StateUserControlled
@@ -368,6 +387,8 @@ func (r *Registry) Release(threadID, activityID string) (Session, Lease, error) 
 		r.mu.Unlock()
 		return Session{}, Lease{}, err
 	}
+	entry.revoke(ErrControlRevoked)
+	entry.control, entry.revoke = context.WithCancelCause(context.Background())
 	entry.leaseToken = token
 	entry.session.Controller = ControllerAgent
 	entry.session.State = StateBackgroundControlled
@@ -390,6 +411,7 @@ func (r *Registry) Stop(threadID, activityID string) (Session, error) {
 		r.mu.Unlock()
 		return session, nil
 	}
+	entry.revoke(ErrControlRevoked)
 	entry.leaseToken = ""
 	entry.session.State = StateStopped
 	entry.session.Controller = ControllerNone
@@ -398,6 +420,26 @@ func (r *Registry) Stop(threadID, activityID string) (Session, error) {
 	r.mu.Unlock()
 	r.emit(Event{Type: EventStopped, Activity: session})
 	return session, nil
+}
+
+// BindControl cancels in-flight work when its lease is revoked. Registration and
+// validation share the registry lock so takeover cannot race between them.
+func (r *Registry) BindControl(parent context.Context, lease Lease) (context.Context, context.CancelFunc, error) {
+	if r == nil {
+		return nil, nil, ErrControlRevoked
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, err := r.entryLocked(lease.ThreadID, lease.ActivityID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if entry.session.Controller != ControllerAgent || entry.leaseToken == "" || entry.leaseToken != lease.Token {
+		return nil, nil, ErrControlRevoked
+	}
+	ctx, cancel := context.WithCancelCause(parent)
+	stop := context.AfterFunc(entry.control, func() { cancel(ErrControlRevoked) })
+	return ctx, func() { stop(); cancel(context.Canceled) }, nil
 }
 
 func (r *Registry) CheckControl(threadID, activityID, token string) error {
