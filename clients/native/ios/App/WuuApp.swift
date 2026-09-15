@@ -9,7 +9,6 @@ import WuuCore
         WindowGroup {
             RootView(model: model)
                 .modifier(MobileTypography())
-                .tint(Color.primary)
                 .task { model.foreground() }
                 .onChange(of: pushDelegate.openedHost, initial: true) { _, host in
                     if let host { pushDelegate.openedHost = nil; model.perform { try await model.openPushHost(host) } }
@@ -27,6 +26,7 @@ import WuuCore
 
 struct RootView: View {
     @Bindable var model: AppModel
+    @Environment(\.colorScheme) private var scheme
     var body: some View {
         Group {
             if model.recovery != nil { RecoveryView(model: model) }
@@ -34,6 +34,8 @@ struct RootView: View {
             else if model.host == nil { DevicesView(model: model) }
             else { HostView(model: model).id(model.host?.pub) }
         }
+        // A semantic SwiftUI primary tint can feed back into UIKit trait resolution.
+        .tint(scheme == .dark ? Color.white : Color.black)
         .alert("提示", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("知道了", role: .cancel) { model.error = nil }
         } message: { Text(model.error ?? "") }
