@@ -12,7 +12,7 @@ not a cloud cron service running independently.
    where the task should run. This does not switch the conversation currently open in Desktop.
 3. Choose **Create** and fill in the name and task content in the detail panel, or start from a **Suggestion**.
 4. Choose Daily, Weekdays, or Weekly, then set the time and timezone. Use **Custom**
-   for a five-field Cron expression. Enable **Once at the next scheduled time** for a one-shot task.
+   for a five-field Cron expression. Open **More settings** to adjust the timezone, enable **Run once**, or use an isolated worktree.
 5. Choose **Create** to save. The request is routed to the selected workspace's plugin
    runtime, and the task records its workspace ID and root. Task state, next execution time, and run records
    are stored in the plugin's workspace storage.

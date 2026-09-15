@@ -48,8 +48,8 @@ it("edits wall-clock schedules and moves a worktree task to an existing chat", a
   const ui = await mount(); await ui.open();
   expect(ui.container.querySelector<HTMLInputElement>('input[type="time"]')!.value).toBe("09:00");
   expect(ui.container.querySelector(".plugin-automation-item-meta")!.textContent).toContain("09:00");
-  await ui.edit('input[type="time"]', "08:15"); await ui.click("每次新会话");
-  await act(async () => ui.container.querySelector<HTMLButtonElement>(".plugin-automation-target-option:last-child")!.click());
+  await ui.edit('input[type="time"]', "08:15"); await ui.click("运行于");
+  await act(async () => ui.container.querySelector<HTMLButtonElement>(".plugin-automation-picker-option:last-child")!.click());
   await ui.click("保存修改");
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", workspaceId: "wuu", input: expect.objectContaining({ id: "one", schedule: "15 8 * * 1-5", workspace: "shared", mode: "thread_heartbeat", heartbeat_thread_id: "chat", workspace_root: "/wuu" }) }));
 });
@@ -76,7 +76,60 @@ it("shows completed one-shot snapshots without treating recurring runs as finish
   expect(ui.container.querySelector(".plugin-automation-list")!.textContent).not.toContain("Recurring");
 });
 it("closes the editor and clears workspace-local tasks when changing workspace", async () => {
-  const ui = await mount(); await ui.open(); await ui.edit(".plugin-automation-workspace-picker select", "other");
+  const ui = await mount(); await ui.open(); await ui.click("工作区"); await ui.click("Other");
   expect(ui.container.querySelector("aside")).toBeNull(); expect(ui.container.querySelector(".plugin-automation-list")).toBeNull();
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.list", workspaceId: "other" }));
+});
+
+it("supports keyboard selection and dismisses only the open menu with Escape", async () => {
+  const ui = await mount(); await ui.open(); await ui.click("重复");
+  const selected = ui.container.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')!;
+  await act(async () => selected.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  expect(document.activeElement?.textContent).toBe("每周");
+  await act(async () => (document.activeElement as HTMLButtonElement).click());
+  expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
+  expect(ui.container.querySelector('button[aria-label="星期"]')).not.toBeNull();
+  await ui.click("运行于");
+  await ui.edit('input[aria-label="搜索会话"]', "investigation");
+  expect(ui.container.querySelectorAll('[role="option"]')).toHaveLength(1);
+  await act(async () => ui.container.querySelector('input[aria-label="搜索会话"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(ui.container.querySelector('[role="listbox"]')).toBeNull();
+  expect(ui.container.querySelector("aside")).not.toBeNull();
+  expect(document.activeElement?.getAttribute("aria-label")).toBe("运行于");
+});
+
+it("resizes the editor with pointer and keyboard, clamps bounds, and preserves width when reopened", async () => {
+  const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1000 } as DOMRect);
+  cleanups.push(() => { width.mockRestore(); rect.mockRestore(); });
+  const ui = await mount(); await ui.click("创建");
+  let separator = ui.container.querySelector<HTMLElement>('[role="separator"]')!;
+  separator.setPointerCapture = vi.fn(); separator.releasePointerCapture = vi.fn();
+  const pointer = async (type: string, x: number) => {
+    const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    await act(async () => separator.dispatchEvent(event));
+  };
+  await pointer("pointerdown", 520); await pointer("pointermove", 420); await pointer("pointerup", 420);
+  expect(separator.getAttribute("aria-valuenow")).toBe("580");
+  await ui.click("关闭"); await ui.click("创建");
+  separator = ui.container.querySelector<HTMLElement>('[role="separator"]')!;
+  expect(separator.getAttribute("aria-valuenow")).toBe("580");
+  await act(async () => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+  expect(separator.getAttribute("aria-valuenow")).toBe("720");
+  await act(async () => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+  expect(separator.getAttribute("aria-valuenow")).toBe("720");
+  await act(async () => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+  expect(separator.getAttribute("aria-valuenow")).toBe("350");
+  expect(ui.invoke.mock.calls.every(([request]) => !request.method.includes("create"))).toBe(true);
+});
+
+it("reveals saved execution overrides and preserves them when the settings are collapsed", async () => {
+  const ui = await mount({ tasks: [{ ...task, recurring: false, timezone: "Pacific/Honolulu" }] });
+  await ui.open();
+  const settings = ui.container.querySelector<HTMLDetailsElement>(".plugin-automation-advanced")!;
+  expect(settings.open).toBe(true);
+  await act(async () => { settings.open = false; settings.dispatchEvent(new Event("toggle")); });
+  await ui.edit("textarea", "Updated instructions"); await ui.click("保存修改");
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", input: expect.objectContaining({ recurring: false, timezone: "Pacific/Honolulu", workspace: "worktree" }) }));
 });

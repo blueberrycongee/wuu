@@ -1,11 +1,11 @@
 export async function activate(api) {
   const React = api.react;
   const h = React.createElement;
-  const { Page, Button, Select, Checkbox, EmptyState } = api.ui;
+  const { Page, Button, TextInput, TextArea, Checkbox, EmptyState } = api.ui;
 
   api.registerLocale({ id: "automation-en", locale: "en-US", entries: {
     "automation.save": "Save changes", "automation.saved": "Saved", "automation.unsaved": "Unsaved changes",
-    "automation.custom": "Custom", "automation.once": "Once at the next scheduled time", "automation.day": "Day",
+    "automation.custom": "Custom", "automation.once": "Run once", "automation.day": "Day",
     "automation.suggestions": "Suggestions", "automation.history": "Recent runs", "automation.more": "More actions",
     "automation.template.brief": "Morning briefing", "automation.template.brief.prompt": "Summarize recent changes in this project, pending work, and anything that needs my attention today.",
     "automation.template.review": "Weekly review", "automation.template.review.prompt": "Review this week's project progress. Summarize completed work, outstanding issues, and priorities for next week.",
@@ -16,7 +16,7 @@ export async function activate(api) {
     "automation.emptyHelp": "Scheduled prompts will show up here.",
     "automation.search": "Search automations", "automation.filter.all": "All", "automation.filter.active": "Active",
     "automation.filter.empty": "No tasks match this filter.",
-    "automation.name": "Name", "automation.prompt": "Prompt", "automation.schedule": "Cron schedule", "automation.timezone": "Timezone", "automation.workspace": "Workspace",
+    "automation.name": "Name", "automation.prompt": "Instructions", "automation.schedule": "Cron schedule", "automation.timezone": "Timezone", "automation.workspace": "Workspace",
     "automation.recurring": "Repeat", "automation.workspaceHelp": "Tasks and runs shown below belong to this workspace.", "automation.workspaceNone": "No available project workspaces",
     "automation.isolation": "Run in an isolated git worktree", "automation.isolationHelp": "Each run executes in its own worktree instead of the live project directory.",
     "automation.create": "Create", "automation.cancel": "Cancel", "automation.pause": "Pause", "automation.resume": "Resume", "automation.remove": "Delete",
@@ -25,7 +25,7 @@ export async function activate(api) {
     "automation.next": "Next", "automation.run.completed": "Completed", "automation.run.failed": "Failed",
     "automation.run.running": "Running", "automation.run.queued": "Queued", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
     "automation.schedule.daily": "Daily", "automation.schedule.weekdays": "Weekdays", "automation.schedule.weekly": "Weekly",
-    "automation.close": "Close", "automation.group.details": "Details", "automation.group.schedule": "Frequency",
+    "automation.advanced": "More settings", "automation.resize": "Resize automation editor", "automation.close": "Close", "automation.group.details": "Execution", "automation.group.schedule": "Schedule",
     "automation.field.target": "Runs in", "automation.field.project": "Project", "automation.field.time": "Time", "automation.field.isolation": "Isolated run",
     "automation.target.new": "New chat each run", "automation.target.thread": "Existing chat",
     "automation.target.search": "Search chats", "automation.target.chats": "Chats", "automation.target.pinned": "Pinned", "automation.target.empty": "No matching chats",
@@ -33,7 +33,7 @@ export async function activate(api) {
   }});
   api.registerLocale({ id: "automation-zh", locale: "zh-CN", entries: {
     "automation.save": "保存修改", "automation.saved": "已保存", "automation.unsaved": "修改未保存",
-    "automation.custom": "自定义", "automation.once": "仅下次计划时间执行", "automation.day": "星期",
+    "automation.custom": "自定义", "automation.once": "仅执行一次", "automation.day": "星期",
     "automation.suggestions": "建议", "automation.history": "最近运行", "automation.more": "更多操作",
     "automation.template.brief": "每日简报", "automation.template.brief.prompt": "汇总这个项目最近的变更、待办工作，以及今天需要我关注的事项。",
     "automation.template.review": "每周回顾", "automation.template.review.prompt": "回顾这个项目本周的进展，整理已完成的工作、尚未解决的问题和下周的重点。",
@@ -44,7 +44,7 @@ export async function activate(api) {
     "automation.emptyHelp": "按时间执行的提示词会显示在这里。",
     "automation.search": "搜索自动化", "automation.filter.all": "全部", "automation.filter.active": "已开启",
     "automation.filter.empty": "没有符合筛选的任务。",
-    "automation.name": "名称", "automation.prompt": "提示词", "automation.schedule": "Cron 时间", "automation.timezone": "时区", "automation.workspace": "工作区",
+    "automation.name": "名称", "automation.prompt": "任务内容", "automation.schedule": "Cron 时间", "automation.timezone": "时区", "automation.workspace": "工作区",
     "automation.recurring": "重复", "automation.workspaceHelp": "下方任务和运行记录都属于这个工作区。", "automation.workspaceNone": "没有可用的项目工作区",
     "automation.isolation": "在独立 git worktree 中运行", "automation.isolationHelp": "每次运行都在自己的 worktree 中执行，不直接改动当前项目目录。",
     "automation.create": "创建", "automation.cancel": "取消", "automation.pause": "暂停", "automation.resume": "继续", "automation.remove": "删除",
@@ -53,101 +53,128 @@ export async function activate(api) {
     "automation.next": "下次", "automation.run.completed": "已完成", "automation.run.failed": "失败",
     "automation.run.running": "运行中", "automation.run.queued": "排队中", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
     "automation.schedule.daily": "每天", "automation.schedule.weekdays": "工作日", "automation.schedule.weekly": "每周",
-    "automation.close": "关闭", "automation.group.details": "详情", "automation.group.schedule": "频率",
+    "automation.advanced": "更多设置", "automation.resize": "调整自动化编辑区宽度", "automation.close": "关闭", "automation.group.details": "执行设置", "automation.group.schedule": "时间安排",
     "automation.field.target": "运行于", "automation.field.project": "项目", "automation.field.time": "时间", "automation.field.isolation": "隔离运行",
     "automation.target.new": "每次新会话", "automation.target.thread": "指定会话",
     "automation.target.search": "搜索会话", "automation.target.chats": "会话", "automation.target.pinned": "已置顶", "automation.target.empty": "没有匹配的会话",
     "automation.placeholder.name": "任务标题", "automation.placeholder.prompt": "描述这次自动化要做什么", "automation.placeholder.schedule": "0 9 * * 1-5",
   }});
   api.registerStyle({ id: "automation-catalog", css: `
-    .plugin-automation { height:100%; min-height:0; container-type:inline-size; color:var(--wuu-color-text, var(--ink)); background:var(--wuu-color-canvas, var(--paper)); }
-    .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
-    .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; }
-    .plugin-automation-body { display:flex; height:100%; min-height:0; }
-    .plugin-automation-main { flex:1; min-width:0; overflow:auto; padding:28px 32px; }
-    .plugin-automation-body[data-panel="true"] .plugin-automation-main { padding:20px; }
-    .plugin-automation-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
-    .plugin-automation-title { font-size:20px; line-height:1.4; margin:0; font-weight:600; }
-    .plugin-automation-filters { display:flex; flex-wrap:wrap; gap:2px; }
-    .plugin-automation-filter { border:0; border-radius:7px; padding:5px 9px; background:transparent; color:var(--wuu-color-text-muted, var(--ink-muted)); cursor:pointer; font:inherit; font-size:12px; }
-    .plugin-automation-filter[aria-pressed="true"], .plugin-automation-filter:hover { background:var(--wuu-color-surface-muted, var(--surface-1)); color:var(--wuu-color-text, var(--ink)); }
-    .plugin-automation-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
-    .plugin-automation-search { flex:1 1 180px; display:flex; align-items:center; gap:8px; height:32px; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:9px; padding:0 10px; color:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-search svg { width:14px; height:14px; flex:none; }
-    .plugin-automation-search input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:13px; }
-    .plugin-automation-workspace-picker { flex:none; max-width:100%; }
-    .plugin-automation-workspace-picker .plugin-ui-field-label { flex:none; white-space:nowrap; font-size:12px; color:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-workspace-picker .plugin-ui-field { display:flex; align-items:center; gap:8px; }
-    .plugin-automation-workspace-picker select { max-width:180px; }
-    .plugin-automation-list { display:flex; flex-direction:column; gap:3px; }
-    .plugin-automation-item { width:100%; display:flex; align-items:flex-start; gap:10px; min-width:0; padding:11px 10px; border:0; border-radius:9px; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
-    .plugin-automation-item:hover, .plugin-automation-item[data-selected="true"] { background:var(--wuu-color-surface-muted, var(--surface-1)); }
-    .plugin-automation-item[data-paused="true"] .plugin-automation-item-main { opacity:0.55; }
-    .plugin-automation-item-dot { width:12px; height:12px; margin-top:3px; flex:none; border:1.5px solid var(--wuu-color-text-muted, var(--ink-muted)); border-radius:50%; }
-    .plugin-automation-item-dot[data-run="failed"] { border-color:var(--wuu-color-danger, var(--danger)); }
-    .plugin-automation-item-dot[data-run="running"] { background:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-item-main { min-width:0; display:grid; gap:3px; flex:1; }
-    .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:500; line-height:1.4; }
-    .plugin-automation-item-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:12px; line-height:1.5; }
-    .plugin-automation-suggestions { margin-top:24px; padding-top:20px; border-top:1px solid var(--wuu-color-border-subtle, var(--hairline)); }
-    .plugin-automation-group-title { margin:0 0 10px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:12px; font-weight:500; }
-    .plugin-automation-empty { min-height:160px; }
-    .plugin-automation-error { color:var(--wuu-color-danger, var(--danger)); font-size:13px; overflow-wrap:anywhere; }
-    .plugin-automation-filtered-empty { padding:24px 0; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:13px; text-align:center; }
-    .plugin-automation-detail { flex:0 0 46%; width:46%; min-width:340px; max-width:520px; overflow:auto; padding:20px 24px; border-left:1px solid var(--wuu-color-border-subtle, var(--hairline)); }
-    .plugin-automation-detail-head { display:flex; align-items:center; gap:8px; margin-bottom:18px; }
-    .plugin-automation-detail-status { flex:1; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:12px; }
-    .plugin-automation-detail-close { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:0; border-radius:7px; background:transparent; color:var(--wuu-color-text-muted, var(--ink-muted)); cursor:pointer; }
-    .plugin-automation-detail-close:hover { background:var(--wuu-color-surface-muted, var(--surface-1)); }
-    .plugin-automation-detail-close svg { width:14px; height:14px; }
-    .plugin-automation-form { display:flex; flex-direction:column; gap:24px; }
-    .plugin-automation-form-identity { display:grid; gap:14px; }
-    .plugin-automation-form-name { width:100%; border:0; background:transparent; color:inherit; font:inherit; font-size:17px; font-weight:600; padding:4px 0; }
-    .plugin-automation-form-prompt { width:100%; min-height:100px; resize:vertical; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:12px; background:transparent; color:inherit; font:inherit; font-size:13px; line-height:1.6; padding:12px; }
-    .plugin-automation-form-group { min-width:0; }
-    .plugin-automation-form-card { border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:12px; padding:0 12px; }
-    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:43px; border-bottom:1px solid var(--wuu-color-border-subtle, var(--hairline)); font-size:13px; }
-    .plugin-automation-form-row:last-child { border:0; }
-    .plugin-automation-form-row > span:first-child { flex:none; }
-    .plugin-automation-form-row-control { display:flex; justify-content:flex-end; min-width:0; max-width:72%; }
-    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; flex-direction:row-reverse; justify-content:space-between; }
-    .plugin-automation-field { min-width:0; max-width:100%; width:180px; border:0; border-radius:6px; padding:6px 2px; background:var(--wuu-color-canvas, var(--paper)); color:inherit; font:inherit; text-align:right; }
-    select.plugin-automation-field { width:auto; text-align-last:right; }
-    .plugin-automation-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
-    .plugin-automation-history { display:grid; gap:10px; margin-top:24px; font-size:12px; }
-    .plugin-automation-history-row { display:flex; justify-content:space-between; gap:12px; color:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-more { position:relative; }
-    .plugin-automation-more summary { list-style:none; cursor:pointer; padding:4px 8px; }
-    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; padding:6px; background:var(--wuu-color-canvas, var(--paper)); border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:9px; }
-    .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-    .plugin-automation input:focus-visible, .plugin-automation textarea:focus-visible, .plugin-automation button:focus-visible, .plugin-automation select:focus-visible, .plugin-automation summary:focus-visible { outline:2px solid var(--wuu-color-text-muted, var(--ink-muted)); outline-offset:2px; }
-    @container (max-width: 720px) {
-      .plugin-automation-body[data-panel="true"] .plugin-automation-main { display:none; }
-      .plugin-automation-detail { flex:1; width:100%; max-width:none; min-width:0; border:0; padding:20px; }
-      .plugin-automation-main { padding:20px; }
-      .plugin-automation-head { flex-wrap:wrap; }
+    .plugin-automation {
+      --automation-unit: var(--wuu-space-unit, 4px);
+      --automation-gap: calc(var(--automation-unit) * 4);
+      --automation-inset: calc(var(--automation-unit) * 6);
+      height:100%; min-height:0; container-type:inline-size;
+      color:var(--wuu-color-text, var(--ink)); background:var(--wuu-color-canvas, var(--paper));
+      font-size:var(--wuu-font-size-ui, var(--font-ui));
     }
-    .plugin-automation-target { position:relative; display:inline-flex; min-width:0; max-width:100%; }
-    .plugin-automation-target-button { display:inline-flex; align-items:center; gap:6px; max-width:100%; min-height:28px; border:0; border-radius:8px; padding:3px 8px; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); cursor:pointer; transition:background-color var(--motion-fast,120ms) ease; }
-    .plugin-automation-target-button:not(:disabled):hover { background:var(--wuu-color-surface-muted, var(--surface-2)); }
-    .plugin-automation-target-button:disabled { cursor:default; opacity:0.6; }
-    .plugin-automation-target-button > svg { width:12px; height:12px; flex:none; color:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-target-value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-automation-target-menu { position:absolute; top:calc(100% + 6px); right:0; z-index:70; width:min(300px, 80vw); max-height:340px; overflow:auto; display:flex; flex-direction:column; gap:2px; box-sizing:border-box; border:1px solid var(--wuu-color-border-subtle, var(--hairline)); border-radius:12px; padding:6px; background:var(--wuu-color-canvas, var(--paper, #fff)); box-shadow:0 12px 32px var(--ink-overlay-12, rgba(18,18,18,0.14)); }
-    .plugin-automation-target[data-align="left"] .plugin-automation-target-menu { right:auto; left:0; }
-    .plugin-automation-target-search { display:flex; align-items:center; gap:6px; height:30px; flex:none; margin-bottom:2px; border-radius:8px; padding:0 8px; background:var(--wuu-color-surface-muted, var(--surface-1)); color:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-target-search svg { width:13px; height:13px; flex:none; }
-    .plugin-automation-target-search input { flex:1; min-width:0; border:0; outline:0; padding:0; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-sm,12px); }
-    .plugin-automation-target-option { display:flex; align-items:center; gap:8px; width:100%; border:0; border-radius:8px; padding:7px 8px; background:transparent; color:var(--wuu-color-text, var(--ink)); font:inherit; font-size:var(--font-ui,13px); text-align:left; cursor:pointer; }
-    .plugin-automation-target-option:hover { background:var(--wuu-color-surface-muted, var(--surface-1)); }
-    .plugin-automation-target-option-main { flex:1; min-width:0; display:grid; gap:1px; }
-    .plugin-automation-target-option-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .plugin-automation-target-option[aria-selected="true"] .plugin-automation-target-option-title { font-weight:var(--weight-medium,500); }
-    .plugin-automation-target-option-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:11px; }
-    .plugin-automation-target-option > svg { width:14px; height:14px; flex:none; color:var(--wuu-color-text-muted, var(--ink-muted)); }
-    .plugin-automation-target-section { padding:6px 8px 2px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:11px; }
-    .plugin-automation-target-empty { margin:0; padding:8px; color:var(--wuu-color-text-muted, var(--ink-muted)); font-size:var(--font-sm,12px); text-align:center; }
-
+    .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
+    .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; font-size:inherit; }
+    .plugin-automation-body { position:relative; display:flex; height:100%; min-height:0; }
+    .plugin-automation-main { flex:1; min-width:0; overflow:auto; padding:var(--automation-inset); }
+    .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
+    .plugin-automation-head { display:flex; align-items:center; justify-content:space-between; gap:var(--automation-gap); margin-bottom:var(--automation-gap); }
+    .plugin-automation-title { margin:0; font-size:var(--font-title); line-height:var(--line-ui); font-weight:var(--weight-semibold); color:var(--ink-strong); }
+    .plugin-automation-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:8px; height:2.6em; border:1px solid var(--field-border); border-radius:var(--wuu-radius-control, var(--radius-sm)); padding:0 12px; color:var(--ink-tertiary); background:var(--field-bg); }
+    .plugin-automation-search:hover { background:var(--field-hover-bg); }
+    .plugin-automation-search svg { width:var(--icon-size-sm); height:var(--icon-size-sm); flex:none; }
+    .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:inherit; font:inherit; color:var(--ink); }
+    .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
+    .plugin-automation-workspace-picker { flex:0 1 34%; min-width:0; }
+    .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
+    .plugin-automation-filters { display:flex; flex-wrap:wrap; gap:4px; padding-bottom:12px; border-bottom:1px solid var(--hairline-soft); margin-bottom:4px; }
+    .plugin-automation-filter { min-height:2.2em; border:0; border-radius:var(--wuu-radius-inner, var(--radius-xs)); padding:4px 10px; background:transparent; color:var(--ink-soft); font:inherit; font-size:var(--font-sm); cursor:pointer; }
+    .plugin-automation-filter[aria-pressed="true"], .plugin-automation-filter:hover { background:var(--surface-2); color:var(--ink); }
+    .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
+    .plugin-automation-item { width:100%; display:flex; align-items:flex-start; gap:10px; min-width:0; padding:12px 10px; border:0; border-radius:var(--wuu-radius-inner, var(--radius-xs)); text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    .plugin-automation-item:hover { background:var(--surface-1); }
+    .plugin-automation-item[data-selected="true"] { background:var(--surface-2); }
+    .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
+    .plugin-automation-item-icon { display:flex; align-items:center; justify-content:center; width:var(--icon-size); height:1.5em; flex:none; color:var(--ink-soft); }
+    .plugin-automation-item-icon svg { width:var(--icon-size); height:var(--icon-size); }
+    .plugin-automation-item-icon[data-run="failed"] { color:var(--danger); }
+    .plugin-automation-item-main { min-width:0; display:grid; gap:3px; flex:1; }
+    .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:inherit; font-weight:var(--weight-medium); line-height:1.5; }
+    .plugin-automation-item-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-tertiary); font-size:var(--font-sm); line-height:1.5; }
+    .plugin-automation-suggestions { margin-top:calc(var(--automation-gap) * 2); }
+    .plugin-automation-suggestions > .plugin-automation-group-title { padding-bottom:12px; border-bottom:1px solid var(--hairline-soft); }
+    .plugin-automation-group-title { margin:0 0 12px; color:var(--ink); font-size:var(--font-ui); font-weight:var(--weight-medium); line-height:1.4; }
+    .plugin-automation-empty { min-height:160px; }
+    .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
+    .plugin-automation-filtered-empty { padding:24px 0; color:var(--ink-soft); text-align:center; }
+    .plugin-automation-detail { flex:0 0 clamp(350px, var(--automation-detail-width, 48%), calc(100% - 280px)); min-width:0; overflow:auto; padding:var(--automation-inset); border-left:1px solid var(--hairline); }
+    .plugin-automation-resizer { position:absolute; top:0; bottom:0; left:calc(100% - var(--automation-detail-width)); transform:translateX(-50%); width:10px; padding:0; border:0; outline:0; background:transparent; z-index:2; cursor:col-resize; touch-action:none; -webkit-app-region:no-drag; }
+    .plugin-automation-resizer::before { content:""; position:absolute; top:0; bottom:0; left:0; width:10px; }
+    .plugin-automation-resizer::after { content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; }
+    .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
+    .plugin-automation-body[data-resizing="true"], .plugin-automation-body[data-resizing="true"] * { cursor:col-resize !important; user-select:none; }
+    .plugin-automation-detail-head { display:flex; align-items:center; gap:8px; min-height:2.6em; margin-bottom:var(--automation-gap); }
+    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:var(--font-sm); }
+    .plugin-automation .plugin-ui-button { min-height:2.6em; border-radius:var(--wuu-radius-control, var(--radius-sm)); font-size:inherit; }
+    .plugin-automation .plugin-automation-detail-close { display:flex; align-items:center; justify-content:center; width:2.2em; min-height:2.2em; padding:0; border-radius:var(--radius-xs); }
+    .plugin-automation-detail-close svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-form { display:flex; flex-direction:column; gap:calc(var(--automation-gap) * 1.5); }
+    .plugin-automation-form-identity { display:grid; gap:var(--automation-gap); }
+    .plugin-automation .plugin-ui-input { height:2.6em; }
+    .plugin-automation .plugin-ui-field-label { font-size:inherit; font-weight:var(--weight-medium); }
+    .plugin-automation .plugin-ui-textarea { min-height:6.5em; max-height:20em; font-size:inherit; line-height:1.6; }
+    .plugin-automation-form-group { min-width:0; }
+    .plugin-automation-form-card { min-width:0; }
+    .plugin-automation-advanced { border-top:1px solid var(--hairline-soft); padding-top:12px; }
+    .plugin-automation-advanced > summary { color:var(--ink-tertiary); font-size:var(--font-sm); cursor:pointer; width:fit-content; }
+    .plugin-automation-advanced[open] > summary { margin-bottom:8px; }
+    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:3em; padding:3px 0; font-size:inherit; }
+    .plugin-automation-form-row > span:first-child { flex:none; }
+    .plugin-automation-form-row-control { display:flex; justify-content:flex-end; min-width:0; max-width:70%; }
+    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; gap:12px; }
+    .plugin-automation-field { min-width:0; max-width:100%; width:12em; height:2.6em; border:1px solid transparent; border-radius:var(--wuu-radius-control, var(--radius-sm)); padding:0 8px; background:transparent; color:inherit; font:inherit; text-align:right; }
+    .plugin-automation-field:hover { background:var(--field-hover-bg); }
+    .plugin-automation-field[type="time"] { width:8em; font-variant-numeric:tabular-nums; }
+    .plugin-automation-field::-webkit-calendar-picker-indicator { display:none; }
+    .plugin-automation-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding-bottom:4px; }
+    .plugin-automation-history { display:grid; gap:12px; margin-top:24px; font-size:var(--font-sm); }
+    .plugin-automation-history-row { display:flex; justify-content:space-between; gap:12px; color:var(--ink-soft); }
+    .plugin-automation-more { position:relative; }
+    .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:2.2em; height:2.2em; border-radius:var(--radius-xs); color:var(--ink-soft); }
+    .plugin-automation-more summary:hover { background:var(--surface-2); }
+    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; padding:var(--menu-inset); background:var(--menu-bg); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); box-shadow:var(--menu-shadow); }
+    .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+    .plugin-automation :is(button,summary):focus-visible { outline:1px solid var(--ink-soft); outline-offset:2px; box-shadow:none; }
+    .plugin-automation :is(input,textarea):focus-visible { outline:0; border-color:var(--ink-soft); box-shadow:none; }
+    .plugin-automation-picker { display:inline-flex; min-width:0; max-width:100%; }
+    .plugin-automation .plugin-automation-picker-trigger { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; max-width:100%; border:1px solid transparent; color:var(--ink); background:transparent; font-weight:var(--weight-normal); padding:0 8px; }
+    .plugin-automation .plugin-automation-picker-trigger:hover, .plugin-automation .plugin-automation-picker-trigger[aria-expanded="true"] { background:var(--field-hover-bg); }
+    .plugin-automation-picker-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-picker-trigger svg { flex:none; width:var(--icon-size-xs); height:var(--icon-size-xs); color:var(--ink-tertiary); }
+    .plugin-automation-picker-trigger[aria-expanded="true"] svg { transform:rotate(180deg); }
+    .plugin-automation-picker-menu { position:fixed; inset:auto; margin:0; padding:var(--menu-inset); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); background:var(--menu-bg); box-shadow:var(--menu-shadow); color:var(--ink); font-size:var(--font-ui); overflow:hidden; }
+    .plugin-automation-picker-menu:popover-open { display:flex; flex-direction:column; gap:1px; }
+    .plugin-automation-picker-search { display:flex; align-items:center; flex:none; gap:7px; height:2.6em; padding:0 9px; color:var(--ink-tertiary); }
+    .plugin-automation-picker-search svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-picker-search input { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
+    .plugin-automation-picker-options { display:flex; flex-direction:column; gap:2px; min-height:0; overflow:auto; }
+    .plugin-automation-picker-option { display:flex; flex:none; line-height:var(--line-ui); align-items:center; justify-content:space-between; gap:10px; width:100%; min-width:0; min-height:2.5em; padding:7px 9px; border:0; border-radius:var(--radius-xs); color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+    .plugin-automation-picker-option:hover, .plugin-automation-picker-option:focus-visible, .plugin-automation-picker-option[aria-selected="true"] { background:var(--menu-hover); outline:0; }
+    .plugin-automation-picker-option-copy { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-picker-option-copy > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-picker-option small, .plugin-automation-picker-group { color:var(--ink-tertiary); font-size:var(--font-xs); }
+    .plugin-automation-picker-option svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-picker-group { padding:6px 9px 3px; }
+    .plugin-automation-picker-empty { padding:12px; text-align:center; color:var(--ink-tertiary); }
+    @container (max-width: 760px) {
+      .plugin-automation-body[data-panel="true"] .plugin-automation-main { display:none; }
+      .plugin-automation-resizer { display:none; }
+      .plugin-automation-detail { flex:1; width:100%; max-width:none; min-width:0; border:0; }
+    }
+    @container (max-width: 420px) {
+      .plugin-automation { --automation-inset:16px; }
+      .plugin-automation-main, .plugin-automation-detail { padding:16px; }
+      .plugin-automation-filter { padding-inline:8px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .plugin-automation *, .plugin-automation-picker-menu { animation:none!important; transition:none!important; }
+    }
   ` });
 
   function shortTimezone(timezone) {
@@ -234,85 +261,72 @@ export async function activate(api) {
       h("path", { d: "m4.5 6.5 3.5 3.5 3.5-3.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
   }
 
-  // Shared "runs in" picker: "new chat each run" plus the workspace's live
-  // conversations (pinned first, then most recently updated). The host
-  // already filters ephemeral and archived threads; when thread listing is
-  // unavailable the menu simply offers the new-chat option.
-  function TargetPicker({ tr, value, threads, disabled, align, onSelect }) {
+  function ClockIcon() {
+    return h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.75", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+      h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M12 7v5l3 2" }));
+  }
+
+  // All automation choices share one menu. The browser's top layer lets a
+  // menu escape a scrolling detail pane without reaching into host internals.
+  function Picker({ label, value, options, onChange, disabled, searchable, placeholder }) {
     const [open, setOpen] = React.useState(false);
     const [query, setQuery] = React.useState("");
-    const rootRef = React.useRef(null);
-    React.useEffect(() => {
-      if (!open) return undefined;
-      const onPointerDown = (event) => {
-        if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+    const trigger = React.useRef(null);
+    const menu = React.useRef(null);
+    const id = React.useId();
+    const visible = options.filter((item) => !query.trim() || item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+    const close = () => { setOpen(false); trigger.current?.focus(); };
+    React.useLayoutEffect(() => {
+      if (!open || !menu.current) return undefined;
+      const node = menu.current;
+      node.showPopover?.();
+      const position = () => {
+        const rect = trigger.current.getBoundingClientRect();
+        const width = Math.min(Math.max(rect.width, searchable ? 300 : 180), window.innerWidth - 24);
+        const below = window.innerHeight - rect.bottom - 12;
+        const above = rect.top - 12;
+        const flip = below < Math.min(node.scrollHeight, 300) && above > below;
+        node.style.width = `${width}px`;
+        node.style.maxHeight = `${Math.max(80, Math.min(360, flip ? above : below))}px`;
+        node.style.left = `${Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12))}px`;
+        node.style.top = `${flip ? Math.max(12, rect.top - node.offsetHeight - 6) : rect.bottom + 6}px`;
       };
-      document.addEventListener("mousedown", onPointerDown);
-      return () => document.removeEventListener("mousedown", onPointerDown);
+      position();
+      (node.querySelector("input") || node.querySelector('[aria-selected="true"]') || node.querySelector('[role="option"]'))?.focus();
+      const outside = (event) => { if (!node.contains(event.target) && !trigger.current?.contains(event.target)) setOpen(false); };
+      const scroll = (event) => { if (!node.contains(event.target)) position(); };
+      document.addEventListener("pointerdown", outside);
+      window.addEventListener("resize", position);
+      document.addEventListener("scroll", scroll, true);
+      return () => { node.hidePopover?.(); document.removeEventListener("pointerdown", outside); window.removeEventListener("resize", position); document.removeEventListener("scroll", scroll, true); };
     }, [open]);
-    const isSelected = (thread) => value.mode === "thread_heartbeat" && value.threadId === thread.id;
-    const label = value.mode === "thread_heartbeat" ? value.threadTitle || tr("automation.target.thread") : tr("automation.target.new");
-    const normalized = query.trim().toLowerCase();
-    const visible = [...threads]
-      .sort((a, b) => ((b.pinned === true) - (a.pinned === true)) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
-      .filter((thread) => !normalized || String(thread.title || "").toLowerCase().includes(normalized))
-      .slice(0, 20);
-    const pinned = visible.filter((thread) => thread.pinned === true);
-    const rest = visible.filter((thread) => thread.pinned !== true);
-    const choose = (target) => {
-      setOpen(false);
-      setQuery("");
-      onSelect(target);
+    const keyDown = (event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+      if (event.key === "Tab") { setOpen(false); trigger.current?.focus(); return; }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
+      if ((event.key === "Home" || event.key === "End") && event.target.tagName === "INPUT") return;
+      event.preventDefault();
+      const items = [...menu.current.querySelectorAll('[role="option"]')];
+      const index = items.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? (index + 1) % items.length : (index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length);
+      items[next]?.focus();
     };
-    const renderThread = (thread) => h("button", {
-      key: thread.id,
-      type: "button",
-      className: "plugin-automation-target-option",
-      "aria-selected": isSelected(thread) ? "true" : "false",
-      onClick: () => choose({ mode: "thread_heartbeat", threadId: thread.id, threadTitle: thread.title }),
-    },
-      h("span", { className: "plugin-automation-target-option-main" },
-        h("span", { className: "plugin-automation-target-option-title" }, thread.title),
-        h("span", { className: "plugin-automation-target-option-meta" }, formatDateTime(thread.updatedAt) || "")),
-      isSelected(thread) ? h(CheckIcon) : null);
-    return h("div", { className: "plugin-automation-target", ref: rootRef, "data-align": align || undefined },
-      h("button", {
-        type: "button",
-        className: "plugin-automation-target-button",
-        disabled,
-        "aria-expanded": open ? "true" : "false",
-        onClick: () => { setOpen(!open); setQuery(""); },
-      },
-        h("span", { className: "plugin-automation-target-value" }, label),
-        h(ChevronIcon)),
-      open ? h("div", {
-        className: "plugin-automation-target-menu",
-        onKeyDown: (event) => {
-          if (event.key === "Escape") {
-            event.stopPropagation();
-            setOpen(false);
-          }
-        },
-      },
-        h("label", { className: "plugin-automation-target-search" },
-          h("span", { className: "plugin-automation-sr" }, tr("automation.target.search")),
-          h(SearchIcon),
-          h("input", { type: "search", autoFocus: true, value: query, placeholder: tr("automation.target.search"), onChange: (event) => setQuery(event.target.value) })),
-        h("button", {
-          type: "button",
-          className: "plugin-automation-target-option",
-          "aria-selected": value.mode !== "thread_heartbeat" ? "true" : "false",
-          onClick: () => choose({ mode: "new_thread" }),
-        },
-          h("span", { className: "plugin-automation-target-option-main" },
-            h("span", { className: "plugin-automation-target-option-title" }, tr("automation.target.new"))),
-          value.mode !== "thread_heartbeat" ? h(CheckIcon) : null),
-        pinned.length > 0 ? h("div", { className: "plugin-automation-target-section" }, tr("automation.target.pinned")) : null,
-        pinned.map(renderThread),
-        rest.length > 0 ? h("div", { className: "plugin-automation-target-section" }, tr("automation.target.chats")) : null,
-        rest.map(renderThread),
-        normalized && visible.length === 0 ? h("p", { className: "plugin-automation-target-empty" }, tr("automation.target.empty")) : null)
-      : null);
+    const selected = options.find((item) => item.value === value);
+    return h("div", { className: "plugin-automation-picker" },
+      h(Button, { className: "plugin-automation-picker-trigger", variant: "ghost", ref: trigger, disabled, "aria-label": label, "aria-haspopup": "listbox", "aria-expanded": open, "aria-controls": open ? id : undefined,
+        onClick: () => { setQuery(""); setOpen(!open); }, onKeyDown: (event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); } },
+      }, h("span", null, selected?.label || placeholder || value), h(ChevronIcon)),
+      open ? h("div", { id, ref: menu, popover: "manual", className: "plugin-automation-picker-menu", onKeyDown: keyDown },
+        searchable ? h("label", { className: "plugin-automation-picker-search" }, h(SearchIcon), h("input", { type: "search", "aria-label": searchable, placeholder: searchable, value: query, onChange: (event) => setQuery(event.target.value) })) : null,
+        h("div", { className: "plugin-automation-picker-options", role: "listbox", "aria-label": label }, visible.map((item) => h("button", { key: item.value, type: "button", role: "option", tabIndex: -1, "aria-selected": item.value === value, className: "plugin-automation-picker-option", onClick: () => { close(); setQuery(""); onChange(item.value); } },
+            h("span", { className: "plugin-automation-picker-option-copy", title: item.label }, item.label), item.value === value ? h(CheckIcon) : null)),
+          !visible.length ? h("div", { className: "plugin-automation-picker-empty" }, "—") : null)) : null);
+  }
+
+  function TargetPicker({ tr, value, threads, disabled, onSelect }) {
+    const sorted = [...threads].sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    const options = [{ value: "", label: tr("automation.target.new") }, ...sorted.map((thread) => ({ value: thread.id, label: thread.title || thread.id }))];
+    return h(Picker, { label: tr("automation.field.target"), value: value.mode === "thread_heartbeat" ? value.threadId : "", options, disabled, searchable: tr("automation.target.search"), placeholder: value.threadTitle || tr("automation.target.thread"), onChange: (id) => onSelect(id ? { mode: "thread_heartbeat", threadId: id, threadTitle: threads.find((thread) => thread.id === id)?.title } : { mode: "new_thread" }) });
   }
 
   function scheduleParts(cron) {
@@ -335,24 +349,19 @@ export async function activate(api) {
     };
     const [custom, setCustom] = React.useState(parts.frequency === "custom");
     return h(React.Fragment, null,
-      h(FieldRow, { label: tr("automation.recurring") }, h("select", {
-        className: "plugin-automation-field", "aria-label": tr("automation.recurring"), value: custom ? "custom" : parts.frequency,
-        onChange: (event) => { const frequency = event.target.value; setCustom(frequency === "custom"); if (frequency !== "custom") update({ frequency }); },
-      }, ["daily", "weekdays", "weekly", "custom"].map((value) => h("option", { key: value, value }, tr(value === "custom" ? "automation.custom" : `automation.schedule.${value}`))))),
+      h(FieldRow, { label: tr("automation.recurring") }, h(Picker, {
+        label: tr("automation.recurring"), value: custom ? "custom" : parts.frequency,
+        onChange: (frequency) => { setCustom(frequency === "custom"); if (frequency !== "custom") update({ frequency }); },
+        options: ["daily", "weekdays", "weekly", "custom"].map((value) => ({ value, label: tr(value === "custom" ? "automation.custom" : `automation.schedule.${value}`) })),
+      })),
       custom ? h(FieldRow, { label: tr("automation.schedule") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.schedule"), value: draft.schedule, required: true, onChange: (event) => onChange({ ...draft, schedule: event.target.value }) }))
         : h(React.Fragment, null,
-          parts.frequency === "weekly" ? h(FieldRow, { label: tr("automation.day") }, h("select", { className: "plugin-automation-field", "aria-label": tr("automation.day"), value: parts.day, onChange: (event) => update({ day: event.target.value }) }, [1, 2, 3, 4, 5, 6, 0].map((day) => h("option", { key: day, value: String(day) }, weekdayName(day))))) : null,
-          h(FieldRow, { label: tr("automation.field.time") }, h("input", { className: "plugin-automation-field", type: "time", required: true, "aria-label": tr("automation.field.time"), value: parts.time, onChange: (event) => { if (event.target.value) update({ time: event.target.value }); } }))),
-      h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => onChange({ ...draft, timezone: event.target.value }) })),
-      h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => onChange({ ...draft, recurring: !event.target.checked }) })));
+          parts.frequency === "weekly" ? h(FieldRow, { label: tr("automation.day") }, h(Picker, { label: tr("automation.day"), value: parts.day, onChange: (day) => update({ day }), options: [1, 2, 3, 4, 5, 6, 0].map((day) => ({ value: String(day), label: weekdayName(day) })) })) : null,
+          h(FieldRow, { label: tr("automation.field.time") }, h("input", { className: "plugin-automation-field", type: "time", required: true, "aria-label": tr("automation.field.time"), value: parts.time, onChange: (event) => { if (event.target.value) update({ time: event.target.value }); } }))));
   }
 
   function FieldRow({ label, children }) {
-    return h("label", { className: "plugin-automation-form-row" }, h("span", null, label), h("span", { className: "plugin-automation-form-row-control" }, children));
-  }
-
-  function Group({ title, children }) {
-    return h("section", { className: "plugin-automation-form-group" }, h("h3", { className: "plugin-automation-group-title" }, title), h("div", { className: "plugin-automation-form-card" }, children));
+    return h("div", { className: "plugin-automation-form-row" }, h("span", null, label), h("label", { className: "plugin-automation-form-row-control" }, children));
   }
 
   function draftFor(task) {
@@ -363,6 +372,7 @@ export async function activate(api) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
     const [localError, setLocalError] = React.useState("");
+    const [advanced, setAdvanced] = React.useState(() => !draft.recurring || draft.workspace === "worktree" || draft.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone);
     const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
     const panelRef = React.useRef(null);
     React.useEffect(() => {
@@ -375,7 +385,7 @@ export async function activate(api) {
       setLocalError("");
       if (!draft.prompt.trim()) return;
       try { new Intl.DateTimeFormat(undefined, { timeZone: draft.timezone }); }
-      catch { setLocalError(`${tr("automation.timezone")}: ${draft.timezone}`); return; }
+      catch { setAdvanced(true); setLocalError(`${tr("automation.timezone")}: ${draft.timezone}`); return; }
       const normalized = { ...draft, title: draft.title.trim() || draft.prompt.trim() };
       if (await onSave(normalized)) { setSaved(normalized); setDraft(normalized); }
     };
@@ -385,31 +395,88 @@ export async function activate(api) {
         task && !readOnly ? h(React.Fragment, null,
           h(Button, { variant: "ghost", disabled: busy, onClick: onPause }, tr(task.paused ? "automation.resume" : "automation.pause")),
           h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
-        h("button", { type: "button", className: "plugin-automation-detail-close", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
+        h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
       h("form", { className: "plugin-automation-form", onSubmit: save },
         h("fieldset", { disabled: busy || readOnly, style: { border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" } },
           h("div", { className: "plugin-automation-form-identity" },
-            h("label", null, h("span", { className: "plugin-automation-sr" }, tr("automation.name")), h("input", { className: "plugin-automation-form-name", placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) })),
-            h("label", null, h("span", { className: "plugin-automation-sr" }, tr("automation.prompt")), h("textarea", { className: "plugin-automation-form-prompt", required: true, rows: 4, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) }))),
-          h(Group, { title: tr("automation.group.details") },
+            h(TextInput, { className: "plugin-automation-form-name", "aria-label": tr("automation.name"), placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) }),
+            h(TextArea, { className: "plugin-automation-form-prompt", "aria-label": tr("automation.prompt"), required: true, rows: 3, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) })),
+          h("div", { className: "plugin-automation-form-card" },
             h("div", { className: "plugin-automation-form-row" }, h("span", null, tr("automation.field.target")), h("span", { className: "plugin-automation-form-row-control" }, h(TargetPicker, {
               tr, threads, disabled: busy || readOnly,
               value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
               onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
             }))),
-            h("div", { className: "plugin-automation-form-row" }, h("span", null, tr("automation.field.project")), h("span", { className: "plugin-automation-item-meta", title: workspace.root }, workspace.name || workspaceName(workspace.root))),
-            h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", disabled: draft.mode === "thread_heartbeat", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) }))),
-          h(Group, { title: tr("automation.group.schedule") }, h(ScheduleFields, { tr, draft, onChange: setDraft }))),
+            h(ScheduleFields, { tr, draft, onChange: setDraft })),
+          h("details", { className: "plugin-automation-advanced", open: advanced, onToggle: (event) => setAdvanced(event.currentTarget.open) },
+            h("summary", null, tr("automation.advanced")),
+            h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => setDraft({ ...draft, timezone: event.target.value }) })),
+            h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => setDraft({ ...draft, recurring: !event.target.checked }) })),
+            draft.mode !== "thread_heartbeat" ? h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
         error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
         !readOnly ? h("div", { className: "plugin-automation-form-actions" },
-          task ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr(dirty ? "automation.unsaved" : "automation.saved")) : null,
+          task && dirty ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr("automation.unsaved")) : null,
           h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
           h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
       runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h("span", null, tr(`automation.run.${runStatus(run)}`)), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null);
   }
 
+  function useEditorResize() {
+    const bodyRef = React.useRef(null);
+    const drag = React.useRef(null);
+    const [width, setWidth] = React.useState(null);
+    const [available, setAvailable] = React.useState(1000);
+    const [resizing, setResizing] = React.useState(false);
+    React.useLayoutEffect(() => {
+      const node = bodyRef.current;
+      const measure = () => setAvailable(node.clientWidth);
+      measure();
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+      observer?.observe(node);
+      return () => observer?.disconnect();
+    }, []);
+    const maximum = Math.max(350, available - 280);
+    const clamp = (value) => Math.max(350, Math.min(maximum, value));
+    const current = clamp(width ?? Math.min(560, available * 0.48));
+    const end = () => { drag.current = null; setResizing(false); };
+    return {
+      bodyRef, resizing, width: current,
+      separator: {
+        role: "separator", tabIndex: 0, "aria-orientation": "vertical",
+        "aria-valuemin": 350, "aria-valuemax": maximum, "aria-valuenow": Math.round(current),
+        onPointerDown: (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.focus();
+          const node = bodyRef.current;
+          // Pointer coordinates include the host's zoom; widths use layout pixels.
+          drag.current = { id: event.pointerId, x: event.clientX, width: current, scale: node.getBoundingClientRect().width / node.clientWidth || 1 };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setResizing(true);
+        },
+        onPointerMove: (event) => {
+          const session = drag.current;
+          if (session?.id === event.pointerId) setWidth(clamp(session.width - (event.clientX - session.x) / session.scale));
+        },
+        onPointerUp: (event) => {
+          if (drag.current?.id !== event.pointerId) return;
+          end();
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        },
+        onPointerCancel: end, onLostPointerCapture: end,
+        onDoubleClick: () => setWidth(null),
+        onKeyDown: (event) => {
+          const next = { ArrowLeft: current + 24, ArrowRight: current - 24, Home: 350, End: maximum }[event.key];
+          if (next === undefined) return;
+          event.preventDefault(); setWidth(clamp(next));
+        },
+      },
+    };
+  }
+
   function Catalog(props) {
     const tr = props.translate;
+    const resize = useEditorResize();
     const [tasks, setTasks] = React.useState([]);
     const [runs, setRuns] = React.useState([]);
     const [workspaces, setWorkspaces] = React.useState([]);
@@ -475,24 +542,32 @@ export async function activate(api) {
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const create = (template) => { setError(""); setSelection({ kind: "new", key: String(Date.now()), draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: template === "review" ? "0 16 * * 5" : "0 9 * * 1-5" } : {}) } }); };
     return h("main", { className: "plugin-automation" }, h(Page, null,
-      h("div", { className: "plugin-automation-body", "data-panel": panelOpen ? "true" : "false" },
+      h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false" },
         h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
-          h("div", { className: "plugin-automation-head" }, panelOpen ? null : h("h1", { className: "plugin-automation-title" }, tr("automation.title")),
-            panelOpen ? h("div", { className: "plugin-automation-filters" }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))) : null,
+          h("div", { className: "plugin-automation-head" }, h("h1", { className: "plugin-automation-title" }, tr("automation.title")),
             h(Button, { variant: "primary", disabled: busy || !workspace, onClick: () => create() }, tr("automation.create"))),
           h("div", { className: "plugin-automation-toolbar" },
             h("label", { className: "plugin-automation-search" }, h(SearchIcon), h("span", { className: "plugin-automation-sr" }, tr("automation.search")), h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
-            h("div", { className: "plugin-automation-workspace-picker" }, h(Select, { label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length, onChange: (event) => { epoch.current++; setWorkspaceID(event.target.value); setSelection(null); setTasks([]); setRuns([]); setError(""); } }, workspaces.length ? workspaces.map((item) => h("option", { key: item.id, value: item.id }, item.name || workspaceName(item.root))) : h("option", { value: "" }, tr("automation.workspaceNone"))))),
-          !panelOpen ? h("div", { className: "plugin-automation-filters", style: { marginBottom: 14 } }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))) : null,
+            h("div", { className: "plugin-automation-workspace-picker" }, h(Picker, {
+              label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
+              placeholder: tr("automation.workspaceNone"),
+              options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
+              onChange: (id) => { epoch.current++; setWorkspaceID(id); setSelection(null); setTasks([]); setRuns([]); setError(""); },
+            }))),
+          h("div", { className: "plugin-automation-filters" }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))),
           error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
           !tasks.length && !completedTasks.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: workspace ? undefined : tr("automation.workspaceNone") }) : !visible.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.filter.empty")) : h("div", { className: "plugin-automation-list" }, visible.map((task) => {
             const done = !tasks.some((item) => item.id === task.id);
-            const meta = [describeSchedule(task.cron, task.timezone, tr) || task.cron, done ? tr("automation.run.completed") : task.paused ? tr("automation.paused") : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].join(" · ");
+            const lastRun = sortedRuns.find((run) => run.task_id === task.id);
+            const meta = done
+              ? [tr("automation.run.completed"), formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)].filter(Boolean).join(" · ")
+              : [describeSchedule(task.cron, task.timezone, tr) || task.cron, task.paused ? tr("automation.paused") : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].join(" · ");
             return h("button", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": task.paused, "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setSelection({ kind: "task", id: task.id }); } },
-              h("span", { className: "plugin-automation-item-dot", "data-run": runStatus(sortedRuns.find((run) => run.task_id === task.id)) }),
+              h("span", { className: "plugin-automation-item-icon", "data-run": runStatus(sortedRuns.find((run) => run.task_id === task.id)) }, done ? h(CheckIcon) : h(ClockIcon)),
               h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, task.title || task.prompt), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta)));
           })),
-          workspace ? h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, className: "plugin-automation-item", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))) : null),
+          workspace ? h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, className: "plugin-automation-item", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-icon" }, h(ClockIcon)), h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))) : null),
+        panelOpen ? h("div", { ...resize.separator, className: "plugin-automation-resizer", "aria-label": tr("automation.resize") }) : null,
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
           readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
