@@ -39,6 +39,10 @@
 
 .sidebar-account-trigger .sidebar-account-avatar {
   justify-self: center;
+  /* Override the standalone avatar's flex basis as well as its dimensions.
+     Without this, the 30px basis can make the trigger avatar overflow the
+     sidebar's icon column even though width/height are reduced to 16px. */
+  flex-basis: var(--sidebar-primary-icon-size, 16px);
   width: var(--sidebar-primary-icon-size, 16px);
   height: var(--sidebar-primary-icon-size, 16px);
   font-size: 9px;
