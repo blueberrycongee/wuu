@@ -4,7 +4,6 @@ const { join } = require("node:path");
 const REMOVED_MAC_PERMISSIONS = [
   "NSMicrophoneUsageDescription",
   "NSSpeechRecognitionUsageDescription",
-  "NSScreenCaptureUsageDescription",
 ];
 
 module.exports = async function afterPack(context) {

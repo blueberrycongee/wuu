@@ -25,7 +25,7 @@ const source = join(packageRoot, ".build", "release", "wuu-cua-mac");
 const destination = join(outDir, "wuu-cua-mac");
 const pipDestination = join(outDir, "wuu-cua-mac-pip");
 const buildInfo = join(outDir, "wuu-cua-mac.build.json");
-const signingIdentity = process.env.WUU_CUA_MAC_SIGN_ID || "-";
+const signingIdentity = process.env.WUU_CUA_MAC_SIGN_ID || process.env.WUU_RELEASE_SIGN_ID || "-";
 
 run("swift", ["build", "-c", "release", "--package-path", packageRoot]);
 if (!existsSync(source)) {
@@ -43,11 +43,13 @@ copyFileSync(source, destination);
 chmodSync(destination, 0o755);
 
 // The development launcher supplies WUU_CUA_MAC_SIGN_ID from a stable local
-// certificate. Direct and release builds intentionally retain ad-hoc signing.
+// certificate. Release builds use the persistent release identity; local packs
+// may use ad-hoc signing for tests.
 run("codesign", [
   "--force",
   "--sign",
   signingIdentity,
+  ...(process.env.WUU_RELEASE_KEYCHAIN ? ["--keychain", process.env.WUU_RELEASE_KEYCHAIN] : []),
   "--identifier",
   "com.blueberrycongee.wuu.cua-mac",
   destination,

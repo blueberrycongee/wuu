@@ -16,19 +16,41 @@ The current GitHub Release provides an arm64 DMG and ZIP for Apple-silicon Macs:
 The desktop package bundles the private core it needs at runtime; you do not need to
 install the `wuu` CLI separately.
 
-## Handle the macOS security prompt
+## Open the macOS preview
 
-The current preview is not signed with an Apple Developer ID and is not notarized, so
-Gatekeeper may block first launch. After confirming that the file comes from the
-project's official GitHub Releases, run:
+The preview uses a persistent self-signed identity, without Apple Developer ID or
+notarization. After verifying the download is from the official GitHub Release,
+try opening `/Applications/wuu.app`. If macOS blocks it, use **System Settings →
+Privacy & Security → Open Anyway**. Do not install a certificate or disable system
+security globally.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/wuu.app
-open /Applications/wuu.app
-```
+## Update from GitHub Releases
 
-This command removes the quarantine attribute from the downloaded app. Do not run it
-on an app from an untrusted source.
+1. Download the new DMG or ZIP from the official release page.
+2. Quit Wuu with **Cmd+Q** and wait for it to exit. Closing its window is not quitting.
+3. Replace `/Applications/wuu.app` with the downloaded app. Keep the same name and
+   location; do not run a second copy from the DMG or Downloads.
+4. Open `/Applications/wuu.app`. Conversations and settings remain in Wuu's user
+   data; do not delete that data to upgrade.
+
+Wuu waits for its core and live computer-use preview to stop before quitting. The
+CUA helpers live inside the app bundle and are replaced with it; there is no
+separate privileged helper or login service to uninstall.
+
+## Computer Use permissions
+
+Computer Use is included on macOS. On first use, grant the requested
+**Accessibility** or **Screen Recording** permission in System Settings. Wuu
+reports missing access and links to the relevant settings; it cannot grant these
+permissions itself. No developer tools or user-side signing are required.
+
+Release signing keeps the app identity stable across builds, but does not promise
+permission retention on every macOS version. The first update from an older
+unsigned/ad-hoc build may require authorization again. If an upgrade loses access,
+follow the reported permission's settings link and authorize the current
+`/Applications/wuu.app` entry. Do not reset all privacy permissions or delete user
+data. Old entries in the system permission list are separate from installed files;
+remove only a confirmed obsolete entry if needed.
 
 ## Install the CLI
 

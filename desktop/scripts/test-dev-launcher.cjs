@@ -151,17 +151,8 @@ assert.deepEqual(
     staleBinaryName: "wuu-core",
   },
 );
-assert.doesNotMatch(packageJSON.scripts["pack:mac"], /cua-mac/);
-assert.doesNotMatch(packageJSON.scripts["dist:mac"], /cua-mac/);
 assert.doesNotMatch(packageJSON.scripts["pack:mac"], /speech-mac/);
 assert.doesNotMatch(packageJSON.scripts["dist:mac"], /speech-mac/);
-assert.deepEqual(packageJSON.build.extraResources[0].filter, [
-  "wuu-core",
-  "wuu-core.exe",
-  "wuu-*-plugin",
-  "wuu-*-plugin.exe",
-]);
-assert.equal(packageJSON.build.mac.extendInfo, undefined);
 assert.equal(packageJSON.build.afterPack, "scripts/after-pack.cjs");
 
 const identities = parseCodeSigningIdentities([

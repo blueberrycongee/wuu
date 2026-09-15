@@ -14,17 +14,33 @@ wuu 当前提供 macOS 桌面预览版，也可以通过 Go 安装命令行工�
 
 桌面安装包自带运行所需的私有 core，不需要另外安装 `wuu` CLI。
 
-## 处理 macOS 的安全提示
+## 打开 macOS 预览版
 
-当前预览版没有 Apple Developer ID 签名和公证，因此 Gatekeeper 可能阻止首次启动。
-先确认文件来自项目的官方 GitHub Releases，再运行：
+预览版使用固定的自签身份，没有 Apple Developer ID 和公证。确认下载来自官方 GitHub
+Release 后，尝试打开 `/Applications/wuu.app`。如果被 macOS 拦截，前往**系统设置 →
+隐私与安全性 → 仍要打开**。无需安装证书，也不要全局关闭系统安全保护。
 
-```bash
-xattr -dr com.apple.quarantine /Applications/wuu.app
-open /Applications/wuu.app
-```
+## 从 GitHub Releases 更新
 
-这条命令会移除下载文件的 quarantine 标记。不要对来源不明的应用运行它。
+1. 从官方 Release 页面下载新版 DMG 或 ZIP。
+2. 按 **Cmd+Q** 退出 Wuu，等待退出完成。关闭窗口不等于退出应用。
+3. 用下载的应用替换 `/Applications/wuu.app`，保持名称和位置不变；不要从 DMG 或下载目录
+   同时运行另一份 Wuu。
+4. 打开 `/Applications/wuu.app`。会话和设置保存在 Wuu 用户数据中，升级不需要删除这些数据。
+
+Wuu 退出前会等待 core 和电脑操作预览停止。CUA helper 位于应用包内部，随应用一起替换，
+无需另外卸载特权 helper 或登录服务。
+
+## 电脑操作权限
+
+macOS 版自带 Computer Use。首次使用时，请在系统设置中授予所需的**辅助功能**或
+**屏幕录制**权限。Wuu 会报告缺失的权限并提供设置入口，无法代替用户授权。
+用户无需安装开发工具或自行签名。
+
+发布签名保持各版本的应用身份稳定，但不保证所有 macOS 版本都保留授权。从旧的未签名或
+ad-hoc 版本首次升级时，可能需要再次授权。如果升级后失去权限，请按错误提示进入对应的
+系统设置，授权当前的 `/Applications/wuu.app`。不要重置全部隐私权限或删除用户数据。
+系统权限列表里的旧条目与磁盘文件不同；如需移除，只处理已确认过时的条目。
 
 ## 安装 CLI
 
