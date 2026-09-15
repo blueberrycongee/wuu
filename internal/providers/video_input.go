@@ -48,7 +48,11 @@ func PrepareVideoInput(req ChatRequest, transport bool) (ChatRequest, error) {
 					return req, fmt.Errorf("video input is not supported by the selected model and connection (%s / %s); choose a video-capable model with a supported video connection", req.Provider, req.Model)
 				}
 			}
-			break
+			// Request-only runtime/plugin context also uses the user role. It
+			// must not hide the latest user attachment from admission checks.
+			if !req.Messages[i].Hidden {
+				break
+			}
 		}
 	}
 	if _, exists := req.ProviderOptions["video_input"]; exists {

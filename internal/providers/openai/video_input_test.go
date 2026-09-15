@@ -3,10 +3,13 @@ package openai
 import (
 	"context"
 	"encoding/json"
-	"github.com/blueberrycongee/wuu/internal/providers"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func TestChatSendsVideoURLWithoutPDFWrappingOrRoutingOptions(t *testing.T) {
@@ -30,7 +33,7 @@ func TestChatSendsVideoURLWithoutPDFWrappingOrRoutingOptions(t *testing.T) {
 		if err := json.Unmarshal(body["messages"], &messages); err != nil {
 			t.Error(err)
 		}
-		if len(messages) != 1 || len(messages[0].Content) != 1 {
+		if len(messages) != 1 || len(messages[0].Content) != 2 {
 			t.Errorf("unexpected messages %s", body["messages"])
 		} else {
 			part := messages[0].Content[0]
@@ -51,11 +54,20 @@ func TestChatSendsVideoURLWithoutPDFWrappingOrRoutingOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Chat(context.Background(), providers.ChatRequest{Model: "custom-video", ProviderOptions: map[string]any{"video_input": "video_url"}, MediaInput: providers.MediaInputPolicy{FileKnown: true}, Messages: []providers.ChatMessage{{Role: "user", Files: []providers.InputFile{{MediaType: "video/mp4", Data: "AAAA"}}}}})
+	req := providers.ChatRequest{
+		Model:           "custom-video",
+		ProviderOptions: map[string]any{"video_input": "video_url"},
+		MediaInput:      providers.MediaInputPolicy{FileKnown: true},
+		Messages: []providers.ChatMessage{
+			{Role: "user", Files: []providers.InputFile{{MediaType: "video/mp4", Data: "AAAA"}}},
+			{Role: "user", Hidden: true, Content: "Runtime context"},
+		},
+	}
+	_, err = client.Chat(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := client.StreamChat(context.Background(), providers.ChatRequest{Model: "custom-video", ProviderOptions: map[string]any{"video_input": "video_url"}, MediaInput: providers.MediaInputPolicy{FileKnown: true}, Messages: []providers.ChatMessage{{Role: "user", Files: []providers.InputFile{{MediaType: "video/mp4", Data: "AAAA"}}}}})
+	events, err := client.StreamChat(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +81,38 @@ func TestChatSendsVideoURLWithoutPDFWrappingOrRoutingOptions(t *testing.T) {
 	}
 }
 
-func TestResponsesRejectsVideoBeforeHTTP(t *testing.T) {
-	client, _ := New(ClientConfig{BaseURL: "https://example.invalid", APIKey: "test", WireAPI: "responses"})
-	_, err := client.buildResponsesRequest(providers.ChatRequest{Model: "custom", MediaInput: providers.MediaInputPolicy{Video: true, VideoKnown: true}, Messages: []providers.ChatMessage{{Role: "user", Files: []providers.InputFile{{MediaType: "video/mp4", Data: "AAAA"}}}}}, true)
-	if err == nil {
-		t.Fatal("Responses accepted unsupported video")
+func TestUnsupportedVideoWithRuntimeContextRejectsBeforeHTTP(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "unexpected provider request", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	for _, wire := range []string{"chat", "responses"} {
+		t.Run(wire, func(t *testing.T) {
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test", WireAPI: wire})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := providers.ChatRequest{
+				Model:      "custom",
+				MediaInput: providers.MediaInputPolicy{Video: true, VideoKnown: true},
+				Messages: []providers.ChatMessage{
+					{Role: "user", Files: []providers.InputFile{{MediaType: "video/mp4", Data: "AAAA"}}},
+					{Role: "user", Hidden: true, Content: "Runtime context"},
+				},
+			}
+			_, err = client.Chat(context.Background(), req)
+			if err == nil || !strings.Contains(err.Error(), "video input is not supported") {
+				t.Fatalf("Chat error = %v, want video admission error", err)
+			}
+			_, err = client.StreamChat(context.Background(), req)
+			if err == nil || !strings.Contains(err.Error(), "video input is not supported") {
+				t.Fatalf("StreamChat error = %v, want video admission error", err)
+			}
+		})
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("unsupported video reached provider: %d requests", calls.Load())
 	}
 }

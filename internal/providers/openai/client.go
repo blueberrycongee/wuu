@@ -849,8 +849,7 @@ func mapMessage(model string, msg providers.ChatMessage) chatMessage {
 // mergeContent combines two chatMessage Content values. Adjacent same-role
 // messages are collapsed because some Chat Completions endpoints reject
 // consecutive user turns. Text-only payloads stay strings. If either side
-// already has image_url or file parts, keep a part list so those media
-// parts are not flattened away.
+// already has media parts, keep a part list so they are not flattened away.
 func mergeContent(existing, incoming any) any {
 	left := contentParts(existing)
 	right := contentParts(incoming)
@@ -886,7 +885,7 @@ func contentParts(v any) []chatContentPart {
 	case []chatContentPart:
 		out := make([]chatContentPart, 0, len(c))
 		for _, part := range c {
-			if part.Type == "" && part.Text == "" && part.ImageURL == nil && part.File == nil {
+			if part.Type == "" && part.Text == "" && part.ImageURL == nil && part.VideoURL == nil && part.File == nil {
 				continue
 			}
 			if part.Type == "text" && part.Text == "" {
@@ -906,7 +905,7 @@ func contentParts(v any) []chatContentPart {
 
 func contentHasMedia(parts []chatContentPart) bool {
 	for _, part := range parts {
-		if part.ImageURL != nil || part.File != nil || part.Type == "image_url" || part.Type == "file" {
+		if part.ImageURL != nil || part.VideoURL != nil || part.File != nil || part.Type == "image_url" || part.Type == "video_url" || part.Type == "file" {
 			return true
 		}
 	}
