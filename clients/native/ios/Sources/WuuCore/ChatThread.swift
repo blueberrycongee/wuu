@@ -19,6 +19,7 @@ public struct ToolActivity: Sendable, Equatable {
     public let arguments: String
     public let result: String
     public let error: String
+    public let presentation: JSONValue
     public init(_ item: JSONValue, turnStatus: String) {
         name = [item["display"]["label"].string, item["name"].string].compactMap { $0 }.first { !$0.isEmpty } ?? "工具"
         let state = item["status"].string ?? ""
@@ -27,6 +28,11 @@ public struct ToolActivity: Sendable, Equatable {
         let text = item["result"].string ?? ""
         result = text.isEmpty ? item["result_detail"]["content"].array.filter { $0["type"].string == "text" }.compactMap { $0["text"].string }.joined(separator: "\n") : text
         error = item["error"].string ?? ""
+        presentation = ["id": item["id"], "type": "tool_call", "name": item["name"],
+            "status": .string(status), "display": item["display"], "arguments": item["arguments"],
+            "result": item["result"], "error": item["error"],
+            "result_detail": ["structured_content": item["result_detail"]["structured_content"],
+                "content": .array(item["result_detail"]["content"].array.filter { $0["type"].string == "text" })]]
     }
     public var statusLabel: String {
         switch status { case "in_progress": "执行中"; case "completed": "已完成"; case "failed": "失败"; case "ended": "已结束"; default: "状态未知" }

@@ -13,25 +13,26 @@ struct ConversationTimeline: View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 22) {
+                    LazyVStack(alignment: .leading, spacing: 18) {
                         if model.live?.historyCursor.isEmpty == false {
                             Button(model.loadingHistory ? "正在读取…" : "加载更早的消息") { model.perform { try await model.loadOlder() } }
                                 .disabled(!model.connected || model.loadingHistory)
                         }
-                        ForEach(model.messages) { message in
-                            if let tool = message.tool {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ToolActivityView(model: model, message: message, tool: tool)
-                                    MessageAttachments(model: model, message: message)
-                                }.id(message.id)
+                        ForEach(ConversationRow.grouped(model.messages)) { row in
+                            if row.isToolGroup {
+                                ToolGroupView(messages: row.messages, settings: model.live?.settings,
+                                    active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id)
                             } else {
-                                MessageBubble(model: model, message: message).id(message.id)
+                                MessageBubble(model: model, message: row.messages[0])
                             }
                         }
                         ForEach(model.live?.pending ?? []) { message in
                             PendingMessageView(model: model, message: message)
                         }
-                        if model.live?.running == true { ProgressView("正在处理").font(.caption) }
+                        if model.live?.running == true && model.messages.last?.tool == nil {
+                            ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
+                                .accessibilityElement().accessibilityLabel("正在处理")
+                        }
                         Color.clear.frame(height: 1).id("bottom").background {
                             GeometryReader { geometry in
                                 Color.clear.preference(key: TimelineBottom.self, value: geometry.frame(in: .named("timeline")).maxY)
@@ -55,34 +56,18 @@ struct ConversationTimeline: View {
     }
 }
 
-private struct ToolActivityView: View {
-    @Bindable var model: AppModel
-    let message: ChatMessage
-    let tool: ToolActivity
+private struct ToolGroupView: View {
+    let messages: [ChatMessage]
+    let settings: ThreadSettings?
+    let active: Bool
+    @Environment(\.mobileTextSize) private var fontSize
     var body: some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 10) {
-                if !tool.arguments.isEmpty { detail("参数", tool.arguments) }
-                if !tool.result.isEmpty { detail("结果", tool.result) }
-                if !tool.error.isEmpty { Text(tool.error).foregroundStyle(.red).textSelection(.enabled) }
-                if !message.contentRef.isEmpty {
-                    Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整详情") { model.perform { try await model.expand(message) } }
-                        .disabled(!model.connected || model.loadingContent.contains(message.id))
-                }
-            }.padding(.top, 8)
-        } label: {
-            HStack {
-                Text(tool.name).lineLimit(2)
-                Spacer(minLength: 8)
-                Text(tool.statusLabel).foregroundStyle(tool.status == "failed" ? Color.red : Color.secondary)
-            }.font(.subheadline)
-        }.accessibilityIdentifier("tool-activity")
-    }
-    private func detail(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(text).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-        }
+        GeometryReader { geometry in
+            SharedAvatar(value: ["tools": .array(messages.compactMap { $0.tool?.presentation }),
+                "active": .bool(active), "fontSize": .number(fontSize),
+                "provider": .string(settings?.provider ?? ""), "model": .string(settings?.model ?? "")],
+                size: max(36, fontSize * 3 + 4), width: geometry.size.width, accessible: true)
+        }.frame(height: max(36, fontSize * 3 + 4)).accessibilityIdentifier("tool-group")
     }
 }
 
@@ -100,7 +85,8 @@ private struct MessageBubble: View {
                     Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
                         .disabled(!model.connected || model.loadingContent.contains(message.id))
                 }
-            }.padding(14)
+            }.padding(.horizontal, message.role == "user" ? 14 : 0)
+                .padding(.vertical, message.role == "user" ? 10 : 0)
                 .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
             if message.role != "user" { Spacer(minLength: 0) }
         }

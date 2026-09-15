@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Simplified iOS conversation activity into desktop-shared tool summaries and
+  mascot motion, with an inline stop control and consistent, dynamically scaled
+  typography across messages, composers, and process rows.
 - Let conversation inputs grow with their contents up to the same height as
   manual expansion, shrink when text is removed, and scroll once full.
 

@@ -9,7 +9,8 @@ const { build } = createRequire(path.join(desktop, "package.json"))("esbuild");
 const result = await build({
   absWorkingDir: path.resolve(directory, "../../.."), entryPoints: [path.join(directory, "src/mascot.tsx")],
   bundle: true, write: false, metafile: true, minify: true, format: "iife", jsx: "automatic", target: ["chrome69", "safari15"],
-  nodePaths: [path.join(desktop, "node_modules")], outfile: "mascot.js", legalComments: "inline", define: { "process.env.NODE_ENV": '"production"' },
+  nodePaths: [path.join(desktop, "node_modules")], outfile: "mascot.js", legalComments: "inline",
+  define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' },
   // Resolve the vendored renderer from this checkout, even when dependencies are shared by a worktree.
   alias: Object.fromEntries([["blobatar", "index.ts"], ["blobatar/blob", "blob.ts"], ["blobatar/expression", "expression.ts"], ["blobatar/react", "react.tsx"], ["blobatar/motion.css", "motion.css"]].map(([name, file]) => [name, path.join(desktop, "vendor/blobatar/src", file)])),
 });

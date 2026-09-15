@@ -8,6 +8,7 @@ import WuuCore
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                .modifier(MobileTypography())
                 .tint(Color.primary)
                 .task { model.foreground() }
                 .onChange(of: pushDelegate.openedHost, initial: true) { _, host in
@@ -209,16 +210,10 @@ struct ConversationView: View {
                 if let request = model.questions.first(where: { $0["thread_id"].string == model.activeID }) {
                     QuestionView(model: model, request: request).id(request["request_id"].string)
                 }
-                if model.live?.running == true {
-                    HStack {
-                        Text("电脑正在工作").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("停止") { model.perform { try await model.stop() } }.font(.caption)
-                    }.padding(.horizontal, 20)
-                }
                 MobileComposer(text: draft, attachments: attachments, model: model,
                     enabled: model.connected && model.live != nil && model.live?.readOnly != true && model.live?.archived != true,
-                    sending: model.sending, placeholder: model.live?.running == true ? "添加后续消息" : "发送消息", identifier: "harness-composer") {
+                    sending: model.sending, placeholder: model.live?.running == true ? "添加后续消息" : "发送消息", identifier: "harness-composer",
+                    stop: model.live?.running == true ? { model.perform { try await model.stop() } } : nil) {
                         let key = draftKey
                         let original = drafts[key] ?? ""
                         let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -230,6 +225,8 @@ struct ConversationView: View {
                         }
                 }
             }.navigationTitle(model.live?.title ?? model.saved?.title ?? "Wuu").navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { Button { drawer.toggle() } label: { Image(systemName: "sidebar.left") }.accessibilityLabel(drawer ? "关闭会话列表" : "会话列表") }
                     ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread(); drawer = false } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }

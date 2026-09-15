@@ -20,6 +20,7 @@ struct HostView: View {
 }
 
 struct CollaborationView: View {
+    @Environment(\.mobileTextSize) private var textSize
     @Bindable var app: AppModel
     @Bindable var model: CollaborationModel
     @State private var account = false
@@ -70,7 +71,7 @@ struct CollaborationView: View {
                         ToolbarItem(placement: .principal) {
                             HStack(spacing: 7) {
                                 RoomMark(room: room, agents: model.agents, size: 27)
-                                Text(room.title(agents: model.agents)).font(.system(size: 16, weight: .semibold)).lineLimit(1)
+                                Text(room.title(agents: model.agents)).font(.system(size: textSize, weight: .medium)).lineLimit(1)
                             }.accessibilityElement(children: .combine)
                         }
                         ToolbarItem(placement: .topBarTrailing) {
@@ -129,7 +130,7 @@ struct CollaborationView: View {
                             RoomMark(room: room, agents: model.agents)
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack {
-                                    Text(room.title(agents: model.agents)).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                                    Text(room.title(agents: model.agents)).font(.system(size: textSize, weight: .medium)).lineLimit(1)
                                     Spacer(minLength: 8)
                                     Text(mobileMessageTime(room.updated)).font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
@@ -323,6 +324,7 @@ private struct CollaborationMessageRow: View {
 }
 
 private struct CollaborationBubble<Content: View>: View {
+    @Environment(\.mobileTextSize) private var textSize
     let own: Bool
     let agent: CollaborationAgent?
     var status: String? = nil
@@ -332,7 +334,7 @@ private struct CollaborationBubble<Content: View>: View {
             if own { Spacer(minLength: 40) }
             if !own, let agent { AgentMark(agent: agent, size: 22, status: status, subtle: status == nil) }
             VStack(alignment: .leading, spacing: 6, content: content)
-                .font(.system(size: 15)).lineSpacing(3)
+                .font(.system(size: textSize))
                 .foregroundStyle(own ? Color(uiColor: .systemBackground) : Color.primary)
                 .padding(.horizontal, 14).padding(.vertical, 9)
                 .background(own ? Color.primary : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))

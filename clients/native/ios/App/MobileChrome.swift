@@ -53,6 +53,7 @@ func mobileMessageTime(_ value: String, separator: Bool = false) -> String {
 }
 
 struct MobileComposer: View {
+    @Environment(\.mobileTextSize) private var textSize
     @Binding var text: String
     @Binding var attachments: [InputAttachment]
     let model: AppModel
@@ -60,6 +61,7 @@ struct MobileComposer: View {
     var sending = false
     var placeholder = "发送消息"
     var identifier = "native-composer"
+    var stop: (() -> Void)? = nil
     var send: () -> Void
     private var canSend: Bool { enabled && !sending && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
     var body: some View {
@@ -93,9 +95,19 @@ struct MobileComposer: View {
                 HStack(alignment: .bottom, spacing: 4) {
                     TextField(enabled ? placeholder : "连接电脑后发送", text: $text, axis: .vertical)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .font(.system(size: 15)).lineLimit(1...6)
+                        .font(.system(size: textSize)).lineLimit(1...6)
                         .padding(.leading, 15).padding(.vertical, 12).disabled(!enabled)
                         .accessibilityIdentifier(identifier)
+                    if let stop {
+                        Button(action: stop) {
+                            Image(systemName: "stop.fill").font(.system(size: 13))
+                                .frame(width: 28, height: 28)
+                                .foregroundStyle(Color(uiColor: .systemBackground))
+                                .background(Color.primary, in: Circle())
+                                .frame(width: 44, height: 44)
+                        }.disabled(!enabled).accessibilityLabel("停止生成")
+                    }
+                    if stop == nil || canSend || sending {
                     Button(action: send) {
                         Group {
                             if sending { ProgressView().tint(Color(uiColor: .systemBackground)).scaleEffect(0.7) }
@@ -105,6 +117,7 @@ struct MobileComposer: View {
                             .background(canSend || sending ? Color.primary : Color.primary.opacity(0.08), in: Circle())
                             .frame(width: 44, height: 44)
                     }.disabled(!canSend).accessibilityLabel(sending ? "正在发送" : "发送")
+                    }
                 }.background(Color(uiColor: .secondarySystemBackground).opacity(0.6), in: RoundedRectangle(cornerRadius: 24))
                     .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
             }
