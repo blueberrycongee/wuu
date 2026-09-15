@@ -1,3 +1,4 @@
+import { shutdownChild } from "./childShutdown";
 import { StringDecoder } from "node:string_decoder";
 import type { ActivitySession } from "../shared/protocol";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -145,17 +146,15 @@ export class CUANativePiP {
     // Native staging and state restoration use public AX APIs. Leave enough
     // time for a graceful close to put a hidden/minimized target back before a
     // genuinely stuck helper is terminated.
-    const forceStop = setTimeout(() => child.kill("SIGTERM"), CUA_PIP_FORCE_STOP_TIMEOUT_MS);
-    forceStop.unref?.();
-    child.once("close", () => {
-      clearTimeout(forceStop);
-      onStopped?.();
-    });
-    if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-      child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
-    } else {
-      child.kill("SIGTERM");
-    }
+    void shutdownChild(child, () => {
+      if (!child.stdin.destroyed && !child.stdin.writableEnded) {
+        child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
+      } else {
+        child.kill("SIGTERM");
+      }
+    }, CUA_PIP_FORCE_STOP_TIMEOUT_MS)
+      .catch((error) => this.onError(error.message))
+      .finally(() => onStopped?.());
   }
 
   isLive(): boolean { return this.child !== undefined; }

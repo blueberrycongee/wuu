@@ -298,3 +298,28 @@ describe("browser observation surface", () => {
     expect(surfaces).toHaveLength(2);
   });
 });
+
+
+it("shutdown waits for preview exit and prevents a queued replacement from starting", async () => {
+  let stopped: (() => void) | undefined;
+  const starts = vi.fn();
+  const coordinator = new ObservationCoordinator(
+    { mainWindow: () => undefined } as unknown as WindowRegistry,
+    undefined,
+    () => ({
+      start: starts, setVisible: vi.fn(), setLive: vi.fn(), animateInteraction: vi.fn(),
+      stop: (callback?: () => void) => { stopped = callback; },
+    }),
+  );
+  coordinator.setActiveThread("thread-1");
+  coordinator.update(activity());
+  coordinator.update(activity({ process_id: 43, updated_at: "2026-07-10T10:00:02Z" }));
+  let finished = false;
+  const done = coordinator.shutdown().then(() => { finished = true; });
+  await Promise.resolve();
+  expect(finished).toBe(false);
+  stopped?.();
+  await done;
+  coordinator.update(activity({ updated_at: "2026-07-10T10:00:03Z" }));
+  expect(starts).toHaveBeenCalledTimes(1);
+});

@@ -13,6 +13,7 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  configurePackagedCUA,
   activityServerRequestRejection,
   AppServerClient,
   type AppServerClientEvent,
@@ -450,4 +451,34 @@ it("forwards a snapshot response before the next notification in the same stdout
     await pending;
     expect(order).toEqual(["snapshot", "notification"]);
   } finally { client.dispose(); }
+});
+
+
+describe("packaged CUA", () => {
+  it("uses the installed bundle instead of stale development overrides", () => {
+    const env: NodeJS.ProcessEnv = { WUU_CUA_MAC_HELPER: "/old/helper", WUU_CUA_MAC_PIP_HELPER: "/old/pip" };
+    configurePackagedCUA(env, "/Applications/wuu.app/Contents/Resources", "darwin", () => true);
+    expect(env.WUU_ENABLE_CUA_MAC).toBe("1");
+    expect(env.WUU_CUA_MAC_HELPER).toBe("/Applications/wuu.app/Contents/Resources/bin/wuu-cua-mac");
+    expect(env.WUU_CUA_MAC_PIP_HELPER).toBe("/Applications/wuu.app/Contents/Resources/bin/wuu-cua-mac-pip");
+  });
+  it("does not enable a broken installation or inherit external helpers", () => {
+    const env: NodeJS.ProcessEnv = { WUU_ENABLE_CUA_MAC: "1", WUU_CUA_MAC_HELPER: "/old/helper" };
+    configurePackagedCUA(env, "/app", "darwin", (path) => !path.endsWith("-pip"));
+    expect(env.WUU_ENABLE_CUA_MAC).toBeUndefined();
+    expect(env.WUU_CUA_MAC_HELPER).toBeUndefined();
+  });
+});
+
+
+it("does not restart a disposed core while the desktop is waiting for exit", async () => {
+  const child = new FakeAppServerChild();
+  const spawn = vi.fn(() => child.asChildProcess());
+  const { client } = makeClient(spawn);
+  client.start();
+  const stopped = client.dispose();
+  expect(() => client.start()).toThrow("disposed");
+  expect(spawn).toHaveBeenCalledTimes(1);
+  child.emit("exit", 0, null);
+  await stopped;
 });

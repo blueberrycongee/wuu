@@ -169,7 +169,7 @@ import type {
   ChannelRoomPreferences,
   VoicePermissionStatus,
 } from "../shared/protocol";
-import { AppServerClientPool } from "./appServerClients";
+import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
 import { ObservationCoordinator, activityControlMethod } from "./cuaActivityWindows";
 import { createObservationPiPFactory } from "./browserPiPWindow";
@@ -1177,6 +1177,7 @@ async function directorySize(path: string): Promise<number> {
 }
 
 app.whenReady().then(async () => {
+  if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
   setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
   installProductionAppShellGuards({
     isPackaged: app.isPackaged,
@@ -2560,16 +2561,27 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+let quitCleanup: Promise<void> | undefined;
+let quitCleanupFinished = false;
+app.on("before-quit", (event) => {
+  if (quitCleanupFinished) return;
+  event.preventDefault();
+  if (quitCleanup) return;
   speechRecognitionService.stop();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts
   // down so no WebContentsView leaks past quit.
   browserHostCoordinator.destroyAll();
-  appServerClientPool.shutdown();
-  // SIGTERM goes out synchronously; the daemon's own signal handling shuts
-  // the relay connection down cleanly.
-  void phoneAccess.shutdown();
+  quitCleanup = Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()])
+    .then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") console.error("Shutdown cleanup failed", result.reason);
+      }
+    })
+    .finally(() => {
+      quitCleanupFinished = true;
+      app.quit();
+    });
 });
 
 app.on("window-all-closed", () => {

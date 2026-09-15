@@ -117,6 +117,8 @@ export class ObservationCoordinator {
   private current: PiPEntry | undefined;
   private replacement: { activity: ActivitySession; key: string } | undefined;
   private replacementInFlight = false;
+  private pendingStop: Promise<void> = Promise.resolve();
+  private closed = false;
   private userBounds: Rectangle | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconcileInFlight = false;
@@ -145,6 +147,7 @@ export class ObservationCoordinator {
   }
 
   setActiveThread(threadID?: string): void {
+    if (this.closed) return;
     this.activeThreadID = threadID?.trim() || undefined;
     if (this.current?.threadID !== this.activeThreadID) this.current?.pip.setVisible(false);
     if (this.replacement?.activity.thread_id !== this.activeThreadID) this.replacement = undefined;
@@ -153,6 +156,7 @@ export class ObservationCoordinator {
   }
 
   update(activity: ActivitySession): void {
+    if (this.closed) return;
     if (!isObservableActivity(activity)) return;
     if (!activity.target?.trim()) return;
     const current = this.observations.get(activity.thread_id);
@@ -178,6 +182,18 @@ export class ObservationCoordinator {
     }
     if (this.replacement?.activity.workdir === workdir) this.replacement = undefined;
     if (this.current?.activity.workdir === workdir) this.stopCurrent();
+  }
+
+  shutdown(): Promise<void> {
+    this.closed = true;
+    this.activeThreadID = undefined;
+    this.replacement = undefined;
+    this.observations.clear();
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
+    this.stopCurrent();
+    return this.pendingStop;
   }
 
   private syncActiveObservation(): void {
@@ -244,9 +260,12 @@ export class ObservationCoordinator {
     // cannot let a replacement start before the old process has closed.
     this.replacementInFlight = true;
     this.current = undefined;
-    outgoing.pip.stop(() => {
-      this.replacementInFlight = false;
-      this.startReplacement();
+    this.pendingStop = new Promise<void>((resolve) => {
+      outgoing.pip.stop(() => {
+        this.replacementInFlight = false;
+        this.startReplacement();
+        resolve();
+      });
     });
   }
 
