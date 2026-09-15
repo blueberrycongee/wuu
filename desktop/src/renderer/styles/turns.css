@@ -2657,6 +2657,16 @@
   flex: 0 0 auto;
 }
 
+/*
+ * The in-progress form of a system event carries a 28px mascot inside a
+ * 20px-min row; when it settles the mascot unmounts and the row would shrink
+ * back to its 20px minimum, so the whole turn reflows. Pin the summary row to
+ * the same 28px footprint in both states so settling never changes its height.
+ */
+.system-event-notice .process-surface-row {
+  min-height: 28px;
+}
+
 .system-event-detail {
   display: block;
   flex: 1 1 auto;
@@ -2707,6 +2717,26 @@
   gap: 10px;
 }
 
+/*
+ * Boxed recovery cards are turn siblings, so they only inherit the 8px item
+ * rhythm. The process↔answer landmark is 16px — the same pause a diff card
+ * gets after prose. Add the remainder; the parent gap already supplies the
+ * rest. After a user bubble, subtract the bubble's trailing gap so the
+ * visible band stays 16px rather than 24px.
+ */
+.turn > .stream-reconnect-notice {
+  margin-top: calc(
+    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
+  );
+}
+
+.turn > .user-message-block + .stream-reconnect-notice {
+  margin-top: calc(
+    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap) -
+      var(--conversation-user-message-trailing-gap)
+  );
+}
+
 .stream-reconnect-icon { flex: 0 0 auto; }
 .stream-reconnect-title {
   flex: 1 1 auto;
@@ -2715,7 +2745,8 @@
 }
 
 .stream-reconnect-status,
-.stream-reconnect-retry {
+.stream-reconnect-retry,
+.stream-reconnect-stopped {
   position: relative;
   flex: 0 0 auto;
   overflow: hidden;
@@ -2729,6 +2760,9 @@
   line-height: 20px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .stream-reconnect-status {
@@ -2755,7 +2789,7 @@
 
 .stream-reconnect-stopped {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
@@ -5092,7 +5126,7 @@ pre {
 }
 
 .turn-edit-summary-card {
-  margin: 14px 0 0;
+  margin: var(--conversation-process-answer-gap) 0 0;
   width: 100%;
   min-width: 0;
   max-width: none;

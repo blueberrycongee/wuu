@@ -385,7 +385,8 @@ describe("RuntimePicker", () => {
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    expect(document.querySelector(".runtime-panel-effort-value")?.textContent).toBe("High");
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("High");
+    expect(document.querySelector(".codex-effort-slider + .runtime-panel-effort-value")).toBeNull();
     expect(onSelectEffort).not.toHaveBeenCalled();
 
     act(() => slider.dispatchEvent(new Event("pointerup", { bubbles: true })));

@@ -238,7 +238,7 @@ function RuntimePanelSummary({
       </div>
       <button type="button" className="runtime-panel-model" onClick={onOpenModels}>
         <span className="runtime-panel-model-name">{model}</span>
-        {!compactSummary ? <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span> : null}
+        <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span>
         <ChevronRight aria-hidden="true" />
       </button>
       {effortOptions.length > 1 ? (
@@ -250,7 +250,6 @@ function RuntimePanelSummary({
           onPreviewEffort={setPreviewEffort}
           onSelectEffort={onSelectEffort}
         />
-        {compactSummary ? <span className="runtime-panel-effort-value">{variantLabel(previewEffort)}</span> : null}
         </div>
       ) : null}
       {onHandoff ? (

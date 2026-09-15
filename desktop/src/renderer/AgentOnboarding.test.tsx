@@ -251,6 +251,8 @@ describe("AgentOnboarding", () => {
   it("embeds the shared provider and model views without an engine switch", async () => {
     const { close } = await mount();
     expect(query(".runtime-panel-context").textContent).toBe("primary");
+    expect(query(".runtime-panel-model .runtime-panel-effort-value").textContent).toBe("High");
+    expect(document.querySelector(".runtime-panel-effort-row .runtime-panel-effort-value")).toBeNull();
     await click(".runtime-panel-model");
     expect(document.querySelector('input[type="search"]')).not.toBeNull();
     expect(close).not.toHaveBeenCalled();
