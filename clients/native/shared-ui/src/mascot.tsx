@@ -3,8 +3,7 @@ import { flushSync } from "react-dom";
 import { AgentAvatarMark, type AgentAvatarStatus } from "../../../../desktop/src/renderer/AgentAvatarMark";
 import { ChannelGroupAvatar } from "../../../../desktop/src/renderer/ChannelGroupAvatar";
 import { WuuMascot, type WuuMascotActivity } from "../../../../desktop/src/renderer/WuuMascot";
-import { buildToolActivityProcessSegments } from "../../../../desktop/src/renderer/ToolActivityHelpers";
-import { condensedToolActivityText, mascotActivityForToolKind } from "../../../../desktop/src/renderer/ProcessSummary";
+import { summarize } from "./process";
 import type { ThreadItem } from "../../../../desktop/src/shared/protocol";
 import type { ChannelRoom, NamedAgent } from "../../../../packages/protocol/src";
 import "../../../../desktop/src/renderer/styles/default-avatar.css";
@@ -57,14 +56,12 @@ window.renderWuuAvatar = (props: AvatarProps) => {
   const agent = props.agent ? agentRecord(props.agent) : room?.kind === "dm"
     ? agents.find(agent => room.members.some(member => member.member_type === "agent" && member.member_id === agent.id)) : undefined;
   const status = props.status ?? (agent?.activity_status === "thinking" ? "thinking" : "idle");
-  const segments = buildToolActivityProcessSegments(props.tools ?? []);
-  const current = [...segments].reverse().find(segment => segment.status === "running") ?? segments.at(-1);
-  const summary = condensedToolActivityText(segments, props.tools?.length ?? 0, false);
+  const summary = props.tools ? summarize(props.tools) : undefined;
   // A reduced-motion change remounts the effects so they observe the new setting.
   flushSync(() => root.render(<div className="native-avatar" key={String(reducedMotion)}>
     {props.tools ? <div className="native-process" style={{ fontSize: props.fontSize ?? 14 }}>
-      {props.active && <WuuMascot visible size={28} activity={mascotActivityForToolKind(current?.kind)} provider={props.provider} model={props.model} />}
-      <span style={{ color: segments.some(segment => segment.status === "failed") ? "var(--status-error, #c33)" : undefined }}>{summary}</span>
+      {props.active && <WuuMascot visible size={28} activity={summary?.activity} provider={props.provider} model={props.model} />}
+      <span style={{ color: summary?.failed ? "var(--status-error, #c33)" : undefined }}>{summary?.text}</span>
     </div> : props.conversation ? <WuuMascot visible size={size} activity={props.activity ?? "thinking"} provider={props.provider} model={props.model} /> :
       room && room.kind !== "dm" ? <ChannelGroupAvatar room={{ ...room, avatar_image: embeddedImage(room.avatar_image) }} agents={agents} /> :
       <AgentAvatarMark seed={agent?.id ?? "wuu"} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image}

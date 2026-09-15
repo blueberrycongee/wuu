@@ -22,20 +22,16 @@ private enum AvatarDocument {
 struct SharedAvatar: View {
     let value: JSONValue
     let size: CGFloat
-    var width: CGFloat? = nil
-    var accessible = false
-    var onHeightChange: ((CGFloat) -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        AvatarSurface(payload: payload, accessible: accessible, onHeightChange: onHeightChange).frame(width: width ?? size, height: size)
-            .allowsHitTesting(accessible).accessibilityHidden(!accessible)
+        AvatarSurface(payload: payload).frame(width: size, height: size)
+            .allowsHitTesting(false).accessibilityHidden(true)
     }
     private var payload: String {
         guard case .object(var fields) = value else { return "{}" }
         fields["size"] = .number(Double(size))
-        fields["width"] = .number(Double(width ?? size))
         fields["dark"] = .bool(scheme == .dark); fields["paused"] = .bool(phase != .active); fields["reducedMotion"] = .bool(reduceMotion)
         return (try? String(decoding: JSONEncoder().encode(JSONValue.object(fields)), as: UTF8.self)) ?? "{}"
     }
@@ -43,8 +39,6 @@ struct SharedAvatar: View {
 
 private struct AvatarSurface: UIViewRepresentable {
     let payload: String
-    let accessible: Bool
-    let onHeightChange: ((CGFloat) -> Void)?
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -53,13 +47,12 @@ private struct AvatarSurface: UIViewRepresentable {
         view.isOpaque = false; view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear; view.scrollView.isScrollEnabled = false
         view.scrollView.contentInsetAdjustmentBehavior = .never
-        view.isUserInteractionEnabled = accessible; view.isAccessibilityElement = false; view.accessibilityElementsHidden = !accessible
+        view.isUserInteractionEnabled = false; view.isAccessibilityElement = false; view.accessibilityElementsHidden = true
         view.navigationDelegate = context.coordinator
         view.loadHTMLString(AvatarDocument.html, baseURL: nil)
         return view
     }
     func updateUIView(_ view: WKWebView, context: Context) {
-        context.coordinator.onHeightChange = onHeightChange
         context.coordinator.update(payload, view: view)
     }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
@@ -69,18 +62,13 @@ private struct AvatarSurface: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         private var loaded = false
         private var payload = "{}"
-        var onHeightChange: ((CGFloat) -> Void)?
         func update(_ value: String, view: WKWebView) {
             guard payload != value else { return }
             payload = value; render(view)
         }
         private func render(_ view: WKWebView) {
             guard loaded else { return }
-            view.evaluateJavaScript("window.renderWuuAvatar(\(payload))") { [weak self] result, _ in
-                if let height = result as? Double, height > 0 {
-                    self?.onHeightChange?(min(512, max(28, CGFloat(height))))
-                }
-            }
+            view.evaluateJavaScript("window.renderWuuAvatar(\(payload))")
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loaded = true; render(webView) }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

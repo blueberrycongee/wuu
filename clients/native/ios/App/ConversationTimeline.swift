@@ -60,17 +60,31 @@ private struct ToolGroupView: View {
     let messages: [ChatMessage]
     let settings: ThreadSettings?
     let active: Bool
-    @Environment(\.mobileTextSize) private var fontSize
-    @State private var measuredHeight: CGFloat?
-    private var height: CGFloat { measuredHeight ?? max(36, fontSize * 3 + 4) }
+    @State private var summary: ToolSummary?
+    @State private var failed = false
+    @State private var request: Task<Void, Never>?
+    private static let engine = ToolSummaryEngine(script: {
+        guard let url = Bundle.main.url(forResource: "process", withExtension: "js", subdirectory: "NativeUI") else { return "" }
+        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    }())
     var body: some View {
-        GeometryReader { geometry in
-            SharedAvatar(value: ["tools": .array(messages.compactMap { $0.tool?.presentation }),
-                "active": .bool(active), "fontSize": .number(fontSize),
-                "provider": .string(settings?.provider ?? ""), "model": .string(settings?.model ?? "")],
-                size: height, width: geometry.size.width, accessible: true,
-                onHeightChange: { measuredHeight = $0 })
-        }.frame(height: height).accessibilityIdentifier("tool-group")
+        HStack(alignment: .top, spacing: 8) {
+            if active { ConversationActivityMark(activity: summary?.activity ?? "tool", settings: settings) }
+            Text(summary?.text ?? (failed ? "动作摘要暂不可用" : "…"))
+                .foregroundStyle(summary?.failed == true ? Color.red : Color.secondary)
+                .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+        }.accessibilityIdentifier("tool-group")
+            .onAppear { refresh() }
+            .onChange(of: messages) { _, _ in refresh() }
+            .onDisappear { request?.cancel() }
+    }
+    private func refresh() {
+        request?.cancel()
+        request = Task {
+            let next = try? await Self.engine.summarize(messages.compactMap { $0.tool?.presentation })
+            guard !Task.isCancelled else { return }
+            summary = next; failed = next == nil
+        }
     }
 }
 
