@@ -88,11 +88,9 @@ struct CollaborationView: View {
     }
     @ViewBuilder private var connectionNotice: some View {
         if !app.connected {
-            HStack {
-                Text(app.connecting ? "正在连接…" : "电脑离线 · 消息只读")
-                Spacer()
-                Button("重连") { Task { await app.connect() } }.disabled(app.connecting)
-            }.font(.caption).padding(.horizontal, 20).padding(.vertical, 8)
+            ConnectionStatusView(connecting: app.connecting, offlineMessage: "电脑离线 · 消息只读", detail: app.connectionStatus) {
+                Task { await app.connect() }
+            }
         }
         if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).padding(12) }
     }

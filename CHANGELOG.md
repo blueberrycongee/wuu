@@ -39,6 +39,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Kept native iOS tab switching on directory pages. Conversation pages, including
   empty sessions, use native back navigation and reserve the bottom edge for the
   composer; directory search also hides the tab bar.
+- Matched native iOS connection feedback to the desktop bouncing Wuu letters and
+  blinking caret, with green branding, typed status text, and reduced-motion support.
 
 ## [2026.9.2] - 2026-09-15
 

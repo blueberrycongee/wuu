@@ -227,12 +227,9 @@ struct ConversationView: View {
     private var conversation: some View {
         VStack(spacing: 0) {
             if !model.connected {
-                HStack {
-                    Text(model.connecting ? "正在连接电脑…" : "电脑未连接 · 历史记录只读")
-                        .accessibilityHint(model.connectionStatus)
-                    Spacer()
-                    Button("重连") { Task { await model.connect() } }.disabled(model.connecting)
-                }.font(.caption).padding(12).background(.secondary.opacity(0.08))
+                ConnectionStatusView(connecting: model.connecting, offlineMessage: "电脑未连接 · 历史记录只读", detail: model.connectionStatus) {
+                    Task { await model.connect() }
+                }
             }
             if model.activeID == nil {
                 ContentUnavailableView("继续你的对话", systemImage: "bubble.left.and.bubble.right", description: Text("打开会话列表，或新建会话。"))
