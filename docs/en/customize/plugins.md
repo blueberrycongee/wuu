@@ -105,6 +105,26 @@ wuu plugin remove my-plugin
 - **Compose extension types:** carry Skills, Hooks, MCP servers, commands, Agent code,
   and Desktop code in one package with one install and upgrade lifecycle.
 
+## Coordinate existing sessions
+
+The bundled **Peers** plugin lets an agent contact another existing conversation.
+It is enabled by default; an explicit disabled preference is preserved. Enable it
+in plugin settings if needed, then ask the agent to contact a session by its copied
+ID, or use `/peer` to discover available conversations. Private and archived
+sessions are excluded from discovery.
+
+Requests start a turn on an idle target or queue behind its current work. The
+target's final response is returned once; that return does not automatically send
+another reply. Messages keep their own source label and use the normal bubble,
+including long-text expansion and copying. On Desktop, clicking the source opens
+that conversation alongside the current one. Native phones also show the source.
+Opt-in account history copies preserve attribution as a text heading for older
+server compatibility; offline copies do not provide source navigation.
+Cross-session messages are not direct user instructions and do not change the
+target's permissions or goal. The agent can decline a request; `peer_policy` can
+refuse incoming requests for a session. Disabling Peers removes its tools and
+automatic coordination behavior.
+
 ## Trust boundary
 
 - Agent runtime processes run with the same user authority as Wuu.

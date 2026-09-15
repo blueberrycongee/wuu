@@ -356,6 +356,28 @@
   scroll-margin-top: 12px;
 }
 
+.session-message-source {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ink-muted);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.session-message-source svg { flex: none; }
+.session-message-source span { overflow-wrap: anywhere; }
+.session-message-source:hover:not(:disabled) { color: var(--ink); }
+.session-message-source:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.session-message-source:disabled { cursor: default; }
+
 /*
  * Edit state stretches the message block to the full row width — a "draft
  * surface" needs every horizontal pixel of the conversation column, and

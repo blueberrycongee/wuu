@@ -209,6 +209,10 @@ owner、visibility、parent、fresh/fork、workspace（`shared` 项目目录，�
 `workspace_root`，便于插件记录 Session 的真实运行目录。`host.session.send` 向已有
 Session 投递输入。send 请求包含插件生成的 `request_id`、模型输入、有大小上限的 request-only
 context blocks、稳定 cause，以及可选的 `presentation: { kind: "query_bubble", text, name }`。
+会话间消息使用 `kind: "session_message"`，`text` 填可见消息正文，`related_session_id` 填来源
+Session。宿主记录来源标题快照，历史恢复保留来源 ID，并在现有只读消息气泡上方显示来源。
+来源必须是未归档的共享 Session，或当前插件拥有的私有 Session；不允许向自身或已归档目标发送。
+所有扩展都可以使用这一展示契约，不仅限于内置 Peers 插件；它不会授予额外执行权限。
 插件通过 `if_running: "queue" | "steer"` 决定目标繁忙时的投递方式：`queue` 在当前 Turn 之后
 再启动一个 Turn，`steer` 则把输入注入当前 Turn。默认仍为 `queue`；steer 成功时返回
 `steered: true` 和当前 `turn_id`。steer 不会创建第二组生命周期事件，也不能携带

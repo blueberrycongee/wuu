@@ -556,6 +556,41 @@ describe("ThreadItemView", () => {
     expect(onEditMessage).not.toHaveBeenCalled();
   });
 
+  it("expands and copies a session message body and opens its source without exposing internal input", async () => {
+    const openInSplit = vi.fn();
+    setOpenThreadInSplitHandler(openInSplit);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
+    const body = "Coordination update.\n".repeat(100) + "End of update.";
+    const onEditMessage = vi.fn();
+    render({
+      item: {
+        id: "peer-message", type: "user_message", text: body,
+        input_text: "Private delivery instructions", related_session_id: "source-session",
+        name: "Source task", origin: "plugin", origin_id: "alternative-messenger",
+        presentation_kind: "session_message", read_only: true,
+      },
+      turnStatus: "completed", streaming: false, onEditMessage,
+    });
+    expect(container?.textContent).toContain("Source task");
+    expect(container?.textContent).not.toContain("Private delivery instructions");
+    expect(container?.textContent).not.toContain("End of update.");
+    const toggle = container!.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(container?.textContent).toContain("End of update.");
+    const actions = container!.querySelectorAll<HTMLButtonElement>(".user-message-actions button");
+    expect(actions).toHaveLength(1);
+    await act(async () => actions[0].click());
+    expect(copy).toHaveBeenCalledWith(body);
+    act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
+    expect(openInSplit).toHaveBeenCalledWith("source-session");
+    expect(onEditMessage).not.toHaveBeenCalled();
+    act(() => toggle.click());
+    expect(container?.textContent).not.toContain("End of update.");
+    setOpenThreadInSplitHandler(undefined);
+  });
+
   it("does not show a related-session action without a related session", () => {
     render({
       item: {

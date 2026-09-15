@@ -3,7 +3,7 @@ package ai.wuu.nativeapp
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ChatMessage(val id: String, val role: String, val text: String, val contentRef: String = "", val attachments: List<String> = emptyList(), val tool: ToolActivity? = null, val turnId: String = "")
+data class ChatMessage(val id: String, val role: String, val text: String, val contentRef: String = "", val attachments: List<String> = emptyList(), val tool: ToolActivity? = null, val turnId: String = "", val sourceSessionId: String = "", val sourceSessionName: String = "")
 data class ToolActivity(val name: String, val status: String, val arguments: String, val result: String, val error: String) {
     val statusLabel get() = when (status) { "in_progress" -> "执行中"; "completed" -> "已完成"; "failed" -> "失败"; "ended" -> "已结束"; else -> "状态未知" }
     companion object {
@@ -47,7 +47,9 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
                     item.optJSONObject("result_detail")?.optJSONArray("content")?.objects().orEmpty().filter { it.optString("type") == "image" }.map {
                         JSONObject(it.toString()).put("media_type", it.optString("mime_type"))
                     }).map { it.toString() },
-                if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"))
+                if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"),
+                sourceSessionId = if (item.optString("origin") == "plugin" && item.optString("presentation_kind") == "session_message") item.optString("related_session_id") else "",
+                sourceSessionName = item.optString("name"))
         }
         val error = turn.optJSONObject("error")?.optString("message").orEmpty()
         val cancelled = turn.optString("status") == "interrupted" && turn.optJSONObject("error")?.optString("category") == "cancelled"

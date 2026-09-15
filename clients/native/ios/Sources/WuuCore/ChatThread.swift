@@ -7,9 +7,12 @@ public struct ChatMessage: Identifiable, Sendable, Equatable {
     public var contentRef: String
     public var attachments: [JSONValue]
     public var tool: ToolActivity?
-    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil) {
+    public var sourceSessionID: String
+    public var sourceSessionName: String
+    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "") {
         self.id = id; self.role = role; self.text = text; self.contentRef = contentRef; self.attachments = attachments
         self.tool = tool
+        self.sourceSessionID = sourceSessionID; self.sourceSessionName = sourceSessionName
     }
 }
 
@@ -92,7 +95,9 @@ public struct ChatThread: Identifiable, Sendable {
                         item["result_detail"]["content"].array.filter { $0["type"].string == "image" }.map { part in
                             ["media_type": part["mime_type"], "data": part["data"], "remote_ref": part["remote_ref"]]
                         },
-                    tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil)
+                    tool: type == "tool_call" ? ToolActivity(item, turnStatus: turn["status"].string ?? "") : nil,
+                    sourceSessionID: item["origin"].string == "plugin" && item["presentation_kind"].string == "session_message" ? item["related_session_id"].string ?? "" : "",
+                    sourceSessionName: item["name"].string ?? "")
             }
             let cancelled = turn["status"].string == "interrupted" && turn["error"]["category"].string == "cancelled"
             if let error = turn["error"]["message"].string, !cancelled, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {

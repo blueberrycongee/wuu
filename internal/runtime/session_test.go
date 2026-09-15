@@ -3107,8 +3107,9 @@ func TestNewThreadRuntimeCreatesIsolatedMutableRuntime(t *testing.T) {
 	if len(rt.BaseSystemPromptSections) == 0 {
 		t.Fatal("base system prompt should expose section metadata")
 	}
-	if len(first.StreamRunner.SystemPromptSections) != len(rt.BaseSystemPromptSections) {
-		t.Fatalf("thread stream runner lost system prompt sections: got %d want %d", len(first.StreamRunner.SystemPromptSections), len(rt.BaseSystemPromptSections))
+	// The runner also carries plugin-contributed sections, unlike the core-only base metadata.
+	if len(first.StreamRunner.SystemPromptSections) != len(rt.StreamRunner.SystemPromptSections) {
+		t.Fatalf("thread stream runner lost system prompt sections: got %d want %d", len(first.StreamRunner.SystemPromptSections), len(rt.StreamRunner.SystemPromptSections))
 	}
 	if first.StreamRunner.SystemPromptSections[0].Key != rt.BaseSystemPromptSections[0].Key ||
 		first.StreamRunner.SystemPromptSections[0].Hash != rt.BaseSystemPromptSections[0].Hash {

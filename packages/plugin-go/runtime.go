@@ -547,6 +547,8 @@ type SessionInput struct {
 }
 
 type SessionInputPresentation struct {
+	// session_message displays text in a read-only bubble attributed to
+	// related_session_id. The host resolves the source title from its store.
 	Kind             string `json:"kind"`
 	Text             string `json:"text"`
 	Name             string `json:"name,omitempty"`

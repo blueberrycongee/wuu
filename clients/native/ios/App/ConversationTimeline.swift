@@ -77,20 +77,38 @@ private struct ToolGroupView: View {
 private struct MessageBubble: View {
     @Bindable var model: AppModel
     let message: ChatMessage
+    @State private var expanded = false
+    private var collapsible: Bool { !message.sourceSessionID.isEmpty && (message.text.count > 400 || message.text.filter { $0 == "\n" }.count > 6) }
     var body: some View {
         HStack {
             if message.role == "user" { Spacer(minLength: 36) }
-            VStack(alignment: .leading, spacing: 8) {
-                MessageText(text: message.text, markdown: message.role == "assistant")
-                    .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
-                MessageAttachments(model: model, message: message)
-                if !message.contentRef.isEmpty {
-                    Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
-                        .disabled(!model.connected || model.loadingContent.contains(message.id))
+            VStack(alignment: .trailing, spacing: 8) {
+                if !message.sourceSessionID.isEmpty {
+                    Button { model.perform { try await model.open(message.sourceSessionID) } } label: {
+                        Label("由 Wuu 从「\(message.sourceSessionName.isEmpty ? message.sourceSessionID : message.sourceSessionName)」发送", systemImage: "bubble.left.and.bubble.right")
+                            .multilineTextAlignment(.trailing).foregroundStyle(.secondary)
+                    }.buttonStyle(.plain).disabled(!model.connected)
                 }
-            }.padding(.horizontal, message.role == "user" ? 14 : 0)
-                .padding(.vertical, message.role == "user" ? 10 : 0)
-                .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
+                VStack(alignment: .leading, spacing: 8) {
+                    MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text, markdown: message.role == "assistant")
+                        .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
+                    if collapsible {
+                        Button(expanded ? "收起" : "显示更多", systemImage: expanded ? "chevron.up" : "chevron.down") { expanded.toggle() }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                    MessageAttachments(model: model, message: message)
+                    if !message.contentRef.isEmpty {
+                        Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
+                            .disabled(!model.connected || model.loadingContent.contains(message.id))
+                    }
+                }.padding(.horizontal, message.role == "user" ? 14 : 0)
+                    .padding(.vertical, message.role == "user" ? 10 : 0)
+                    .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
+                if !message.sourceSessionID.isEmpty {
+                    Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+                        .labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
             if message.role != "user" { Spacer(minLength: 0) }
         }
     }

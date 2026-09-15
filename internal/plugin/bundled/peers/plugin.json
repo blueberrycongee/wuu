@@ -5,7 +5,7 @@
   "description": "Coordinate independent user-visible sessions with bounded request and reply turns.",
   "icon": "users",
   "version": "0.1.0",
-  "defaultEnabled": false,
+  "defaultEnabled": true,
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
   "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:peers", "timeout": 30 },

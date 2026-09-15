@@ -1336,6 +1336,8 @@ export const zhCN = {
   "message.showMoreFiles": "还有 {count} 个文件",
   "message.collapseFiles": "收起文件",
   "message.openRelatedSession": "打开关联会话",
+  "message.fromSession": "由 Wuu 从「{name}」发送",
+  "message.anotherSession": "另一会话",
   "message.viewFullProcess": "查看完整过程",
   "message.viewProcess": "查看过程",
   "message.addImageOrPdf": "添加图片或 PDF",

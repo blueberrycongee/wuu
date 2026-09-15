@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronDown, ChevronUp, FileText, Info, Plus, Send } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "lucide-react";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
 import {
@@ -265,12 +265,13 @@ function BuiltInThreadItemView({
       // separate inspector plugin.
       const deliveryText = item.input_text?.trim() ?? "";
       const relatedSessionID = item.related_session_id?.trim() || undefined;
+      const sessionMessage = item.origin === "plugin" && item.presentation_kind === "session_message";
+      const sourceLabel = t("message.fromSession", { name: item.name?.trim() || relatedSessionID || t("message.anotherSession") });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a
       // related session get a navigation action.
-      const relatedSessionAvailable = deliveryText !== ""
-        && deliveryText !== displayText.trim()
-        && relatedSessionID !== undefined;
+      const relatedSessionAvailable = relatedSessionID !== undefined
+        && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
           requestOpenThreadInSplit(relatedSessionID);
@@ -285,6 +286,18 @@ function BuiltInThreadItemView({
           data-user-message-id={item.id}
           data-turn-id={turnID}
         >
+          {sessionMessage ? (
+            <button
+              type="button"
+              className="session-message-source"
+              onClick={openRelatedSession}
+              disabled={!relatedSessionAvailable}
+              title={sourceLabel}
+            >
+              <MessagesSquare size={15} aria-hidden="true" />
+              <span>{sourceLabel}</span>
+            </button>
+          ) : null}
           {editing ? (
             <UserMessageInlineEditor
               item={item}
@@ -328,7 +341,7 @@ function BuiltInThreadItemView({
                   iconSize={15}
                 />
               ) : null}
-              {relatedSessionAvailable ? (
+              {relatedSessionAvailable && !sessionMessage ? (
                 <button
                   type="button"
                   className="message-action-button"

@@ -287,14 +287,25 @@ class MainActivity : ComponentActivity() {
                         ToolProcessView(model, entry)
                     } else {
                         val message = (entry as ConversationEntry.Message).message
+                        var expanded by remember(message.id, message.text) { mutableStateOf(false) }
+                        val collapsible = message.sourceSessionId.isNotEmpty() && (message.text.length > 400 || message.text.count { it == '\n' } > 6)
                         Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.role == "user") Alignment.End else Alignment.Start) {
+                            if (message.sourceSessionId.isNotEmpty()) TextButton(onClick = { model.perform { model.open(message.sourceSessionId) } }, enabled = model.connected) {
+                                Text("由 Wuu 从「${message.sourceSessionName.ifEmpty { message.sourceSessionId }}」发送", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             if (message.role == "pending" || message.role == "error") Text(if (message.role == "pending") "等待处理" else "错误",
                                 modifier = Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold, color = if (message.role == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                             SelectionContainer {
                                 Surface(color = if (message.role == "user") MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-                                    shape = MaterialTheme.shapes.medium) { MessageText(message.text, message.role == "assistant",
-                                        if (message.role == "user") Modifier.padding(horizontal = 12.dp, vertical = 12.dp) else Modifier.fillMaxWidth()) }
+                                    shape = MaterialTheme.shapes.medium) {
+                                    Column(if (message.role == "user") Modifier.padding(12.dp) else Modifier.fillMaxWidth()) {
+                                        if (collapsible) {
+                                            Text(message.text, maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
+                                            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "显示更多") }
+                                        } else MessageText(message.text, message.role == "assistant", Modifier)
+                                    }
+                                }
                             }
                             if (message.contentRef.isNotEmpty()) TextButton(onClick = { model.perform { model.expand(message) } }, enabled = model.connected && message.id !in model.loadingContent) {
                                 Text(if (message.id in model.loadingContent) "正在读取…" else "加载完整消息")

@@ -261,6 +261,13 @@ optional model-alias semantics; the create result reports the effective
 existing Session. A send request carries a plugin-generated `request_id`, the
 model input, request-only context blocks with a size cap, a stable `cause`,
 and an optional `presentation: { kind: "query_bubble", text, name }`.
+For messages between Sessions, use `kind: "session_message"`, put the visible
+message body in `text`, and set `related_session_id` to the source Session.
+The host snapshots the source title, preserves its ID through history replay,
+and displays attribution above the existing read-only message bubble. The source
+must be an active shared Session or a private Session owned by the calling plugin;
+self-delivery and archived targets are rejected. This presentation is available
+to all extensions, not only the bundled Peers plugin. It adds no execution authority.
 Plugins choose how a busy target handles the input with
 `if_running: "queue" | "steer"`: `queue` starts another Turn after the active
 one, while `steer` injects the input into the active Turn. The default remains

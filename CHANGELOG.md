@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Enabled cross-session coordination through Peers, with attributed message bodies,
+  source navigation, and expandable existing chat bubbles on Desktop and native mobile.
+
 ### Changed
 
 - Simplified iOS conversation activity into desktop-shared tool summaries and

@@ -211,19 +211,20 @@ const (
 )
 
 const (
-	SessionVisibilityUser          = "user"
-	SessionVisibilityPlugin        = "plugin"
-	SessionListScopeOwned          = "owned"
-	SessionListScopeShared         = "shared"
-	SessionContextFresh            = "fresh"
-	SessionContextFork             = "fork"
-	SessionContextSourceSeed       = "seed"
-	SessionInputPlugin             = "plugin"
-	SessionPresentationQueryBubble = "query_bubble"
-	SessionIfRunningQueue          = "queue"
-	SessionIfRunningSteer          = "steer"
-	SessionInspectWaitNone         = "none"
-	SessionInspectWaitTerminal     = "terminal"
+	SessionVisibilityUser             = "user"
+	SessionVisibilityPlugin           = "plugin"
+	SessionListScopeOwned             = "owned"
+	SessionListScopeShared            = "shared"
+	SessionContextFresh               = "fresh"
+	SessionContextFork                = "fork"
+	SessionContextSourceSeed          = "seed"
+	SessionInputPlugin                = "plugin"
+	SessionPresentationQueryBubble    = "query_bubble"
+	SessionPresentationSessionMessage = "session_message"
+	SessionIfRunningQueue             = "queue"
+	SessionIfRunningSteer             = "steer"
+	SessionInspectWaitNone            = "none"
+	SessionInspectWaitTerminal        = "terminal"
 )
 
 // SessionToolPolicy can only remove tools from the child session's ordinary

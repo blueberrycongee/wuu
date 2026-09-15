@@ -629,20 +629,37 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	msg.ReadOnly = true
 	msg.DisplayContent = "插件已唤醒 Agent"
 	if params.Presentation != nil {
-		if kind := strings.TrimSpace(params.Presentation.Kind); kind != "" && kind != pluginhost.SessionPresentationQueryBubble {
-			return pluginhost.SessionSendResult{}, errors.New("presentation.kind must be query_bubble")
+		if kind := strings.TrimSpace(params.Presentation.Kind); kind != "" {
+			if kind != pluginhost.SessionPresentationQueryBubble && kind != pluginhost.SessionPresentationSessionMessage {
+				return pluginhost.SessionSendResult{}, errors.New("presentation.kind must be query_bubble or session_message")
+			}
+			msg.PresentationKind = kind
 		}
 		if text := strings.TrimSpace(params.Presentation.Text); text != "" {
 			msg.DisplayContent = text
 		}
 		msg.Name = strings.TrimSpace(params.Presentation.Name)
 		msg.RelatedSessionID = strings.TrimSpace(params.Presentation.RelatedSessionID)
+		if msg.PresentationKind == pluginhost.SessionPresentationSessionMessage {
+			if msg.RelatedSessionID == "" || msg.RelatedSessionID == params.SessionID || strings.TrimSpace(params.Presentation.Text) == "" {
+				return pluginhost.SessionSendResult{}, errors.New("session_message requires text and a distinct related_session_id as its source")
+			}
+			if metadata.ArchivedAt != nil {
+				return pluginhost.SessionSendResult{}, errors.New("cannot deliver a session message to an archived session")
+			}
+		}
 		if msg.RelatedSessionID != "" {
 			related, exists, findErr := session.Find(s.rt.SessionDir, msg.RelatedSessionID)
 			if findErr != nil {
 				return pluginhost.SessionSendResult{}, findErr
 			}
-			if !exists || related.Owner != owner {
+			if msg.PresentationKind == pluginhost.SessionPresentationSessionMessage {
+				if !exists || related.ArchivedAt != nil || (related.Visibility == pluginhost.SessionVisibilityPlugin && related.Owner != owner) {
+					return pluginhost.SessionSendResult{}, errors.New("session message source must be an active shared session or owned by the plugin")
+				}
+				// Snapshot the host's title, not a caller-supplied display identity.
+				msg.Name = strings.TrimSpace(related.Title)
+			} else if !exists || related.Owner != owner {
 				return pluginhost.SessionSendResult{}, errors.New("related_session_id must name a session owned by the plugin")
 			}
 		}

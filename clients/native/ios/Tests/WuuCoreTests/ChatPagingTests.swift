@@ -2,6 +2,20 @@ import XCTest
 @testable import WuuCore
 
 final class ChatPagingTests: XCTestCase {
+    func testSessionMessageSourceSurvivesLiveDeliveryAndReload() {
+        let item: JSONValue = ["id": "message", "type": "user_message", "text": "Coordination update",
+            "input_text": "Internal delivery context", "origin": "plugin", "presentation_kind": "session_message",
+            "name": "Source task", "related_session_id": "source"]
+        let turn: JSONValue = ["id": "turn", "items": [item]]
+        var live = ChatThread(["id": "target", "turns": [["id": "turn", "items": []]]])
+        live.apply("item/completed", ["thread_id": "target", "turn_id": "turn", "item": item])
+        let restored = ChatThread(["id": "target", "turns": [turn]])
+        XCTAssertEqual(live.messages, restored.messages)
+        XCTAssertEqual(live.messages.first?.sourceSessionID, "source")
+        XCTAssertEqual(live.messages.first?.sourceSessionName, "Source task")
+        XCTAssertEqual(live.messages.first?.text, "Coordination update")
+    }
+
     func testUserStopPreservesPartialAnswerWithoutSynthesizingFailure() {
         for (status, category, isFailure) in [("interrupted", "cancelled", false), ("failed", "provider", true), ("interrupted", "provider", true)] {
             let turn: JSONValue = ["id": "turn", "status": .string(status),

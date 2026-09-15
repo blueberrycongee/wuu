@@ -994,7 +994,7 @@ export interface HostServiceContracts {
         prompt: string;
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
-      presentation?: { kind: "query_bubble"; text: string; name?: string; related_session_id?: string };
+      presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
       cause?: string;
       if_running?: "queue" | "steer";
       reply_to_turn_id?: string;

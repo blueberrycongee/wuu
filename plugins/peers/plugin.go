@@ -245,7 +245,7 @@ func sendMessage(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCa
 		SessionID: target.SessionID,
 		Input:     pluginapi.SessionInput{Prompt: prompt},
 		Presentation: &pluginapi.SessionInputPresentation{
-			Kind: "query_bubble", Text: "Peer session sent a request", Name: sourceName,
+			Kind: "session_message", Text: message, RelatedSessionID: sourceID,
 		},
 		Cause:     "peer.request",
 		IfRunning: pluginapi.SessionIfRunningQueue,
@@ -522,7 +522,7 @@ func deliverReply(ctx context.Context, host pluginapi.Host, record requestRecord
 		SessionID: record.SourceSessionID,
 		Input:     pluginapi.SessionInput{Prompt: prompt},
 		Presentation: &pluginapi.SessionInputPresentation{
-			Kind: "query_bubble", Text: "Peer session replied", Name: record.TargetName,
+			Kind: "session_message", Text: output, RelatedSessionID: record.TargetSessionID,
 		},
 		Cause: "peer.reply", IfRunning: pluginapi.SessionIfRunningQueue,
 	}, &sent)
