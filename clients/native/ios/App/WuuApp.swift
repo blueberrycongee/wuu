@@ -27,9 +27,22 @@ import WuuCore
 struct RootView: View {
     @Bindable var model: AppModel
     @Environment(\.colorScheme) private var scheme
+    private var isFixture: Bool {
+        #if DEBUG
+        NativeUIFixture.enabled
+        #else
+        false
+        #endif
+    }
+    @ViewBuilder private var fixture: some View {
+        #if DEBUG
+        NativeUIFixtureView(model: model)
+        #endif
+    }
     var body: some View {
         Group {
-            if model.recovery != nil { RecoveryView(model: model) }
+            if isFixture { fixture }
+            else if model.recovery != nil { RecoveryView(model: model) }
             else if model.account == nil { LoginView(model: model) }
             else if model.host == nil { DevicesView(model: model) }
             else { HostView(model: model).id(model.host?.pub) }

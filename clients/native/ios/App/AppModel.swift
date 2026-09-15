@@ -59,7 +59,15 @@ import CryptoKit
     var messages: [ChatMessage] {
         live?.messages ?? saved?.messages.map { ChatMessage(id: $0.stableID, role: $0.role, text: $0.text) } ?? []
     }
+    var conversationRows: [ConversationRow] { live?.rows ?? ConversationRow.grouped(messages) }
     init() {
+        #if DEBUG
+        if NativeUIFixture.enabled {
+            live = NativeUIFixture.thread(); activeID = live?.id; connected = true
+            if let live { NativeUIFixture.configure(collaboration, thread: live) }
+            return
+        }
+        #endif
         clearAbandonedAttachmentPreviews()
         do {
             account = try vault.load("session", as: AccountSession.self)
@@ -249,6 +257,9 @@ import CryptoKit
         else if !snapshot.enabled || !entries.contains(where: { $0.id == activeID }) { saved = nil }
     }
     func foreground() {
+        #if DEBUG
+        if NativeUIFixture.enabled { return }
+        #endif
         isForeground = true
         if account == nil {
             if let pending = try? vault.load("github", as: GitHubPending.self), pending.expires > Date() {
@@ -513,6 +524,9 @@ import CryptoKit
         guard epoch == stamp else { throw CancellationError() }
     }
     func attachmentThumbnail(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
+        #if DEBUG
+        if NativeUIFixture.enabled { return try await fixtureAttachment(message, index: index) }
+        #endif
         guard connected, let remote, let live, message.attachments.indices.contains(index),
               live.messages.contains(where: { $0.id == message.id }) else { throw CancellationError() }
         let stamp = epoch, selected = opening
@@ -521,6 +535,9 @@ import CryptoKit
         return result
     }
     func previewAttachment(_ message: ChatMessage, index: Int) async throws {
+        #if DEBUG
+        if NativeUIFixture.enabled { attachmentPreview = try await fixtureAttachment(message, index: index); return }
+        #endif
         guard connected, let remote, let live, !loadingAttachment, message.attachments.indices.contains(index),
               live.messages.contains(where: { $0 == message }) else { return }
         let stamp = epoch, selection = opening
@@ -531,6 +548,13 @@ import CryptoKit
               self.live?.messages.contains(where: { $0 == message }) == true else { return }
         attachmentPreview = result
     }
+    #if DEBUG
+    private func fixtureAttachment(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
+        try await readMessageAttachment(message.attachments[index], scopeID: "local-ui-fixture", messageID: message.id) { _, _ in
+            throw NativeError.invalid("Fixture must not access the network")
+        }
+    }
+    #endif
     func previewCollaborationAttachment(_ message: CollaborationMessage, field: String, index: Int) async throws {
         guard connected, !loadingAttachment else { return }
         let stamp = epoch; loadingAttachment = true

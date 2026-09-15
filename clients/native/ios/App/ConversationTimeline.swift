@@ -1,16 +1,13 @@
 import SwiftUI
 import WuuCore
 
-private struct TimelineBottom: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 struct ConversationTimeline: View {
     @Bindable var model: AppModel
     @State private var nearBottom = true
+    @State private var following = true
+    @State private var scrollState = TimelineScrollState()
     var body: some View {
-        GeometryReader { viewport in
+        GeometryReader { _ in
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
@@ -18,10 +15,15 @@ struct ConversationTimeline: View {
                             Button(model.loadingHistory ? "正在读取…" : "加载更早的消息") { model.perform { try await model.loadOlder() } }
                                 .disabled(!model.connected || model.loadingHistory)
                         }
-                        ForEach(ConversationRow.grouped(model.messages)) { row in
+                        ForEach(model.conversationRows) { row in
                             if row.isToolGroup {
-                                ToolGroupView(messages: row.messages, settings: model.live?.settings,
-                                    active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ToolGroupView(messages: row.messages, settings: model.live?.settings,
+                                        active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id)
+                                    ForEach(row.messages.filter { !$0.attachments.isEmpty }) { message in
+                                        MessageAttachments(model: model, message: message)
+                                    }
+                                }
                             } else {
                                 MessageBubble(model: model, message: row.messages[0])
                             }
@@ -33,20 +35,23 @@ struct ConversationTimeline: View {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
                                 .accessibilityElement().accessibilityLabel("正在处理")
                         }
-                        Color.clear.frame(height: 1).id("bottom").background {
-                            GeometryReader { geometry in
-                                Color.clear.preference(key: TimelineBottom.self, value: geometry.frame(in: .named("timeline")).maxY)
-                            }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }.padding(16).background {
+                        TimelineScrollReader { next in
+                            let update = scrollState.update(next, following: following)
+                            if nearBottom != next.atBottom { nearBottom = next.atBottom }
+                            if following != update.following { following = update.following }
+                            if update.scrollToBottom { proxy.scrollTo("bottom", anchor: .bottom) }
                         }
-                    }.padding(16)
-                }.coordinateSpace(name: "timeline").defaultScrollAnchor(.bottom)
-                    .onPreferenceChange(TimelineBottom.self) { nearBottom = $0 <= viewport.size.height + 48 }
+                    }
+                }.defaultScrollAnchor(.bottom)
+                    .scrollDismissesKeyboard(.interactively)
                     .onChange(of: model.messages.last) { _, _ in
-                        if nearBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                        if following && scrollState.metrics?.interacting != true { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if !nearBottom {
-                            Button { proxy.scrollTo("bottom", anchor: .bottom) } label: {
+                            Button { following = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
                                 Label("最新消息", systemImage: "arrow.down").font(.caption).padding(10).background(.regularMaterial, in: Capsule())
                             }.padding(12)
                         }
@@ -92,32 +97,34 @@ private struct MessageBubble: View {
     @Bindable var model: AppModel
     let message: ChatMessage
     @State private var expanded = false
-    private var collapsible: Bool { !message.sourceSessionID.isEmpty && (message.text.count > 400 || message.text.filter { $0 == "\n" }.count > 6) }
+    private var collapsible: Bool { !message.sourceSessionID.isEmpty && (message.text.prefix(401).count > 400 || message.text.filter { $0 == "\n" }.count > 6) }
     var body: some View {
         HStack {
             if message.role == "user" { Spacer(minLength: 36) }
-            VStack(alignment: .trailing, spacing: 8) {
+            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
                 if !message.sourceSessionID.isEmpty {
                     Button { model.perform { try await model.open(message.sourceSessionID) } } label: {
                         Label("由 Wuu 从「\(message.sourceSessionName.isEmpty ? message.sourceSessionID : message.sourceSessionName)」发送", systemImage: "bubble.left.and.bubble.right")
                             .multilineTextAlignment(.trailing).foregroundStyle(.secondary)
                     }.buttonStyle(.plain).disabled(!model.connected)
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text, markdown: message.role == "assistant")
-                        .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
-                    if collapsible {
-                        Button(expanded ? "收起" : "显示更多", systemImage: expanded ? "chevron.up" : "chevron.down") { expanded.toggle() }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
-                    }
-                    MessageAttachments(model: model, message: message)
-                    if !message.contentRef.isEmpty {
-                        Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
-                            .disabled(!model.connected || model.loadingContent.contains(message.id))
-                    }
-                }.padding(.horizontal, message.role == "user" ? 14 : 0)
-                    .padding(.vertical, message.role == "user" ? 10 : 0)
-                    .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
+                if !message.text.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text, markdown: message.role == "assistant")
+                            .foregroundStyle(message.role == "error" ? Color.red : Color.primary)
+                        if collapsible {
+                            Button(expanded ? "收起" : "显示更多", systemImage: expanded ? "chevron.up" : "chevron.down") { expanded.toggle() }
+                                .buttonStyle(.plain).foregroundStyle(.secondary)
+                        }
+                    }.padding(.horizontal, message.role == "user" ? 14 : 0)
+                        .padding(.vertical, message.role == "user" ? 10 : 0)
+                        .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
+                }
+                MessageAttachments(model: model, message: message)
+                if !message.contentRef.isEmpty {
+                    Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
+                        .disabled(!model.connected || model.loadingContent.contains(message.id))
+                }
                 if !message.sourceSessionID.isEmpty {
                     Button("复制", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
                         .labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.secondary)

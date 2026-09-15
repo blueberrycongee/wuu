@@ -6,6 +6,7 @@ struct MessageText: View {
     let markdown: Bool
     @Environment(\.mobileTextSize) private var textSize
     @State private var content = MarkdownContent("")
+    @State private var renderedText: String?
     var body: some View {
         Group {
             if markdown, text.utf8.count <= 128 * 1024 {
@@ -39,13 +40,27 @@ struct MessageText: View {
                         guard ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return .discarded }
                         return .systemAction
                     })
-                    .task(id: text) { content = MarkdownContent(text) }
+                    .task(id: text) {
+                        guard renderedText != text else { return }
+                        // Coalesce token bursts before parsing; never parse a long reply on the UI actor.
+                        do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
+                        let value = await Task.detached(priority: .userInitiated) { ParsedMarkdown(text) }.value
+                        guard !Task.isCancelled else { return }
+                        content = value.content; renderedText = text
+                    }
             } else {
                 Text(text).font(.system(size: textSize)).lineSpacing(textSize * 0.2)
             }
         }.textSelection(.enabled)
             .contextMenu { Button("复制消息") { UIPasteboard.general.string = text } }
     }
+}
+
+// MarkdownUI 2.4.1 predates Sendable. Its parsed content is an immutable tree of
+// value-type blocks, inline nodes and strings, with no retained parser pointers.
+private struct ParsedMarkdown: @unchecked Sendable {
+    let content: MarkdownContent
+    init(_ text: String) { content = MarkdownContent(text) }
 }
 
 // Remote Markdown must not fetch tracking images just because a conversation was opened.

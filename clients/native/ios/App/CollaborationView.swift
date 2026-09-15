@@ -176,17 +176,12 @@ struct CollaborationView: View {
     }
 }
 
-private struct CollaborationBottom: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 private struct CollaborationRoomView: View {
     @Bindable var app: AppModel
     @Bindable var model: CollaborationModel
     let room: CollaborationRoom
     @State private var nearBottom = true
-    @GestureState private var dragging = false
+    @State private var scrollState = TimelineScrollState()
     private var timeline: CollaborationTimeline { model.timelines[room.id] ?? CollaborationTimeline() }
     private var draft: Binding<String> { Binding(get: { model.drafts[room.id] ?? "" }, set: { model.drafts[room.id] = $0 }) }
     private var files: Binding<[InputAttachment]> { Binding(get: { model.attachments[room.id] ?? [] }, set: { model.attachments[room.id] = $0 }) }
@@ -218,19 +213,17 @@ private struct CollaborationRoomView: View {
                             ForEach(Array(timeline.responses.enumerated()), id: \.offset) { _, response in
                                 CollaborationActivity(app: app, model: model, response: response)
                             }
-                            Color.clear.frame(height: 1).id("bottom").background {
-                                GeometryReader { geometry in
-                                    Color.clear.preference(key: CollaborationBottom.self, value: geometry.frame(in: .named("collaboration-timeline")).maxY)
-                                }
+                            Color.clear.frame(height: 1).id("bottom")
+                        }.scrollTargetLayout().padding(.horizontal, 12).padding(.vertical, 12).background {
+                            TimelineScrollReader { next in
+                                let update = scrollState.update(next, following: following)
+                                if nearBottom != next.atBottom { nearBottom = next.atBottom }
+                                if following != update.following { model.followingLatest[room.id] = update.following }
+                                if update.scrollToBottom { proxy.scrollTo("bottom", anchor: .bottom) }
                             }
-                        }.scrollTargetLayout().padding(.horizontal, 12).padding(.vertical, 12)
+                        }
                     }.coordinateSpace(name: "collaboration-timeline").defaultScrollAnchor(.bottom).scrollPosition(id: position, anchor: .top)
                         .scrollDismissesKeyboard(.interactively)
-                        .simultaneousGesture(DragGesture(minimumDistance: 3).updating($dragging) { _, state, _ in state = true })
-                        .onPreferenceChange(CollaborationBottom.self) {
-                            nearBottom = $0 <= viewport.size.height + 36
-                            if dragging || nearBottom { model.followingLatest[room.id] = nearBottom }
-                        }
                         .onChange(of: timeline.messages.last) { _, _ in if following { proxy.scrollTo("bottom", anchor: .bottom) } }
                         .onChange(of: timeline.responses) { _, _ in if following { proxy.scrollTo("bottom", anchor: .bottom) } }
                         .onChange(of: viewport.size.height) { _, _ in if following { proxy.scrollTo("bottom", anchor: .bottom) } }
@@ -291,8 +284,14 @@ private struct CollaborationMessageRow: View {
     let agents: [CollaborationAgent]
     let group: Bool
     let messages: [CollaborationMessage]
+    private var tiles: [AttachmentTile] {
+        ["images", "markdown_images", "files"].flatMap { field in
+            message.value[field].array.enumerated().map { AttachmentTile(field: field, index: $0.offset, value: $0.element) }
+        }
+    }
     var body: some View {
-        CollaborationBubble(own: message.isHuman, agent: !message.isHuman && group ? agents.first { $0.id == message.authorID } : nil) {
+        CollaborationBubble(own: message.isHuman, agent: !message.isHuman && group ? agents.first { $0.id == message.authorID } : nil,
+            hasContent: !message.body.isEmpty || !message.taskTitle.isEmpty || message.replyID != nil || message.value["agent_creation_proposal"] != .null) {
             if let replyID = message.replyID, !replyID.isEmpty {
                 Text(messages.first { $0.id == replyID }?.body ?? "回复较早的消息").font(.caption).opacity(0.7).lineLimit(3).padding(.leading, 8)
                     .overlay(alignment: .leading) { Capsule().fill(Color.primary.opacity(0.2)).frame(width: 2) }
@@ -302,41 +301,37 @@ private struct CollaborationMessageRow: View {
                 Text(collaborationStatus(message.taskState)).font(.caption).opacity(0.7)
             }
             if !message.body.isEmpty { MessageText(text: message.body, markdown: !message.isHuman) }
-            ForEach(["images", "markdown_images", "files"], id: \.self) { field in
-                ForEach(Array(message.value[field].array.enumerated()), id: \.offset) { index, file in
-                    if field != "files" {
-                        MessageImage(key: "\(app.collaboration.roomID ?? ""):\(message.id):\(index):\(file["remote_ref"].string ?? "")",
-                            connected: app.connected, loader: app.imagePreviews,
-                            read: { try await app.collaboration.readAttachment(message, field: field, index: index, preview: true, app: app) },
-                            open: { app.perform { try await app.previewCollaborationAttachment(message, field: field, index: index) } })
-                    } else {
-                    Button { app.perform { try await app.previewCollaborationAttachment(message, field: field, index: index) } } label: {
-                        Label(file["filename"].string ?? (field == "images" ? "查看图片" : "查看文件"), systemImage: field == "images" ? "photo" : "doc")
-                            .font(.subheadline).padding(.vertical, 6)
-                    }.disabled(!app.connected || app.loadingAttachment)
-                    }
-                }
-            }
             if message.value["agent_creation_proposal"] != .null { Label("Agent 创建请求 · 在电脑上处理", systemImage: "person.badge.plus").font(.caption) }
+        } attachments: {
+            AttachmentGallery(items: tiles, scope: "\(app.collaboration.roomID ?? ""):\(message.id)", own: message.isHuman, model: app,
+                read: { try await app.collaboration.readAttachment(message, field: $0.field, index: $0.index, preview: true, app: app) },
+                open: { tile in app.perform { try await app.previewCollaborationAttachment(message, field: tile.field, index: tile.index) } })
         }
     }
 }
 
-private struct CollaborationBubble<Content: View>: View {
+private struct CollaborationBubble<Content: View, Attachments: View>: View {
     @Environment(\.mobileTextSize) private var textSize
     let own: Bool
     let agent: CollaborationAgent?
+    let hasContent: Bool
     var status: String? = nil
     @ViewBuilder var content: () -> Content
+    @ViewBuilder var attachments: () -> Attachments
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
             if own { Spacer(minLength: 40) }
             if !own, let agent { AgentMark(agent: agent, size: 22, status: status, subtle: status == nil) }
-            VStack(alignment: .leading, spacing: 6, content: content)
-                .font(.system(size: textSize))
-                .foregroundStyle(own ? Color(uiColor: .systemBackground) : Color.primary)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(own ? Color.primary : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+            VStack(alignment: own ? .trailing : .leading, spacing: 8) {
+                if hasContent {
+                    VStack(alignment: .leading, spacing: 6, content: content)
+                        .font(.system(size: textSize))
+                        .foregroundStyle(own ? Color(uiColor: .systemBackground) : Color.primary)
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(own ? Color.primary : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+                }
+                attachments()
+            }
             if !own { Spacer(minLength: 30) }
         }.frame(maxWidth: .infinity, alignment: own ? .trailing : .leading)
     }
