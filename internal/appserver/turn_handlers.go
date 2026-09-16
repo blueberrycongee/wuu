@@ -2480,6 +2480,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			s.pruneRevokedSteersLocked(th)
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
 			th.resetSteerWakeLocked()
+			for _, msg := range steers {
+				delete(th.pendingSteerControls, msg.ClientID)
+			}
 			th.mu.Unlock()
 			notifyBatch(batch)
 			for _, steer := range steers {
@@ -2726,6 +2729,17 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	th.interrupting = false
 	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
+	// Collaboration retains a durable outbox. An unconsumed correction must
+	// return through that scheduler so its scope and capacity are checked again.
+	remainingSteers := unconsumedSteers[:0]
+	for _, msg := range unconsumedSteers {
+		if msg.Cause == "session_management" {
+			delete(th.pendingSteerControls, msg.ClientID)
+			continue
+		}
+		remainingSteers = append(remainingSteers, msg)
+	}
+	unconsumedSteers = remainingSteers
 	if len(unconsumedSteers) > 0 {
 		if threadRuntime != nil && threadRuntime.AgentControl != nil {
 			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.AgentControl)
@@ -2735,6 +2749,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			for i := range queuedSteers {
 				if c, ok := th.pendingSteerControls[queuedSteers[i].msg.ClientID]; ok {
 					queuedSteers[i].snapshot.Control = &c
+					delete(th.pendingSteerControls, queuedSteers[i].msg.ClientID)
 				}
 			}
 			th.applySteerDocumentOverridesLocked(queuedSteers)

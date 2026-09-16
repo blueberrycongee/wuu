@@ -172,8 +172,16 @@ func (s *Service) PutHarnessLink(ctx context.Context, link HarnessSessionLink) e
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO harness_session_links(session_id,agent_id,room_id,active,payload) VALUES(?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET agent_id=excluded.agent_id,room_id=excluded.room_id,active=excluded.active,payload=excluded.payload`, link.SessionID, link.AgentID, link.RoomID, link.Active, string(data))
-	return err
+	result, err := s.db.ExecContext(ctx, `INSERT INTO harness_session_links(session_id,agent_id,room_id,active,payload) VALUES(?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET agent_id=excluded.agent_id,room_id=excluded.room_id,active=excluded.active,payload=excluded.payload WHERE json_extract(harness_session_links.payload,'$.control_revision')<=json_extract(excluded.payload,'$.control_revision')`, link.SessionID, link.AgentID, link.RoomID, link.Active, string(data))
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Service) HarnessLinks(ctx context.Context, agentID, roomID string) ([]HarnessSessionLink, error) {

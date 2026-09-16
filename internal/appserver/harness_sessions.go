@@ -279,7 +279,21 @@ func (s *Server) inspectHarnessSession(ctx context.Context, p channels.HarnessSe
 		}
 		items = append(items, map[string]any{"seq": r.Seq, "role": r.Role, "name": r.Name, "content": harnessExcerpt(r.Content, 1600), "tool_calls": harnessExcerpt(string(r.ToolCalls), 1600), "tool_result": harnessExcerpt(string(r.ToolResult), 1600), "truncated": len([]rune(r.Content)) > 1600})
 	}
-	return map[string]any{"session": v, "history": items, "page": map[string]any{"has_more": page.HasMore, "next": page.Next}, "note": "Session reports are evidence to assess; inspect artifacts and checks before declaring the user's goal complete."}, nil
+	progress := make([]map[string]any, 0)
+	if th := s.thread(m.ID); th != nil {
+		th.mu.Lock()
+		if th.running && len(th.Turns) > 0 {
+			current := th.Turns[len(th.Turns)-1]
+			for _, item := range current.Items[max(0, len(current.Items)-limit):] {
+				if item.Type == ThreadItemReasoning {
+					continue
+				}
+				progress = append(progress, map[string]any{"turn_id": current.ID, "type": item.Type, "status": item.Status, "name": item.Name, "text": harnessExcerpt(item.Text, 1600), "arguments": harnessExcerpt(item.Arguments, 1600), "result": harnessExcerpt(item.Result, 1600), "error": harnessExcerpt(item.Error, 1600)})
+			}
+		}
+		th.mu.Unlock()
+	}
+	return map[string]any{"session": v, "history": items, "live_progress": progress, "history_scope": "History contains settled turns; a running session may have uncommitted progress on its executing host. Missing history is not evidence of a failed start.", "page": map[string]any{"has_more": page.HasMore, "next": page.Next}, "note": "Session reports are evidence to assess; inspect artifacts and checks before declaring the user's goal complete."}, nil
 }
 
 func harnessExcerpt(text string, limit int) string {
@@ -444,8 +458,8 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 	}
 	if ok {
 		if linkErr == nil && link.Active && link.RoomID == op.Actor.RoomID && link.WorkID == op.Actor.WorkID {
-			link.SourceTurnID, link.ControlRevision = op.Actor.TurnID, op.Revision
 			if p.Mode == "steer" {
+				link.ControlRevision = op.Revision
 				link.Objective = p.Prompt
 			}
 			if err := s.channelService.PutHarnessLink(ctx, link); err != nil {
@@ -653,8 +667,14 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 	if err != nil {
 		return err
 	}
+	accepted := make(map[string]bool)
+	for _, item := range turn.Items {
+		if item.Type == ThreadItemUserMessage {
+			accepted[item.SourceID] = true
+		}
+	}
 	for _, op := range ops {
-		if op.Params.SessionID == link.SessionID && op.State == "submitted" && op.TurnID == turn.ID {
+		if op.Params.SessionID == link.SessionID && op.State == "submitted" && op.TurnID == turn.ID && accepted[op.ID] {
 			op.State = "completed"
 			if err := s.channelService.PutHarnessOperation(ctx, op); err != nil {
 				return err
