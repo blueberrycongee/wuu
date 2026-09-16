@@ -1581,17 +1581,21 @@ func (s *Service) workRunAdmissionTx(ctx context.Context, tx *sql.Tx, roomID, na
 	if err != nil {
 		return "", "", err
 	}
-	identityLimit := s.agentRunLimit
 	if namedAgentID != "" {
 		var continuing bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM named_agent_conversations WHERE agent_id=?)`, namedAgentID).Scan(&continuing); err != nil {
+		var executors int
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM named_agent_conversations WHERE agent_id=?),
+			(SELECT COUNT(*) FROM harness_session_admissions WHERE agent_id=? AND session_id!=?)`, namedAgentID, namedAgentID, sessionRef).Scan(&continuing, &executors); err != nil {
 			return "", "", err
 		}
-		if continuing {
-			identityLimit = 1
+		// Serialize the identity's own turns, not the ordinary sessions it
+		// manages. Those sessions reserve a manager slot for human follow-ups.
+		if continuing && agentActive-executors >= 1 {
+			return WorkRunQueued, "named_agent_capacity", nil
 		}
 	}
-	if namedAgentID != "" && agentActive >= identityLimit {
+	if namedAgentID != "" && agentActive >= s.agentRunLimit {
 		return WorkRunQueued, "named_agent_capacity", nil
 	}
 	if roomActive >= s.roomRunLimit {

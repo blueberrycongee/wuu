@@ -117,6 +117,42 @@ func TestIdentityConversationTaskAssignmentsDoNotCreateWorkers(t *testing.T) {
 	}
 }
 
+func TestIdentityAcceptsFollowupWhileManagedHarnessSessionRuns(t *testing.T) {
+	f, provider := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	f.server.channelService.SetCollaborationRunLimits(3, 4, 6)
+	var first ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Remove the room panel", RequestID: "start"}, &first)
+	call := provider.next(t)
+	client, err := f.server.channelService.BindAgentSession(ctx, f.identity.ID, first.Session.SessionRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.CreateTask(ctx, channels.TaskCreateParams{RoomID: f.room.ID, OwnerID: f.identity.ID, Title: "Remove the panel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := channels.HarnessSessionLink{SessionID: "running-executor", AgentID: f.identity.ID, RoomID: f.room.ID, WorkID: task.ID}
+	if err := f.server.channelService.ReserveHarnessExecution(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	// This remains admitted throughout the test: the manager must receive
+	// corrections without waiting for its executor to finish or release capacity.
+	defer f.server.channelService.ReleaseHarnessExecution(ctx, link.SessionID)
+	_, err = f.server.channelService.EnqueueSessionInput(ctx, channels.CollaborationSessionSendParams{SessionRef: first.Session.SessionRef, Body: "Keep the stored memory data", RequestID: "correction"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call.response <- providers.ChatResponse{Content: "The execution session is working on the panel."}
+	f.waitForCompletion(t)
+	continued := provider.next(t)
+	if !strings.Contains(collaborationRequestText(continued.request), "Keep the stored memory data") {
+		t.Fatal("manager did not receive the human correction while its executor was active")
+	}
+	continued.response <- providers.ChatResponse{Content: "I will preserve the memory data."}
+	f.waitForCompletion(t)
+}
+
 func TestIdentityTaskProgressSettlesWithoutEmptyWake(t *testing.T) {
 	f, provider := newCollaborationFlowFixture(t)
 	ctx := context.Background()
