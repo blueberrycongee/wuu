@@ -1,7 +1,7 @@
 # 用 `wuu exec` 做自动化
 
-`wuu exec` 是面向脚本、CI 和其他 Agent 的文本入口。它使用与桌面端相同的 core、会话、
-工具和权限系统，但不会启动终端 UI。
+`wuu exec` 用于从脚本、CI 或其他 Agent 运行任务。它与桌面端共用会话、工具和权限，
+返回文本或 JSONL，不打开界面。使用前先[配置模型](../getting-started/model-services.md)。
 
 ## 运行一个任务
 
@@ -83,6 +83,11 @@ wuu exec --ephemeral "临时分析，不保存会话"
 ```bash
 wuu --help
 ```
+
+标准和只读模式下，Agent 命令还受到文件系统写入沙箱约束；沙箱后端不可用时会拒绝运行，
+不会悄悄放开限制。这不隔离命令继承的环境变量或网络访问。无人值守检查优先使用只读
+模式，允许修改前先检查任务配置。完整边界见[权限模式](../reference/permissions.md)和
+[安全说明](../reference/security-model.md)。
 
 ## 退出码
 
