@@ -184,6 +184,7 @@ export function Composer({
   onSelectEngineModel,
   onSelectEngineEffort,
   onSelectPermissionMode,
+  onToggleApproveForMe,
   onOpenSettings,
   onOpenSkillsCatalog,
   onSelectProject,
@@ -286,6 +287,7 @@ export function Composer({
   onSelectEngineModel?: (model: string, effort: string) => void;
   onSelectEngineEffort?: (effort: string) => void;
   onSelectPermissionMode: (mode: PermissionMode) => void;
+  onToggleApproveForMe?: (enabled: boolean) => void;
   onToggleBranchMenu: () => void;
   onOpenSettings: () => void;
   onOpenSkillsCatalog: () => void;
@@ -1405,6 +1407,7 @@ export function Composer({
                           engine={activeEngine}
                           disabled={!initialized || readOnly || running}
                           onSelect={onSelectPermissionMode}
+                          onToggleApproveForMe={onToggleApproveForMe}
                         />
                       </FloatingMenuPortal>
                     ) : null}

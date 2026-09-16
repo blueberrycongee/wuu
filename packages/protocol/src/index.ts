@@ -266,6 +266,7 @@ export type GeneralSettingsSummary = {
 
 export type PermissionSummary = {
   mode?: string;
+  approve_for_me?: boolean;
 };
 
 export type ModelProfileSummary = {
@@ -1879,6 +1880,7 @@ export type Thread = {
   // Agent engine bound at thread creation (wuu, codex, claude).
   engine_id?: string;
   permission_mode?: string;
+  approve_for_me?: boolean;
   cwd: string;
   workspace_id?: string;
   // workspace_kind tags the thread with the workspace it was created in.
@@ -1913,6 +1915,7 @@ export type ThreadStartParams = {
   model?: string;
   effort?: string;
   permission_mode?: string;
+  approve_for_me?: boolean;
   provider?: string;
   handoff?: ThreadHandoffParams;
 };

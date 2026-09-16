@@ -2413,6 +2413,19 @@
   color: var(--danger);
 }
 
+.permission-mode-group {
+  display: grid;
+  gap: 1px;
+}
+
+.permission-mode-option.permission-mode-nested {
+  padding-left: 18px;
+}
+
+.permission-mode-option[aria-checked="true"] strong {
+  color: var(--accent, var(--ink));
+}
+
 /* The permission-mode list carries no checked-state visual: the chip above the
    composer already states the active mode, so hovering is the only in-list
    affordance (generic gray hover above). The danger row's label keeps its

@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -1198,6 +1199,7 @@ func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) session.
 		Variant:        strings.TrimSpace(th.ModelVariant),
 		Effort:         strings.TrimSpace(th.ModelEffort),
 		PermissionMode: strings.TrimSpace(th.PermissionMode),
+		ApproveForMe:   th.ApproveForMe,
 	}
 	applyThreadRuntimeSelection(th, healed)
 	persist := th.PersistHistory
@@ -2292,6 +2294,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	}
 	if threadRuntime != nil && threadRuntime.Toolkit != nil {
 		runtime.ConfigureToolkitPermissions(threadRuntime.Toolkit, turnPermissions)
+		th.mu.Lock()
+		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
+		turnID := th.currentTurn
+		th.mu.Unlock()
+		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID})
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.

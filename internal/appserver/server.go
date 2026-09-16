@@ -67,6 +67,7 @@ type threadState struct {
 	ModelVariant   string
 	ModelEffort    string
 	PermissionMode string
+	ApproveForMe   bool
 	// EngineID is the agent engine this thread is bound to. It is fixed at
 	// thread creation; the built-in engine is "wuu".
 	EngineID string

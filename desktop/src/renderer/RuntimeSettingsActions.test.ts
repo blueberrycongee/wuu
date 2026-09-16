@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InitializeResult, Thread } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
 import type { CodexModelLoadState, CodexRuntimeMenu } from "./ComposerTypes";
-import { readDraftPermissionMemory, readDraftRuntimeMemory } from "./DraftRuntimeMemory";
+import { readDraftApproveForMeMemory, readDraftPermissionMemory, readDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
@@ -883,5 +883,60 @@ describe("createRuntimeSettingsActions", () => {
     expect(api.interruptTurn).toHaveBeenNthCalledWith(1, "secondary-thread");
     expect(api.interruptTurn).toHaveBeenNthCalledWith(2, "primary-thread");
     expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+  });
+
+  it("persists Approve for me on the active thread and keeps the menu open", async () => {
+    const api = installWuuApi();
+    api.updateRuntimeSettings.mockResolvedValue({
+      provider: "codex",
+      model: "gpt-5",
+      effort: "medium",
+      variant: "medium",
+      permissions: { mode: "standard", approve_for_me: true },
+    });
+    const primary = { ...thread("thread-1"), permission_mode: "standard" };
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        initialized: initialized({ permissions: { mode: "standard" } }),
+        thread: primary,
+        threads: [primary],
+        status: "ready",
+      },
+    });
+
+    await harness.actions.setApproveForMe(true);
+
+    expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      { approve_for_me: true },
+      undefined,
+      undefined,
+      "thread-1",
+    );
+    expect(harness.getAppState().thread?.approve_for_me).toBe(true);
+    expect(harness.getRuntimeMenus().accessMenuOpen).toBe(true);
+    expect(readDraftApproveForMeMemory()).toBe(true);
+  });
+
+  it("remembers a draft Approve for me pick before the first thread starts", async () => {
+    const api = installWuuApi();
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        initialized: initialized({ permissions: { mode: "standard" } }),
+        thread: undefined,
+        threads: [],
+        status: "ready",
+      },
+    });
+
+    await harness.actions.setApproveForMe(true);
+
+    expect(api.updateRuntimeSettings).not.toHaveBeenCalled();
+    expect(harness.getAppState().initialized?.permissions?.approve_for_me).toBe(true);
+    expect(readDraftApproveForMeMemory()).toBe(true);
   });
 });

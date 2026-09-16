@@ -25,6 +25,7 @@ function session(): Thread {
     model_variant: "high",
     model_effort: "",
     permission_mode: "read_only",
+    approve_for_me: true,
     cwd: "/tmp/project",
     status: "idle",
     created_at: "2026-01-01T00:00:00Z",
@@ -51,7 +52,7 @@ describe("session runtime state", () => {
       model: "session-model",
       variant: "high",
       effort: "",
-      permissions: { mode: "read_only" },
+      permissions: { mode: "read_only", approve_for_me: true },
     });
   });
 
@@ -72,6 +73,7 @@ describe("session runtime state", () => {
       provider: "session-provider",
       model: "session-model",
       variant: "high",
+      permissions: { mode: "read_only", approve_for_me: true },
     });
   });
 });

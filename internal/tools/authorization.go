@@ -34,3 +34,11 @@ func authorizationDenied(toolName, reason string) error {
 	}
 	return fmt.Errorf("tool %q denied by authorization provider: error_kind=authorization_denied reason=%q", toolName, reason)
 }
+
+func reviewDenied(toolName, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "approve for me denied this action"
+	}
+	return fmt.Errorf("tool %q denied by approve for me: error_kind=review_denied reason=%q model_next_action=%q", toolName, reason, "do not retry an equivalent command; choose a clearly safer approach or tell the user the risk")
+}

@@ -1212,6 +1212,7 @@ export const zhCN = {
   "runtime.permission.standard": "标准",
   "runtime.permission.readOnly": "只读",
   "runtime.permission.unconfined": "无边界",
+  "runtime.permission.approveForMe": "替我审批",
   "runtime.searchModels": "搜索模型",
   "runtime.model": "模型",
   "runtime.provider": "模型服务",

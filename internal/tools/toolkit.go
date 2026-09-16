@@ -64,6 +64,8 @@ type Toolkit struct {
 	boundary                WorkspaceBoundary
 	permissionRequestHook   func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error
 	authorizer              Authorizer
+	reviewer                Reviewer
+	approveForMe            bool
 	codeModeMu              sync.RWMutex
 	codeMode                *codemode.Service
 	codeModeOnly            bool
@@ -117,6 +119,9 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	if err := t.boundary.Check(info, call); err != nil {
 		return err
 	}
+	if err := t.reviewToolCall(ctx, info, call); err != nil {
+		return err
+	}
 	if t.authorizer == nil {
 		return nil
 	}
@@ -134,6 +139,12 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 }
 
 func (t *Toolkit) SetAuthorizer(authorizer Authorizer) { t.authorizer = authorizer }
+
+func (t *Toolkit) SetReviewer(reviewer Reviewer) { t.reviewer = reviewer }
+
+func (t *Toolkit) SetApproveForMe(enabled bool) { t.approveForMe = enabled }
+
+func (t *Toolkit) ApproveForMe() bool { return t != nil && t.approveForMe }
 
 func (t *Toolkit) SetProcessSandboxProvider(provider processsandbox.Provider) {
 	t.env.ProcessSandboxProvider = provider
@@ -266,6 +277,8 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		env:                 &env,
 		boundary:            t.boundary,
 		authorizer:          t.authorizer,
+		reviewer:            t.reviewer,
+		approveForMe:        t.approveForMe,
 		mcpManager:          t.mcpManager,
 		activityRegistry:    t.activityRegistry,
 		mcpActivityBindings: cloneMCPActivityBindings(t.mcpActivityBindings),

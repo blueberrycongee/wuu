@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -159,6 +160,20 @@ func (s *Server) currentPermissionSummary() PermissionSummary {
 	return PermissionSummary{
 		Mode: strings.TrimSpace(permissions.Mode),
 	}
+}
+
+func (s *Server) permissionSummaryForThread(th *threadState) PermissionSummary {
+	summary := s.currentPermissionSummary()
+	if th == nil {
+		return summary
+	}
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	if mode := strings.TrimSpace(th.PermissionMode); mode != "" {
+		summary.Mode = config.NormalizePermissionMode(mode)
+	}
+	summary.ApproveForMe = th.ApproveForMe && approvefor.EnabledForMode(summary.Mode)
+	return summary
 }
 
 func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
@@ -1135,7 +1150,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if threadID != "" && params.BaseURL == nil && params.APIKey == nil && params.AuthToken == nil && params.Type == nil && !params.CreateProvider && params.RemoveModel == "" && params.ReuseCodexCredentials == nil {
 		return s.handleThreadModelSelection(req, params)
 	}
-	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil) {
+	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
 		return s.writeResponse(req.ID, nil, errors.New("save provider configuration separately from conversation selection"))
 	}
 	explicitSelection := providerName != "" || model != "" ||
@@ -1917,21 +1932,29 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if params.PermissionMode != nil {
 		permission = config.NormalizePermissionMode(*params.PermissionMode)
 	}
-	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, permission); err != nil {
+	th.mu.Lock()
+	approveForMe := th.ApproveForMe
+	th.mu.Unlock()
+	if params.ApproveForMe != nil {
+		approveForMe = *params.ApproveForMe && approvefor.EnabledForMode(permission)
+	} else if !approvefor.EnabledForMode(permission) {
+		approveForMe = false
+	}
+	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, permission, approveForMe); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
 		Provider: s.rt.ProviderName, Model: s.rt.Model,
 		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
-		MaxParallel: s.rt.MaxParallel(), Permissions: s.currentPermissionSummary(),
+		MaxParallel: s.rt.MaxParallel(), Permissions: s.permissionSummaryForThread(th),
 		ExtensionTrust: s.currentExtensionTrustSummary(), ModelProfile: modelProfile,
 		ToolSurface: toolSurface, ModelRoles: s.currentModelRoleSummaries(),
 		Providers: s.providerSummaries(), AdvancedSettings: s.currentAdvancedSettingsSummary(),
 	}, nil)
 }
 
-func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, permissionMode string) error {
+func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, permissionMode string, approveForMe bool) error {
 	if th == nil {
 		return nil
 	}
@@ -1941,6 +1964,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 		Variant:        variant,
 		Effort:         effort,
 		PermissionMode: permissionMode,
+		ApproveForMe:   approveForMe,
 	}
 	if th.PersistHistory {
 		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, th.ID, selection); err != nil {

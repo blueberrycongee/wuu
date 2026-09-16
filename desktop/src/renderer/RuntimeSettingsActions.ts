@@ -17,7 +17,7 @@ import type {
   CodexRuntimeMenu,
   PermissionMode,
 } from "./ComposerTypes";
-import { lastEffortForRuntimeModel, writeDraftPermissionMemory, writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
+import { lastEffortForRuntimeModel, writeDraftApproveForMeMemory, writeDraftPermissionMemory, writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { isCodexProvider, normalizedVariantForProviderModel } from "./RuntimeHelpers";
 import { runtimeViewForSession } from "./SessionRuntimeState";
 import { showErrorToast } from "./Toast";
@@ -69,6 +69,7 @@ export type RuntimeSettingsActions = {
   ) => Promise<boolean>;
   selectRuntimeEffort: (nextVariant: string) => Promise<boolean>;
   selectPermissionMode: (mode: PermissionMode) => Promise<void>;
+  setApproveForMe: (enabled: boolean) => Promise<void>;
   interrupt: () => Promise<void>;
   interruptPane: (pane: ConversationPaneID) => Promise<void>;
 };
@@ -80,6 +81,7 @@ type RuntimeSelectionUpdate = {
   connection?: RuntimeConnectionUpdate;
   variant?: string;
   permissionMode?: string;
+  approveForMe?: boolean;
 };
 
 export function createRuntimeSettingsActions(
@@ -122,9 +124,11 @@ export function createRuntimeSettingsActions(
           model: nextModel,
           variant: nextEffort,
           effort: nextEffort,
-          permissions: update.permissionMode === undefined
-            ? current.initialized.permissions
-            : { mode: update.permissionMode as PermissionMode },
+          permissions: {
+            ...current.initialized.permissions,
+            ...(update.permissionMode === undefined ? {} : { mode: update.permissionMode as PermissionMode }),
+            ...(update.approveForMe === undefined ? {} : { approve_for_me: update.approveForMe }),
+          },
         } : current.initialized,
       }));
       return;
@@ -205,22 +209,31 @@ export function createRuntimeSettingsActions(
         (targetThread?.permission_mode ||
           state.initialized.permissions?.mode ||
           "");
+    const approveForMeChanged =
+      update.approveForMe !== undefined &&
+      update.approveForMe !==
+        (targetThread?.approve_for_me ?? state.initialized.permissions?.approve_for_me ?? false);
     if (
       !providerChanged &&
       !modelChanged &&
       !effortChanged &&
       !variantChanged &&
       !connectionChanged &&
-      !permissionModeChanged
+      !permissionModeChanged &&
+      !approveForMeChanged
     ) {
       return;
     }
     try {
+      const connectionPayload = {
+        ...nextConnection,
+        ...(update.approveForMe === undefined ? {} : { approve_for_me: update.approveForMe }),
+      };
       const updated = await window.wuu.updateRuntimeSettings(
         nextProvider,
         nextModel,
         nextEffort,
-        nextConnection,
+        Object.keys(connectionPayload).length > 0 ? connectionPayload : undefined,
         nextVariant,
         nextPermissionMode,
         targetThread?.id,
@@ -262,6 +275,9 @@ export function createRuntimeSettingsActions(
           ...(nextPermissionMode === undefined
             ? {}
             : { permission_mode: nextPermissionMode }),
+          ...(update.approveForMe === undefined
+            ? {}
+            : { approve_for_me: update.approveForMe }),
         };
         const next = updateThreadByID(
           { ...current, initialized },
@@ -587,6 +603,18 @@ export function createRuntimeSettingsActions(
     deps.setAccessMenuOpen(false);
   }
 
+  async function setApproveForMe(enabled: boolean): Promise<void> {
+    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    try {
+      await sendRuntimeSelection({ approveForMe: enabled });
+      writeDraftApproveForMeMemory(enabled);
+    } catch {
+      // Failure already surfaced through the status line.
+    }
+  }
+
   async function interrupt(): Promise<void> {
     const thread = activeThreadForState(deps.getAppState());
     if (!thread) {
@@ -623,6 +651,7 @@ export function createRuntimeSettingsActions(
     selectRuntimeModel,
     selectRuntimeEffort,
     selectPermissionMode,
+    setApproveForMe,
     interrupt,
     interruptPane,
   };

@@ -3109,6 +3109,9 @@ export function App(): JSX.Element {
           }
           void selectPermissionMode(mode);
         }}
+        onToggleApproveForMe={(enabled) => {
+          void setApproveForMe(enabled);
+        }}
         onOpenSettings={() => {
           closeProjectMenus();
           setSettingsInitialPage("providers");
@@ -3841,6 +3844,7 @@ export function App(): JSX.Element {
     selectRuntimeModel,
     selectRuntimeEffort,
     selectPermissionMode,
+    setApproveForMe,
     interrupt,
     interruptPane,
   } = createRuntimeSettingsActions({
@@ -4384,6 +4388,7 @@ export function App(): JSX.Element {
                   model: currentState.initialized?.model,
                   effort: currentState.initialized?.variant || currentState.initialized?.effort,
                   permission_mode: currentState.initialized?.permissions?.mode,
+                  approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
           }),
           "thread/start did not return a thread",

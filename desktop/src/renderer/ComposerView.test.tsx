@@ -101,6 +101,7 @@ function handoffInitialized(): InitializeResult {
 
 function renderComposer(props: {
   accessMenuOpen?: boolean;
+  activeEngine?: string;
   variant?: ComposerVariant;
   canSelectProject?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
@@ -138,6 +139,7 @@ function renderComposer(props: {
   setPrompt?: (value: string) => void;
   pluginHost?: PluginHost;
   onSelectPermissionMode?: (mode: PermissionMode) => void;
+  onToggleApproveForMe?: (enabled: boolean) => void;
   tokensPerSecond?: number;
   tokenSpeedSampledAt?: number;
   tokenSpeedSource?: "real" | "estimated" | "none";
@@ -173,6 +175,7 @@ function renderComposer(props: {
           statusLiveProgress={props.statusLiveProgress}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
+          activeEngine={props.activeEngine}
           gitStatus={props.gitStatus}
           gitBusy={props.gitBusy}
           projects={props.projects ?? []}
@@ -195,6 +198,7 @@ function renderComposer(props: {
           onSelectRuntimeModel={() => {}}
           onSelectRuntimeEffort={() => {}}
           onSelectPermissionMode={onSelectPermissionMode}
+          onToggleApproveForMe={props.onToggleApproveForMe ?? (() => {})}
           onToggleBranchMenu={props.onToggleBranchMenu ?? (() => {})}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
@@ -2721,7 +2725,12 @@ describe("Composer permission menu", () => {
     expect(labels).toEqual(["工作区内完全信任", "只读", "无边界"]);
     expect(document.body.textContent).not.toContain("平衡");
     expect(document.body.textContent).not.toContain("严格");
-    expect(document.body.textContent).not.toContain("替我审批");
+    const menuLabels = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        ".access-menu button strong",
+      ),
+    ).map((label) => label.textContent?.trim());
+    expect(menuLabels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
 
     const checkedLabels = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>(
@@ -2770,6 +2779,42 @@ describe("Composer permission menu", () => {
     });
 
     expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined");
+  });
+
+  it.each([undefined, "", "wuu"])("toggles Approve for me in standard Wuu mode with engine %s", (activeEngine) => {
+    const onToggleApproveForMe = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: false },
+      activeEngine,
+      onToggleApproveForMe,
+    });
+    const toggle = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemcheckbox\"]"),
+    ).find((button) => button.textContent?.includes("替我审批"));
+    expect(toggle).not.toBeUndefined();
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onToggleApproveForMe).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps Approve for me nested under Standard and disabled in unconfined mode", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "unconfined", approve_for_me: true },
+      onToggleApproveForMe: vi.fn(),
+    });
+    const toggle = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemcheckbox\"]"),
+    ).find((button) => button.textContent?.includes("替我审批"));
+    expect(toggle).not.toBeUndefined();
+    expect(toggle?.disabled).toBe(true);
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    const standard = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    ).find((button) => button.textContent?.includes("工作区内完全信任"));
+    expect(standard?.nextElementSibling).toBe(toggle ?? null);
   });
 });
 

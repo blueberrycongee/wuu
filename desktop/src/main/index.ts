@@ -1632,6 +1632,7 @@ app.whenReady().then(async () => {
         create_provider?: boolean;
         remove_model?: string;
         reuse_codex_credentials?: boolean;
+        approve_for_me?: boolean;
       },
       variant?: string,
       permissionMode?: string,
@@ -1666,6 +1667,9 @@ app.whenReady().then(async () => {
         ...(permissionMode === undefined
           ? {}
           : { permission_mode: permissionMode }),
+        ...(connection?.approve_for_me === undefined
+          ? {}
+          : { approve_for_me: connection.approve_for_me }),
       }),
   );
   ipcMain.handle(

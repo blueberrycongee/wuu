@@ -1353,6 +1353,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkills(s.Skills)
 		ConfigureToolkitPermissions(kit, s.Permissions)
+		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
 		kit.SetSessionDir(artifactDir)
 		kit.SetSessionsDir(s.SessionDir)

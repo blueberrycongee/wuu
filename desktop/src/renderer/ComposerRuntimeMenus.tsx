@@ -1399,31 +1399,54 @@ export function AccessMenu({
   permissions,
   engine,
   disabled,
-  onSelect
+  onSelect,
+  onToggleApproveForMe
 }: {
   permissions?: PermissionSummary;
   engine?: string;
   disabled: boolean;
   onSelect: (mode: PermissionMode) => void;
+  onToggleApproveForMe?: (enabled: boolean) => void;
 }): JSX.Element {
-  useI18n();
+  const { t } = useI18n();
   const mode = permissionModeFromSummary(permissions);
   const options = permissionModeOptions(engine);
+  const showApproveForMe = (engine || "wuu") === "wuu" && onToggleApproveForMe;
   return (
     <div className="composer-context-menu access-menu" role="menu">
       {options.map((option) => (
-        <button
-          key={option.mode}
-          className={`permission-mode-option ${option.tone}`}
-          role="menuitemradio"
-          aria-checked={mode === option.mode}
-          aria-label={option.label}
-          type="button"
-          disabled={disabled}
-          onClick={() => onSelect(option.mode)}
-        >
-          <strong>{option.label}</strong>
-        </button>
+        <div key={option.mode} className="permission-mode-group">
+          <button
+            className={`permission-mode-option ${option.tone}`}
+            role="menuitemradio"
+            aria-checked={mode === option.mode}
+            aria-label={option.label}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelect(option.mode)}
+          >
+            <strong>{option.label}</strong>
+          </button>
+          {showApproveForMe && option.mode === "standard" ? (
+            <button
+              className="permission-mode-option permission-mode-nested"
+              role="menuitemcheckbox"
+              aria-checked={mode === "standard" && Boolean(permissions?.approve_for_me)}
+              aria-label={t("runtime.permission.approveForMe")}
+              type="button"
+              disabled={disabled || mode !== "standard"}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (mode !== "standard") {
+                  onSelect("standard");
+                }
+                onToggleApproveForMe(!(mode === "standard" && permissions?.approve_for_me));
+              }}
+            >
+              <strong>{t("runtime.permission.approveForMe")}</strong>
+            </button>
+          ) : null}
+        </div>
       ))}
     </div>
   );

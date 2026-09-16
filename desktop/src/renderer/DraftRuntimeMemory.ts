@@ -16,6 +16,7 @@ const DRAFT_RUNTIME_MEMORY_KEY = "wuu.desktop.lastDraftRuntime";
 // session. Kept separate from the provider/model memory because it stays
 // valid regardless of which provider catalog is currently offered.
 const DRAFT_PERMISSION_MEMORY_KEY = "wuu.desktop.lastDraftPermissionMode";
+const DRAFT_APPROVE_FOR_ME_MEMORY_KEY = "wuu.desktop.lastDraftApproveForMe";
 
 export type DraftRuntimeMemory = {
   provider: string;
@@ -55,6 +56,33 @@ export function clearDraftPermissionMemory(): void {
     window.localStorage.removeItem(DRAFT_PERMISSION_MEMORY_KEY);
   } catch {
     // Nothing to recover: the next read falls back to the workspace default.
+  }
+}
+
+export function readDraftApproveForMeMemory(): boolean | undefined {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_APPROVE_FOR_ME_MEMORY_KEY);
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeDraftApproveForMeMemory(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(DRAFT_APPROVE_FOR_ME_MEMORY_KEY, enabled ? "1" : "0");
+  } catch {
+    // A denied write should not break the current-window selection.
+  }
+}
+
+export function clearDraftApproveForMeMemory(): void {
+  try {
+    window.localStorage.removeItem(DRAFT_APPROVE_FOR_ME_MEMORY_KEY);
+  } catch {
+    // The next read falls back to the workspace default.
   }
 }
 
@@ -129,6 +157,7 @@ export function applyDraftRuntimeMemory(
 ): InitializeResult {
   const remembered = resolveDraftRuntimeMemory(initialized);
   const rememberedMode = readDraftPermissionMemory();
+  const rememberedApproveForMe = readDraftApproveForMeMemory();
   let next = initialized;
   if (remembered) {
     next = {
@@ -143,6 +172,12 @@ export function applyDraftRuntimeMemory(
     next = {
       ...next,
       permissions: { ...next.permissions, mode: rememberedMode },
+    };
+  }
+  if (rememberedApproveForMe !== undefined && rememberedApproveForMe !== Boolean(next.permissions?.approve_for_me)) {
+    next = {
+      ...next,
+      permissions: { ...next.permissions, approve_for_me: rememberedApproveForMe },
     };
   }
   return next;
@@ -165,6 +200,7 @@ export function seedDraftRuntimeFromMemory(state: AppState): AppState {
     && (next.variant ?? "") === (state.initialized.variant ?? "")
     && (next.effort ?? "") === (state.initialized.effort ?? "")
     && (next.permissions?.mode ?? "") === (state.initialized.permissions?.mode ?? "")
+    && Boolean(next.permissions?.approve_for_me) === Boolean(state.initialized.permissions?.approve_for_me)
   ) {
     return state;
   }
