@@ -645,9 +645,12 @@ export function App(): JSX.Element {
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [namedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
   const directoryRefreshInFlightRef = useRef(false);
+  const channelDirectoryGenerationRef = useRef(0);
+  const [channelDirectoryLoaded, setChannelDirectoryLoaded] = useState(false);
   const [selectedCollaborationAgentID, setSelectedCollaborationAgentID] = useState("");
   const selectedCollaborationAgentRequestRef = useRef("");
-  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState("");
+  const directMessageRequestGenerationRef = useRef(0);
+  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState(() => readChannelRoomPreferences().selectedRoomID ?? "");
   const [channelComposerDrafts, setChannelComposerDrafts] = useState<Record<string, ComposerDraftState>>({});
   // Rooms (with per-room unread counts) live at the App level so the unified
   // sidebar and the channel canvas share one source of truth; selection is
@@ -687,23 +690,26 @@ export function App(): JSX.Element {
     ) {
       setChannelRooms([]);
       setNamedAgents([]);
+      setChannelDirectoryLoaded(false);
       return;
     }
     let active = true;
     const refresh = async (): Promise<void> => {
       if (directoryRefreshInFlightRef.current) return;
       directoryRefreshInFlightRef.current = true;
+      const generation = ++channelDirectoryGenerationRef.current;
       try {
         const result = await window.wuu!.listChannelRooms();
-        if (active) {
+        if (active && generation === channelDirectoryGenerationRef.current) {
           const rooms = result.rooms ?? [];
           setChannelRooms((current) =>
             sameChannelRooms(current, rooms) ? current : rooms,
           );
+          setChannelDirectoryLoaded(true);
         }
         if (typeof window.wuu!.listNamedAgents === "function") {
           const agentResult = await window.wuu!.listNamedAgents();
-          if (active) {
+          if (active && generation === channelDirectoryGenerationRef.current) {
             const agents = agentResult.agents ?? [];
             setNamedAgents((current) =>
               sameNamedAgents(current, agents) ? current : agents,
@@ -1076,23 +1082,26 @@ export function App(): JSX.Element {
   const draftSessionTabCounterRef = useRef(0);
   const currentSessionTab = activeSessionTab(state);
   const activeChannelRooms = useMemo(
-    () => [
-      ...visibleChannelRooms(
-        channelRooms.filter((room) => room.kind === "channel"),
-        channelRoomPreferences,
-      ),
-      ...channelRooms.filter((room) => room.kind === "dm"),
-    ],
+    () => visibleChannelRooms(channelRooms, channelRoomPreferences),
     [channelRoomPreferences, channelRooms],
   );
   const archivedChannelRooms = useMemo(
     () => channelRooms.filter((room) => channelRoomPreferences.archivedRoomIDs.includes(room.id)),
     [channelRoomPreferences.archivedRoomIDs, channelRooms],
   );
-  const selectedChannelRoomID =
-    (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
+  const selectedChannelRoomID = selectedCollaborationAgentID
+    ? activeChannelRooms.find((room) => room.kind === "dm" && room.members.some(
+      (member) => member.member_type === "agent" && member.member_id === selectedCollaborationAgentID,
+    ))?.id ?? ""
+    : (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
       ? selectedChannelRoomIDState
-      : activeChannelRooms[0]?.id ?? "");
+      : channelDirectoryLoaded ? activeChannelRooms[0]?.id ?? "" : "");
+  useEffect(() => {
+    if (appMode !== "collaboration" || !selectedChannelRoomID) return;
+    setSelectedChannelRoomIDState(selectedChannelRoomID);
+    if (channelRoomPreferences.selectedRoomID === selectedChannelRoomID) return;
+    updateChannelRoomPreferences((current) => ({ ...current, selectedRoomID: selectedChannelRoomID }));
+  }, [appMode, selectedChannelRoomID, channelRoomPreferences.selectedRoomID]);
   const selectedCollaborationAgent =
     namedAgents.find((agent) => agent.id === selectedCollaborationAgentID);
   const activeChannelComposerDraft = useMemo(
@@ -3494,6 +3503,7 @@ export function App(): JSX.Element {
   }
 
   async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding): Promise<void> {
+    const requestGeneration = ++directMessageRequestGenerationRef.current;
     selectedCollaborationAgentRequestRef.current = agentID;
     setSelectedCollaborationAgentID(agentID);
     setCollaborationSection("rooms");
@@ -3508,7 +3518,16 @@ export function App(): JSX.Element {
       setSelectedChannelRoomIDState(existingDirectMessage.id);
       clearChannelRoomUnread(existingDirectMessage.id);
     }
-    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) });
+    const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
+      && requestGeneration === directMessageRequestGenerationRef.current;
+    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) }).catch((reason: unknown) => {
+      if (!isCurrentRequest()) return null;
+      setSelectedCollaborationAgentID("");
+      throw reason;
+    });
+    if (!result || !isCurrentRequest()) return;
+    // An older directory poll must not erase the DM that was just opened.
+    channelDirectoryGenerationRef.current += 1;
     setChannelRooms((current) => {
       const existing = current.findIndex((room) => room.id === result.room.id);
       if (existing < 0) return [...current, result.room];
@@ -3516,9 +3535,9 @@ export function App(): JSX.Element {
       next[existing] = result.room;
       return next;
     });
-    if (selectedCollaborationAgentRequestRef.current !== agentID) return;
     if (channelRoomPreferences.archivedRoomIDs.includes(result.room.id)) unarchiveChannelRoom(result.room);
     setSelectedChannelRoomIDState(result.room.id);
+    setSelectedCollaborationAgentID("");
     clearChannelRoomUnread(result.room.id);
   }
 
@@ -5435,6 +5454,7 @@ export function App(): JSX.Element {
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
               onOpenSession={openCollaborationHarnessSession}
+              onOpenAgentConversation={selectCollaborationAgent}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}

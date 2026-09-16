@@ -20,12 +20,7 @@ export function readChannelRoomPreferences(): ChannelRoomPreferences {
       return emptyChannelRoomPreferences;
     }
     const parsed = JSON.parse(raw) as Partial<ChannelRoomPreferences>;
-    const archivedRoomIDs = normalizedRoomIDs(parsed.archivedRoomIDs);
-    const archived = new Set(archivedRoomIDs);
-    return {
-      pinnedRoomIDs: normalizedRoomIDs(parsed.pinnedRoomIDs).filter((id) => !archived.has(id)),
-      archivedRoomIDs,
-    };
+    return normalizeChannelRoomPreferences(parsed);
   } catch {
     return emptyChannelRoomPreferences;
   }
@@ -76,6 +71,7 @@ export function archiveChannelRoomPreference(
   roomID: string,
 ): ChannelRoomPreferences {
   return {
+    ...preferences,
     pinnedRoomIDs: preferences.pinnedRoomIDs.filter((id) => id !== roomID),
     archivedRoomIDs: Array.from(new Set([...preferences.archivedRoomIDs, roomID])),
   };
@@ -116,6 +112,8 @@ function normalizeChannelRoomPreferences(
   return {
     pinnedRoomIDs: normalizedRoomIDs(value.pinnedRoomIDs).filter((id) => !archived.has(id)),
     archivedRoomIDs,
+    ...(typeof value.selectedRoomID === "string" && value.selectedRoomID.trim() && !archived.has(value.selectedRoomID)
+      ? { selectedRoomID: value.selectedRoomID } : {}),
   };
 }
 

@@ -95,6 +95,7 @@ describe("desktopSettings", () => {
       {
         pinnedRoomIDs: ["room-1", "room-2", "room-2"],
         archivedRoomIDs: ["room-1", "room-1", ""],
+        selectedRoomID: " ada-dm ",
       },
       file,
     );
@@ -102,6 +103,7 @@ describe("desktopSettings", () => {
     expect(getChannelRoomPreferences(file)).toEqual({
       pinnedRoomIDs: ["room-2"],
       archivedRoomIDs: ["room-1"],
+      selectedRoomID: "ada-dm",
     });
     expect(getThemePreference(file)).toBe("dark");
   });

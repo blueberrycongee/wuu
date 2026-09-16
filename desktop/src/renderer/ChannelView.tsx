@@ -311,7 +311,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -326,6 +326,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onRoomRead?: (roomID: string) => void;
   onOpenMemoryDirectory?: (path: string) => void;
   onOpenSession?: (sessionID: string) => void;
+  onOpenAgentConversation?: (agentID: string) => Promise<void>;
   onCreateAgent?: () => void;
   onManageProviders?: () => void;
   composerDraft?: {
@@ -365,6 +366,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     directoryAgents !== undefined && directoryRooms !== undefined;
   const [internalSelectedRoomID, setInternalSelectedRoomID] = useState("");
   const selectedRoomID = controlledRoomID ?? internalSelectedRoomID;
+  const selectedRoomIDRef = useRef(selectedRoomID);
+  selectedRoomIDRef.current = selectedRoomID;
   const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; turnID?: string; name: string } | null>(null);
   const [inspectorClosing, setInspectorClosing] = useState(false);
   const conversationRef = useRef<HTMLDivElement>(null);
@@ -414,8 +417,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setInspectedSession({ roomID: selectedRoomID, agentID, sessionRef: fallbackSessionRef, name: agents.find(agent => agent.id === agentID)?.name ?? agentID });
   };
   const setSelectedRoomID = useCallback((value: string | ((current: string) => string)): void => {
-    const base = controlledRoomID ?? internalSelectedRoomID;
+    const base = selectedRoomIDRef.current;
     const next = typeof value === "function" ? value(base) : value;
+    selectedRoomIDRef.current = next;
     setInternalSelectedRoomID(next);
     if (next !== base) onSelectRoom?.(next);
   }, [controlledRoomID, internalSelectedRoomID, onSelectRoom]);
@@ -824,12 +828,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setRooms((current) =>
       sameChannelRooms(current, nextRooms) ? current : nextRooms,
     );
-    setSelectedRoomID((current) =>
-      current && result.rooms.some((room) => room.id === current)
-        ? current
-        : (result.rooms[0]?.id ?? ""),
-    );
-  }, [setAgents, setRooms]);
+    if (!directoryIsControlled) {
+      setSelectedRoomID((current) =>
+        current && result.rooms.some((room) => room.id === current)
+          ? current
+          : (result.rooms[0]?.id ?? ""),
+      );
+    }
+  }, [directoryIsControlled, setAgents, setRooms]);
 
   const markRoomRead = useCallback((roomID: string, latestMessageSeq: number): void => {
     if (!roomID || !window.wuu) return;
@@ -1419,6 +1425,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setCreatingRoom(true);
     setNewRoomError("");
     try {
+      if (onOpenAgentConversation) {
+        closeRoomPanel();
+        await onOpenAgentConversation(agentID);
+        return;
+      }
       const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID });
       setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
       closeRoomPanel();

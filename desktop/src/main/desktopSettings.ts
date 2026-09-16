@@ -129,6 +129,8 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
           (id) => !archived.has(id),
         ),
         archivedRoomIDs,
+        ...(typeof preferences.selectedRoomID === "string" && preferences.selectedRoomID.trim() && !archived.has(preferences.selectedRoomID.trim())
+          ? { selectedRoomID: preferences.selectedRoomID.trim() } : {}),
       };
     }
     if (typeof record.codex_pet === "object" && record.codex_pet !== null && !Array.isArray(record.codex_pet)) {
@@ -318,6 +320,8 @@ export function setChannelRoomPreferences(
       (id) => !archived.has(id),
     ),
     archivedRoomIDs,
+    ...(typeof preferences.selectedRoomID === "string" && preferences.selectedRoomID.trim() && !archived.has(preferences.selectedRoomID.trim())
+      ? { selectedRoomID: preferences.selectedRoomID.trim() } : {}),
   };
   const settings = readDesktopSettings(filePath);
   writeDesktopSettings({ ...settings, channel_room_preferences: next }, filePath);

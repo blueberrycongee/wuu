@@ -2656,6 +2656,7 @@ export type VoiceInputSettingsSnapshot = {
 export type ChannelRoomPreferences = {
   pinnedRoomIDs: string[];
   archivedRoomIDs: string[];
+  selectedRoomID?: string;
 };
 
 // The three OS families the desktop shell distinguishes. Anything more

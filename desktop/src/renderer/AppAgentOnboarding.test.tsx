@@ -124,7 +124,7 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
   expect(container.querySelector(".channel-room-settings-name")?.textContent).toBe("General");
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).pinnedRoomIDs).toEqual(["new-dm"]);
   await manageSidebarRow("Research", t("channels.hideConversation"));
-  expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!)).toEqual({ pinnedRoomIDs: [], archivedRoomIDs: ["new-dm"] });
+  expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!)).toMatchObject({ pinnedRoomIDs: [], archivedRoomIDs: ["new-dm"] });
   expect(container.querySelector(".collaboration-sidebar nav")?.textContent).not.toContain("Research");
   await click(t("account.menu"));
   await click(t("sidebar.settings"));
@@ -229,6 +229,69 @@ it("preserves the agent draft across provider settings and returns to the model 
   expect(window.wuu.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Research", provider_override: "byok", model_override: "reasoner" }));
 });
 
+
+it("restores a saved direct conversation and falls back when it is no longer available", async () => {
+  agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
+  const dm: ChannelRoom = { ...group, id: "ada-dm", kind: "dm", name: "Ada", members: [{ member_type: "agent", member_id: "ada", room_id: "ada-dm", joined_at: group.created_at }] };
+  rooms = [group, dm];
+  localStorage.setItem("wuu.channels.roomPreferences", JSON.stringify({ pinnedRoomIDs: [], archivedRoomIDs: [], selectedRoomID: dm.id }));
+  await act(async () => root.render(<App />));
+  await click("collaboration");
+  expect(container.querySelector(".channel-room-header")?.textContent).toContain("Ada");
+  await click("harness");
+  await click("collaboration");
+  expect(container.querySelector(".channel-room-header")?.textContent).toContain("Ada");
+  await act(async () => root.unmount());
+  rooms = [group];
+  root = createRoot(container);
+  await act(async () => root.render(<App />));
+  await click("collaboration");
+  expect(container.querySelector(".channel-room-header")?.textContent).toContain("General");
+});
+
+it("hides the previous room while opening a DM and ignores a late DM selection", async () => {
+  agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
+  rooms = [group];
+  vi.mocked(window.wuu.listChannelMessages).mockImplementation(async ({ room_id }) => ({ messages: [{ id: "public", room_id, seq: 1, kind: "text", author_type: "human", author_id: "human", body: "Only in General", created_at: group.created_at }] }));
+  let finish!: (result: { room: ChannelRoom }) => void;
+  vi.mocked(window.wuu.openChannelDirectMessage).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => root.render(<App />));
+  await click("collaboration");
+  expect(container.querySelector('[role="log"]')?.textContent).toContain("Only in General");
+  await click(t("channels.newConversation"));
+  await act(async () => container.querySelector<HTMLButtonElement>("#channel-recipient-ada")!.click());
+  expect(container.querySelector('[role="log"]')?.textContent ?? "").not.toContain("Only in General");
+  const groupRow = [...container.querySelectorAll<HTMLButtonElement>(".collaboration-contact-row")].find(row => row.querySelector("strong")?.textContent === "General");
+  expect(groupRow).toBeTruthy();
+  await act(async () => groupRow!.click());
+  await act(async () => finish({ room: { ...group, id: "ada-dm", name: "Ada", kind: "dm", members: [{ member_type: "agent", member_id: "ada", room_id: "ada-dm", joined_at: group.created_at }] } }));
+  expect(container.querySelector(".channel-room-header")?.textContent).toContain("General");
+});
+
+it("does not let an older directory poll erase a newly opened DM", async () => {
+  vi.useFakeTimers();
+  try {
+    agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+    const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
+    rooms = [group];
+    await act(async () => root.render(<App />));
+    await click("collaboration");
+    let finishPoll!: (result: { rooms: ChannelRoom[] }) => void;
+    vi.mocked(window.wuu.listChannelRooms).mockImplementationOnce(() => new Promise(resolve => { finishPoll = resolve; }));
+    await act(async () => vi.advanceTimersByTime(2_000));
+    const dm: ChannelRoom = { ...group, id: "ada-dm", name: "Ada", kind: "dm", members: [{ member_type: "agent", member_id: "ada", room_id: "ada-dm", joined_at: group.created_at }] };
+    vi.mocked(window.wuu.openChannelDirectMessage).mockResolvedValue({ room: dm });
+    await click(t("channels.newConversation"));
+    await act(async () => container.querySelector<HTMLButtonElement>("#channel-recipient-ada")!.click());
+    await act(async () => finishPoll({ rooms: [group] }));
+    expect(container.querySelector(".channel-room-header")?.textContent).toContain("Ada");
+    expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).selectedRoomID).toBe("ada-dm");
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("opens an existing agent from the recipient picker before its new DM is in the directory", async () => {
   agents = [{ id: "existing-agent", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];

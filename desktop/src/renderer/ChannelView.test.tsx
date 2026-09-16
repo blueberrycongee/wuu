@@ -1040,6 +1040,24 @@ describe("ChannelView", () => {
     });
   });
 
+  it("keeps late history responses in their own room during rapid switching", async () => {
+    const api = createApi();
+    const pending = new Map<string, (result: { messages: ChannelMessage[] }) => void>();
+    api.listChannelMessages = vi.fn(({ room_id }) => new Promise<{ messages: ChannelMessage[] }>(resolve => pending.set(room_id, resolve)));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryRooms={rooms} directoryAgents={agents} selectedRoomID="room-1" />));
+    act(() => root?.render(<ChannelView directoryRooms={rooms} directoryAgents={agents} selectedRoomID="room-2" />));
+    const message = (room_id: string): ChannelMessage => ({ id: room_id, room_id, seq: 1, kind: "text", author_type: "human", author_id: "human", body: `Private to ${room_id}`, created_at: "2026-07-23T00:00:00Z" });
+    await act(async () => pending.get("room-2")!({ messages: [message("room-2")] }));
+    await act(async () => pending.get("room-1")!({ messages: [message("room-1")] }));
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Private to room-2");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Private to room-1");
+    act(() => root?.render(<ChannelView directoryRooms={rooms} directoryAgents={agents} selectedRoomID="room-1" />));
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Private to room-1");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Private to room-2");
+  });
+
   it("hydrates the next room draft without publishing the previous room draft", async () => {
     const api = createApi();
     const onComposerDraftChange = vi.fn();
