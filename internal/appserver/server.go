@@ -1285,6 +1285,11 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleWorkspaceView(req)
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)
+	case MethodHarnessDispatch:
+		if !s.startBackground(func() { _ = s.handleHarnessDispatch(ctx, req) }) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodWorkspaceStateCleanup:
 		return s.handleWorkspaceStateCleanup(req)
 	case MethodThreadRegenerateTitle:

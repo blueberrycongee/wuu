@@ -72,8 +72,6 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 	if p.Action == "inspect" {
 		return s.inspectHarnessSession(ctx, p)
 	}
-	s.harnessMu.Lock()
-	defer s.harnessMu.Unlock()
 	if p.SessionID != "" && p.Action != "manage" {
 		link, err := s.channelService.HarnessLink(ctx, p.SessionID)
 		if err != nil && !errors.Is(err, channels.ErrNotFound) {
@@ -116,9 +114,21 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 		}
 		p.WorkspaceRoot, p.WorkspaceID = root, id
 	} else {
-		if _, err := s.sharedHarnessSession(p.SessionID); err != nil {
+		metadata, err := s.sharedHarnessSession(p.SessionID)
+		if err != nil {
 			return nil, err
 		}
+		root, id, err := s.sessionWorkspace(metadata)
+		if err != nil {
+			return nil, err
+		}
+		if p.WorkspaceRoot != "" || p.WorkspaceID != "" {
+			requestedRoot, requestedID, err := s.resolveSessionWorkspace(p.WorkspaceID, p.WorkspaceRoot)
+			if err != nil || root != requestedRoot || id != requestedID {
+				return nil, errors.New("an existing session cannot be retargeted to another workspace")
+			}
+		}
+		p.WorkspaceRoot, p.WorkspaceID = root, id
 	}
 	switch p.Action {
 	case "create", "send", "stop", "manage":
@@ -130,6 +140,9 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 	}
 	if p.Action == "manage" && p.Mode != "" && p.Mode != "attach" && p.Mode != "release" && p.Mode != "resume" {
 		return nil, errors.New("manage mode must be attach, release, or resume")
+	}
+	if !s.ownsSessionWorkspace(p.WorkspaceRoot, p.WorkspaceID) && !s.supportsClientMethod(MethodWorkspaceHarnessDispatch) {
+		return nil, errors.New("target workspace runtime is unavailable: this host does not support workspace dispatch; no operation was accepted")
 	}
 	id := p.SessionID
 	if p.Action == "create" {
@@ -147,7 +160,7 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 		return nil, err
 	}
 	if op.State == "pending" {
-		if err := s.applyHarnessOperationLocked(ctx, &op); err != nil {
+		if err := s.dispatchHarnessOperation(ctx, &op); err != nil {
 			return nil, err
 		}
 	}
@@ -313,6 +326,13 @@ func harnessExcerpt(text string, limit int) string {
 
 func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.HarnessOperation) error {
 	p := op.Params
+	root, id, err := s.harnessOperationWorkspace(*op)
+	if err != nil {
+		return err
+	}
+	if !s.ownsSessionWorkspace(root, id) {
+		return errors.New("session execution requires its bound workspace runtime")
+	}
 	defer s.publishSessionControl(p.SessionID)
 	if err := s.validateHarnessScope(ctx, op.Actor, false); err != nil {
 		return err
@@ -500,7 +520,7 @@ func (s *Server) kickHarnessSessions() {
 	})
 }
 
-func (s *Server) reconcileHarnessSessions(ctx context.Context) error {
+func (s *Server) reconcileLocalHarnessSessions(ctx context.Context) error {
 	s.harnessMu.Lock()
 	defer s.harnessMu.Unlock()
 	links, err := s.channelService.HarnessLinks(ctx, "", "")
@@ -508,6 +528,14 @@ func (s *Server) reconcileHarnessSessions(ctx context.Context) error {
 		return err
 	}
 	for _, link := range links {
+		metadata, err := s.sharedHarnessSession(link.SessionID)
+		if err != nil {
+			continue
+		}
+		root, id, err := s.sessionWorkspace(metadata)
+		if err != nil || !s.ownsSessionWorkspace(root, id) {
+			continue
+		}
 		if active, err := session.ThreadExecutionActive(s.rt.SessionDir, link.SessionID); err != nil {
 			return err
 		} else if !active {
@@ -527,6 +555,16 @@ func (s *Server) reconcileHarnessSessions(ctx context.Context) error {
 	}
 	for i := range ops {
 		op := &ops[i]
+		root, id, err := s.harnessOperationWorkspace(*op)
+		if err != nil {
+			if err := s.failHarnessOperation(ctx, op, err.Error()); err != nil {
+				return err
+			}
+			continue
+		}
+		if !s.ownsSessionWorkspace(root, id) {
+			continue
+		}
 		if op.State == "submitted" {
 			active, err := session.ThreadExecutionActive(s.rt.SessionDir, op.Params.SessionID)
 			if err != nil {

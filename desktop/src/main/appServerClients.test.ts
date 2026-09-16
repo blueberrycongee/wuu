@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
 
 vi.mock("electron", () => ({
   app: {
@@ -217,6 +218,78 @@ describe("AppServerClientPool Activity routing", () => {
 
 describe("AppServerClientPool session routing", () => {
   afterEach(() => vi.unstubAllEnvs());
+  it("negotiates host routing for prewarmed and restarted project processes", async () => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const children: FakeAppServerChild[] = [];
+    const methods: string[][] = [];
+    const context = { kind: "project" as const, project_id: "project", cwd: "/project" };
+    const initialize = { capabilities: { reverse_rpc: { methods: [WORKSPACE_HARNESS_DISPATCH] } } };
+    const pool = new AppServerClientPool(() => context, () => context.cwd, () => {}, () => {
+      const child = new FakeAppServerChild();
+      const received: string[] = [];
+      children.push(child);
+      methods.push(received);
+      child.stdin.on("data", data => {
+        const request = JSON.parse(String(data));
+        if (!request.method) return;
+        received.push(request.method);
+        if (request.method === "initialize") expect(request.params).toEqual(initialize);
+        child.stdout.write(`${JSON.stringify({ id: request.id, result: {} })}\n`);
+      });
+      return child.asChildProcess();
+    }, () => initialize);
+    pool.prewarmContexts([context]);
+    expect(methods).toEqual([["initialize"]]);
+    children[0].emit("exit", 1, null);
+    await pool.requestInContext(context, "thread/list");
+    expect(methods).toEqual([["initialize"], ["initialize", "thread/list"]]);
+    void pool.shutdown();
+  });
+
+  it.each(["valid", "mismatch", "missing"])("dispatches a %s project binding without using the foreground workspace", async (binding) => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const children = new Map<string, FakeAppServerChild>();
+    const requests = new Map<string, Array<Record<string, any>>>();
+    const source = { kind: "project" as const, project_id: "source", cwd: "/source" };
+    const target = { kind: "project" as const, project_id: "target", cwd: "/target" };
+    let routed: Promise<void> | undefined;
+    const initialize = { capabilities: { reverse_rpc: { methods: [WORKSPACE_HARNESS_DISPATCH] } } };
+    const pool = new AppServerClientPool(() => source, () => source.cwd, event => {
+      if (event.kind === "server-request") {
+        routed = routeHarnessWorkspaceRequest(event, pool, () => {
+          if (binding === "missing") throw new Error("workspace is unavailable");
+          return target;
+        }, initialize);
+      }
+    }, (_cmd, _args, options) => {
+      const child = new FakeAppServerChild();
+      children.set(options.cwd, child);
+      requests.set(options.cwd, []);
+      child.stdin.on("data", data => {
+        const message = JSON.parse(String(data));
+        requests.get(options.cwd)!.push(message);
+        if (message.method) child.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`);
+      });
+      return child.asChildProcess();
+    });
+    pool.prewarmContexts([source]);
+    children.get(source.cwd)!.stdout.write(`${JSON.stringify({ id: "dispatch", method: WORKSPACE_HARNESS_DISPATCH, params: {
+      workspace_id: target.project_id, workspace_root: binding === "mismatch" ? source.cwd : target.cwd, operation_id: "durable-op",
+    } })}\n`);
+    await routed;
+    if (binding === "valid") {
+      expect(requests.get(target.cwd)).toMatchObject([
+        { method: "initialize", params: initialize },
+        { method: "session/harness/dispatch", params: { workspace_id: "target", workspace_root: target.cwd, operation_id: "durable-op" } },
+      ]);
+      expect(requests.get(source.cwd)).toEqual([{ id: "dispatch", result: {} }]);
+    } else {
+      expect(children.has(target.cwd)).toBe(false);
+      expect(requests.get(source.cwd)).toMatchObject([{ id: "dispatch", error: { message: expect.any(String) } }]);
+    }
+    void pool.shutdown();
+  });
+
   it("routes ordinary Harness reads and controls to the session executor", async () => {
     vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
     const children = new Map<string, FakeAppServerChild>();

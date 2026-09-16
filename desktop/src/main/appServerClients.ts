@@ -86,6 +86,7 @@ export class AppServerClientPool {
     private readonly getActiveWorkdir: () => string | undefined,
     private readonly emitToRenderer: (event: ServerEvent) => void,
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
+    private readonly getInitializeParams?: () => unknown,
   ) {}
 
   // A workdir the check pins (e.g. it owns a live agent browser tab) is treated
@@ -299,6 +300,8 @@ export class AppServerClientPool {
           this.maybeBroadcastRunningThreads();
         },
         this.spawnAppServer,
+        undefined,
+        this.getInitializeParams,
       );
       this.clients.set(workdir, client);
     }
@@ -419,6 +422,7 @@ export class AppServerClient {
     private readonly onStateChange: () => void,
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
     private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
+    private readonly getInitializeParams?: () => unknown,
   ) {}
 
   start(): void {
@@ -643,6 +647,15 @@ export class AppServerClient {
     child.on("close", (code) => {
       this.finalizeChild(child, code);
     });
+    // Prewarmed and restarted cores can host background identities before a
+    // renderer opens that project. Negotiate host routing on every spawn.
+    if (this.getInitializeParams) {
+      void this.request("initialize", this.getInitializeParams()).catch(error => {
+        if (this.child === child && !this.disposing) {
+          this.emit(this, { kind: "server-error", message: String(error) });
+        }
+      });
+    }
   }
 
   private write(payload: unknown): void {

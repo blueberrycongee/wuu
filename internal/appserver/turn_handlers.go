@@ -1008,6 +1008,22 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if s == nil || s.closed.Load() {
 		return nil, errServerClosed
 	}
+	// A correct CWD alone is insufficient: configuration, plugins and artifacts
+	// belong to the host runtime. Fence every admission, including user takeover
+	// of a managed session and reuse of a runtime cached before rerouting.
+	th.mu.Lock()
+	boundProject := th.NamedAgentID == "" && (th.WorkspaceID != "" || th.Source == "collaboration")
+	binding := session.Session{WorkspaceID: th.WorkspaceID, CWD: th.CWD, WorktreeBaseRepo: th.WorktreeBaseRepo}
+	th.mu.Unlock()
+	if boundProject {
+		root, id, err := s.sessionWorkspace(binding)
+		if err != nil {
+			return nil, err
+		}
+		if !s.ownsSessionWorkspace(root, id) {
+			return nil, errors.New("session must execute in its bound project runtime")
+		}
+	}
 	// External-engine threads (codex, later claude) carry no native
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.

@@ -30,6 +30,13 @@ If you inspect tool activity, `chat_session` is for discovering and communicatin
 named identities and reading their results. `session` manages ordinary execution
 sessions. You do not need to call either tool yourself.
 
+Named Agents can discover your registered projects. Specify which project a task
+belongs to; ask the Agent to clarify before starting if the project is ambiguous.
+A work session stays bound to that project, including follow-up instructions and
+its execution configuration. Switching the foreground project does not retarget it.
+An unavailable or conflicting project binding produces an error instead of falling
+back to another project. This routing guarantee is not a filesystem sandbox.
+
 ## Track or cancel work
 
 Use the task view to check the owner, progress, and results. When execution is linked

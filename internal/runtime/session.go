@@ -2102,16 +2102,16 @@ func namedAgentWorkspaceContextProvider(wuuHome, agentHome, memoryDir string, to
 		if len(registered) == 0 {
 			content.WriteString("Registered project workspaces: none. Projectless conversation sessions are excluded.")
 		} else {
-			content.WriteString("Registered project workspaces available for activity:\n")
+			content.WriteString("Registered project workspace directory (discovery, not authorization for unrelated work):\n")
 			for _, workspace := range registered {
 				name := strings.TrimSpace(workspace.Name)
 				root := strings.TrimSpace(workspace.Root)
 				if name == "" {
 					name = root
 				}
-				fmt.Fprintf(&content, "- %s — %s\n", name, root)
+				fmt.Fprintf(&content, "- %s — id: %s — path: %s\n", name, workspace.ID, root)
 			}
-			content.WriteString("Use absolute paths or a command-specific cwd to work in any listed project.")
+			content.WriteString("Bind each execution session to the project the user requested, using its registered ID or absolute path. Confirm the returned binding before follow-ups; existing sessions retain their project. If the task does not identify a project clearly, ask the user. Your identity home, the foreground workspace, and the process hosting you are not project defaults. Keep direct inspection and commands within the task's authorized project scope.")
 		}
 		return []wuucontext.Block{{
 			Kind:    wuucontext.BlockEnvironment,
