@@ -1084,6 +1084,22 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
 	}
 	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+		// Draft selections arrive through thread/start, not config/model/update.
+		// Register a discovered connection before treating the pin as removed.
+		cfg, _, loadErr := s.rt.LoadEffectiveConfig()
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		cfg, registerErr := s.registerDiscoveredProvider(cfg, modelProvider)
+		if registerErr != nil {
+			return nil, registerErr
+		}
+		// Another app server may have registered it since the failed build.
+		if _, _, resolveErr := cfg.ResolveProvider(modelProvider); resolveErr == nil {
+			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
+		}
+	}
+	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// The pinned provider was removed from config after this session
 		// selected it. Self-heal the dead provider/model pair to the
 		// workspace defaults so the turn proceeds instead of every send

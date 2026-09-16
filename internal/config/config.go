@@ -1238,6 +1238,48 @@ func CreateProviderRuntime(configPath, providerName string, providerType *string
 	return updateProviderSelection(configPath, providerName, newModel, baseURL, apiKey, authToken, effort, variant, permissionMode, reuseCodexCredentials, true, providerType)
 }
 
+// AddProviderIfMissing saves a provider without changing the default provider
+// or agent settings. Existing definitions are left unchanged.
+func AddProviderIfMissing(configPath, providerName string, provider ProviderConfig) error {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return errors.New("provider name is required")
+	}
+	lock, err := storelock.Acquire(filepath.Dir(configPath))
+	if err != nil {
+		return fmt.Errorf("lock config: %w", err)
+	}
+	defer func() { _ = lock.Release() }()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	var providers map[string]json.RawMessage
+	if err := json.Unmarshal(raw["providers"], &providers); err != nil || providers == nil {
+		return errors.New("providers section not found")
+	}
+	if _, exists := providers[providerName]; exists {
+		return nil
+	}
+	providers[providerName], err = json.Marshal(provider)
+	if err != nil {
+		return fmt.Errorf("marshal provider: %w", err)
+	}
+	raw["providers"], err = json.Marshal(providers)
+	if err != nil {
+		return fmt.Errorf("marshal providers: %w", err)
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
+}
+
 // RemoveProvider deletes a configured provider from the config file and,
 // when the removed provider was the active default, atomically promotes
 // fallbackName to default_provider with fallbackModel. fallbackName must

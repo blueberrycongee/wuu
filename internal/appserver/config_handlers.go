@@ -1880,6 +1880,10 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	cfg, err = s.registerDiscoveredProvider(cfg, provider)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -2289,6 +2293,22 @@ func (s *Server) providerSummaries() []ProviderSummary {
 		}
 	}
 	return summaries
+}
+
+// A conversation can select the same discovered connections shown in the
+// picker. Save only the connection so subsequent runtime builds and restarts
+// resolve the pin without changing workspace defaults or other conversations.
+func (s *Server) registerDiscoveredProvider(cfg config.Config, providerName string) (config.Config, error) {
+	providerName = strings.TrimSpace(providerName)
+	provider, discovered := localGrokBuildProvider(cfg, providerName, os.Getenv("HOME"))
+	if !discovered {
+		return cfg, nil
+	}
+	if err := config.AddProviderIfMissing(s.rt.ConfigPath, providerName, provider); err != nil {
+		return cfg, err
+	}
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	return cfg, err
 }
 
 func localGrokBuildProvider(cfg config.Config, providerName, home string) (config.ProviderConfig, bool) {
