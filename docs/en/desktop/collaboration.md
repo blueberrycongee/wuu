@@ -50,9 +50,9 @@ message alone is not proof that tests passed or that a visual result was inspect
 
 ## Plans and memory
 
-Open **Plans and memory** in the room to inspect, pause, resume, or cancel saved plans
-and edit or delete memory. Room memory is shared within that room; identity memory
-belongs to the Named Agent. Removing memory does not remove existing chat history.
+Saved plans and memory remain available to Agents, but there is no room-header panel
+for managing them. Room memory is shared within that room; identity memory belongs
+to the Named Agent. Existing plans, memories, and chat history are preserved.
 
 **The execution host must be running.** Plans cannot run on time while the device is
 off, asleep, or Wuu is closed. Check pending work and errors after returning rather

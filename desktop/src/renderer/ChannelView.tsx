@@ -9,7 +9,6 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
-import { ChannelContinuity } from "./ChannelContinuity";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
@@ -1714,7 +1713,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   </span> : null}
                   <span className="channel-room-settings-name" role="heading" aria-level={2}>{selectedRoomTitle || t("channels.rooms")}</span><ChevronDown className="icon" aria-hidden="true" />
                 </button>
-                {selectedRoom ? <ChannelContinuity key={selectedRoom.id} roomId={selectedRoom.id} agents={selectedRoomAgents} /> : null}
               </>}
             </header>
           {composingNewRoom ? <div className="channel-new-room-surface">

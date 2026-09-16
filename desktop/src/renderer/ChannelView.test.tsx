@@ -228,6 +228,25 @@ afterEach(() => {
 });
 
 describe("ChannelView", () => {
+  it.each(["channel", "dm"] as const)("keeps %s header settings without a plans or memory management entry", async (kind) => {
+    const room = { ...rooms[0], kind, members: kind === "dm" ? rooms[0].members.slice(0, 1) : rooms[0].members };
+    const api = createApi();
+    api.bootstrapChannels = vi.fn(async () => ({ agents, rooms: [room] }));
+    api.channelContinuity = vi.fn(async () => ({}));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    await act(async () => root!.render(<ChannelView section="rooms" selectedRoomID={room.id} directoryAgents={agents} directoryRooms={[room]} />));
+    const heading = container.querySelector<HTMLElement>('header [role="heading"]')!;
+    const settings = heading.closest("button")!;
+    // The header exposes conversation settings only, even when the host supports continuity.
+    expect(Array.from(settings.closest("header")!.querySelectorAll("button"))).toEqual([settings]);
+    await act(async () => settings.click());
+    expect(settings.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(`#${settings.getAttribute("aria-controls")}`)).not.toBeNull();
+    expect(api.channelContinuity).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Human direction");
+  });
+
   it("positions asynchronously loaded history before paint", async () => {
     const api = createApi();
     let resolveMessages!: (value: { messages: ChannelMessage[] }) => void;
