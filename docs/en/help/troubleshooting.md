@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Check the workspace, model service, and local state by symptom first. Before reporting
+Start with the symptom below. Before reporting
 a problem, do not upload an entire `~/.wuu`; it may contain source code, sessions,
 tool output, and credential information.
 
@@ -9,11 +9,9 @@ tool output, and credential information.
 1. Quit wuu completely, then reopen it.
 2. Confirm the app comes from the official [GitHub
    Releases](https://github.com/blueberrycongee/wuu/releases).
-3. If macOS blocks the unsigned preview, handle the quarantine attribute as described
-   in the [installation guide](../getting-started/installation.md).
-4. If the UI stays stuck on the initialization state, record the error message and app
-   version; the desktop depends on a private core that starts with the app and does not
-   automatically fall back to an offline mode.
+3. If macOS blocks the app, follow **Open Anyway** in the
+   [installation guide](../getting-started/installation.md). Do not disable Gatekeeper.
+4. If initialization remains stuck, record the error message and app version for a report.
 
 ## The model service is unavailable
 
@@ -31,17 +29,15 @@ tool output, and credential information.
 
 In the desktop, check the current project; in the CLI, check the current directory or
 `--workdir`. Sessions are filtered by workspace by default. After a directory has been
-moved, use **Relocate** on the project in the sidebar instead of adding it again as a
+moved, use **Relocate…** on the project in the sidebar instead of adding it again as a
 new project with the same name.
 
 ## The agent cannot modify files
 
-- Check whether read-only mode is active;
-- confirm the target is inside a registered workspace;
-- look at whether the tool error says a sensitive path or high-risk operation was
-  rejected;
-- do not switch straight to `unconfined` to get around an ordinary error; first confirm
-  the task really needs access outside the workspace.
+Check the [permission mode](../reference/permissions.md) and the target directory.
+Read-only mode blocks writes; standard mode requires the target to be in a registered
+workspace. Read the tool error for the blocked path or an unavailable sandbox backend.
+Do not switch straight to `unconfined` to work around an error.
 
 ## Commands take a long time
 

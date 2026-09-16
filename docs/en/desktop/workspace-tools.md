@@ -30,10 +30,17 @@ workspace. Commands started by the agent and background processes also leave act
 and results in the message stream; long output may be saved as a log reference instead
 of being expanded in full.
 
-Terminal commands run as the current user. The permission mode constrains wuu's tool
-access; system-level isolation requires a container or virtual machine.
+Commands you type in this terminal run with your operating-system permissions, even
+when the Agent is in read-only mode. Agent commands are subject to the selected
+[permission mode](../reference/permissions.md); do not use the terminal to run an
+unreviewed command just because the Agent could not run it.
 
 ## Browser
+
+The browser panel lets you view web pages beside your work. While an Agent operates
+a page, choose **Take control of browser** to operate manually, then **Return browser
+control to Agent** to hand it back. **Stop browser activity** ends the current automation.
+Automatic browser operation requires a supported runtime and tools.
 
 The built-in browser can use a local proxy such as Clash on its own, without changing
 the app-server's or model service's network connections. Set `WUU_BROWSER_PROXY` before
@@ -47,14 +54,6 @@ For a packaged build, launch the app from a terminal with the same environment
 variable. The proxy only applies to the session used by wuu's built-in browser; if the
 proxy port is unavailable, the desktop and API service still start normally, but
 browser requests fail — fix the port and restart the desktop.
-
-The browser panel is for viewing web pages next to the workspace. While the agent is
-operating on a page, you can choose **Take over browser** to operate manually, then
-choose **Return browser to agent** to let the task continue; choose **Stop browser
-activity** to end the current automation. The agent controlling the browser still
-requires the current shell and runtime to provide the corresponding capability; seeing
-the browser panel does not mean every model or build can operate web pages
-automatically.
 
 ## Find entries with `/`
 

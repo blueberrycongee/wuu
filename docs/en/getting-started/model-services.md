@@ -1,4 +1,4 @@
-# Connecting a model service
+# Model setup
 
 Choose a provider, then a model it offers. The provider configuration holds the
 endpoint and credentials; the model name is an ID that provider accepts. One
