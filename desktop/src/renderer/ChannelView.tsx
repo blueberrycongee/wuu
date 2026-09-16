@@ -117,10 +117,6 @@ function ChannelAuthorName({ name, mentionLabel, onMention }: {
   );
 }
 
-type ChannelTimelineItem =
-  | { kind: "message"; message: ChannelMessage }
-  | { kind: "orchestration"; tasks: ChannelMessage[] };
-
 async function readChannelMessages(roomID: string): Promise<ChannelMessageListResult> {
   const result = await window.wuu!.listChannelMessages({ room_id: roomID, limit: 500 });
   const messages = [...(result.messages ?? [])];
@@ -136,25 +132,6 @@ async function readChannelMessages(roomID: string): Promise<ChannelMessageListRe
   return { ...result, messages };
 }
 
-function buildChannelTimeline(messages: ChannelMessage[]): ChannelTimelineItem[] {
-  const timeline: ChannelTimelineItem[] = [];
-  for (const message of messages) {
-    // Work cards share the timeline with public conversation replies.
-    if (message.kind === "task") {
-      const previous = timeline[timeline.length - 1];
-      const previousTask = previous?.kind === "orchestration" ? previous.tasks[previous.tasks.length - 1] : undefined;
-      if (previous?.kind === "orchestration" && previousTask && previousTask.seq + 1 === message.seq) {
-        previous.tasks.push(message);
-      } else {
-        timeline.push({ kind: "orchestration", tasks: [message] });
-      }
-      continue;
-    }
-    timeline.push({ kind: "message", message });
-  }
-  return timeline;
-}
-
 export function assignmentState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" {
   if (state === "checking") return "checking";
   if (state === "revising") return "revising";
@@ -166,99 +143,6 @@ export function assignmentState(state?: string): "open" | "doing" | "checking" |
 
 function assignmentStatusKey(state: ReturnType<typeof assignmentState>): "open" | "doing" | "checking" | "revising" | "needsHuman" | "done" {
   return state === "needs_human" ? "needsHuman" : state;
-}
-
-// Work records use a wider state vocabulary than the lightweight chat-task
-// states (working/completed/integrating plus terminal failure states). Collapse
-// them into one user-facing set so a card never shows raw "open → working"
-// style transitions, and terminal states stay visually distinct.
-function workDisplayState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "integrating" | "failed" | "cancelled" | "interrupted" {
-  if (state === "working" || state === "doing") return "doing";
-  if (state === "checking") return "checking";
-  if (state === "revising") return "revising";
-  if (state === "needs_human") return "needs_human";
-  if (state === "integrating") return "integrating";
-  if (state === "done" || state === "completed") return "done";
-  if (state === "failed") return "failed";
-  if (state === "cancelled") return "cancelled";
-  if (state === "interrupted") return "interrupted";
-  return "open";
-}
-
-function ChannelOrchestrationCluster({
-  room,
-  tasks,
-  agents,
-}: {
-  room: ChannelRoom;
-  tasks: ChannelMessage[];
-  agents: NamedAgent[];
-}): JSX.Element {
-  const { t } = useI18n();
-  const agentByID = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
-  return (
-    <MessageBubbleRow
-      outgoing={false}
-      className="channel-message channel-orchestration-message channel-orchestration-row"
-      contentClassName="channel-message-content"
-    >
-      <div className="channel-assignment-list">
-        {tasks.map((task, index) => {
-          const owner = agentByID.get(task.task_owner ?? "");
-          const ownerName = owner?.name ?? task.task_owner ?? t("channels.taskOwnerLabel");
-          const work = task.work;
-          const workState = workDisplayState(work?.state ?? task.task_state);
-          const statusLabel = workState === "cancelled"
-            ? t("channels.workStatus.cancelled")
-            : workState === "failed"
-              ? t("channels.workStatus.failed")
-              : workState === "interrupted"
-                ? t("channels.workStatus.interrupted")
-                : workState === "integrating"
-                  ? t("channels.workStatus.integrating")
-                  : t(`channels.assignmentStatus.${assignmentStatusKey(workState)}`);
-          const title = task.task_title?.trim() || task.body.trim() || t("channels.newTask");
-          const body = task.task_title?.trim() && task.body.trim() !== task.task_title.trim()
-            ? task.body.trim()
-            : "";
-          return (
-            <details
-              className="stream-event-card channel-assignment-item"
-              data-state={workState}
-              key={task.id}
-              style={{ "--channel-assignment-index": index } as CSSProperties}
-            >
-              <summary className="channel-assignment-heading" title={ownerName}>
-                <span className="channel-assignment-target" aria-hidden="true">
-                  <AgentAvatarMark seed={owner?.id ?? task.task_owner ?? task.id}
-                    avatarKey={owner?.avatar_key ?? "abstract-1"} avatarImage={owner?.avatar_image} />
-                </span>
-                <span className="channel-assignment-copy"><strong>{title}</strong></span>
-                <ChevronDown className="channel-assignment-chevron" aria-hidden="true" />
-              </summary>
-              <div className="channel-assignment-content">
-                <div className="channel-assignment-context">
-                  {room.kind !== "dm" ? <span>{ownerName}</span> : null}
-                  <span className="channel-assignment-status" data-state={workState}>{statusLabel}</span>
-                </div>
-                {body ? <RichContent text={body} /> : null}
-                {work?.unresolved_items?.trim() && work.unresolved_items.trim() !== body ? (
-                  <RichContent text={work.unresolved_items.trim()} />
-                ) : null}
-                {work?.artifacts?.length ? (
-                  <div className="channel-assignment-artifacts">
-                    {work.artifacts.map((artifact) => (
-                      <a key={artifact.id} href={artifact.uri}>{artifact.label || artifact.summary || artifact.kind}</a>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </details>
-          );
-        })}
-      </div>
-    </MessageBubbleRow>
-  );
 }
 
 function ChannelMessageBubble({
@@ -855,7 +739,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         : (taskOwnerAgents[0]?.id ?? "")
     ));
   }, [setupPanel, taskOwnerAgents]);
-  const channelTimeline = useMemo(() => buildChannelTimeline(messages), [messages]);
+  // Keep task records for the board and read cursors, but out of the chat stream.
+  const channelTimeline = useMemo(() => messages.filter((message) => message.kind !== "task"), [messages]);
   const activityFor = useCallback((agent?: NamedAgent): AgentActivityStatus => {
     if (!agent) return "idle";
     if (sendingAgentIDs.has(agent.id)) return "sending";
@@ -1857,19 +1742,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
         <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
           {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}
-          {channelTimeline.map((item, index) => {
-            if (item.kind === "orchestration" && selectedRoom) {
-              return (
-                <ChannelOrchestrationCluster
-                  key={`orchestration-${item.tasks[0].id}`}
-                  room={selectedRoom}
-                  tasks={item.tasks}
-                  agents={agents}
-                />
-              );
-            }
-            if (item.kind !== "message") return null;
-            const message = item.message;
+          {channelTimeline.map((message, index) => {
             const proposal = message.agent_creation_proposal;
             if (proposal) {
               const pending = proposal.state === "pending";
@@ -1934,8 +1807,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             const agent = own ? undefined : messageAgents.find((candidate) => candidate.id === message.author_id);
             const status = activityFor(agent);
             const reply = message.reply_to ? messages.find((candidate) => candidate.id === message.reply_to) : undefined;
-            const previousItem = channelTimeline[index - 1];
-            const previous = previousItem?.kind === "message" ? previousItem.message : previousItem?.tasks.at(-1);
+            const previous = channelTimeline[index - 1];
             const date = new Date(message.created_at);
             const gap = previous ? date.getTime() - Date.parse(previous.created_at) : Infinity;
             const showTimestamp = !previous || gap < 0 || gap >= 5 * 60_000 || date.toDateString() !== new Date(previous.created_at).toDateString();

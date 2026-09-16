@@ -398,7 +398,7 @@ describe("ChannelView", () => {
     expect(card?.querySelector(".channel-agent-proposal-actions")).toBeNull();
   });
 
-  it("expands task content with actionable blockers and artifact links", async () => {
+  it("keeps task records out of chat while retaining them in the task board", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: room_id === "room-1" ? [{
       id: "work-1", room_id, seq: 1, author_type: "agent" as const, author_id: "agent-1",
@@ -436,21 +436,11 @@ describe("ChannelView", () => {
     act(() => root?.render(<ChannelView selectedRoomID="room-1" onOpenSession={onOpenSession} />));
     await settle();
 
-    const task = container.querySelector<HTMLDetailsElement>(".channel-assignment-item");
-    expect(task?.open).toBe(false);
-    const heading = task?.querySelector("summary");
-    expect(heading?.textContent).toBe("Fix callback");
-    expect(heading?.querySelector(".agent-avatar-mark")).not.toBeNull();
-    act(() => heading?.click());
-    expect(task?.open).toBe(true);
-    expect(task?.textContent).toContain("Reject callback replay");
-    expect(container.querySelector(".channel-work-activity")).toBeNull();
-    expect(container.querySelector(".channel-assignment-status")?.textContent).toBe("验收中");
-    expect(task?.textContent).toContain("full suite unavailable");
-    const artifact = task?.querySelector<HTMLAnchorElement>(".channel-assignment-artifacts a");
-    expect(artifact?.textContent).toBe("callback diff");
-    expect(artifact?.getAttribute("href")).toBe("artifact://diff-1");
-    expect(container.textContent).not.toContain("Verifier Bot");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Fix callback");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Reject callback replay");
+    act(() => root?.render(<ChannelView section="tasks" onOpenSession={onOpenSession} />));
+    await settle();
+    expect(container.querySelector(".channel-task-board")?.textContent).toContain("Fix callback");
   });
 
   it("caps channel unread counts at 99+", () => {
@@ -942,8 +932,7 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-message.own .channel-human-avatar")).toBeNull();
     expect(container.querySelector(".channel-message.own .channel-message-meta strong")).toBeNull();
     expect(container.querySelector(".channel-task-card")).toBeNull();
-    expect(container.querySelector(".channel-orchestration-message")).not.toBeNull();
-    expect(container.querySelector(".channel-message-stream")?.textContent).toContain("Investigate flaky build");
+    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Investigate flaky build");
     expect(container.querySelector('[aria-label="Alpha: 处理中"]')).not.toBeNull();
     expect(container.querySelector(".channel-agent-status-card")?.textContent).toBe("处理中");
     expect(container.querySelector(".channel-agent-status-card strong")).toBeNull();
