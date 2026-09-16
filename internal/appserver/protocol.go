@@ -2090,18 +2090,26 @@ const (
 	WorkspaceKindScratch WorkspaceKind = "scratch"
 )
 
+type ThreadSessionControl struct {
+	ManagerID   string `json:"manager_id"`
+	ManagerName string `json:"manager_name"`
+	State       string `json:"state"`
+	Revision    int64  `json:"revision"`
+}
+
 type Thread struct {
-	ID             string `json:"id"`
-	Source         string `json:"source,omitempty"`
-	ParentID       string `json:"parent_id,omitempty"`
-	AgentPath      string `json:"agent_path,omitempty"`
-	Preview        string `json:"preview"`
-	Title          string `json:"title,omitempty"`
-	ModelProvider  string `json:"model_provider"`
-	Model          string `json:"model"`
-	ModelVariant   string `json:"model_variant"`
-	ModelEffort    string `json:"model_effort"`
-	PermissionMode string `json:"permission_mode"`
+	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
+	ID             string                `json:"id"`
+	Source         string                `json:"source,omitempty"`
+	ParentID       string                `json:"parent_id,omitempty"`
+	AgentPath      string                `json:"agent_path,omitempty"`
+	Preview        string                `json:"preview"`
+	Title          string                `json:"title,omitempty"`
+	ModelProvider  string                `json:"model_provider"`
+	Model          string                `json:"model"`
+	ModelVariant   string                `json:"model_variant"`
+	ModelEffort    string                `json:"model_effort"`
+	PermissionMode string                `json:"permission_mode"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).

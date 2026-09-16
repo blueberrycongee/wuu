@@ -1072,7 +1072,12 @@ export type ChannelContinuityParams = {
 export type ChannelContinuityResult = { arrangements?: CollaborationArrangement[]; entries?: CollaborationMemoryEntry[]; next?: string };
 
 export type ChannelSessionListParams = { agentId?: string; roomId?: string };
-export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[] };
+export type ManagedHarnessSession = {
+ session_id: string; title: string; workspace_root: string; workspace_id?: string;
+ provider: string; model: string; effort?: string; state: "running" | "idle";
+ control?: { manager_id: string; state: "active" | "paused" | "taken_over"; revision: number };
+};
+export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[]; managed_sessions?: ManagedHarnessSession[] };
 export type ChannelSessionCreateParams = {
   agentId: string;
   roomId: string;
@@ -1903,6 +1908,7 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+ session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
   parent_id?: string;
   agent_path?: string;

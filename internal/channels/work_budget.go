@@ -27,6 +27,8 @@ func collaborationTokenUsage(ctx context.Context, reader tokenUsageReader, roomI
 		FROM work_runs run JOIN works work ON work.id=run.work_id
 		UNION ALL
 		SELECT room_id,work_id,input_tokens,output_tokens FROM collaboration_turn_scopes WHERE run_id=''
+		UNION ALL
+		SELECT room_id,work_id,input_tokens,output_tokens FROM harness_session_usage
 	)`+where, args...).Scan(&input, &output)
 	return
 }

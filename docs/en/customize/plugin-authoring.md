@@ -229,7 +229,7 @@ kernel services are:
 | --- | --- |
 | `host.storage.get` / `set` / `delete` / `keys` / `compare-exchange` | Namespaced storage; every call must pass `scope: "user" \| "workspace"` |
 | `host.settings.get` / `list` | Settings, read-only at runtime |
-| `host.session.create` / `send` / `list` / `cancel` | Create, deliver to, list, and cancel plugin-owned Sessions |
+| `host.session.create` / `send` / `list` / `inspect` / `cancel` / `control` | Create and inspect Sessions, send input, and manage execution control |
 | `host.data.query` | Read a versioned, read-only event snapshot for one thread |
 | `registry.introspect` | Read-only introspection: which services exist, at what version, provided by which generation |
 | `execution.update` | Report progress for one in-flight execution (see "Execution scope") |
@@ -934,3 +934,12 @@ publishing and re-validate after Wuu upgrades.
   runtime carries the same risk as running a third-party local command. Check
   the source before installing. Updates from the same source identity keep
   trust; a change of source identity asks for confirmation again.
+
+`host.session.control` reads or changes a Session's automatic manager independently
+of ownership and parentage. Changes use the last observed `revision`; stale
+changes fail. Set `state` to `active`, `paused`, or `released`. A managed send or
+cancel carries `control_revision`. A direct user message takes control; stopping
+pauses automatic follow-up. Resume only when the user asks to continue. Releasing
+management does not stop the current turn or delete history. Create can route to
+an explicit registered `workspace_id` or `workspace_root`; it never inherits the
+parent identity's home in place of that project.

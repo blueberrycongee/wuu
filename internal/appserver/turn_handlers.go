@@ -124,6 +124,7 @@ type turnRuntimeSnapshot struct {
 	ProcessCompletionIDs     []string
 	ExecutionRunID           string
 	PluginTurn               *pluginTurnReference
+	Control                  *session.Control
 	RequestContext           []agent.ContextSegment
 	ActiveDocument           *ActiveDocument
 }
@@ -191,6 +192,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	userMsg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
@@ -497,6 +501,9 @@ func (s *Server) handleTurnQueue(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	msg.ClientID = queueID
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	entry := queuedTurn{id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
@@ -684,6 +691,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 	}
 	heldTurn, isHeld, err := s.findHeldUserTurn(params.ThreadID, clientID)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
@@ -1654,6 +1664,9 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
+	if err := s.takeHarnessControl(threadID, session.ControlPaused); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	_, err := s.interruptThreadExecution(threadID, "", "")
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
@@ -1702,7 +1715,14 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 		}
 		return false, nil
 	}
-	pendingSteers := queuedTurnsFromSteers(th.pendingSteers)
+	s.pruneRevokedSteersLocked(th)
+	var humanSteers []providers.ChatMessage
+	for _, msg := range th.pendingSteers {
+		if msg.Origin != "plugin" {
+			humanSteers = append(humanSteers, msg)
+		}
+	}
+	pendingSteers := queuedTurnsFromSteers(humanSteers)
 	th.applySteerDocumentOverridesLocked(pendingSteers)
 	for index := range pendingSteers {
 		pendingSteers[index].origin = session.HeldUserWorkOriginSteer
@@ -2457,6 +2477,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 				messages = append(messages, baseBeforeStep()...)
 			}
 			th.mu.Lock()
+			s.pruneRevokedSteersLocked(th)
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
 			th.resetSteerWakeLocked()
 			th.mu.Unlock()
@@ -2703,6 +2724,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// Keep the execution lease through trace persistence and runner cleanup so
 	// the next turn cannot observe a half-restored runtime.
 	th.interrupting = false
+	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
 	if len(unconsumedSteers) > 0 {
 		if threadRuntime != nil && threadRuntime.AgentControl != nil {
@@ -2710,6 +2732,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		}
 		if len(unconsumedSteers) > 0 {
 			queuedSteers := coalescedQueuedTurnsFromSteers(unconsumedSteers)
+			for i := range queuedSteers {
+				if c, ok := th.pendingSteerControls[queuedSteers[i].msg.ClientID]; ok {
+					queuedSteers[i].snapshot.Control = &c
+				}
+			}
 			th.applySteerDocumentOverridesLocked(queuedSteers)
 			s.prependQueuedUserTurns(th.ID, queuedSteers)
 		}
@@ -2816,6 +2843,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 		})
 	}
+	s.kickHarnessSessions()
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""
@@ -3443,6 +3471,18 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.mu.Unlock()
 		cancel()
 	}
+	if snapshot.Control != nil {
+		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
+			abortAdmission()
+			return startedThreadTurn{}, false, err
+		}
+	}
+	if userMsg.ClientID != "" && userMsg.Origin == "plugin" {
+		if _, found := s.findSessionInput(th, userMsg.ClientID); found {
+			abortAdmission()
+			return startedThreadTurn{}, false, errSessionInputApplied
+		}
+	}
 	if hooks.afterLease != nil {
 		if err := hooks.afterLease(th, &userMsg); err != nil {
 			abortAdmission()
@@ -3522,7 +3562,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendChatMessage(s.rt.SessionDir, th.ID, userMsg)
+		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()

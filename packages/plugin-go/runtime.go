@@ -58,6 +58,7 @@ const (
 	HostServiceSessionList            = "host.session.list"
 	HostServiceSessionCancel          = "host.session.cancel"
 	HostServiceSessionInspect         = "host.session.inspect"
+	HostServiceSessionControl         = "host.session.control"
 	HostServiceSessionHistoryRead     = "host.session.history.read"
 	HostServiceSessionHistorySearch   = "host.session.history.search"
 	HostServiceWorkspaceStatus        = "host.workspace.status"
@@ -95,6 +96,7 @@ const (
 	KernelSessionListService            = "host.session.list"
 	KernelSessionCancelService          = "host.session.cancel"
 	KernelSessionInspectService         = "host.session.inspect"
+	KernelSessionControlService         = "host.session.control"
 	KernelSessionHistoryReadService     = "host.session.history.read"
 	KernelSessionHistorySearchService   = "host.session.history.search"
 	KernelWorkspaceStatusService        = "host.workspace.status"
@@ -556,6 +558,7 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
+	ControlRevision int64 `json:"control_revision,omitempty"`
 	// ReplyToTurnID preserves the original turn scope when a plugin returns deferred work.
 	ReplyToTurnID string                    `json:"reply_to_turn_id,omitempty"`
 	RequestID     string                    `json:"request_id"`
@@ -597,9 +600,10 @@ type SessionListResult struct {
 }
 
 type SessionCancelParams struct {
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id,omitempty"`
-	QueueID   string `json:"queue_id,omitempty"`
+	ControlRevision int64  `json:"control_revision,omitempty"`
+	SessionID       string `json:"session_id"`
+	TurnID          string `json:"turn_id,omitempty"`
+	QueueID         string `json:"queue_id,omitempty"`
 }
 
 type SessionCancelResult struct {
@@ -615,6 +619,19 @@ type SessionInspectParams struct {
 	RequestID string `json:"request_id,omitempty"`
 	Wait      string `json:"wait,omitempty"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
+}
+
+type SessionControlParams struct {
+	SessionID string `json:"session_id"`
+	State     string `json:"state,omitempty"`
+	Revision  int64  `json:"revision,omitempty"`
+}
+
+type SessionControlResult struct {
+	SessionID string `json:"session_id"`
+	ManagerID string `json:"manager_id,omitempty"`
+	State     string `json:"state,omitempty"`
+	Revision  int64  `json:"revision"`
 }
 
 type SessionTurnInspection struct {
@@ -807,6 +824,7 @@ func kernelServiceForLegacyMethod(method string) (string, bool) {
 		HostServiceSessionCreate: KernelSessionCreateService, HostServiceSessionSend: KernelSessionSendService,
 		HostServiceSessionList: KernelSessionListService, HostServiceSessionCancel: KernelSessionCancelService,
 		HostServiceSessionInspect:     KernelSessionInspectService,
+		HostServiceSessionControl:     KernelSessionControlService,
 		HostServiceSessionHistoryRead: KernelSessionHistoryReadService, HostServiceSessionHistorySearch: KernelSessionHistorySearchService,
 		HostServiceWorkspaceStatus: KernelWorkspaceStatusService, HostServiceWorkspaceApply: KernelWorkspaceApplyService,
 		HostServiceWorkspaceDiscard: KernelWorkspaceDiscardService,

@@ -413,6 +413,10 @@ func (s *Server) loadPersistedThreadState(id string, now time.Time) (*threadStat
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
+	th.SessionControl, err = s.readThreadSessionControl(id)
+	if err != nil {
+		return nil, err
+	}
 	if th.NamedAgentID != "" && s.channelService != nil {
 		binding, err := s.channelService.LookupCollaborationSession(context.Background(), id)
 		if err == nil {

@@ -120,6 +120,8 @@ type threadState struct {
 	runtimePluginRevision          uint64
 	admissionReserved              bool
 	pendingSteers                  []providers.ChatMessage
+	pendingSteerControls           map[string]session.Control
+	SessionControl                 *ThreadSessionControl
 	steerWake                      chan struct{}
 	steerWakeClosed                bool
 	activeSteerDocument            *ActiveDocument
@@ -296,6 +298,7 @@ type Server struct {
 	channelMaintenanceDone      chan struct{}
 	channelMaintenanceStopOnce  sync.Once
 	namedAgentMu                sync.Mutex
+	harnessMu                   sync.Mutex
 	namedAgentMCPMu             sync.Mutex
 	namedAgentMCPServer         *http.Server
 	namedAgentMCPBaseURL        string
@@ -432,6 +435,7 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		s.pluginTurnUnbind = rt.PluginSessionRouter.BindExtended(
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
+			s.controlPluginSession,
 		)
 		s.startBackground(s.replayPendingPluginTurnLifecycles)
 	}
@@ -679,6 +683,9 @@ func (s *Server) startChannelMaintenance() {
 func (s *Server) runChannelMaintenance(ctx context.Context) {
 	if s == nil || s.channelService == nil {
 		return
+	}
+	if err := s.reconcileHarnessSessions(ctx); err != nil {
+		log.Printf("wuu: Harness session recovery: %v", err)
 	}
 	if err := s.channelService.ExpireDrafts(ctx); err != nil {
 		log.Printf("wuu: channels maintenance: %v", err)

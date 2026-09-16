@@ -46,3 +46,30 @@ func TestControlFencesTakeoverAndDoesNotTransferOwnership(t *testing.T) {
 		t.Fatalf("management changed resources: %+v", metadata)
 	}
 }
+
+func TestControlledInputIsNotPersistedAfterTakeover(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := CreateWithMetadata(dir, "session", "/project"); err != nil {
+		t.Fatal(err)
+	}
+	control, err := ChangeControl(dir, "session", "manager", ControlActive, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendControlledHistoryRecord(dir, "session", HistoryRecord{Role: "user", Content: "accepted"}, &control); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ChangeControl(dir, "session", "manager", ControlTakenOver, control.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendControlledHistoryRecord(dir, "session", HistoryRecord{Role: "user", Content: "stale"}, &control); !errors.Is(err, ErrControlChanged) {
+		t.Fatalf("stale append: %v", err)
+	}
+	records, err := LoadHistoryRecords(dir, "session", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Content != "accepted" {
+		t.Fatalf("history changed: %+v", records)
+	}
+}

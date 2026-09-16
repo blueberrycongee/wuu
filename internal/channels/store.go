@@ -114,6 +114,10 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := service.migrateHarnessSessions(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := service.initializeRoomScheduling(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err

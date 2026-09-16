@@ -874,6 +874,12 @@ func AppendHistoryRecord(sessDir, id string, rec HistoryRecord) error {
 // AppendHistoryRecordReturningSeq is AppendHistoryRecord but also returns the
 // seq assigned to the new record — its stable address within the thread.
 func AppendHistoryRecordReturningSeq(sessDir, id string, rec HistoryRecord) (int, error) {
+	return AppendControlledHistoryRecord(sessDir, id, rec, nil)
+}
+
+// AppendControlledHistoryRecord atomically fences automatic input against a
+// control change. An accepted input cannot appear after a committed takeover.
+func AppendControlledHistoryRecord(sessDir, id string, rec HistoryRecord, control *Control) (int, error) {
 	db, err := openStore(sessDir)
 	if err != nil {
 		return 0, err
@@ -892,6 +898,16 @@ func AppendHistoryRecordReturningSeq(sessDir, id string, rec HistoryRecord) (int
 		return 0, err
 	} else if !ok {
 		return 0, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	if control != nil {
+		var manager, state string
+		var revision int64
+		if err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&manager, &revision, &state); err != nil {
+			return 0, err
+		}
+		if control.SessionID != id || manager != control.ManagerID || revision != control.Revision || state != ControlActive {
+			return 0, ErrControlChanged
+		}
 	}
 	seq, err := appendHistoryRecordTx(tx, id, rec)
 	if err != nil {

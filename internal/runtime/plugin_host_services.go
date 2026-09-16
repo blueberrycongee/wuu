@@ -78,6 +78,19 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 
 	switch method {
+	case pluginhost.HostServiceSessionControl:
+		if s.turnRouter == nil {
+			return nil, serviceError("service_unavailable", "session service is unavailable")
+		}
+		var params pluginhost.SessionControlParams
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		result, err := s.turnRouter.Control(ctx, s.pluginID, params)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionCreate:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")
@@ -427,6 +440,7 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
 		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
 		pluginhost.HostServiceWorkspaceDiscard,
+		pluginhost.HostServiceSessionControl,
 	}
 	registrations := make([]pluginhost.ServiceRegistration, 0, len(descriptors)+8)
 	for index, descriptor := range descriptors {

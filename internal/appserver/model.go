@@ -53,6 +53,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		status = ThreadStatusInProgress
 	}
 	return Thread{
+		SessionControl:  th.SessionControl,
 		ID:              th.ID,
 		Source:          th.Source,
 		ParentID:        th.ParentID,

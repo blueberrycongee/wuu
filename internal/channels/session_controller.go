@@ -378,7 +378,9 @@ func activeCollaborationCountsTx(ctx context.Context, tx *sql.Tx, principalID, r
  SELECT COALESCE(run.named_agent_id,'') AS principal_id,work.room_id FROM work_runs run JOIN works work ON work.id=run.work_id WHERE run.state='running'
  UNION ALL
  SELECT binding.principal_id,binding.room_id FROM collaboration_session_bindings binding WHERE binding.state IN ('starting','running') AND binding.session_ref != ? AND NOT EXISTS(SELECT 1 FROM work_runs run WHERE run.id=binding.run_id AND run.state='running')
- )`, principalID, roomID, excludeSession).Scan(&identity, &room, &global)
+ UNION ALL
+ SELECT agent_id,room_id FROM harness_session_admissions WHERE session_id != ?
+ )`, principalID, roomID, excludeSession, excludeSession).Scan(&identity, &room, &global)
 	return
 }
 

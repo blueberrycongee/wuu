@@ -19,7 +19,7 @@ import (
 // CollaborationRuntimeVersion is persisted by collaboration session owners.
 // Changing the execution contract requires a new version; ordinary extension
 // generations never replace an already constructed collaboration environment.
-const CollaborationRuntimeVersion = "collaboration/v1"
+const CollaborationRuntimeVersion = "collaboration/v2"
 
 // newCollaborationSession deliberately constructs a new execution environment.
 // Cloning an interactive runner or toolkit and clearing selected callbacks is
