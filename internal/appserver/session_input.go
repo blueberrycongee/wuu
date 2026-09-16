@@ -134,9 +134,10 @@ func (s *Server) findSessionInput(th *threadState, clientID string) (pluginhost.
 }
 
 func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot) (startedThreadTurn, bool, error) {
-	// The host call only admits the turn. Once accepted, the turn belongs to the
-	// target session and must outlive the plugin invocation that submitted it.
-	ctx = context.WithoutCancel(ctx)
+	// A submitted turn is an independent execution boundary. In particular it
+	// must not inherit the caller's inference workflow, journal or operation ID;
+	// those are owned by the originating session, not by the new executor.
+	ctx = context.Background()
 	var threadRuntime *runtime.ThreadRuntime
 	started, ok, err := s.startThreadUserTurnWithAdmission(
 		ctx, th, msg, snapshot, false, turnReadOnlyFail,

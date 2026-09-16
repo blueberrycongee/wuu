@@ -9,15 +9,19 @@ import (
 )
 
 type collaborationFlowCall struct {
-	request  providers.ChatRequest
-	response chan providers.ChatResponse
-	failure  chan error
+	workflowID string
+	request    providers.ChatRequest
+	response   chan providers.ChatResponse
+	failure    chan error
 }
 
 type collaborationFlowProvider struct{ calls chan *collaborationFlowCall }
 
 func (provider *collaborationFlowProvider) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
 	call := &collaborationFlowCall{request: request, response: make(chan providers.ChatResponse, 1), failure: make(chan error, 1)}
+	if workflow := providers.InferenceWorkflowFromContext(ctx); workflow != nil {
+		call.workflowID = workflow.ID
+	}
 	select {
 	case provider.calls <- call:
 	case <-ctx.Done():

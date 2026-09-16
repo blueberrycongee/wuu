@@ -21,10 +21,11 @@ func harnessTestActor(t *testing.T, f *collaborationRPCFixture, ref string) chan
 	return channels.HarnessSessionActor{AgentID: f.identity.ID, SessionRef: ref, TurnID: b.TurnID, RoomID: f.room.ID}
 }
 
-func harnessTestCreate(t *testing.T, f *collaborationRPCFixture, actor channels.HarnessSessionActor) (string, channels.HarnessSessionParams) {
+func harnessTestCreate(t *testing.T, f *collaborationRPCFixture, actor channels.HarnessSessionActor) (string, channels.HarnessSessionParams, string) {
 	t.Helper()
 	p := channels.HarnessSessionParams{Action: "create", Title: "Document refresh", Prompt: "Inspect current docs and report evidence.", WorkspaceRoot: f.server.rt.RootDir, OperationID: "create-docs"}
-	result, err := f.server.HarnessSession(context.Background(), actor, p)
+	workflow := providers.NewInferenceWorkflow(providers.InferenceProfileInteractive)
+	result, err := f.server.HarnessSession(providers.WithInferenceWorkflow(context.Background(), workflow), actor, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func harnessTestCreate(t *testing.T, f *collaborationRPCFixture, actor channels.
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	return decoded.Session.ID, p
+	return decoded.Session.ID, p, workflow.ID
 }
 
 func TestHarnessSessionVisibleIdempotentAndWakesOriginalConversation(t *testing.T) {
@@ -44,8 +45,11 @@ func TestHarnessSessionVisibleIdempotentAndWakesOriginalConversation(t *testing.
 	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Update the docs", RequestID: "request"}, &parent)
 	decision := provider.next(t)
 	actor := harnessTestActor(t, f, parent.Session.SessionRef)
-	id, p := harnessTestCreate(t, f, actor)
+	id, p, sourceWorkflow := harnessTestCreate(t, f, actor)
 	worker := provider.next(t)
+	if worker.workflowID == "" || worker.workflowID == sourceWorkflow {
+		t.Fatalf("executor inherited caller inference workflow: %q", worker.workflowID)
+	}
 	if id == actor.SessionRef {
 		t.Fatal("created another identity conversation")
 	}
@@ -97,7 +101,7 @@ func TestHarnessTakeoverFencesQueuedWorkAndLeavesHistory(t *testing.T) {
 	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Update docs", RequestID: "request"}, &parent)
 	decision := provider.next(t)
 	actor := harnessTestActor(t, f, parent.Session.SessionRef)
-	id, _ := harnessTestCreate(t, f, actor)
+	id, _, _ := harnessTestCreate(t, f, actor)
 	worker := provider.next(t)
 	if _, err := f.server.HarnessSession(context.Background(), actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Apply the draft", OperationID: "queued-edit"}); err != nil {
 		t.Fatal(err)
