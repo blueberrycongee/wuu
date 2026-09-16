@@ -549,7 +549,7 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     await openTab(harness, "/repo", "t1");
     const view = harness.views[0];
     const rect = { x: 12, y: 34, width: 640, height: 480 };
-    harness.coordinator.reportBounds("/repo", "t1", harness.mainWindow as unknown as BrowserParentWindowHandle, rect);
+    harness.coordinator.reportBounds("/repo", "t1", harness.mainWindow as unknown as BrowserParentWindowHandle, rect, 1);
 
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-1"),
@@ -569,6 +569,24 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     expect(view.visibleState).toBe(false);
     harness.coordinator.setOverlaySuppressed("/repo", "t1", false);
     expect(view.visibleState).toBe(false);
+  });
+
+  it("keeps cached and live native bounds aligned with a zoomed app without zooming the browser", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    const rect = { x: 101, y: 51, width: 801, height: 601 };
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 0.8);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-zoom"),
+    );
+    expect(view.boundsSet).toEqual({ x: 81, y: 41, width: 641, height: 481 });
+
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1.25);
+    expect(view.boundsSet).toEqual({ x: 126, y: 64, width: 1001, height: 751 });
+    expect(view.zoomFactor).toBe(1);
   });
 });
 

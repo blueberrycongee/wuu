@@ -1,4 +1,4 @@
-/* Keep layout in CSS pixels: page zoom also scales embedded browsers. */
+/* Saved font sizes stay in CSS pixels, independent of the desktop page scale. */
 :root {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   --font-ui: var(--conversation-message-font-size, 13px);

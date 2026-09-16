@@ -414,7 +414,21 @@ export class BrowserHostCoordinator {
   // -------------------------------------------------------------------------
   // Renderer-reported geometry (visibility takeover positioning).
   // -------------------------------------------------------------------------
-  reportBounds(workdir: string, tabID: string, window: BrowserParentWindowHandle, rect: Rectangle): void {
+  reportBounds(
+    workdir: string,
+    tabID: string,
+    window: BrowserParentWindowHandle,
+    cssRect: Rectangle,
+    zoomFactor: number,
+  ): void {
+    // Native views use DIP, not the reporting renderer's zoomed CSS pixels.
+    // Convert before caching too, so a later visibility takeover stays aligned.
+    const rect = {
+      x: Math.round(cssRect.x * zoomFactor),
+      y: Math.round(cssRect.y * zoomFactor),
+      width: Math.round(cssRect.width * zoomFactor),
+      height: Math.round(cssRect.height * zoomFactor),
+    };
     const key = tabKey(workdir, tabID);
     this.lastBounds.set(key, { window, rect });
     const entry = this.tabs.get(key);

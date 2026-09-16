@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
@@ -35,6 +35,23 @@ import {
   type WuuDesktopApi,
   type VoiceInputSettings,
 } from "../shared/protocol";
+
+// Match Electron's Actual Size followed by one Zoom Out step. Apply before
+// rendering on every load: webPreferences.zoomFactor alone can be overridden
+// by Chromium's remembered per-origin zoom. Browser/PiP contents do not use
+// this preload, and saved UI/code font preferences remain independent.
+webFrame.setZoomLevel(-0.5);
+
+function syncPageZoom(): void {
+  // Native window controls stay in DIP while the app uses zoomed CSS pixels.
+  document.documentElement?.style.setProperty(
+    "--desktop-page-zoom",
+    String(webFrame.getZoomFactor()),
+  );
+}
+syncPageZoom();
+window.addEventListener("DOMContentLoaded", syncPageZoom, { once: true });
+window.addEventListener("resize", syncPageZoom);
 
 // Read the persisted theme preference synchronously so the very first
 // paint carries the right data-theme — an async round-trip would flash

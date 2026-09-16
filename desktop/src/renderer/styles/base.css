@@ -356,7 +356,7 @@
    * max(<neutral padding>, var(...)), so each platform only reserves the
    * corner it actually loses and the other side collapses to the neutral
    * value. */
-  --window-controls-inset-left: 86px;
+  --window-controls-inset-left: calc(86px / var(--desktop-page-zoom, 1));
   --window-controls-inset-right: 0px;
   font-feature-settings: "kern", "liga", "calt", "palt";
   font-size: var(--font-ui);
@@ -373,7 +373,7 @@
 :root[data-platform="win32"] {
   --window-controls-inset-left: 0px;
   --window-controls-inset-right: max(
-    138px,
+    calc(138px / var(--desktop-page-zoom, 1)),
     calc(100vw - env(titlebar-area-width, 100vw))
   );
 }

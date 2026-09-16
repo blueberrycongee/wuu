@@ -2532,6 +2532,7 @@ app.whenReady().then(async () => {
         payload.tabID,
         senderWindow as unknown as BrowserParentWindowHandle,
         payload.rect,
+        event.sender.getZoomFactor(),
       );
       return { ok: true };
     },

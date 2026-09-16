@@ -15,6 +15,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Set the desktop interface's default scale to one zoom-out step below actual
+  size, preserving saved font preferences and native browser alignment.
 - Simplified iOS conversation activity into desktop-shared tool summaries and
   mascot motion, with an inline stop control and consistent, dynamically scaled
   typography across messages, composers, and process rows.
