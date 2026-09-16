@@ -217,6 +217,34 @@ describe("AppServerClientPool Activity routing", () => {
 
 describe("AppServerClientPool session routing", () => {
   afterEach(() => vi.unstubAllEnvs());
+  it("routes ordinary Harness reads and controls to the session executor", async () => {
+    vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+    const children = new Map<string, FakeAppServerChild>();
+    const requests = new Map<string, Array<{ id: string; method: string }>>();
+    const active = { kind: "no_project" as const, cwd: "/project" };
+    const owner = { kind: "no_project" as const, cwd: "/executor" };
+    const pool = new AppServerClientPool(() => active, () => active.cwd, () => {}, (_cmd, _args, options) => {
+      const child = new FakeAppServerChild();
+      children.set(options.cwd, child);
+      requests.set(options.cwd, []);
+      child.stdin.on("data", data => requests.get(options.cwd)!.push(JSON.parse(String(data))));
+      return child.asChildProcess();
+    });
+    pool.prewarmContexts([active, owner]);
+    children.get(owner.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "session" } })}\n`);
+    const read = pool.request("thread/resume", { session_id: "session" });
+    const steer = pool.requestInContext(active, "turn/steer", { thread_id: "session", prompt: "Correction" });
+    const pending = requests.get(owner.cwd)!;
+    expect(pending.map(request => request.method)).toEqual(["thread/resume", "turn/steer"]);
+    expect(requests.get(active.cwd)).toEqual([]);
+    for (const request of pending) {
+      children.get(owner.cwd)!.stdout.write(`${JSON.stringify({ id: request.id, result: { owner: true } })}\n`);
+    }
+    expect(await read).toEqual({ owner: true });
+    expect(await steer).toEqual({ owner: true });
+    pool.shutdown();
+  });
+
   it("reads the execution owner across workspaces, retains completion, and forgets exited owners", async () => {
     vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
     const children = new Map<string, FakeAppServerChild>();

@@ -328,7 +328,19 @@ function serverEventTargetsActiveContext(
   event: ServerEvent,
   state: AppState,
 ): boolean {
-  return event.workdir === state.activeContext?.cwd;
+  if (event.workdir === state.activeContext?.cwd) return true;
+  if (event.kind !== "notification") return false;
+  const params = event.message.params as Record<string, unknown> | undefined;
+  const threadID = threadIDFromParams(params)
+    ?? threadFromRecord(recordValue(params, "thread"))?.id;
+  // Execution ownership can differ from the conversation's workspace. Keep
+  // session events flowing to loaded conversations without admitting another
+  // runtime's configuration or unscoped lifecycle events.
+  return Boolean(threadID && (
+    state.thread?.id === threadID
+    || state.secondaryThread?.id === threadID
+    || state.threads.some(thread => thread.id === threadID)
+  ));
 }
 
 type StreamingNotificationHandling =

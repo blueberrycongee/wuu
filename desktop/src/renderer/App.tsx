@@ -1216,21 +1216,23 @@ export function App(): JSX.Element {
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
   const activeThreadRunning = isThreadRunning(activeThread);
+  const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
   useEffect(() => {
     const contextCwd = state.activeContext?.cwd;
+    const executorRunning = activeThreadID !== undefined && crossWorkdirRunningThreadIDs.has(activeThreadID);
     if (
       !activeThreadID ||
-      !activeThreadRunning ||
       !contextCwd ||
-      crossWorkdirRunningThreadIDs.has(activeThreadID)
+      (!activeThreadRunning && !executorRunning) ||
+      (activeThreadHasRunningTurn && executorRunning)
     ) {
       return undefined;
     }
 
     // The aggregate main-process snapshot is independent of renderer server
-    // events. If it says the visible thread stopped while this pane still has
-    // an in-progress turn, re-read durable state instead of guessing that the
-    // turn completed. A short delay avoids racing the normal turn/start path.
+    // events. Repair both a missed start and a missed completion. An owner
+    // resume includes the new input and live items; a workspace list alone may
+    // only know that another process holds the execution lease.
     const key = `${contextCwd}\u0000${activeThreadID}`;
     let disposed = false;
     const timer = window.setTimeout(() => {
@@ -1238,8 +1240,10 @@ export function App(): JSX.Element {
         return;
       }
       runningThreadReconcileInFlightRef.current = key;
-      void window.wuu
-        .listThreads()
+      const refresh = executorRunning
+        ? window.wuu.resumeThread(activeThreadID).then(result => result.thread ? [result.thread] : [])
+        : window.wuu.listThreads().then(result => result.threads);
+      void refresh
         .then((listed) => {
           if (disposed) {
             return;
@@ -1251,7 +1255,10 @@ export function App(): JSX.Element {
             ) {
               return current;
             }
-            return reconcileListedThreadState(current, listed.threads);
+            if (executorRunning && !listed[0]) return current;
+            return reconcileListedThreadState(current, executorRunning
+              ? upsertThread(current.threads, listed[0])
+              : listed);
           });
         })
         .catch(() => {
@@ -1270,6 +1277,7 @@ export function App(): JSX.Element {
   }, [
     activeThreadID,
     activeThreadRunning,
+    activeThreadHasRunningTurn,
     crossWorkdirRunningThreadIDs,
     state.activeContext?.cwd,
   ]);

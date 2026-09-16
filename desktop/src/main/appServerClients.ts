@@ -103,7 +103,7 @@ export class AppServerClientPool {
   }
 
   request<T>(method: string, params?: unknown): Promise<T> {
-    return this.client().request<T>(method, params);
+    return this.requestInContext<T>(this.getRuntimeContext(), method, params);
   }
 
   prewarmContexts(contexts: readonly RuntimeContext[]): void {
@@ -169,7 +169,14 @@ export class AppServerClientPool {
     params?: unknown,
     onResponse?: (response: AppServerResponse) => void,
   ): Promise<T> {
-    return this.clientForContext(context).request<T>(method, params, onResponse);
+    // A session may execute in a resident process other than its project
+    // client. Reads and controls must reach that same live runtime.
+    const sessionID = isRecord(params)
+      ? params.thread_id ?? params.session_id ?? params.main_thread_id
+      : undefined;
+    return typeof sessionID === "string" && sessionID
+      ? this.requestForSession<T>(context, sessionID, method, params, onResponse)
+      : this.clientForContext(context).request<T>(method, params, onResponse);
   }
 
   requestForSession<T>(
@@ -273,10 +280,6 @@ export class AppServerClientPool {
     if (client) {
       this.disposeClient(client);
     }
-  }
-
-  private client(): AppServerClient {
-    return this.clientForContext(this.getRuntimeContext());
   }
 
   private clientForContext(context: RuntimeContext): AppServerClient {

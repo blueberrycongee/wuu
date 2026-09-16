@@ -20,13 +20,14 @@ vi.mock("./ConversationTurnList", () => ({
     turns,
   }: {
     threadID: string;
-    turns: Array<{ status?: string }>;
+    turns: Array<{ status?: string; items?: Array<{ type: string; text?: string }> }>;
   }): JSX.Element => (
     <div
       data-testid="turn-list-probe"
       data-thread-id={threadID}
       data-turn-count={turns.length}
       data-latest-turn-status={turns.at(-1)?.status}
+      data-latest-user-text={turns.at(-1)?.items?.find(item => item.type === "user_message")?.text}
     />
   ),
 }));
@@ -242,9 +243,9 @@ function installWuuApi(): {
       active_context: { kind: "no_project", cwd: workspace },
     }),
     initialize: vi.fn().mockResolvedValue(initialized()),
-    listThreads: vi.fn().mockResolvedValue({
+    listThreads: vi.fn().mockImplementation(async () => ({
       threads: Array.from(threadsByID.values()),
-    }),
+    })),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     resumeThread,
     startTurn,
@@ -341,10 +342,10 @@ function setMainComposerPrompt(value: string): void {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function emitNotification(method: string, params: Record<string, unknown>): void {
+function emitNotification(method: string, params: Record<string, unknown>, workdir = workspace): void {
   const event = {
     kind: "notification",
-    workdir: workspace,
+    workdir,
     message: { method, params },
   } as ServerEvent;
   for (const handler of serverEventHandlers) {
@@ -362,6 +363,7 @@ describe("session tab switch latency", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => {
       root?.unmount();
     });
@@ -538,5 +540,71 @@ describe("session tab switch latency", () => {
     expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("completed");
     expect(container.querySelector(".composer-stop-button")).toBeNull();
     expect(container.querySelector(".composer-send-button")).not.toBeNull();
+  });
+
+  it("shows a managed follow-up emitted by another workspace's executor", async () => {
+    installWuuApi();
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    const turn = {
+      id: "managed-follow-up",
+      items_view: "full",
+      status: "in_progress",
+      items: [{ id: "managed-input", type: "user_message", text: "Check the revised task" }],
+    };
+    await act(async () => {
+      emitNotification("turn/started", { thread_id: threadAID, turn }, "/another-executor");
+    });
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe("Check the revised task");
+    expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("in_progress");
+    expect(container.querySelector(".composer-stop-button")).not.toBeNull();
+
+    await act(async () => {
+      emitNotification("turn/completed", { thread_id: threadAID, turn: { ...turn, status: "completed" } }, "/another-executor");
+      emitNotification("turn/started", { thread_id: "unrelated-session", turn }, "/another-executor");
+      emitNotification("config/changed", { provider: "other", model: "other" }, "/another-executor");
+    });
+    expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("completed");
+    expect(container.querySelector(".composer-stop-button")).toBeNull();
+    expect(visibleRuntimeModel()).toContain("model-a");
+  });
+
+  it("recovers a missed managed start from the aggregate running snapshot", async () => {
+    const { threadsByID, resumeThread } = installWuuApi();
+    let onRunning!: (snapshot: Array<{ workdir: string; thread_id: string }>) => void;
+    window.wuu.onRunningThreadsChanged = handler => {
+      onRunning = handler;
+      return () => {};
+    };
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    resumeThread.mockClear();
+    // The project client still has the old snapshot; only the execution
+    // owner's resume can supply the missed turn.
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [threadA(), threadB()] });
+    const running = threadA();
+    running.status = "in_progress";
+    running.turns.push({
+      id: "missed-follow-up", status: "in_progress", items_view: "full",
+      items: [{ id: "missed-input", type: "user_message", text: "New managed input" }],
+    });
+    threadsByID.set(threadAID, running);
+    vi.useFakeTimers();
+    await act(async () => {
+      onRunning([{ workdir: "/another-executor", thread_id: threadAID }]);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(resumeThread).toHaveBeenCalledWith(threadAID);
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe("New managed input");
+    expect(container.querySelector(".composer-stop-button")).not.toBeNull();
   });
 });
