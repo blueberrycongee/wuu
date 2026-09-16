@@ -793,16 +793,21 @@
 }
 
 .sidebar-brand {
-  display: flex;
+  /* Three tracks so the wordmark and stacked mode labels stay put when the
+   * bell mounts or unmounts (harness vs collaboration). Column 3 is reserved
+   * even when the button is absent. */
+  display: grid;
   flex-shrink: 0;
+  grid-template-columns: auto minmax(0, 1fr) 32px;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
   min-height: 44px;
   padding: 0 var(--sidebar-row-pad-x) 8px;
   color: var(--sidebar-brand-wordmark-color);
 }
 
 .sidebar-brand-wordmark {
+  grid-column: 1;
   font-family: var(--empty-home-title-font);
   font-size: 28px;
   font-weight: 650;
@@ -812,12 +817,12 @@
 
 .sidebar-mode-switch {
   display: flex;
+  grid-column: 2;
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
-  margin-right: 10px;
   transform: none;
   -webkit-app-region: no-drag;
 }
@@ -868,11 +873,10 @@
   width: 32px;
   height: 32px;
   position: relative;
-  flex: 0 0 32px;
-  align-self: center;
+  grid-column: 3;
+  justify-self: end;
   place-items: center;
   margin-right: -4px;
-  margin-left: auto;
   border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
@@ -1048,7 +1052,7 @@
   min-height: 30px;
   align-items: center;
   gap: 7px;
-  padding: 0 8px;
+  padding: 0 var(--sidebar-row-pad-x);
   color: var(--ink-muted);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
@@ -1070,6 +1074,22 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--sidebar-functional-row-gap);
+}
+
+/* Bell view rows have no leading icon. Pin the title to the same inset as
+ * the wuu wordmark instead of inheriting session-tree indent. */
+.sidebar-unread-row.thread-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 0;
+  padding-left: var(--sidebar-row-pad-x);
+  padding-right: var(--sidebar-row-pad-x);
+}
+
+.sidebar-unread-row .thread-row-main {
+  grid-column: 1 / -1;
+  padding-left: 0;
+  margin-left: 0;
 }
 
 .sidebar-attention-section + .sidebar-attention-section {
@@ -1182,10 +1202,6 @@
 
 .collaboration-sidebar .sidebar-content {
   padding: 0 8px 8px;
-}
-
-.collaboration-sidebar .sidebar-brand {
-  margin-inline: 4px;
 }
 
 .collaboration-sidebar-topbar {

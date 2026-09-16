@@ -487,6 +487,10 @@
 @media (pointer: coarse) {
   /* Keep the desktop lockup: wordmark, stacked mode labels, then the bell.
    * Give the labels a little more vertical room without turning them into tabs. */
+  .sidebar-brand {
+    grid-template-columns: auto minmax(0, 1fr) 44px;
+  }
+
   .sidebar-mode-switch {
     gap: 2px;
   }
@@ -498,7 +502,6 @@
   .sidebar-notifications-button {
     width: 44px;
     height: 44px;
-    flex-basis: 44px;
     margin-right: -8px;
   }
 }
