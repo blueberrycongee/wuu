@@ -324,7 +324,7 @@ export const zhCN = {
   "channels.sessions.control.running": "运行中",
   "channels.sessions.control.idle": "待跟进",
   "channels.sessions.control.paused": "已暂停",
-  "channels.sessions.control.taken_over": "用户接管",
+  "channels.sessions.control.takenOver": "用户接管",
   "channels.sessions.title": "执行会话",
   "channels.viewTrace": "查看轨迹",
   "channels.backToChat": "返回聊天",

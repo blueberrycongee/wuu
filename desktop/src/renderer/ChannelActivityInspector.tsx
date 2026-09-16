@@ -55,7 +55,11 @@ export function ChannelActivityInspector({ roomID, agentID, name, agents, fallba
       <span className="channel-managed-label">{t("channels.sessions.managed")}</span>
       {managed.map(session => <button key={session.session_id} type="button" className="channel-managed-session" onClick={() => onOpenSession?.(session.session_id)}>
         <span className="channel-managed-title">{session.title || session.workspace_root}</span>
-        <span className="channel-session-meta">{t(`channels.sessions.control.${session.control?.state === "active" ? session.state : session.control?.state ?? "idle"}`)}</span>
+        <span className="channel-session-meta">{t(`channels.sessions.control.${
+          session.control?.state === "taken_over" ? "takenOver"
+            : session.control?.state === "active" ? session.state
+              : session.control?.state ?? "idle"
+        }`)}</span>
         <ArrowUpRight className="icon" aria-hidden="true" />
       </button>)}
     </nav> : null}

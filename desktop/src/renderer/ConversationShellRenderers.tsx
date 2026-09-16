@@ -432,8 +432,9 @@ export function ConversationTitleActions({
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const control = (state.activePane === "secondary" ? state.secondaryThread : state.thread)?.session_control;
-  const management = control ? <span className="session-control-label" title={`${control.manager_name} · ${t(`channels.sessions.control.${control.state}`)}`}>
-    {control.manager_name} · {t(`channels.sessions.control.${control.state}`)}
+  const controlLabel = control ? t(`channels.sessions.control.${control.state === "taken_over" ? "takenOver" : control.state}`) : "";
+  const management = control ? <span className="session-control-label" title={`${control.manager_name} · ${controlLabel}`}>
+    {control.manager_name} · {controlLabel}
   </span> : null;
   if (compactNavigation) {
     return <div className="title-actions">{management}<CompactConversationActions

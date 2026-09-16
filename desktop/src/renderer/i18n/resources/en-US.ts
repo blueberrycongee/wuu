@@ -326,7 +326,7 @@ export const enUS = {
   "channels.sessions.control.running": "Running",
   "channels.sessions.control.idle": "Ready",
   "channels.sessions.control.paused": "Paused",
-  "channels.sessions.control.taken_over": "User control",
+  "channels.sessions.control.takenOver": "User control",
   "channels.sessions.title": "Sessions",
   "channels.viewTrace": "View trace",
   "channels.backToChat": "Back to chat",
