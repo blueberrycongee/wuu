@@ -3652,10 +3652,10 @@
 }
 
 .channel-managed-sessions { flex-shrink: 0; max-height: 30%; overflow-y: auto; padding: 8px 16px; }
-.channel-managed-label { display: block; color: var(--text-muted); margin-bottom: 4px; }
+.channel-managed-label { display: block; color: var(--ink-soft); margin-bottom: 4px; }
 .channel-managed-session { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 0; text-align: start; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
-.channel-managed-session:hover { color: var(--text-primary); }
-.channel-managed-session:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.channel-managed-session:hover { color: var(--ink); }
+.channel-managed-session:focus-visible { outline: 2px solid var(--interaction-accent); outline-offset: 2px; border-radius: 4px; }
 .channel-managed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-managed-session .icon { flex-shrink: 0; }
-.session-control-label { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+.session-control-label { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(12em, 24vw); }

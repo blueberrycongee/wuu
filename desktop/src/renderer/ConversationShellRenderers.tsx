@@ -431,16 +431,21 @@ export function ConversationTitleActions({
   onToggleRightPanel,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
+  const control = (state.activePane === "secondary" ? state.secondaryThread : state.thread)?.session_control;
+  const management = control ? <span className="session-control-label" title={`${control.manager_name} · ${t(`channels.sessions.control.${control.state}`)}`}>
+    {control.manager_name} · {t(`channels.sessions.control.${control.state}`)}
+  </span> : null;
   if (compactNavigation) {
-    return <CompactConversationActions
+    return <div className="title-actions">{management}<CompactConversationActions
       canStartNewThread={Boolean(state.activeContext)} onStartNewThread={onStartNewThread}
       environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentPanelVisible}
       onToggleEnvironmentPanel={onToggleEnvironmentPanel} rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={onToggleRightPanel}
-    />;
+    /></div>;
   }
   return (
     <div className="title-actions">
+      {management}
       <button
             ref={environmentToggleRef}
             className={`icon-button environment-toggle-button${environmentPanelVisible ? " active" : ""}`}

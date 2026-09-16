@@ -512,7 +512,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     const timer = window.setTimeout(finishClosingInspector, motionDurationMs("--environment-panel-exit-duration", 220));
     return () => window.clearTimeout(timer);
   }, [inspectorClosing, finishClosingInspector]);
-  const inspectSession = (sessionRef: string, turnID: string | undefined, name: string) => {
+  const inspectSession = (sessionRef: string, turnID: string | undefined, name: string, agentID?: string) => {
     if (savingAgent) return;
     if (settingsOpen) closeAgentPanel();
     if (!inspectorClosing && inspectedSession?.sessionRef === sessionRef && inspectedSession.turnID === turnID) {
@@ -521,7 +521,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     }
     setInspectorClosing(false);
     inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setInspectedSession({ roomID: selectedRoomID, sessionRef, turnID, name });
+    setInspectedSession({ roomID: selectedRoomID, sessionRef, turnID, name, agentID });
   };
   const inspectAgentActivity = (agentID: string, fallbackSessionRef?: string) => {
     if (!inspectorClosing && inspectedSession?.agentID === agentID) { closeInspector(); return; }
@@ -1954,7 +1954,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               avatarKey: agent?.avatar_key ?? "abstract-1", avatarImage: agent?.avatar_image,
               model, effort,
               onEdit: agent ? () => openConversationAgent(agent) : undefined,
-              onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author),
+              onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author, message.author_id),
             } : undefined;
             return (
               <Fragment key={message.id}>
@@ -2049,7 +2049,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         {inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
           agents={agents} onOpenSession={onOpenSession}
           roomID={inspectedSession.roomID} agentID={inspectedSession.agentID} name={inspectedSession.name}
-          fallbackSessionRef={inspectedSession.sessionRef} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
+          fallbackSessionRef={inspectedSession.sessionRef} turnID={inspectedSession.turnID} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
         /> : inspectedSession?.sessionRef ? <ChannelSessionInspector
           agents={agents}
           key={`${inspectedSession.sessionRef}:${inspectedSession.turnID ?? "latest"}`}

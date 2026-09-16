@@ -5471,9 +5471,6 @@ export function App(): JSX.Element {
                 />
               </button>
             ) : null}
-            {state.thread?.session_control ? <span className="session-control-label" title={state.thread.session_control.manager_name}>
-              {state.thread.session_control.manager_name} · {t(`channels.sessions.control.${state.thread.session_control.state}`)}
-            </span> : null}
             <ConversationTitleContent
               state={state}
               crossWorkspaceThreads={sidebarThreads}

@@ -5,12 +5,13 @@ import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
 import type { NamedAgent, ManagedHarnessSession } from "../shared/protocol";
 
-export function ChannelActivityInspector({ roomID, agentID, name, agents, fallbackSessionRef, overlay, closing, onClose, onOpenSession }: {
+export function ChannelActivityInspector({ roomID, agentID, name, agents, fallbackSessionRef, turnID, overlay, closing, onClose, onOpenSession }: {
   roomID: string;
   agentID: string;
   name: string;
   agents?: NamedAgent[];
   fallbackSessionRef?: string;
+  turnID?: string;
   overlay: boolean;
   closing: boolean;
   onClose: () => void;
@@ -48,7 +49,7 @@ export function ChannelActivityInspector({ roomID, agentID, name, agents, fallba
     const timer = window.setInterval(() => { if (document.visibilityState !== "hidden") void read(); }, 2_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [roomID, agentID, fallbackSessionRef, retry]);
-  if (sessionRef) return <ChannelSessionInspector key={sessionRef} sessionRef={sessionRef} name={name}
+  if (sessionRef) return <ChannelSessionInspector key={sessionRef} sessionRef={sessionRef} turnID={turnID} name={name}
     agents={agents} overlay={overlay} closing={closing} onClose={onClose}>
     {managed.length ? <nav className="channel-managed-sessions" aria-label={t("channels.sessions.managed")}>
       <span className="channel-managed-label">{t("channels.sessions.managed")}</span>
