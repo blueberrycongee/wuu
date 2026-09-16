@@ -1193,6 +1193,12 @@ func migrateSchema(db *sql.DB) error {
 			FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_messages_role ON session_messages(session_id, role, seq)`,
+		`CREATE TABLE IF NOT EXISTS session_controls (
+			session_id TEXT PRIMARY KEY,
+			manager_id TEXT NOT NULL,
+			revision INTEGER NOT NULL,
+			state TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS plugin_turn_lifecycle_outbox (
 				plugin_id TEXT NOT NULL,
 				request_id TEXT NOT NULL,

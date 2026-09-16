@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -113,11 +112,8 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	}
 	// A worktree session runs in its own git worktree based on the fork
 	// parent's directory, or on the project root for fresh context.
-	if params.WorkspaceID != "" && params.WorkspaceID != strings.TrimSpace(s.rt.WorkspaceID) {
-		return pluginhost.SessionCreateResult{}, errors.New("target workspace is not served by this app-server")
-	}
-	if params.WorkspaceRoot != "" && filepath.Clean(params.WorkspaceRoot) != filepath.Clean(s.rt.RootDir) {
-		return pluginhost.SessionCreateResult{}, errors.New("target workspace root is not served by this app-server")
+	if _, _, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot); err != nil {
+		return pluginhost.SessionCreateResult{}, err
 	}
 	owner := pluginSessionOwner(pluginID, params)
 	if existing, ok, err := session.FindManagedByRequest(s.rt.SessionDir, owner, params.RequestID); err != nil {
@@ -814,10 +810,16 @@ func (s *Server) findPluginSessionRequest(th *threadState, clientID string) (plu
 }
 
 func (s *Server) createPluginSessionThread(owner string, params pluginhost.SessionCreateParams) (*threadState, error) {
+	return s.createHostSessionThread(owner, pluginSessionSource(owner, params), "", params)
+}
+
+func (s *Server) createHostSessionThread(owner, source, id string, params pluginhost.SessionCreateParams) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
-	id := session.NewID()
+	if id == "" {
+		id = session.NewID()
+	}
 	threadCWD := s.rt.RootDir
 	managed := session.ManagedMetadata{Owner: owner, Visibility: params.Visibility, ParentID: params.ParentSessionID, ContextSource: params.ContextSource, CreationRequestID: params.RequestID}
 	var history []providers.ChatMessage
@@ -874,8 +876,14 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 		selection.Variant = resolved.Runtime.Variant
 		selection.Effort = resolved.Runtime.Effort
 	}
-	source := pluginSessionSource(owner, params)
 	workspaceID := strings.TrimSpace(s.rt.WorkspaceID)
+	if params.WorkspaceID != "" || params.WorkspaceRoot != "" {
+		root, resolvedID, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot)
+		if err != nil {
+			return nil, err
+		}
+		threadCWD, workspaceID = root, resolvedID
+	}
 	if len(history) == 0 {
 		history = make([]providers.ChatMessage, 0, 1)
 	}
