@@ -125,8 +125,10 @@ export function agentAvatarConfig(value: string): AgentAvatarConfig {
   return DEFAULT_AGENT_AVATAR_CONFIG;
 }
 
-export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "static", turnSignal = 0, morph }: {
+export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "static", turnSignal = 0, morph, disableMorph = false }: {
   morph?: MascotMorph;
+  /** Static transcript identities do not need the activity morph renderer. */
+  disableMorph?: boolean;
   seed: string;
   avatarKey: string;
   avatarImage?: string;
@@ -147,6 +149,7 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle",
       data-agent-avatar-turn={turn || undefined} style={{ "--agent-avatar-hue": config.hue, "--agent-turn-duration": `${AGENT_TURN_MS}ms` } as CSSProperties} aria-hidden="true">
       {turn ? <AgentAvatarRibbon key={`rear-${turn}`} front={false} /> : null}
       {avatarImage ? <img className="agent-avatar-image" src={avatarImage} alt="" draggable={false} /> : <WuuMascot
+        disableMorph={disableMorph}
         morph={motion === "static" ? "idle" : morph}
         identityName={`agent-avatar:${avatarKey}`}
         identityHue={config.hue}

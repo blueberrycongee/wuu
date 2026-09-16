@@ -53,7 +53,7 @@ export function ChannelAgentHoverCard({ id, name, avatarKey, avatarImage, model,
     setOpen(false);
     action();
   };
-  const avatar = <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status="idle" />;
+  const avatar = <AgentAvatarMark disableMorph seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status="idle" />;
   return <span ref={anchor} className="channel-agent-hover-anchor" onMouseEnter={show} onMouseLeave={scheduleClose} onFocus={show} onBlur={scheduleClose}>
     <button type="button" className="channel-agent-hover-trigger" aria-label={name} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? cardID : undefined} onClick={event => { show(); if (event.detail === 0) requestAnimationFrame(() => card.current?.querySelector("button")?.focus()); }}>{avatar}</button>
     {open ? <FloatingMenuPortal anchorRef={anchor} owner="channel-agent" placement="below" align="left" width={264} flip>

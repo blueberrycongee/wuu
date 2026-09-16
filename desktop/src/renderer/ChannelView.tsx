@@ -78,7 +78,7 @@ export function formatChannelUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(Math.max(0, count));
 }
 
-function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, focusable = true }: {
+function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, focusable = true, disableMorph = false }: {
   id: string;
   name: string;
   avatarKey: string;
@@ -89,11 +89,12 @@ function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, mod
   modelLabel: string;
   compact?: boolean;
   focusable?: boolean;
+  disableMorph?: boolean;
 }): JSX.Element {
   const accessibleDescription = model ? `${name}: ${statusText}, ${modelLabel}: ${model}` : `${name}: ${statusText}`;
   return (
     <span className={`channel-agent-avatar${compact ? " compact" : ""}`} tabIndex={focusable ? 0 : undefined} aria-label={accessibleDescription}>
-      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={status} />
+      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={status} disableMorph={disableMorph} />
       <span className="channel-agent-status-card" role="tooltip">
         <span>{statusText}</span>
         {model ? <span className="channel-agent-model">{model}</span> : null}
@@ -1850,7 +1851,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
                 contentClassName="channel-message-content"
                 avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
-                  <AgentAvatar id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
+                  <AgentAvatar disableMorph id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
                 ) : undefined}
                 meta={!own && !direct && !continued ? (
                   <div className="channel-message-meta">
