@@ -693,6 +693,16 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Reject an obsolete UI submission before it revokes automatic management.
+	// The admission checks below still run after the control transition.
+	th.mu.Lock()
+	if !isHeld || th.running {
+		err = th.validateSteerTargetLocked(params.ExpectedTurnID)
+	}
+	th.mu.Unlock()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -730,18 +740,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
 	}
-	if params.ExpectedTurnID == "" {
+	if err := th.validateSteerTargetLocked(params.ExpectedTurnID); err != nil {
 		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("expected_turn_id is required"))
-	}
-	if params.ExpectedTurnID != th.currentTurn {
-		actual := th.currentTurn
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, fmt.Errorf("expected active turn id `%s` but found `%s`", params.ExpectedTurnID, actual))
-	}
-	if th.currentTurnKind == TurnKindCompact {
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("cannot steer a compact turn"))
+		return s.writeResponse(req.ID, nil, err)
 	}
 	turnID := th.currentTurn
 	for _, pendingSteer := range th.pendingSteers {
@@ -806,6 +807,22 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}),
 	})
 	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+}
+
+func (th *threadState) validateSteerTargetLocked(expectedTurnID string) error {
+	if !th.running || th.currentTurn == "" {
+		return errors.New("no active turn to steer")
+	}
+	if expectedTurnID == "" {
+		return errors.New("expected_turn_id is required")
+	}
+	if expectedTurnID != th.currentTurn {
+		return fmt.Errorf("expected active turn id `%s` but found `%s`", expectedTurnID, th.currentTurn)
+	}
+	if th.currentTurnKind == TurnKindCompact {
+		return errors.New("cannot steer a compact turn")
+	}
+	return nil
 }
 
 func (th *threadState) signalSteerWakeLocked() {

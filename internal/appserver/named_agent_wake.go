@@ -35,6 +35,7 @@ func (s *Server) Deliver(agentID string) {
 
 func (s *Server) Interrupt(agentID string) {
 	s.interruptAgentSessions(agentID, "", true)
+	s.kickHarnessSessions()
 }
 
 func (s *Server) InterruptSession(agentID, sessionRef string) {
@@ -50,6 +51,7 @@ func (s *Server) InterruptRunSession(sessionRef string) {
 	if sessionRef == "" {
 		return
 	}
+	defer s.kickHarnessSessions()
 	if th := s.thread(sessionRef); th != nil {
 		th.mu.Lock()
 		namedAgentID := strings.TrimSpace(th.NamedAgentID)

@@ -1245,7 +1245,10 @@ func activeWorkSessionInterruptTargetsTx(ctx context.Context, tx *sql.Tx, workID
         SELECT binding.named_agent_id, binding.session_ref FROM collaboration_session_bindings binding
         JOIN named_agent_conversations primary_session ON primary_session.session_ref=binding.session_ref
         WHERE binding.work_id=? AND binding.state IN ('starting','running','interrupted')
-        ORDER BY 1, 2`, workID, workID)
+        UNION
+        SELECT '', session_id FROM harness_session_links
+        WHERE active=1 AND json_extract(payload,'$.work_id')=?
+        ORDER BY 1, 2`, workID, workID, workID)
 	if err != nil {
 		return nil, fmt.Errorf("list active work sessions for cancellation: %w", err)
 	}

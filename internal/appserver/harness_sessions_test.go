@@ -194,3 +194,100 @@ func TestHarnessManageExistingReleaseAndStop(t *testing.T) {
 	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Work stopped"})
 	f.waitForCompletion(t)
 }
+
+func TestHarnessTaskCancellationStopsOnlyItsExecution(t *testing.T) {
+	f, provider := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	var parent ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect docs and branches", RequestID: "request"}, &parent)
+	decision := provider.next(t)
+	actor := harnessTestActor(t, f, parent.Session.SessionRef)
+	client, err := f.server.channelService.BindAgent(ctx, actor.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.CreateTask(ctx, channels.TaskCreateParams{RoomID: actor.RoomID, Title: "Inspect docs", OwnerID: actor.AgentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, _ := harnessTestCreate(t, f, actor)
+	_ = provider.next(t)
+	if _, err := f.server.HarnessSession(ctx, actor, channels.HarnessSessionParams{Action: "manage", SessionID: id, WorkID: task.ID, OperationID: "bind-task"}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.server.createHostSessionThread("user", "", "", pluginhost.SessionCreateParams{Name: "Other task", Visibility: "user", ContextSource: "fresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []channels.HarnessSessionParams{
+		{Action: "manage", SessionID: other.ID, OperationID: "attach-other"},
+		{Action: "send", SessionID: other.ID, Prompt: "Inspect branches", OperationID: "start-other"},
+	} {
+		if _, err := f.server.HarnessSession(ctx, actor, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otherCall := provider.next(t)
+	if _, err := client.CancelWork(ctx, task.ID, "User cancelled documentation work"); err != nil {
+		t.Fatal(err)
+	}
+	// The cancellation event itself must stop this worker, without a maintenance tick.
+	waitForThreadLeaseRelease(t, f.server.rt.SessionDir, id)
+	if err := f.server.reconcileHarnessSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := session.ReadControl(f.server.rt.SessionDir, id)
+	if err != nil || control.State != session.ControlPaused {
+		t.Fatalf("cancelled task still managed: %+v %v", control, err)
+	}
+	if active, err := session.ThreadExecutionActive(f.server.rt.SessionDir, other.ID); err != nil || !active {
+		t.Fatalf("cancellation interrupted unrelated work: %v %v", active, err)
+	}
+	if _, err := f.server.HarnessSession(ctx, actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Stale continuation", OperationID: "late-send"}); err == nil {
+		t.Fatal("cancelled task accepted new execution")
+	}
+	otherCall.response <- providers.ChatResponse{Content: "Branch evidence"}
+	waitForTurnCompletedForThread(t, f.out, other.ID)
+	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Task cancelled"})
+	f.waitForCompletion(t)
+}
+
+func TestHarnessInspectIncludesUnsettledProgress(t *testing.T) {
+	f, provider := newCollaborationFlowFixture(t)
+	var parent ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect docs", RequestID: "request"}, &parent)
+	decision := provider.next(t)
+	actor := harnessTestActor(t, f, parent.Session.SessionRef)
+	id, _, _ := harnessTestCreate(t, f, actor)
+	worker := provider.next(t)
+	th := f.server.thread(id)
+	th.mu.Lock()
+	turn := &th.Turns[len(th.Turns)-1]
+	turn.Items = append(turn.Items,
+		ThreadItem{ID: "tool", Type: ThreadItemToolCall, Name: "run_shell", Status: ThreadItemStatusInProgress, Result: "Building documentation"},
+		ThreadItem{ID: "reasoning", Type: ThreadItemReasoning, Text: "Private reasoning"},
+	)
+	th.mu.Unlock()
+	result, err := f.server.inspectHarnessSession(context.Background(), channels.HarnessSessionParams{SessionID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(result)
+	var view struct {
+		Progress []struct{ Name, Result string } `json:"live_progress"`
+	}
+	if err := json.Unmarshal(data, &view); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range view.Progress {
+		found = found || item.Name == "run_shell" && item.Result == "Building documentation"
+	}
+	if !found || strings.Contains(string(data), "Private reasoning") {
+		t.Fatalf("live evidence unavailable or private reasoning exposed: %s", data)
+	}
+	worker.response <- providers.ChatResponse{Content: "Documentation built"}
+	waitForTurnCompletedForThread(t, f.out, id)
+	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Waiting for result"})
+	f.waitForCompletion(t)
+}

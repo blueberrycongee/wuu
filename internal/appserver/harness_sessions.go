@@ -578,6 +578,8 @@ func (s *Server) reconcileHarnessLink(ctx context.Context, link channels.Harness
 			if _, err := session.ChangeControl(s.rt.SessionDir, link.SessionID, link.AgentID, session.ControlPaused, c.Revision); err != nil {
 				return err
 			}
+			s.revokeSessionInputs(link.SessionID)
+			s.publishSessionControl(link.SessionID)
 			return s.interruptHarnessSession(link.SessionID)
 		}
 		return err
