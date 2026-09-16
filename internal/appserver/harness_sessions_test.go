@@ -76,6 +76,11 @@ func TestHarnessSessionVisibleIdempotentAndWakesOriginalConversation(t *testing.
 	if count != 1 {
 		t.Fatalf("replayed creation made %d sessions", count)
 	}
+	// Updating management must retain the in-flight result even though its
+	// accepted input predates the current control revision.
+	if _, err := f.server.HarnessSession(context.Background(), actor, channels.HarnessSessionParams{Action: "manage", SessionID: id, Prompt: "Track the installation review", OperationID: "update-running-management"}); err != nil {
+		t.Fatal(err)
+	}
 	coordinatorModelTool(decision, "yield-parent", "yield_turn", map[string]any{"reason": "Waiting for execution result"})
 	f.waitForCompletion(t)
 	worker.response <- providers.ChatResponse{Content: "Inspected docs; stale installation instructions remain."}

@@ -159,7 +159,14 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"session": view, "operation_id": op.ID, "state": op.State, "turn_id": op.TurnID, "error": op.Error}, nil
+	result := map[string]any{"session": view, "operation_id": op.ID, "state": op.State, "turn_id": op.TurnID, "error": op.Error}
+	if view.Management != nil && view.Management.Active && view.Management.WorkID == "" {
+		result["task_binding"] = map[string]any{
+			"state": "unbound",
+			"note":  "No recorded task is bound. Cancelling a chat_task will not stop this session, and task-specific limits do not apply. If this executes an existing responsibility, use manage with its work_id before continuing; chat_task list can recover the ID. Work without a task record may remain unbound.",
+		}
+	}
+	return result, nil
 }
 
 func (s *Server) validateHarnessActor(ctx context.Context, actor channels.HarnessSessionActor) error {
@@ -654,8 +661,10 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 	if err != nil {
 		return err
 	}
-	if c.Revision == revision && c.State == session.ControlActive && s.validateHarnessScope(ctx, actor, false) == nil {
-		body := fmt.Sprintf("Harness session %s finished turn %s (%s). This is an execution result, not proof that the user's goal is complete. Inspect the session and artifacts, check against the latest request, then continue with session send if needed. Results belong to room %s.\n\n%s", link.SessionID, turn.ID, turn.Status, actor.RoomID, harnessExcerpt(text, 2400))
+	if c.ManagerID == link.AgentID && c.State == session.ControlActive && actor.AgentID == link.AgentID && actor.RoomID == link.RoomID && s.validateHarnessScope(ctx, actor, false) == nil {
+		// Keep the payload stable across retries. Current control can change after
+		// delivery but before its cursor commits; provenance belongs to the input.
+		body := fmt.Sprintf("Harness session %s finished turn %s (%s). This is execution evidence, not proof that the user's goal is complete. Accepted input belongs to room %s, task %q goal revision %d, control revision %d. Compare these with the current session: a later control or task change makes this prior evidence, not completion of the new goal. Inspect artifacts and pending instructions before continuing with session send or reporting completion.\n\n%s", link.SessionID, turn.ID, turn.Status, actor.RoomID, actor.WorkID, actor.GoalRevision, revision, harnessExcerpt(text, 2400))
 		_, err = s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: actor.SessionRef, ParentTurnID: actor.TurnID, SourceSessionRef: link.SessionID, RequestID: "harness-result:" + link.SessionID + ":" + turn.ID, Body: body})
 		if err != nil {
 			return err
