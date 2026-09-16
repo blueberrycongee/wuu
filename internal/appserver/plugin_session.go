@@ -937,7 +937,9 @@ func (s *Server) createHostSessionThread(owner, source, id string, params plugin
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility
-	th.ParentID = params.ParentSessionID
+	// Session lineage stays in persisted metadata for management and cancellation.
+	// Thread.ParentID identifies internal agent workers, not ordinary sessions
+	// created from another session; keep this consistent with applySessionMetadata.
 	th.WorktreePath = createdWorktreePath
 	if created != nil {
 		th.WorktreeBaseHEAD = created.WorktreeBaseHEAD

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -60,6 +61,48 @@ func TestHarnessSessionVisibleIdempotentAndWakesOriginalConversation(t *testing.
 	if m.Owner != "user" || m.Visibility != "user" || m.CWD != f.server.rt.RootDir || isNamedAgentSessionSource(m.Source) {
 		t.Fatalf("not a normal project session: %+v", m)
 	}
+	if m.ParentID != actor.SessionRef {
+		t.Fatalf("lost manager provenance: parent = %q", m.ParentID)
+	}
+	assertRootSession := func(thread Thread) {
+		t.Helper()
+		if thread.ParentID != "" || thread.AgentPath != "" || thread.ReadOnly || thread.Ephemeral {
+			t.Fatalf("ordinary session would be hidden as an internal worker: %+v", thread)
+		}
+	}
+	started := false
+	for _, notification := range notificationsByMethod(parseOutput(t, f.out.String()), NotificationThreadStarted) {
+		thread := remarshal[ThreadStartedNotification](t, notification["params"]).Thread
+		if thread.ID == id {
+			started = true
+			assertRootSession(thread)
+		}
+	}
+	if !started {
+		t.Fatal("created session did not emit thread/started")
+	}
+	assertListed := func(status ThreadStatus) {
+		t.Helper()
+		for _, method := range []string{MethodThreadList, MethodThreadListAll} {
+			var listed ThreadListResult
+			f.rpc(t, method, ThreadListParams{SummaryOnly: true}, &listed)
+			found := false
+			for _, thread := range listed.Threads {
+				if thread.ID != id {
+					continue
+				}
+				found = true
+				assertRootSession(thread)
+				if thread.Status != status || thread.SessionControl == nil || thread.SessionControl.ManagerID != actor.AgentID {
+					t.Fatalf("%s lost execution or management state: %+v", method, thread)
+				}
+			}
+			if !found {
+				t.Fatalf("%s omitted the managed session", method)
+			}
+		}
+	}
+	assertListed(ThreadStatusInProgress)
 	if _, err := f.server.HarnessSession(context.Background(), actor, p); err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +141,15 @@ func TestHarnessSessionVisibleIdempotentAndWakesOriginalConversation(t *testing.
 	}
 	wake.response <- providers.ChatResponse{Content: "I found the outdated instructions and am checking the replacement."}
 	f.waitForCompletion(t)
+	assertListed(ThreadStatusIdle)
+	restored, err := f.server.loadPersistedThreadState(id, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.server.mu.Lock()
+	f.server.threads[id] = restored
+	f.server.mu.Unlock()
+	assertListed(ThreadStatusIdle)
 }
 
 func TestHarnessTakeoverFencesQueuedWorkAndLeavesHistory(t *testing.T) {

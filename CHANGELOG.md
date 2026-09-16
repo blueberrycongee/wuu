@@ -36,6 +36,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Kept newly created Named Agent-managed sessions visible in the Harness sidebar
+  immediately, without requiring a restart or losing their management relationship.
 - Preserved Named Agent room images through wake delivery and history reads, using
   the same model media policy as ordinary conversations without duplicating attachments.
 - Fixed selecting an automatically discovered Grok Build connection in existing
