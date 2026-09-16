@@ -2373,18 +2373,12 @@
 
 .thread-list-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
-  /* Land the button text on the same column-2 x as the section body's
-   * .sidebar-section-empty-note placeholder so "展开 / 收起" reads as a
-   * footer hint, not as a half-row off to the left. We use the *nav*
-   * tokens on purpose: the empty-note column is computed from
-   * row-pad-x (8) + nav-icon-col (22) + nav-column-gap (10) = 40px,
-   * and we want "展开 / 收起" to share that x even though the rows
-   * above use the wider .thread-row grid. Layout: row-pad-x (8)
-   * + nav-icon-col (22) + nav-column-gap (10) − control-pad-x (8)
-   * = 32px, plus the button's 8px horizontal padding → 40px. */
+  /* The list gap keeps this action close to its rows. Put the extra breathing
+   * room below it, before the next section, and keep labels on the title axis. */
+  padding-bottom: var(--sidebar-functional-heading-gap);
   padding-left: calc(
     var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col) +
       var(--sidebar-nav-column-gap) - var(--sidebar-row-control-pad-x)
@@ -2392,7 +2386,9 @@
   padding-right: var(--sidebar-row-pad-x);
 }
 
-.thread-list-more {
+.thread-list-more,
+.thread-list-collapse-btn {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   min-height: 28px;
@@ -2403,8 +2399,8 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--sidebar-heading-size, var(--font-sm));
-  font-weight: var(--weight-medium);
-  padding: 0 var(--sidebar-row-control-pad-x);
+  font-weight: var(--sidebar-label-weight, 400);
+  padding: 2px var(--sidebar-row-control-pad-x);
   text-align: left;
   white-space: nowrap;
   transition:
@@ -2413,36 +2409,15 @@
 }
 
 .thread-list-more:hover,
-.thread-list-more:focus-visible {
-  outline: 0;
+.thread-list-collapse-btn:hover {
   background: var(--sidebar-thread-list-button-hover-bg);
   color: var(--ink);
 }
 
-.thread-list-collapse-btn {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--sidebar-heading-size, var(--font-sm));
-  font-weight: var(--weight-medium);
-  padding: 0 var(--sidebar-row-control-pad-x);
-  white-space: nowrap;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.thread-list-collapse-btn:hover,
+.thread-list-more:focus-visible,
 .thread-list-collapse-btn:focus-visible {
-  outline: 0;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
   background: var(--sidebar-thread-list-button-hover-bg);
   color: var(--ink);
 }

@@ -15,6 +15,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Made sidebar list expansion controls lighter and kept them grouped with their
+  conversations, with consistent expand/collapse spacing and keyboard focus.
 - Set the desktop interface's default scale to one zoom-out step below actual
   size, preserving saved font preferences and native browser alignment.
 - Simplified iOS conversation activity into desktop-shared tool summaries and
