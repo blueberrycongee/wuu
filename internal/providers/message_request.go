@@ -23,17 +23,19 @@ func PrepareMessagesForProviderRequest(provider, model string, msgs []ChatMessag
 
 // PrepareMessagesForProviderRequestWithPolicy is PrepareMessagesForProviderRequest
 // plus media admission: media kinds the policy marks unsupported are stripped
-// and replaced by a short marker before any other transform runs, so every
-// downstream validation sees the same message shape the provider will see.
+// and replaced by a short marker after rich tool results become observations,
+// before model compatibility transforms and final validation.
 // Auto and supported kinds pass through unchanged.
 func PrepareMessagesForProviderRequestWithPolicy(provider, model string, msgs []ChatMessage, policy MediaInputPolicy) ([]ChatMessage, error) {
 	msgs = ResolveProviderHistory(msgs, provider, "")
-	msgs = ProjectMediaForPolicy(msgs, policy)
 	repaired, err := RepairAndValidateToolCallHistory(msgs)
 	if err != nil {
 		return nil, err
 	}
 	projected := ApplyToolResultProjections(repaired)
+	// Rich history reads create observation media too. Apply the same policy
+	// after projection so switching to a text-only model cannot reintroduce it.
+	projected = ProjectMediaForPolicy(projected, policy)
 	compatible := ApplyProviderModelMessageCompatibility(provider, model, projected)
 	if err := ValidateToolCallHistory(compatible); err != nil {
 		return nil, fmt.Errorf("invalid message sequence after model compatibility: %w", err)

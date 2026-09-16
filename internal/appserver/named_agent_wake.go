@@ -436,15 +436,20 @@ func (s *Server) startAgentRuntimeSessionWakeLocked(agent channels.AgentRuntime,
 						return encodeErr
 					}
 					input.Content = fmt.Sprintf("Active room for this turn: %s. Continue relevant commitments from your history; other jobs remain queued.\n", strings.Join(roomIDs, ", ")) + "Durable collaboration deliveries follow. Use sender and session provenance to distinguish human instructions from peer reports. These deliveries are already received; chat_check contains only additional messages.\n" + string(encoded)
+					var roomMessages []channels.Message
 					for _, delivery := range messages {
-						prompt, err := s.channelService.RoomTurnPrompt(context.Background(), delivery.ID)
+						roomContext, err := s.channelService.RoomTurnContext(context.Background(), delivery.ID)
 						if err != nil {
 							return err
 						}
-						if prompt != "" {
-							input.Content += "\n\n" + prompt
+						if roomContext.Prompt != "" {
+							input.Content += "\n\n" + roomContext.Prompt
 						}
+						roomMessages = append(roomMessages, roomContext.Messages...)
 					}
+					admitted.mu.Lock()
+					appendRoomMessageMedia(input, roomMessages, admitted.History)
+					admitted.mu.Unlock()
 					sum := sha256.Sum256([]byte(strings.Join(deliveryIDs, "\x00")))
 					input.ClientID = fmt.Sprintf("collaboration-delivery:%x", sum)
 				}

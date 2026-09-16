@@ -67,7 +67,8 @@ func TestRoomDiscussionSerializesMembersRotatesAndStopsOnPass(t *testing.T) {
 		t.Fatalf("second speaker %s", id)
 	}
 	pending, _ = s.PendingCollaborationDispatches(ctx, beta.Agent.ID)
-	prompt, err := s.RoomTurnPrompt(ctx, pending[0].ID)
+	roomContext, err := s.RoomTurnContext(ctx, pending[0].ID)
+	prompt := roomContext.Prompt
 	if err != nil || !strings.Contains(prompt, sent.Message.ID) || !strings.Contains(prompt, "The delivery filter excludes the message.") {
 		t.Fatalf("next speaker lost source or prior reply: %s %v", prompt, err)
 	}

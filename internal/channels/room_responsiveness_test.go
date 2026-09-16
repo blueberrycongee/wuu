@@ -143,7 +143,8 @@ func TestRoomDiscussionPromptIncludesLatestHistory(t *testing.T) {
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("next member: %+v %v", pending, err)
 	}
-	prompt, err := s.RoomTurnPrompt(ctx, pending[0].ID)
+	roomContext, err := s.RoomTurnContext(ctx, pending[0].ID)
+	prompt := roomContext.Prompt
 	if err != nil || !strings.Contains(prompt, sent.Message.Body) || !strings.Contains(prompt, "I will update the installation guide.") || strings.Contains(prompt, "Earlier request 00") {
 		t.Fatalf("next member received stale discussion context: %s %v", prompt, err)
 	}

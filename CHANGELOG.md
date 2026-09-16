@@ -36,6 +36,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserved Named Agent room images through wake delivery and history reads, using
+  the same model media policy as ordinary conversations without duplicating attachments.
 - Fixed selecting an automatically discovered Grok Build connection in existing
   and new conversations without changing workspace defaults.
 - Kept the extension catalog visible after a failed reload and routed reload
