@@ -1,45 +1,34 @@
 # 连接模型服务
 
-你选择模型服务并提供 API Key 或受支持的订阅登录，wuu 使用该服务完成推理；模型费用
-和数据策略由对应服务决定。
+先选择服务商（provider），再选择它提供的模型（model）。服务配置保存连接地址和凭据，
+模型名称填写服务商接受的模型 ID。同一服务可以配置多个模型。
+
+提示词、相关文件、附件和工具结果可能发送给你选择的服务商。费用和数据政策由该服务商
+决定；使用网关时，数据会发往配置的网关地址。不要把真实 API Key 写进项目文件或提交到 Git。
 
 ## 配置桌面应用
 
-1. 打开**设置 → 模型服务**。
-2. 选择**新增服务**。
-3. 选择服务类型：**OpenAI 兼容**、**Anthropic 兼容**、**xAI SuperGrok**或 **Grok Build**。
-4. 填写服务标识和模型名称。
-5. 按服务要求填写 API 端点和 API Key。
-6. 选择**添加服务**，并确认它显示为当前服务。
+1. 打开**设置 → 模型服务 → 新增服务**。
+2. 按服务商的 API 协议选择 **OpenAI 兼容**或 **Anthropic 兼容**。
+3. 填写服务标识、模型名称、API 端点和 API Key，然后选择**添加服务**。
+4. 回到对话，确认选中的服务和模型，发送一个小任务检查是否能正常回复和调用工具。
 
-“模型名称”必须使用服务端实际接受的模型 ID。使用 OpenAI 兼容网关、本地模型服务或
-代理时，端点通常需要包含服务要求的 API 前缀；以该服务自己的文档为准。
+OpenAI 和 OpenRouter 等服务可使用 OpenAI 兼容类型；Anthropic 使用 Anthropic 兼容类型。
+网关或本地服务按其协议选择，端点须包含服务要求的 API 前缀，例如 `/v1`。
+已有服务可以在设置中添加或切换模型，无需为每个模型重复填写凭据。
 
-## 常见选择
+## 使用订阅登录
 
-- **OpenAI：**选择 OpenAI 兼容类型并填写 API Key。桌面端当前不能直接发起 OpenAI
-  OAuth 登录；使用 OAuth 需要已有 Wuu 凭据，或先运行 Codex CLI 完成登录，再在首次设置或
-  `openai-codex` provider 配置中启用 `reuse_codex_credentials`。Codex 原生上下文压缩
-  默认开启；如需继续使用 Wuu 的可移植文本摘要压缩，可将 `native_compaction` 设为
-  `false`。
-- **xAI SuperGrok：**选择 xAI SuperGrok 类型，然后使用 SuperGrok 或已绑定的 X
-  Premium+ 账号登录。Wuu 走自己的 agent loop，把订阅 OAuth token 打到
-  `https://api.x.ai/v1`。这不会读取 `~/.grok/auth.json`，也不会使用
-  `XAI_API_KEY`。CLI 可用 `wuu login xai`。
-- **Grok Build：**先运行 `grok login`，然后选择 Grok Build。Wuu 只读复用
-  `GROK_HOME/auth.json` 或 `~/.grok/auth.json`，通过 Grok Build CLI chat proxy 调用模型，
-  但继续使用 Wuu 自己的 agent loop。凭据过期后重新运行 `grok login`；Wuu 不会修改或
-  刷新 Grok CLI 的凭据。桌面端检测到本机登录后会自动显示 Grok Build 服务，不需要
-  再次登录或手动新增；第一次选用时才把连接写入 Wuu 配置。默认模型为 `grok-4.5`，
-  也提供 `grok-4.6`；两者使用 500k 上下文和默认 `high` 思考强度，4.6 额外支持
-  `xhigh`。
-- **Anthropic：**选择 Anthropic 兼容类型，填写 Anthropic API Key 和模型 ID。
-- **OpenRouter、one-api 或其他网关：**选择 OpenAI 兼容类型，并填写网关端点、Key
-  和它提供的模型 ID。
-- **本地服务：**选择与本地服务协议匹配的兼容类型，填写本机端点和已加载模型。
+- **Codex 订阅：**先在 Codex CLI 登录，再在 Wuu 首次设置中选择复用登录，或在
+  `openai-codex` 服务配置中启用 `reuse_codex_credentials`。桌面端不能直接发起 OpenAI OAuth 登录。
+- **xAI SuperGrok：**新增服务时选择 **xAI SuperGrok**，按提示完成账号登录。
+  CLI 使用 `wuu login xai`，运行任务时选择 `--provider xai-subscription`。
+  此连接使用 xAI 订阅登录，与 Grok CLI 登录和 `XAI_API_KEY` 分开。
+- **Grok Build：**先运行 `grok login`。桌面端检测到可用的本机登录后会显示该服务，
+  可直接选择；CLI 使用 `--provider grok-build`。登录过期后重新运行 `grok login`，
+  Wuu 不会修改或刷新 Grok CLI 的凭据。
 
-wuu 不保证所有“兼容”服务都完整实现工具调用和流式响应。模型必须支持稳定的工具
-调用，才能完成文件编辑、命令执行等 Agent 工作。
+以上连接使用 Wuu 的 Agent 执行任务。文件编辑、命令执行需要模型和服务端都支持工具调用。
 
 ## 配置 CLI
 
@@ -49,72 +38,29 @@ wuu 不保证所有“兼容”服务都完整实现工具调用和流式响应�
 wuu init
 ```
 
-配置默认写入 `~/.wuu/config.json`；设置 `WUU_HOME` 后写入
-`$WUU_HOME/config.json`。初始配置包含 OpenAI、Anthropic、OpenRouter、xAI SuperGrok 和 Grok Build 示例。
+配置默认写入 `~/.wuu/config.json`；设置 `WUU_HOME` 后写入 `$WUU_HOME/config.json`。
+已有配置时直接编辑，`wuu init --force` 会覆盖文件。
 
-按照所选服务的 `api_key_env` 设置环境变量：
-
-```bash
-export OPENAI_API_KEY="..."
-wuu exec "描述一下这个工作区"
-```
-
-SuperGrok 订阅不走 API key。先登录，再指定 provider：
+在 `providers` 中确认所选服务的 `base_url`、`model` 和 `api_key_env`。
+初始默认服务为 `openai`；请确认示例模型是账号可用的模型，再按 `api_key_env` 设置环境变量：
 
 ```bash
-wuu login xai
-wuu exec --provider xai-subscription "描述一下这个工作区"
+export OPENAI_API_KEY="你的 API Key"
+cd /path/to/your/project
+wuu exec --provider openai --permission-mode read_only "阅读这个项目，告诉我怎样运行测试"
 ```
 
-Grok Build 在 Wuu 中同样不需要 API Key。先通过它自己的 CLI 登录：
-
-```bash
-grok login
-wuu exec --provider grok-build "描述一下这个工作区"
-```
-
-单次运行可以切换到另一个已经配置的服务：
-
-```bash
-wuu exec --provider anthropic "审查当前改动"
-```
-
-## 凭据和项目配置
-
-- 桌面端应在**设置 → 模型服务**中保存凭据。CLI 解析 API Key 时依次检查服务配置中
-  显式填写的 `api_key`、对应环境变量和 Wuu 凭据存储。
-- 模型服务显示“凭据已配置”表示当前 Wuu 进程能从配置、对应环境变量、桌面凭据存储
-  或受支持的 OAuth 来源读取到非空凭据。只填写 `api_key_env` / `auth_token_env` 的变量名，
-  或只启用 Codex CLI 凭据复用，不代表凭据可用；状态中不会包含密钥值。
-- 不要把真实 API Key 写入仓库中的 `.wuu.json`、`wuu.json` 或示例配置。
-- 正常启动时，项目配置不能替换用户拥有的服务端点、凭据和权限模式。
-- 提示词、相关文件内容和工具结果可能发送给当前模型服务。处理敏感内容前先了解服务商
-  的数据政策。
-
-完整加载顺序见[配置模型](../reference/configuration.md)。
+`--provider` 选择配置中的服务标识，`--model` 可覆盖本次使用的模型。
+正常启动时，项目配置不能替换用户的服务地址、凭据和权限模式；详细规则见
+[配置说明](../reference/configuration.md)。
 
 ## 排查连接问题
 
-### 提示缺少 API Key
+“凭据已配置”只表示 Wuu 能读到凭据，不保证服务商接受它。提示缺少 API Key 时，
+检查所选服务以及 `api_key_env` 对应的变量是否有值。桌面应用还需要从能读取该变量的
+进程启动；也可以直接在设置中保存 API Key。
 
-桌面端检查当前服务是否显示凭据已配置；如果只配置了环境变量名，还要确保变量已导出到
-启动桌面应用的进程。CLI 检查 `api_key_env` 与实际导出的环境变量名称是否一致，并确保
-从能够读取该变量的终端启动 wuu。空值与未设置的变量都不算可用凭据。
-
-### 提示模型不存在
-
-确认模型名称是服务端接受的模型 ID，而不是产品展示名称。使用网关时还要确认该 Key
-有权访问对应模型。
-
-### 请求成功但不能使用工具
-
-有些聊天模型或兼容网关不支持 Agent 所需的工具调用。换用明确支持工具调用的模型，
-并检查网关是否原样转发工具定义和结果。
-
-### `wuu init` 提示配置已存在
-
-直接编辑已有配置。`wuu init --force` 会替换文件，只有在备份需要保留的内容后才使用。
-
-## 下一步
+提示模型不存在时，核对模型 ID 和账号访问权限。能聊天却不能使用工具时，检查模型和
+网关是否支持工具调用及流式响应。
 
 模型服务连接完成后，继续[完成第一个任务](first-task.md)。

@@ -10,7 +10,7 @@ wuu 是一个开源桌面应用，让你和 AI Agent 一起处理本地项目。
 
 ## 开始使用
 
-桌面预览版支持 Apple 芯片 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，将 `wuu.app` 放入 `/Applications` 后打开。预览版尚未签名或公证；如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
+桌面预览版支持 Apple 芯片 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，将 `wuu.app` 放入 `/Applications` 后打开。预览版使用自签身份，没有 Apple Developer ID 和公证；如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
 
 打开设置，接上模型，再把本地项目文件夹添加为工作区。可以先试一个小任务，完成后检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有一个示例。
 
@@ -23,11 +23,16 @@ git clone https://github.com/blueberrycongee/wuu.git
 cd wuu
 make install
 wuu init
-cd /path/to/your/project
-wuu exec "阅读这个项目，告诉我怎样运行测试"
 ```
 
-请确保 Go 的二进制目录在 `PATH` 中。脚本调用、JSONL 输出和会话控制见 [`wuu exec` 指南](docs/zh-cn/automation/exec.md)。
+确认 Go 的二进制目录在 `PATH` 中，并[配置模型服务](docs/zh-cn/getting-started/model-services.md#配置-cli)，再进入项目目录运行：
+
+```bash
+cd /path/to/your/project
+wuu exec --permission-mode read_only "阅读这个项目，告诉我怎样运行测试"
+```
+
+脚本调用、JSONL 输出和会话控制见 [`wuu exec` 指南](docs/zh-cn/automation/exec.md)。
 
 ## 文件与数据
 

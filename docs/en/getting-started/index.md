@@ -1,10 +1,10 @@
 # Quick start
 
-For your first task, use a small project without sensitive files. You'll need an Apple silicon Mac and access to a model provider.
+For your first task, use a small project without sensitive files. The desktop preview requires an Apple silicon Mac and access to a model provider.
 
-[Install wuu](installation.md) from GitHub Releases. The desktop preview is unsigned; the installation guide explains what to do if macOS blocks it.
+[Install wuu](installation.md) from GitHub Releases. The desktop preview is self-signed and not notarized; the installation guide explains what to do if macOS blocks it.
 
-Open Settings and [connect a model provider](model-services.md), entering its API key if required. Then add your local project folder as a workspace and start a conversation.
+[Connect a provider and choose a model](model-services.md) during first-run setup or in **Settings → Model providers**, using an API Key or supported subscription login. Then add your local project folder as a workspace and start a conversation.
 
 wuu can change files and run commands. Check the selected workspace and [permission mode](../reference/permissions.md) before sending a task. Prompts and relevant file contents may be sent to your model provider; see the [security model](../reference/security-model.md).
 
@@ -20,10 +20,10 @@ Review the changed files and command output before accepting the result. You can
 
 ## Use the CLI
 
-The desktop app does not need a separate CLI. To work from a terminal or script, follow the [installation guide](installation.md), then run this from your project folder:
+The desktop app does not need a separate CLI. To work from a terminal or script, [install the CLI](installation.md#install-the-cli) and [configure a model provider](model-services.md#configure-the-cli), then run this from your project folder:
 
 ```bash
-wuu exec "read this project and explain how to run its tests"
+wuu exec --permission-mode read_only "read this project and explain how to run its tests"
 ```
 
 See the [`wuu exec` guide](../automation/exec.md) for more options. If something goes wrong, start with [troubleshooting](../help/troubleshooting.md).

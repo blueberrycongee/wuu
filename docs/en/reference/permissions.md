@@ -35,11 +35,16 @@ system-level security guarantee.
 
 ## System permissions and isolation
 
-Child processes that are allowed to run inherit Wuu's system identity, environment
-variables, and network capabilities. Wuu's permission mode is not an operating-system
-sandbox. When handling malicious repositories, dependencies, or native programs, use a
-macOS sandbox, container, virtual machine, or a separate system account to establish a
-real security boundary.
+In `standard` and `read_only`, Wuu's command tools apply a filesystem sandbox.
+Standard mode allows writes to registered working directories and a private temporary
+directory; read-only mode restricts file writes. macOS uses a built-in backend. If no
+backend is available, execution is refused until a sandbox extension is configured or
+the user explicitly switches to `unconfined`.
+
+This sandbox preserves the process identity, inherited environment, and network
+access. It does not guarantee credential secrecy or cover every plugin, MCP server,
+or external program. Use a container, virtual machine, or separate system account
+for further isolation when handling malicious repositories, dependencies, or native code.
 
 ## CLI examples
 

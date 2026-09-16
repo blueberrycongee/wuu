@@ -5,8 +5,8 @@ a model provider, and can run tools on the user's machine. That is useful
 authority, so a repository opened in Wuu must be treated more like executable
 code than a passive document.
 
-This document describes the current boundary. It is not a claim that model
-output is safe or that Wuu is an operating-system sandbox.
+This document describes the current boundary. Review model output and use a
+container, virtual machine, or separate system account for further isolation of untrusted code.
 
 ## Permission modes
 
@@ -14,11 +14,12 @@ Wuu has three permission modes (`standard`, `read_only`, and `unconfined`) that
 control which local paths the agent can access and modify; how to switch and
 the CLI override are covered in [permission modes](permissions.md).
 
-In every mode, Wuu is not an OS sandbox: permitted child processes run with the
-Wuu process's operating-system identity, inherited environment, and network
-stack. The path boundary and hard tool guards reduce mistakes, but they are not
-a security boundary against malicious native code or a compromised dependency.
-`unconfined` hands the agent full local authority at the current user's
+In `standard` and `read_only`, Wuu's command tools apply a filesystem sandbox to
+restrict writes; see [permission modes](permissions.md#system-permissions-and-isolation)
+for its scope and backend requirements. Processes retain their system identity,
+inherited environment, and network access, so this protection does not guarantee
+credential secrecy. `unconfined` removes this sandbox and the path boundary,
+handing the agent full local authority at the current user's
 privilege level and should be enabled only for trusted tasks; the sensitive-path
 guards kept by the dedicated file and Git tools (`.env`, SSH private keys,
 `~/.wuu` credential files, and so on) are defense in depth, and arbitrary shell
@@ -29,7 +30,7 @@ mutations receive extra classification or hard checks, and tool output is
 redacted for common secret patterns.
 
 For untrusted repositories, use a disposable VM, container, or a separate OS
-account. Do not substitute permission modes for OS-level isolation.
+account. Do not substitute permission modes for full execution-environment isolation.
 
 ## Data sent to model providers
 
@@ -122,7 +123,7 @@ as the host session. Revoke devices that are lost or no longer trusted.
 
 1. Review a new repository's instructions, settings, hooks, skills, and MCP
    configuration before enabling tools.
-2. Use `read_only` for inspection and a real OS sandbox for hostile code.
+2. Use `read_only` for inspection and a separate isolated environment for hostile code.
 3. Keep provider endpoints and credential environment names in the user config.
 4. Pair remote devices in private and use `wss://` for relays across untrusted
    networks.
