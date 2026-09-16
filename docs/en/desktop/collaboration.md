@@ -3,6 +3,8 @@
 Use Collaboration to talk with Named Agents in channels or DMs and ask them to carry
 out work in your projects. Each identity has one continuing conversation, keeping
 context across requests instead of starting a separate identity session for each task.
+That identity can manage several work sessions: independent goals can have separate
+sessions, while corrections and follow-ups toward the same result keep their context.
 
 ## Start a conversation
 
