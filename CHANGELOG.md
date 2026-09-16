@@ -32,6 +32,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Kept the extension catalog visible after a failed reload and routed reload
   feedback through the shared top notice, with localized notices for busy tasks.
+- Kept inline images and subsequent streamed text in chronological order without
+  moving text across images at completion, and reserved stable image preview space.
 - Kept streaming process text visible when providers revise a provisional final
   answer into commentary before tool calls, including DeepSeek V4 Pro.
 - Corrected external-engine token accounting for reasoning, cache writes, and

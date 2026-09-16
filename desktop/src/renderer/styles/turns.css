@@ -4852,7 +4852,7 @@ pre {
 
 /*
  * Rich tool-result artifacts
- * Images remain in result order between process and answer content. Document
+ * Images and subsequent messages remain in chronological order. Document
  * outputs collect at the turn end, matching the existing file-change summary.
  */
 .turn-artifact-inline-list {
@@ -4876,34 +4876,41 @@ pre {
 .turn-artifact-inline-image {
   align-self: flex-start;
   margin: 0;
-  width: fit-content;
+  width: min(100%, 480px);
   max-width: min(100%, 480px);
   min-width: 0;
 }
 
 .turn-artifact-image-preview {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  /* Reserve the media viewport before lazy loading, including remote previews.
+     Decoding must not move the text being streamed beneath the image. */
+  aspect-ratio: 12 / 7;
+  width: 100%;
   min-width: 0;
-  min-height: 80px;
+  min-height: 0;
 }
 
 .turn-artifact-inline-image img {
   display: block;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
-  max-height: 280px;
+  min-height: 0;
+  max-height: 100%;
   border-radius: var(--radius-xs);
-  object-fit: contain;
+  object-fit: scale-down;
 }
 
 .turn-artifact-inline-image button {
-  display: block;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
-  min-height: 58px;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);

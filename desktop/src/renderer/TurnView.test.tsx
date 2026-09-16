@@ -7,6 +7,7 @@ import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { STREAM_TEXT_NOTIFY_INTERVAL_MS, streamTextKey, streamTextStore } from "./StreamText";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -103,6 +104,7 @@ afterEach(() => {
     root?.unmount();
   });
   container?.remove();
+  streamTextStore.clearItem("turn-1", "commentary-1");
   desktopPluginHost.setActiveConversationThread(undefined);
   root = undefined;
   container = undefined;
@@ -417,6 +419,61 @@ describe("TurnView", () => {
     expect(preview.contains(diff)).toBe(false);
     expect(container.querySelector(".agent-block")?.contains(diff)).toBe(true);
     expect(preview.closest(".turn-process-fold")).toBeNull();
+  });
+
+  it("keeps text after published images in place through streaming, more output, and completion", () => {
+    vi.useFakeTimers();
+    const image = (id: string): ThreadItem => ({
+      id, type: "tool_call", name: "present_artifact", status: "completed",
+      result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", name: `${id}.svg`,
+        uri: `wuu-artifact://workspace/thread/${id}/chart.svg`,
+        artifact: { ref: id, placement: "inline" } }] },
+    });
+    const first = image("first"), second = image("second");
+    const text: ThreadItem = { ...makeCommentary("Reading the chart"), status: "in_progress" };
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    const update = (turn: Turn): void => {
+      act(() => root!.render(<ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider>));
+      act(() => vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS));
+    };
+    const before = (a: Element, b: Element): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    update(makeTurn("in_progress", [first]));
+    const firstImage = container.querySelector("img")!;
+    update(makeTurn("in_progress", [first, text]));
+    const message = container.querySelector(".agent-block")!;
+    expect(before(firstImage, message)).toBe(true);
+    expect(message.closest(".turn-process-fold")).toBeNull();
+
+    const streamKey = streamTextKey("turn-1", text.id, "text");
+    act(() => {
+      streamTextStore.seed(streamKey, text.text!);
+      streamTextStore.append(streamKey, " with streamed details");
+    });
+    act(() => vi.advanceTimersByTime(STREAM_TEXT_NOTIFY_INTERVAL_MS + 100));
+    expect(message.textContent).toContain("with streamed details");
+    expect(container.querySelector(".agent-block")).toBe(message);
+    expect(container.querySelector("img")).toBe(firstImage);
+
+    update(makeTurn("interrupted", [first, { ...text, text: streamTextStore.get(streamKey) }]));
+    expect(container.querySelector(".agent-block")).toBe(message);
+    expect(before(firstImage, message)).toBe(true);
+
+    // A second output must not gather both images after all the commentary.
+    const settledText = { ...text, text: streamTextStore.get(streamKey), status: "completed" as const };
+    const final = { ...makeFinalAnswer("The comparison"), terminal: false, status: "in_progress" as const };
+    update(makeTurn("in_progress", [first, settledText, second, final]));
+    const secondImage = container.querySelectorAll("img")[1];
+    const finalMessage = container.querySelectorAll(".agent-block")[1];
+    expect(before(message, secondImage)).toBe(true);
+    expect(before(secondImage, finalMessage)).toBe(true);
+
+    // Confirming terminal status must preserve both the image and text nodes.
+    update(makeTurn("completed", [first, settledText, second, { ...final, terminal: true, status: "completed" }]));
+    expect(container.querySelectorAll("img")[0]).toBe(firstImage);
+    expect(container.querySelectorAll("img")[1]).toBe(secondImage);
+    expect(container.querySelectorAll(".agent-block")[0]).toBe(message);
+    expect(container.querySelectorAll(".agent-block")[1]).toBe(finalMessage);
+    expect(before(secondImage, finalMessage)).toBe(true);
   });
 
   it("buffers structural process changes briefly while keeping the current text visible", () => {
