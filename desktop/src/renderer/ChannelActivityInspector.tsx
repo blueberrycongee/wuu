@@ -1,11 +1,11 @@
-import { ArrowLeft, PanelRightClose } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, PanelRightClose } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { useI18n } from "./i18n";
 import { toastErrorMessage } from "./Toast";
-import type { NamedAgent } from "../shared/protocol";
+import type { NamedAgent, ManagedHarnessSession } from "../shared/protocol";
 
-export function ChannelActivityInspector({ roomID, agentID, name, agents, fallbackSessionRef, overlay, closing, onClose }: {
+export function ChannelActivityInspector({ roomID, agentID, name, agents, fallbackSessionRef, overlay, closing, onClose, onOpenSession }: {
   roomID: string;
   agentID: string;
   name: string;
@@ -14,8 +14,10 @@ export function ChannelActivityInspector({ roomID, agentID, name, agents, fallba
   overlay: boolean;
   closing: boolean;
   onClose: () => void;
+  onOpenSession?: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [managed, setManaged] = useState<ManagedHarnessSession[]>([]);
   const [sessionRef, setSessionRef] = useState(fallbackSessionRef);
   const [loading, setLoading] = useState(!fallbackSessionRef);
   const [error, setError] = useState("");
@@ -33,6 +35,7 @@ export function ChannelActivityInspector({ roomID, agentID, name, agents, fallba
         if (!active) return;
         const primary = result.sessions.find(session => session.primary) ?? (result.sessions.length === 1 ? result.sessions[0] : undefined);
         setSessionRef(primary?.session_ref ?? fallbackSessionRef);
+        setManaged(result.managed_sessions ?? []);
         setError("");
       } catch (reason) {
         if (active) setError(toastErrorMessage(reason));
@@ -46,7 +49,16 @@ export function ChannelActivityInspector({ roomID, agentID, name, agents, fallba
     return () => { active = false; window.clearInterval(timer); };
   }, [roomID, agentID, fallbackSessionRef, retry]);
   if (sessionRef) return <ChannelSessionInspector key={sessionRef} sessionRef={sessionRef} name={name}
-    agents={agents} overlay={overlay} closing={closing} onClose={onClose} />;
+    agents={agents} overlay={overlay} closing={closing} onClose={onClose}>
+    {managed.length ? <nav className="channel-managed-sessions" aria-label={t("channels.sessions.managed")}>
+      <span className="channel-managed-label">{t("channels.sessions.managed")}</span>
+      {managed.map(session => <button key={session.session_id} type="button" className="channel-managed-session" onClick={() => onOpenSession?.(session.session_id)}>
+        <span className="channel-managed-title">{session.title || session.workspace_root}</span>
+        <span className="channel-session-meta">{t(`channels.sessions.control.${session.control?.state === "active" ? session.state : session.control?.state ?? "idle"}`)}</span>
+        <ArrowUpRight className="icon" aria-hidden="true" />
+      </button>)}
+    </nav> : null}
+  </ChannelSessionInspector>;
   return <aside inert={closing} className={`conversation-pane session-inspector-extension${closing ? " closing" : ""}`}
     aria-label={`${name} · ${t("channels.executionTrace")}`} onKeyDown={event => {
       if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); onClose(); }

@@ -3380,6 +3380,12 @@ export function App(): JSX.Element {
     });
   }, [activateThread, revealConversationFromFocusedWorkspace]);
 
+  const openCollaborationHarnessSession = useStableCallback((id: string) => {
+    setAppMode("harness");
+    revealConversationFromFocusedWorkspace();
+    void activateThread(id);
+  });
+
   const {
     selectSessionTab,
     closeSessionTab,
@@ -5420,7 +5426,7 @@ export function App(): JSX.Element {
               onSelectRoom={selectChannelRoom}
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
-              onOpenSession={handleOpenThreadInSplit}
+              onOpenSession={openCollaborationHarnessSession}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}
@@ -5465,6 +5471,9 @@ export function App(): JSX.Element {
                 />
               </button>
             ) : null}
+            {state.thread?.session_control ? <span className="session-control-label" title={state.thread.session_control.manager_name}>
+              {state.thread.session_control.manager_name} · {t(`channels.sessions.control.${state.thread.session_control.state}`)}
+            </span> : null}
             <ConversationTitleContent
               state={state}
               crossWorkspaceThreads={sidebarThreads}

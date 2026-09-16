@@ -2083,11 +2083,12 @@ describe("ChannelView", () => {
       { primary: true, session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Review integration", state: "waiting", purpose: "work", created_at: "", updated_at: "2026-09-13T00:00:00Z" },
       { session_ref: "child", parent_session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Implement settings", state: "running", purpose: "work", created_at: "", updated_at: "2026-09-13T00:01:00Z" },
     ];
-    api.listChannelSessions = vi.fn(async () => ({ sessions }));
+    api.listChannelSessions = vi.fn(async () => ({ sessions, managed_sessions: [{ session_id: "ordinary", title: "Refresh docs", workspace_root: "/project", provider: "openai", model: "gpt-6", state: "running" as const, control: { manager_id: "agent-2", state: "active" as const, revision: 1 } }] }));
+    const openSession = vi.fn();
     api.readChannelSession = vi.fn().mockImplementation(async ({ sessionRef }) => ({ session: sessions.find(s => s.session_ref === sessionRef), thread: { id: sessionRef, turns: [{ id: "turn", status: "completed", items: [{ id: "text", type: "agent_message", text: `Trace for ${sessionRef}` }] }] } }));
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
-    await act(async () => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await act(async () => root?.render(<ChannelView selectedRoomID="room-1" onOpenSession={openSession} />));
     await settle();
     const avatar = container.querySelector<HTMLButtonElement>(".channel-coordinator-member button")!;
     expect(avatar.disabled).toBe(false);
@@ -2098,6 +2099,10 @@ describe("ChannelView", () => {
     const panel = () => container.querySelector(".session-inspector-extension")!;
     expect(panel().querySelectorAll(".channel-activity-session-entry")).toHaveLength(0);
     expect(panel().textContent).toContain("Trace for parent");
+    const managed = Array.from(panel().querySelectorAll("button")).find(button => button.textContent?.includes("Refresh docs"))!;
+    await act(async () => managed.click());
+    expect(openSession).toHaveBeenCalledWith("ordinary");
+    expect(api.readChannelSession).not.toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "ordinary" }));
     expect(panel().textContent).not.toContain("Trace for child");
     expect(panel().querySelector('button[aria-label="全部会话"]')).toBeNull();
     expect(container.querySelector(".channel-message-stream")).not.toBeNull();

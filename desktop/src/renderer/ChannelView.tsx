@@ -2047,7 +2047,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         ) : null}
         </div>
         {inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
-          agents={agents}
+          agents={agents} onOpenSession={onOpenSession}
           roomID={inspectedSession.roomID} agentID={inspectedSession.agentID} name={inspectedSession.name}
           fallbackSessionRef={inspectedSession.sessionRef} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
         /> : inspectedSession?.sessionRef ? <ChannelSessionInspector
