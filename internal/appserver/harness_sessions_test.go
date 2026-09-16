@@ -291,3 +291,61 @@ func TestHarnessInspectIncludesUnsettledProgress(t *testing.T) {
 	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Waiting for result"})
 	f.waitForCompletion(t)
 }
+
+func TestHarnessUnconsumedCorrectionSurvivesTerminalReconciliation(t *testing.T) {
+	f, provider := newCollaborationFlowFixture(t)
+	ctx := context.Background()
+	var parent ChannelSessionResult
+	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect docs", RequestID: "request"}, &parent)
+	decision := provider.next(t)
+	actor := harnessTestActor(t, f, parent.Session.SessionRef)
+	id, _, _ := harnessTestCreate(t, f, actor)
+	worker := provider.next(t)
+	// Hold reconciliation while reproducing a steer accepted immediately before
+	// a terminal response, with no durable user input from consuming the steer.
+	f.server.harnessMu.Lock()
+	func() {
+		defer f.server.harnessMu.Unlock()
+		worker.response <- providers.ChatResponse{Content: "Original draft"}
+		waitForTurnCompletedForThread(t, f.out, id)
+		c, _, err := session.ReadControl(f.server.rt.SessionDir, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err = session.ChangeControl(f.server.rt.SessionDir, id, actor.AgentID, session.ControlActive, c.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		link, err := f.server.channelService.HarnessLink(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		link.ControlRevision = c.Revision
+		if err := f.server.channelService.PutHarnessLink(ctx, link); err != nil {
+			t.Fatal(err)
+		}
+		op, _, err := f.server.channelService.ReserveHarnessOperation(ctx, actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Include installation evidence", Mode: "steer", OperationID: "late-correction"}, id, c.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		th := f.server.thread(id)
+		th.mu.Lock()
+		op.TurnID = th.Turns[len(th.Turns)-1].ID
+		th.mu.Unlock()
+		op.State, op.Prepared = "submitted", true
+		if err := f.server.channelService.PutHarnessOperation(ctx, op); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	if err := f.server.reconcileHarnessSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	continued := provider.next(t)
+	if text := collaborationRequestText(continued.request); !strings.Contains(text, "Include installation evidence") {
+		t.Fatalf("correction was lost after old turn ended: %s", text)
+	}
+	continued.response <- providers.ChatResponse{Content: "Installation verified"}
+	waitForThreadLeaseRelease(t, f.server.rt.SessionDir, id)
+	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Waiting for corrected evidence"})
+	f.waitForCompletion(t)
+}
