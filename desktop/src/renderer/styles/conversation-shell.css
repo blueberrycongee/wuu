@@ -34,9 +34,9 @@
   --shell-turn-rail-bar-bg: rgba(60, 60, 67, 0.4);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
-     without being shadowed by a more specific selector. Default 14px
-     matches the value the .conversation-pane block below used to carry;
-     see renderer/main.tsx for the apply path. font-family and
+     without being shadowed by a more specific selector. Default 13px
+     matches MESSAGE_FLOW_FONT_SIZE_RANGE; see renderer/main.tsx for the
+     apply path. font-family and
      font-weight moved here too so the settings preview (which is NOT
      inside .conversation-pane) and any future surface can read the
      same values without duplicating the cascade. */
@@ -45,7 +45,7 @@
     "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC",
     "Noto Sans SC", sans-serif;
-  --conversation-message-font-size: 14px;
+  --conversation-message-font-size: 13px;
   /* Normal (400) body weight: the stream previously held 450 to add
      presence to 14px type, but in practice it read as denser, heavier
      gray walls across long answers. Default weight lets the font's own
@@ -109,7 +109,7 @@
   --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.5);
   --conversation-prose-indent: 1.4em;
   --conversation-prose-max-width: 100%;
-  --conversation-message-element-gap: 18px;
+  --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
   /* Process rows share the message size and weight; color and spacing,
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
@@ -141,7 +141,8 @@
   --conversation-user-message-trailing-gap: 8px;
   --conversation-rule-process-gap: 16px;
   --conversation-process-detail-gap: 16px;
-  --conversation-process-answer-gap: var(--conversation-answer-hover-action-gap);
+  /* Reading groups do not inherit the independently configurable action-bar gap. */
+  --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
   --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 16px);

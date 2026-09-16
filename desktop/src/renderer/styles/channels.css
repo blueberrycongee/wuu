@@ -790,7 +790,7 @@
   padding: 9px 14px;
   background: var(--ink-overlay-6);
   color: var(--text-primary);
-  font-size: var(--conversation-message-font-size, 14px);
+  font-size: var(--conversation-message-font-size, 13px);
   line-height: var(--conversation-reading-line-height, 1.5);
   overflow-wrap: anywhere;
   word-break: break-word;

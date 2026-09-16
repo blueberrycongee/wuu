@@ -2588,20 +2588,16 @@ export type SettingsUsageResponse = {
 
 // Appearance preference for the desktop shell. "system" follows the OS
 // light/dark setting via prefers-color-scheme.
-// Continuous px value the user picks for the message-stream font size.
-// Range mirrors the developer-only design-tokens mixer
-// (ConversationDesignTokens.ts → msg-font-size: 13–20 step 0.5 default
-// 14) so the user setting and the mixer operate in the same coordinate
-// space. The renderer clamps incoming values to this range before
-// applying them; the main process keeps the same range check at the
-// IPC boundary.
+// UI and message-stream size in CSS pixels. The renderer clamps incoming
+// values to this range; the main process validates the same range at the IPC
+// boundary. A new default must not replace a valid saved preference.
 export type MessageFlowFontSize = number;
 
 export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   min: 13,
   max: 20,
   step: 0.5,
-  default: 14,
+  default: 13,
 } as const;
 
 export type ThemePreference = "system" | "light" | "dark";

@@ -1,8 +1,8 @@
 /* Keep layout in CSS pixels: page zoom also scales embedded browsers. */
 :root {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  --font-ui: var(--conversation-message-font-size, 14px);
-  --font-xs: calc(var(--font-ui) - 2px);
+  --font-ui: var(--conversation-message-font-size, 13px);
+  --font-xs: max(12px, calc(var(--font-ui) - 2px));
   --font-sm: calc(var(--font-ui) - 1px);
   --font-body: calc(var(--font-ui) + 1px);
   --font-title: calc(var(--font-ui) + 2px);
@@ -18,8 +18,8 @@
   --icon-size-xl: calc(20px * var(--appearance-scale, 1));
 }
 .sidebar, .settings-sidebar, .sidebar-content {
-  --font-ui: var(--conversation-message-font-size, 14px);
-  --font-xs: calc(var(--font-ui) - 2px);
+  --font-ui: var(--conversation-message-font-size, 13px);
+  --font-xs: max(12px, calc(var(--font-ui) - 2px));
   --font-sm: calc(var(--font-ui) - 1px);
   --sidebar-primary-icon-size: calc(var(--font-ui) * 16 / 14);
   --sidebar-nav-icon-col: calc(var(--font-ui) * 18 / 14);
@@ -34,7 +34,7 @@
   --sidebar-nav-icon-col: calc(var(--sidebar-primary-icon-size) + 2px);
   --sidebar-tree-icon-col: var(--sidebar-primary-icon-size);
 }
-.sidebar :is(.nav-item, .project-row, .thread-row), .settings-sidebar .nav-item {
+.sidebar :is(.nav-item, .project-row, .thread-row), .settings-sidebar :is(.nav-item, .settings-nav-item) {
   min-height: var(--sidebar-row-height, 2.5em);
   height: auto;
   padding-block: 0.35em;
@@ -66,7 +66,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .settings-theme-preview { border-radius: var(--radius-lg); }
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  font-size: var(--conversation-message-font-size, 14px);
+  font-size: var(--conversation-message-font-size, 13px);
   line-height: 1.6;
 }
 @media (pointer: coarse) {
@@ -85,7 +85,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
     font-size: max(16px, var(--conversation-message-font-size, 16px));
   }
 }
-.workspace-markdown-reading .rich-content { font-size: var(--conversation-message-font-size, 14px); }
+.workspace-markdown-reading .rich-content { font-size: var(--conversation-message-font-size, 13px); }
 .workspace-markdown-reading .rich-heading { font-size: 1.27em; }
 .workspace-markdown-reading .rich-heading--h1 { font-size: 1.87em; }
 .workspace-markdown-reading .rich-heading--h2 { font-size: 1.4em; }

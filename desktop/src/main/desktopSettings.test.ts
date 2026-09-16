@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_MESSAGE_FLOW_FONT_SIZE,
   getCodexPetScale,
   getChannelRoomPreferences,
   getCodexPetSettings,
@@ -179,8 +180,8 @@ describe("desktopSettings", () => {
     expect(getMessageFlowFontSize(file)).toBe(16);
   });
 
-  it("defaults the message-flow font size to 14", () => {
-    expect(getMessageFlowFontSize(file)).toBe(14);
+  it("uses the default message-flow size when no preference is saved", () => {
+    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
   });
 
   it("round-trips the message-flow font size", () => {
@@ -192,15 +193,21 @@ describe("desktopSettings", () => {
     expect(getMessageFlowFontSize(file)).toBe(15);
   });
 
+  it("preserves the former default when it is already saved", async () => {
+    await writeFile(file, JSON.stringify({ message_flow_font_size: 14 }));
+    setThemePreference("dark", file);
+    expect(getMessageFlowFontSize(file)).toBe(14);
+  });
+
   it("rejects out-of-range message-flow font size values on read", async () => {
     await writeFile(file, JSON.stringify({ message_flow_font_size: 5 }));
-    expect(getMessageFlowFontSize(file)).toBe(14);
+    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
     await writeFile(file, JSON.stringify({ message_flow_font_size: 100 }));
-    expect(getMessageFlowFontSize(file)).toBe(14);
+    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
     await writeFile(file, JSON.stringify({ message_flow_font_size: "huge" }));
-    expect(getMessageFlowFontSize(file)).toBe(14);
+    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
     await writeFile(file, JSON.stringify({ message_flow_font_size: null }));
-    expect(getMessageFlowFontSize(file)).toBe(14);
+    expect(getMessageFlowFontSize(file)).toBe(DEFAULT_MESSAGE_FLOW_FONT_SIZE);
   });
 
   it("keeps the message-flow font size when toggling other settings", () => {

@@ -97,7 +97,7 @@
   padding: 8px 12px;
   background: var(--ink-overlay-4);
   color: var(--ink);
-  font-size: var(--conversation-message-font-size, 14px);
+  font-size: var(--conversation-message-font-size, 13px);
   line-height: var(--conversation-reading-line-height, 1.5);
   /*
    * Last-resort wrapping for unbreakable inline tokens (file paths like

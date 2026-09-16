@@ -334,7 +334,7 @@
   --sidebar-row-pad-x: 12px;
   --sidebar-label-weight: 400;
   --sidebar-selected-weight: 500;
-  --sidebar-label-size: var(--conversation-message-font-size, 14px);
+  --sidebar-label-size: var(--conversation-message-font-size, 13px);
   --sidebar-heading-size: max(12px, calc(var(--sidebar-label-size) - 2px));
   --sidebar-row-height: max(32px, calc(var(--sidebar-label-size) * 2.25));
   /* One icon and text axis for navigation, projects, and account controls. */
@@ -354,9 +354,10 @@
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: 4px;
   --sidebar-functional-group-gap: max(20px, calc(var(--sidebar-label-size) * 1.5));
-  --sidebar-section-body-gap: 8px;
+  /* Parent and child rows belong to one tree: use the same separation as
+   * sibling rows. The collapse body owns this gap; lists add no outer inset. */
+  --sidebar-section-body-gap: var(--sidebar-row-gap);
   --sidebar-row-gap: max(2px, calc(var(--sidebar-label-size) * 0.2));
-  --sidebar-list-pad-y: 2px;
   --sidebar-child-indent: 8px;
   --sidebar-session-status-col: var(--sidebar-nav-icon-col);
   --sidebar-session-status-dot-size: 5px;
@@ -1956,16 +1957,6 @@
   min-height: 0;
 }
 
-/* Mirrors .thread-list (gap 3px, 2px vertical padding) so pinned rows
- * sit on the same rhythm as project thread rows. */
-.pinned-thread-list {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--sidebar-row-gap);
-  padding: var(--sidebar-list-pad-y) 0;
-}
-
 .session-organization-group + .session-organization-group,
 .session-folder-list .project-section + .project-section {
   margin-top: 4px;
@@ -2369,12 +2360,15 @@
   transform: translate3d(0, -8px, 0) scale(0.992);
 }
 
-.thread-list {
+/* Lists own only sibling spacing. Their parent owns heading/group spacing,
+ * including when a pinned item wraps a single session in its own list. */
+.thread-list,
+.pinned-thread-list {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   gap: var(--sidebar-row-gap);
-  padding: var(--sidebar-list-pad-y) 0;
 }
 
 .thread-list-footer {
@@ -2498,6 +2492,16 @@
 
 .sidebar-session-row[data-sort-indicator="after"]::after {
   bottom: -2px;
+}
+
+/* Collapse bodies clip their contents. With no list-edge padding, keep the
+ * first/last insertion marker and its shadow inside the boundary row. */
+:is(.thread-list, .pinned-thread-list) > .sidebar-session-row:first-child[data-sort-indicator="before"]::after {
+  top: 1px;
+}
+
+:is(.thread-list, .pinned-thread-list) > .sidebar-session-row:last-child[data-sort-indicator="after"]::after {
+  bottom: 1px;
 }
 
 .thread-row {

@@ -371,7 +371,7 @@
 }
 
 .settings-row-label-description {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
   font-weight: 400;
   line-height: 1.5;
