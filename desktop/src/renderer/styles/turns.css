@@ -4902,6 +4902,8 @@ pre {
   max-height: 100%;
   border-radius: var(--radius-xs);
   object-fit: scale-down;
+  /* Keep visible media on the prose axis inside the stable loading viewport. */
+  object-position: left center;
 }
 
 .turn-artifact-inline-image button {
