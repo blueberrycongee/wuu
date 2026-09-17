@@ -1909,8 +1909,8 @@
 }
 
 .composer-send-button svg.lucide-arrow-up {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   stroke-width: 1.75;
   transform: none;
 }
@@ -1941,11 +1941,11 @@
   color: var(--paper);
 }
 
-/* Solid stop glyph: a filled square reads as "stop" better than an outline,
- * and the extra ink weight means it can sit smaller inside the 28px circle. */
+/* The solid stop glyph needs less area than the send arrow for balanced
+ * visual weight; keep the circle and hit target unchanged between states. */
 .composer-stop-button svg {
-  width: 11px;
-  height: 11px;
+  width: 8px;
+  height: 8px;
   fill: currentColor;
 }
 
@@ -2065,7 +2065,8 @@
 
 .composer-send-button::before,
 .composer-stop-button::before {
-  inset: 1px;
+  /* Reduce visual weight without shrinking the button's hit target. */
+  inset: 2px;
 }
 
 .composer-tool-button:hover:not(:disabled)::before,

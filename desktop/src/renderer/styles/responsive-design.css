@@ -582,7 +582,7 @@
 
   .app-shell.compact-navigation :is(.composer-send-button, .composer-stop-button)::before {
     /* Keep the circle compact without shrinking its touch target. */
-    inset: 6px;
+    inset: 8px;
   }
 
   .app-shell.compact-navigation :is(.nav-item, .thread-row, .project-row) {
