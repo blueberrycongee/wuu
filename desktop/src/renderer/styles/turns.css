@@ -461,6 +461,13 @@
   word-break: break-word;
 }
 
+.user-message-long-card.collapsed .user-message-raw-query {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+
 .user-message-expand-toggle {
   display: inline-flex;
   align-items: center;

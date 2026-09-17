@@ -813,7 +813,7 @@
 }
 
 .channel-message-bubble.long-card.collapsed .rich-content {
-  max-height: 20.3em;
+  max-height: 5lh;
   overflow: hidden;
 }
 

@@ -306,6 +306,41 @@ describe("ThreadItemView", () => {
     expect(container?.querySelector(".user-message-pasted-text-content")?.textContent).toBe(pastedText);
   });
 
+  it.each([false, true])("collapses structured text across parts and preserves attachments (split=%s)", (split) => {
+    const paragraphs = Array.from({ length: 16 }, (_, index) =>
+      `段落 ${index + 1}：懂，你是说**折叠后的预览还是太长，占的空间太多**，不是想取消折叠。`,
+    );
+    const text = paragraphs.join("\n\n");
+    render({
+      item: {
+        ...makeUserMessage(text),
+        content_parts: [
+          { type: "pasted_text", text: "separate attachment", title: "Notes" },
+          ...(split ? paragraphs : [text]).map((part) => ({ type: "text" as const, text: part })),
+        ],
+      },
+      turnStatus: "completed",
+      streaming: false,
+    });
+
+    const bubble = container?.querySelector(".user-message");
+    const toggle = bubble?.querySelector<HTMLButtonElement>(".user-message-expand-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(bubble?.textContent).toContain("段落 1：");
+    expect(bubble?.textContent).not.toContain("段落 16：");
+    expect(container?.querySelector(".user-message-pasted-text")).not.toBeNull();
+    expect(bubble?.textContent).not.toContain("separate attachment");
+
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(bubble?.textContent).toContain("段落 16：");
+    expect(bubble?.querySelector("strong")).not.toBeNull();
+
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(bubble?.textContent).not.toContain("段落 16：");
+  });
+
   it("collapses long wrapped user messages without explicit line breaks", () => {
     const longSingleParagraph = "pasted query ".repeat(150);
 
@@ -386,6 +421,8 @@ describe("ThreadItemView", () => {
 
     expect(rawQuery?.textContent).not.toContain("line 20");
     expect(rawQuery?.textContent?.endsWith("...")).toBe(true);
+    expect(rawQuery?.textContent).toContain("line 5");
+    expect(rawQuery?.textContent).not.toContain("line 6");
     expect(toggle?.textContent).toContain("显示更多");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
@@ -393,7 +430,7 @@ describe("ThreadItemView", () => {
       toggle?.click();
     });
 
-    expect(rawQuery?.textContent).toContain("line 20");
+    expect(rawQuery?.textContent).toBe(longText);
     expect(toggle?.textContent).toContain("收起");
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 

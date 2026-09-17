@@ -499,9 +499,10 @@ function UserMessageContent({
   // numbers. The hook's `{text, expanded}` state shape is what makes
   // the toggle survive a parent re-render with a new message body
   // without flashing the previous expansion — see the module doc.
-  const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(structured ? "" : text);
+  const bubbleText = structured ? textParts.map((part) => part.text).join("\n\n") : text;
+  const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
-  const displayedText = collapsed ? collapsedLongTextPreview(text) : text;
+  const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
 
   return (
     <>
@@ -524,7 +525,9 @@ function UserMessageContent({
           data-wuu-component="message-bubble"
           data-wuu-variant="user"
         >
-          {structured ? (
+          {collapsed ? (
+            <div className="user-message-raw-query">{displayedText}</div>
+          ) : structured ? (
             <div className="user-message-content-parts">
               {textParts.map((part, index) =>
                 part.text ? (
