@@ -6,7 +6,7 @@
 
 .sidebar-account-trigger {
   display: grid;
-  grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr) auto;
+  grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr) var(--sidebar-row-action-size);
   align-items: center;
   gap: var(--sidebar-nav-column-gap, 8px);
   width: 100%;
@@ -68,7 +68,7 @@
   font-weight: var(--sidebar-label-weight, 500);
 }
 
-.sidebar-account-trigger > svg { flex-shrink: 0; color: var(--ink-muted); }
+.sidebar-account-trigger > svg { justify-self: center; flex-shrink: 0; color: var(--ink-muted); }
 .sidebar-account-menu {
   position: absolute;
   inset-inline: 0;

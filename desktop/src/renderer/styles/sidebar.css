@@ -346,8 +346,10 @@
   --sidebar-tree-column-gap: 4px;
   --sidebar-row-action-size: 24px;
   --sidebar-accessory-gap: 8px;
-  --sidebar-fork-icon-size: calc(var(--sidebar-primary-icon-size) - 2px);
-  --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + 3px);
+  --sidebar-fork-icon-size: var(--sidebar-primary-icon-size);
+  --sidebar-fork-slot-inset: calc((var(--sidebar-row-action-size) - var(--sidebar-fork-icon-size)) / 2);
+  --sidebar-action-gap: var(--space-1);
+  --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap));
   --sidebar-row-control-pad-x: 8px;
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
   /* Semantic spacing stays on a 2/4/8/16px scale. Larger text grows the
@@ -877,7 +879,8 @@
   grid-column: 3;
   justify-self: end;
   place-items: center;
-  margin-right: -4px;
+  /* Keep the larger bell hit target centered on the row accessory column. */
+  margin-right: calc((var(--sidebar-row-action-size) - 32px) / 2);
   border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
@@ -920,7 +923,7 @@
   z-index: 1;
   width: 19px;
   height: 19px;
-  stroke-width: 1.8;
+  stroke-width: var(--icon-stroke);
   transform-origin: 50% 15%;
 }
 
@@ -1683,6 +1686,7 @@
 
 .sidebar-functional-heading {
   display: flex;
+  column-gap: var(--sidebar-action-gap);
   min-width: 0;
   min-height: 24px;
   align-items: center;
@@ -1729,9 +1733,12 @@
 
 .sidebar-content .sidebar-functional-heading-toggle > .sidebar-functional-heading-chevron {
   order: 2;
-  width: 12px;
-  height: 12px;
-  margin: 0 4px 0 8px;
+  /* Center the disclosure glyph in the same slot as the adjacent actions. */
+  box-sizing: border-box;
+  width: var(--sidebar-row-action-size);
+  height: var(--sidebar-row-action-size);
+  padding: calc((var(--sidebar-row-action-size) - var(--icon-size-xs)) / 2);
+  margin: 0;
   flex: 0 0 auto;
   color: var(--ink-muted);
   transition: transform var(--motion-fast) var(--ease-out);
@@ -2299,7 +2306,7 @@
   right: var(--sidebar-row-pad-x, 8px);
   opacity: 0;
   pointer-events: none;
-  transform: translate3d(4px, 0, 0);
+  transform: none;
   --sidebar-row-icon-hover-bg: transparent;
   --sidebar-row-icon-focus-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
   transition:
@@ -2584,8 +2591,8 @@
  * indicator while those controls are present rather than letting them overlap. */
 .thread-row:hover::before,
 .thread-row:hover .thread-row-spinner,
-.thread-row:has(.thread-row-action:focus-visible)::before,
-.thread-row:has(.thread-row-action:focus-visible) .thread-row-spinner {
+.thread-row:focus-within::before,
+.thread-row:focus-within .thread-row-spinner {
   opacity: 0;
 }
 
@@ -2739,7 +2746,7 @@
 
 /* Reserve the actual accessory footprint plus a reading gap at every size. */
 .thread-row:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
-  padding-right: calc(var(--sidebar-fork-icon-size) + var(--sidebar-accessory-gap));
+  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:is(.running, .has-unread) .thread-row-main > .thread-row-title {
@@ -2747,17 +2754,17 @@
 }
 
 .thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
-  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-fork-icon-size) + var(--sidebar-accessory-gap) * 2);
+  padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:hover .thread-row-main > .thread-row-title,
-.thread-row:has(.thread-row-action:focus-visible) .thread-row-main > .thread-row-title {
+.thread-row:focus-within .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
-.thread-row:has(.thread-row-action:focus-visible):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
-  padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-fork-icon-size) + var(--sidebar-accessory-gap) * 2);
+.thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
 .thread-row-main > .thread-row-title[data-title-swap] {
@@ -2780,30 +2787,27 @@
   width: var(--sidebar-fork-icon-size);
   height: var(--sidebar-fork-icon-size);
   position: absolute;
-  right: var(--sidebar-row-pad-x, 8px);
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-fork-slot-inset));
   top: 50%;
   transform: translateY(-50%);
-  color: var(--ink-tertiary);
-  opacity: 0.75;
+  color: var(--ink-muted);
   pointer-events: none;
   z-index: 1;
   /* Do not animate the horizontal position. This decorative icon has no hit
    * target; sliding it across the pin/archive buttons briefly put the visible
    * glyph over a different clickable box, which made forked rows feel badly
    * misaligned. */
-  transition: opacity var(--motion-fast) var(--ease-out);
 }
 
 /* Keep the persistent fork marker beside, rather than underneath, a right-edge
  * running/unread indicator. */
 .thread-row:is(.running, .has-unread):has(.thread-row-fork-icon) .thread-row-fork-icon {
-  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
-.thread-row:has(.thread-row-action:focus-visible) .thread-row-fork-icon {
-  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
-  opacity: 0.95;
+.thread-row:focus-within .thread-row-fork-icon {
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2847,7 +2851,7 @@
   right: var(--sidebar-row-pad-x, 8px);
   z-index: 1;
   display: flex;
-  gap: 3px;
+  gap: var(--sidebar-action-gap);
   opacity: 0;
   pointer-events: none;
   visibility: hidden;
@@ -2877,8 +2881,7 @@
   transition-delay: 120ms;
 }
 
-.thread-row:focus-within .thread-row-actions,
-.thread-row:has(.thread-row-action:focus-visible) .thread-row-actions {
+.thread-row:focus-within .thread-row-actions {
   opacity: 1;
   pointer-events: auto;
   visibility: visible;

@@ -10,17 +10,25 @@
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) {
+    .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
+    .session-tab-close, .workspace-tool-tab-close) {
   --control-icon-size: var(--icon-size);
   --control-icon-stroke: var(--icon-stroke);
 }
 
-:is(.sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) {
+:is(.session-tab-close, .workspace-tool-tab-close) {
   --control-icon-size: var(--icon-size-sm);
 }
 
+/* Sidebar actions share the navigation glyph scale, including nested project
+ * actions. Utility classes must not make pin/archive smaller than new-thread. */
+:is(.sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button) {
+  --control-icon-size: var(--sidebar-primary-icon-size);
+}
+
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) > svg.lucide {
+    .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
+    .session-tab-close, .workspace-tool-tab-close) > svg.lucide {
   display: block;
   flex: 0 0 auto;
   width: var(--control-icon-size);
@@ -31,7 +39,7 @@
 /* Increase sparse glyphs' span, inversely scaling their stroke so the rendered
  * line weight stays equal to enclosed glyphs at every appearance scale. */
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button) > svg.lucide-plus {
+    .sidebar-row-icon-button, .sidebar-functional-action) > svg.lucide-plus {
   width: calc(var(--control-icon-size) * 10 / 9);
   height: calc(var(--control-icon-size) * 10 / 9);
   stroke-width: calc(var(--control-icon-stroke) * 0.9);
