@@ -885,6 +885,44 @@ describe("createRuntimeSettingsActions", () => {
     expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
   });
 
+  it("selects Approve for me as a permission choice and closes the menu", async () => {
+    const api = installWuuApi();
+    api.updateRuntimeSettings.mockResolvedValue({
+      provider: "codex",
+      model: "gpt-5",
+      effort: "medium",
+      variant: "medium",
+      permissions: { mode: "standard", approve_for_me: true },
+    });
+    const primary = { ...thread("thread-1"), permission_mode: "read_only" };
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        initialized: initialized({ permissions: { mode: "read_only" } }),
+        thread: primary,
+        threads: [primary],
+        status: "ready",
+      },
+    });
+
+    await harness.actions.selectPermissionMode("standard", true);
+
+    expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      { approve_for_me: true },
+      undefined,
+      "standard",
+      "thread-1",
+    );
+    expect(harness.getAppState().thread?.permission_mode).toBe("standard");
+    expect(harness.getAppState().thread?.approve_for_me).toBe(true);
+    expect(harness.getRuntimeMenus().accessMenuOpen).toBe(false);
+    expect(readDraftPermissionMemory()).toBe("standard");
+    expect(readDraftApproveForMeMemory()).toBe(true);
+  });
+
   it("persists Approve for me on the active thread and keeps the menu open", async () => {
     const api = installWuuApi();
     api.updateRuntimeSettings.mockResolvedValue({

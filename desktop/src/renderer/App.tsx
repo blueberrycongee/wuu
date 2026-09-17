@@ -3101,16 +3101,13 @@ export function App(): JSX.Element {
         onSelectRuntimeEffort={(nextVariant) =>
           selectRuntimeEffort(nextVariant)
         }
-        onSelectPermissionMode={(mode) => {
+        onSelectPermissionMode={(mode, approveForMe) => {
           if (!activeThread && effectiveEngine !== "wuu") {
             setDraftPermissionMode(mode);
             setAccessMenuOpen(false);
             return;
           }
-          void selectPermissionMode(mode);
-        }}
-        onToggleApproveForMe={(enabled) => {
-          void setApproveForMe(enabled);
+          void selectPermissionMode(mode, approveForMe);
         }}
         onOpenSettings={() => {
           closeProjectMenus();
@@ -3844,7 +3841,6 @@ export function App(): JSX.Element {
     selectRuntimeModel,
     selectRuntimeEffort,
     selectPermissionMode,
-    setApproveForMe,
     interrupt,
     interruptPane,
   } = createRuntimeSettingsActions({

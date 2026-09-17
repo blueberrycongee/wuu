@@ -138,14 +138,13 @@ function renderComposer(props: {
   activeContext?: RuntimeContext;
   setPrompt?: (value: string) => void;
   pluginHost?: PluginHost;
-  onSelectPermissionMode?: (mode: PermissionMode) => void;
-  onToggleApproveForMe?: (enabled: boolean) => void;
+  onSelectPermissionMode?: (mode: PermissionMode, approveForMe?: boolean) => void;
   tokensPerSecond?: number;
   tokenSpeedSampledAt?: number;
   tokenSpeedSource?: "real" | "estimated" | "none";
   activeProject?: DesktopProject;
   projects?: DesktopProject[];
-}): { onSelectPermissionMode: (mode: PermissionMode) => void } {
+}): { onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void } {
   const codexModels: CodexModelLoadState = {
     loading: false,
     error: "",
@@ -198,7 +197,6 @@ function renderComposer(props: {
           onSelectRuntimeModel={() => {}}
           onSelectRuntimeEffort={() => {}}
           onSelectPermissionMode={onSelectPermissionMode}
-          onToggleApproveForMe={props.onToggleApproveForMe ?? (() => {})}
           onToggleBranchMenu={props.onToggleBranchMenu ?? (() => {})}
           onOpenSettings={() => {}}
           onOpenSkillsCatalog={() => {}}
@@ -2722,7 +2720,7 @@ describe("Composer permission menu", () => {
         "button[role=\"menuitemradio\"] strong",
       ),
     ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["工作区内完全信任", "只读", "无边界"]);
+    expect(labels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
     expect(document.body.textContent).not.toContain("平衡");
     expect(document.body.textContent).not.toContain("严格");
     const menuLabels = Array.from(
@@ -2738,6 +2736,9 @@ describe("Composer permission menu", () => {
       ),
     ).map((label) => label.textContent?.trim());
     expect(checkedLabels).toEqual(["工作区内完全信任"]);
+    expect(document.body.querySelector(
+      "button[role=\"menuitemradio\"][aria-checked=\"true\"] svg",
+    )).not.toBeNull();
     expect(document.body.textContent).not.toContain("profile:");
     expect(document.body.textContent).not.toContain("reviewer:");
   });
@@ -2763,7 +2764,7 @@ describe("Composer permission menu", () => {
       );
     });
 
-    expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only");
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only", false);
 
     const unconfinedOption = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>(
@@ -2778,43 +2779,116 @@ describe("Composer permission menu", () => {
       );
     });
 
-    expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined");
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined", false);
   });
 
-  it.each([undefined, "", "wuu"])("toggles Approve for me in standard Wuu mode with engine %s", (activeEngine) => {
-    const onToggleApproveForMe = vi.fn();
+  it("turns Approve for me off when Standard is selected", () => {
+    const onSelectPermissionMode = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: true },
+      onSelectPermissionMode,
+    });
+
+    const standard = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        "button[role=\"menuitemradio\"]",
+      ),
+    ).find((button) => button.textContent?.includes("工作区内完全信任"));
+    act(() => {
+      standard?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", false);
+  });
+
+  it.each([undefined, "", "wuu"])("selects Approve for me as a peer option in Wuu mode with engine %s", (activeEngine) => {
+    const onSelectPermissionMode = vi.fn();
     renderComposer({
       accessMenuOpen: true,
       permissions: { mode: "standard", approve_for_me: false },
       activeEngine,
-      onToggleApproveForMe,
+      onSelectPermissionMode,
     });
-    const toggle = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemcheckbox\"]"),
+    const option = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
     ).find((button) => button.textContent?.includes("替我审批"));
-    expect(toggle).not.toBeUndefined();
+    expect(option).not.toBeUndefined();
+    expect(option?.disabled).toBe(false);
     act(() => {
-      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      option?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    expect(onToggleApproveForMe).toHaveBeenCalledWith(true);
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
   });
 
-  it("keeps Approve for me nested under Standard and disabled in unconfined mode", () => {
+  it("shows Approve for me as selected on the chip and with a check in the menu", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: true },
+    });
+
+    const chip = container.querySelector<HTMLButtonElement>(
+      "button[aria-label=\"权限模式：替我审批\"]",
+    );
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toContain("替我审批");
+
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    );
+    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
+    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
+    expect(approveForMe?.getAttribute("aria-checked")).toBe("true");
+    expect(approveForMe?.querySelector("svg")).not.toBeNull();
+    expect(standard?.getAttribute("aria-checked")).toBe("false");
+    expect(standard?.querySelector("svg")).toBeNull();
+  });
+
+  it("does not mark Approve for me selected when it is off", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: false },
+    });
+
+    expect(container.querySelector<HTMLButtonElement>(
+      "button[aria-label=\"权限模式：标准\"]",
+    )).not.toBeNull();
+
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    );
+    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
+    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
+    expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
+    expect(approveForMe?.querySelector("svg")).toBeNull();
+    expect(standard?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("keeps Approve for me selectable from unconfined mode", () => {
+    const onSelectPermissionMode = vi.fn();
     renderComposer({
       accessMenuOpen: true,
       permissions: { mode: "unconfined", approve_for_me: true },
-      onToggleApproveForMe: vi.fn(),
+      onSelectPermissionMode,
     });
-    const toggle = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemcheckbox\"]"),
-    ).find((button) => button.textContent?.includes("替我审批"));
-    expect(toggle).not.toBeUndefined();
-    expect(toggle?.disabled).toBe(true);
-    expect(toggle?.getAttribute("aria-checked")).toBe("false");
-    const standard = Array.from(
+    const radios = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
-    ).find((button) => button.textContent?.includes("工作区内完全信任"));
-    expect(standard?.nextElementSibling).toBe(toggle ?? null);
+    );
+    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
+    const unconfined = radios.find((button) => button.textContent?.includes("无边界"));
+    expect(approveForMe).not.toBeUndefined();
+    expect(approveForMe?.disabled).toBe(false);
+    expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
+    expect(approveForMe?.querySelector("svg")).toBeNull();
+    expect(unconfined?.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector<HTMLButtonElement>(
+      "button[aria-label=\"权限模式：无边界\"]",
+    )).not.toBeNull();
+    act(() => {
+      approveForMe?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
   });
 });
 

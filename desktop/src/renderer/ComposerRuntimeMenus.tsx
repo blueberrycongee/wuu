@@ -1395,59 +1395,71 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
   }
 }
 
+type AccessOption = {
+  key: string;
+  mode: PermissionMode;
+  approveForMe: boolean;
+  label: string;
+  tone: ChipTone;
+};
+
+function accessOptions(engine: string | undefined, includeApproveForMe: boolean): AccessOption[] {
+  const options: AccessOption[] = [];
+  for (const option of permissionModeOptions(engine)) {
+    options.push({
+      key: option.mode,
+      mode: option.mode,
+      approveForMe: false,
+      label: option.label,
+      tone: option.tone,
+    });
+    if (includeApproveForMe && option.mode === "standard") {
+      options.push({
+        key: "approve_for_me",
+        mode: "standard",
+        approveForMe: true,
+        label: translate("runtime.permission.approveForMe"),
+        tone: "neutral",
+      });
+    }
+  }
+  return options;
+}
+
 export function AccessMenu({
   permissions,
   engine,
   disabled,
-  onSelect,
-  onToggleApproveForMe
+  onSelect
 }: {
   permissions?: PermissionSummary;
   engine?: string;
   disabled: boolean;
-  onSelect: (mode: PermissionMode) => void;
-  onToggleApproveForMe?: (enabled: boolean) => void;
+  onSelect: (mode: PermissionMode, approveForMe?: boolean) => void;
 }): JSX.Element {
-  const { t } = useI18n();
   const mode = permissionModeFromSummary(permissions);
-  const options = permissionModeOptions(engine);
-  const showApproveForMe = (engine || "wuu") === "wuu" && onToggleApproveForMe;
+  const approveForMeOn = mode === "standard" && Boolean(permissions?.approve_for_me);
+  const showApproveForMe = (engine || "wuu") === "wuu";
   return (
     <div className="composer-context-menu access-menu" role="menu">
-      {options.map((option) => (
-        <div key={option.mode} className="permission-mode-group">
+      {accessOptions(engine, showApproveForMe).map((option) => {
+        const selected = mode === option.mode && option.approveForMe === approveForMeOn;
+        return (
           <button
+            key={option.key}
             className={`permission-mode-option ${option.tone}`}
             role="menuitemradio"
-            aria-checked={mode === option.mode}
+            aria-checked={selected}
             aria-label={option.label}
             type="button"
             disabled={disabled}
-            onClick={() => onSelect(option.mode)}
+            onClick={() => onSelect(option.mode, showApproveForMe ? option.approveForMe : undefined)}
           >
             <strong>{option.label}</strong>
+            {selected ? <Check aria-hidden="true" /> : null}
           </button>
-          {showApproveForMe && option.mode === "standard" ? (
-            <button
-              className="permission-mode-option permission-mode-nested"
-              role="menuitemcheckbox"
-              aria-checked={mode === "standard" && Boolean(permissions?.approve_for_me)}
-              aria-label={t("runtime.permission.approveForMe")}
-              type="button"
-              disabled={disabled || mode !== "standard"}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (mode !== "standard") {
-                  onSelect("standard");
-                }
-                onToggleApproveForMe(!(mode === "standard" && permissions?.approve_for_me));
-              }}
-            >
-              <strong>{t("runtime.permission.approveForMe")}</strong>
-            </button>
-          ) : null}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

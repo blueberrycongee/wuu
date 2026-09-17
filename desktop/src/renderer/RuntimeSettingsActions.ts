@@ -68,7 +68,7 @@ export type RuntimeSettingsActions = {
     variant?: string,
   ) => Promise<boolean>;
   selectRuntimeEffort: (nextVariant: string) => Promise<boolean>;
-  selectPermissionMode: (mode: PermissionMode) => Promise<void>;
+  selectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => Promise<void>;
   setApproveForMe: (enabled: boolean) => Promise<void>;
   interrupt: () => Promise<void>;
   interruptPane: (pane: ConversationPaneID) => Promise<void>;
@@ -588,15 +588,21 @@ export function createRuntimeSettingsActions(
     // Keep the panel open — see selectRuntimeModel.
   }
 
-  async function selectPermissionMode(mode: PermissionMode): Promise<void> {
+  async function selectPermissionMode(mode: PermissionMode, approveForMe?: boolean): Promise<void> {
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
       return;
     }
     try {
-      await sendRuntimeSelection({ permissionMode: mode });
+      await sendRuntimeSelection({
+        permissionMode: mode,
+        ...(approveForMe === undefined ? {} : { approveForMe }),
+      });
       // Remember the choice so the next new conversation (another tab or a
       // relaunch) starts with it instead of the workspace default.
       writeDraftPermissionMemory(mode);
+      if (approveForMe !== undefined) {
+        writeDraftApproveForMeMemory(approveForMe);
+      }
     } catch {
       // Failure already surfaced through the status line.
     }

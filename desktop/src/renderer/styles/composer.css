@@ -2383,7 +2383,7 @@
   height: 30px;
   min-height: 30px;
   justify-content: flex-start;
-  gap: 0;
+  gap: 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
   padding: 0 10px;
@@ -2400,6 +2400,7 @@
 
 .permission-mode-option strong {
   color: var(--ink);
+  flex: 1;
   font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
   line-height: 16px;
@@ -2413,23 +2414,10 @@
   color: var(--danger);
 }
 
-.permission-mode-group {
-  display: grid;
-  gap: 1px;
-}
-
-.permission-mode-option.permission-mode-nested {
-  padding-left: 18px;
-}
-
-.permission-mode-option[aria-checked="true"] strong {
+.permission-mode-option[aria-checked="true"] strong,
+.permission-mode-option[aria-checked="true"] svg {
   color: var(--accent, var(--ink));
 }
-
-/* The permission-mode list carries no checked-state visual: the chip above the
-   composer already states the active mode, so hovering is the only in-list
-   affordance (generic gray hover above). The danger row's label keeps its
-   tone as an option cue. */
 
 .composer-context-menu button svg {
   width: 16px;
