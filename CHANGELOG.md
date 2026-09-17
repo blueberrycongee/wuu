@@ -36,6 +36,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevented transient busy indicators when switching cached desktop conversation
+  tabs, while retaining send protection until background selection completes.
 - Kept newly created Named Agent-managed sessions visible in the Harness sidebar
   immediately, without requiring a restart or losing their management relationship.
 - Preserved Named Agent room images through wake delivery and history reads, using

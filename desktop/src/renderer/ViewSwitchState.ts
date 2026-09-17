@@ -109,8 +109,10 @@ export function useViewSwitchState({
     [],
   );
 
+  // Background resume still blocks sends, but must not mark cached tabs,
+  // sidebar rows, or extension headers busy when no loading UI is needed.
   const visiblePendingThreadID =
-    pendingViewSwitch?.kind === "thread"
+    pendingViewSwitch?.kind === "thread" && pendingViewSwitch.visible
       ? pendingViewSwitch.targetID
       : undefined;
   const visiblePendingProjectID =
