@@ -1,3 +1,4 @@
+import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { hostSupports } from "./HostCapabilities";
 import { Children, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Github, Globe2, Mail } from "lucide-react";
@@ -251,6 +252,7 @@ function markdownComponents(
     },
     a({ href, title, children }) {
       const inner = renderMarkdownText(children, richTextOptions, "a");
+      if (href === PENDING_STREAM_LINK) return <span>{inner}</span>;
       const target = parseLinkTarget(href);
       if (target.kind === "workspace-file") {
         if (!onOpenFile) {
@@ -275,6 +277,7 @@ function markdownComponents(
       return <span>{inner}</span>;
     },
     img({ src, alt }) {
+      if (src === PENDING_STREAM_LINK) return <span>{alt}</span>;
       if (!src) {
         return null;
       }
@@ -681,6 +684,7 @@ function reactNodeText(node: ReactNode): string {
 }
 
 const richMarkdownUrlTransform: UrlTransform = (url, key) => {
+  if (url === PENDING_STREAM_LINK) return url;
   if (key === "href") {
     return parseLinkTarget(url).kind === "invalid" ? "" : url;
   }

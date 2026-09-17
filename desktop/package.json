@@ -78,6 +78,7 @@
     "afterPack": "scripts/after-pack.cjs",
     "files": [
       "out/**/*",
+      "vendor/zeron/LICENSE",
       "package.json"
     ],
     "extraResources": [

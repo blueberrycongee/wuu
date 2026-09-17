@@ -12,7 +12,6 @@ import {
   containsMermaidFence,
   StreamingMarkdown,
   splitIntoStableBlocks,
-  splitStreamWords,
 } from "./StreamingMarkdown";
 import {
   STREAM_TEXT_NOTIFY_INTERVAL_MS,
@@ -123,15 +122,16 @@ describe("StreamingMarkdown", () => {
     ]);
   });
 
-  it("keeps a terminal fenced code block closed when adding the stream cursor", () => {
+  it.each(["", "\n", "\n \t", "\n\n"])("keeps a terminal fenced code block closed with trailing whitespace %j", (trailing) => {
     const key = streamTextKey("turn", "s10", "text");
-    const text = "重启开发环境：\n\n```bash\ncd desktop\nnpm run dev\n```";
+    const text = "重启开发环境：\n\n```bash\ncd desktop\nnpm run dev\n```" + trailing;
     streamTextStore.seed(key, text);
     mount({ streamKey: key, initialText: text, isLive: false, phase: "final_answer" });
 
     const code = document.querySelector(".rich-code-block code");
     expect(code?.textContent).toBe("cd desktop\nnpm run dev\n");
     expect(code?.textContent).not.toContain("```");
+    expect(document.querySelector(".streaming-markdown")?.textContent).not.toContain("\uE000");
   });
 
   it("leaves no trailing cursor paragraph under a fence-final message after settle", () => {
@@ -453,7 +453,7 @@ describe("StreamingMarkdown", () => {
     expect(cursor?.closest("li")).toBeTruthy();
   });
 
-  it("wraps live streamed words in arrival spans and settles to plain text", async () => {
+  it("commits complete streamed text even without the optional paint API", async () => {
     const key = streamTextKey("turn", "s-words", "text");
     streamTextStore.seed(key, "");
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
@@ -464,13 +464,10 @@ describe("StreamingMarkdown", () => {
     });
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
-    // CJK and Latin words both ride the arrival animation while live.
-    expect(surface.querySelectorAll(".stream-word").length).toBeGreaterThanOrEqual(2);
-    // Word spans never alter the visible text.
+    // Full text is committed immediately, including without paint API support.
     expect(surface.textContent).toContain("你好 world");
 
     rerender({ streamKey: key, initialText: "", isLive: false, phase: "final_answer" });
-    expect(surface.querySelector(".stream-word")).toBeNull();
     expect(surface.textContent).toContain("你好 world");
   });
 });
@@ -588,41 +585,5 @@ describe("splitIntoStableBlocks", () => {
     const result = splitIntoStableBlocks(text);
     expect(result.blocks).toEqual(["```ts\ncode\n```\n\n"]);
     expect(result.tail).toBe("after");
-  });
-});
-
-describe("splitStreamWords", () => {
-  it("splits CJK and Latin text into word-shaped segments without losing a character", () => {
-    const text = "你好 world，这 is 混排";
-    const segments = splitStreamWords(text);
-    // Concatenation invariant: segments always rebuild the exact input.
-    expect(segments.map((segment) => segment.text).join("")).toBe(text);
-    // CJK prose rides the animation as word segments, not a raw text run.
-    expect(
-      segments
-        .filter((segment) => segment.word)
-        .map((segment) => segment.text)
-        .join("")
-    ).toContain("你好");
-    expect(
-      segments
-        .filter((segment) => segment.word)
-        .map((segment) => segment.text)
-        .join("")
-    ).toContain("world");
-  });
-
-  it("keeps whitespace as plain segments so spacing stays pixel-exact", () => {
-    const segments = splitStreamWords("你好 world");
-    expect(segments.some((segment) => !segment.word && segment.text === " ")).toBe(
-      true
-    );
-  });
-
-  it("handles empty and whitespace-only input", () => {
-    expect(splitStreamWords("")).toEqual([]);
-    expect(
-      splitStreamWords("  ").every((segment) => !segment.word)
-    ).toBe(true);
   });
 });

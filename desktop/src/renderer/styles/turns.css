@@ -1837,19 +1837,6 @@
   }
 }
 
-/* Streamed word arrival. Each newly mounted word span plays a one-shot
-   fade; React reconciliation keeps already-visible words inert, so the cue
-   lands only on fresh text. Opacity alone is cheap enough to run while the
-   conversation is also scrolling. The duration rides the motion ladder, so
-   prefers-reduced-motion zeroes it at the token layer. */
-.streaming-markdown .stream-word {
-  animation: stream-word-in var(--motion-base) var(--ease-out) backwards;
-}
-
-@keyframes stream-word-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
 
 .turn-progress {
   display: inline-flex;
