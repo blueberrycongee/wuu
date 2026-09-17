@@ -655,20 +655,22 @@ func (s *Server) handleThreadFork(req Request) error {
 	}
 	// A fork inherits its source's engine binding; threads never silently
 	// switch engines.
-	if _, err := session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID); err != nil {
+	updatedSession, err = session.SetEngine(s.rt.SessionDir, sess.ID, source.thread.EngineID)
+	if err != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	sess = &updatedSession
 	// A fork belongs to the same workspace as its source, so it inherits the
 	// active workspace's stable id (empty for scratch/DM/group runtimes).
 	if wsID := strings.TrimSpace(s.rt.WorkspaceID); wsID != "" {
-		if _, err := session.SetWorkspaceID(s.rt.SessionDir, id, wsID); err != nil {
+		updatedSession, err = session.SetWorkspaceID(s.rt.SessionDir, id, wsID)
+		if err != nil {
 			cleanupWorktree()
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
+	sess = &updatedSession
 	stateDir, stateDirErr := s.workspaceStateDir()
 	if stateDirErr != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)

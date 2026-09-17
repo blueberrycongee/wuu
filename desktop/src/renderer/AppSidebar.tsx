@@ -51,6 +51,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { ChannelRoom, DesktopProject } from "../shared/protocol";
 import {
+  isScratchThread,
+  threadBelongsToProject,
   isThreadExecuting,
   isThreadUnread,
   threadTime,
@@ -952,13 +954,22 @@ export function AppSidebar({
   const attentionCount = runningThreads.length + unreadThreads.length;
   const visibleProjectThreadsByProjectID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
+    const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
+    const projects = sidebarProjects.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID);
     for (const [projectID, threads] of Object.entries(projectThreadsByProjectID)) {
-      next[projectID] = threads.filter(
-        (thread) => !thread.pinned && !organization.folderByThreadID[thread.id],
+      const project = projects.find((candidate) => candidate.id === projectID);
+      // Cached buckets can overlap while a fork's workspace metadata refreshes.
+      // Classify the same session snapshot in every bucket before publishing nodes.
+      next[projectID] = threads.map((thread) => byID.get(thread.id) ?? thread).filter(
+        (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] && (
+          projectID === SCRATCH_PSEUDO_PROJECT_ID
+            ? isScratchThread(thread, projects)
+            : project !== undefined && threadBelongsToProject(thread, project)
+        ),
       );
     }
     return next;
-  }, [organization.folderByThreadID, projectThreadsByProjectID]);
+  }, [allSidebarThreads, organization.folderByThreadID, projectThreadsByProjectID, sidebarProjects]);
   const folderThreadsByID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     for (const folder of organization.folders) next[folder.id] = [];

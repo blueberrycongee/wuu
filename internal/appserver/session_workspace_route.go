@@ -49,8 +49,12 @@ func availableSessionWorkspace(root, id string) (string, string, error) {
 	return filepath.Clean(root), id, nil
 }
 
-// A linked worktree executes with its base project's configuration and state.
+// The persisted workspace ID owns configuration and state; CWD is the execution
+// directory and may be a subdirectory or a local fork's shared worktree.
 func (s *Server) sessionWorkspace(m session.Session) (string, string, error) {
+	if strings.TrimSpace(m.WorkspaceID) != "" {
+		return s.resolveSessionWorkspace(m.WorkspaceID, m.WorktreeBaseRepo)
+	}
 	return s.resolveSessionWorkspace(m.WorkspaceID, firstNonEmpty(m.WorktreeBaseRepo, m.CWD))
 }
 

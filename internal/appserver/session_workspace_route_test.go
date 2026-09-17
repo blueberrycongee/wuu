@@ -43,3 +43,34 @@ func TestSessionCreationRoutesExplicitWorkspaceInsteadOfParentHome(t *testing.T)
 		t.Fatal("mismatched root accepted")
 	}
 }
+
+func TestLocalForkExecutionUsesPersistedProjectWithDifferentCWD(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WorkspaceID = "project"
+	rt.WuuHome = t.TempDir()
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	// Same-directory forks carry the project ID without owning the source's
+	// worktree. Their execution directory must not become a project-root check.
+	fork, err := session.CreateForkWithMetadata(rt.SessionDir, "local-fork", t.TempDir(), session.ForkMetadata{ForkedFromID: "source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SetWorkspaceID(rt.SessionDir, fork.ID, rt.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	th, err := srv.ensureThreadLoaded(fork.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ensureThreadRuntime(th); err != nil {
+		t.Fatalf("local fork could not execute: %v", err)
+	}
+	// A cached runtime must still reject execution after a project rebind.
+	th.mu.Lock()
+	th.WorkspaceID = "unregistered-project"
+	th.mu.Unlock()
+	if _, err := srv.ensureThreadRuntime(th); err == nil {
+		t.Fatal("foreign project reused the cached runtime")
+	}
+}

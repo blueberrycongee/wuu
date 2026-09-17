@@ -62,6 +62,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Center code-block text within balanced vertical padding and align copy actions
   with the first code line across code sizes and Markdown previews.
 
+- Fixed duplicate sidebar navigation nodes after forking worktree conversations
+  by preserving workspace identity and reconciling cached sidebar membership.
+
 - Prevented transient busy indicators when switching cached desktop conversation
   tabs, while retaining send protection until background selection completes.
 - Kept newly created Named Agent-managed sessions visible in the Harness sidebar
