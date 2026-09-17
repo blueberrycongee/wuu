@@ -40,6 +40,7 @@ afterEach(() => {
   reduced = false;
   delete document.documentElement.dataset.appearanceMotion;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("streaming paint integration", () => {
@@ -61,8 +62,58 @@ describe("streaming paint integration", () => {
     mount("world next");
     expect(registry.size).toBeGreaterThan(0);
     mount("world next", false);
+    expect(registry.size).toBeGreaterThan(0);
+    act(() => {
+      const finish = frame!;
+      frame = undefined;
+      finish(performance.now() + 1000);
+    });
     expect(registry.size).toBe(0);
     expect(frame).toBeUndefined();
+  });
+  it("finishes pending fades on their original clock after completion", () => {
+    setup();
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    mount("old");
+    mount("old new");
+    const [name, highlight] = [...registry][0];
+    const tick = (time: number) => act(() => {
+      now = time;
+      const callback = frame!;
+      frame = undefined;
+      callback(time);
+    });
+    tick(100);
+    mount("old new", false);
+    expect(registry.get(name)).toBe(highlight);
+    expect([...highlight].map(range => range.toString()).join("")).toBe(" new!");
+    tick(399);
+    expect(registry.get(name)).toBe(highlight);
+    tick(400);
+    expect(registry.size).toBe(0);
+    expect(frame).toBeUndefined();
+    expect(host.querySelector("[data-stream-veil]")).toBeNull();
+    mount("old new", true);
+    mount("old new again", true);
+    expect(registry.size).toBeGreaterThan(0);
+  });
+  it("includes a final append while draining and cleans up if unmounted", () => {
+    setup();
+    mount("old");
+    mount("old next");
+    mount("old next final", false);
+    expect([...registry.values()].flatMap(value => [...value]).map(range => range.toString()).join("")).toBe(" next final!");
+    act(() => root.render(null));
+    expect(registry.size).toBe(0);
+    expect(frame).toBeUndefined();
+  });
+  it("does not animate a historical completed message", () => {
+    setup();
+    mount("complete", false);
+    expect(registry.size).toBe(0);
+    expect(frame).toBeUndefined();
+    expect(host.textContent).toBe("complete!Copy");
   });
   it("keeps a promoted block's active range and rule across later tail updates", () => {
     setup();
@@ -133,6 +184,12 @@ describe("streaming paint integration", () => {
     expect([...highlight].map(range => range.toString()).join("")).toBe("ld");
     expect([...registry.values()].flatMap(value => [...value]).every(range => range.startContainer.isConnected)).toBe(true);
     render("intro\n\nworld\n\nnext", false);
+    expect(registry.get(name)).toBe(highlight);
+    act(() => {
+      const finish = frame!;
+      frame = undefined;
+      finish(performance.now() + 1000);
+    });
     expect(registry.size).toBe(0);
     expect(host.textContent).toContain("world");
   });

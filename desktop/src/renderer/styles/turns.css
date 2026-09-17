@@ -2112,6 +2112,12 @@
   padding: var(--conversation-process-detail-gap) 0 0 0;
 }
 
+/* A direct reply begins here until the provider confirms it as an answer.
+ * Keep its distance from the status header unchanged across that handoff. */
+.turn-process-fold-body:has(> .turn-process-fold-body-inner > .turn-process-entry-commentary:first-child) {
+  padding-top: var(--conversation-process-answer-gap);
+}
+
 .turn-process-fold-body-inner {
   display: flex;
   min-width: 0;

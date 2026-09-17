@@ -498,6 +498,26 @@ describe("ThreadItemView", () => {
     expect(block?.classList.contains("agent-actions-enter")).toBe(true);
   });
 
+  it.each([undefined, false])("reserves actions before terminal is known (%s)", (terminal) => {
+    render({
+      item: { ...makeFinalAnswer("in_progress"), terminal },
+      turnStatus: "in_progress",
+      latestAgentMessageID: "final-1",
+      streaming: true,
+    });
+    expect(actionBar().getAttribute("aria-hidden")).toBe("true");
+    expect(actionBar().querySelectorAll("button")).toHaveLength(0);
+    render({
+      item: makeFinalAnswer("completed"),
+      turnStatus: "completed",
+      actionableAgentMessageID: "final-1",
+      latestAgentMessageID: "final-1",
+      streaming: false,
+    });
+    expect(actionBar().getAttribute("aria-hidden")).toBeNull();
+    expect(actionBar().querySelectorAll("button")).toHaveLength(2);
+  });
+
   it("keeps historical answer actions hover-revealed rather than persistent", () => {
     render({
       item: makeFinalAnswer("completed"),

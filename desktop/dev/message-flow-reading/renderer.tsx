@@ -103,7 +103,7 @@ function Fixture(): JSX.Element {
   const [size, setSize] = useState<number>(Number(params.get("size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default);
   const [theme, setTheme] = useState(params.get("theme") || "light");
   const [surface, setSurface] = useState(params.get("surface") || "stream");
-  const [live, setLive] = useState(false);
+  const [live, setLive] = useState(params.has("lateTerminal"));
   const [playing, setPlaying] = useState(false);
   const [run, setRun] = useState(0);
   const key = `reading-fixture-${run}`;
@@ -143,7 +143,7 @@ function Fixture(): JSX.Element {
           {surface === "lifecycle" ? <WuuUIRoot><TurnView
             turn={{ id: "fixture-lifecycle", status: live ? "in_progress" : "completed", items_view: "full", items: [
               { id: "fixture-request", type: "user_message", status: "completed", text: "检查回复完成后的空白。" },
-              { id: "fixture-answer", type: "agent_message", terminal: true, status: live ? "in_progress" : "completed", text: "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
+              { id: "fixture-answer", type: "agent_message", terminal: live && params.has("lateTerminal") ? undefined : true, status: live ? "in_progress" : "completed", text: params.has("lateTerminal") ? Array(4).fill("在技术演进与协作模式持续变迁的当下，软件工程的重心正逐渐从单纯的代码编写转向更高维度的系统设计、上下文维护与心智模型对齐。现代开发工作流不再是由孤立的函数或离散的代码提交拼凑而成，而是一个需要持续演进、自我校准并包容复杂性的动态生态系统。").join("\n\n") : "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
             ] }}
             isLatestTurn latestAgentMessageID="fixture-answer"
             streamStatus={live && params.has("notice") ? { text: "连接恢复提示需要在窄窗口和大字号下自然换行，而不是用一个固定高度的空白代替。", liveProgress: false } : undefined}

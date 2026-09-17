@@ -390,9 +390,10 @@ function BuiltInThreadItemView({
       const actionsPersistent =
         actionsVisible &&
         (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
-      // Reserve the same row while a final answer streams. Completion replaces
-      // an inert slot with controls instead of growing the answer's footprint.
-      const reserveActionSlot = !isProcessText && (copyable || item.status === "in_progress");
+      // The provider may confirm terminal only at completion. Reserve actions
+      // for live candidates too, so confirmation cannot grow the answer.
+      const reserveActionSlot = (!isProcessText || item.status === "in_progress") &&
+        (copyable || item.status === "in_progress");
       return (
         <article
           data-wuu-component="message"

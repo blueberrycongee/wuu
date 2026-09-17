@@ -51,6 +51,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevented streamed replies from jumping at completion by preserving prose
+  geometry, reserving action space, and allowing active text fades to finish.
 - Outline inline image artifacts with a subtle border and rounded corners so
   light images remain distinct from the conversation background.
 

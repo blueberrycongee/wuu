@@ -51,3 +51,9 @@ app-server.
 Run the composer-height check again with `WUU_HEIGHT_RUNNING_E2E=1` to cover
 ongoing process output. Running and completed turns use the same bottom reading
 clearance; neither relies on an extra turn-boundary margin at the end.
+
+`?surface=lifecycle&lateTerminal=1` starts an unclassified multi-paragraph
+stream and confirms it as the final answer when the stream toggle is cleared.
+`scripts/stream-settlement-layout-e2e.cjs` compares paragraph positions, dimensions
+and total turn height across this handoff at default/large sizes and wide/narrow
+windows in both themes. Run it with the current checkout's Wuu Dev executable.

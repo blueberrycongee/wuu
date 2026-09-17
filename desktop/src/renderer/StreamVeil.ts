@@ -1,6 +1,6 @@
 // Cadence and range tracking adapted from Zeron (MIT), Copyright (c) 2026 Wing.
 // The complete upstream notice is retained in desktop/vendor/zeron/LICENSE.
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -75,10 +75,16 @@ export function useStreamVeil(
   identity: string, stableBlocks = 0,
 ): void {
   const painter = useRef<{ update: () => void } | null>(null);
+  const [painting, setPainting] = useState(live);
+  const latestLive = useRef(live);
+  useLayoutEffect(() => {
+    latestLive.current = live;
+    if (live) setPainting(true);
+  }, [live]);
   const latestStableBlocks = useRef(stableBlocks);
   useLayoutEffect(() => { latestStableBlocks.current = stableBlocks; }, [stableBlocks]);
   useLayoutEffect(() => {
-    if (!live) return;
+    if (!painting) return;
     const element = root.current;
     const registry = (globalThis.CSS as unknown as { highlights?: HighlightRegistry } | undefined)?.highlights;
     const HighlightClass = (globalThis as unknown as { Highlight?: HighlightConstructor }).Highlight;
@@ -133,8 +139,13 @@ export function useStreamVeil(
       for (const parent of markedParents) parent.removeAttribute("data-stream-veil");
       markedParents.clear();
     };
+    const finishIfIdle = (): void => {
+      // Provider completion stops new output, but must not truncate ranges
+      // that are still fading. Release the painter only after they finish.
+      if (!latestLive.current && painted.size === 0) setPainting(false);
+    };
     const paint = (now: number): void => {
-      if (disabled()) { clear(); needsBaseline = true; return; }
+      if (disabled()) { clear(); needsBaseline = true; finishIfIdle(); return; }
       const spans = veil.sample(now);
       const active = new Set<string>();
       for (const span of spans) {
@@ -170,9 +181,10 @@ export function useStreamVeil(
         cancelAnimationFrame(frame);
         frame = undefined;
       }
+      finishIfIdle();
     };
     const update = (): void => {
-      if (disabled()) { clear(); needsBaseline = true; return; }
+      if (disabled()) { clear(); needsBaseline = true; finishIfIdle(); return; }
       if (knownStableBlocks > latestStableBlocks.current) needsBaseline = true;
       if (needsBaseline) {
         clear();
@@ -180,6 +192,7 @@ export function useStreamVeil(
         offset = 0;
         veil = new StreamVeil(read().flat);
         needsBaseline = false;
+        finishIfIdle();
         return;
       }
       // All DOM/style reads finish before changing highlight rules.
@@ -244,6 +257,6 @@ export function useStreamVeil(
       motion.removeEventListener("change", reset);
       document.removeEventListener("visibilitychange", reset);
     };
-  }, [root, identity, live]);
-  useLayoutEffect(() => { if (live) painter.current?.update(); }, [text, live, stableBlocks, identity]);
+  }, [root, identity, painting]);
+  useLayoutEffect(() => { painter.current?.update(); }, [text, live, stableBlocks, identity, painting]);
 }
