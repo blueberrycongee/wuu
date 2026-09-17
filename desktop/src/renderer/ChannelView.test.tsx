@@ -1199,6 +1199,67 @@ describe("ChannelView", () => {
     expect(renderedMessages[4].querySelector(".channel-author-mention")?.textContent).toBe("@Beta");
   });
 
+  it("resizes inline settings without replacing the chat, clamps width, and ends cancelled drags", async () => {
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[1]] };
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id} />));
+    await settle();
+    const view = container.querySelector<HTMLElement>(".channel-view")!;
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 1000 });
+    const stream = container.querySelector('[role="log"]');
+    const toggle = container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")!;
+    act(() => toggle.click());
+    const separator = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
+    expect(separator.hidden).toBe(false);
+    const width = () => Number(separator.getAttribute("aria-valuenow"));
+    const pointer = (target: EventTarget, type: string, x: number) => act(() => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      target.dispatchEvent(event);
+    });
+    const start = width();
+    pointer(separator, "pointerdown", 660);
+    pointer(window, "pointermove", 600);
+    expect(width()).toBe(start + 60);
+    pointer(window, "pointermove", -1000);
+    expect(width()).toBe(Number(separator.getAttribute("aria-valuemax")));
+    pointer(window, "pointermove", 2000);
+    expect(width()).toBe(Number(separator.getAttribute("aria-valuemin")));
+    pointer(window, "pointercancel", 2000);
+    const cancelledWidth = width();
+    pointer(window, "pointermove", 600);
+    expect(width()).toBe(cancelledWidth);
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    act(() => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    expect(width()).toBe(cancelledWidth + 16);
+    act(() => separator.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(width()).toBe(start);
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    pointer(separator, "pointerdown", 660);
+    act(() => toggle.click());
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    pointer(window, "pointermove", 500);
+    act(() => toggle.click());
+    expect(container.querySelector('[aria-controls="channel-conversation-settings"][role="separator"]')?.getAttribute("aria-valuenow")).toBe(String(start));
+    const reopened = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
+    pointer(reopened, "pointerdown", 660);
+    pointer(window, "pointermove", 580);
+    pointer(window, "pointerup", 580);
+    pointer(window, "pointermove", 500);
+    expect(reopened.getAttribute("aria-valuenow")).toBe(String(start + 80));
+    act(() => toggle.click());
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 830 });
+    act(() => toggle.click());
+    const constrained = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
+    act(() => constrained.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    expect(Number(constrained.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(830 - 400);
+    act(() => toggle.click());
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 800 });
+    act(() => toggle.click());
+    expect(container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!.hidden).toBe(true);
+  });
+
   it("opens the DM agent settings without replacing the chat and keeps a failed draft for retry", async () => {
     const api = createApi();
     const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[1]] };

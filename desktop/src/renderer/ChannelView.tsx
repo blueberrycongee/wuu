@@ -13,6 +13,7 @@ import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { ChannelAgentSettings } from "./ChannelAgentSettings";
+import { useChannelSettingsResize } from "./ChannelSettingsResize";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
@@ -454,6 +455,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const agentEditorGeneration = useRef(0);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const settingsOpen = section === "rooms" && settingsRoomID === selectedRoomID && Boolean(settingsRoomID);
+  const settingsResize = useChannelSettingsResize(settingsOpen);
   useEffect(() => {
     agentEditorGeneration.current += 1;
     setSettingsRoomID("");
@@ -1672,11 +1674,12 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
 
   return (
     <section
+      ref={settingsResize.ref}
       className={`channel-view channel-mode-${section}${settingsOpen ? " has-agent-settings" : ""}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
       aria-label={t("channels.title")}
       data-wuu-component="channel-view"
       data-wuu-variant={section}
-      style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : undefined}
+      style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : settingsResize.style}
     >
       {section === "rooms" ? <div
         ref={conversationRef}
@@ -2225,6 +2228,15 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           {selectedRoom ? <button className="channel-settings-manage" type="button" onClick={() => { closeAgentPanel(); editRoom(selectedRoom); }}>{t("channels.manageRoom", { name: selectedRoom.name })}</button> : null}
         </div>
       </aside> : null}
+      {settingsOpen ? <div
+        className="channel-settings-resizer"
+        role="separator"
+        aria-label={t("app.resizeRightSidebar")}
+        aria-controls="channel-conversation-settings"
+        aria-orientation="vertical"
+        tabIndex={0}
+        {...settingsResize.separatorProps}
+      /> : null}
       <ChannelAgentSettings
         inline={settingsOpen}
         busy={savingAgent}

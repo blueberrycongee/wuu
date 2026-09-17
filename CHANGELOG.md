@@ -68,6 +68,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore draggable width adjustment for Collaboration conversation settings,
+  with keyboard controls, saved width, and bounds that preserve chat space.
+
 - Prevented streamed replies from jumping at completion by preserving prose
   geometry, reserving action space, and allowing active text fades to finish.
 - Outline inline image artifacts with a subtle border and rounded corners so
