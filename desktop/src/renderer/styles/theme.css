@@ -342,7 +342,7 @@
 
   /* turns.css — conversation body, process fold, waiting animation. */
   --turn-collapsed-focus-ring: var(--focus-ring);
-  --user-message-bg-color: var(--wuu-message-user-background, #26292d);
+  --user-message-bg-color: var(--wuu-message-user-background, #253247);
   --user-message-fg-color: #fff;
   --user-message-link-color: var(--wuu-color-link, #60a5fa);
   --user-message-link-hover-color: var(--wuu-color-link-hover, #79b8ff);

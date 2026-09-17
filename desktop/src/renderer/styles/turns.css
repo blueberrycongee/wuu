@@ -2,7 +2,7 @@
    theme overrides these in base.css theme blocks. */
 :root {
   --turn-collapsed-focus-ring: var(--focus-ring);
-  --user-message-bg-color: var(--wuu-message-user-background, #F6F6F7);
+  --user-message-bg-color: var(--wuu-message-user-background, #EAF1FA);
   --user-message-radius: var(--wuu-message-user-radius, 16px);
   --user-message-fg-color: var(--ink);
   --user-message-jump-flash-bg: var(--surface-3);
@@ -329,9 +329,10 @@
 }
 
 .user-message-block {
+  --user-message-max-width: min(560px, 80%);
   display: grid;
   grid-template-columns: auto;
-  max-width: min(var(--conversation-message-max-width), var(--conversation-message-max-inline));
+  max-width: var(--user-message-max-width);
   align-self: flex-end;
   justify-items: end;
   gap: 8px;
@@ -369,7 +370,7 @@
 /*
  * Edit state stretches the message block to the full row width — a "draft
  * surface" needs every horizontal pixel of the conversation column, and
- * inherits the default max-width (672px / 83%) otherwise clamps it back to
+ * inheriting the default max-width otherwise clamps it back to
  * the bubble width. Override max-width explicitly so the textarea, image
  * grid, and action row all line up with the assistant turn above and below.
  */
@@ -382,13 +383,13 @@
 }
 
 .user-message-block:has(.user-message-long-card) {
-  width: min(var(--conversation-message-max-width), var(--conversation-message-max-inline));
+  width: var(--user-message-max-width);
   grid-template-columns: minmax(0, 1fr);
   justify-items: stretch;
 }
 
 .user-message-block:has(.user-message-attachments) {
-  width: min(var(--conversation-message-max-width), var(--conversation-message-max-inline));
+  width: var(--user-message-max-width);
   grid-template-columns: minmax(0, 1fr);
   justify-items: end;
 }
@@ -420,18 +421,6 @@
     animation: none;
     background: var(--user-message-jump-flash-bg);
   }
-}
-
-.conversation-split-width .user-message-block {
-  max-width: min(var(--conversation-split-message-max-width), var(--conversation-split-message-max-inline));
-}
-
-.conversation-split-width .user-message-block:has(.user-message-long-card) {
-  width: min(var(--conversation-split-message-max-width), var(--conversation-split-message-max-inline));
-}
-
-.conversation-split-width .user-message-block:has(.user-message-attachments) {
-  width: min(var(--conversation-split-message-max-width), var(--conversation-split-message-max-inline));
 }
 
 .user-message-block .user-message {

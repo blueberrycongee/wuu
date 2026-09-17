@@ -15,6 +15,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Narrow outgoing desktop conversation bubbles to 560px or 80% of the message
+  area and use a mist-blue palette in light and dark themes.
+
 - Temporarily hide the Collaboration sidebar's Agent management shortcut while
   retaining agent management capabilities and other entry points.
 
