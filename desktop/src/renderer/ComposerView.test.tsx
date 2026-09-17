@@ -1692,16 +1692,28 @@ describe("Composer send control", () => {
     expect(textarea?.selectionEnd).toBe(8);
   });
 
-  it("shares the plus menu width and available-height contract", () => {
-    renderComposer({
-      variant: "dock",
-      prompt: "/",
+  it.each(["hero", "dock"] as const)("anchors %s slash suggestions to the input, over the content above it", (variant) => {
+    renderComposer({ variant, canSelectProject: true });
+    const frame = container.querySelector<HTMLElement>(".composer-frame")!;
+    const shell = container.querySelector<HTMLElement>(".composer-shell")!;
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(new DOMRect(80, 400, 640, 120));
+    vi.spyOn(shell, "getBoundingClientRect").mockReturnValue(new DOMRect(80, 340, 640, 180));
+
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "/");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     const slashLayer = document.body.querySelector<HTMLElement>(
       '[data-floating-menu-owner="composer-slash"]',
     );
     expect(slashLayer).not.toBeNull();
+    const menuBottom = window.innerHeight - parseFloat(slashLayer!.style.bottom);
+    expect(menuBottom).toBeGreaterThan(shell.getBoundingClientRect().top);
+    expect(menuBottom).toBeLessThanOrEqual(frame.getBoundingClientRect().top);
+    expect(slashLayer!.style.width).toBe(`${frame.getBoundingClientRect().width}px`);
+    expect(slashLayer!.style.left).toBe(`${frame.getBoundingClientRect().left}px`);
   });
 
   it("shows the hero project selector above the input card", () => {

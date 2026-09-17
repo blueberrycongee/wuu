@@ -1,5 +1,4 @@
-/* Text entry keeps a stable surface while editing; the caret identifies focus.
- * Search and form fields share a restrained hover treatment without a focus halo. */
+/* The field surface stays stable; a shared outline identifies keyboard focus. */
 .catalog-search:hover {
   background: var(--field-hover-bg);
 }
@@ -23,9 +22,10 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 7px;
-  height: 36px;
+  min-height: var(--control-search-height);
+  height: auto;
   margin: 0;
-  padding: 0 9px;
+  padding: 5px 9px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -45,7 +45,20 @@
 }
 
 .menu-search input::placeholder {
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
+}
+
+:is(.menu-search, .catalog-search, .settings-archive-search):has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+:is(.sidebar-name-dialog-input, .environment-dialog-input,
+    .new-participant-field input, .onboarding-provider-form input,
+    .onboarding-provider-form select):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 .menu-search svg {
@@ -54,4 +67,83 @@
 
 .workspace-diff-search {
   margin: 0 8px 7px;
+}
+
+/* Host settings and extension settings share the same switch. The target is
+ * larger than its track; font growth never stretches the track or the thumb. */
+:is(.settings-switch, .plugin-ui-checkbox input) {
+  --switch-track-color: var(--gray-350);
+  position: relative;
+  display: inline-block;
+  order: 2;
+  justify-self: end;
+  flex: 0 0 auto;
+  width: 36px;
+  height: var(--control-field-height);
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+:is(.settings-switch, .plugin-ui-checkbox input)::before {
+  content: "";
+  position: absolute;
+  left: calc(50% - 16px);
+  top: calc(50% - 10px);
+  width: 32px;
+  height: 20px;
+  border: 1px solid var(--control-boundary);
+  border-radius: var(--radius-pill);
+  background: var(--switch-track-color);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.settings-switch-thumb,
+.plugin-ui-checkbox input::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 14px);
+  top: calc(50% - 8px);
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-circle);
+  background: var(--gray-0);
+  box-shadow: var(--shadow-soft);
+  transition: transform var(--motion-fast) var(--ease-out);
+  pointer-events: none;
+}
+
+.settings-switch[aria-checked="true"],
+.plugin-ui-checkbox input:checked {
+  --switch-track-color: var(--wuu-color-text, var(--gray-900));
+}
+
+.settings-switch[aria-checked="true"] .settings-switch-thumb,
+.plugin-ui-checkbox input:checked::after {
+  transform: translateX(12px);
+}
+
+:is(.settings-switch, .plugin-ui-checkbox input):hover:not(:disabled)::before {
+  border-color: var(--ink);
+}
+
+:is(.settings-switch, .plugin-ui-checkbox input):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+:is(.settings-switch, .plugin-ui-checkbox input):disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  :is(.settings-switch, .plugin-ui-checkbox input) {
+    width: 44px;
+    min-height: 44px;
+  }
 }

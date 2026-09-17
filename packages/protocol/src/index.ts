@@ -2603,7 +2603,7 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   min: 13,
   max: 20,
   step: 0.5,
-  default: 13,
+  default: 14.5,
 } as const;
 
 export type ThemePreference = "system" | "light" | "dark";

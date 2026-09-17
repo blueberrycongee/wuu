@@ -67,7 +67,7 @@
 .composer-context-meter-label {
   min-width: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -86,7 +86,7 @@
   border: 1px solid var(--context-meter-tooltip-border);
   border-radius: var(--radius-xs);
   box-shadow: var(--context-meter-tooltip-shadow);
-  font-size: 11px;
+  font-size: var(--font-xs);
   line-height: 1.45;
   color: var(--ink);
   pointer-events: none;

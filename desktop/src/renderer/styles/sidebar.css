@@ -1286,7 +1286,7 @@
   grid-template-columns: var(--collaboration-contact-avatar-size) minmax(0, 1fr);
   align-items: center;
   column-gap: 12px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   padding: 6px 8px;
   background: transparent;
   color: var(--ink);
@@ -1392,7 +1392,7 @@
   width: 100%;
   min-height: 34px;
   padding: 6px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-soft);
   text-align: left;
@@ -1503,7 +1503,7 @@
     var(--sidebar-tree-icon-col)
     minmax(0, 1fr)
     auto;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   /* Idle chrome sits on --ink-soft so 16px Lucide outlines stay readable
    * without matching the conversation's --ink-strong. Hover/selected still

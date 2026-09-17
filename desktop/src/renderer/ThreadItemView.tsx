@@ -279,7 +279,7 @@ function BuiltInThreadItemView({
       };
       return (
         <div
-          className={`user-message-block${copyable || editActionVisible ? " user-message-block-with-actions" : ""}`}
+          className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable ? " user-message-block-with-actions" : ""}`}
           data-wuu-component="message"
           data-wuu-variant="user"
           id={userMessageAnchorID(turnID, item.id)}
@@ -390,16 +390,16 @@ function BuiltInThreadItemView({
       const actionsPersistent =
         actionsVisible &&
         (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
-      // Copy/fork always paint into the existing turn-boundary band.
-      // Latest answers stay visible; older ones appear on hover. Neither
-      // reserves in-flow height, so completion cannot shift auto-follow.
+      // Reserve the same row while a final answer streams. Completion replaces
+      // an inert slot with controls instead of growing the answer's footprint.
+      const reserveActionSlot = !isProcessText && (copyable || item.status === "in_progress");
       return (
         <article
           data-wuu-component="message"
           data-wuu-variant="agent"
           className={`agent-block${
-            actionsVisible
-              ? ` agent-block-with-action-slot agent-actions-available${settleEntered ? " agent-actions-enter" : ""}${actionsPersistent ? " agent-actions-persistent" : " agent-actions-overlay"}`
+            reserveActionSlot
+              ? ` agent-block-with-action-slot${actionsVisible ? ` agent-actions-available${settleEntered ? " agent-actions-enter" : ""}${actionsPersistent ? " agent-actions-persistent" : " agent-actions-overlay"}` : ""}`
               : ""
           }`}
         >
@@ -425,6 +425,8 @@ function BuiltInThreadItemView({
                   : undefined
               }
             />
+          ) : reserveActionSlot ? (
+            <div className="message-actions agent-message-actions" aria-hidden="true" />
           ) : null}
         </article>
       );

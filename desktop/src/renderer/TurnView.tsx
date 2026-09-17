@@ -1,6 +1,6 @@
 /// <reference path="../shared/jsx-compat.d.ts" />
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type {
   InputFile,
   InputImage,
@@ -188,6 +188,19 @@ function TurnContent({
     rawAssistantDisplay,
   );
   const reconnectItems = turn.items.filter((item) => item.type === "stream_reconnect");
+  const visibleStreamStatus = isLatestTurn && turn.status === "in_progress" && reconnectItems.length === 0
+    ? streamStatus
+    : undefined;
+  const previousStreamStatus = useRef<TurnStreamStatus | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (turn.status === "in_progress") previousStreamStatus.current = visibleStreamStatus;
+  }, [turn.status, visibleStreamStatus]);
+  // Ordinary streaming has no transport notice. Preserve space only for a
+  // notice that was actually visible at settlement, using its real layout.
+  const retainedStreamStatus = isLatestTurn && turn.status !== "in_progress" && !streamStatus
+    ? previousStreamStatus.current
+    : undefined;
+  const renderedStreamStatus = visibleStreamStatus ?? retainedStreamStatus;
   const retryMessage = userItems.at(-1);
   const event = turnEventForTurn(turn);
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
@@ -209,6 +222,7 @@ function TurnContent({
       id={turnAnchorID(turn.id)}
       data-turn-id={turn.id}
       data-turn-status={turn.status}
+      data-latest-turn={isLatestTurn || undefined}
     >
       {userItems.map((item) => renderThreadItem(item, false))}
       {assistantDisplay ? (
@@ -244,20 +258,10 @@ function TurnContent({
             : undefined}
         />
       ))}
-      {isLatestTurn && turn.status === "in_progress" && streamStatus && reconnectItems.length === 0 ? (
-        <StreamStatusNotice status={streamStatus} />
-      ) : null}
-      {/*
-       * Hold the row the streaming status chip occupied when the live turn
-       * settles. Without this subspace, unmounting the chip collapses the
-       * turn's height on the completion frame and auto-follow re-pins the
-       * already-rendered answer upward. The spacer is only rendered for the
-       * turn that mounted live (animateCompletionActions) once it is no
-       * longer in_progress, so reloaded history keeps its current spacing
-       * and a mid-stream transport gap never flashes a placeholder.
-       */}
-      {animateCompletionActions && turn.status !== "in_progress" && !streamStatus ? (
-        <div className="turn-stream-status-spacer" aria-hidden="true" />
+      {renderedStreamStatus ? (
+        <div className={visibleStreamStatus ? undefined : "turn-stream-status-spacer"} aria-hidden={!visibleStreamStatus || undefined}>
+          <StreamStatusNotice status={renderedStreamStatus} />
+        </div>
       ) : null}
       {event ? <TurnEventNotice event={event} /> : null}
       {incomplete ? editSummary : null}

@@ -1,6 +1,5 @@
 :root {
-  /* Component color tokens for chat.css.
-     Light-theme values; the dark theme overrides these in base.css theme blocks. */
+  /* Chat bubbles retain their neutral surface independently of turn bubbles. */
   --chat-user-message-bg: var(--wuu-message-user-background, #F3F3F4);
 }
 
@@ -55,7 +54,7 @@
   align-items: center;
   gap: 10px;
   color: var(--ink-tertiary);
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .chat-inline-divider::before,
@@ -120,6 +119,7 @@
 
 .chat-bubble--user {
   background: var(--chat-user-message-bg);
+  color: var(--wuu-message-user-color, var(--ink));
   /* Tail corner (bottom-right) marks the outgoing bubble as the user's
      own — the group-chat echo of .user-message in the main stream. */
   border-radius: var(--radius-sm) var(--radius-sm) 3px var(--radius-sm);
@@ -196,12 +196,12 @@
   align-self: flex-end;
 }
 .chat-pending-hint {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--ink-muted);
   padding: 0 4px;
 }
 
 .chat-pending-attachments {
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--ink-muted);
 }

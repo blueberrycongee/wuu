@@ -57,7 +57,7 @@
   --conversation-flow-top-gap: 36px;
   --conversation-turn-boundary-gap: 48px;
   --conversation-turn-item-gap: 8px;
-  --conversation-composer-clearance: 12px;
+  --conversation-composer-clearance: 20px;
 }
 
 .conversation-pane {
@@ -137,7 +137,7 @@
    * gap (there is no longer a hairline rule; the 32px band stays under the
    * 48px turn boundary so a Q&A pair reads as one group).
    */
-  --conversation-user-rule-gap: 32px;
+  --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
   --conversation-user-message-trailing-gap: 8px;
   --conversation-rule-process-gap: 16px;
   --conversation-process-detail-gap: 16px;
@@ -146,7 +146,9 @@
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
   --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 16px);
-  --conversation-message-action-size: var(--wuu-message-action-size, 24px);
+  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
+  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
+  --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
   --conversation-activity-gap: 8px;
   --conversation-visible-inset-left: 0px;
   --conversation-visible-inset-right: 0px;
@@ -239,12 +241,12 @@
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
-  column-gap: 10px;
+  column-gap: var(--control-toolbar-gap);
   overflow: hidden;
   box-shadow: inset 0 -1px 0 var(--surface-3);
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(24px, var(--window-controls-inset-right)) 0 24px;
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 24px;
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
 }
@@ -252,7 +254,7 @@
 /* With the right panel open the panel's tabbar owns the top-right corner
  * instead, so the titlebar keeps its neutral padding. No-op on macOS. */
 .app-shell.right-panel-open .titlebar {
-  padding-right: 24px;
+  padding-right: var(--control-toolbar-inset);
 }
 
 .title-block,
@@ -394,8 +396,10 @@
 /* Keep the tab rail's available width stable when the active surface does
  * not support creating a conversation (for example, a channel room). */
 .session-tab-new-slot {
-  width: 30px;
-  height: 30px;
+  display: grid;
+  place-items: center;
+  width: max(30px, var(--control-size-toolbar));
+  height: max(30px, var(--control-size-toolbar));
 }
 
 .session-tab-list-shell {

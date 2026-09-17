@@ -21,18 +21,19 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  height: 34px;
+  min-height: var(--control-field-height);
+  height: auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 10px;
+  padding: 5px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-  line-height: var(--line-body);
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
   transition:
@@ -47,9 +48,8 @@
 }
 
 .select-menu-trigger:focus-visible {
-  outline: 0;
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .select-menu-trigger[aria-expanded="true"] {
@@ -99,7 +99,7 @@
 
 .minute-clock-readout {
   color: var(--ink);
-  font-size: 18px;
+  font-size: var(--font-heading);
   font-variant-numeric: tabular-nums;
   font-weight: var(--weight-medium);
 }
@@ -205,8 +205,7 @@
 
 /* Settings inputs and dropdown triggers share the same field material. */
 .select-menu-trigger.settings-select-trigger {
-  height: 32px;
-  padding: 0 12px;
+  padding-inline: 12px;
   border-color: var(--hairline);
   background: var(--field-bg);
   font-weight: 400;
@@ -221,7 +220,6 @@
   background: var(--surface-1);
 }
 
-.select-menu-trigger.settings-select-trigger:focus-visible,
 .select-menu-trigger.settings-select-trigger[aria-expanded="true"] {
   background: var(--field-hover-bg);
   border-color: var(--hairline);
@@ -305,22 +303,28 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  height: 34px;
-  padding: 0 9px;
+  min-height: var(--control-row-height);
+  height: auto;
+  padding: 6px 9px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
+  line-height: 1.4;
   text-align: left;
   cursor: pointer;
 }
 
-.select-menu-item:hover:not(:disabled),
+.select-menu-item:hover:not(:disabled) {
+  background: var(--menu-hover);
+}
+
 .select-menu-item:focus-visible {
-  outline: 0;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
   background: var(--menu-hover);
 }
 
@@ -337,6 +341,7 @@
   display: grid;
   min-width: 0;
   flex: 1 1 auto;
+  gap: 2px;
 }
 
 .select-menu-item-label {
@@ -351,11 +356,17 @@
   font-size: var(--font-xs);
   font-weight: var(--weight-regular);
   line-height: var(--line-ui);
+  overflow-wrap: anywhere;
 }
 
 .select-menu-check {
   flex: 0 0 auto;
   color: var(--ink-soft);
+  visibility: hidden;
+}
+
+.select-menu-item[aria-checked="true"] .select-menu-check {
+  visibility: visible;
 }
 
 .select-menu-empty {

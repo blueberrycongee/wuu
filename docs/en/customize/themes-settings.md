@@ -18,6 +18,14 @@ Returning to a built-in theme removes plugin token overrides. Disabling or remov
 the plugin also removes its theme contribution. Appearance plugins cannot hide
 Settings, plugin management, or recovery entries.
 
+## Adjust reading size and interface scale
+
+Desktop starts with a 14.5px UI font and one Zoom Out step. Existing saved font
+sizes are preserved. Adjust the UI font in settings independently of the code
+font. Use the View menu's Zoom In, Zoom Out, or Actual Size controls to change
+the whole interface scale; the desktop remembers this choice across reloads.
+These defaults are a starting point, not a required combination.
+
 ## Manage plugin settings
 
 Wuu renders declared boolean, text, number, and enum fields, so the plugin does not

@@ -49,8 +49,10 @@ const WORKSPACE_TREE_CSS = `
     --trees-selected-bg-override: var(--wuu-workspace-file-tree-selected-background, var(--surface-3));
     --trees-selected-focused-border-color-override: var(--wuu-workspace-file-tree-selected-border, transparent);
     --trees-border-color-override: var(--wuu-workspace-file-tree-border-color, transparent);
-    --trees-font-family-override: var(--wuu-workspace-file-tree-font-family, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    --trees-font-size-override: var(--font-sm);
+    --trees-font-family-override: var(--wuu-workspace-file-tree-font-family, var(--appearance-ui-font, system-ui, sans-serif));
+    --trees-font-size-override: var(--font-ui);
+    --trees-search-font-weight-override: 400;
+    --trees-focus-ring-color-override: var(--focus-ring);
     --trees-item-margin-x-override: 5px;
     --trees-padding-inline-override: 0px;
   }
@@ -194,7 +196,9 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
     initialSelectedPaths: selectedFilePath ? [selectedFilePath] : [],
     icons: { set: "complete", colored: true },
     // The virtualizer and its shadow DOM must agree on the touch target size.
-    itemHeight: window.matchMedia?.("(pointer: coarse)").matches ? 44 : 24,
+    // Leave room for the full supported 13–20px UI range. Keep the model's
+    // virtual offsets and rendered rows identical when font preferences change.
+    itemHeight: window.matchMedia?.("(pointer: coarse)").matches ? 44 : 32,
     overscan: 8,
     preparedInput: initialPreparedInputRef.current,
     search: true,

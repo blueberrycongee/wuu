@@ -183,7 +183,7 @@
   box-shadow: inset 0 -1px 0 var(--surface-3);
   /* The docked panel sits at the window's right edge, so the tabbar is
    * what clears the Windows controls overlay; a no-op elsewhere. */
-  padding: 0 max(8px, var(--window-controls-inset-right)) 0 8px;
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 8px;
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -3398,6 +3398,8 @@ html.resizing-workspace-file-split * {
 /* Block code: keeps the existing rich-code-block chrome (header + copy
    button) and only overrides the inner <pre><code> and the outer frame. */
 .workspace-markdown-reading .rich-code-block {
+  --rich-code-padding-block: 12px;
+  --rich-code-line-height: 1.55;
   margin: 14px 0;
   border: 1px solid var(--rule);
   border-radius: var(--radius-md);
@@ -3407,14 +3409,18 @@ html.resizing-workspace-file-split * {
 
 .workspace-markdown-reading .rich-code-block .rich-code {
   margin: 0;
-  padding: 12px 14px;
+  padding: var(--rich-code-padding-block) 14px;
   background: transparent;
   color: var(--ink);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: var(--rich-code-line-height);
   white-space: pre;
   overflow-x: auto;
+}
+
+.workspace-markdown-reading .rich-code-block--no-header > .rich-code {
+  padding-right: 40px;
 }
 
 .workspace-markdown-reading .rich-code-header {

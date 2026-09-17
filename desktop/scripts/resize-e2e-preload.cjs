@@ -61,6 +61,13 @@ const resizeThread = {
   turns
 };
 
+// Exercise the same footer clearance while process output is still running.
+if (process.env.WUU_HEIGHT_RUNNING_E2E === "1") {
+  resizeThread.status = "running";
+  turns.at(-1).status = "in_progress";
+  turns.at(-1).items.at(-1).status = "in_progress";
+}
+
 // Pull-to-new-session must make room for its animation even with a live TODO
 // capsule above the composer (the mobile overlap regression).
 if (process.env.WUU_PULL_SESSION_E2E === "1") {

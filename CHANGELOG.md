@@ -15,6 +15,21 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Use compact corners for embedded message-flow code, output and diff cards,
+  and smaller code-copy icons while preserving their click targets.
+
+- Use natural letter spacing across desktop UI and prose and remove global
+  proportional CJK alternates, preserving code and terminal character alignment.
+- Default new desktop UI preferences to 14.5px while preserving saved sizes;
+  remember each user's page zoom and scale message action controls with text.
+- Align titlebar and workspace controls, lighten message bubbles, and unify
+  sidebar and account-menu row heights, hover corners, and spacing.
+- Unified desktop navigation spacing, replaced workspace tool cards with a
+  centered list, and aligned file-tree text with UI font preferences.
+- Refined desktop conversation typography, prompt widths, message corners, and
+  action spacing while preserving saved text sizes and responsive reading space.
+- Use a light neutral background and dark text for outgoing messages in light mode,
+  including their inline code, links, and edit controls.
 - Removed the room-header plans and memory panel while preserving Agent capabilities,
   saved plans, memory, and task controls.
 - Made sidebar list expansion controls lighter and kept them grouped with their
@@ -35,6 +50,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   blinking caret, with green branding, typed status text, and reduced-motion support.
 
 ### Fixed
+
+- Outline inline image artifacts with a subtle border and rounded corners so
+  light images remain distinct from the conversation background.
+
+- Center code-block text within balanced vertical padding and align copy actions
+  with the first code line across code sizes and Markdown previews.
 
 - Prevented transient busy indicators when switching cached desktop conversation
   tabs, while retaining send protection until background selection completes.

@@ -45,6 +45,7 @@ async function run() {
       const label = `${variant}/${width}x${height}/${fontSize}/${theme}`;
       await setDraft(win, "");
       const empty = await geometry(win);
+      if (variant === "populated") await checkEndClearance(win, `${label}: short input`);
       phase = `${label}: input resizing`;
       await setDraft(win, Array(5).fill("逐行输入，自动增高。").join("\n"));
       const growing = await geometry(win);
@@ -55,6 +56,7 @@ async function run() {
       assert.ok(full.scrollHeight > full.inputHeight, `${label}: full input must scroll`);
       assert.ok(full.top >= 0 && full.bottom <= height, `${label}: input must stay in viewport: ${JSON.stringify(full)}`);
       near(full.bottom, empty.bottom, `${label}: capped input keeps bottom anchored`);
+      if (variant === "populated") await checkEndClearance(win, `${label}: expanded input`);
       await evaluate(win, () => {
         const input = document.querySelector('[data-main-conversation-composer] textarea');
         input.setSelectionRange(input.value.length, input.value.length);
@@ -85,6 +87,20 @@ async function run() {
       await setDraft(win, Array(5).fill("内容").join("\n"));
       await setDraft(win, "");
       near((await geometry(win)).inputHeight, empty.inputHeight, `${label}: clearing shrinks input`);
+      if (variant === "populated") {
+        await evaluate(win, () => {
+          const transfer = new DataTransfer();
+          transfer.items.add(new File(["%PDF-1.4 layout fixture"], "layout-fixture.pdf", { type: "application/pdf" }));
+          const input = document.querySelector('[data-main-conversation-composer] input[type="file"]');
+          input.files = transfer.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await waitFor(win, () => !!document.querySelector('[data-main-conversation-composer] .composer-file-attachment'));
+        await geometry(win);
+        await checkEndClearance(win, `${label}: attachment`);
+        await evaluate(win, () => document.querySelector('[data-main-conversation-composer] .composer-attachment-remove').click());
+        await geometry(win);
+      }
       console.log(`PASS ${label}`);
     }
     // Width and font changes must reflow existing text without another keystroke.
@@ -133,6 +149,40 @@ async function run() {
 
 function near(actual, expected, message) {
   assert.ok(Math.abs(actual - expected) <= 2, `${message}: ${actual} vs ${expected}`);
+}
+async function checkEndClearance(win, label) {
+  // Window-resize settlement deliberately defers the dock measurement. Wait
+  // for that contract, not just for the textarea's own rectangle to stabilize.
+  await waitFor(win, () => {
+    const pane = document.querySelector(".conversation-pane");
+    const dock = pane.querySelector(".dock-composer-wrap");
+    const frame = dock.querySelector(".composer-frame");
+    const expected = Math.ceil(dock.getBoundingClientRect().height)
+      + (parseFloat(getComputedStyle(frame).getPropertyValue("--composer-expanded-offset")) || 0);
+    return !document.documentElement.matches(".window-resizing, .layout-motion-active")
+      && Math.abs(parseFloat(getComputedStyle(pane).getPropertyValue("--dock-composer-height")) - expected) < 1;
+  });
+  await evaluate(win, () => {
+    const scroll = document.querySelector(".conversation-pane .scroll-region");
+    scroll.scrollTop = scroll.scrollHeight;
+  });
+  await geometry(win);
+  const measured = await evaluate(win, () => {
+    const input = document.querySelector('[data-main-conversation-composer] .composer-frame');
+    const turn = document.querySelector('.cached-conversation-pane[data-active="true"] .turn[data-latest-turn="true"]');
+    const pane = document.querySelector(".conversation-pane");
+    const scroll = pane.querySelector(".scroll-region");
+    return {
+      gap: input.getBoundingClientRect().top - turn.getBoundingClientRect().bottom,
+      dockHeight: getComputedStyle(pane).getPropertyValue("--dock-composer-height"),
+      expandedOffset: getComputedStyle(input).getPropertyValue("--composer-expanded-offset"),
+      flowPadding: getComputedStyle(turn.closest(".conversation-width")).paddingBottom,
+      scrollTop: scroll.scrollTop, scrollMax: scroll.scrollHeight - scroll.clientHeight,
+    };
+  });
+  // Allow one CSS pixel for fractional zoom and scroll quantization.
+  assert.ok(measured.gap >= 31 && measured.gap <= 53, `${label}: keep a comfortable, unobstructed end gap: ${JSON.stringify(measured)}`);
+  console.log(`PASS end clearance ${label}: ${measured.gap}px`);
 }
 function evaluate(win, fn, ...args) {
   return win.webContents.executeJavaScript(`(${fn.toString()})(...${JSON.stringify(args)})`, true);

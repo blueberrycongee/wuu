@@ -1,3 +1,5 @@
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
+
 export interface AppearancePreferences {
   codeSize: number;
   uiFont: string;
@@ -52,7 +54,7 @@ export function applyAppearance(value: AppearancePreferences): void {
   // Keep the existing persisted reading size as the unified UI preference.
   // The retired local uiSize must not override it after an upgrade.
   root.style.removeProperty("--appearance-ui-size");
-  const uiSize = Number.parseFloat(root.style.getPropertyValue("--conversation-message-font-size")) || 14;
+  const uiSize = Number.parseFloat(root.style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default;
   root.style.setProperty("--appearance-scale", String(uiSize / 14));
   root.style.setProperty("--appearance-code-size", `${preferences.codeSize}px`);
   root.style.setProperty("--appearance-ui-font", fontFamily(preferences.uiFont, "system-ui, sans-serif"));

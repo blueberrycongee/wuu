@@ -142,7 +142,7 @@ async function run() {
   win.setContentSize(1024, 820);
   await settledGeometry(win, 1024);
   await evaluate(win, () => document.querySelector(".session-tab-new").click());
-  await waitFor(win, () => !!document.querySelector(".hero-composer-wrap .composer-frame"));
+  await waitFor(win, () => !!document.querySelector(".empty-home-inner"));
   for (const width of [1024, 800, 760, 759, 600, 390, 320]) {
     win.setContentSize(width, 820);
     const geometry = await settledGeometry(win, width);

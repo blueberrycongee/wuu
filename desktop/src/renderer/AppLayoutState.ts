@@ -52,10 +52,10 @@ const SIDEBAR_COLLAPSE_WIDTH = SIDEBAR_MIN_WIDTH - SIDEBAR_COLLAPSE_INTENT_PX;
 const SIDEBAR_STEP = 24;
 const SIDEBAR_WIDTH_KEY = "wuu.desktop.sidebarWidth";
 const SIDEBAR_COLLAPSED_KEY = "wuu.desktop.sidebarCollapsed";
-export const WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH = 360;
+export const WORKSPACE_RIGHT_PANEL_DEFAULT_WIDTH = 480;
 export const WORKSPACE_RIGHT_PANEL_MIN_WIDTH = 300;
 export const WORKSPACE_RIGHT_PANEL_MAX_WIDTH = 860;
-export const WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH = 360;
+export const WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH = 352;
 export const WORKSPACE_CONVERSATION_SAFE_WIDTH = 440;
 export const WORKSPACE_DOCKED_PANEL_SAFE_WIDTH = 320;
 // The narrowest drag range the panel must always keep. Without it, a tight

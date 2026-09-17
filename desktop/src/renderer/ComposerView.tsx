@@ -445,7 +445,6 @@ export function Composer({
       ? t("composer.queueSend")
       : t("composer.send");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const composerShellRef = useRef<HTMLDivElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
@@ -1074,10 +1073,10 @@ export function Composer({
   const content = (
     <div className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`} data-wuu-component="composer">
       <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
-      <div className="composer-shell" ref={composerShellRef}>
+      <div className="composer-shell">
         {slashMenuOpen ? (
           <FloatingMenuPortal
-            anchorRef={composerShellRef}
+            anchorRef={composerFrameRef}
             owner="composer-slash"
             placement="above"
             align="left"

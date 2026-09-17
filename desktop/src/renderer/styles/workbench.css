@@ -102,12 +102,12 @@
  * inputs, pill switches). */
 .plugin-ui-page {
   box-sizing: border-box;
-  width: min(100%, var(--wuu-content-max-width, 1088px));
+  width: min(100%, var(--wuu-content-max-width, calc(var(--content-column-width) + var(--page-padding) * 2)));
   max-width: 100%;
   min-width: 0;
   min-height: 100%;
   margin: 0 auto;
-  padding: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  padding: calc(var(--page-padding) * var(--wuu-space-density, 1));
   overflow-wrap: anywhere;
   color: var(--wuu-color-text, var(--ink));
   font-family: var(--wuu-font-family-ui, inherit);
@@ -133,13 +133,13 @@
 }
 
 .settings-scroll .plugin-ui-section {
-  gap: 16px;
+  gap: var(--section-heading-gap);
 }
 
 .settings-scroll .plugin-ui-section-header h2 {
   color: var(--ink-strong);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 
 .plugin-ui-page[data-wuu-density="compact"] {
@@ -190,14 +190,12 @@
   margin: 0;
 }
 
-/* A section is named by a quiet 12px label, the same grouping signal the
- * native settings surface uses — one ramp step below row titles, regular
- * weight, no enclosure. */
+/* Section headings share the host's reading hierarchy. */
 .plugin-ui-section-header h2 {
-  color: var(--wuu-color-text-muted, var(--ink-muted));
-  font-size: var(--font-sm);
-  font-weight: 400;
-  line-height: 1.3;
+  color: var(--wuu-color-text, var(--ink));
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
 }
 
 .plugin-ui-section-header p {
@@ -224,7 +222,7 @@
 }
 
 .plugin-ui-stack[data-wuu-gap="large"] {
-  gap: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  gap: calc(var(--section-gap) * var(--wuu-space-density, 1));
 }
 
 .plugin-ui-row {
@@ -240,7 +238,7 @@
  * action is the strongest contrast pair in the ramp, not the accent — the
  * accent stays reserved for live state and navigation. */
 .plugin-ui-button {
-  min-height: 32px;
+  min-height: var(--control-field-height);
   border: 0;
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: 0 calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
@@ -350,8 +348,11 @@
 }
 
 .plugin-ui-button:focus-visible,
-.plugin-ui-toolbar-toggle:focus-visible {
-  box-shadow: 0 0 0 3px var(--ink-overlay-12, rgba(127, 127, 127, 0.24));
+.plugin-ui-toolbar-toggle:focus-visible,
+.plugin-ui-input:focus-visible,
+.plugin-ui-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .plugin-ui-field {
@@ -376,14 +377,16 @@
 .plugin-ui-input {
   width: 100%;
   min-width: 0;
-  height: 32px;
+  min-height: var(--control-field-height);
+  height: auto;
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
-  padding: 0 calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
+  padding: 5px calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
   color: var(--wuu-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
   font-size: var(--font-ui);
+  line-height: 1.5;
   transition:
     background-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
     border-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
@@ -430,53 +433,6 @@
   gap: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
   color: var(--wuu-color-text, var(--ink));
   cursor: pointer;
-}
-
-.plugin-ui-checkbox input {
-  position: relative;
-  order: 2;
-  justify-self: end;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 auto;
-  margin: 0;
-  appearance: none;
-  border-radius: var(--radius-pill);
-  background: var(--gray-350, var(--wuu-color-border-strong));
-  cursor: pointer;
-  transition:
-    background var(--wuu-motion-duration-base, var(--motion-base)) var(--wuu-motion-easing-standard, var(--ease-out)),
-    box-shadow var(--wuu-motion-duration-base, var(--motion-base)) var(--wuu-motion-easing-standard, var(--ease-out));
-}
-
-.plugin-ui-checkbox input::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--radius-pill);
-  background: var(--wuu-color-canvas, var(--paper));
-  box-shadow: var(--shadow-soft);
-  transition: transform var(--wuu-motion-duration-base, var(--motion-base)) var(--wuu-motion-easing-standard, var(--ease-out));
-}
-
-.plugin-ui-checkbox input:checked {
-  background: var(--wuu-color-text, var(--gray-900));
-}
-
-.plugin-ui-checkbox input:checked::after {
-  transform: translateX(16px);
-  background: var(--gray-0, #1d2024);
-}
-
-.plugin-ui-checkbox:hover input:not(:disabled) {
-  box-shadow: 0 0 0 4px var(--ink-overlay-6, rgba(127, 127, 127, 0.12));
-}
-
-.plugin-ui-checkbox input:focus-visible {
-  box-shadow: 0 0 0 4px var(--ink-overlay-12, rgba(127, 127, 127, 0.24));
 }
 
 .plugin-ui-checkbox-copy {

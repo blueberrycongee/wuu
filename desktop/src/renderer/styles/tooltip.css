@@ -23,7 +23,7 @@
   background: var(--surface-3);
   box-shadow: var(--shadow-card);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--font-sm);
   line-height: 1.4;
   /* Preserve intentional line breaks in source text (errors, commands);
      everything else wraps inside the max-width. */

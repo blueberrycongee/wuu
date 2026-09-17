@@ -11,6 +11,7 @@ import {
   appendPendingTerminalEvent,
   WorkspaceTerminalPanel,
 } from "./WorkspaceTerminalPanel";
+import { appearanceDefaults, saveAppearance } from "./AppearancePreferences";
 
 const { terminalConstructorOptions, terminalDataHandlers, terminalInstances } = vi.hoisted(() => ({
   terminalConstructorOptions: [] as Array<{
@@ -24,7 +25,7 @@ const { terminalConstructorOptions, terminalDataHandlers, terminalInstances } = 
   }>,
   terminalDataHandlers: [] as Array<(data: string) => void>,
   terminalInstances: [] as Array<{
-    options: { disableStdin?: boolean; theme?: Record<string, string> };
+    options: { disableStdin?: boolean; fontSize?: number; fontFamily?: string; theme?: Record<string, string> };
     write: ReturnType<typeof vi.fn>;
     writeln: ReturnType<typeof vi.fn>;
   }>,
@@ -40,7 +41,7 @@ vi.mock("@xterm/xterm", () => ({
   }) => {
     terminalConstructorOptions.push(options);
     const terminal = {
-      options: { theme: options.theme },
+      options: { ...options },
       loadAddon: vi.fn(),
       open: vi.fn(),
       focus: vi.fn(),
@@ -83,6 +84,7 @@ let stopManagedProcess: ReturnType<typeof vi.fn>;
 const terminalEventHandlers: Array<(event: TerminalSessionEvent) => void> = [];
 
 beforeEach(() => {
+  localStorage.clear();
   document.documentElement.dataset.theme = "light";
   terminalConstructorOptions.length = 0;
   terminalDataHandlers.length = 0;
@@ -132,6 +134,9 @@ afterEach(() => {
   root = null;
   container.remove();
   delete document.documentElement.dataset.theme;
+  document.documentElement.removeAttribute("style");
+  delete document.documentElement.dataset.appearanceMotion;
+  localStorage.clear();
   vi.clearAllMocks();
 });
 
@@ -258,6 +263,25 @@ describe("WorkspaceTerminalPanel", () => {
 
     expect(terminalInstances[0]?.write).toHaveBeenCalledWith("first");
     expect(terminalInstances[0]?.write).not.toHaveBeenCalledWith("second");
+  });
+
+  it("updates an open terminal from code preferences without restarting its session", async () => {
+    saveAppearance({ ...appearanceDefaults, codeSize: 15, codeFont: "Monaco" });
+    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
+    const terminal = terminalInstances[0]!;
+    expect(terminal.options.fontSize).toBe(15);
+    expect(terminal.options.fontFamily).toContain("Monaco");
+
+    act(() => saveAppearance({ ...appearanceDefaults, codeSize: 19 }));
+    expect(terminal.options.fontSize).toBe(19);
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(stopTerminalSession).not.toHaveBeenCalled();
+
+    act(() => window.dispatchEvent(new Event("wuu-content-size-change")));
+    expect(terminal.options.fontSize).toBe(19);
+    act(() => { root?.unmount(); root = null; });
+    saveAppearance({ ...appearanceDefaults, codeSize: 12 });
+    expect(terminal.options.fontSize).toBe(19);
   });
 
   it("does not render a terminal without a workspace context", () => {
@@ -400,8 +424,7 @@ describe("WorkspaceTerminalPanel", () => {
     expect(terminalConstructorOptions[0]).toMatchObject({
       convertEol: false,
       cursorBlink: true,
-      fontSize: 12,
-      lineHeight: 1.45,
+      fontSize: appearanceDefaults.codeSize,
       scrollback: 10000,
     });
 

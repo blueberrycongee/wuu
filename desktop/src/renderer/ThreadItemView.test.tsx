@@ -456,7 +456,8 @@ describe("ThreadItemView", () => {
       onForkMessage,
     });
 
-    expect(container?.querySelector(".agent-message-actions")).toBeNull();
+    expect(actionBar().getAttribute("aria-hidden")).toBe("true");
+    expect(actionBar().querySelector("button, [tabindex]")).toBeNull();
 
     render({
       item: makeFinalAnswer("completed"),
@@ -467,6 +468,7 @@ describe("ThreadItemView", () => {
     });
 
     const finalizingActions = actionBar();
+    expect(finalizingActions.getAttribute("aria-hidden")).toBeNull();
     expect(finalizingActions.dataset.wuuPlacement).toBe("persistent");
     expect(finalizingActions.querySelectorAll("button")).toHaveLength(2);
     const finalizingButtons = finalizingActions.querySelectorAll<HTMLButtonElement>("button");
@@ -496,7 +498,7 @@ describe("ThreadItemView", () => {
     expect(block?.classList.contains("agent-actions-enter")).toBe(true);
   });
 
-  it("renders historical answers with a hover overlay bar instead of an in-flow slot", () => {
+  it("keeps historical answer actions hover-revealed rather than persistent", () => {
     render({
       item: makeFinalAnswer("completed"),
       turnStatus: "completed",

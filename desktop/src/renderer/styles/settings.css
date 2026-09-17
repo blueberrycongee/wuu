@@ -133,7 +133,7 @@
   height: 32px;
   align-items: center;
   gap: 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);

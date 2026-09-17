@@ -41,8 +41,8 @@
   --ink: var(--wuu-color-text, var(--gray-800));
   --ink-soft: var(--wuu-color-text-muted, var(--gray-650));
   --wuu-color-live-highlight: rgba(198, 202, 205, 0.36);
-  --ink-tertiary: color-mix(in srgb, var(--ink-soft) 90%, var(--paper));
-  --ink-muted: color-mix(in srgb, var(--ink-soft) 70%, var(--paper));
+  --ink-tertiary: color-mix(in srgb, var(--ink-soft) 95%, var(--paper));
+  --ink-muted: color-mix(in srgb, var(--ink-soft) 88%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
 
   /* --- Paper & surfaces: a monotonic elevation ladder. The previous dark
@@ -296,22 +296,14 @@
   --task-card-border: var(--wuu-color-border-subtle, var(--hairline));
 
   /* sidebar.css */
-  /* macOS's `under-window` vibrancy material can remain light even when the
-     renderer is dark. Keep a little wallpaper depth from the native material,
-     but make the dark surface dense enough that navigation text has contrast.
-     After the 2026-07-15 neutral rewrite, glass shadows and the resizer
-     overlay ride on the shared ink-overlay ladder; their
-     hue now follows --ink-* instead of carrying its own green or blue cast. */
-  --sidebar-material-fill: rgba(16, 18, 21, 0.88);
+  /* Match the light theme's flat navigation plane. Opaque fill prevents
+     native wallpaper and browser backing surfaces from changing contrast. */
+  --sidebar-material-fill: var(--surface-1);
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);
-  --sidebar-material-highlight: rgba(255, 255, 255, 0.075);
-  /* The light theme zeroed its frost gradient / white edge chrome (the rail
-   * is now a uniform bright frost with a dark hairline). Dark still wants the
-   * subtle top-left sheen and light-on-dark edges, so the values that used to
-   * be inherited from sidebar.css are pinned here. */
-  --sidebar-material-veil-1: rgba(255, 255, 255, 0.018);
-  --sidebar-material-veil-2: rgba(255, 255, 255, 0.07);
+  --sidebar-material-highlight: transparent;
+  --sidebar-material-veil-1: transparent;
+  --sidebar-material-veil-2: transparent;
   --sidebar-drawer-edge: rgba(255, 255, 255, 0.42);
   --sidebar-drawer-inner-edge: rgba(255, 255, 255, 0.24);
   --sidebar-edge-shadow: 1px 0 16px rgba(20, 24, 28, 0.025);
@@ -350,7 +342,10 @@
 
   /* turns.css — conversation body, process fold, waiting animation. */
   --turn-collapsed-focus-ring: var(--focus-ring);
-  --user-message-bg-color: var(--wuu-message-user-background, #2a2e33);
+  --user-message-bg-color: var(--wuu-message-user-background, #26292d);
+  --user-message-fg-color: #fff;
+  --user-message-link-color: var(--wuu-color-link, #60a5fa);
+  --user-message-link-hover-color: var(--wuu-color-link-hover, #79b8ff);
   --user-message-edit-button-primary-hover-bg: var(--gray-900);
   --user-message-edit-button-disabled-fg: rgba(20, 23, 26, 0.7);
   --message-copy-bg: rgba(38, 42, 46, 0.85);
@@ -365,7 +360,7 @@
   --turn-progress-sweep-base: #79837e;
   --turn-progress-failed-rule-bg: #4a2b26;
   --turn-process-entry-color: var(--wuu-color-text-muted, var(--gray-600));
-  --process-control-color-fallback: var(--wuu-color-text-muted, var(--gray-450));
+  --process-control-color-fallback: var(--ink-tertiary);
   --activity-toggle-hover-color: var(--gray-700);
   --activity-toggle-hover-svg-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-650));
@@ -397,7 +392,7 @@
   --diff-delete-text-color: var(--wuu-color-danger, #f0857a);
   --turn-source-icon-color-fallback: rgba(255, 255, 255, 0.85);
   /* conversation-shell.css */
-  --shell-process-control-color: var(--wuu-color-text-muted, var(--gray-400));
+  --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--selection-surface);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
   --shell-session-tab-status-default: rgba(228, 232, 235, 0.28);

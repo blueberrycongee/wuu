@@ -1,37 +1,41 @@
 /* Saved font sizes stay in CSS pixels, independent of the desktop page scale. */
 :root {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  --font-ui: var(--conversation-message-font-size, 13px);
-  --font-xs: max(12px, calc(var(--font-ui) - 2px));
-  --font-sm: calc(var(--font-ui) - 1px);
-  --font-body: calc(var(--font-ui) + 1px);
-  --font-title: calc(var(--font-ui) + 2px);
-  --font-heading: calc(var(--font-ui) + 5px);
-  --font-display: calc(var(--font-ui) + 11px);
+  /* Preserve the font's natural spacing in both navigation and prose.
+   * Their reading rhythm comes from line and block spacing, not tracking. */
+  --tracking-ui: normal;
+  --tracking-prose: normal;
+  letter-spacing: var(--tracking-ui);
+  --font-ui: var(--conversation-message-font-size, 14.5px);
+  --font-xs: max(12px, calc(var(--font-ui) * 12 / 14));
+  --font-sm: calc(var(--font-ui) * 13 / 14);
+  --font-body: var(--font-ui);
+  --font-content: var(--font-ui);
+  --font-title: calc(var(--font-ui) * 16 / 14);
+  --font-heading: calc(var(--font-ui) * 20 / 14);
+  --font-display: calc(var(--font-ui) * 24 / 14);
+  --font-hero: calc(var(--font-ui) * 32 / 14);
   --font-mono: var(--appearance-code-font, ui-monospace, monospace);
   --conversation-message-font-family: var(--appearance-ui-font, system-ui, sans-serif);
   --appearance-code-size: 11px;
-  --icon-size: calc(16px * var(--appearance-scale, 1));
-  --icon-size-sm: calc(14px * var(--appearance-scale, 1));
-  --icon-size-xs: calc(12px * var(--appearance-scale, 1));
-  --icon-size-lg: calc(18px * var(--appearance-scale, 1));
-  --icon-size-xl: calc(20px * var(--appearance-scale, 1));
+  --icon-size: clamp(16px, calc(var(--font-ui) * 16 / 14), 20px);
+  --icon-size-sm: clamp(14px, calc(var(--font-ui) * 14 / 14), 18px);
+  --icon-size-xs: clamp(12px, calc(var(--font-ui) * 12 / 14), 16px);
+  --icon-size-lg: clamp(18px, calc(var(--font-ui) * 18 / 14), 22px);
+  --icon-size-xl: clamp(20px, calc(var(--font-ui) * 20 / 14), 24px);
 }
 .sidebar, .settings-sidebar, .sidebar-content {
-  --font-ui: var(--conversation-message-font-size, 13px);
-  --font-xs: max(12px, calc(var(--font-ui) - 2px));
-  --font-sm: calc(var(--font-ui) - 1px);
   --sidebar-primary-icon-size: calc(var(--font-ui) * 16 / 14);
   --sidebar-nav-icon-col: calc(var(--font-ui) * 18 / 14);
   --sidebar-tree-icon-col: calc(var(--font-ui) * 16 / 14);
-  --sidebar-row-action-size: calc(var(--font-ui) * 24 / 14);
+  --sidebar-row-action-size: max(28px, calc(var(--font-ui) * 1.4 + 8px));
   font-size: var(--font-ui);
 }
 /* Reading labels and chrome share the UI size.
  * Limit icon growth so large reading text does not turn the rail into a toolbar. */
 .sidebar-content {
   --sidebar-primary-icon-size: clamp(16px, calc(var(--sidebar-label-size) + 2px), 20px);
-  --sidebar-nav-icon-col: calc(var(--sidebar-primary-icon-size) + 2px);
+  --sidebar-nav-icon-col: var(--sidebar-primary-icon-size);
   --sidebar-tree-icon-col: var(--sidebar-primary-icon-size);
 }
 .sidebar :is(.nav-item, .project-row, .thread-row), .settings-sidebar :is(.nav-item, .settings-nav-item) {
@@ -52,7 +56,17 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-content pre.rich-code,
 .workspace-markdown-reading .rich-content pre.rich-code code {
   font-family: var(--appearance-code-font, ui-monospace, monospace);
-  font-size: var(--appearance-code-size, 12px);
+  font-size: var(--appearance-code-size, 11px);
+  letter-spacing: normal;
+}
+/* Grid-based editors and terminal cells must not inherit prose tracking. */
+:is(kbd, samp, .monaco-editor, .xterm, .tool-diff,
+  .turn-file-diff-body, .workspace-terminal-screen, .activity-command) {
+  letter-spacing: normal;
+}
+.rich-content, .composer textarea, .user-message-edit-input,
+.user-message-raw-query, .workspace-markdown-reading {
+  letter-spacing: var(--tracking-prose);
 }
 .appearance-font-picker { width: clamp(160px, 22vw, 240px); min-width: 0; }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
@@ -60,14 +74,14 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   width: 100%;
-  gap: 20px;
+  gap: 16px;
 }
-.settings-theme-card { gap: 12px; }
+.settings-theme-card { gap: 8px; }
 .settings-theme-preview { border-radius: var(--radius-lg); }
 .composer textarea, .workspace-markdown-reading {
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  font-size: var(--conversation-message-font-size, 13px);
-  line-height: 1.6;
+  font-size: var(--font-ui);
+  line-height: 1.625;
 }
 @media (pointer: coarse) {
   :root[data-host-kind="web"] :is(
@@ -85,16 +99,12 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
     font-size: max(16px, var(--conversation-message-font-size, 16px));
   }
 }
-.workspace-markdown-reading .rich-content { font-size: var(--conversation-message-font-size, 13px); }
-.workspace-markdown-reading .rich-heading { font-size: 1.27em; }
-.workspace-markdown-reading .rich-heading--h1 { font-size: 1.87em; }
-.workspace-markdown-reading .rich-heading--h2 { font-size: 1.4em; }
-.workspace-markdown-reading .rich-heading--h3 { font-size: 1.13em; }
+.workspace-markdown-reading .rich-content { font-size: var(--font-ui); }
+.workspace-markdown-reading .rich-heading { font-size: 1em; }
+.workspace-markdown-reading .rich-heading--h1 { font-size: 1.5em; }
+.workspace-markdown-reading .rich-heading--h2 { font-size: 1.25em; }
+.workspace-markdown-reading .rich-heading--h3 { font-size: 1.125em; }
 .workspace-markdown-reading :is(.rich-heading--h4, .rich-heading--h5, .rich-heading--h6) { font-size: 1em; }
-.settings-button, .settings-select-trigger, .settings-input {
-  min-height: 2.6em;
-  height: auto;
-}
 :root[data-appearance-motion="reduce"] *,
 :root[data-appearance-motion="reduce"] *::before,
 :root[data-appearance-motion="reduce"] *::after {

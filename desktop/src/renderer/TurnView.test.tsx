@@ -6,6 +6,7 @@ import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresent
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
+import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { STREAM_TEXT_NOTIFY_INTERVAL_MS, streamTextKey, streamTextStore } from "./StreamText";
 
@@ -69,7 +70,7 @@ function makeReasoning(text: string, id = "reasoning-1"): ThreadItem {
   };
 }
 
-function render(turn: Turn, isLatestTurn = false): HTMLDivElement {
+function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatus): HTMLDivElement {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -79,6 +80,7 @@ function render(turn: Turn, isLatestTurn = false): HTMLDivElement {
         turn={turn}
         onStreamFrame={() => {}}
         isLatestTurn={isLatestTurn}
+        streamStatus={streamStatus}
       />,
     );
   });
@@ -203,7 +205,7 @@ describe("TurnView", () => {
     ).toBe(false);
   });
 
-  it("keeps the stream status footprint after a live turn settles", () => {
+  it("does not invent transport notice space when an ordinary live turn settles", () => {
     const userItem: ThreadItem = {
       id: "user-1",
       type: "user_message",
@@ -212,7 +214,7 @@ describe("TurnView", () => {
     };
     const view = render(makeTurn("in_progress", [userItem]), true);
 
-    // While streaming the notice row is present; no spacer yet.
+    // Ordinary streaming never displayed a transport notice.
     expect(view.querySelector(".turn-stream-status-spacer")).toBeNull();
 
     rerender(
@@ -220,9 +222,26 @@ describe("TurnView", () => {
       true,
     );
 
-    // The settled live turn reserves the row the chip occupied, so the
-    // already-rendered answer does not jump on the completion frame.
-    expect(view.querySelector(".turn-stream-status-spacer")).not.toBeNull();
+    expect(view.querySelector(".turn-stream-status-spacer")).toBeNull();
+  });
+
+  it("retains only the notice actually visible when a live turn settles", () => {
+    const answer = makeFinalAnswer("Answer text.", "in_progress");
+    const view = render(makeTurn("in_progress", [answer]), true, { text: "Transport recovery", liveProgress: false });
+    const notice = view.querySelector(".stream-status-notice");
+    expect(notice).not.toBeNull();
+    expect(notice?.closest('[aria-hidden="true"]')).toBeNull();
+    rerender(makeTurn("completed", [{ ...answer, status: "completed" }]), true);
+    expect(view.querySelector(".stream-status-notice")).toBe(notice);
+    expect(notice?.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it("does not preserve a transport notice that cleared before completion", () => {
+    const answer = makeFinalAnswer("Answer text.", "in_progress");
+    const view = render(makeTurn("in_progress", [answer]), true, { text: "Transport recovery", liveProgress: false });
+    rerender(makeTurn("in_progress", [answer]), true);
+    rerender(makeTurn("completed", [{ ...answer, status: "completed" }]), true);
+    expect(view.querySelector(".turn-stream-status-spacer")).toBeNull();
   });
 
   it("does not reserve the stream footprint for a historical completed turn", () => {

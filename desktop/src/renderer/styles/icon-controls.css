@@ -1,11 +1,12 @@
 /* Shared icon-button optics. Load after appearance.css so utility sizes do not
  * override these role-based sizes. Business colors and activation stay local. */
 :root {
-  --control-size-inline: 24px;
-  --control-size-toolbar: 30px;
-  --control-size-roomy: 34px;
+  --control-size-inline: max(28px, calc(var(--font-ui) * 1.4 + 8px));
+  --control-size-toolbar: max(32px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
+  --control-size-roomy: max(36px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
   --control-size-touch: 44px;
-  --control-toolbar-gap: 10px;
+  --control-toolbar-gap: 8px;
+  --control-toolbar-inset: 16px;
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
@@ -52,6 +53,11 @@
 .title-actions,
 .workspace-panel-tabbar {
   gap: var(--control-toolbar-gap);
+}
+
+.titlebar .icon-button {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
 }
 
 .icon-button {

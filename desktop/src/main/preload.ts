@@ -36,22 +36,11 @@ import {
   type VoiceInputSettings,
 } from "../shared/protocol";
 
-// Match Electron's Actual Size followed by one Zoom Out step. Apply before
-// rendering on every load: webPreferences.zoomFactor alone can be overridden
-// by Chromium's remembered per-origin zoom. Browser/PiP contents do not use
-// this preload, and saved UI/code font preferences remain independent.
-webFrame.setZoomLevel(-0.5);
+import { initializeDesktopPageZoom } from "../shared/DesktopPageZoom";
 
-function syncPageZoom(): void {
-  // Native window controls stay in DIP while the app uses zoomed CSS pixels.
-  document.documentElement?.style.setProperty(
-    "--desktop-page-zoom",
-    String(webFrame.getZoomFactor()),
-  );
-}
-syncPageZoom();
-window.addEventListener("DOMContentLoaded", syncPageZoom, { once: true });
-window.addEventListener("resize", syncPageZoom);
+// The default is one Zoom Out step; subsequent loads honor the user's choice.
+// Browser/PiP contents do not use this preload.
+initializeDesktopPageZoom(webFrame, window);
 
 // Read the persisted theme preference synchronously so the very first
 // paint carries the right data-theme — an async round-trip would flash
