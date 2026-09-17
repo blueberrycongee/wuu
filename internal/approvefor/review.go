@@ -47,6 +47,10 @@ type Request struct {
 	Tool           Tool
 	Arguments      string
 	CWD            string
+	// UserMessages is populated by the host, never from tool arguments.
+	UserMessages []string
+	// ReferencedPaths contains literal path operands extracted by native tools.
+	ReferencedPaths []string
 }
 
 // Decision is the host's final answer for one reviewed call.
@@ -112,13 +116,22 @@ func looksLikePermissionEscalation(arguments string) bool {
 }
 
 func isWuuCredentialCall(req Request) bool {
-	for _, value := range argumentPaths(req.Arguments) {
+	paths := append(argumentPaths(req.Arguments), req.ReferencedPaths...)
+	for _, value := range paths {
+		if !filepath.IsAbs(value) {
+			value = filepath.Join(req.CWD, value)
+		}
+		if isWuuCredentialPath(value) {
+			return true
+		}
+		if resolved, err := filepath.EvalSymlinks(value); err == nil {
+			value = resolved
+		}
 		if isWuuCredentialPath(value) {
 			return true
 		}
 	}
-	lower := strings.ToLower(req.Arguments)
-	return strings.Contains(lower, "auth.json") || strings.Contains(lower, "credentials.json")
+	return false
 }
 
 func sensitivePathReasonFromArgs(arguments string) (string, bool) {
@@ -179,6 +192,12 @@ func isWuuCredentialPath(absPath string) bool {
 	home, err := statepath.Home("")
 	if err != nil {
 		return false
+	}
+	if filepath.Dir(filepath.Clean(absPath)) == filepath.Clean(home) {
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
 	}
 	return filepath.Dir(filepath.Clean(absPath)) == filepath.Clean(home)
 }

@@ -146,6 +146,20 @@ func (t *Toolkit) SetApproveForMe(enabled bool) { t.approveForMe = enabled }
 
 func (t *Toolkit) ApproveForMe() bool { return t != nil && t.approveForMe }
 
+// RefreshAuthorityFrom reapplies the parent's current policy before a dormant
+// worker resumes, including the reviewer bound to the current turn.
+func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
+	if t == nil || parent == nil {
+		return
+	}
+	t.SetBoundary(parent.boundary)
+	if t.env != nil && parent.env != nil {
+		t.env.PermissionMode = parent.env.PermissionMode
+	}
+	t.approveForMe = parent.approveForMe
+	t.reviewer = parent.reviewer
+}
+
 func (t *Toolkit) SetProcessSandboxProvider(provider processsandbox.Provider) {
 	t.env.ProcessSandboxProvider = provider
 }

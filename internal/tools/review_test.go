@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +15,35 @@ type recordingReviewer struct {
 	requests []approvefor.Request
 	decision approvefor.Decision
 	err      error
+}
+
+func TestReviewerCredentialPathsDoNotMatchOrdinaryText(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".wuu")
+	t.Setenv("WUU_HOME", home)
+	reviewer := &recordingReviewer{decision: approvefor.Decision{Outcome: approvefor.OutcomeAllow}}
+	kit := &Toolkit{env: &Env{RootDir: root, PermissionMode: "standard"}, boundary: StandardBoundary(), reviewer: reviewer, approveForMe: true}
+	for _, command := range []string{"echo auth.json", "echo credentials.json"} {
+		args, _ := json.Marshal(map[string]string{"command": command})
+		if err := kit.checkPermission(context.Background(), ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}, providers.ToolCall{Name: "bash", Arguments: string(args)}); err != nil {
+			t.Fatalf("harmless filename mention denied: %v", err)
+		}
+	}
+	for _, args := range []map[string]string{
+		{"command": "cat '" + filepath.Join(home, "auth.json") + "'"},
+		{"command": "cat credentials.json", "cwd": home},
+		{"command": "cd .wuu && cat remote.json"},
+		{"command": "cat \"$WUU_HOME/auth.json\""},
+	} {
+		encoded, _ := json.Marshal(args)
+		err := kit.checkPermission(context.Background(), ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}, providers.ToolCall{Name: "bash", Arguments: string(encoded)})
+		if err == nil || !strings.Contains(err.Error(), "credential files") {
+			t.Fatalf("credential read allowed: %v", err)
+		}
+	}
+	if len(reviewer.requests) != 2 {
+		t.Fatalf("credential calls must bypass reviewer, got %d requests", len(reviewer.requests))
+	}
 }
 
 func (r *recordingReviewer) Review(_ context.Context, request approvefor.Request) (approvefor.Decision, error) {

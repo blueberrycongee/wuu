@@ -2,10 +2,13 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 // Reviewer is the optional host policy that may allow a high-risk native tool
@@ -30,8 +33,9 @@ func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call provid
 			Risk:        string(info.Risk),
 			Reason:      info.Reason,
 		},
-		Arguments: call.Arguments,
-		CWD:       t.env.RootDir,
+		Arguments:       call.Arguments,
+		CWD:             t.env.RootDir,
+		ReferencedPaths: reviewShellPaths(call, t.env.RootDir),
 	}
 	if reason := approvefor.HardDenyReason(req); reason != "" {
 		return reviewDenied(info.Name, reason)
@@ -52,4 +56,60 @@ func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call provid
 	default:
 		return reviewDenied(info.Name, decision.Reason)
 	}
+}
+
+// Reuse the shell classifier's parser to check literal operands, rather than
+// searching arbitrary document content for credential filenames. Dynamic shell
+// expressions still require the ordinary high-risk review.
+func reviewShellPaths(call providers.ToolCall, root string) []string {
+	if call.Name != "bash" {
+		return nil
+	}
+	var args bashArgs
+	if err := decodeArgs(call.Arguments, &args); err != nil {
+		return nil
+	}
+	resolve := func(path string) string {
+		for _, prefix := range []string{"$WUU_HOME/", "${WUU_HOME}/"} {
+			if strings.HasPrefix(path, prefix) {
+				if home, err := statepath.Home(""); err == nil {
+					path = filepath.Join(home, strings.TrimPrefix(path, prefix))
+				}
+				break
+			}
+		}
+		for _, prefix := range []string{"~/", "$HOME/", "${HOME}/"} {
+			if strings.HasPrefix(path, prefix) {
+				if home, err := os.UserHomeDir(); err == nil {
+					path = filepath.Join(home, strings.TrimPrefix(path, prefix))
+				}
+				break
+			}
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(root, path)
+		}
+		return path
+	}
+	if args.CWD != "" {
+		root = resolve(args.CWD)
+	}
+	segments, ok := splitShellCommandSegmentsQuoted(args.Command)
+	if !ok {
+		return nil
+	}
+	var paths []string
+	for _, segment := range segments {
+		fields, ok := splitShellFields(segment)
+		if !ok || len(fields) == 0 {
+			continue
+		}
+		for _, field := range fields[1:] {
+			paths = append(paths, resolve(field))
+		}
+		if fields[0] == "cd" && len(fields) == 2 {
+			root = resolve(fields[1])
+		}
+	}
+	return paths
 }

@@ -2618,7 +2618,7 @@ func workerWakeAuthority(parent *tools.Toolkit) func(agent.ToolExecutor) {
 		if !ok || workerKit == nil || parent == nil {
 			return
 		}
-		workerKit.SetBoundary(parent.Boundary())
+		workerKit.RefreshAuthorityFrom(parent)
 	}
 }
 

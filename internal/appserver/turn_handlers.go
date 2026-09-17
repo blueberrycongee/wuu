@@ -2292,13 +2292,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		runner.ForceInitialCompact = turnRuntime.ForceCompact
 		runner.CompactOnly = turnRuntime.CompactOnly
 	}
+	reviewIntent := &nativeReviewIntent{}
+	reviewIntent.append(history)
 	if threadRuntime != nil && threadRuntime.Toolkit != nil {
 		runtime.ConfigureToolkitPermissions(threadRuntime.Toolkit, turnPermissions)
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
-		turnID := th.currentTurn
 		th.mu.Unlock()
-		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID})
+		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID, intent: reviewIntent})
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.
@@ -2452,6 +2453,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			th.resetSteerWakeLocked()
 			th.mu.Unlock()
 			notifyBatch(batch)
+			reviewIntent.append(steers)
 			for _, steer := range steers {
 				if ids := agentCompletionResultIDs(steer.ClientID); len(ids) > 0 {
 					turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, ids...)
