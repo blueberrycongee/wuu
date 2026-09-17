@@ -38,23 +38,29 @@ func (t *Toolkit) reviewToolCall(ctx context.Context, info ToolInfo, call provid
 		ReferencedPaths: reviewShellPaths(call, t.env.RootDir),
 	}
 	if reason := approvefor.HardDenyReason(req); reason != "" {
-		return reviewDenied(info.Name, reason)
+		return reviewBlocked(info.Name, "review_forbidden", reason, "this is a hard permission boundary; do not retry, bypass it or ask for conversational approval to override it; explain the restriction and offer a permitted alternative")
 	}
 	if !approvefor.NeedsReview(req) {
 		return nil
 	}
 	if t.reviewer == nil {
-		return reviewDenied(info.Name, "approve for me is enabled but no reviewer is available")
+		return reviewFailed(info.Name, "approve for me is enabled but no reviewer is available")
 	}
 	decision, err := t.reviewer.Review(ctx, req)
 	if err != nil {
-		return reviewDenied(info.Name, "reviewer unavailable")
+		return reviewFailed(info.Name, "reviewer unavailable")
 	}
 	switch strings.TrimSpace(decision.Outcome) {
 	case approvefor.OutcomeAllow:
 		return nil
-	default:
+	case approvefor.OutcomeDeny:
 		return reviewDenied(info.Name, decision.Reason)
+	case approvefor.OutcomeUnsure:
+		return reviewBlocked(info.Name, "review_needs_context", decision.Reason, "review could not establish sufficient safety or authorization; do not repeat the same request; explain the exact action, target and risk in the conversation, ask for missing information or explicit approval, then submit the specific action for fresh review; a vague continue is not blanket approval")
+	case approvefor.OutcomeCancelled:
+		return reviewBlocked(info.Name, "review_cancelled", decision.Reason, "the owning execution was cancelled; no safety verdict was reached and the action was not executed; do not automatically retry")
+	default:
+		return reviewFailed(info.Name, decision.Reason)
 	}
 }
 

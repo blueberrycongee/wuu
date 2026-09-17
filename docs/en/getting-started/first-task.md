@@ -21,7 +21,8 @@ currently selected workspace first.
 Before sending, you can use the permission button next to the input box to select
 **Read only**. The permission mode only controls Wuu's tool boundary; it does not put
 the project inside an operating-system sandbox. Keep **Standard** for ordinary
-modification tasks.
+modification tasks. **Approve for me** is a Standard-mode option that reviews
+high-risk tool calls before they run; it does not raise the workspace boundary.
 
 Start a new conversation in the target workspace and send a read-only task first:
 

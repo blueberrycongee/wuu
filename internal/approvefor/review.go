@@ -13,11 +13,9 @@ const (
 	OutcomeAllow  = "allow"
 	OutcomeDeny   = "deny"
 	OutcomeUnsure = "unsure"
-
-	AllowOnceLabel = "Allow once"
-	DenyLabel      = "Deny"
-
-	QuestionID = "approval.wuu_tool"
+	// Failed and Cancelled describe review infrastructure, not a safety verdict.
+	OutcomeFailed    = "failed"
+	OutcomeCancelled = "cancelled"
 
 	riskHigh = "high"
 
@@ -60,10 +58,18 @@ type Decision struct {
 }
 
 // NeedsReview reports whether Approve for me should inspect this call.
-// Workspace-local low/medium work stays on the ordinary allow/deny path.
+// Workspace-local low/medium non-shell work stays on the ordinary allow/deny path.
 func NeedsReview(req Request) bool {
 	if !EnabledForMode(req.PermissionMode) {
 		return false
+	}
+	// Read-only classification is not proof that a shell command cannot read
+	// credentials (even a simple cat can). We do not have a full shell parser
+	// here: keep all shell execution on the contextual review path instead of
+	// hard-denying credential strings that may only be echo/source/code data.
+	// Check the native tool name too, so missing Kind metadata cannot bypass it.
+	if req.Tool.Kind == kindShell || req.Tool.Name == "bash" {
+		return true
 	}
 	if req.Tool.ReadOnly && req.Tool.Risk != riskHigh {
 		return false
@@ -72,7 +78,7 @@ func NeedsReview(req Request) bool {
 		return true
 	}
 	switch req.Tool.Kind {
-	case kindShell, kindGit, kindProcess, kindBrowser, kindMCP:
+	case kindGit, kindProcess, kindBrowser, kindMCP:
 		return true
 	}
 	return false
@@ -98,27 +104,24 @@ func EnabledForMode(mode string) bool {
 	return config.NormalizePermissionMode(mode) == config.PermissionModeStandard
 }
 
-func TruncateText(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if limit <= 0 || len(value) <= limit {
-		return value
-	}
-	if limit <= 3 {
-		return value[:limit]
-	}
-	return value[:limit-3] + "..."
-}
-
 func looksLikePermissionEscalation(arguments string) bool {
-	lower := strings.ToLower(arguments)
-	return strings.Contains(lower, "unconfined") &&
-		(strings.Contains(lower, "permission_mode") || strings.Contains(lower, "permission-mode"))
+	var payload map[string]any
+	if json.Unmarshal([]byte(arguments), &payload) != nil {
+		return false
+	}
+	for _, key := range []string{"permission_mode", "permission-mode"} {
+		value, _ := payload[key].(string)
+		if strings.EqualFold(strings.TrimSpace(value), "unconfined") {
+			return true
+		}
+	}
+	return false
 }
 
 func isWuuCredentialCall(req Request) bool {
 	paths := append(argumentPaths(req.Arguments), req.ReferencedPaths...)
 	for _, value := range paths {
-		if !filepath.IsAbs(value) {
+		if !filepath.IsAbs(value) && req.CWD != "" {
 			value = filepath.Join(req.CWD, value)
 		}
 		if isWuuCredentialPath(value) {
@@ -131,6 +134,9 @@ func isWuuCredentialCall(req Request) bool {
 			return true
 		}
 	}
+	// NeedsReview routes shell calls to contextual review even when classified
+	// read-only/low-risk. Do not substring-match programs or free-form content:
+	// a credential basename in source is not evidence of file access.
 	return false
 }
 
@@ -153,6 +159,20 @@ func argumentPaths(arguments string) []string {
 		value, _ := payload[key].(string)
 		if strings.TrimSpace(value) != "" {
 			paths = append(paths, value)
+		}
+	}
+	// Only patch headers name files. Added/deleted/context lines are content,
+	// even when they contain credential paths or permission-mode examples.
+	for _, key := range []string{"patchText", "patch_text", "patch"} {
+		patch, _ := payload[key].(string)
+		for _, line := range strings.Split(patch, "\n") {
+			for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
+				if strings.HasPrefix(line, prefix) {
+					if path := strings.TrimSpace(strings.TrimPrefix(line, prefix)); path != "" {
+						paths = append(paths, path)
+					}
+				}
+			}
 		}
 	}
 	return paths

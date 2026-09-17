@@ -134,9 +134,10 @@ Returns the current runtime configuration summary. Its result includes
 
 `config/model/update`
 
-Updates the workspace defaults for provider, model, variant/effort, and
-permission mode. `model` is required for a request without `thread_id`, which
-changes only the defaults inherited by threads created after the update.
+Updates the workspace defaults for provider, model, variant/effort, permission
+mode, and the optional Standard-mode `approve_for_me` review flag. `model` is
+required for a request without `thread_id`, which changes only the defaults
+inherited by threads created after the update.
 
 When `thread_id` is present, only the explicitly provided selection fields are
 applied: they are pinned to that conversation and become the workspace
@@ -164,7 +165,10 @@ Creates a new persistent conversation thread backed by normal session storage.
 When called with `{"ephemeral": true}`, creates an in-memory thread that is not
 written to the session store and cannot be resumed after the server exits.
 The optional `permission_mode` selects `standard`, `read_only`, or `unconfined`.
-New external-engine threads default to `unconfined` when callers omit it.
+The optional `approve_for_me` flag reviews high-risk native tool calls in
+Standard mode for the built-in Wuu engine; other engines and permission modes
+keep it off. New external-engine threads default to `unconfined` when callers
+omit `permission_mode`.
 
 `thread/resume`
 

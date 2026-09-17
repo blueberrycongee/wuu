@@ -16,6 +16,25 @@ Use standard mode unless there is a clear reason not to. Use read-only when you 
 need analysis. Treat `unconfined` as handing the current logged-in user's local
 permissions to the agent, and enable it briefly only for trusted tasks.
 
+## Approve for me
+
+In the desktop permission menu, **Approve for me** is a Standard-mode option for
+the built-in Wuu engine. It is not a fourth permission mode and does not raise
+the workspace boundary.
+
+When it is on, high-risk native tool calls — shell, Git, process, browser, MCP,
+and other destructive or high-risk tools — are reviewed before they run.
+Ordinary workspace-local reads stay on the normal allow path. The reviewer can
+allow the exact call, deny it, or leave the main agent to explain the action in
+conversation and wait for informed user approval of that target. A timeout or
+review failure is not a safety verdict: the action does not run, and the agent
+must not bypass the check.
+
+Approve for me cannot switch the session to Unconfined, read or write Wuu
+credential files, or write known sensitive paths through the dedicated file
+tools. `wuu exec` does not expose this option; non-interactive runs remain
+allow-or-deny.
+
 Even under `unconfined`, the dedicated tools keep the following defense in depth:
 
 - known sensitive paths such as `.env`, SSH private keys, and credential

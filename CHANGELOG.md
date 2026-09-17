@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Added **Approve for me** as a Standard-mode permission option. High-risk native
+  tool calls are reviewed before they run; the workspace boundary is unchanged,
+  and a review timeout or failure is not treated as a denial.
+
 ### Changed
 
 - Unified skill and plugin catalog artwork with original, theme-aware capability

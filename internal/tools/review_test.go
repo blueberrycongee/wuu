@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,12 +81,90 @@ func TestReviewerDenyAndHardDenyFailClosed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "error_kind=review_denied") {
 		t.Fatalf("deny = %v", err)
 	}
-	hard := kit.checkPermission(context.Background(), ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}, providers.ToolCall{Name: "bash", Arguments: `{"command":"export permission_mode=unconfined"}`})
+	hard := kit.checkPermission(context.Background(), ToolInfo{Name: "update_runtime", Risk: ToolRiskHigh}, providers.ToolCall{Name: "update_runtime", Arguments: `{"permission_mode":"unconfined"}`})
 	if hard == nil || !strings.Contains(hard.Error(), "cannot raise the session permission mode") {
 		t.Fatalf("hard deny = %v", hard)
 	}
 	if len(reviewer.requests) != 1 {
 		t.Fatalf("hard deny should skip the reviewer, requests = %+v", reviewer.requests)
+	}
+	if !strings.Contains(hard.Error(), "error_kind=review_forbidden") || !strings.Contains(hard.Error(), "do not retry") {
+		t.Fatalf("hard denial must not invite a conversational override: %v", hard)
+	}
+}
+
+func TestReviewerReportsUncertaintyFailureAndCancellationSeparately(t *testing.T) {
+	for _, tc := range []struct {
+		outcome, kind string
+		err           error
+	}{
+		{approvefor.OutcomeDeny, "review_denied", nil},
+		{approvefor.OutcomeUnsure, "review_needs_context", nil},
+		{approvefor.OutcomeFailed, "review_failed", nil},
+		{approvefor.OutcomeCancelled, "review_cancelled", nil},
+		{"invalid", "review_failed", nil},
+		{"", "review_failed", errors.New("unavailable")},
+	} {
+		t.Run(tc.kind+tc.outcome, func(t *testing.T) {
+			kit := &Toolkit{env: &Env{PermissionMode: "standard"}, boundary: StandardBoundary(), approveForMe: true,
+				reviewer: &recordingReviewer{decision: approvefor.Decision{Outcome: tc.outcome, Reason: "specific reason"}, err: tc.err}}
+			err := kit.checkPermission(context.Background(), ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}, providers.ToolCall{Name: "bash"})
+			if err == nil || !strings.Contains(err.Error(), "error_kind="+tc.kind) || !strings.Contains(err.Error(), "action_executed=false") {
+				t.Fatalf("unexpected review error: %v", err)
+			}
+		})
+	}
+}
+
+func TestReviewerSeesShellContentInsteadOfSubstringDenial(t *testing.T) {
+	reviewer := &recordingReviewer{decision: approvefor.Decision{Outcome: approvefor.OutcomeDeny, Reason: "review shell effects"}}
+	kit := &Toolkit{env: &Env{PermissionMode: "standard"}, boundary: StandardBoundary(), approveForMe: true, reviewer: reviewer}
+	err := kit.checkPermission(context.Background(), ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}, providers.ToolCall{Name: "bash", Arguments: `{"command":"echo permission_mode=unconfined"}`})
+	if err == nil || len(reviewer.requests) != 1 || !strings.Contains(err.Error(), "review shell effects") {
+		t.Fatalf("shell content must still be reviewed, not auto-allowed or hard denied: %v", err)
+	}
+}
+
+func TestReviewerReadOnlyShellStillRequiresReview(t *testing.T) {
+	reviewer := &recordingReviewer{decision: approvefor.Decision{Outcome: approvefor.OutcomeDeny, Reason: "requires review"}}
+	kit := &Toolkit{env: &Env{PermissionMode: "standard"}, boundary: StandardBoundary(), approveForMe: true, reviewer: reviewer}
+	info := ToolInfo{Name: "bash", Kind: ToolKindShell, ReadOnly: true, Risk: ToolRiskLow}
+	call := providers.ToolCall{Name: "bash", Arguments: `{"command":"cat README.md"}`}
+	if err := kit.checkPermission(context.Background(), info, call); err == nil || !strings.Contains(err.Error(), "review_denied") {
+		t.Fatalf("read-only shell skipped review: %v", err)
+	}
+	if len(reviewer.requests) != 1 {
+		t.Fatalf("expected one review, got %d", len(reviewer.requests))
+	}
+	kit.reviewer = nil
+	if err := kit.checkPermission(context.Background(), info, call); err == nil || !strings.Contains(err.Error(), "review_failed") {
+		t.Fatalf("missing reviewer must fail closed: %v", err)
+	}
+}
+
+func TestReviewerCannotOverrideBoundaryAndDoesNotCacheAllow(t *testing.T) {
+	reviewer := &recordingReviewer{decision: approvefor.Decision{Outcome: approvefor.OutcomeAllow, Reason: "approved exact action"}}
+	kit := &Toolkit{env: &Env{PermissionMode: "standard"}, boundary: StandardBoundary(), approveForMe: true, reviewer: reviewer}
+	info := ToolInfo{Name: "bash", Kind: ToolKindShell, Risk: ToolRiskHigh}
+	call := providers.ToolCall{Name: "bash", Arguments: `{"command":"cleanup build"}`}
+	if err := kit.checkPermission(context.Background(), info, call); err != nil {
+		t.Fatal(err)
+	}
+	reviewer.decision = approvefor.Decision{Outcome: approvefor.OutcomeDeny, Reason: "different target"}
+	call.Arguments = `{"command":"cleanup source"}`
+	if err := kit.checkPermission(context.Background(), info, call); err == nil {
+		t.Fatal("previous approval was reused")
+	}
+	if len(reviewer.requests) != 2 {
+		t.Fatal("each action needs fresh review")
+	}
+	kit.boundary = ReadOnlyBoundary()
+	info.ReadOnly = false
+	if err := kit.checkPermission(context.Background(), info, call); err == nil {
+		t.Fatal("review overrode read-only boundary")
+	}
+	if len(reviewer.requests) != 2 {
+		t.Fatal("boundary must reject before the reviewer")
 	}
 }
 

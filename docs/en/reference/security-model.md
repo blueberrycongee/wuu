@@ -13,6 +13,10 @@ output is safe or that Wuu is an operating-system sandbox.
 Wuu has three permission modes (`standard`, `read_only`, and `unconfined`) that
 control which local paths the agent can access and modify; how to switch and
 the CLI override are covered in [permission modes](permissions.md).
+**Approve for me** is a Standard-mode option, not a fourth mode: it reviews
+high-risk native tool calls before they run, still inside the same workspace
+boundary. A review timeout or failure is not a denial, and it cannot raise the
+session to Unconfined or open Wuu credential files.
 
 In every mode, Wuu is not an OS sandbox: permitted child processes run with the
 Wuu process's operating-system identity, inherited environment, and network

@@ -2299,7 +2299,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
 		th.mu.Unlock()
-		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID, intent: reviewIntent})
+		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID, runner: runner, intent: reviewIntent})
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.
@@ -4201,10 +4201,12 @@ func (s *Server) hasQueuedAgentCompletionWork(threadID string) bool {
 
 func combineAgentCompletionMessages(turns []agentCompletionTurn) providers.ChatMessage {
 	if len(turns) == 0 {
-		return providers.ChatMessage{Role: "user"}
+		return providers.ChatMessage{Role: "user", ReadOnly: true}
 	}
 	if len(turns) == 1 {
-		return turns[0].msg
+		msg := turns[0].msg
+		msg.ReadOnly = true
+		return msg
 	}
 	contents := make([]string, 0, len(turns))
 	name := ""
@@ -4218,9 +4220,12 @@ func combineAgentCompletionMessages(turns []agentCompletionTurn) providers.ChatM
 		}
 	}
 	return providers.ChatMessage{
-		Role:    "user",
-		Name:    name,
-		Content: strings.Join(contents, "\n\n"),
+		Role: "user",
+		Name: name,
+		// A merged completion is generated evidence even when its parts have
+		// different (or legacy missing) names/origins and lose their envelopes.
+		ReadOnly: true,
+		Content:  strings.Join(contents, "\n\n"),
 	}
 }
 
