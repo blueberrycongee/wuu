@@ -550,7 +550,24 @@ export function interruptOptimisticTurn<T extends { turns: Turn[] }>(
     changed = true;
     return { ...turn, status: "interrupted" as const };
   });
-  return changed ? { ...thread, turns } : thread;
+  return changed ? withSettledOptimisticTurns(thread, turns) : thread;
+}
+
+function withSettledOptimisticTurns<T extends { turns: Turn[] }>(
+  thread: T,
+  turns: Turn[],
+): T {
+  // upsertTurn marks the thread running when inserting a placeholder. Removing
+  // or interrupting it must also undo that status when no active turn remains.
+  return {
+    ...thread,
+    turns,
+    ...("status" in thread &&
+    thread.status === "in_progress" &&
+    !turns.some((turn) => turn.status === "in_progress")
+      ? { status: "idle" }
+      : {}),
+  };
 }
 
 export function interruptLatestOptimisticTurn<T extends { turns: Turn[] }>(
@@ -695,10 +712,10 @@ export function dropOptimisticTurn<T extends { turns: Turn[] }>(
   // A dropped placeholder never becomes a real turn, so its frozen elapsed
   // (if any) is dead bookkeeping.
   clearPausedTurnElapsed(optimisticTurnID);
-  return {
-    ...thread,
-    turns: thread.turns.filter((turn) => turn.id !== optimisticTurnID),
-  };
+  const turns = thread.turns.filter((turn) => turn.id !== optimisticTurnID);
+  return turns.length === thread.turns.length
+    ? thread
+    : withSettledOptimisticTurns(thread, turns);
 }
 
 /**

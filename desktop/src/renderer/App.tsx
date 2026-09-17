@@ -3878,18 +3878,21 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
     markOptimisticTurnInterrupted: (threadID) => {
       const interruptedAt = Date.now();
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        threadID,
-        (thread) => interruptLatestOptimisticTurn(thread, interruptedAt),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          threadID,
-          (thread) => interruptLatestOptimisticTurn(thread, interruptedAt),
-        ),
-      );
+      const interruptPendingTurn = (current: AppState): AppState => {
+        let changed = false;
+        const next = updateThreadByID(current, threadID, (thread) => {
+          const interrupted = interruptLatestOptimisticTurn(thread, interruptedAt);
+          changed = interrupted !== thread;
+          return interrupted;
+        });
+        // No server terminal event exists yet for a pending submission. Clear
+        // its local running flag as well as freezing the optimistic turn.
+        return changed && activeThreadForState(current)?.id === threadID
+          ? { ...next, running: isThreadRunning(activeThreadForState(next)) }
+          : next;
+      };
+      appStateRef.current = interruptPendingTurn(appStateRef.current);
+      setState(interruptPendingTurn);
     },
     variantByModel: runtimeVariantByModelRef.current,
   });

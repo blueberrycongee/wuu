@@ -21,6 +21,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
       );
       return <div
         data-testid="composer-probe"
+        data-running={props.running}
         data-queued-ids={props.queuedMessages
           .map((message) => message.id)
           .join(",")}
@@ -49,6 +50,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
         <button type="button" onClick={() => props.onSend()}>
           send
         </button>
+        <button type="button" aria-label="stop" onClick={props.onInterrupt}>stop</button>
         {props.onSteer ? (
           <button type="button" aria-label="steer" onClick={() => props.onSteer?.()}>
             steer
@@ -243,6 +245,7 @@ function installWuuApi(options: {
         },
       ),
     steerTurn: options.steerTurn ?? vi.fn().mockResolvedValue({ turn_id: "turn-current" }),
+    interruptTurn: vi.fn().mockResolvedValue({ ok: true }),
     dequeueTurn: vi
       .fn()
       .mockImplementation((_threadID: string, clientID: string) => {
@@ -309,6 +312,41 @@ describe("queued turn reconciliation", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it("leaves the running state when stopping a submission before start returns", async () => {
+    let resolveStart!: (value: Awaited<ReturnType<WuuDesktopApi["startTurn"]>>) => void;
+    const startTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["startTurn"]>>>((resolve) => {
+      resolveStart = resolve;
+    }));
+    const idleThread: Thread = { ...runningThread(), status: "idle", turns: [] };
+    installWuuApi({ thread: idleThread, startTurn });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    await act(async () => {
+      const textarea = composerProbe().querySelector("textarea")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "pending request");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      composerProbe().querySelector("button")!.click();
+    });
+    await flushAsync();
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(composerProbe().dataset.running).toBe("true");
+    await act(async () => {
+      composerProbe().querySelector<HTMLButtonElement>('[aria-label="stop"]')!.click();
+    });
+    expect(window.wuu.interruptTurn).toHaveBeenCalledWith(threadID);
+    expect(composerProbe().dataset.running).toBe("false");
+
+    await act(async () => {
+      resolveStart({ turn: { id: "late-turn", status: "in_progress", items_view: "full", items: [] } });
+    });
+    await flushAsync();
+    expect(window.wuu.interruptTurn).toHaveBeenCalledTimes(2);
+    expect(composerProbe().dataset.running).toBe("false");
   });
 
   it("dequeues a message before restoring it for editing", async () => {
@@ -523,7 +561,7 @@ describe("queued turn reconciliation", () => {
           rejectStart = reject;
         }),
     );
-    installWuuApi({ thread: answerReadyThread(), startTurn });
+    installWuuApi({ thread: { ...runningThread(), status: "idle", turns: [] }, startTurn });
     await act(async () => {
       root = createRoot(container);
       root.render(<App />);
@@ -552,6 +590,7 @@ describe("queued turn reconciliation", () => {
     await flushAsync();
 
     expect(composerProbe().querySelector("textarea")?.value).toBe("restore this send");
+    expect(composerProbe().dataset.running).toBe("false");
   });
 
   it("removes an already materialized queue entry after a missed start notification", async () => {
