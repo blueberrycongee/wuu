@@ -3,4 +3,4 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wuu 窗口尺寸对照</title>
 <style>body{margin:0;background:#e5e5e5;font:13px/1.5 system-ui}header{padding:12px 20px}iframe{display:block;border:0;background:white;margin:0 auto;width:420px;height:900px;max-width:none}</style></head>
 <body><header><label>内容窗口宽度 <select id="width"><option>420</option><option>768</option><option>1280</option><option>1920</option></select> px</label> · 隔离页面，不修改应用偏好</header><iframe title="设计系统验收页" src="./"></iframe>
-<script type="module">document.querySelector('#width').addEventListener('change',event=>{document.querySelector('iframe').style.width=event.target.value+'px';});</script></body></html>
+<script type="module">const frame=document.querySelector('iframe');frame.src='./'+location.search;const width=new URLSearchParams(location.search).get('width')||'420';document.querySelector('#width').value=width;frame.style.width=width+'px';document.querySelector('#width').addEventListener('change',event=>{frame.style.width=event.target.value+'px';});</script></body></html>

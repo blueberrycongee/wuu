@@ -278,7 +278,7 @@
   gap: 12px;
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
-  padding: 12px 14px 12px 16px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
 .turn-file-diff-heading {
@@ -328,7 +328,7 @@
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
-  padding: 12px 0 32px;
+  padding: var(--compact-padding-block) 0 var(--card-padding);
 }
 
 .turn-artifact-toolbar {

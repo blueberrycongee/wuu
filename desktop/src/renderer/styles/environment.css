@@ -903,13 +903,13 @@
   --environment-dialog-max-width: 640px;
   width: min(var(--environment-dialog-max-width), 100%);
   max-height: 100%;
-  gap: 14px;
+  gap: var(--space-3);
   border: var(--wuu-border-strong, 1px solid var(--hairline));
   border-radius: var(--wuu-radius-overlay, var(--menu-radius));
   background: var(--paper);
   box-shadow: var(--shadow-modal);
   overflow: auto;
-  padding: 20px;
+  padding: var(--panel-padding);
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
@@ -1074,8 +1074,8 @@
   width: min(520px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   grid-template-rows: auto auto auto;
-  gap: 14px;
-  padding: 18px;
+  gap: var(--space-3);
+  padding: var(--panel-padding);
   transform-origin: center;
 }
 
@@ -1549,8 +1549,8 @@
 .fork-dialog {
   width: min(100%, clamp(360px, 34vw, 480px));
   max-height: min(440px, calc(100dvh - 48px));
-  gap: 8px;
-  padding: 10px;
+  gap: var(--space-2);
+  padding: var(--compact-padding-block);
 }
 
 .fork-dialog .environment-dialog-header {
@@ -1581,7 +1581,7 @@
   background: transparent;
   color: var(--ink);
   text-align: left;
-  padding: 14px;
+  padding: var(--compact-padding-inline);
   cursor: pointer;
   transition: background var(--menu-enter-duration) var(--menu-enter-easing);
 }
@@ -1657,7 +1657,7 @@
     width: 100%;
     max-height: calc(100dvh - 24px);
     gap: 12px;
-    padding: 8px;
+    padding: var(--compact-padding-block);
   }
 
   .fork-dialog h2 {
@@ -1665,7 +1665,7 @@
   }
 
   .fork-dialog-option {
-    padding: 12px;
+    padding: var(--compact-padding-inline);
   }
 
   .fork-dialog-option-icon {

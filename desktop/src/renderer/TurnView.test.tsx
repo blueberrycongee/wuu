@@ -10,6 +10,12 @@ import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { STREAM_TEXT_NOTIFY_INTERVAL_MS, streamTextKey, streamTextStore } from "./StreamText";
 
+// Keep the temporarily hidden review surface's lifecycle coverage for restoration.
+vi.mock("./FeatureFlags", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./FeatureFlags")>(),
+  ENABLE_TURN_EDIT_SUMMARY: true,
+}));
+
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 

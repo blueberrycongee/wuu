@@ -115,8 +115,7 @@
 /*
  * content-visibility:auto implies paint containment, which clips any
  * descendant painted outside the turn's border box — exactly where the
- * hover action overlays go (user actions above the bubble, agent
- * actions below the answer, both inside the 48px boundary band). Lift
+ * user action overlays go below the bubble. Lift
  * the containment precisely when those overlays can be visible: while
  * the turn is hovered, holds focus, or keeps a latest-answer action
  * bar visible. Off-screen turns keep the rendering shortcut.
@@ -254,10 +253,10 @@
   /*
    * User query → assistant reply is separated by whitespace alone — no
    * hairline. Turn-to-turn separation already owns the single visible
-   * boundary (the 48px --conversation-turn-boundary-gap band on .turn), so a
+   * boundary (the --conversation-turn-boundary-gap band on .turn), so a
    * full-width rule inside a turn duplicated that meaning while splitting one
-   * Q&A pair in two. The gap holds at 32px (--conversation-user-rule-gap),
-   * tighter than the 48px turn boundary: tight within a group, loose between.
+   * Q&A pair in two. The action row and turn boundary together separate
+   * rounds more than this query-to-reply gap.
    */
   margin-top: calc(
     var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
@@ -4679,7 +4678,7 @@ pre {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
   border-bottom: 1px solid var(--hairline-soft);
   background: var(--surface-1);
   flex-shrink: 0;
@@ -4705,7 +4704,7 @@ pre {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 10px 0;
+  padding: var(--compact-padding-block) 0;
   background: var(--paper);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
@@ -4725,9 +4724,9 @@ pre {
 }
 
 .tool-diff-hunk + .tool-diff-hunk {
-  margin-top: 12px;
+  margin-top: var(--space-2);
   border-top: 1px solid var(--hairline-soft);
-  padding-top: 10px;
+  padding-top: var(--space-2);
 }
 
 .tool-diff-line {
@@ -4793,7 +4792,7 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
   border-bottom: 1px solid var(--message-flow-card-divider);
   background: var(--message-flow-card-header-bg);
 }
@@ -4817,7 +4816,7 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
   border: 0;
   background: transparent;
   color: inherit;
@@ -5235,11 +5234,11 @@ pre {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 68px;
+  min-height: var(--control-row-height);
   box-sizing: border-box;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: var(--space-3);
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
   border: 0;
   background: transparent;
   color: inherit;
@@ -5326,12 +5325,12 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 .turn-edit-summary-list {
-  padding: 0 8px 8px;
+  padding: 0 var(--space-1) var(--space-1);
 }
 
 .turn-edit-summary-row {
-  min-height: 36px;
-  padding: 7px 8px;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   border-radius: var(--radius-sm);
   cursor: default;
 }

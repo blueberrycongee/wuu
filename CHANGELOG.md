@@ -15,9 +15,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Temporarily hide conversation file-change summary cards and the turn navigation
+  rail while retaining edit history and the underlying review components.
+
+- Reduce excess whitespace between conversation turns while preserving message
+  action space and query-to-reply spacing.
+
+- Share spacing and density roles across desktop menus, forms, cards, dialogs,
+  and plugin UI; let controls grow with text and compact file-change summaries.
+
 - Tighten sidebar spacing with consistent row, heading, and group intervals;
   keep the pinned drop target within the group spacing.
 
+- Keep the conversation composer 12px from the bottom across viewport widths
+  and input states, while retaining device safe-area clearance.
 - Use compact corners for embedded message-flow code, output and diff cards,
   and smaller code-copy icons while preserving their click targets.
 

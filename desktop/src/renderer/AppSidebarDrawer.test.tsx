@@ -33,6 +33,12 @@ vi.mock("@xterm/addon-fit", () => ({
   FitAddon: vi.fn().mockImplementation(() => ({ fit: vi.fn() })),
 }));
 
+// Exercise responsive unmounting even while the rail is hidden in the product.
+vi.mock("./FeatureFlags", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./FeatureFlags")>(),
+  ENABLE_CONVERSATION_TURN_RAIL: true,
+}));
+
 vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: () => (
     <div className="workspace-monaco-editor" data-testid="mock-monaco-editor" />

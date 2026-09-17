@@ -89,10 +89,10 @@
 }
 .sidebar-account-menu .select-menu-item {
   justify-content: flex-start;
-  gap: var(--sidebar-nav-column-gap, 10px);
-  min-height: var(--sidebar-row-height, 2.5em);
-  padding: 0.35em var(--sidebar-row-pad-x, 12px);
-  line-height: 1.45;
+  gap: var(--menu-item-gap);
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  line-height: 1.4;
   flex-shrink: 0;
 }
 .sidebar-account-menu .select-menu-item > span {

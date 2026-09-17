@@ -13,6 +13,7 @@ import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
+import { ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
@@ -204,7 +205,7 @@ function TurnContent({
   const retryMessage = userItems.at(-1);
   const event = turnEventForTurn(turn);
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
-  const editSummary = (
+  const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (
     <TurnEditSummaryPresentation
       turn={turn}
       isLatestTurn={Boolean(isLatestTurn)}
@@ -213,7 +214,7 @@ function TurnContent({
       onOpenFileDiff={onOpenFileDiff}
       onCollapseComplete={onCollapseComplete}
     />
-  );
+  ) : undefined;
 
   return (
     <section

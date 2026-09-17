@@ -107,7 +107,7 @@
   min-width: 0;
   min-height: 100%;
   margin: 0 auto;
-  padding: calc(var(--page-padding) * var(--wuu-space-density, 1));
+  padding: var(--page-padding);
   overflow-wrap: anywhere;
   color: var(--wuu-color-text, var(--ink));
   font-family: var(--wuu-font-family-ui, inherit);
@@ -129,7 +129,7 @@
 }
 
 .settings-scroll .plugin-ui-stack[data-wuu-gap="large"] {
-  gap: var(--settings-gap);
+  gap: var(--section-gap);
 }
 
 .settings-scroll .plugin-ui-section {
@@ -165,23 +165,23 @@
 }
 
 .plugin-ui-panel {
-  padding: calc(var(--wuu-space-unit, 4px) * 5 * var(--wuu-space-density, 1));
+  padding: var(--panel-padding);
 }
 
 .plugin-ui-card {
-  padding: calc(var(--wuu-space-unit, 4px) * 4 * var(--wuu-space-density, 1));
+  padding: var(--card-padding);
   box-shadow: var(--wuu-elevation-panel, none);
 }
 
 .plugin-ui-section {
   display: grid;
   min-width: 0;
-  gap: calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
+  gap: var(--space-3);
 }
 
 .plugin-ui-section-header {
   display: grid;
-  gap: calc(var(--wuu-space-unit, 4px) * var(--wuu-space-density, 1));
+  gap: var(--space-1);
 }
 
 .plugin-ui-section-header h2,
@@ -214,15 +214,15 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
+  gap: var(--space-3);
 }
 
 .plugin-ui-stack[data-wuu-gap="small"] {
-  gap: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+  gap: var(--space-2);
 }
 
 .plugin-ui-stack[data-wuu-gap="large"] {
-  gap: calc(var(--section-gap) * var(--wuu-space-density, 1));
+  gap: var(--section-gap);
 }
 
 .plugin-ui-row {
@@ -230,7 +230,7 @@
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+  gap: var(--space-2);
 }
 
 /* Buttons join the shared 32px control family: no border, filled with the
@@ -239,14 +239,16 @@
  * accent stays reserved for live state and navigation. */
 .plugin-ui-button {
   min-height: var(--control-field-height);
+  height: auto;
   border: 0;
   border-radius: var(--wuu-radius-control, var(--radius-sm));
-  padding: 0 calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
+  padding: var(--control-padding-block) var(--control-padding-inline);
   color: var(--wuu-color-text, var(--ink));
   background: var(--wuu-control-secondary-background, var(--surface-2));
   cursor: pointer;
   font: inherit;
   font-size: var(--font-ui);
+  line-height: 1.5;
   font-weight: var(--weight-medium);
   transition:
     background-color var(--wuu-motion-duration-fast, var(--motion-fast)) var(--wuu-motion-easing-standard, var(--ease-out)),
@@ -358,7 +360,7 @@
 .plugin-ui-field {
   display: grid;
   min-width: 0;
-  gap: calc(var(--wuu-space-unit, 4px) * 1.5 * var(--wuu-space-density, 1));
+  gap: calc(var(--space-1) * 1.5);
 }
 
 .plugin-ui-field-label {
@@ -381,7 +383,7 @@
   height: auto;
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
-  padding: 5px calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
+  padding: var(--control-padding-block) var(--control-padding-inline);
   color: var(--wuu-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
@@ -411,7 +413,7 @@
   resize: vertical;
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
-  padding: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1)) calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
+  padding: var(--compact-padding-block) var(--control-padding-inline);
   color: var(--wuu-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
@@ -430,14 +432,14 @@
   display: inline-grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  gap: var(--space-6);
   color: var(--wuu-color-text, var(--ink));
   cursor: pointer;
 }
 
 .plugin-ui-checkbox-copy {
   display: grid;
-  gap: calc(var(--wuu-space-unit, 4px) * var(--wuu-space-density, 1));
+  gap: var(--space-1);
 }
 
 .plugin-ui-state {
@@ -445,8 +447,8 @@
   min-height: 180px;
   place-content: center;
   justify-items: center;
-  gap: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
-  padding: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  gap: var(--space-2);
+  padding: var(--space-6);
   text-align: center;
 }
 
@@ -467,22 +469,11 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+  gap: var(--space-2);
 }
 
 @keyframes plugin-ui-state-spin {
   to { transform: rotate(360deg); }
-}
-
-@media (max-width: 560px) {
-  .plugin-ui-page {
-    padding: calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
-  }
-
-  .plugin-ui-panel,
-  .plugin-ui-card {
-    padding: calc(var(--wuu-space-unit, 4px) * 3 * var(--wuu-space-density, 1));
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

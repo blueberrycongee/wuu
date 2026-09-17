@@ -55,7 +55,8 @@
   /* Outer message-flow rhythm. Structural containers must consume these
      landmarks instead of adding their own anonymous gaps on top. */
   --conversation-flow-top-gap: 36px;
-  --conversation-turn-boundary-gap: 48px;
+  /* Answer actions already reserve their own row inside the preceding turn. */
+  --conversation-turn-boundary-gap: 16px;
   --conversation-turn-item-gap: 8px;
   --conversation-composer-clearance: 20px;
 }
@@ -130,11 +131,11 @@
    * One spacing ladder, one value per meaning. These landmarks match
    * the visible message flow from top to bottom: user query -> assistant
    * reply (whitespace only, no rule), process header -> expanded details,
-   * process cluster -> final answer. Copy/fork overlay the turn
-   * boundary instead of adding a second in-flow row.
+   * process cluster -> final answer. Copy/fork reserve an in-flow row;
+   * the turn boundary adds only the remaining separation to the next query.
    * `--conversation-user-rule-gap` keeps its name for the query -> reply
-   * gap (there is no longer a hairline rule; the 32px band stays under the
-   * 48px turn boundary so a Q&A pair reads as one group).
+   * gap (there is no longer a hairline rule). The action row plus the turn
+   * boundary keep separate Q&A pairs farther apart than query and reply.
    */
   --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
   --conversation-user-message-trailing-gap: 8px;

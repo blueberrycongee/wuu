@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowUp, Folder, Plus, Search } from "lucide-react";
 import { SelectMenu } from "../../src/renderer/SelectMenu";
@@ -7,6 +8,9 @@ import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics
 import { SidebarNameDialog } from "../../src/renderer/SidebarNameDialog";
 import type { Turn } from "../../src/shared/protocol";
 import { SettingsRow } from "../../src/renderer/SettingsRow";
+import { TurnEditSummaryCard } from "../../src/renderer/TurnEditSummaryCard";
+import { Modal } from "../../src/renderer/Modal";
+import { createPluginUIKit } from "../../src/shared/workbench";
 import { RichContent } from "../../src/renderer/RichContent";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
@@ -35,24 +39,28 @@ const result = await runTask({ workspace: "example", mode: "review" });
 `;
 
 function Fixture() {
-  const [theme, setTheme] = useState("light");
-  const [size, setSize] = useState(14);
-  const [surface, setSurface] = useState("controls");
+  const params = new URLSearchParams(location.search);
+  const [theme, setTheme] = useState(params.get("theme") || "light");
+  const [size, setSize] = useState(Number(params.get("size")) || 14);
+  const [surface, setSurface] = useState(params.get("surface") || "controls");
+  const [density, setDensity] = useState(Number(params.get("density")) || 1);
   const [sync, setSync] = useState(true);
   const [dialog, setDialog] = useState(false);
   const [name, setName] = useState("项目笔记");
   const [value, setValue] = useState("local");
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => { applyMessageFlowFontSize(size); }, [size]);
+  useEffect(() => { document.documentElement.style.setProperty("--wuu-space-density", String(density)); }, [density]);
   useLayoutEffect(() => { applyMeasuredScrollbarWidth(); }, []);
   return <WuuUIRoot><ImagePreviewProvider>
     <header className="review-toolbar">
       <strong>生产组件对照 · 示例数据</strong>
       <label>主题<select value={theme} onChange={e => setTheme(e.target.value)}><option value="light">亮色</option><option value="dark">暗色</option></select></label>
       <label>字号<select value={size} onChange={e => setSize(Number(e.target.value))}>{[13, 14, 20].map(n => <option key={n} value={n}>{n}px</option>)}</select></label>
-      <label>页面<select value={surface} onChange={e => setSurface(e.target.value)}><option value="controls">设置与菜单</option><option value="conversation">对话与输入</option><option value="messages">各模式消息</option><option value="extension">插件控件</option></select></label>
+      <label>密度<select value={density} onChange={e => setDensity(Number(e.target.value))}><option value={1}>标准</option><option value={0.75}>紧凑</option><option value={1.25}>宽松</option></select></label>
+      <label>页面<select value={surface} onChange={e => setSurface(e.target.value)}><option value="controls">设置与菜单</option><option value="conversation">对话与输入</option><option value="messages">各模式消息</option><option value="extension">插件控件</option><option value="spacing">间距与文件变更</option></select></label>
     </header>
-    {surface === "controls" ? <main className="settings-page review-settings">
+    {surface === "spacing" ? <SpacingExample theme={theme} size={size} density={density} /> : surface === "controls" ? <main className="settings-page review-settings">
       <header className="settings-page-header"><h1 className="settings-page-title">常规</h1></header>
       <section className="settings-section"><h2 className="settings-section-title">工作环境</h2><div className="settings-group">
         <SettingsRow title="工作环境" description="同一设置行同时检查长标签、说明与选择控件。"><div className="review-menu"><SelectMenu ariaLabel="工作环境" value={value} onChange={setValue} options={options} triggerClassName="settings-select-trigger" searchable searchPlaceholder="搜索环境" /></div></SettingsRow>
@@ -78,6 +86,55 @@ function Fixture() {
     <SidebarNameDialog open={dialog} title={name} onTitleChange={setName} onSubmit={() => setDialog(false)} onClose={() => setDialog(false)} dialogTitle="重命名项目" dialogTitleId="review-dialog-title" fieldLabel="项目名称" fieldAriaLabel="弹层项目名称" placeholder="项目名称" icon={Folder} submitLabel="保存" cancelLabel="取消"/>
 
   </ImagePreviewProvider></WuuUIRoot>;
+}
+
+const ui = createPluginUIKit(React);
+const editTurn = (paths: string[]): Turn => ({
+  id: "spacing-edits", status: "completed", items_view: "full",
+  items: paths.map((path, index) => ({
+    id: `edit-${index}`, type: "tool_call", name: "edit_file", status: "completed",
+    result: JSON.stringify({ path, diff: { hunks: [{ old_start: 1, new_start: 1, lines: [
+      { op: "delete", content: "const oldValue = true;" },
+      { op: "insert", content: "const newValue = true;" },
+    ] }] } }),
+  })),
+});
+
+function SpacingExample({ theme, size, density }: { theme: string; size: number; density: number }) {
+  const [dialog, setDialog] = useState(false);
+  const [value, setValue] = useState("local");
+  const [metrics, setMetrics] = useState("");
+  const page = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = page.current!;
+    const measure = () => {
+      const height = (selector: string) => element.querySelector(selector)!.getBoundingClientRect().height;
+      const inset = (selector: string) => getComputedStyle(element.querySelector(selector)!).paddingLeft;
+      setMetrics(`宿主 / 插件输入高度 ${height('.settings-input').toFixed(1)} / ${height('.plugin-ui-input').toFixed(1)}；单文件卡片 ${height('.is-single').toFixed(1)}；插件标准 / 紧凑卡片内边距 ${inset('.review-plugin-standard .plugin-ui-card')} / ${inset('.review-plugin-compact .plugin-ui-card')}`);
+    };
+    const frame = requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); };
+  }, [theme, size, density]);
+  return <main ref={page} className="settings-page review-settings review-spacing">
+    <output className="review-metrics">{metrics}</output>
+    <section className="settings-section"><h2>文件变更</h2>
+      <TurnEditSummaryCard turn={editTurn(["src/session.css"])} onOpenFile={() => setDialog(true)} />
+      <TurnEditSummaryCard turn={editTurn(["src/components/a-very-long-directory-name/another-directory/LongFileName.tsx", "src/settings.css", "src/empty.ts"])} onOpenFile={() => setDialog(true)} />
+    </section>
+    <section className="settings-section"><h2>宿主与插件表单</h2><div className="review-controls">
+      <label className="plugin-ui-field"><span className="plugin-ui-field-label">宿主输入</span><input className="settings-input" aria-label="宿主输入" placeholder="宿主输入" /></label>
+      <ui.TextInput label="插件输入" placeholder="插件输入" />
+      <SelectMenu ariaLabel="间距验收菜单" value={value} onChange={setValue} options={options} searchable />
+      <button className="settings-button" onClick={() => setDialog(true)}>打开弹窗</button><ui.Button disabled>不可用</ui.Button>
+    </div></section>
+    <section className="settings-section"><h2>局部密度</h2>
+      <ui.Page className="review-plugin-standard"><ui.Card><ui.Stack><span>跟随主题密度</span><ui.TextInput label="标准密度输入" placeholder="标准密度输入" /><ui.Button>操作</ui.Button></ui.Stack></ui.Card></ui.Page>
+      <ui.Page density="compact" className="review-plugin-compact"><ui.Card><ui.Stack><span>局部紧凑密度</span><ui.TextInput label="紧凑密度输入" placeholder="紧凑密度输入" /><ui.Button>操作</ui.Button></ui.Stack></ui.Card></ui.Page>
+    </section>
+    {dialog ? <Modal title="检查留白" ariaLabel="间距验收弹窗" onClose={() => setDialog(false)} footer={<button className="settings-button" onClick={() => setDialog(false)}>关闭</button>}><p>正文随窗口换行，面板负责外沿，内容不重复增加内边距。</p><input className="settings-input" aria-label="弹窗输入" placeholder="名称" /></Modal> : null}
+  </main>;
 }
 
 

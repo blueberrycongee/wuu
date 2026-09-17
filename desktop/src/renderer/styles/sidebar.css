@@ -331,7 +331,7 @@
 }
 
 .sidebar-content {
-  --sidebar-row-pad-x: 12px;
+  --sidebar-row-pad-x: var(--control-padding-inline);
   --sidebar-label-weight: 400;
   --sidebar-selected-weight: 500;
   --sidebar-label-size: var(--conversation-message-font-size, 13px);
@@ -353,8 +353,8 @@
   /* Semantic spacing stays on a 2/4/8/16px scale. Larger text grows the
    * row itself instead of stretching the space between related items. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
-  --sidebar-functional-heading-gap: 4px;
-  --sidebar-functional-group-gap: 16px;
+  --sidebar-functional-heading-gap: var(--space-1);
+  --sidebar-functional-group-gap: var(--space-4);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -2045,15 +2045,16 @@
 
 .project-add-menu button {
   display: flex;
-  height: 34px;
+  height: auto;
+  min-height: var(--control-row-height);
   align-items: center;
-  gap: 9px;
+  gap: var(--menu-item-gap);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
-  padding: 0 9px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
@@ -3012,16 +3013,17 @@
 .thread-row-context-menu-item {
   display: flex;
   width: 100%;
-  height: 32px;
+  height: auto;
+  min-height: var(--control-row-height);
   align-items: center;
-  gap: 9px;
+  gap: var(--menu-item-gap);
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
-  padding: 0 9px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
   cursor: pointer;
 }

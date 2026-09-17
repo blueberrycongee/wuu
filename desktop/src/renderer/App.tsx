@@ -217,6 +217,7 @@ import {
 } from "./RuntimeHelpers";
 import type { SettingsPage } from "./SettingsView";
 import {
+  ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
   ENABLE_MANAGEMENT_ASSISTANT,
@@ -5534,7 +5535,7 @@ export function App(): JSX.Element {
         )}
         {/* Unmount the hidden rail so compact scrolling does not measure turns
             or update navigation state for controls that cannot be used. */}
-        {!compactNavigation ? (
+        {ENABLE_CONVERSATION_TURN_RAIL && !compactNavigation ? (
           <ConversationTurnRail
             turns={turns}
             activeTurnID={turns[turns.length - 1]?.id}

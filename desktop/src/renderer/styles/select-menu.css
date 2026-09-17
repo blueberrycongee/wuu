@@ -26,7 +26,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 10px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
@@ -205,7 +205,6 @@
 
 /* Settings inputs and dropdown triggers share the same field material. */
 .select-menu-trigger.settings-select-trigger {
-  padding-inline: 12px;
   border-color: var(--hairline);
   background: var(--field-bg);
   font-weight: 400;
@@ -283,7 +282,7 @@
 }
 
 .select-menu-group-label {
-  padding: 6px 10px 3px;
+  padding: var(--menu-inset) var(--menu-item-padding-inline) var(--space-1);
   color: var(--codex-menu-label-text);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
@@ -302,10 +301,10 @@
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--menu-item-gap);
   min-height: var(--control-row-height);
   height: auto;
-  padding: 6px 9px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -370,7 +369,7 @@
 }
 
 .select-menu-empty {
-  padding: 8px 9px;
+  padding: var(--compact-padding-block) var(--menu-item-padding-inline);
   color: var(--ink-muted);
   font-size: var(--font-sm);
   line-height: 1.38;

@@ -211,10 +211,8 @@
                                                                   
   --menu-radius: var(--wuu-radius-overlay, var(--radius-md));
 
-  /* Compact floating menus (pad ≈6px, rows = --radius-xs): shell must be
-   * concentric → outer ≈ inner + inset. Panel/dialog overlays keep --menu-radius. */
-  --menu-inset: 6px;
-  --menu-shell-radius: calc(var(--radius-xs) + var(--menu-inset));
+  /* Compact menu geometry is defined with its inset in spacing.css.
+   * Panel/dialog overlays keep --menu-radius. */
 
                                                                      
                  

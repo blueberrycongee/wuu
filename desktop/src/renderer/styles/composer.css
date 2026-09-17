@@ -1,7 +1,7 @@
 .user-question-card {
   box-sizing: border-box;
   margin: 4px 0 24px;
-  padding: 16px 18px 14px;
+  padding: var(--card-padding);
   border: 0;
   border-radius: var(--radius-lg);
   background: var(--surface-1);
@@ -137,7 +137,7 @@
 }
 
 .user-question-card-offer {
-  padding: 16px 16px 12px;
+  padding: var(--card-padding);
   background: var(--paper);
 }
 
@@ -449,7 +449,7 @@
 
 .dock-composer-wrap {
   --composer-dock-bottom-space: max(
-    clamp(12px, calc(2.5vw + 2px), 24px),
+    12px,
     env(safe-area-inset-bottom, 0px)
   );
   position: relative;
@@ -457,8 +457,7 @@
   grid-column: 1;
   grid-row: 2;
   align-self: end;
-  /* Keep the bottom spacing continuous across the navigation breakpoint,
-     just like the shared fluid horizontal gutters. */
+  /* Keep the bottom inset stable across viewport widths and composer states. */
   padding-block: clamp(12px, calc(0.833333vw + 8.666667px), 16px)
     var(--composer-dock-bottom-space);
   /* Match the scroll region's stable scrollbar gutter so the dock composer
@@ -2328,7 +2327,7 @@
 .access-menu {
   gap: 2px;
   background: var(--paper);
-  padding: 5px;
+  padding: var(--menu-inset);
   width: 176px;
 }
 
@@ -2344,17 +2343,18 @@
 
 .composer-context-menu button {
   display: flex;
-  height: 34px;
+  height: auto;
+  min-height: var(--control-row-height);
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--menu-item-gap);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: 400;
   line-height: var(--line-ui);
-  padding: 0 9px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
@@ -2367,13 +2367,13 @@
 }
 
 .composer-context-menu .permission-mode-option {
-  height: 30px;
-  min-height: 30px;
+  height: auto;
+  min-height: var(--control-row-height);
   justify-content: flex-start;
   gap: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
-  padding: 0 10px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
@@ -2438,10 +2438,10 @@
 
 .composer-context-menu.composer-plus-menu button {
   height: auto;
-  min-height: 32px;
+  min-height: var(--control-row-height);
   gap: 8px;
-  padding: 6px 9px;
-  line-height: 18px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  line-height: 1.4;
   border-radius: var(--radius-xs);
   color: var(--ink-soft);
   font-weight: 400;
@@ -2514,16 +2514,17 @@
 
 .composer-project-menu button {
   display: flex;
-  height: 34px;
+  height: auto;
+  min-height: var(--control-row-height);
   align-items: center;
-  gap: 8px;
+  gap: var(--menu-item-gap);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: 400;
   line-height: var(--line-ui);
-  padding: 0 9px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
@@ -2875,8 +2876,8 @@
 .composer-branch-menu .project-picker-list button {
   width: 100%;
   height: auto;
-  min-height: 34px;
-  padding: 6px 9px;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
 }
 
 .composer-branch-menu small {
@@ -2929,19 +2930,5 @@
     width: 14px;
     height: 14px;
     flex-basis: 14px;
-  }
-
-  .composer-project-menu button,
-  .composer-context-menu button {
-    height: 32px;
-  }
-
-  .composer-branch-menu .project-picker-list button {
-    height: auto;
-    min-height: 32px;
-  }
-
-  .composer-project-menu .menu-search {
-    height: 32px;
   }
 }

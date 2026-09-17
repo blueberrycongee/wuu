@@ -9,6 +9,11 @@ body { margin: 0; background: var(--paper); }
 .review-page h2 { margin: 0 0 16px; font-size: var(--font-body); font-weight: var(--weight-semibold); }
 .review-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .review-controls > .settings-input, .review-controls > .select-menu { width: min(240px, 100%); }
+.review-controls > .plugin-ui-field { width: min(240px, 100%); }
+.review-spacing .turn-edit-summary-card { margin-top: 0; }
+.review-spacing h2 { margin: 0; font-size: var(--font-body); }
+.review-metrics { font: 12px/1.5 monospace; overflow-wrap: anywhere; }
+.review-spacing > section > .plugin-ui-page { min-height: 0; }
 .review-menu { width: min(320px, 100%); }
 .review-settings { min-height: 0; }
 .review-conversation.conversation-pane { height: calc(100dvh - 70px); min-height: 420px; }
