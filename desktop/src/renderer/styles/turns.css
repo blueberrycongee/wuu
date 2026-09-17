@@ -2512,6 +2512,11 @@
   min-width: 0;
 }
 
+.process-surface-fold {
+  --process-summary-icon-size: 28px;
+  --process-summary-icon-gap: 8px;
+}
+
 .process-surface-row {
   display: flex;
   width: 100%;
@@ -2569,15 +2574,15 @@
 .process-surface-summary-line .process-surface-blobatar,
 .turn-reasoning-summary > .process-surface-blobatar {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
+  width: var(--process-summary-icon-size, 28px);
+  height: var(--process-summary-icon-size, 28px);
   align-self: center;
   overflow: visible;
   transform-origin: center;
 }
 
 .process-surface-summary-line .process-surface-blobatar {
-  margin-right: 8px;
+  margin-right: var(--process-summary-icon-gap, 8px);
 }
 
 /* Align the painted silhouette, not the SVG's transparent padding. Keep the
@@ -2974,6 +2979,12 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+/* Start expanded detail icons at the summary text, not under its mascot.
+ * Match the layout slot rather than the mascot's animated painted outline. */
+.process-surface-fold:has(> .process-surface-row > .process-surface-summary-line > .process-surface-blobatar) > .process-surface-body {
+  padding-left: calc(var(--process-summary-icon-size) + var(--process-summary-icon-gap));
 }
 
 .tool-result-data-json {
