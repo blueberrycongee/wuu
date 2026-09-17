@@ -1437,6 +1437,7 @@ export function AccessMenu({
   disabled: boolean;
   onSelect: (mode: PermissionMode, approveForMe?: boolean) => void;
 }): JSX.Element {
+  useI18n();
   const mode = permissionModeFromSummary(permissions);
   const approveForMeOn = mode === "standard" && Boolean(permissions?.approve_for_me);
   const showApproveForMe = (engine || "wuu") === "wuu";
