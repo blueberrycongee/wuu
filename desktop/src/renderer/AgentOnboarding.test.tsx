@@ -144,9 +144,30 @@ describe("AgentOnboarding", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("keeps the confirmed transcript mounted while creation and conversation opening complete", async () => {
+    const creation = deferred<NamedAgent>();
+    const opening = deferred<void>();
+    const open = vi.fn().mockReturnValue(opening.promise);
+    await mount({ onCreate: () => creation.promise, onOpenConversation: open });
+    await next();
+    const modelRow = query('[data-message-id="model"]');
+    const nameRow = query('[data-message-id="name"]');
+    await click('[data-action="submit"]');
+    const answerRow = query('[data-message-id="answer"]');
+    expect(query('[data-message-id="model"]')).toBe(modelRow);
+    expect(query('[data-message-id="name"]')).toBe(nameRow);
+    await act(async () => creation.resolve(agent));
+    expect(query('[data-message-id="answer"]')).toBe(answerRow);
+    expect(query('[data-message-id="model"]')).toBe(modelRow);
+    expect(query('[data-message-id="name"]')).toBe(nameRow);
+    expect(open).toHaveBeenCalledOnce();
+    await act(async () => opening.resolve());
+  });
+
   it("switches to each model's supported effort and excludes unavailable providers", async () => {
     await mount();
     await next();
+    await click('[data-action="edit-model"]');
     await click(".runtime-panel-context button");
     expect(document.querySelector(".runtime-provider-options")?.textContent).not.toContain("not-connected");
     await act(async () => [...document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")].find(item => item.textContent === "primary")?.click());
@@ -196,7 +217,9 @@ describe("AgentOnboarding", () => {
     await click('[data-action="submit"]');
     expect(create.mock.calls[0][0].request_id).toBe(requestID);
     expect(create.mock.calls[1][0].request_id).toBe(requestID);
+    await click('[data-action="edit-model"]');
     await choose("agent-model", "reasoner");
+    await click('[data-action="confirm-model"]');
     expect(currentDraft.requestId).toBe(requestID);
     await type("agent-name", "Grace");
     expect(currentDraft.requestId).not.toBe(requestID);
@@ -214,7 +237,7 @@ describe("AgentOnboarding", () => {
     expect(currentDraft.createdAgent).toEqual(agent);
     expect(query('[role="alert"]').textContent).toContain("connection lost");
     expect(document.activeElement).toBe(query('[data-action="submit"]'));
-    expect(query<HTMLFieldSetElement>(".agent-onboarding-runtime").disabled).toBe(true);
+    expect(query<HTMLButtonElement>('[data-action="edit-model"]').disabled).toBe(true);
     expect(close).not.toHaveBeenCalled();
     await click('[data-action="submit"]');
     expect(create).toHaveBeenCalledOnce();

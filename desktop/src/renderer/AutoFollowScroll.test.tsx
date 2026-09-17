@@ -112,6 +112,28 @@ describe("useAutoFollowScrollContainer", () => {
     }
   });
 
+  it("respects reading history after the stream mounts on opening or returning from setup", () => {
+    function ConditionalProbe({ open }: { open: boolean }): ReactNode {
+      handle = useAutoFollowScrollContainer({ open, observeKey: "same-room" });
+      return open ? createElement("div", { ref: handle.scrollRef }) : null;
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      act(() => root?.render(createElement(ConditionalProbe, { open: false })));
+      act(() => root?.render(createElement(ConditionalProbe, { open: true })));
+      scrollNode = container.firstElementChild as HTMLDivElement;
+      layout = stubLayout(scrollNode);
+      act(() => {
+        scrollNode!.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+        layout!.scrollTop = 300;
+        scrollNode!.dispatchEvent(new Event("scroll"));
+      });
+      expect(handle?.autoFollowRef.current).toBe(false);
+      layout.scrollHeight += 200;
+      act(() => notifyResize());
+      expect(layout.scrollTop).toBe(300);
+    }
+  });
+
   it("does not pull history to the bottom when a resize frame is pending", () => {
     if (!layout || !scrollNode) throw new Error("probe not mounted");
     document.documentElement.classList.add(WINDOW_RESIZING_CLASS);

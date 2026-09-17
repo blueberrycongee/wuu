@@ -3538,7 +3538,8 @@
 .channel-message-bubble pre { max-width: 100%; overflow-x: auto; }
 .channel-message-bubble .rich-content table { display: block; max-width: 100%; overflow-x: auto; }
 .channel-message-pending .channel-message-bubble { opacity: 0.65; }
-.channel-send-status { color: var(--text-secondary); font-size: 11px; }
+.channel-message-pending .channel-message-content { position: relative; }
+.channel-send-status { position: absolute; top: 100%; right: 0; color: var(--text-secondary); font-size: var(--font-sm); }
 .channel-response-status.failed,
 .channel-response-error,
 .channel-send-error { color: var(--danger); }

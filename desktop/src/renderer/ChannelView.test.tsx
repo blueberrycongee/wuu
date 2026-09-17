@@ -2453,12 +2453,51 @@ describe("ChannelView", () => {
     act(() => container.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
     await settle();
     expect(container.querySelector(".channel-message-pending")?.textContent).toContain("Please investigate");
+    const optimisticRow = container.querySelector(".channel-message-pending");
+    const optimisticBubble = container.querySelector(".channel-message-bubble");
+    const timestamp = container.querySelector(".channel-timestamp");
+    expect(timestamp).not.toBeNull();
+    const displayTime = timestamp?.getAttribute("datetime");
     act(() => setInputValue(textarea, "And check the logs"));
     refreshStarted = true;
     await act(async () => resolveSend({ message: { id: "sent", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user", kind: "text", body: "Please investigate", created_at: "2026-07-23T00:03:00Z" } }));
     expect(container.querySelector(".channel-message-pending")).toBeNull();
     expect(container.querySelector(".channel-message-bubble")?.textContent).toBe("Please investigate");
+    expect(container.querySelector('[data-message-id="sent"]')).toBe(optimisticRow);
+    expect(container.querySelector(".channel-message-bubble")).toBe(optimisticBubble);
+    expect(container.querySelector(".channel-timestamp")).toBe(timestamp);
+    expect(timestamp?.getAttribute("datetime")).toBe(displayTime);
     expect(textarea.value).toBe("And check the logs");
+  });
+
+  it("does not duplicate a pending send when a poll sees it before acknowledgement", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      const sent: ChannelMessage = { id: "early-send", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user", kind: "text", body: "Sent once", created_at: new Date().toISOString() };
+      let durable: ChannelMessage[] = [];
+      let resolveSend!: (value: { message: ChannelMessage }) => void;
+      api.listChannelMessages = vi.fn(async () => ({ messages: durable, responses: [] }));
+      api.sendChannelMessage = vi.fn(() => new Promise<{ message: ChannelMessage }>((resolve) => { resolveSend = resolve; }));
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      act(() => setInputValue(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")!, sent.body));
+      await act(async () => container.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
+      const row = container.querySelector(".channel-message-pending");
+      durable = [sent];
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(vi.mocked(api.listChannelMessages).mock.calls.length).toBeGreaterThan(1);
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
+      await act(async () => resolveSend({ message: sent }));
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
+      expect(container.querySelector('[data-message-id="early-send"]')).toBe(row);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelector('[data-message-id="early-send"]')).toBe(row);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a failed send in the composer with a retry action", async () => {

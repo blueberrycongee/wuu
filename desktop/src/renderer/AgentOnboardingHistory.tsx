@@ -6,7 +6,7 @@ import "./styles/agent-onboarding.css";
 export function AgentOnboardingHistory({ onboarding }: { onboarding: ChannelRoomOnboarding }): JSX.Element {
   const avatar = <AgentAvatarMark seed="draft-agent" avatarKey={onboarding.avatar_key} />;
   return <>
-    <MessageBubbleRow outgoing={false} avatar={avatar} className="channel-message agent" contentClassName="channel-message-content">
+    <MessageBubbleRow messageID="model" outgoing={false} avatar={avatar} className="channel-message agent" contentClassName="channel-message-content">
       <MessageBubble outgoing={false} className="agent-onboarding-bubble">
         <div className="agent-onboarding-form">
           <p className="agent-onboarding-prompt">{onboarding.model_prompt}</p>
@@ -15,11 +15,11 @@ export function AgentOnboardingHistory({ onboarding }: { onboarding: ChannelRoom
         </div>
       </MessageBubble>
     </MessageBubbleRow>
-    <MessageBubbleRow outgoing={false} avatar={avatar} className="channel-message agent" contentClassName="channel-message-content">
+    <MessageBubbleRow messageID="name" outgoing={false} avatar={avatar} className="channel-message agent" contentClassName="channel-message-content">
       <MessageBubble outgoing={false} className="channel-message-bubble">{onboarding.name_prompt}</MessageBubble>
     </MessageBubbleRow>
-    <MessageBubbleRow outgoing className="channel-message own" contentClassName="channel-message-content">
+    {onboarding.name ? <MessageBubbleRow messageID="answer" outgoing className="channel-message own" contentClassName="channel-message-content">
       <MessageBubble outgoing className="channel-message-bubble">{onboarding.name}</MessageBubble>
-    </MessageBubbleRow>
+    </MessageBubbleRow> : null}
   </>;
 }

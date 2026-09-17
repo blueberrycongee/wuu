@@ -9,7 +9,7 @@
   height: 100%;
   color: var(--ink);
   background: var(--paper);
-  font-size: var(--font-base, 14px);
+  font-size: var(--font-ui);
 }
 .agent-onboarding-name {
   flex: 1;
@@ -23,7 +23,8 @@
 }
 .agent-onboarding .agent-onboarding-name:disabled { opacity: 1; }
 .agent-onboarding-name::placeholder { color: var(--ink); opacity: 1; }
-.agent-onboarding-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px var(--channel-horizontal-gutter) 20px; }
+.agent-onboarding-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 6px; padding: 12px var(--channel-horizontal-gutter) 20px; }
+.agent-onboarding-name-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; width: min(100%, var(--channel-content-max-width)); margin-inline: auto; }
 .agent-onboarding-bubble { max-width: 100%; padding: 12px; }
 .agent-onboarding-form { min-width: 0; width: 208px; max-width: 100%; transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1); }
 .agent-onboarding-form:has(.runtime-panel.is-providers) { width: 180px; }
@@ -42,7 +43,7 @@
 .agent-onboarding button:focus-visible, .agent-onboarding input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .channel-recipient-action-icon { display: grid; place-items: center; color: var(--ink-soft); background: var(--surface-2); border-radius: var(--radius-circle); }
 @media (max-width: 600px) {
-  .agent-onboarding-scroll { padding: 20px 16px; }
+  .agent-onboarding-scroll { padding-top: 12px; }
   .agent-onboarding-name { font-size: var(--font-title); }
   .agent-onboarding-submit, .agent-onboarding-manage { min-height: 40px; }
 }

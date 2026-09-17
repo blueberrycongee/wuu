@@ -387,7 +387,7 @@ export function useAutoFollowScrollContainer({
       node.removeEventListener("touchcancel", handleTouchEnd);
       node.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleScrollFrame, markUserScrollAwayIntent, setAutoFollow]);
+  }, [handleScrollFrame, markUserScrollAwayIntent, observeKey, open, setAutoFollow]);
 
   useLayoutEffect(() => {
     const node = scrollRef.current;
@@ -426,7 +426,7 @@ export function useAutoFollowScrollContainer({
       windowResizeScroll.cancel();
       resizeObserver.disconnect();
     };
-  }, [observeKey, refreshPointerScrollGestureLayout, scrollToBottom]);
+  }, [observeKey, open, refreshPointerScrollGestureLayout, scrollToBottom]);
 
   useEffect(() => {
     if (!open) {

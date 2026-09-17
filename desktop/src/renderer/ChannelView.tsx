@@ -176,8 +176,8 @@ function ChannelMessageBubble({
     <>
       {message.images?.length || message.files?.length ? (
         <ComposerAttachmentStrip
-          images={(message.images ?? []).map((image, index) => ({ id: `${message.id}-${attachmentIDPrefix}-image-${index}`, ...image }))}
-          files={(message.files ?? []).map((file, index) => ({ id: `${message.id}-${attachmentIDPrefix}-file-${index}`, ...file }))}
+          images={(message.images ?? []).map((image, index) => ({ id: `${attachmentIDPrefix}-image-${index}`, ...image }))}
+          files={(message.files ?? []).map((file, index) => ({ id: `${attachmentIDPrefix}-file-${index}`, ...file }))}
           removable={false}
         />
       ) : null}
@@ -444,6 +444,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   ), [messagesByRoomID, responsesByRoomID, selectedRoomID]);
   const [sendError, setSendError] = useState<{ roomID: string; message: string } | null>(null);
   const [pendingMessage, setPendingMessage] = useState<ChannelMessage | null>(null);
+  const sendingRoomRef = useRef<string | null>(null);
+  // Keep the optimistic row's identity and display time through acknowledgement
+  // and subsequent polls. Durable message data remains untouched.
+  const sentPresentationRef = useRef(new Map<string, { key: string; createdAt: string }>());
   const [loadedRoomIDs, setLoadedRoomIDs] = useState<Set<string>>(() => new Set());
   const messages = messagesByRoomID[selectedRoomID] ?? [];
   const [trackedTasks, setTrackedTasks] = useState<ChannelMessage[]>([]);
@@ -572,7 +576,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const sendingTimersRef = useRef<Map<string, number>>(new Map());
   const splitResizeStartRef = useRef({ x: 0, width: CHANNEL_SPLIT_DEFAULT_WIDTH });
   const messageScroll = useAutoFollowScrollContainer({
-    open: section === "rooms" && Boolean(selectedRoomID),
+    open: section === "rooms" && Boolean(selectedRoomID) && !onboardingDraft,
     observeKey: selectedRoomID,
   });
   useLayoutEffect(() => {
@@ -746,7 +750,13 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     ));
   }, [setupPanel, taskOwnerAgents]);
   // Keep task records for the board and read cursors, but out of the chat stream.
-  const channelTimeline = useMemo(() => messages.filter((message) => message.kind !== "task"), [messages]);
+  const channelTimeline = useMemo(() => [
+    ...messages.filter((message) => message.kind !== "task").map((message) => {
+      const presentation = sentPresentationRef.current.get(message.id);
+      return presentation ? { ...message, created_at: presentation.createdAt } : message;
+    }),
+    ...(pendingMessage?.room_id === selectedRoomID ? [pendingMessage] : []),
+  ], [messages, pendingMessage, selectedRoomID]);
   const activityFor = useCallback((agent?: NamedAgent): AgentActivityStatus => {
     if (!agent) return "idle";
     if (sendingAgentIDs.has(agent.id)) return "sending";
@@ -875,6 +885,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         const nextResponses = result.responses.map(({ body: _body, ...activity }) => activity);
         setResponsesByRoomID((current) => JSON.stringify(current[roomID]) === JSON.stringify(nextResponses) ? current : { ...current, [roomID]: nextResponses });
       }
+      // A poll can see the durable send before its RPC returns its identity.
+      // Do not briefly show it alongside the optimistic row or guess by body.
+      if (sendingRoomRef.current === roomID) return;
       const nextMessages = result.messages ?? [];
       const previousMessages = messagesByRoomIDRef.current.get(roomID) ?? [];
       const messagesUnchanged = sameChannelMessages(previousMessages, nextMessages);
@@ -1176,6 +1189,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     const sentImageIDs = new Set(composerImages.map((image) => image.id));
     const sentFileIDs = new Set(composerFiles.map((file) => file.id));
     const pending: ChannelMessage = { id: `pending:${crypto.randomUUID()}`, room_id: roomID, seq: 0, author_type: "human", author_id: "local-user", kind: "text", body: messageBody, created_at: new Date().toISOString() };
+    sendingRoomRef.current = roomID;
     setSending(true);
     setSendError(null);
     setPendingMessage(pending);
@@ -1187,6 +1201,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       setPendingMessage({ ...pending, images, files });
       const result = await window.wuu.sendChannelMessage({ room_id: roomID, body: messageBody, images, files });
       acknowledgeMessageMotion(pending.id, result.message.id);
+      sentPresentationRef.current.set(result.message.id, { key: pending.id, createdAt: pending.created_at });
       // The acknowledged message is already durable. Show it immediately and
       // invalidate any list snapshot that started before this send completed.
       messageRefreshGenerationByRoomRef.current.set(roomID, (messageRefreshGenerationByRoomRef.current.get(roomID) ?? 0) + 1);
@@ -1209,6 +1224,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         setDraftRevision((revision) => revision + 1);
       }
     } finally {
+      sendingRoomRef.current = null;
       setPendingMessage(null);
       setSending(false);
     }
@@ -1842,7 +1858,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author, message.author_id),
             } : undefined;
             return (
-              <Fragment key={message.id}>
+              <Fragment key={sentPresentationRef.current.get(message.id)?.key ?? message.id}>
               {showTimestamp ? <time className="channel-timestamp" dateTime={message.created_at}>
                 {formatDate(message.created_at, date.toDateString() === new Date().toDateString()
                   ? { hour: "2-digit", minute: "2-digit" }
@@ -1851,7 +1867,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               <MessageBubbleRow
                 outgoing={own}
                 messageID={message.id}
-                className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
+                className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}${message.id === pendingMessage?.id ? " channel-message-pending" : ""}`}
                 contentClassName="channel-message-content"
                 avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
                   <AgentAvatar disableMorph id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
@@ -1869,19 +1885,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   outgoing={own}
                   allowCollapse={own}
                   onExpand={messageScroll.pauseAutoFollow}
-                  attachmentIDPrefix="main"
+                  attachmentIDPrefix={sentPresentationRef.current.get(message.id)?.key ?? message.id}
                   beforeBody={reply ? <blockquote className="channel-message-reply"><strong>{reply.author_type === "human" ? t("channels.you") : (agentNames.get(reply.author_id) ?? reply.author_id)}</strong><span>{reply.body || reply.task_title}</span></blockquote> : undefined}
                 />
+                {message.id === pendingMessage?.id ? <span className="channel-send-status" role="status">{t("channels.messageSending")}</span> : null}
               </MessageBubbleRow>
               </Fragment>
             );
           })}
-          {pendingMessage?.room_id === selectedRoomID ? (
-            <MessageBubbleRow outgoing messageID={pendingMessage.id} className="channel-message own channel-message-pending" contentClassName="channel-message-content">
-              <ChannelMessageBubble message={pendingMessage} outgoing allowCollapse={false} attachmentIDPrefix="pending" />
-              <span className="channel-send-status" role="status">{t("channels.messageSending")}</span>
-            </MessageBubbleRow>
-          ) : null}
 
         </div>
         {!(inspectedSession && inspectorOverlay) ? <JumpToLatestPill
