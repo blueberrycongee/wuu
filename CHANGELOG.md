@@ -15,6 +15,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Tighten sidebar spacing with consistent row, heading, and group intervals;
+  keep the pinned drop target within the group spacing.
+
 - Use compact corners for embedded message-flow code, output and diff cards,
   and smaller code-copy icons while preserving their click targets.
 

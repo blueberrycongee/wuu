@@ -350,14 +350,15 @@
   --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + 3px);
   --sidebar-row-control-pad-x: 8px;
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
-  /* Shared row spacing separates hit surfaces without stretching their contents. */
+  /* Semantic spacing stays on a 2/4/8/16px scale. Larger text grows the
+   * row itself instead of stretching the space between related items. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: 4px;
-  --sidebar-functional-group-gap: max(20px, calc(var(--sidebar-label-size) * 1.5));
+  --sidebar-functional-group-gap: 16px;
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
-  --sidebar-row-gap: max(2px, calc(var(--sidebar-label-size) * 0.2));
+  --sidebar-row-gap: 2px;
   --sidebar-child-indent: 8px;
   --sidebar-session-status-col: var(--sidebar-nav-icon-col);
   --sidebar-session-status-dot-size: 5px;
@@ -1902,6 +1903,16 @@
   position: relative;
   height: var(--sidebar-functional-group-gap);
   flex: 0 0 var(--sidebar-functional-group-gap);
+}
+
+/* The drop surface is the group break, not another list row. */
+.pinned-append-drop-zone:not(:first-child) {
+  margin-top: calc(-1 * var(--sidebar-functional-row-gap));
+}
+
+.sidebar-functional-group-collapse:has(.pinned-append-drop-zone:only-child),
+.sidebar-functional-group-collapse:has(> .thread-list-collapse-inner > .sidebar-functional-group-body:empty) {
+  margin-top: 0;
 }
 
 /* The append target occupies the group break instead of adding a blank row. */
