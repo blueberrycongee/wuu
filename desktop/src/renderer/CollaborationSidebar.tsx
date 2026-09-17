@@ -1,5 +1,5 @@
 import { AgentOnboardingAvatar } from "./AgentOnboardingAvatar";
-import { Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2, UsersRound } from "lucide-react";
+import { Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
@@ -15,7 +15,7 @@ import { useI18n } from "./i18n";
 export function CollaborationSidebar({
   initialized, agents, rooms, pinnedRoomIDs = [], archivedRoomIDs = [], selectedAgentID, selectedRoomID,
   collapsed = false, onToggleCollapsed,
-  onSelectAgent, onSelectRoom, onManageAgents, onCreateRoom, draftAgent, draftSelected, onSelectDraft,
+  onSelectAgent, onSelectRoom, onCreateRoom, draftAgent, draftSelected, onSelectDraft,
   onEditAgent, onEditRoom,
   onTogglePinned, onHideConversation, onDeleteConversation,
   onSwitchToHarness, onOpenSettings, onOpenAccount, onPointerEnter, onPointerLeave,
@@ -31,6 +31,7 @@ export function CollaborationSidebar({
   selectedRoomID?: string;
   onSelectAgent: (agentID: string) => void;
   onSelectRoom: (roomID: string) => void;
+  // Retain the callback contract while the footer entry is temporarily hidden.
   onManageAgents: () => void;
   onEditAgent?: (agentID: string) => void;
   onEditRoom?: (roomID: string) => void;
@@ -151,7 +152,6 @@ export function CollaborationSidebar({
             {newConversationButton}
             <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("sidebar.harness")} title={t("sidebar.harness")} onClick={onSwitchToHarness}><Code2 aria-hidden="true" /></button>
           </> : null}
-          <button className="collaboration-sidebar-footer-action" type="button" disabled={!initialized} aria-label={t("channels.manageAgents")} title={collapsed ? t("channels.manageAgents") : undefined} onClick={onManageAgents}><UsersRound aria-hidden="true" /><span>{t("channels.manageAgents")}</span></button>
           <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
         </div>
       </div>

@@ -15,6 +15,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Temporarily hide the Collaboration sidebar's Agent management shortcut while
+  retaining agent management capabilities and other entry points.
+
 - Temporarily hide conversation file-change summary cards and the turn navigation
   rail while retaining edit history and the underlying review components.
 

@@ -319,7 +319,7 @@ it("keeps the unfinished identity and avatar when navigating away and back", asy
   await confirmModel();
   await enterName("Unfinished");
   const avatar = container.querySelector(".collaboration-contact-row.active .agent-avatar-mark")?.outerHTML;
-  await click(t("channels.manageAgents"));
+  await click(t("channels.newConversation"));
   expect(container.querySelector('[data-wuu-component="agent-onboarding"]')).toBeNull();
   await click("Unfinished");
   expect(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")?.value).toBe("Unfinished");

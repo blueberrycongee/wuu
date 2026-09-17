@@ -162,6 +162,19 @@ it("keeps collapsed conversations accessible, selected and unread while exposing
   expect(callbacks.onCreateRoom).toHaveBeenCalledOnce();
 });
 
+it.each([false, true])("hides the management shortcut but keeps the account menu usable (collapsed=%s)", (collapsed) => {
+  render([dm, group], [], collapsed);
+  expect(host.querySelector(`button[aria-label="${t("channels.manageAgents")}"]`)).toBeNull();
+  const account = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("account.menu")}"]`)!;
+  expect(account.disabled).toBe(false);
+  act(() => account.click());
+  expect(account.getAttribute("aria-expanded")).toBe("true");
+  act(() => host.querySelector<HTMLButtonElement>('[data-settings-page="providers"]')!.click());
+  expect(callbacks.onOpenSettings).toHaveBeenCalledExactlyOnceWith("providers");
+  expect(account.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(account);
+});
+
 it("does not let a hidden search filter remove rail shortcuts", () => {
   render();
   const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
