@@ -1,6 +1,6 @@
 import { AgentOnboardingAvatar } from "./AgentOnboardingAvatar";
-import { Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { ChevronRight, Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { AppModeSwitch } from "./AppModeSwitch";
@@ -14,13 +14,15 @@ import { useI18n } from "./i18n";
 
 export function CollaborationSidebar({
   initialized, agents, rooms, pinnedRoomIDs = [], archivedRoomIDs = [], selectedAgentID, selectedRoomID,
-  collapsed = false, onToggleCollapsed,
+  collapsed = false, onToggleCollapsed, embedded = false,
   onSelectAgent, onSelectRoom, onCreateRoom, draftAgent, draftSelected, onSelectDraft,
   onEditAgent, onEditRoom,
+  renderAgentSessions,
   onTogglePinned, onHideConversation, onDeleteConversation,
   onSwitchToHarness, onOpenSettings, onOpenAccount, onPointerEnter, onPointerLeave,
 }: {
   initialized: boolean;
+  embedded?: boolean;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   agents: NamedAgent[];
@@ -35,6 +37,7 @@ export function CollaborationSidebar({
   onManageAgents: () => void;
   onEditAgent?: (agentID: string) => void;
   onEditRoom?: (roomID: string) => void;
+  renderAgentSessions?: (agentID: string) => ReactNode;
   onTogglePinned?: (conversation: CollaborationConversation) => void;
   onHideConversation?: (conversation: CollaborationConversation) => void;
   onDeleteConversation?: (conversation: CollaborationConversation) => void;
@@ -50,6 +53,7 @@ export function CollaborationSidebar({
 }): JSX.Element {
   const { t, formatDate } = useI18n();
   const [query, setQuery] = useState("");
+  const [sectionCollapsed, setSectionCollapsed] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   useEffect(() => { setContextMenu(null); }, [query, collapsed, initialized]);
   const conversations = useMemo(
@@ -81,23 +85,31 @@ export function CollaborationSidebar({
     <Plus aria-hidden="true" />
   </button>;
 
+  const Container = embedded ? "section" : "aside";
   return (
-    <aside className={`sidebar collaboration-sidebar${collapsed ? " collaboration-sidebar-rail" : ""}`} data-wuu-component="collaboration-sidebar"
+    <Container className={embedded ? "sidebar-functional-group collaboration-sidebar-section" : `sidebar collaboration-sidebar${collapsed ? " collaboration-sidebar-rail" : ""}`} data-wuu-component="collaboration-sidebar"
       onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
-      <div className="sidebar-content">
-        <div className="collaboration-sidebar-topbar">
+      <div className={embedded ? undefined : "sidebar-content"}>
+        {embedded ? <div className="sidebar-functional-heading">
+          <button type="button" className="sidebar-functional-heading-toggle" aria-expanded={!sectionCollapsed}
+            onClick={() => setSectionCollapsed((value) => !value)}>
+            <ChevronRight className="sidebar-functional-heading-chevron" data-expanded={!sectionCollapsed || undefined} aria-hidden="true" />
+            <span className="sidebar-functional-heading-label">{t("sidebar.collaboration")}</span>
+          </button>
+          <div className="sidebar-functional-heading-action">{newConversationButton}</div>
+        </div> : <div className="collaboration-sidebar-topbar">
           {!collapsed ? newConversationButton : null}
 
-        </div>
-        {!collapsed ? <AppModeSwitch mode="collaboration" collaborationEnabled onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }} /> : null}
-        {!collapsed ? <div className="collaboration-sidebar-tools">
+        </div>}
+        {!embedded && !collapsed ? <AppModeSwitch mode="collaboration" collaborationEnabled onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }} /> : null}
+        {!embedded && !collapsed ? <div className="collaboration-sidebar-tools">
           <label className="collaboration-sidebar-search">
             <Search aria-hidden="true" />
             <input type="search" value={query} placeholder={t("channels.searchConversations")}
               aria-label={t("channels.searchConversations")} onChange={(event) => setQuery(event.currentTarget.value)} />
           </label>
         </div> : null}
-        <nav className="collaboration-sidebar-main" data-scroll-fade="" aria-label={t("channels.conversations")}>
+        <nav className="collaboration-sidebar-main" hidden={embedded && sectionCollapsed} data-scroll-fade={embedded ? undefined : ""} aria-label={t("channels.conversations")}>
           {draftAgent ? <button type="button" className={`collaboration-contact-row${draftSelected ? " active" : ""}`} aria-current={draftSelected ? "page" : undefined} onClick={onSelectDraft} aria-label={draftAgent.name || t("channels.newAgent")}>
             <span className="collaboration-contact-avatar" aria-hidden="true"><AgentOnboardingAvatar avatarKey={draftAgent.avatarKey} /></span>
             <span className="collaboration-contact-copy"><span className="collaboration-contact-heading"><strong>{draftAgent.name || t("channels.newAgent")}</strong></span></span>
@@ -115,7 +127,7 @@ export function CollaborationSidebar({
             const date = message ? new Date(message.created_at) : undefined;
             const timestamp = date && !Number.isNaN(date.getTime()) ? formatDate(date, date.toDateString() === new Date().toDateString()
               ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" }) : "";
-            return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
+            return <Fragment key={id}><button type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
               aria-current={selected ? "page" : undefined} disabled={!initialized}
               aria-label={collapsed ? `${name}${unread > 0 ? `, ${t("channels.unreadMessages", { count: unread })}` : ""}` : undefined}
               title={collapsed ? `${name}${avatarThinking ? ` · ${t("channels.agentWorking")}` : ""}` : undefined}
@@ -142,24 +154,24 @@ export function CollaborationSidebar({
                     : pinned ? <Pin className="collaboration-contact-pin" aria-label={t("channels.pinnedConversation")} /> : null}
                 </span>
               </span>
-            </button>;
+            </button>{agent && !collapsed ? renderAgentSessions?.(agent.id) : null}</Fragment>;
           })}
           {!collapsed && query.trim() && conversations.length === 0 && !draftAgent ? <div className="collaboration-contact-empty">{t("channels.noMatchingConversations")}</div> : null}
         </nav>
-        <div className="collaboration-sidebar-footer">
+        {!embedded ? <div className="collaboration-sidebar-footer">
           {collapsed ? <>
             <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("app.expandLeftSidebar")} title={t("app.expandLeftSidebar")} onClick={onToggleCollapsed}><PanelLeftOpen aria-hidden="true" /></button>
             {newConversationButton}
             <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("sidebar.harness")} title={t("sidebar.harness")} onClick={onSwitchToHarness}><Code2 aria-hidden="true" /></button>
           </> : null}
           <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
-        </div>
+        </div> : null}
       </div>
       {contextMenu && initialized && contextConversation ? <ThreadContextMenu
         x={contextMenu.x} y={contextMenu.y}
         items={contextItems}
         onClose={() => setContextMenu(null)}
       /> : null}
-    </aside>
+    </Container>
   );
 }

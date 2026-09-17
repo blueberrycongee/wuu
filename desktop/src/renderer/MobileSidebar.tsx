@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState, type ComponentProps } from "react";
+import { useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2, Monitor } from "lucide-react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import type { AppSidebar } from "./AppSidebar";
@@ -18,7 +18,7 @@ type Props = Pick<ComponentProps<typeof AppSidebar>,
   "onRemoveProject" | "onRelocateProject" | "onSelectProjectWorkspace" |
   "onCreateProject" | "onOpenProjectFolder" | "groupChatEnabled" |
   "onSwitchToCollaboration" | "onNavigateAway"
-> & { visible: boolean; commands: readonly NavigationSourceNode[] };
+> & { visible: boolean; commands: readonly NavigationSourceNode[]; collaborationNavigation?: ReactNode };
 
 export function MobileSidebar(props: Props): JSX.Element {
   const { t } = useI18n();
@@ -116,6 +116,7 @@ export function MobileSidebar(props: Props): JSX.Element {
           </button>
         </div>
         <div className="mobile-sidebar-scroll" data-scroll-fade="" aria-label={t("sidebar.conversations")} aria-busy={loading}>
+          {props.collaborationNavigation}
           {project?.missing ? <p className="mobile-sidebar-empty" role="status">{t("threadSidebar.missingWorkspace")}</p> : null}
           {groups.filter(group => group.threads.length > 0).map(group => <section
             key={group.label} className="mobile-sidebar-group" aria-label={group.label}>
@@ -161,7 +162,7 @@ export function MobileSidebar(props: Props): JSX.Element {
           && node.id !== "command:search-conversations").map(node =>
           <button key={node.id} type="button" className="mobile-sidebar-choice" disabled={node.disabled}
             aria-current={node.active ? "page" : undefined} onClick={() => activateCommand(node)}>{node.label}</button>)}
-        {props.groupChatEnabled ? <button type="button" className="mobile-sidebar-choice" onClick={props.onSwitchToCollaboration}>{t("sidebar.collaboration")}</button> : null}
+        {props.groupChatEnabled && !props.collaborationNavigation ? <button type="button" className="mobile-sidebar-choice" onClick={props.onSwitchToCollaboration}>{t("sidebar.collaboration")}</button> : null}
         {project && selectedID !== SCRATCH_PSEUDO_PROJECT_ID ? <section className="mobile-sidebar-secondary" aria-label={project.name}>
           <h3>{project.name}</h3>
           {props.onSelectProjectWorkspace ? <button type="button" className="mobile-sidebar-choice" disabled={project.missing}

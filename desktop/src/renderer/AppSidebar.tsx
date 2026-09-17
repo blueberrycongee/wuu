@@ -356,6 +356,9 @@ export function AppSidebar({
   onStartNewThread,
   onOpenSkillsTab,
   groupChatEnabled = false,
+  collaborationNavigation,
+  collaborationNavigationNodes = [],
+  managedThreadsByAgentID = {},
   onToggleConversationSearch,
   onSelectThread,
   onTogglePinned,
@@ -411,6 +414,9 @@ export function AppSidebar({
   onStartNewThread: () => void;
   onOpenSkillsTab: () => void;
   groupChatEnabled?: boolean;
+  collaborationNavigation?: ReactNode | ((renderAgentSessions: (agentID: string) => ReactNode) => ReactNode);
+  collaborationNavigationNodes?: readonly NavigationSourceNode[];
+  managedThreadsByAgentID?: Readonly<Record<string, ThreadSummary[]>>;
   // Unified 协作 section: the room list (with per-room unread counts) is
   // polled at the App level and passed down so the sidebar and the channel
   // canvas never disagree about what needs attention.
@@ -470,8 +476,11 @@ export function AppSidebar({
       for (const thread of threads) byID.set(thread.id, thread);
     }
     for (const thread of pinnedThreads) byID.set(thread.id, thread);
+    for (const threads of Object.values(managedThreadsByAgentID)) {
+      for (const thread of threads) byID.set(thread.id, thread);
+    }
     return [...byID.values()];
-  }, [pinnedThreads, projectThreadsByProjectID]);
+  }, [pinnedThreads, projectThreadsByProjectID, managedThreadsByAgentID]);
   const organization = useSessionOrganization(organizationSourceThreads);
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
@@ -530,6 +539,16 @@ export function AppSidebar({
     workbenchController.deactivateRegion("primary");
     action();
   }, [workbenchController]);
+  const collaborationSection = typeof collaborationNavigation === "function"
+    ? collaborationNavigation((agentID) => {
+      const threads = managedThreadsByAgentID[agentID];
+      return threads?.length ? <div className="collaboration-agent-sessions">
+        <OrganizationThreadList threads={threads} activeID={activeThreadID}
+          pendingThreadID={pendingThreadID} lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+          onSelect={(id) => activateNative(() => onSelectThread(id))}
+          onTogglePinned={onTogglePinned} onArchive={onArchiveThread} onDelete={onDeleteThread} onRename={onRenameThread} />
+      </div> : null;
+    }) : collaborationNavigation;
   const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string): void => {
     void workbenchController.openPluginView(pluginId, viewTypeId, {
       region: "primary",
@@ -939,13 +958,13 @@ export function AppSidebar({
     return [...byID.values()];
   }, [pinnedRows, projectThreadsByProjectID]);
   const attentionThreads = useMemo(() => partitionAttentionThreads(
-    allSidebarThreads,
+    organizationSourceThreads,
     activeThreadID,
     pendingThreadID,
     state.lastViewedTurnByThreadID,
   ), [
     activeThreadID,
-    allSidebarThreads,
+    organizationSourceThreads,
     pendingThreadID,
     state.lastViewedTurnByThreadID,
   ]);
@@ -1553,7 +1572,7 @@ export function AppSidebar({
         <div className="traffic-spacer" />
         <AppModeSwitch
           mode="harness"
-          collaborationEnabled={groupChatEnabled}
+          collaborationEnabled={groupChatEnabled && !collaborationNavigation}
           onChange={(mode) => { if (mode === "collaboration") onSwitchToCollaboration?.(); }}
           unreadViewOpen={unreadViewOpen}
           unreadCount={attentionCount}
@@ -1667,6 +1686,7 @@ export function AppSidebar({
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
+          {collaborationSection}
           {pluginNavigationEntries.length > 0 ? (
             <section
               className="sidebar-functional-group plugin-navigation-group"
@@ -2050,13 +2070,14 @@ export function AppSidebar({
         onCreateProject={onCreateProject}
         onOpenProjectFolder={onOpenProjectFolder}
         groupChatEnabled={groupChatEnabled}
+        collaborationNavigation={collaborationSection}
         onSwitchToCollaboration={onSwitchToCollaboration}
         commands={navigationNodes}
       /> : nativeSidebar}
     </SessionOrganizationProvider>
   );
   return (
-    <NavigationPresentation nodes={navigationNodes} fallback={organizedSidebar} />
+    <NavigationPresentation nodes={[...collaborationNavigationNodes, ...navigationNodes]} fallback={organizedSidebar} />
   );
 }
 

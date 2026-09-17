@@ -1281,6 +1281,31 @@
   padding-bottom: 12px;
 }
 
+/* The shared sidebar owns scrolling and the account footer. */
+.collaboration-sidebar-section .collaboration-sidebar-main {
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.collaboration-sidebar-section .collaboration-sidebar-main[hidden] {
+  display: none;
+}
+
+.collaboration-agent-sessions {
+  padding-left: calc(var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col));
+  min-width: 0;
+}
+
+.collaboration-sidebar-section .collaboration-contact-row {
+  --collaboration-contact-avatar-size: 28px;
+  min-height: 48px;
+  column-gap: 8px;
+}
+
+.collaboration-sidebar-section .collaboration-contact-heading strong {
+  font-weight: var(--weight-regular);
+}
+
 .collaboration-contact-row {
   --collaboration-contact-avatar-size: 36px;
   display: grid;

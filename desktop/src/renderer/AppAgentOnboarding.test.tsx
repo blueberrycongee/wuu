@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ChannelRoom, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
+import type { ChannelRoom, InitializeResult, NamedAgent, ServerEvent, Thread, WuuDesktopApi } from "../shared/protocol";
 import { translateCurrent as t } from "./i18n";
 
 vi.mock("@xterm/xterm", () => ({ Terminal: vi.fn() }));
@@ -13,6 +13,7 @@ let container: HTMLDivElement;
 let root: Root;
 let agents: NamedAgent[];
 let rooms: ChannelRoom[];
+let eventListeners: Set<(event: ServerEvent) => void>;
 const workspace = "/tmp/wuu-agent-onboarding-test";
 const initialized: InitializeResult = {
   protocol_version: "wuu-app-server/v0.1", provider: "byok", model: "reasoner",
@@ -55,6 +56,7 @@ async function startNewAgent(): Promise<void> {
 }
 
 beforeEach(() => {
+  eventListeners = new Set();
   agents = [];
   rooms = [];
   window.localStorage.clear();
@@ -73,7 +75,7 @@ beforeEach(() => {
     listThreads: vi.fn().mockResolvedValue({ threads: [] }), listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
     gitStatus: vi.fn().mockResolvedValue({ is_repo: false, dirty_count: 0, files: [] }),
-    onServerEvent: vi.fn(() => () => {}), onWindowResizeState: vi.fn(() => () => {}), onTerminalEvent: vi.fn(() => () => {}),
+    onServerEvent: vi.fn((listener) => { eventListeners.add(listener); return () => eventListeners.delete(listener); }), onWindowResizeState: vi.fn(() => () => {}), onTerminalEvent: vi.fn(() => () => {}),
     listChannelRooms: vi.fn(async () => ({ rooms })), listNamedAgents: vi.fn(async () => ({ agents })),
     listChannelMessages: vi.fn().mockResolvedValue({ messages: [], responses: [] }),
     markChannelRoomRead: vi.fn().mockResolvedValue({}),
@@ -106,8 +108,56 @@ async function manageSidebarRow(name: string, action: string): Promise<void> {
   const row = Array.from(container.querySelectorAll<HTMLButtonElement>(".collaboration-contact-row")).find(button => button.querySelector("strong")?.textContent === name)!;
   expect(row).toBeTruthy();
   act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 100 })));
-  await click(action);
+  const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    .find(button => button.textContent?.trim() === action);
+  expect(item).toBeTruthy();
+  await act(async () => item!.click());
 }
+
+async function selectSidebarConversation(name: string): Promise<void> {
+  const row = [...container.querySelectorAll<HTMLButtonElement>(".collaboration-contact-row")]
+    .find(button => button.querySelector("strong")?.textContent === name);
+  expect(row).toBeTruthy();
+  await act(async () => row!.click());
+}
+
+it("nests managed sessions beneath their agent without duplicating them in workspace or pinned groups", async () => {
+  agents = [{ id: "manager", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  const thread = (id: string, control?: Thread["session_control"]): Thread => ({
+    id, title: id, preview: id, cwd: workspace, workspace_kind: "scratch",
+    model_provider: "byok", model: "reasoner", status: "idle", turns: [],
+    created_at: "2026-09-12T00:00:00Z", updated_at: "2026-09-12T00:00:00Z", session_control: control,
+  });
+  const managed = ["active", "paused", "taken_over"].map(state => thread(`managed-${state}`, {
+    manager_id: "manager", manager_name: "Research", state: state as "active" | "paused" | "taken_over", revision: 1,
+  }));
+  managed[0].pinned = true;
+  const ordinary = thread("ordinary");
+  const unknown = thread("unavailable-manager", { manager_id: "deleted-agent", manager_name: "Former agent", state: "active", revision: 1 });
+  vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [...managed, ordinary, unknown] });
+  window.wuu.resumeThread = vi.fn().mockResolvedValue({ thread: managed[0] });
+  await act(async () => { root.render(<App />); });
+  const sidebar = container.querySelector('[data-wuu-component="app-sidebar"]') ?? container.querySelector(".sidebar");
+  const nested = sidebar?.querySelector(".collaboration-agent-sessions");
+  expect(nested).toBeTruthy();
+  for (const item of managed) {
+    const buttons = [...sidebar!.querySelectorAll<HTMLButtonElement>("button.thread-row-main")].filter(button => button.textContent?.includes(item.title!));
+    expect(buttons).toHaveLength(1);
+    expect(nested!.contains(buttons[0])).toBe(true);
+  }
+  expect(nested?.textContent).not.toContain("ordinary");
+  expect(nested?.textContent).not.toContain("unavailable-manager");
+  const select = [...nested!.querySelectorAll<HTMLButtonElement>("button.thread-row-main")].find(button => button.textContent?.includes("managed-active"))!;
+  await act(async () => select.click());
+  expect(window.wuu.resumeThread).toHaveBeenCalledWith("managed-active");
+  await act(async () => { for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: workspace, message: {
+    method: "thread/updated", params: { thread: { ...managed[0], session_control: undefined } },
+  } }); });
+  expect(container.querySelector(".collaboration-agent-sessions")?.textContent).not.toContain("managed-active");
+  const released = [...sidebar!.querySelectorAll<HTMLButtonElement>("button.thread-row-main")].filter(button => button.textContent?.includes("managed-active"));
+  expect(released).toHaveLength(1);
+  expect(released[0].closest(".collaboration-agent-sessions")).toBeNull();
+});
 
 it("pins a new Agent without navigation, persists hiding, and restores its DM from settings", async () => {
   agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
@@ -118,14 +168,14 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
     return { room };
   });
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
+  await selectSidebarConversation("General");
   await manageSidebarRow("Research", t("sidebar.pin"));
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledExactlyOnceWith({ agent_id: "new-agent" });
   expect(container.querySelector(".channel-room-settings-name")?.textContent).toBe("General");
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).pinnedRoomIDs).toEqual(["new-dm"]);
   await manageSidebarRow("Research", t("channels.hideConversation"));
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!)).toMatchObject({ pinnedRoomIDs: [], archivedRoomIDs: ["new-dm"] });
-  expect(container.querySelector(".collaboration-sidebar nav")?.textContent).not.toContain("Research");
+  expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Research");
   await click(t("account.menu"));
   await click(t("sidebar.settings"));
   await act(async () => { await vi.dynamicImportSettled(); });
@@ -133,7 +183,7 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
   await click(t("settings.restoreRoom", { title: "Research" }));
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).archivedRoomIDs).toEqual([]);
   await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
-  expect(container.querySelector(".collaboration-sidebar nav")?.textContent).toContain("Research");
+  expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).toContain("Research");
 });
 
 it.each(["agent", "group"])("confirms context deletion and removes only the requested %s", async (target) => {
@@ -143,7 +193,6 @@ it.each(["agent", "group"])("confirms context deletion and removes only the requ
   window.wuu.deleteChannelRoom = vi.fn(async () => { rooms = []; return { deleted: true }; });
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
   const name = target === "agent" ? "Research" : "General";
   const label = t(target === "agent" ? "channels.deleteAgent" : "channels.deleteRoom");
   await manageSidebarRow(name, label);
@@ -158,13 +207,12 @@ it.each(["agent", "group"])("confirms context deletion and removes only the requ
     expect(window.wuu.deleteChannelRoom).toHaveBeenCalledExactlyOnceWith({ room_id: "general" });
     expect(window.wuu.deleteNamedAgent).not.toHaveBeenCalled();
   }
-  expect(container.querySelector(".collaboration-sidebar nav")?.textContent).not.toContain(name);
+  expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain(name);
   confirm.mockRestore();
 });
 
 it("opens a newly created identity's conversation before the next directory refresh", async () => {
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
   await click(t("channels.newConversation"));
   expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
   await startNewAgent();
@@ -193,7 +241,6 @@ it("creates independent conversations for consecutive agents with the default di
     return { room };
   });
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
   for (let index = 1; index <= 2; index += 1) {
     await click(t("channels.newConversation"));
     await startNewAgent();
@@ -210,7 +257,6 @@ it("creates independent conversations for consecutive agents with the default di
 
 it("preserves the agent draft across provider settings and returns to the model step", async () => {
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
   await click(t("channels.newConversation"));
   expect(container.querySelector("#channel-recipient-create-agent")).toBeTruthy();
   await startNewAgent();
@@ -230,23 +276,26 @@ it("preserves the agent draft across provider settings and returns to the model 
 });
 
 
-it("restores a saved direct conversation and falls back when it is no longer available", async () => {
+it("switches between direct conversations and Harness without replacing the sidebar", async () => {
   agents = [{ id: "ada", name: "Ada", memory_dir: "", avatar_key: "abstract-1", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
   const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
   const dm: ChannelRoom = { ...group, id: "ada-dm", kind: "dm", name: "Ada", members: [{ member_type: "agent", member_id: "ada", room_id: "ada-dm", joined_at: group.created_at }] };
   rooms = [group, dm];
   localStorage.setItem("wuu.channels.roomPreferences", JSON.stringify({ pinnedRoomIDs: [], archivedRoomIDs: [], selectedRoomID: dm.id }));
   await act(async () => root.render(<App />));
-  await click("collaboration");
+  const sidebar = container.querySelector('[data-wuu-component="sidebar"]');
+  await selectSidebarConversation("Ada");
   expect(container.querySelector(".channel-room-header")?.textContent).toContain("Ada");
-  await click("harness");
-  await click("collaboration");
+  await click(t("sidebar.newConversation"));
+  expect(container.querySelector(".channel-room-header")).toBeNull();
+  expect(container.querySelector('[data-wuu-component="sidebar"]')).toBe(sidebar);
+  await selectSidebarConversation("Ada");
   expect(container.querySelector(".channel-room-header")?.textContent).toContain("Ada");
   await act(async () => root.unmount());
   rooms = [group];
   root = createRoot(container);
   await act(async () => root.render(<App />));
-  await click("collaboration");
+  await selectSidebarConversation("General");
   expect(container.querySelector(".channel-room-header")?.textContent).toContain("General");
 });
 
@@ -258,7 +307,7 @@ it("hides the previous room while opening a DM and ignores a late DM selection",
   let finish!: (result: { room: ChannelRoom }) => void;
   vi.mocked(window.wuu.openChannelDirectMessage).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   await act(async () => root.render(<App />));
-  await click("collaboration");
+  await selectSidebarConversation("General");
   expect(container.querySelector('[role="log"]')?.textContent).toContain("Only in General");
   await click(t("channels.newConversation"));
   await act(async () => container.querySelector<HTMLButtonElement>("#channel-recipient-ada")!.click());
@@ -277,7 +326,7 @@ it("does not let an older directory poll erase a newly opened DM", async () => {
     const group: ChannelRoom = { id: "general", kind: "channel", name: "General", members: [], created_by: "human", created_at: agents[0].created_at };
     rooms = [group];
     await act(async () => root.render(<App />));
-    await click("collaboration");
+    await selectSidebarConversation("General");
     let finishPoll!: (result: { rooms: ChannelRoom[] }) => void;
     vi.mocked(window.wuu.listChannelRooms).mockImplementationOnce(() => new Promise(resolve => { finishPoll = resolve; }));
     await act(async () => vi.advanceTimersByTime(2_000));
@@ -301,7 +350,6 @@ it("opens an existing agent from the recipient picker before its new DM is in th
     return { room };
   });
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
   await click(t("channels.newConversation"));
   await act(async () => { container.querySelector<HTMLButtonElement>("#channel-recipient-existing-agent")!.click(); });
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledExactlyOnceWith({ agent_id: "existing-agent" });
@@ -313,7 +361,6 @@ it("opens an existing agent from the recipient picker before its new DM is in th
 
 it("keeps the unfinished identity and avatar when navigating away and back", async () => {
   await act(async () => { root.render(<App />); });
-  await click("collaboration");
   await click(t("channels.newConversation"));
   await startNewAgent();
   await confirmModel();
@@ -337,8 +384,8 @@ it("keeps Harness environment reservations out of Collaboration and restores the
   await click(t("shell.showEnvironmentInfo"));
   expect(container.querySelector("main.environment-panel-reserved")).toBeTruthy();
   expect(container.querySelector("main.environment-panel-visible")).toBeTruthy();
-  await click("collaboration");
+  await click(t("channels.newConversation"));
   expect(container.querySelector("main.environment-panel-visible, main.environment-panel-reserved, main.side-thread-panel-visible")).toBeNull();
-  await click("harness");
+  await click(t("sidebar.newConversation"));
   expect(container.querySelector("main.environment-panel-visible")).toBeTruthy();
 });
