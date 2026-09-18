@@ -76,6 +76,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           VITE_ENABLE_ACCOUNT: "false"
           VITE_ENABLE_REMOTE_CONTROL: "false"
+          VITE_ENABLE_COLLABORATION_SETTINGS: "false"
           NODE_OPTIONS: "--max-old-space-size=4096"
 
       - name: Verify packaged app

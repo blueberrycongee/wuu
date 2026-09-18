@@ -75,7 +75,7 @@ export type ArchivedRoomView = {
   created_at: string;
 };
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
-import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
+import { ENABLE_COLLABORATION_SETTINGS, ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { SettingsRow } from "./SettingsRow";
 import { EngineSettingsSection } from "./EngineSettingsSection";
@@ -113,6 +113,9 @@ const COPY_RESET_MS = 1500;
 
 function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
   const next = page ?? "providers";
+  if (next === "collaboration" && !ENABLE_COLLABORATION_SETTINGS) {
+    return "providers";
+  }
   if (next === "remote" && (!ENABLE_REMOTE_CONTROL || !hostSupports("getRemoteControlSnapshot"))) {
     return "providers";
   }
@@ -889,7 +892,9 @@ export function SettingsView({
     ?? settingsPageTitle(activePage, t);
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
     Object.freeze({ id: "providers", label: settingsPageTitle("providers", t) }),
-    Object.freeze({ id: "collaboration", label: settingsPageTitle("collaboration", t) }),
+    ...(ENABLE_COLLABORATION_SETTINGS
+      ? [Object.freeze({ id: "collaboration", label: settingsPageTitle("collaboration", t) })]
+      : []),
     Object.freeze({ id: "advanced", label: settingsPageTitle("advanced", t) }),
     Object.freeze({ id: "general", label: settingsPageTitle("general", t) }),
     ...(ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot")
@@ -945,9 +950,11 @@ export function SettingsView({
               <SettingsNavItem icon={<KeyRound className="icon-lg" />} active={activePage === "providers"} onClick={() => setActivePage("providers")}>
                 {t("settings.providers")}
               </SettingsNavItem>
-              <SettingsNavItem icon={<Hash className="icon-lg" />} active={activePage === "collaboration"} onClick={() => setActivePage("collaboration")}>
-                {t("settings.collaboration")}
-              </SettingsNavItem>
+              {ENABLE_COLLABORATION_SETTINGS ? (
+                <SettingsNavItem icon={<Hash className="icon-lg" />} active={activePage === "collaboration"} onClick={() => setActivePage("collaboration")}>
+                  {t("settings.collaboration")}
+                </SettingsNavItem>
+              ) : null}
               <SettingsNavItem icon={<SlidersHorizontal className="icon-lg" />} active={activePage === "advanced"} onClick={() => setActivePage("advanced")}>
                 {t("settings.advanced")}
               </SettingsNavItem>
@@ -1121,7 +1128,7 @@ export function SettingsView({
                   onStartXAILogin={() => void startXAILogin()}
                 />
               </>
-            ) : activePage === "collaboration" ? (
+            ) : activePage === "collaboration" && ENABLE_COLLABORATION_SETTINGS ? (
               <SettingsCollaborationPage
                 initialized={initialized}
                 running={running}
