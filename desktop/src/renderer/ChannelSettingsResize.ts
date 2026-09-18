@@ -1,26 +1,40 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
-const WIDTH_KEY = "wuu.channels.settingsWidth";
-const DEFAULT_WIDTH = 340;
-const MIN_WIDTH = 280;
-const MAX_WIDTH = 560;
-const STACKED_WIDTH = 820;
+interface ChannelPanelResizeOptions {
+  storageKey: string;
+  defaultWidth: number;
+  minWidth: number;
+  maxWidth: number;
+  dockedAbove: number;
+}
+
 const CHAT_MIN_WIDTH = 400;
 
-function initialWidth(): number {
-  const stored = window.localStorage.getItem(WIDTH_KEY);
-  const width = stored === null ? DEFAULT_WIDTH : Number(stored);
-  return Number.isFinite(width) ? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width)) : DEFAULT_WIDTH;
+function initialWidth(options: ChannelPanelResizeOptions): number {
+  const stored = window.localStorage.getItem(options.storageKey);
+  const width = stored === null ? options.defaultWidth : Number(stored);
+  return Number.isFinite(width) ? Math.max(options.minWidth, Math.min(options.maxWidth, width)) : options.defaultWidth;
 }
 
 export function useChannelSettingsResize(open: boolean) {
-  const ref = useRef<HTMLElement>(null);
-  const [preferredWidth, setPreferredWidth] = useState(initialWidth);
+  const resize = useChannelPanelResize(open, {
+    storageKey: "wuu.channels.settingsWidth", defaultWidth: 340,
+    minWidth: 280, maxWidth: 560, dockedAbove: 820,
+  });
+  return { ...resize, style: { "--channel-settings-width": `${resize.width}px` } as CSSProperties };
+}
+
+// Settings and session inspectors share drag cleanup, persistence and chat clearance.
+export function useChannelPanelResize<T extends HTMLElement = HTMLElement>(open: boolean, options: ChannelPanelResizeOptions) {
+  const { storageKey, defaultWidth, minWidth, maxWidth: limit, dockedAbove } = options;
+  const ref = useRef<T>(null);
+  const [preferredWidth, setPreferredWidth] = useState(() => initialWidth(options));
   const [containerWidth, setContainerWidth] = useState(0);
   const [drag, setDrag] = useState<{ x: number; width: number; pointerId: number } | null>(null);
-  const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, containerWidth - CHAT_MIN_WIDTH));
+  const maxWidth = Math.max(minWidth, Math.min(limit, containerWidth - CHAT_MIN_WIDTH));
   const width = Math.min(preferredWidth, maxWidth);
-  const docked = open && containerWidth > STACKED_WIDTH;
+  const fitsDocked = containerWidth > dockedAbove;
+  const docked = open && fitsDocked;
 
   useLayoutEffect(() => {
     const node = ref.current;
@@ -33,10 +47,10 @@ export function useChannelSettingsResize(open: boolean) {
   }, [open]);
 
   const updateWidth = useCallback((next: number) => {
-    const clamped = Math.max(MIN_WIDTH, Math.min(maxWidth, next));
+    const clamped = Math.max(minWidth, Math.min(maxWidth, next));
     setPreferredWidth(clamped);
-    window.localStorage.setItem(WIDTH_KEY, String(clamped));
-  }, [maxWidth]);
+    window.localStorage.setItem(storageKey, String(clamped));
+  }, [minWidth, maxWidth, storageKey]);
 
   useEffect(() => {
     if (!drag || !docked) {
@@ -68,10 +82,13 @@ export function useChannelSettingsResize(open: boolean) {
 
   return {
     ref,
-    style: { "--channel-settings-width": `${width}px` } as CSSProperties,
+    width,
+    docked,
+    fitsDocked,
+    resizing: Boolean(drag) && docked,
     separatorProps: {
       hidden: !docked,
-      "aria-valuemin": MIN_WIDTH,
+      "aria-valuemin": minWidth,
       "aria-valuemax": maxWidth,
       "aria-valuenow": width,
       "data-resizing": Boolean(drag) || undefined,
@@ -81,11 +98,11 @@ export function useChannelSettingsResize(open: boolean) {
         event.currentTarget.focus();
         setDrag({ x: event.clientX, width, pointerId: event.pointerId });
       },
-      onDoubleClick() { updateWidth(DEFAULT_WIDTH); },
+      onDoubleClick() { updateWidth(defaultWidth); },
       onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
         const next = event.key === "ArrowLeft" ? width + 16
           : event.key === "ArrowRight" ? width - 16
-          : event.key === "Home" ? MIN_WIDTH
+          : event.key === "Home" ? minWidth
           : event.key === "End" ? maxWidth : null;
         if (next === null) return;
         event.preventDefault();

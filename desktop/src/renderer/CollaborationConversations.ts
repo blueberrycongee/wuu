@@ -1,4 +1,5 @@
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
+import type { ThreadSummary } from "./AppState";
 
 export type CollaborationConversation = {
   id: string;
@@ -8,6 +9,23 @@ export type CollaborationConversation = {
   updatedAt: string;
   pinned: boolean;
 };
+
+// Only move sessions when their manager has a visible navigation entry. Hidden
+// or deleted agents must not make otherwise accessible sessions disappear.
+export function managedSidebarThreads(
+  threads: readonly ThreadSummary[], conversations: readonly CollaborationConversation[],
+): { byAgentID: Record<string, ThreadSummary[]>; threadIDs: Set<string> } {
+  const visibleAgents = new Set(conversations.flatMap(item => item.agent ? [item.agent.id] : []));
+  const byAgentID: Record<string, ThreadSummary[]> = {};
+  const threadIDs = new Set<string>();
+  for (const thread of threads) {
+    const managerID = thread.session_control?.manager_id;
+    if (!managerID || !visibleAgents.has(managerID) || thread.archived || thread.ephemeral || thread.parent_id) continue;
+    (byAgentID[managerID] ??= []).push(thread);
+    threadIDs.add(thread.id);
+  }
+  return { byAgentID, threadIDs };
+}
 
 function searchable(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();

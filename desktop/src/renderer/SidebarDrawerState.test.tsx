@@ -38,6 +38,7 @@ async function renderSidebarDrawerState({
   closeOnWindowResize?: boolean;
 } = {}): Promise<{
   get: () => SidebarDrawerStateController;
+  setCollapsed: (collapsed: boolean) => Promise<void>;
   sidebar: HTMLElement;
   hoverZone: HTMLElement;
 }> {
@@ -45,11 +46,11 @@ async function renderSidebarDrawerState({
   let sidebar: HTMLElement | null = null;
   let hoverZone: HTMLElement | null = null;
 
-  function Probe() {
+  function Probe({ collapsed = true }: { collapsed?: boolean }) {
     const appShellRef = useRef<HTMLDivElement>(null);
     const drawer = useSidebarDrawerState({
       appShellRef,
-      sidebarCollapsed: true,
+      sidebarCollapsed: collapsed,
       resizingSidebar: false,
       motionMs: 120,
       closeOnWindowResize,
@@ -85,6 +86,7 @@ async function renderSidebarDrawerState({
   }
 
   return {
+    setCollapsed: async (collapsed) => { await act(async () => root!.render(createElement(Probe, { collapsed }))); },
     get: () => {
       if (!latest) {
         throw new Error("sidebar drawer state was not rendered");
@@ -97,6 +99,16 @@ async function renderSidebarDrawerState({
 }
 
 describe("useSidebarDrawerState", () => {
+  it("finishes docking when the pointer enters the newly pinned rail", async () => {
+    const hook = await renderSidebarDrawerState();
+    await act(async () => hook.get().openSidebarDrawerNow());
+    await hook.setCollapsed(false);
+    expect(hook.get().sidebarDrawerPhase).toBe("docking");
+    await act(async () => hook.get().openSidebarDrawer());
+    await act(async () => vi.advanceTimersByTime(120));
+    expect(hook.get().sidebarDrawerPhase).toBe("closed");
+  });
+
   it("opens immediately for an explicit focus-mode navigation request", async () => {
     const hook = await renderSidebarDrawerState();
     const openSidebarDrawerNow = (

@@ -9,6 +9,7 @@ import { assignmentState, ChannelView, formatChannelUnreadCount } from "./Channe
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
+import type { ThreadSummary } from "./AppState";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -228,6 +229,61 @@ afterEach(() => {
 });
 
 describe("ChannelView", () => {
+  it("keeps working sessions inside their agent conversation and preserves the chat while browsing all sessions", async () => {
+    const reduced = new EventTarget();
+    Object.assign(reduced, { matches: true });
+    vi.spyOn(window, "matchMedia").mockReturnValue(reduced as MediaQueryList);
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    const dmRooms: ChannelRoom[] = agents.map((agent, i) => ({ ...rooms[0], id: `dm-${i}`, kind: "dm",
+      members: [{ room_id: `dm-${i}`, member_id: agent.id, member_type: "agent", joined_at: agent.created_at }] }));
+    const work: ThreadSummary[] = Array.from({ length: 4 }, (_, i) => ({
+      id: `work-${i}`, title: `Alpha work ${i}`, cwd: "/repo", status: i < 3 ? "in_progress" : "idle",
+      created_at: agents[0].created_at, updated_at: new Date(Date.UTC(2026, 8, 17, 0, i)).toISOString(),
+      model_provider: "test", model: "test", preview: "", turns: [], turn_count: 1,
+    }));
+    const betaWork = { ...work[0], id: "beta-work", title: "Beta work" };
+    const openSession = vi.fn();
+    root = createRoot(container);
+    const renderRoom = (id: string, alphaWork = work) => act(async () => root!.render(<ChannelView
+      selectedRoomID={id} directoryAgents={agents} directoryRooms={[...dmRooms, rooms[0]]}
+      onOpenSession={openSession} managedThreadsByAgentID={{ [agents[0].id]: alphaWork, [agents[1].id]: [betaWork] }}
+      composerDraft={{ prompt: "Keep this draft", images: [], files: [] }} />));
+    await renderRoom(dmRooms[0].id);
+    const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const stream = container.querySelector('[role="log"]');
+    const all = container.querySelector<HTMLButtonElement>('.channel-conversation-footer .managed-agent-work-pill')!;
+    expect(all.textContent).toContain("3");
+    expect(all.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => all.click());
+    expect(all.getAttribute("aria-expanded")).toBe("true");
+    const results = container.querySelectorAll<HTMLButtonElement>('.managed-session-result');
+    expect(results).toHaveLength(4);
+    expect(results[0].textContent).toContain("Alpha work 2");
+    expect(results[3].textContent).toContain("Alpha work 3");
+    await act(async () => results[0].click());
+    expect(openSession).toHaveBeenCalledExactlyOnceWith("work-2");
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    expect(container.querySelector('textarea')).toBe(composer);
+    expect(composer.value).toBe("Keep this draft");
+    await act(async () => container.querySelector<HTMLButtonElement>('.managed-session-panel header button')!.click());
+    expect(container.querySelector('.managed-session-panel')).toBeNull();
+    expect(all.getAttribute("aria-expanded")).toBe("false");
+    await renderRoom(dmRooms[0].id, work.map(thread => ({ ...thread, status: "idle" })));
+    expect(container.querySelector('.managed-agent-work .managed-session-spinner')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.managed-agent-work-pill')!.click());
+    expect(container.querySelectorAll('.managed-session-result')).toHaveLength(4);
+    await renderRoom(dmRooms[1].id);
+    expect(container.querySelector('.managed-session-panel')).toBeNull();
+    expect(container.querySelector('.managed-agent-work-pill')?.textContent).toContain("1");
+    await act(async () => container.querySelector<HTMLButtonElement>('.managed-agent-work-pill')!.click());
+    expect(container.querySelectorAll('.managed-session-result')).toHaveLength(1);
+    expect(container.querySelector('.managed-session-result')?.textContent).toContain("Beta work");
+    await renderRoom(rooms[0].id);
+    expect(container.querySelector('.managed-agent-work')).toBeNull();
+    await renderRoom(dmRooms[0].id, []);
+    expect(container.querySelector('.managed-agent-work')).toBeNull();
+  });
+
   it.each(["channel", "dm"] as const)("keeps %s header settings without a plans or memory management entry", async (kind) => {
     const room = { ...rooms[0], kind, members: kind === "dm" ? rooms[0].members.slice(0, 1) : rooms[0].members };
     const api = createApi();
@@ -1197,6 +1253,72 @@ describe("ChannelView", () => {
     expect(container.querySelectorAll(".channel-message-stream > time")).toHaveLength(2);
     expect(renderedMessages[3].querySelector(".channel-human-avatar")).toBeNull();
     expect(renderedMessages[4].querySelector(".channel-author-mention")?.textContent).toBe("@Beta");
+  });
+
+  it("resizes managed sessions without replacing the running activity or draft and restores the width after reopening", async () => {
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[0]] };
+    const work: ThreadSummary = {
+      id: "work", title: "Running work", cwd: "/repo", status: "in_progress", model: "test", model_provider: "test",
+      preview: "", turns: [], turn_count: 0, created_at: dm.created_at, updated_at: dm.created_at,
+    };
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id}
+      onOpenSession={vi.fn()} managedThreadsByAgentID={{ [agents[0].id]: [work] }} />));
+    await settle();
+    const conversation = container.querySelector<HTMLElement>(".channel-conversation")!;
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1100 });
+    const stream = container.querySelector('[role="log"]');
+    const activity = container.querySelector('.channel-activity-inspect');
+    expect(activity).not.toBeNull();
+    const composer = container.querySelector('textarea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(composer, "Keep this draft");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const toggle = container.querySelector<HTMLButtonElement>('.managed-agent-work-pill')!;
+    act(() => toggle.click());
+    const separator = () => container.querySelector<HTMLElement>('.channel-inspector-resizer')!;
+    const width = () => Number(separator().getAttribute("aria-valuenow"));
+    expect(separator().hidden).toBe(false);
+    const pointer = (target: EventTarget, type: string, x: number, pointerId = 1) => act(() => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: pointerId });
+      target.dispatchEvent(event);
+    });
+    const initial = width();
+    pointer(separator(), "pointerdown", 680);
+    pointer(window, "pointermove", 620, 2);
+    expect(width()).toBe(initial);
+    pointer(window, "pointermove", 620);
+    expect(width()).toBe(initial + 60);
+    pointer(window, "pointercancel", 620);
+    pointer(window, "pointermove", 580);
+    expect(width()).toBe(initial + 60);
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    act(() => toggle.click());
+    act(() => toggle.click());
+    expect(width()).toBe(initial + 60);
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    expect(container.querySelector('.channel-activity-inspect')).toBe(activity);
+    expect(container.querySelector('textarea')).toBe(composer);
+    expect(composer.value).toBe("Keep this draft");
+    pointer(separator(), "pointerdown", 620);
+    act(() => toggle.click());
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    pointer(window, "pointermove", 300);
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
+    act(() => toggle.click());
+    expect(separator().hidden).toBe(true);
+    expect(container.querySelector('.channel-room-main')?.hasAttribute('inert')).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>('.managed-session-panel header button')!.click());
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1100 });
+    act(() => toggle.click());
+    expect(width()).toBe(initial + 60);
+    pointer(separator(), "pointerdown", 620);
+    act(() => root?.unmount());
+    root = null;
+    expect(document.body.style.cursor).not.toBe("col-resize");
   });
 
   it("resizes inline settings without replacing the chat, clamps width, and ends cancelled drags", async () => {

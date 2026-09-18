@@ -1508,6 +1508,8 @@ function summarizeThreadForSidebar(
     workspace_id: thread.workspace_id,
     workspace_kind: thread.workspace_kind,
     status: runningThreadIDs?.has(thread.id) && !answerReady ? "in_progress" : status,
+    session_control: thread.session_control,
+    ephemeral: thread.ephemeral,
     read_only: thread.read_only,
     pinned: thread.pinned,
     folder_id: thread.folder_id,

@@ -356,6 +356,8 @@ export function AppSidebar({
   onStartNewThread,
   onOpenSkillsTab,
   groupChatEnabled = false,
+  collaborationNavigation,
+  collaborationNavigationNodes = [],
   onToggleConversationSearch,
   onSelectThread,
   onTogglePinned,
@@ -411,6 +413,8 @@ export function AppSidebar({
   onStartNewThread: () => void;
   onOpenSkillsTab: () => void;
   groupChatEnabled?: boolean;
+  collaborationNavigation?: ReactNode;
+  collaborationNavigationNodes?: readonly NavigationSourceNode[];
   // Unified 协作 section: the room list (with per-room unread counts) is
   // polled at the App level and passed down so the sidebar and the channel
   // canvas never disagree about what needs attention.
@@ -939,13 +943,13 @@ export function AppSidebar({
     return [...byID.values()];
   }, [pinnedRows, projectThreadsByProjectID]);
   const attentionThreads = useMemo(() => partitionAttentionThreads(
-    allSidebarThreads,
+    organizationSourceThreads,
     activeThreadID,
     pendingThreadID,
     state.lastViewedTurnByThreadID,
   ), [
     activeThreadID,
-    allSidebarThreads,
+    organizationSourceThreads,
     pendingThreadID,
     state.lastViewedTurnByThreadID,
   ]);
@@ -1553,7 +1557,7 @@ export function AppSidebar({
         <div className="traffic-spacer" />
         <AppModeSwitch
           mode="harness"
-          collaborationEnabled={groupChatEnabled}
+          collaborationEnabled={groupChatEnabled && !collaborationNavigation}
           onChange={(mode) => { if (mode === "collaboration") onSwitchToCollaboration?.(); }}
           unreadViewOpen={unreadViewOpen}
           unreadCount={attentionCount}
@@ -1667,6 +1671,7 @@ export function AppSidebar({
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
+          {collaborationNavigation}
           {pluginNavigationEntries.length > 0 ? (
             <section
               className="sidebar-functional-group plugin-navigation-group"
@@ -2050,13 +2055,14 @@ export function AppSidebar({
         onCreateProject={onCreateProject}
         onOpenProjectFolder={onOpenProjectFolder}
         groupChatEnabled={groupChatEnabled}
+        collaborationNavigation={collaborationNavigation}
         onSwitchToCollaboration={onSwitchToCollaboration}
         commands={navigationNodes}
       /> : nativeSidebar}
     </SessionOrganizationProvider>
   );
   return (
-    <NavigationPresentation nodes={navigationNodes} fallback={organizedSidebar} />
+    <NavigationPresentation nodes={[...collaborationNavigationNodes, ...navigationNodes]} fallback={organizedSidebar} />
   );
 }
 

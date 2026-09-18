@@ -91,6 +91,33 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 }
 
 describe("AgentOnboarding", () => {
+  it("keeps model management in model selection and lets the selected card reopen it without losing the name", async () => {
+    const manage = vi.fn();
+    const { create } = await mount({ onManageProviders: manage });
+    expect(container.querySelector('[data-action="confirm-model"]')).not.toBeNull();
+    expect(container.querySelector('[data-action="edit-model"]')).toBeNull();
+    await click('[data-action="manage-providers"]');
+    expect(manage).toHaveBeenCalledOnce();
+    await click('[data-action="confirm-model"]');
+    const footer = query(".channel-conversation-footer");
+    expect(footer.querySelector('[data-action="edit-model"]')).toBeNull();
+    expect(container.querySelector('[data-action="manage-providers"]')).toBeNull();
+    expect(footer.querySelector('[data-action="random-name"]')).not.toBeNull();
+    expect(document.activeElement).toBe(query(".channel-composer textarea"));
+    await type("agent-name", "Ada");
+    const edit = query('[data-action="edit-model"]');
+    expect(edit.closest(".agent-onboarding-form")?.querySelector(".agent-onboarding-history-model")).toBeTruthy();
+    await click('[data-action="edit-model"]');
+    expect(currentDraft.step).toBe("model");
+    expect(container.querySelector('[data-action="manage-providers"]')).not.toBeNull();
+    await choose("agent-model", "plain");
+    await click('[data-action="confirm-model"]');
+    expect(query<HTMLTextAreaElement>(".channel-composer textarea").value).toBe("Ada");
+    expect(currentDraft.model).toBe("plain");
+    expect(container.querySelector('[data-action="manage-providers"]')).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("shows the avatar before the model bubble and reveals controls after the formation", async () => {
     vi.useFakeTimers();
     vi.mocked(prefersReducedMotion).mockReturnValue(false);

@@ -144,17 +144,16 @@ export function useSidebarDrawerState({
   }, [appShellRef]);
 
   const openSidebarDrawer = useCallback((): void => {
-    if (resizingSidebar || sidebarDrawerSuppressedRef.current) {
+    // Entering the newly pinned rail must not cancel its docking timer.
+    if (resizingSidebar || !sidebarCollapsed || sidebarDrawerSuppressedRef.current) {
       return;
     }
-    if (sidebarCollapsed && sidebarDrawerPointerHovered() === false) {
+    if (sidebarDrawerPointerHovered() === false) {
       return;
     }
     clearSidebarDrawerOpenTimer();
     clearSidebarDrawerCloseTimer();
-    if (sidebarCollapsed) {
-      setSidebarDrawerPhase("open");
-    }
+    setSidebarDrawerPhase("open");
   }, [
     clearSidebarDrawerCloseTimer,
     clearSidebarDrawerOpenTimer,

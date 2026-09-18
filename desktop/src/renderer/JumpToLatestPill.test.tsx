@@ -96,6 +96,32 @@ function stubRect(node: HTMLElement, rect: Partial<DOMRect>): void {
     }) as DOMRect;
 }
 
+it("keeps an inline companion mounted while adding and removing the history jump action", () => {
+  const { node, setScrollTop, scrollTo } = scrollContainer({ scrollHeight: 1500, clientHeight: 500, scrollTop: 1000 });
+  const host = document.createElement("div");
+  document.body.append(host);
+  mountedContainers.push(host);
+  const root = createRoot(host);
+  mountedRoots.push(root);
+  const open = vi.fn();
+  act(() => root.render(createElement(JumpToLatestPill, {
+    containerRef: { current: node }, bottomAnchor: null, inline: true,
+    companion: createElement("button", { onClick: open, "data-companion": true }, "Running sessions"),
+  })));
+  const companion = host.querySelector<HTMLButtonElement>("[data-companion]")!;
+  expect(host.querySelectorAll("button")).toHaveLength(1);
+  act(() => { setScrollTop(100); node.dispatchEvent(new Event("scroll")); });
+  expect(host.querySelectorAll("button")).toHaveLength(2);
+  expect(host.querySelector("[data-companion]")).toBe(companion);
+  act(() => host.querySelector<HTMLButtonElement>(".jump-to-latest-pill")!.click());
+  expect(scrollTo).toHaveBeenCalledWith({ top: 1500, behavior: "smooth" });
+  act(() => { setScrollTop(1000); node.dispatchEvent(new Event("scroll")); });
+  expect(host.querySelectorAll("button")).toHaveLength(1);
+  expect(host.querySelector("[data-companion]")).toBe(companion);
+  act(() => companion.click());
+  expect(open).toHaveBeenCalledOnce();
+});
+
 function mountPill(node: HTMLElement): HTMLElement {
   const host = document.createElement("div");
   node.appendChild(host);

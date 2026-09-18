@@ -44,7 +44,7 @@ export function MessageBubble({
   className?: string;
 }): JSX.Element {
   return (
-    <div className={`chat-bubble${outgoing ? " chat-bubble--user" : ""}${className ? ` ${className}` : ""}`}>
+    <div className={`chat-bubble${outgoing ? " chat-bubble--user user-message" : ""}${className ? ` ${className}` : ""}`}>
       {children}
     </div>
   );

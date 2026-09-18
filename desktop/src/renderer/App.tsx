@@ -99,7 +99,7 @@ import {
   AppSidebar,
 } from "./AppSidebar";
 import { ChannelView, type ChannelSection } from "./ChannelView";
-import type { CollaborationConversation } from "./CollaborationConversations";
+import { collaborationConversations, managedSidebarThreads, type CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import type { AppMode } from "./AppModeSwitch";
@@ -545,8 +545,7 @@ export function App(): JSX.Element {
   // rail. Keep a docked sidebar docked; only an already-collapsed or compact
   // sidebar remains a drawer while the workspace is expanded.
   const [appMode, setAppMode] = useState<AppMode>("harness");
-  const collaborationRail = ENABLE_GROUP_CHAT && appMode === "collaboration" && sidebarCollapsed && !compactNavigation && !poppedOutMode;
-  const sidebarDrawerMode = compactNavigation || (sidebarCollapsed && !collaborationRail);
+  const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
     sidebarHoverZoneRef,
@@ -2218,8 +2217,6 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
-  const [mainConversationScrolledAway, setMainConversationScrolledAway] =
-    useState(false);
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
@@ -2266,6 +2263,8 @@ export function App(): JSX.Element {
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
+    statusClusterRef,
+    statusClusterNode,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
@@ -2281,6 +2280,7 @@ export function App(): JSX.Element {
     secondaryTurns: state.secondaryThread?.turns,
     emptyConversation,
     initialized: Boolean(state.initialized),
+    running: isStateActiveThreadRunning(state),
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id
@@ -2581,6 +2581,11 @@ export function App(): JSX.Element {
     () => pinnedThreadSummaries(sidebarThreadSummaries),
     [sidebarThreadSummaries],
   );
+  const sidebarConversations = useMemo(() => ENABLE_GROUP_CHAT
+    ? collaborationConversations(namedAgents, channelRooms, channelRoomPreferences.pinnedRoomIDs, "", channelRoomPreferences.archivedRoomIDs)
+    : [], [namedAgents, channelRooms, channelRoomPreferences]);
+  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations),
+    [sidebarThreadSummaries, sidebarConversations]);
   const sidebarScratchThreads = useMemo(
     () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
     [sidebarThreadSummaries, state.projects],
@@ -2605,11 +2610,11 @@ export function App(): JSX.Element {
     [scratchPseudoProject, state.projects],
   );
   const sidebarThreadsByProjectID = useMemo(
-    () => ({
+    () => Object.fromEntries(Object.entries({
       [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
       ...sidebarProjectThreadSummariesByProjectID,
-    }),
-    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID],
+    }).map(([id, threads]) => [id, threads.filter(thread => !managedSidebar.threadIDs.has(thread.id))])),
+    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID, managedSidebar],
   );
   const activeThreadReadOnly = Boolean(activeThread?.read_only);
   const activeThreadIsRunning = isStateActiveThreadRunning(state);
@@ -2758,7 +2763,7 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${collaborationRail ? " collaboration-rail" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -2776,9 +2781,9 @@ export function App(): JSX.Element {
     resizingRightPanel ? " resizing-right-panel" : ""
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
-    "--sidebar-width": `${collaborationRail ? 88 : effectiveSidebarWidth}px`,
-    "--sidebar-open-width": `${collaborationRail ? 88 : sidebarWidth}px`,
-    "--workspace-sheet-left": `${collaborationRail ? 88 : sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
+    "--sidebar-width": `${effectiveSidebarWidth}px`,
+    "--sidebar-open-width": `${sidebarWidth}px`,
+    "--workspace-sheet-left": `${sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
@@ -3399,7 +3404,7 @@ export function App(): JSX.Element {
   }, [activateThread, revealConversationFromFocusedWorkspace]);
 
   const openCollaborationHarnessSession = useStableCallback((id: string) => {
-    setAppMode("harness");
+    openHarnessView();
     revealConversationFromFocusedWorkspace();
     void activateThread(id);
   });
@@ -3433,6 +3438,7 @@ export function App(): JSX.Element {
   });
 
   function prepareChannelTab(): void {
+    desktopWorkbenchController.deactivateRegion("primary");
     setProjectMenuOpen(false);
     setRuntimeMenuOpen(false);
     setCodexRuntimeMenu(null);
@@ -3481,6 +3487,7 @@ export function App(): JSX.Element {
   }
 
   function openHarnessView(): void {
+    desktopWorkbenchController.deactivateRegion("primary");
     setAppMode("harness");
     selectedCollaborationAgentRequestRef.current = "";
     setSelectedCollaborationAgentID("");
@@ -5096,7 +5103,7 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible && !collaborationRail ? (
+  const collaborationNavigation = sidebarToggleVisible ? (
     <button
       className="icon-button side-panel-toggle-button sidebar-toggle-button"
       data-wuu-component="sidebar-toggle"
@@ -5134,7 +5141,7 @@ export function App(): JSX.Element {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
-          data-wuu-sidebar-mode={collaborationRail ? "rail" : sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
+          data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           {!poppedOutMode ? (
             <>
@@ -5167,11 +5174,32 @@ export function App(): JSX.Element {
               </button>
             </div>
           ) : null}
-          {appMode === "collaboration" && ENABLE_GROUP_CHAT ? (
+          <AppSidebar
+            collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
+              { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
+              { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
+                label: t("channels.newConversation"), disabled: !state.initialized,
+                onActivate: () => { closeCompactSessionSwitcher(); openNewChannelRoom(); } },
+              ...sidebarConversations.flatMap((conversation) => [{
+                  id: `collaboration:${conversation.id}`, kind: "room" as const,
+                  parentId: "section:collaboration", depth: 1, label: conversation.name,
+                  active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
+                    ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
+                  pinned: conversation.pinned, unread: Boolean(conversation.room?.unread_count),
+                  running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
+                  disabled: !state.initialized,
+                  onActivate: () => {
+                    closeCompactSessionSwitcher();
+                    if (conversation.room) selectChannelRoom(conversation.room.id);
+                    else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
+                  },
+                  onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
+                }]),
+            ] : undefined}
+            collaborationNavigation={ENABLE_GROUP_CHAT ? (
             <CollaborationSidebar
+              embedded
               initialized={Boolean(state.initialized)}
-              collapsed={collaborationRail}
-              onToggleCollapsed={toggleSidebar}
               agents={namedAgents}
               rooms={channelRooms}
               pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
@@ -5179,8 +5207,8 @@ export function App(): JSX.Element {
               onTogglePinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
               onHideConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
               onDeleteConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-              selectedAgentID={collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-              selectedRoomID={collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
+              selectedAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
+              selectedRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
               onSelectAgent={(agent) => {
                 closeCompactSessionSwitcher();
                 selectCollaborationAgent(agent);
@@ -5195,6 +5223,7 @@ export function App(): JSX.Element {
               }}
               onEditAgent={(agentID) => {
                 closeCompactSessionSwitcher();
+                openChannelsView();
                 setAgentOnboardingActive(false);
                 setNewRoomRequest(0);
                 setEditChannelRoomRequestID("");
@@ -5202,13 +5231,14 @@ export function App(): JSX.Element {
               }}
               onEditRoom={(roomID) => {
                 closeCompactSessionSwitcher();
+                openChannelsView();
                 setAgentOnboardingActive(false);
                 setNewRoomRequest(0);
                 setEditChannelAgentRequestID("");
                 setEditChannelRoomRequestID(roomID);
               }}
               draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
-              draftSelected={agentOnboardingActive}
+              draftSelected={appMode === "collaboration" && agentOnboardingActive}
               onSelectDraft={openNewNamedAgent}
               onCreateRoom={() => {
                 closeCompactSessionSwitcher();
@@ -5218,8 +5248,6 @@ export function App(): JSX.Element {
                 closeCompactSessionSwitcher();
                 openHarnessView();
               }}
-              onPointerEnter={openSidebarDrawer}
-              onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
               onOpenAccount={() => {
                 if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
                 else setAccountOpen(true);
@@ -5229,8 +5257,7 @@ export function App(): JSX.Element {
                 setSettingsOpen(true);
               }}
             />
-          ) : (
-          <AppSidebar
+          ) : undefined}
             sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
             mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
@@ -5242,8 +5269,8 @@ export function App(): JSX.Element {
                 ? workspaceContext.project_id
                 : undefined
             }
-            pinnedThreads={sidebarPinnedThreads}
-            activeThreadID={activeThreadID}
+            pinnedThreads={sidebarPinnedThreads.filter(thread => !managedSidebar.threadIDs.has(thread.id))}
+            activeThreadID={appMode === "harness" ? activeThreadID : undefined}
             pendingThreadID={visiblePendingThreadID}
             pendingProjectID={visiblePendingProjectID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
@@ -5255,11 +5282,13 @@ export function App(): JSX.Element {
             searchOpen={conversationSearch.open}
             sectionOrder={sidebarSectionOrder}
             onStartNewThread={() => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadWithComposerFocus();
             }}
             onOpenSkillsTab={() => {
+              openHarnessView();
               closeCompactSessionSwitcher();
               openSkillsTab();
             }}
@@ -5273,6 +5302,7 @@ export function App(): JSX.Element {
             }}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void activateThread(id);
@@ -5304,6 +5334,7 @@ export function App(): JSX.Element {
                     if (!project || project.missing) {
                       return;
                     }
+                    openHarnessView();
                     setFocusedWorkspaceContext({
                       kind: "project",
                       project_id: project.id,
@@ -5315,11 +5346,13 @@ export function App(): JSX.Element {
                 : undefined
             }
             onStartNewThreadForProject={(id) => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadForProjectWithComposerFocus(id);
             }}
             onSelectProjectThread={(projectID, threadID) => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void selectProjectThread(projectID, threadID);
@@ -5343,7 +5376,6 @@ export function App(): JSX.Element {
               setSettingsOpen(true);
             }}
           />
-          )}
 
           {compactNavigation ? (
             <>
@@ -5366,7 +5398,7 @@ export function App(): JSX.Element {
             </>
           ) : null}
 
-          {sidebarDrawerMode || collaborationRail ? null : (
+          {sidebarDrawerMode ? null : (
             <div
               className="sidebar-resizer"
               inert={rightPanelOpen && rightPanelGlobalized}
@@ -5396,7 +5428,10 @@ export function App(): JSX.Element {
         onClearQuery={clearConversationSearchQuery}
         onKeyDown={handleConversationSearchKeyDown}
         onSelectIndex={setConversationSearchSelectedIndex}
-        onSelectResult={selectConversationSearchResult}
+        onSelectResult={(result) => {
+          openHarnessView();
+          return selectConversationSearchResult(result);
+        }}
       />
             </>
           ) : null}
@@ -5458,6 +5493,8 @@ export function App(): JSX.Element {
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
               onOpenSession={openCollaborationHarnessSession}
+              managedThreadsByAgentID={managedSidebar.byAgentID}
+              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
               onOpenAgentConversation={selectCollaborationAgent}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
@@ -5758,8 +5795,7 @@ export function App(): JSX.Element {
             {mainConversationDockVisible && !emptyConversation ? (
               <JumpToLatestPill
                 containerRef={conversationScrollRef}
-                bottomAnchor={dockComposerNode}
-                onScrolledAwayChange={setMainConversationScrolledAway}
+                bottomAnchor={statusClusterNode ?? dockComposerNode}
               />
             ) : null}
           </div>
@@ -5810,9 +5846,8 @@ export function App(): JSX.Element {
 
         <ConversationStatusCluster
           host={desktopPluginHost}
-          visible={
-            mainConversationDockVisible && !mainConversationScrolledAway
-          }
+          visible={mainConversationDockVisible}
+          clusterRef={statusClusterRef}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}

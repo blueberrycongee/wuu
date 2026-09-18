@@ -631,19 +631,24 @@
   color: var(--ink);
 }
 
-.sidebar-resizer {
+.sidebar-resizer,
+.channel-inspector-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--sidebar-width, 296px) - 5px);
-  z-index: 10;
   width: 10px;
   cursor: col-resize;
   outline: 0;
   -webkit-app-region: no-drag;
 }
 
-.sidebar-resizer::before {
+.sidebar-resizer {
+  left: calc(var(--sidebar-width, 296px) - 5px);
+  z-index: 10;
+}
+
+.sidebar-resizer::before,
+.channel-inspector-resizer::before {
   /* Spans the full sidebar height so the hover/drag feedback lights the
    * entire right edge of the left sidebar, not just a short indicator
    * segment that leaves the top and bottom 12px dark. */
@@ -664,7 +669,10 @@
 
 .sidebar-resizer:hover::before,
 .sidebar-resizer:focus-visible::before,
-.resizing-sidebar .sidebar-resizer::before {
+.resizing-sidebar .sidebar-resizer::before,
+.channel-inspector-resizer:hover::before,
+.channel-inspector-resizer:focus-visible::before,
+.channel-inspector-resizer[data-resizing]::before {
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
 }
@@ -1275,19 +1283,38 @@
   min-height: 0;
   flex: 1 1 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sidebar-row-gap);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: 12px;
 }
 
+/* The shared sidebar owns scrolling and the account footer. */
+.collaboration-sidebar-section .collaboration-sidebar-main {
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.collaboration-sidebar-section .collaboration-sidebar-main[hidden] {
+  display: none;
+}
+
+.collaboration-sidebar-section {
+  --collaboration-contact-avatar-size: 24px;
+}
+
+.collaboration-sidebar-section .collaboration-contact-row {
+  min-height: var(--sidebar-row-height);
+  column-gap: var(--sidebar-nav-column-gap);
+  padding: 4px var(--sidebar-row-pad-x);
+}
+
 .collaboration-contact-row {
-  --collaboration-contact-avatar-size: 36px;
   display: grid;
   flex: 0 0 auto;
   min-width: 0;
-  min-height: 56px;
-  grid-template-columns: var(--collaboration-contact-avatar-size) minmax(0, 1fr);
+  min-height: max(40px, var(--sidebar-row-height));
+  grid-template-columns: var(--collaboration-contact-avatar-size, 28px) minmax(0, 1fr);
   align-items: center;
   column-gap: 12px;
   border-radius: var(--radius-xs);
@@ -1312,8 +1339,8 @@
 
 .collaboration-contact-avatar {
   display: block;
-  width: var(--collaboration-contact-avatar-size);
-  height: var(--collaboration-contact-avatar-size);
+  width: var(--collaboration-contact-avatar-size, 28px);
+  height: var(--collaboration-contact-avatar-size, 28px);
   overflow: visible;
   border-radius: var(--radius-xs);
 }
@@ -1324,21 +1351,18 @@
 }
 
 .collaboration-contact-copy {
-  display: grid;
-  gap: 4px;
+  display: block;
   min-width: 0;
 }
 
-.collaboration-contact-heading,
-.collaboration-contact-detail {
+.collaboration-contact-heading {
   display: flex;
   align-items: center;
   min-width: 0;
   gap: 8px;
 }
 
-.collaboration-contact-heading strong,
-.collaboration-contact-preview {
+.collaboration-contact-heading strong {
   display: block;
   flex: 1;
   min-width: 0;
@@ -1350,27 +1374,14 @@
 .collaboration-contact-heading strong {
   font-size: var(--sidebar-label-size);
   line-height: 1.45;
-  font-weight: var(--weight-medium);
-}
-
-.collaboration-contact-heading time {
-  flex-shrink: 0;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.collaboration-contact-preview {
-  font-size: var(--sidebar-heading-size);
-  line-height: 1.4;
-  color: var(--ink-soft);
+  font-weight: var(--weight-regular);
 }
 
 .collaboration-contact-row.has-unread strong { font-weight: var(--weight-semibold); }
-.collaboration-contact-preview.thinking { color: var(--ink); }
 .collaboration-contact-pin { width: 12px; height: 12px; color: var(--ink-muted); flex-shrink: 0; }
 
 .collaboration-contact-unread {
+  flex-shrink: 0;
   min-width: 18px;
   border-radius: var(--radius-pill);
   padding: 2px 5px;
@@ -1415,6 +1426,7 @@
 .collaboration-sidebar-rail .collaboration-sidebar-topbar { padding: 0; min-height: 52px; }
 .collaboration-sidebar-rail .collaboration-sidebar-main { gap: 4px; overflow-x: hidden; }
 .collaboration-sidebar-rail .collaboration-contact-row {
+  --collaboration-contact-avatar-size: 36px;
   position: relative;
   display: flex;
   justify-content: center;
