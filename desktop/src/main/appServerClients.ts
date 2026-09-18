@@ -613,8 +613,12 @@ export class AppServerClient {
       }
       const message = chunk.trim();
       if (message) {
+        // Keep stderr for process-exit diagnostics. Do not surface it as a
+        // user-facing server-error: app-server writes warnings and debug lines
+        // here while turns are still running, and the composer status row would
+        // otherwise flash "wuu 内部错误" over a healthy request.
         this.lastStderr = `${this.lastStderr}\n${message}`.trim().slice(-4000);
-        this.emit(this, { kind: "server-error", message });
+        console.warn(`[app-server] ${message}`);
       }
     });
     child.stderr.on("error", (error) => {
