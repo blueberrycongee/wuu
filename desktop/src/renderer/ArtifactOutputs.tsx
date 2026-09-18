@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, ExternalLink, X } from "lucide-react";
+import { ChevronRight, Download, ExternalLink, FileDiff, X } from "lucide-react";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview } from "./ImagePreview";
@@ -9,6 +9,15 @@ import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
 import { AttachmentImage } from "./AttachmentImage";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
+import {
+  TURN_OUTPUT_SUMMARY_BATCH_SIZE,
+  TurnOutputSummaryCard,
+  TurnOutputSummaryChevron,
+  TurnOutputSummaryMore,
+  TurnOutputSummaryPresentation,
+  turnOutputSummaryVisible,
+} from "./TurnOutputSummaryCard";
+import { Tooltip } from "./Tooltip";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -59,6 +68,44 @@ export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
   return artifacts;
 }
 
+export function turnEndFileArtifacts(artifacts: readonly TurnArtifact[]): readonly TurnArtifact[] {
+  return artifacts.filter((artifact) => artifact.placement === "turn_end" && artifact.type !== "text");
+}
+
+export function turnHasTurnEndArtifacts(turn: Turn): boolean {
+  return turnEndFileArtifacts(collectTurnArtifacts(turn)).length > 0;
+}
+
+export function TurnArtifactSummaryPresentation({
+  turn,
+  isLatestTurn,
+  cwd,
+  onOpenFile,
+  onCollapseComplete,
+}: {
+  turn: Turn;
+  isLatestTurn: boolean;
+  cwd?: string;
+  onOpenFile?: (path: string) => void;
+  onCollapseComplete?: () => void;
+}): JSX.Element | null {
+  const artifacts = collectTurnArtifacts(turn);
+  return (
+    <TurnOutputSummaryPresentation
+      visible={turnOutputSummaryVisible(turn, isLatestTurn) && turnEndFileArtifacts(artifacts).length > 0}
+      onCollapseComplete={onCollapseComplete}
+    >
+      <TurnEndArtifactOutputs
+        artifacts={artifacts}
+        cwd={cwd}
+        onOpenFile={onOpenFile}
+        compact={turn.status === "failed" || turn.status === "interrupted"}
+        stopped={turn.status === "interrupted"}
+      />
+    </TurnOutputSummaryPresentation>
+  );
+}
+
 export function TurnInlineArtifactOutputs({
   artifacts,
   cwd,
@@ -97,43 +144,116 @@ export function TurnEndArtifactOutputs({
   artifacts,
   cwd,
   onOpenFile,
+  compact = false,
+  stopped = false,
 }: {
   artifacts: readonly TurnArtifact[];
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  compact?: boolean;
+  stopped?: boolean;
 }): JSX.Element | null {
-  const { t } = useI18n();
+  const { t, formatNumber } = useI18n();
   const [preview, setPreview] = useState<TurnArtifact>();
-  const turnEnd = artifacts.filter((artifact) => artifact.placement === "turn_end");
-  const artifactCount = turnEnd.filter((artifact) => artifact.type !== "text").length;
+  const [visibleCount, setVisibleCount] = useState(TURN_OUTPUT_SUMMARY_BATCH_SIZE);
+  const [expanded, setExpanded] = useState(false);
+  const files = turnEndFileArtifacts(artifacts);
 
   useEffect(() => {
-    if (preview && !turnEnd.some((artifact) => artifact.id === preview.id)) {
+    if (preview && !files.some((artifact) => artifact.id === preview.id)) {
       setPreview(undefined);
     }
-  }, [preview, turnEnd]);
+  }, [preview, files]);
 
-  if (turnEnd.length === 0) return null;
+  if (files.length === 0) return null;
+
+  const openArtifact = (artifact: TurnArtifact): void => {
+    if (canPreviewArtifact(artifact)) {
+      setPreview(artifact);
+      return;
+    }
+    const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
+    if (workspacePath && onOpenFile) {
+      onOpenFile(workspacePath);
+      return;
+    }
+    if (artifact.uri && /^https?:/i.test(artifact.uri)) {
+      void window.wuu?.openExternal?.(artifact.uri);
+      return;
+    }
+    setPreview(artifact);
+  };
+
+  if (compact) {
+    return (
+      <div className="turn-edit-summary-compact">
+        <button
+          type="button"
+          className="turn-edit-summary-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span>
+            {t(stopped ? "artifacts.retainedStopped" : "artifacts.retained", { count: formatNumber(files.length) })}
+          </span>
+          <ChevronRight className="icon-xs" aria-hidden="true" />
+        </button>
+        {expanded ? (
+          <TurnEndArtifactOutputs artifacts={artifacts} cwd={cwd} onOpenFile={onOpenFile} />
+        ) : null}
+      </div>
+    );
+  }
+
+  const title = t(
+    files.length === 1 ? "artifacts.countOne" : "artifacts.count",
+    { count: formatNumber(files.length) },
+  );
+  const icon = <FileDiff className="icon" />;
+  const visible = files.slice(0, visibleCount);
+  const hiddenCount = Math.max(0, files.length - visibleCount);
+  const nextCount = Math.min(TURN_OUTPUT_SUMMARY_BATCH_SIZE, hiddenCount);
+  const single = files.length === 1 ? files[0] : undefined;
+
   return (
     <>
-      <section className="turn-output-summary-card turn-artifact-summary-card" data-wuu-component="turn-artifacts">
-        <header className="turn-output-summary-header turn-artifact-summary-header">
-          <strong className="turn-output-summary-title">{t("artifacts.title")}</strong>
-          <span>{t("artifacts.count", { count: artifactCount })}</span>
-        </header>
-        <div className="turn-output-summary-list turn-artifact-summary-list">
-          {turnEnd.map((artifact) => (
-            <ArtifactRenderer
-              artifact={artifact}
-              cwd={cwd}
-              key={artifact.id}
-              onOpenFile={onOpenFile}
-              onPreview={setPreview}
-              variant="card"
+      {single ? (
+        <TurnOutputSummaryCard
+          component="turn-artifacts"
+          icon={icon}
+          title={title}
+          subtitle={
+            <Tooltip content={single.name}>
+              <span className="turn-edit-summary-overview-path">{single.name}</span>
+            </Tooltip>
+          }
+          trailing={<TurnOutputSummaryChevron />}
+          onOpen={() => openArtifact(single)}
+          openLabel={t("artifacts.openNamed", { name: single.name })}
+        />
+      ) : (
+        <TurnOutputSummaryCard
+          component="turn-artifacts"
+          icon={icon}
+          title={title}
+          rows={visible.map((artifact) => ({
+            key: artifact.id,
+            name: artifact.name,
+            tooltip: artifact.name,
+            onOpen: () => openArtifact(artifact),
+            openLabel: t("artifacts.openNamed", { name: artifact.name }),
+          }))}
+          footer={hiddenCount > 0 ? (
+            <TurnOutputSummaryMore
+              hiddenCount={hiddenCount}
+              nextCount={nextCount}
+              onShowMore={() =>
+                setVisibleCount((current) => Math.min(current + TURN_OUTPUT_SUMMARY_BATCH_SIZE, files.length))
+              }
             />
-          ))}
-        </div>
-      </section>
+          ) : null}
+        />
+      )}
       {preview ? (
         <ArtifactPreviewOverlay
           artifact={preview}
@@ -290,14 +410,14 @@ function ArtifactCard({
   return (
     <button
       type="button"
-      className="turn-output-summary-row turn-artifact-summary-row"
+      className="turn-output-summary-row turn-edit-summary-row is-clickable"
       onClick={open}
       aria-label={t("artifacts.openNamed", { name: artifact.name })}
     >
       <span className="turn-output-summary-file">
         <strong className="turn-output-summary-name">{artifact.name}</strong>
       </span>
-      <span className="turn-artifact-summary-meta">
+      <span className="turn-output-summary-meta">
         <span>{artifact.mimeType}</span>
         <ExternalLink aria-hidden="true" className="icon" />
       </span>

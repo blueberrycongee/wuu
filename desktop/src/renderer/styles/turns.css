@@ -4773,35 +4773,8 @@ pre {
   color: var(--ink);
 }
 
-/* Shared visual grammar for turn-owned output summaries. Artifact previews and
- * file edits have different behavior, but should read as the same card family. */
-.turn-output-summary-card {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  overflow: hidden;
-  border: 1px solid var(--message-flow-card-border);
-  border-radius: var(--message-flow-card-radius);
-  background: var(--message-flow-card-bg);
-  box-shadow: var(--message-flow-card-shadow);
-}
-
-.turn-output-summary-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: var(--compact-padding-block) var(--compact-padding-inline);
-  border-bottom: 1px solid var(--message-flow-card-divider);
-  background: var(--message-flow-card-header-bg);
-}
-
-.turn-output-summary-title {
-  color: var(--ink);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-}
-
+/* Shared row primitives for turn output summaries. Card chrome lives on
+ * `.turn-edit-summary-card` so file changes and presented files read as one family. */
 .turn-output-summary-list {
   display: flex;
   flex-direction: column;
@@ -4871,8 +4844,18 @@ pre {
   color: var(--ink);
 }
 
-.turn-artifact-summary-list > .turn-artifact-text-part {
-  padding: 8px 12px;
+.turn-output-summary-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+}
+
+.turn-output-summary-meta .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .turn-artifact-inline-image {
@@ -4950,37 +4933,6 @@ pre {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--paper);
-}
-
-.turn-artifact-summary-card {
-  align-self: stretch;
-}
-
-.turn-artifact-summary-header {
-  align-items: center;
-}
-
-.turn-artifact-summary-header span {
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-}
-
-.turn-artifact-summary-row {
-  cursor: pointer;
-}
-
-.turn-artifact-summary-meta {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-}
-
-.turn-artifact-summary-meta .icon {
-  width: 14px;
-  height: 14px;
 }
 
 .artifact-preview-overlay {
@@ -5223,6 +5175,11 @@ pre {
 /* The shell gap already separates successful output from the answer. */
 .assistant-turn-shell > .turn-edit-presentation .turn-edit-summary-card {
   margin-top: 0;
+}
+
+.assistant-turn-shell > .turn-edit-presentation + .turn-edit-presentation .turn-edit-summary-card,
+.turn-edit-presentation + .turn-edit-presentation .turn-edit-summary-card {
+  margin-top: var(--conversation-process-answer-gap);
 }
 
 .turn-edit-summary-card > .tool-diff-preview-trigger {

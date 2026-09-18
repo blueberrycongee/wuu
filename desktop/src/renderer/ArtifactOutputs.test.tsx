@@ -6,7 +6,7 @@ import type { ThreadItem, Turn } from "../shared/protocol";
 const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
 vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
 vi.mock("./plugins/Workbench", () => ({WorkbenchContentRenderer:({fallback}:{fallback:React.ReactNode})=>fallback}));
-vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key})}));
+vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key, formatNumber:(value:number)=>String(value)})}));
 vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
 
 function presentedImage(id: string, hash: string, name = "chart.svg"): ThreadItem {
@@ -67,14 +67,49 @@ it("keeps document output data inspectable without projecting it into the image 
     await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={artifacts} />));
     expect(container.childElementCount).toBe(0);
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={artifacts} />));
+    expect(container.querySelector(".turn-edit-summary-card")).toBeTruthy();
+    expect(container.querySelector(".turn-output-summary-header")).toBeNull();
+    expect(container.querySelector(".turn-edit-summary-overview")).toBeTruthy();
     expect(container.textContent).toContain("Report");
+    expect(container.textContent).not.toContain("application/pdf");
     expect(container.textContent).not.toContain("Message 99");
-    const fold = container.querySelector<HTMLDetailsElement>(".tool-result-data details")!;
-    expect(fold.open).toBe(false);
-    await act(async () => { fold.open = true; fold.dispatchEvent(new Event("toggle")); });
-    expect(JSON.parse(container.querySelector(".tool-result-data-json")!.textContent!)).toEqual(data);
-    await act(async () => { fold.open = false; fold.dispatchEvent(new Event("toggle")); });
-    expect(container.querySelector(".tool-result-data-json")).toBeNull();
+    expect(container.querySelector(".tool-result-data")).toBeNull();
+  } finally { act(() => root.unmount()); container.remove(); }
+});
+
+it("uses the file-change summary chrome for a single presented file", async () => {
+  const turn = { id: "turn", items: [{ id: "present", type: "tool_call", name: "present_artifact", result_detail: { content: [{
+    type: "file", mime_type: "video/mp4", name: "wuu-promo.mp4", uri: "wuu-artifact://workspace/thread/video/wuu-promo.mp4",
+    artifact: { placement: "turn_end", sha256: "vid" },
+  }] } }] } as Turn;
+  const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+  try {
+    await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
+    expect(container.querySelector('[data-wuu-component="turn-artifacts"]')?.classList.contains("turn-edit-summary-card")).toBe(true);
+    expect(container.querySelector(".turn-edit-summary-icon")).toBeTruthy();
+    expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("artifacts.countOne");
+    expect(container.querySelector(".turn-edit-summary-overview-path")?.textContent).toBe("wuu-promo.mp4");
+    expect(container.querySelector(".turn-edit-summary-row")).toBeNull();
+    expect(container.textContent).not.toContain("video/mp4");
+  } finally { act(() => root.unmount()); container.remove(); }
+});
+
+it("lists multiple presented files in the same summary rows as file changes", async () => {
+  const file = (id: string, name: string): ThreadItem => ({
+    id, type: "tool_call", name: "present_artifact", result_detail: { content: [{
+      type: "file", mime_type: "application/pdf", name, uri: `wuu-artifact://workspace/thread/${id}/${name}`,
+      artifact: { placement: "turn_end", sha256: id },
+    }] },
+  });
+  const turn = { id: "turn", items: [file("a", "one.pdf"), file("b", "two.pdf")] } as Turn;
+  const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+  try {
+    await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
+    expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("artifacts.count");
+    expect(Array.from(container.querySelectorAll(".turn-edit-summary-row"), (row) => row.textContent)).toEqual([
+      "one.pdf",
+      "two.pdf",
+    ]);
   } finally { act(() => root.unmount()); container.remove(); }
 });
 

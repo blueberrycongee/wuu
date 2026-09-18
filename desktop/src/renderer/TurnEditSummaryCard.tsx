@@ -10,6 +10,12 @@ import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { turnIsAnswerReady } from "./AppState";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import {
+  TURN_OUTPUT_SUMMARY_BATCH_SIZE,
+  TurnOutputSummaryCard,
+  TurnOutputSummaryChevron,
+  TurnOutputSummaryMore,
+} from "./TurnOutputSummaryCard";
 
 type FileEdit = {
   path: string;
@@ -337,8 +343,6 @@ export function turnHasFileEdits(turn: Turn): boolean {
   return collectTurnFileEdits(turn).length > 0;
 }
 
-const FILE_BATCH_SIZE = 3;
-
 function EditStats({ additions, deletions }: { additions: number; deletions: number }): JSX.Element | null {
   if (additions === 0 && deletions === 0) return null;
   return (
@@ -363,7 +367,7 @@ export function TurnEditSummaryCard({
   compact?: boolean;
 }): JSX.Element | null {
   const { t, formatNumber } = useI18n();
-  const [visibleCount, setVisibleCount] = useState(FILE_BATCH_SIZE);
+  const [visibleCount, setVisibleCount] = useState(TURN_OUTPUT_SUMMARY_BATCH_SIZE);
   const [expanded, setExpanded] = useState(false);
 
   if (turn.status === "in_progress" && !turnIsAnswerReady(turn)) return null;
@@ -375,7 +379,7 @@ export function TurnEditSummaryCard({
 
   const visibleEdits = edits.slice(0, visibleCount);
   const hiddenCount = Math.max(0, edits.length - visibleCount);
-  const nextCount = Math.min(FILE_BATCH_SIZE, hiddenCount);
+  const nextCount = Math.min(TURN_OUTPUT_SUMMARY_BATCH_SIZE, hiddenCount);
   const additions = edits.reduce((total, edit) => total + edit.additions, 0);
   const deletions = edits.reduce((total, edit) => total + edit.deletions, 0);
   const title = t(
@@ -428,119 +432,69 @@ export function TurnEditSummaryCard({
   }
 
   const singleEdit = edits.length === 1 ? edits[0] : undefined;
+  const canOpen = Boolean(onOpenFile || onOpenFileDiff);
+  const icon = <FileDiff className="icon" />;
+
   if (singleEdit) {
-    const canOpenFile = Boolean(onOpenFile || onOpenFileDiff);
-    const overviewContent = (
-      <>
-        <span className="turn-edit-summary-icon" aria-hidden="true">
-          <FileDiff className="icon" />
-        </span>
-        <span className="turn-edit-summary-overview-copy">
-          <strong className="turn-edit-summary-overview-title">{title}</strong>
+    return (
+      <TurnOutputSummaryCard
+        icon={icon}
+        title={title}
+        subtitle={
           <Tooltip content={singleEdit.path}>
             <span className="turn-edit-summary-overview-path">
               {fileDisplayName(singleEdit.path)}
             </span>
           </Tooltip>
-        </span>
-        <span className="turn-edit-summary-overview-trailing">
-          <EditStats additions={singleEdit.additions} deletions={singleEdit.deletions} />
-          {canOpenFile ? <ChevronRight className="icon" aria-hidden="true" /> : null}
-        </span>
-      </>
-    );
-    return (
-      <div className="turn-edit-summary-card is-single">
-        <ToolDiffPreview diff={singleEdit.diff} item={singleEdit.item}>
-          {canOpenFile ? (
-            <button
-              className="turn-edit-summary-overview is-clickable"
-              type="button"
-              aria-label={t("turnEdits.openFile", { path: singleEdit.path })}
-              onClick={() => openEdit(singleEdit)}
-            >
-              {overviewContent}
-            </button>
-          ) : (
-            <div className="turn-edit-summary-overview">{overviewContent}</div>
-          )}
-        </ToolDiffPreview>
-      </div>
+        }
+        trailing={
+          <>
+            <EditStats additions={singleEdit.additions} deletions={singleEdit.deletions} />
+            {canOpen ? <TurnOutputSummaryChevron /> : null}
+          </>
+        }
+        onOpen={canOpen ? () => openEdit(singleEdit) : undefined}
+        openLabel={t("turnEdits.openFile", { path: singleEdit.path })}
+        wrapOverview={(overview) => (
+          <ToolDiffPreview diff={singleEdit.diff} item={singleEdit.item}>
+            {overview}
+          </ToolDiffPreview>
+        )}
+      />
     );
   }
 
   return (
-    <div className="turn-edit-summary-card is-multiple">
-      <div className="turn-edit-summary-overview">
-        <span className="turn-edit-summary-icon" aria-hidden="true">
-          <FileDiff className="icon" />
+    <TurnOutputSummaryCard
+      icon={icon}
+      title={title}
+      subtitle={
+        <span className="turn-edit-summary-overview-meta">
+          <EditStats additions={additions} deletions={deletions} />
         </span>
-        <span className="turn-edit-summary-overview-copy">
-          <strong className="turn-edit-summary-overview-title">{title}</strong>
-          <span className="turn-edit-summary-overview-meta">
-            <EditStats additions={additions} deletions={deletions} />
-          </span>
-        </span>
-      </div>
-      <div className="turn-output-summary-list turn-edit-summary-list">
-        {visibleEdits.map((edit) => {
-          const canOpenFile = Boolean(onOpenFile || onOpenFileDiff);
-          const rowContent = (
-            <>
-              <span className="turn-output-summary-file turn-edit-summary-file">
-                <Tooltip content={edit.path}>
-                  <span className="turn-output-summary-name turn-edit-summary-name">
-                    {fileDisplayName(edit.path)}
-                  </span>
-                </Tooltip>
-              </span>
-              <EditStats additions={edit.additions} deletions={edit.deletions} />
-            </>
-          );
-          return (
-            <ToolDiffPreview
-              diff={edit.diff}
-              item={edit.item}
-              key={edit.path}
-            >
-              {canOpenFile ? (
-                <button
-                  className="turn-output-summary-row turn-edit-summary-row is-clickable"
-                  type="button"
-                  aria-label={t("turnEdits.openFile", { path: edit.path })}
-                  onClick={() => openEdit(edit)}
-                >
-                  {rowContent}
-                </button>
-              ) : (
-                <div className="turn-output-summary-row turn-edit-summary-row">{rowContent}</div>
-              )}
-            </ToolDiffPreview>
-          );
-        })}
-        {hiddenCount > 0 ? (
-          <div className="turn-edit-summary-more">
-            <span>
-              {t(hiddenCount === 1 ? "turnEdits.moreFileOne" : "turnEdits.moreFiles", {
-                count: formatNumber(hiddenCount),
-              })}
-            </span>
-            <button
-              className="turn-edit-summary-more-button"
-              type="button"
-              onClick={() =>
-                setVisibleCount((current) =>
-                  Math.min(current + FILE_BATCH_SIZE, edits.length),
-                )
-              }
-            >
-              {t(nextCount === 1 ? "turnEdits.showMoreOne" : "turnEdits.showMore", {
-                count: formatNumber(nextCount),
-              })}
-            </button>
-          </div>
-        ) : null}
-      </div>
-    </div>
+      }
+      rows={visibleEdits.map((edit) => ({
+        key: edit.path,
+        name: fileDisplayName(edit.path),
+        tooltip: edit.path,
+        trailing: <EditStats additions={edit.additions} deletions={edit.deletions} />,
+        onOpen: canOpen ? () => openEdit(edit) : undefined,
+        openLabel: t("turnEdits.openFile", { path: edit.path }),
+        wrap: (row) => (
+          <ToolDiffPreview diff={edit.diff} item={edit.item}>
+            {row}
+          </ToolDiffPreview>
+        ),
+      }))}
+      footer={hiddenCount > 0 ? (
+        <TurnOutputSummaryMore
+          hiddenCount={hiddenCount}
+          nextCount={nextCount}
+          onShowMore={() =>
+            setVisibleCount((current) => Math.min(current + TURN_OUTPUT_SUMMARY_BATCH_SIZE, edits.length))
+          }
+        />
+      ) : null}
+    />
   );
 }

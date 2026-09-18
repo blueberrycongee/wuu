@@ -45,7 +45,6 @@ import { useConversationRenderActive } from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
   collectTurnArtifacts,
-  TurnEndArtifactOutputs,
   TurnInlineArtifactOutputs,
 } from "./ArtifactOutputs";
 
@@ -217,7 +216,6 @@ export function AssistantTurnShell({
           ))}
         </div>
       ) : null}
-      <TurnEndArtifactOutputs artifacts={artifacts} cwd={cwd} onOpenFile={onOpenFile} />
       {trailingContent}
     </div>
   );

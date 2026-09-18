@@ -31,6 +31,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Temporarily hide conversation file-change summary cards and the turn navigation
   rail while retaining edit history and the underlying review components.
+- Present generated files with the same turn output-summary card as file changes,
+  and keep that receipt hidden in the conversation while retaining snapshots and
+  inline image previews.
 
 - Reduce excess whitespace between conversation turns while preserving message
   action space and query-to-reply spacing.

@@ -9,6 +9,12 @@ export const ENABLE_TURN_EDIT_SUMMARY = false;
 export const ENABLE_CONVERSATION_TURN_RAIL = false;
 
 /**
+ * Same turn output-summary family as the file-change card. Hide the file-list
+ * card until that surface returns; keep snapshots and inline image previews.
+ */
+export const ENABLE_TURN_ARTIFACT_SUMMARY = false;
+
+/**
  * Collaboration is part of the default desktop product in development and
  * release builds. Keep a build-time opt-out for emergency rollback without
  * maintaining a separate release-only product surface.
