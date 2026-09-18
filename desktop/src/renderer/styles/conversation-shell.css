@@ -258,24 +258,6 @@
 }
 
 .title-block,
-.conversation-title-heading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.conversation-title-heading h1 {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-title-heading .session-tab-new {
-  flex: 0 0 auto;
-}
-
 .title-actions {
   display: flex;
   min-width: 0;
@@ -284,12 +266,28 @@
 }
 
 .title-block {
-  display: grid;
   min-width: 0;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  column-gap: 10px;
   overflow: hidden;
+}
+
+.conversation-title-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversation-title-heading h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-title-heading .session-tab-new {
+  flex: 0 0 auto;
 }
 
 .title-actions {
@@ -393,7 +391,6 @@
 
 .title-block h1 {
   min-width: 0;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -751,6 +748,11 @@
   font-size: 14px;
   font-weight: 500;
   color: var(--ink-secondary);
+}
+
+/* Compact chrome already exposes new-conversation in title-actions. */
+.app-shell.compact-navigation .conversation-title-heading .session-tab-new {
+  display: none;
 }
 
 .app-shell.compact-navigation .titlebar .sidebar-toggle-button,

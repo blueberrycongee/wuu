@@ -336,16 +336,17 @@ export function ConversationTitleContent({
       />
   ) : (
     <div className="conversation-title-heading">
-      <h1>{activeTitle}</h1>
       <button
         className="icon-button session-tab-new"
         type="button"
         aria-label={t("tabs.newConversation")}
         title={t("tabs.newConversation")}
+        disabled={!state.activeContext}
         onClick={onStartNewThread}
       >
         <SquarePen aria-hidden="true" />
       </button>
+      <h1>{activeTitle}</h1>
     </div>
   );
   const tabState = { ...state, threads: crossWorkspaceThreads };

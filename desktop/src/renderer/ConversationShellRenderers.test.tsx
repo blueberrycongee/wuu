@@ -111,6 +111,39 @@ describe("ConversationSplitPaneRenderer file routing", () => {
 });
 
 describe("ConversationTitleContent presentation boundary", () => {
+  it("keeps the new-conversation control before the title", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => root?.render(
+      <ConversationTitleContent
+        state={{
+          ...initialState,
+          activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
+        }}
+        crossWorkspaceThreads={[]}
+        sessionTabsVisible={false}
+        pendingComposerMessagesByThread={{}}
+        activeTitle="A very long conversation title that should not push the new-conversation control away"
+        onSelectSessionTab={() => {}}
+        onCloseSessionTab={() => {}}
+        onCloseSessionTabs={() => {}}
+        onPopOutSessionTab={() => {}}
+        onStartNewThread={() => {}}
+        onReorderSessionTabs={() => {}}
+      />,
+    ));
+
+    const heading = container.querySelector(".conversation-title-heading");
+    const button = heading?.querySelector("button.session-tab-new");
+    const title = heading?.querySelector("h1");
+    expect(button).not.toBeNull();
+    expect(title).not.toBeNull();
+    expect(button?.compareDocumentPosition(title!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(button?.disabled).toBe(false);
+  });
+
   it("replaces its native title root with the conversation header presenter", async () => {
     const pluginHost = new PluginHost({ react: React });
     const workbenchController = new WorkbenchController(pluginHost);
