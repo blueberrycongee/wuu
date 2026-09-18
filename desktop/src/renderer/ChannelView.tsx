@@ -1916,6 +1916,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 messageID={message.id}
                 className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}${message.id === pendingMessage?.id ? " channel-message-pending" : ""}`}
                 contentClassName="channel-message-content"
+                reserveAvatar={!own && (!direct || Boolean(traceCard))}
                 avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
                   <AgentAvatar disableMorph id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
                 ) : undefined}

@@ -1267,6 +1267,11 @@ describe("ChannelView", () => {
         id: "message-5", room_id, seq: 5, author_type: "agent" as const,
         author_id: "agent-2", kind: "text" as const, body: "Another agent replies",
         created_at: "2026-07-23T00:10:10Z",
+      }, {
+        id: "message-6", room_id, seq: 6, author_type: "agent" as const,
+        author_id: "agent-2", kind: "text" as const, body: "Same speaker, later turn",
+        created_at: "2026-07-23T00:10:20Z",
+        source_session_ref: "work-session", source_turn_id: "turn-2",
       }],
     }));
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
@@ -1275,17 +1280,25 @@ describe("ChannelView", () => {
     await settle();
 
     const renderedMessages = container.querySelectorAll<HTMLElement>(".channel-message-stream > .channel-message");
-    expect(renderedMessages).toHaveLength(5);
+    expect(renderedMessages).toHaveLength(6);
     expect(renderedMessages[0].querySelector(".channel-agent-avatar")).not.toBeNull();
     expect(renderedMessages[0].querySelector(".channel-author-mention")?.textContent).toBe("@Alpha");
     expect(renderedMessages[1].textContent).toContain("Follow-up update");
+    expect(renderedMessages[1].classList.contains("channel-message-continuation")).toBe(true);
+    expect(renderedMessages[1].querySelector(".chat-avatar-slot")).not.toBeNull();
     expect(renderedMessages[1].querySelector(".channel-agent-avatar")).toBeNull();
     expect(renderedMessages[1].querySelector(".channel-author-mention")).toBeNull();
+    expect(renderedMessages[2].classList.contains("channel-message-continuation")).toBe(false);
     expect(renderedMessages[2].querySelector(".channel-agent-avatar")).not.toBeNull();
     expect(renderedMessages[2].querySelector(".channel-author-mention")?.textContent).toBe("@Alpha");
     expect(container.querySelectorAll(".channel-message-stream > time")).toHaveLength(2);
     expect(renderedMessages[3].querySelector(".channel-human-avatar")).toBeNull();
+    expect(renderedMessages[3].classList.contains("channel-message-continuation")).toBe(false);
     expect(renderedMessages[4].querySelector(".channel-author-mention")?.textContent).toBe("@Beta");
+    expect(renderedMessages[5].classList.contains("channel-message-continuation")).toBe(true);
+    expect(renderedMessages[5].querySelector(".chat-avatar-slot")).not.toBeNull();
+    expect(renderedMessages[5].querySelector(".channel-agent-avatar")).toBeNull();
+    expect(renderedMessages[5].querySelector(".channel-author-mention")).toBeNull();
   });
 
   it("resizes managed sessions without replacing the running activity or draft and restores the width after reopening", async () => {
