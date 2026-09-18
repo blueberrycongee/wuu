@@ -1041,7 +1041,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 1_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 1_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -1072,12 +1074,15 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     if (section !== "rooms" || !selectedRoomID) return;
     let active = true;
     const refresh = (): void => {
+      if (document.visibilityState !== "visible") return;
       void refreshMessages(selectedRoomID).catch((reason: unknown) => {
         if (active) setLoadError(toastErrorMessage(reason));
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 2_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 2_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -1089,6 +1094,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     let timer: number | undefined;
     let active = true;
     const off = window.wuu.onServerEvent((event) => {
+      if (document.visibilityState !== "visible") return;
       if (event.kind !== "notification") return;
       const { method, params } = event.message;
       if (!["item/agentMessage/delta", "item/agentMessage/replace", "item/started", "item/completed", "turn/completed"].includes(method)) return;

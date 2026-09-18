@@ -723,7 +723,9 @@ export function App(): JSX.Element {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 2_000);
     return () => {
       active = false;
       window.clearInterval(timer);
