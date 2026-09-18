@@ -76,6 +76,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
   without pulling readers away from an explicitly paused reading position.
+- Position locally queued and steered messages when they enter the conversation,
+  reserving response space unless the user has since scrolled or changed threads.
 
 - Prevented overlapping automation timer ticks from leaving a run stuck in
   starting before the session send settled.

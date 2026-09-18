@@ -312,6 +312,61 @@ describe("queued turn reconciliation", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+    vi.restoreAllMocks();
+  });
+
+  it.each(["queue", "steer"])("positions a locally sent %s message when it enters the conversation", async mode => {
+    const { queuedClientIDs } = installWuuApi();
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    vi.mocked(window.matchMedia).mockImplementation(query => ({
+      matches: query.includes("prefers-reduced-motion"),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+    const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
+    const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
+    let top = 1400;
+    const tail = () => Number.parseFloat(viewport.parentElement!.style.getPropertyValue("--session-tail-space") || "0");
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, get: () => 600 },
+      scrollHeight: { configurable: true, get: () => 2000 + tail() },
+      scrollTop: { configurable: true, get: () => top, set: value => { top = Math.max(0, Math.min(value, 1400 + tail())); } },
+    });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === viewport) return { top: 100, bottom: 700, height: 600 } as DOMRect;
+      if (this === content) return { height: 2000 + tail() } as DOMRect;
+      if (this.hasAttribute("data-user-message-id")) return { top: 1870 - top, bottom: 1950 - top, height: 80 } as DOMRect;
+      return originalRect.call(this);
+    });
+    await act(async () => {
+      const textarea = composerProbe().querySelector("textarea")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "follow-up request");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      const button = mode === "queue" ? composerProbe().querySelector("button")!
+        : composerProbe().querySelector<HTMLButtonElement>('[aria-label="steer"]')!;
+      button.click();
+    });
+    const sourceID = mode === "queue" ? queuedClientIDs[0] : vi.mocked(window.wuu.steerTurn).mock.calls[0][4];
+    expect(sourceID).toBeTruthy();
+    expect(tail()).toBe(0);
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({
+        kind: "notification", workdir: workspace,
+        message: { method: "item/completed", params: {
+          thread_id: threadID, turn_id: "turn-current",
+          item: { id: "accepted-input", type: "user_message", status: "completed", text: "follow-up request", source_id: sourceID },
+        } },
+      });
+    });
+    expect(container.querySelector('[data-user-message-id="accepted-input"]')).not.toBeNull();
+    expect(tail()).toBeGreaterThan(0);
+    expect(top).toBeCloseTo(1650);
   });
 
   it("leaves the running state when stopping a submission before start returns", async () => {
