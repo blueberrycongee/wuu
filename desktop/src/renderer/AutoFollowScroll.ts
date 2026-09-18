@@ -11,6 +11,8 @@ import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
+import { createMessageScrollMotion } from "./MessageScrollMotion";
+import { motionDurationMs, prefersReducedMotion } from "./motion";
 
 export const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 16;
 export const AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS = 700;
@@ -107,6 +109,7 @@ export function useAutoFollowScrollContainer({
   scrollToBottom: (options?: {
     force?: boolean;
     revealScrollbar?: boolean;
+    animate?: boolean;
   }) => void;
   pauseAutoFollow: () => void;
   scheduleScrollToBottom: () => void;
@@ -125,14 +128,20 @@ export function useAutoFollowScrollContainer({
   const touchLastYRef = useRef<number | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
   const scrollbarHideTimerRef = useRef<number | undefined>(undefined);
+  const motionFrameRef = useRef<number | undefined>(undefined);
+  const cancelMotion = useCallback(() => {
+    if (motionFrameRef.current !== undefined) window.cancelAnimationFrame(motionFrameRef.current);
+    motionFrameRef.current = undefined;
+  }, []);
 
   const setAutoFollow = useCallback((next: boolean): void => {
+    if (!next) cancelMotion();
     autoFollowRef.current = next;
     const node = scrollRef.current;
     if (node) {
       setAutoFollowOverflowAnchor(node, next);
     }
-  }, []);
+  }, [cancelMotion]);
 
   const pauseAutoFollow = useCallback((): void => {
     setAutoFollow(false);
@@ -182,7 +191,7 @@ export function useAutoFollowScrollContainer({
   }, []);
 
   const scrollToBottom = useCallback(
-    (options: { force?: boolean; revealScrollbar?: boolean } = {}): void => {
+    (options: { force?: boolean; revealScrollbar?: boolean; animate?: boolean } = {}): void => {
       const node = scrollRef.current;
       if (!node || (!options.force && !autoFollowRef.current)) {
         return;
@@ -192,7 +201,27 @@ export function useAutoFollowScrollContainer({
         setAutoFollow(true);
       }
       clearUserScrollAwayIntent();
+      // Resize delivery and message reconciliation retarget the same motion;
+      // only an explicit nonanimated jump may take over its scroll writes.
+      if (motionFrameRef.current !== undefined) {
+        if (!options.force || options.animate) return;
+        cancelMotion();
+      }
       const targetTop = maxScrollTop(node);
+      if (options.animate && !document.hidden && !prefersReducedMotion() && Math.abs(node.scrollTop - targetTop) > 1) {
+        const sample = createMessageScrollMotion(node.scrollTop, targetTop, motionDurationMs("--query-scroll-duration", 360));
+        const step = (now: number): void => {
+          motionFrameRef.current = undefined;
+          if (scrollRef.current !== node || !autoFollowRef.current) return;
+          const { top, done } = sample(now, maxScrollTop(node));
+          node.scrollTop = top;
+          programmaticScrollTopRef.current = node.scrollTop;
+          lastScrollTopRef.current = node.scrollTop;
+          if (!done) motionFrameRef.current = window.requestAnimationFrame(step);
+        };
+        motionFrameRef.current = window.requestAnimationFrame(step);
+        return;
+      }
       const moved = node.scrollTop !== targetTop;
       if (moved) node.scrollTop = node.scrollHeight;
       programmaticScrollTopRef.current = node.scrollTop;
@@ -201,7 +230,7 @@ export function useAutoFollowScrollContainer({
         showScrollbar(node);
       }
     },
-    [clearUserScrollAwayIntent, setAutoFollow, showScrollbar],
+    [cancelMotion, clearUserScrollAwayIntent, setAutoFollow, showScrollbar],
   );
 
   const scheduleScrollToBottom = useCallback((): void => {
@@ -292,12 +321,16 @@ export function useAutoFollowScrollContainer({
       return undefined;
     }
     setAutoFollowOverflowAnchor(node, autoFollowRef.current);
+    const interruptMotion = (): void => {
+      if (motionFrameRef.current !== undefined) setAutoFollow(false);
+    };
 
     const handleScroll = (): void => {
       handleScrollFrame();
     };
     const handleWheel = (event: WheelEvent): void => {
       event.stopPropagation();
+      if (event.deltaY !== 0) interruptMotion();
       if (event.deltaY < 0) {
         markUserScrollAwayIntent();
         // Disarm before the browser emits `scroll`. A queued resize or message
@@ -309,6 +342,7 @@ export function useAutoFollowScrollContainer({
     };
     const handlePointerDown = (event: PointerEvent): void => {
       event.stopPropagation();
+      interruptMotion();
       if (event.target === node) {
         pointerScrollGestureRef.current = {
           node,
@@ -329,6 +363,7 @@ export function useAutoFollowScrollContainer({
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
       event.stopPropagation();
+      if (SCROLL_AWAY_KEYS.has(event.key) || SCROLL_TOWARD_LATEST_KEYS.has(event.key) || event.key === " ") interruptMotion();
       if (SCROLL_AWAY_KEYS.has(event.key)) {
         markUserScrollAwayIntent();
       } else if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) {
@@ -337,6 +372,7 @@ export function useAutoFollowScrollContainer({
     };
     const handleTouchStart = (event: TouchEvent): void => {
       event.stopPropagation();
+      interruptMotion();
       touchLastYRef.current = event.touches[0]?.clientY;
     };
     const handleTouchMove = (event: TouchEvent): void => {
@@ -401,6 +437,7 @@ export function useAutoFollowScrollContainer({
       liveResizeFrame = window.requestAnimationFrame(() => {
         liveResizeFrame = undefined;
         if (!isWindowResizing() || !autoFollowRef.current) return;
+        cancelMotion();
         // Match the main conversation: keep the bottom anchored during the
         // drag, not only after it settles. Chromium clamps this target without
         // needing scrollHeight/clientHeight reads on every resize frame.
@@ -426,7 +463,24 @@ export function useAutoFollowScrollContainer({
       windowResizeScroll.cancel();
       resizeObserver.disconnect();
     };
-  }, [observeKey, open, refreshPointerScrollGestureLayout, scrollToBottom]);
+  }, [cancelMotion, observeKey, open, refreshPointerScrollGestureLayout, scrollToBottom]);
+
+  useLayoutEffect(() => cancelMotion, [cancelMotion, observeKey, open]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const settle = () => {
+      if (motionFrameRef.current === undefined || (!document.hidden && !media?.matches)) return;
+      cancelMotion();
+      scrollToBottom();
+    };
+    media?.addEventListener("change", settle);
+    document.addEventListener("visibilitychange", settle);
+    return () => {
+      media?.removeEventListener("change", settle);
+      document.removeEventListener("visibilitychange", settle);
+    };
+  }, [cancelMotion, scrollToBottom]);
 
   useEffect(() => {
     if (!open) {

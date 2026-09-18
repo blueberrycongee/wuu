@@ -7,6 +7,7 @@ import { useChannelMessageMotion } from "./useChannelMessageMotion";
 let container: HTMLDivElement;
 let root: Root;
 let acknowledge: (pending: string, message: string) => void;
+const onArrival = vi.fn();
 const animations: { currentTime: number; playState: string; cancel: ReturnType<typeof vi.fn> }[] = [];
 const animate = vi.fn(() => {
   const animation = { currentTime: 0, playState: "running", cancel: vi.fn(), addEventListener: vi.fn() };
@@ -17,14 +18,14 @@ const message = (id: string, seq: number): ChannelMessage => ({ id, seq, room_id
 
 function Transcript({ room = "room", ready = true, messages, pending }: { room?: string; ready?: boolean; messages: ChannelMessage[]; pending?: string }) {
   const ref = useRef<HTMLDivElement>(null);
-  acknowledge = useChannelMessageMotion(ref, room, ready, messages, pending);
-  return <div ref={ref}>{messages.map(m => <article key={m.id} data-message-id={m.id}>{m.body}</article>)}
+  acknowledge = useChannelMessageMotion(ref, room, ready, messages, pending, onArrival);
+  return <div ref={ref}>{messages.map(m => <article key={m.id} className={m.author_type === "human" ? "own" : "agent"} data-message-id={m.id}>{m.body}</article>)}
     {pending ? <article key={pending} className="own" data-message-id={pending}>Sending</article> : null}</div>;
 }
 
 beforeEach(() => {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  animations.length = 0; animate.mockClear();
+  animations.length = 0; animate.mockClear(); onArrival.mockClear();
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
   Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
 });
@@ -70,4 +71,35 @@ it("respects reduced motion without hiding new content", () => {
   act(() => root.render(<Transcript messages={[message("reply", 1)]} />));
   expect(animate).not.toHaveBeenCalled();
   expect(container.textContent).toBe("reply");
+});
+
+it("starts scrolling only on a fresh mounted arrival, not an attachment update or acknowledgement", () => {
+  act(() => root.render(<Transcript messages={[message("history", 1)]} />));
+  expect(onArrival).not.toHaveBeenCalled();
+  act(() => root.render(<Transcript messages={[message("history", 1)]} pending="pending" />));
+  expect(onArrival).toHaveBeenCalledExactlyOnceWith(true);
+  act(() => root.render(<Transcript messages={[message("history", 1)]} pending="pending" />));
+  act(() => { acknowledge("pending", "sent"); root.render(<Transcript messages={[message("history", 1), message("sent", 2)]} />); });
+  expect(onArrival).toHaveBeenCalledTimes(1);
+  act(() => root.render(<Transcript messages={[message("history", 1), message("sent", 2), message("reply", 3)]} />));
+  expect(onArrival).toHaveBeenLastCalledWith(false);
+  expect(onArrival).toHaveBeenCalledTimes(2);
+});
+
+it("cancels the bubble entrance as soon as the user takes control", () => {
+  act(() => root.render(<Transcript messages={[]} />));
+  act(() => root.render(<Transcript messages={[]} pending="pending" />));
+  act(() => container.firstElementChild!.dispatchEvent(new WheelEvent("wheel", { deltaY: -10 })));
+  expect(animations[0].cancel).toHaveBeenCalled();
+});
+
+it("distinguishes a fast local acknowledgement from an incoming human message", () => {
+  act(() => root.render(<Transcript messages={[]} />));
+  act(() => root.render(<Transcript messages={[{ ...message("remote-human", 1), author_type: "human" }]} />));
+  expect(onArrival).toHaveBeenCalledExactlyOnceWith(false);
+  act(() => {
+    acknowledge("unpainted", "fast");
+    root.render(<Transcript messages={[message("remote-human", 1), { ...message("fast", 2), author_type: "human" }]} />);
+  });
+  expect(onArrival).toHaveBeenLastCalledWith(true);
 });

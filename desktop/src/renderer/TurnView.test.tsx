@@ -381,7 +381,7 @@ describe("TurnView", () => {
   });
 
   it("removes old cards immediately when reduced motion is requested", () => {
-    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     const turn = makeTurn("completed", [{
       id: "write-1", type: "tool_call", name: "write_file", status: "completed",
       result: JSON.stringify({ path: "brief.md", diff: { new_file: true, lines: 1 } }),

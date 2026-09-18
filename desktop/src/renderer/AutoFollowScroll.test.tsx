@@ -56,10 +56,10 @@ describe("useAutoFollowScrollContainer", () => {
   let notifyResize: () => void;
   let frames: Map<number, FrameRequestCallback>;
 
-  function paint(): void {
+  function paint(now = 0): void {
     const pending = [...frames.values()];
     frames.clear();
-    act(() => pending.forEach((callback) => callback(0)));
+    act(() => pending.forEach((callback) => callback(now)));
   }
 
   beforeEach(() => {
@@ -92,6 +92,7 @@ describe("useAutoFollowScrollContainer", () => {
     act(() => root?.unmount());
     document.body.removeChild(container);
     document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -110,6 +111,70 @@ describe("useAutoFollowScrollContainer", () => {
       act(() => scrollNode!.dispatchEvent(new Event("scroll")));
       expect(handle?.autoFollowRef.current).toBe(true);
     }
+  });
+
+  it("uses one continuous arrival scroll across resize and reconciliation writes", () => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    expect(layout!.scrollTop).toBe(800);
+    paint(0); paint(180);
+    const middle = layout!.scrollTop;
+    expect(middle).toBeGreaterThan(800);
+    expect(middle).toBeLessThan(1200);
+    layout!.scrollHeight += 100;
+    act(() => { notifyResize(); handle!.scrollToBottom(); });
+    expect(layout!.scrollTop).toBe(middle);
+    paint(180);
+    expect(layout!.scrollTop).toBe(middle);
+    paint(360);
+    expect(layout!.scrollTop).toBe(1300);
+    expect(frames.size).toBe(0);
+  });
+
+  it.each(["wheel", "pointerdown", "touchstart", "keydown"])("yields an arrival to %s before another frame or resize can write", event => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(80);
+    const position = layout!.scrollTop;
+    act(() => {
+      scrollNode!.dispatchEvent(event === "wheel" ? new WheelEvent(event, { deltaY: 20 })
+        : event === "keydown" ? new KeyboardEvent(event, { key: "PageUp" })
+        : event === "touchstart" ? new TouchEvent(event, { touches: [] }) : new Event(event));
+      notifyResize();
+    });
+    paint(500);
+    expect(layout!.scrollTop).toBe(position);
+    expect(handle!.autoFollowRef.current).toBe(false);
+  });
+
+  it("keeps incoming arrivals paused until a new local send explicitly resumes following", () => {
+    act(() => handle!.pauseAutoFollow());
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(500);
+    expect(layout!.scrollTop).toBe(800);
+    act(() => handle!.scrollToBottom({ force: true, animate: true }));
+    expect(layout!.scrollTop).toBe(800);
+    paint(600); paint(1000);
+    expect(layout!.scrollTop).toBe(1200);
+  });
+
+  it("settles an active arrival before hiding and never leaves a background scroll running", () => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(80);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(layout!.scrollTop).toBe(1200);
+    expect(frames.size).toBe(0);
+  });
+
+  it("positions immediately instead of animating when reduced motion is requested", () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    expect(layout!.scrollTop).toBe(1200);
+    expect(frames.size).toBe(0);
   });
 
   it("respects reading history after the stream mounts on opening or returning from setup", () => {

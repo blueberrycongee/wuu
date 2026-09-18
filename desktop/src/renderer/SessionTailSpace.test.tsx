@@ -308,7 +308,7 @@ it.each(["following", "placing", "holding", "paused"] as const)("settles queue d
   // The next observer delivery must not produce a second correction.
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
   if (mode === "placing") {
-    tick(360);
+    tick(196); tick(360);
     const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
     expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(node, message, false));
     return;
@@ -552,6 +552,9 @@ it("tracks the bubble when an earlier receipt collapses during submission", () =
   naturalHeight -= 120;
   messageBottom -= 120;
   render({ messageID: "submitted", running: true });
+  const beforeCorrection = scrollTop();
+  tick(80);
+  expect(scrollTop()).toBe(beforeCorrection);
   tick(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
@@ -641,7 +644,7 @@ it("hands off optimistic motion and positioning without restarting at acknowledg
   expect(animations).toHaveLength(2);
   expect(animations[1].currentTime).toBe(80);
   expect(animations[0].cancel).toHaveBeenCalled();
-  tick(360);
+  tick(96); tick(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   render({ messageID: "accepted" });
   expect(animations).toHaveLength(2);
@@ -751,7 +754,7 @@ it("adapts to asynchronous attachment sizing during placement without replaying 
   messageBottom += 240;
   naturalHeight += 240;
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
-  tick(360);
+  tick(96); tick(360);
   expect(scrollTop()).toBeLessThan(messageTop);
   expect(animations).toHaveLength(1);
   const anchored = scrollTop();
@@ -783,7 +786,7 @@ it("continues an in-flight draft placement through a pane remount and viewport r
   animations[0].currentTime = 80;
   viewportHeight = 900;
   render({ id: "created", messageID: "submitted", mountKey: "promoted" });
-  tick(360);
+  tick(96); tick(360);
   const viewport = api.conversationScrollRef.current!;
   const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(viewport, message, false));

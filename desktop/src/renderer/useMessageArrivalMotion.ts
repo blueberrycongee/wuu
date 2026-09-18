@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { messageMotionTime } from "./MessageScrollMotion";
 
 type Arrival = { element: HTMLElement; animation?: Animation };
 type MessageArrival = { id: string; element: HTMLElement; own: boolean; fresh: boolean };
@@ -20,7 +21,9 @@ export function useMessageArrivalMotion() {
 
   const reconcile = useCallback((messages: readonly MessageArrival[], reset = false) => {
     const next = new Map<string, Arrival>();
-    const duration = motionDurationMs("--motion-slow", 280);
+    const freshArrivals: MessageArrival[] = [];
+    const startTime = messageMotionTime();
+    const duration = motionDurationMs("--motion-base", 180);
     const easing = getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim() || "cubic-bezier(0.16, 1, 0.3, 1)";
     const canAnimate = !reset && !document.hidden && !prefersReducedMotion() && duration > 0;
     for (const { id, element, own, fresh } of messages) {
@@ -29,6 +32,7 @@ export function useMessageArrivalMotion() {
       const arrival: Arrival = { element };
       next.set(id, arrival);
       const source = reset ? undefined : handoffs.current.get(id) ?? old;
+      if (!reset && !source && fresh) freshArrivals.push({ id, element, own, fresh });
       const animation = source?.animation;
       const elapsed = animation && animation.playState !== "finished" && animation.playState !== "idle"
         && typeof animation.currentTime === "number" ? animation.currentTime : undefined;
@@ -37,10 +41,11 @@ export function useMessageArrivalMotion() {
       if (!canAnimate || !element.animate || (source ? elapsed === undefined : !fresh)) continue;
       const origin = own ? "right bottom" : "left top";
       const entrance = element.animate([
-        { opacity: 0, transform: own ? "translateY(12px) scale(.985)" : "translateY(8px)", transformOrigin: origin },
+        { opacity: 0.45, transform: "translateY(6px)", transformOrigin: origin },
         { opacity: 1, transform: "none", transformOrigin: origin },
       ], { duration, easing });
       if (elapsed !== undefined) entrance.currentTime = elapsed;
+      else if (startTime !== undefined) entrance.startTime = startTime;
       arrival.animation = entrance;
       running.current.add(entrance);
       const release = () => running.current.delete(entrance);
@@ -55,6 +60,7 @@ export function useMessageArrivalMotion() {
     }
     handoffs.current.clear();
     rows.current = next;
+    return freshArrivals;
   }, []);
 
   useEffect(() => {
