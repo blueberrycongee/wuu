@@ -1320,17 +1320,20 @@ export function useConversationScrollState({
     let windowResizeHeight: ReturnType<
       typeof createWindowResizeSettleScheduler
     > | undefined;
-    const applyHeight = (nextHeight: number): void => {
+    const applyHeight = (nextHeight: number, inputInset = nextHeight): void => {
       const nextValue = `${nextHeight}px`;
+      const insetValue = `${inputInset}px`;
       if (
         dockComposerHeightRef.current === nextHeight &&
-        pane?.style.getPropertyValue("--dock-composer-height") === nextValue
+        pane?.style.getPropertyValue("--dock-composer-height") === nextValue &&
+        pane?.style.getPropertyValue("--conversation-input-inset") === insetValue
       ) {
         return;
       }
       dockComposerHeightRef.current = nextHeight;
       pane?.style.setProperty("--dock-composer-height", nextValue);
-      // This token now changes the readable viewport. Settle its owned range
+      pane?.style.setProperty("--conversation-input-inset", insetValue);
+      // The input edge changes the readable viewport. Settle its owned range
       // in the same frame, before queue removal can clamp a held submission.
       // The scroll policy leaves deliberate reading pauses untouched.
       scrollConversationToBottom();
@@ -1347,7 +1350,11 @@ export function useConversationScrollState({
         return;
       }
       const nextHeight = dockComposerVisualHeight(node);
-      applyHeight(nextHeight);
+      const input = node.querySelector<HTMLElement>(".composer-frame");
+      const inputInset = input
+        ? Math.max(0, Math.ceil(node.getBoundingClientRect().bottom - input.getBoundingClientRect().top))
+        : nextHeight;
+      applyHeight(nextHeight, inputInset);
     };
 
     windowResizeHeight = createWindowResizeSettleScheduler(updateHeight);

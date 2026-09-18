@@ -702,4 +702,20 @@ describe("useConversationScrollState — dock composer height", () => {
 
     expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("452px");
   });
+
+  it("clips at the input edge rather than the surrounding dock accessories", async () => {
+    const { pane, dockComposer, frame } = mountDockComposerProbe();
+    stubRectHeight(dockComposer, 220);
+    frame.getBoundingClientRect = () => ({ top: 72, bottom: 208, height: 136 }) as DOMRect;
+    flushResizeObserversFor(dockComposer);
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(pane.style.getPropertyValue("--conversation-input-inset")).toBe("148px");
+
+    // Growing upward changes the clipping edge even if the dock's layout box
+    // stays fixed (the expanded editor is positioned outside that box).
+    frame.getBoundingClientRect = () => ({ top: -180, bottom: 208, height: 388 }) as DOMRect;
+    flushResizeObserversFor(frame);
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(pane.style.getPropertyValue("--conversation-input-inset")).toBe("400px");
+  });
 });

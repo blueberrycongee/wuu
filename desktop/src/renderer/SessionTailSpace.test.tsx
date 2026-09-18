@@ -52,8 +52,8 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
       api.conversationScrollRef.current = node;
       if (!node) return;
       Object.defineProperties(node, {
-        clientHeight: { configurable: true, get: () => viewportHeight - statusSpace() - Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--dock-composer-height") || "0") },
-        scrollHeight: { configurable: true, get: () => Math.max(node.clientHeight, naturalHeight + tailSpace()) },
+        clientHeight: { configurable: true, get: () => viewportHeight - Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--conversation-input-inset") || "0") },
+        scrollHeight: { configurable: true, get: () => Math.max(node.clientHeight, naturalHeight + statusSpace() + tailSpace()) },
         scrollTop: { configurable: true, get: () => { top = Math.max(0, Math.min(top, node.scrollHeight - node.clientHeight)); return top; }, set: value => { top = Math.max(0, Math.min(value, node.scrollHeight - node.clientHeight)); } },
       });
     }} onScroll={() => api.handleConversationScroll()}>
@@ -136,7 +136,7 @@ beforeEach(() => {
     unobserve() {}
   });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    if (this.hasAttribute("data-content")) return { height: naturalHeight + tailSpace() } as DOMRect;
+    if (this.hasAttribute("data-content")) return { height: naturalHeight + statusSpace() + tailSpace() } as DOMRect;
     if (this.hasAttribute("data-viewport")) return { top: 100, height: this.clientHeight } as DOMRect;
     if (this.classList.contains("conversation-status-cluster")) return { height: statusHeight } as DOMRect;
     if (this.hasAttribute("data-dock")) return { height: composerHeight } as DOMRect;
@@ -186,7 +186,7 @@ it.each([false, true])("preserves reading ownership when toggling grouped tools 
   expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
 });
 
-it.each(["following", "holding", "paused"])("adapts the readable viewport to actual status presence while %s", mode => {
+it.each(["following", "holding", "paused"])("reserves trailing status space without shortening the reading viewport while %s", mode => {
   const pluginHost = new PluginHost({ react: React });
   render({ messageID: "old" });
   if (mode === "holding") submit();
@@ -195,13 +195,13 @@ it.each(["following", "holding", "paused"])("adapts the readable viewport to act
   const readingTop = scrollTop();
   const viewport = api.conversationScrollRef.current!;
   render({ messageID, pluginHost });
-  expect(viewport.clientHeight).toBe(viewportHeight - statusHeight);
-  expect(scrollTop()).toBe(mode === "following" ? naturalHeight - viewport.clientHeight : readingTop);
+  expect(viewport.clientHeight).toBe(viewportHeight);
+  expect(scrollTop()).toBe(mode === "following" ? naturalHeight + statusHeight - viewport.clientHeight : readingTop);
   statusHeight = 48;
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
   tick(800);
-  expect(viewport.clientHeight).toBe(viewportHeight - statusHeight);
-  expect(scrollTop()).toBe(mode === "following" ? naturalHeight - viewport.clientHeight : readingTop);
+  expect(viewport.clientHeight).toBe(viewportHeight);
+  expect(scrollTop()).toBe(mode === "following" ? naturalHeight + statusHeight - viewport.clientHeight : readingTop);
   render({ messageID, pluginHost, todoComplete: true });
   expect(viewport.clientHeight).toBe(viewportHeight);
   expect(scrollTop()).toBe(mode === "following" ? naturalHeight - viewport.clientHeight : readingTop);
