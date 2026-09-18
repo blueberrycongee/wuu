@@ -391,6 +391,13 @@ export function useConversationScrollState({
     return Array.from(viewport?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])
       .find(node => node.dataset.userMessageId === submissionRef.current?.messageID && !node.closest('[aria-hidden="true"]'));
   }, [activePane, splitConversation]);
+  const reconcileSubmittedArrival = useCallback(() => {
+    const message = splitConversation ? undefined : submittedMessage();
+    const element = message?.querySelector<HTMLElement>("[data-message-arrival]");
+    reconcileArrivals(element && submissionRef.current
+      ? [{ id: submissionRef.current.messageID, element, own: true, fresh: submissionRef.current.animate }]
+      : []);
+  }, [reconcileArrivals, splitConversation, submittedMessage]);
   const { reserve: reserveTailSpace, ensureRange: ensureTailRange, filled: tailFilled, consume: consumeTailSpace, syncLayout: syncTailLayout, discard: discardTailSpace } = useSessionTailSpace({
     threadID: activeThreadID,
     enabled: initialized && !emptyConversation && !splitConversation,
@@ -403,8 +410,21 @@ export function useConversationScrollState({
   const scrollConversationToBottom = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
     // A composer/status resize changes the readable viewport, not the answer.
-    // Keep enough range for the held anchor without leaving stale extra space.
-    if (scrollModeRef.current === "holding") ensureTailRange(lastConversationScrollTopRef.current);
+    // Keep the held or in-flight position valid in the same frame. Measuring
+    // the enlarged viewport can already clamp scrollTop, so restore it too.
+    if (scrollModeRef.current === "holding" || scrollModeRef.current === "placing") {
+      const ownedTop = lastConversationScrollTopRef.current;
+      ensureTailRange(ownedTop);
+      const viewport = conversationViewport();
+      if (viewport && Math.abs(viewport.scrollTop - ownedTop) > 1) {
+        // Unlike a new programmatic scroll, this must not cancel placement.
+        viewport.scrollTop = ownedTop;
+        programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
+      }
+    }
+    // Child-only mounts must start their entrance with placement, not on a
+    // later parent render after the bubble has already painted at full opacity.
+    reconcileSubmittedArrival();
     syncTailLayout();
     // Cached/windowed turns can mount in a child-only commit. The parent
     // layout effect is not guaranteed to run when the exact bubble appears.
@@ -433,6 +453,7 @@ export function useConversationScrollState({
     tailFilled,
     submittedMessage,
     ensureTailRange,
+    reconcileSubmittedArrival,
   ]);
 
   // A draft can be remounted into a real thread during the same animation.
@@ -1023,13 +1044,7 @@ export function useConversationScrollState({
     positionSubmittedMessage(true);
   });
 
-  useLayoutEffect(() => {
-    const message = splitConversation ? undefined : submittedMessage();
-    const element = message?.querySelector<HTMLElement>("[data-message-arrival]");
-    reconcileArrivals(element && submissionRef.current
-      ? [{ id: submissionRef.current.messageID, element, own: true, fresh: submissionRef.current.animate }]
-      : []);
-  });
+  useLayoutEffect(reconcileSubmittedArrival);
 
   useLayoutEffect(() => {
     if (!activeThreadID) {
@@ -1305,18 +1320,12 @@ export function useConversationScrollState({
       ) {
         return;
       }
-      const wasVisible = dockComposerHeightRef.current > 0;
-      const isVisible = nextHeight > 0;
-      const visibilityChanged = wasVisible !== isVisible;
       dockComposerHeightRef.current = nextHeight;
       pane?.style.setProperty("--dock-composer-height", nextValue);
-      // Only re-scroll on a visibility transition (composer hidden → visible
-      // or vice versa), not on every continuous resize from typing or focus
-      // changes. Continuous resize firing scrollConversationToBottom used to
-      // fight the user whenever they tried to scroll up.
-      if (visibilityChanged && isVisible && isFollowing()) {
-        scrollConversationToBottom();
-      }
+      // This token now changes the readable viewport. Settle its owned range
+      // in the same frame, before queue removal can clamp a held submission.
+      // The scroll policy leaves deliberate reading pauses untouched.
+      scrollConversationToBottom();
     };
 
     if (!node) {
