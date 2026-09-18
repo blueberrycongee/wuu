@@ -286,6 +286,7 @@ function BuiltInThreadItemView({
           data-user-message-id={item.id}
           data-turn-id={turnID}
         >
+          <div className="user-message-motion" data-message-arrival>
           {sessionMessage ? (
             <button
               type="button"
@@ -318,6 +319,7 @@ function BuiltInThreadItemView({
               onOpenFile={onOpenFile}
             />
           )}
+          </div>
           {!editing && (copyable || editActionVisible || relatedSessionAvailable) ? (
             <div
               className="message-actions user-message-actions"

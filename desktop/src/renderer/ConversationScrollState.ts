@@ -30,6 +30,7 @@ import {
 import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { useSessionTailSpace } from "./SessionTailSpace";
+import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 
 // Tight threshold so the conversation only re-engages auto-follow when the
 // user is effectively parked at the bottom. The previous 48px band let one
@@ -63,13 +64,14 @@ function clampFraction(value: number, minimum: number, maximum: number): number 
 }
 
 /**
- * Place the submitted message in the upper reading band. The message block's
- * bottom is the anchor so a long, multi-line message cannot consume the
- * context gap above it.
+ * Short messages leave room for the response in the upper reading band.
+ * Tall folded cards (including attachments) keep their beginning visible;
+ * response space must never be bought by clipping the submitted content.
  */
 export function submittedMessageScrollTop(
   viewport: HTMLElement,
   message: HTMLElement,
+  clamp = true,
 ): number {
   const viewportRect = viewport.getBoundingClientRect();
   const messageRect = message.getBoundingClientRect();
@@ -89,10 +91,10 @@ export function submittedMessageScrollTop(
     SUBMITTED_MESSAGE_MIN_FRACTION,
     SUBMITTED_MESSAGE_MAX_FRACTION,
   );
-  return clampScrollTop(
-    viewport,
-    viewport.scrollTop + messageBottom - viewportRect.top - viewportHeight * messageBand,
-  );
+  const bottomTarget = viewport.scrollTop + messageBottom - viewportRect.top - viewportHeight * messageBand;
+  const topLimit = viewport.scrollTop + messageTop - viewportRect.top - viewportHeight * 0.08;
+  const target = Math.max(0, Math.min(bottomTarget, topLimit));
+  return clamp ? clampScrollTop(viewport, target) : target;
 }
 
 function cssPixelValue(value: string): number {
@@ -118,9 +120,14 @@ export function dockComposerVisualHeight(node: HTMLElement): number {
   return layoutHeight + expandedOffset;
 }
 
+type SubmissionScrollPhase = "pending" | "placing" | "holding";
+type ConversationScrollMode = "following" | "paused" | SubmissionScrollPhase;
+
 export type ConversationScrollSnapshot = {
   scrollTop: number;
   autoFollow: boolean;
+  submissionPhase?: SubmissionScrollPhase;
+  submittedMessageID?: string;
 };
 
 export function useConversationScrollState({
@@ -157,13 +164,13 @@ export function useConversationScrollState({
    * measurement — see JumpToLatestPill's anchored mode.
    */
   dockComposerNode: HTMLElement | null;
-  statusClusterRef: (node: HTMLDivElement | null) => void;
-  statusClusterNode: HTMLDivElement | null;
   scheduleStreamScroll: () => void;
   handleConversationScroll: (scrolledNode?: HTMLElement) => void;
   enableConversationAutoFollow: () => void;
-  /** Smoothly move the current conversation to its new bottom on submit. */
-  requestSubmittedQueryScroll: () => void;
+  /** Position this submission once its optimistic bubble has mounted. */
+  requestSubmittedQueryScroll: (messageID: string) => void;
+  acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
+  discardSubmittedMessage: (messageID: string) => void;
   /**
    * Pause auto-follow so a programmatic scroll (e.g. query-history
    * jump) doesn't get pulled back to the bottom by the next stream
@@ -186,23 +193,31 @@ export function useConversationScrollState({
     secondary: null
   });
   const conversationPaneRef = useRef<HTMLElement | null>(null);
-  const submittedPositionPendingRef = useRef(false);
-  const submittedPositionFrameRef = useRef<number | undefined>(undefined);
-  const submittedPositionAttemptsRef = useRef(0);
+  const submissionRef = useRef<{ messageID: string; threadID?: string; animate: boolean } | undefined>(undefined);
+  // Exactly one owner can write scrollTop. Geometry alone cannot transfer
+  // ownership: a submission's padded bottom is not the bottom of its output.
+  const scrollModeRef = useRef<ConversationScrollMode>("following");
+  function isFollowing(): boolean { return scrollModeRef.current === "following"; }
+  function submissionPhase(): SubmissionScrollPhase | undefined {
+    const mode = scrollModeRef.current;
+    return mode === "following" || mode === "paused" ? undefined : mode;
+  }
+  const { reconcile: reconcileArrivals, acknowledge: acknowledgeArrival, cancel: cancelArrivals } = useMessageArrivalMotion();
+  const previousThreadRef = useRef(activeThreadID);
   const [dockComposerNode, setDockComposerNode] = useState<HTMLElement | null>(null);
   const dockComposerRef = useCallback((node: HTMLElement | null) => {
     setDockComposerNode(node);
   }, []);
   const dockComposerHeightRef = useRef(0);
-  const conversationAutoFollowRef = useRef(true);
   const setAutoFollow = useCallback((next: boolean): void => {
-    conversationAutoFollowRef.current = next;
+    scrollModeRef.current = next ? "following" : "paused";
   }, []);
   const lastConversationScrollTopRef = useRef(0);
   const programmaticScrollTopRef = useRef<number | undefined>(undefined);
   const suppressAutoFollowRearmRef = useRef(false);
   const smoothAutoFollowRef = useRef(false);
   const submittedScrollFrameRef = useRef<number | undefined>(undefined);
+  const positionSubmittedMessageRef = useRef<((animate: boolean) => boolean) | undefined>(undefined);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
     { node: HTMLElement; scrollTop: number; scrollHeight: number } | undefined
@@ -281,7 +296,9 @@ export function useConversationScrollState({
   ): void {
     threadScrollSnapshotsRef.current.set(threadID, {
       scrollTop: clampScrollTop(node, node.scrollTop),
-      autoFollow: node.scrollHeight <= node.clientHeight ? true : autoFollow
+      autoFollow,
+      submissionPhase: submissionPhase(),
+      submittedMessageID: submissionRef.current?.messageID,
     });
   }
 
@@ -312,10 +329,12 @@ export function useConversationScrollState({
       window.cancelAnimationFrame(submittedScrollFrameRef.current);
       submittedScrollFrameRef.current = undefined;
     }
+    if (scrollModeRef.current === "placing") scrollModeRef.current = "holding";
   }, []);
 
   const markUserScrollAwayIntent = useCallback((startTop?: number): void => {
     cancelSubmittedQueryScroll();
+    if (submissionPhase()) setAutoFollow(false);
     userScrollAwayIntentRef.current = true;
     if (startTop !== undefined) {
       userScrollAwayStartTopRef.current = startTop;
@@ -350,19 +369,43 @@ export function useConversationScrollState({
     }
     programmaticScrollTopRef.current = actualTop;
     lastConversationScrollTopRef.current = actualTop;
-    const nextAutoFollow =
-      node.scrollHeight <= node.clientHeight ? true : autoFollow;
-    setAutoFollow(nextAutoFollow);
-    setAutoFollowOverflowAnchor(node, nextAutoFollow);
+    const nextAutoFollow = autoFollow;
+    if (!submissionPhase()) setAutoFollow(nextAutoFollow);
+    setAutoFollowOverflowAnchor(node, nextAutoFollow || Boolean(submissionPhase()));
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
     if (moved && options.revealScrollbar) {
       showConversationScrollbar(node);
     }
   }
 
+  const adoptingSubmission = Boolean(submissionRef.current && !submissionRef.current.threadID && activeThreadID &&
+    primaryTurns?.some(turn => turn.items.some(item => item.id === submissionRef.current?.messageID)));
+  const submittedMessage = useCallback(() => {
+    const viewport = conversationViewport();
+    return Array.from(viewport?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])
+      .find(node => node.dataset.userMessageId === submissionRef.current?.messageID && !node.closest('[aria-hidden="true"]'));
+  }, [activePane, splitConversation]);
+  const { reserve: reserveTailSpace, ensureRange: ensureTailRange, filled: tailFilled, consume: consumeTailSpace, syncLayout: syncTailLayout, discard: discardTailSpace } = useSessionTailSpace({
+    threadID: activeThreadID,
+    enabled: initialized && !emptyConversation && !splitConversation,
+    preserveOnThreadChange: adoptingSubmission,
+    paneRef: conversationPaneRef,
+    viewportRef: conversationScrollRef,
+    contentRef: scrollContentRef,
+  });
+
   const scrollConversationToBottom = useCallback((): void => {
+    if (previousThreadRef.current !== activeThreadID) return;
+    syncTailLayout();
+    // Cached/windowed turns can mount in a child-only commit. The parent
+    // layout effect is not guaranteed to run when the exact bubble appears.
+    if (scrollModeRef.current === "pending") positionSubmittedMessageRef.current?.(true);
     const node = conversationViewport();
-    if (!node || !conversationAutoFollowRef.current) {
+    if (node && scrollModeRef.current === "holding" &&
+      tailFilled(submittedMessage()?.getBoundingClientRect().height ?? 0)) {
+      setAutoFollow(true);
+    }
+    if (!node || !isFollowing()) {
       return;
     }
     // The submit animation reads the live bottom itself. A native smooth
@@ -377,89 +420,118 @@ export function useConversationScrollState({
     clearUserScrollAwayIntent,
     setAutoFollow,
     splitConversation,
+    syncTailLayout,
+    tailFilled,
+    submittedMessage,
   ]);
 
-  const { statusClusterRef, statusClusterNode, reserve: reserveTailSpace, consume: consumeTailSpace } = useSessionTailSpace({
-    threadID: activeThreadID,
-    running,
-    enabled: initialized && !emptyConversation && !splitConversation,
-    paneRef: conversationPaneRef,
-    viewportRef: conversationScrollRef,
-    followLayout: scrollConversationToBottom,
+  // A draft can be remounted into a real thread during the same animation.
+  // Frame callbacks keep their deadline but must use the current scope's
+  // layout/snapshot callbacks, not closures belonging to the outgoing draft.
+  const submissionFrameCallbacks = useRef({ ensureTailRange, scrollConversationToBottom, rememberActiveThreadScrollSnapshot });
+  useLayoutEffect(() => {
+    submissionFrameCallbacks.current = { ensureTailRange, scrollConversationToBottom, rememberActiveThreadScrollSnapshot };
   });
 
-  const positionSubmittedMessage = useCallback((animate = false): boolean => {
-    if (splitConversation) return false;
-    const viewport = conversationViewport();
-    if (!viewport) return false;
-    const message = Array.from(
-      viewport.querySelectorAll<HTMLElement>("[data-user-message-id]"),
-    ).at(-1);
-    if (!message) return false;
+  const acknowledgeSubmittedMessage = useCallback((pendingID: string, messageID: string) => {
+    for (const snapshot of threadScrollSnapshotsRef.current.values()) {
+      if (snapshot.submittedMessageID === pendingID) snapshot.submittedMessageID = messageID;
+    }
+    if (submissionRef.current?.messageID !== pendingID) return;
+    acknowledgeArrival(pendingID, messageID);
+    submissionRef.current.messageID = messageID;
+  }, [acknowledgeArrival]);
+
+  const discardSubmittedMessage = useCallback((messageID: string) => {
+    for (const [threadID, snapshot] of threadScrollSnapshotsRef.current) {
+      if (snapshot.submittedMessageID !== messageID) continue;
+      snapshot.submissionPhase = undefined;
+      snapshot.submittedMessageID = undefined;
+      discardTailSpace(threadID);
+    }
+    if (submissionRef.current?.messageID !== messageID) return;
+    discardTailSpace(submissionRef.current.threadID);
+    cancelSubmittedQueryScroll();
+    cancelArrivals();
+    submissionRef.current = undefined;
     setAutoFollow(false);
-    setAutoFollowOverflowAnchor(viewport, false);
-    submittedPositionPendingRef.current = false;
-    const targetTop = submittedMessageScrollTop(viewport, message);
+    const node = conversationViewport();
+    if (node) {
+      setAutoFollowOverflowAnchor(node, false);
+      rememberActiveThreadScrollSnapshot(node, false);
+    }
+  }, [activePane, activeThreadID, splitConversation, discardTailSpace, cancelSubmittedQueryScroll, cancelArrivals, setAutoFollow]);
+
+  const positionSubmittedMessage = useCallback((animate = false): boolean => {
+    if (splitConversation || scrollModeRef.current !== "pending") return false;
+    let viewport = conversationViewport();
+    if (!viewport) return false;
+    const message = submittedMessage();
+    if (!message) return false;
+    scrollModeRef.current = "placing";
+    setAutoFollowOverflowAnchor(viewport, true);
+    const targetTop = submittedMessageScrollTop(viewport, message, false);
+    reserveTailSpace(targetTop, message.getBoundingClientRect().height);
     const startTop = clampScrollTop(viewport, viewport.scrollTop);
-    if (!animate || prefersReducedMotion() || Math.abs(targetTop - startTop) <= 1) {
+    if (!animate || !submissionRef.current?.animate || prefersReducedMotion() || Math.abs(targetTop - startTop) <= 1) {
       viewport.scrollTop = targetTop;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+      scrollModeRef.current = "holding";
+      rememberActiveThreadScrollSnapshot(viewport, false);
       return true;
     }
 
     let startedAt: number | undefined;
-    const duration = motionDurationMs("--query-submit-duration", 220);
+    const duration = motionDurationMs("--query-scroll-duration", 360);
     const step = (now: number): void => {
       submittedScrollFrameRef.current = undefined;
+      if (scrollModeRef.current !== "placing") return;
+      viewport = conversationViewport();
+      if (!viewport) {
+        scrollModeRef.current = "pending";
+        return;
+      }
       startedAt ??= now;
       const progress = duration > 0 ? Math.min(1, (now - startedAt) / duration) : 1;
-      const eased = 1 - (1 - progress) ** 3;
-      viewport.scrollTop = startTop + (targetTop - startTop) * eased;
+      const eased = progress * progress * (3 - 2 * progress);
+      // A previous turn's receipt can collapse during this same animation.
+      // Follow the bubble's live position without restarting the deadline.
+      const liveMessage = submittedMessage();
+      if (!liveMessage) {
+        scrollModeRef.current = "pending";
+        return;
+      }
+      const liveTarget = submittedMessageScrollTop(viewport, liveMessage, false);
+      submissionFrameCallbacks.current.ensureTailRange(liveTarget);
+      viewport.scrollTop = startTop + (liveTarget - startTop) * eased;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      rememberActiveThreadScrollSnapshot(viewport, false);
+      if (progress >= 1) scrollModeRef.current = "holding";
+      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false);
       if (progress < 1) {
         submittedScrollFrameRef.current = window.requestAnimationFrame(step);
+      } else {
+        submissionFrameCallbacks.current.scrollConversationToBottom();
       }
     };
     submittedScrollFrameRef.current = window.requestAnimationFrame(step);
     return true;
-  }, [activePane, splitConversation]);
+  }, [activePane, activeThreadID, ensureTailRange, reserveTailSpace, scrollConversationToBottom, splitConversation, submittedMessage]);
 
-  useLayoutEffect(() => {
-    if (!submittedPositionPendingRef.current || splitConversation) return;
-    const tryPosition = (): void => {
-      submittedPositionFrameRef.current = undefined;
-      if (positionSubmittedMessage(true) || !submittedPositionPendingRef.current) return;
-      if (++submittedPositionAttemptsRef.current >= 3) {
-        submittedPositionPendingRef.current = false;
-        return;
-      }
-      submittedPositionFrameRef.current = window.requestAnimationFrame(tryPosition);
-    };
-    tryPosition();
-    return () => {
-      if (submittedPositionFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(submittedPositionFrameRef.current);
-        submittedPositionFrameRef.current = undefined;
-      }
-    };
-  }, [positionSubmittedMessage, primaryTurns, running, splitConversation]);
+  useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 
-  const requestSubmittedQueryScroll = useCallback((): void => {
+  const requestSubmittedQueryScroll = useCallback((messageID: string): void => {
     // Collaboration keeps its existing bottom-follow behavior. Ordinary
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
-    if (splitConversation && !conversationAutoFollowRef.current) return;
+    if (splitConversation && !isFollowing()) return;
     cancelSubmittedQueryScroll();
-    reserveTailSpace();
-    submittedPositionPendingRef.current = !splitConversation;
-    submittedPositionAttemptsRef.current = 0;
+    submissionRef.current = { messageID, threadID: activeThreadID, animate: true };
     clearUserScrollAwayIntent();
     cancelBottomOverscroll(conversationViewport());
     selectionPausedAutoFollowRef.current = false;
-    setAutoFollow(splitConversation);
+    scrollModeRef.current = splitConversation ? "following" : "pending";
     const node = conversationViewport();
     if (!node) {
       return;
@@ -469,9 +541,8 @@ export function useConversationScrollState({
       // the first committed turn) will be positioned at the reading anchor
       // below, and stream growth must not get a chance to steal that anchor.
       suppressAutoFollowRearmRef.current = false;
-      setAutoFollowOverflowAnchor(node, false);
+      setAutoFollowOverflowAnchor(node, true);
       rememberActiveThreadScrollSnapshot(node, false);
-      positionSubmittedMessage(true);
       return;
     }
     const smooth = !prefersReducedMotion();
@@ -488,7 +559,7 @@ export function useConversationScrollState({
     let startedAt: number | undefined;
     const step = (now: number): void => {
       submittedScrollFrameRef.current = undefined;
-      if (!smoothAutoFollowRef.current || !conversationAutoFollowRef.current) return;
+      if (!smoothAutoFollowRef.current || !isFollowing()) return;
       startedAt ??= now;
       const progress = duration > 0 ? Math.min(1, (now - startedAt) / duration) : 1;
       // CSS uses cubic-bezier(1/3, 1, 2/3, 1): linear time, cubic ease-out.
@@ -512,27 +583,28 @@ export function useConversationScrollState({
     clearUserScrollAwayIntent,
     scrollConversationToBottom,
     cancelSubmittedQueryScroll,
-    reserveTailSpace,
     setAutoFollow,
     splitConversation,
-    positionSubmittedMessage,
   ]);
 
-  useLayoutEffect(() => cancelSubmittedQueryScroll,
-    [activeThreadID, activePane, splitConversation, cancelSubmittedQueryScroll]);
-
   useLayoutEffect(() => {
-    submittedPositionPendingRef.current = false;
-    if (submittedPositionFrameRef.current !== undefined) {
-      window.cancelAnimationFrame(submittedPositionFrameRef.current);
-      submittedPositionFrameRef.current = undefined;
-    }
-  }, [activeThreadID, activePane, splitConversation]);
+    if (!adoptingSubmission) cancelSubmittedQueryScroll();
+  }, [activeThreadID, activePane, splitConversation, cancelSubmittedQueryScroll]);
+  useLayoutEffect(() => cancelSubmittedQueryScroll, [cancelSubmittedQueryScroll]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const reduce = () => { if (media?.matches) cancelSubmittedQueryScroll(); };
+    const hide = () => { if (document.hidden) cancelSubmittedQueryScroll(); };
+    media?.addEventListener("change", reduce);
+    document.addEventListener("visibilitychange", hide);
+    return () => { media?.removeEventListener("change", reduce); document.removeEventListener("visibilitychange", hide); };
+  }, [cancelSubmittedQueryScroll]);
 
   const scheduleLiveResizeScroll = useCallback((): void => {
     if (
       liveResizeScrollFrameRef.current !== undefined ||
-      !conversationAutoFollowRef.current
+      !isFollowing()
     ) {
       return;
     }
@@ -542,7 +614,7 @@ export function useConversationScrollState({
       if (
         !node ||
         !isWindowResizing() ||
-        !conversationAutoFollowRef.current
+        !isFollowing()
       ) {
         return;
       }
@@ -555,10 +627,12 @@ export function useConversationScrollState({
   }, [activePane, splitConversation]);
 
   const scheduleStreamScroll = useCallback((): void => {
+    if (previousThreadRef.current !== activeThreadID) return;
+    syncTailLayout();
     if (!activeThreadID) {
       return;
     }
-    if (!conversationAutoFollowRef.current) {
+    if (!isFollowing() && !submissionPhase()) {
       return;
     }
     if (isWindowResizing()) {
@@ -580,7 +654,7 @@ export function useConversationScrollState({
         scrollConversationToBottom();
       });
     });
-  }, [scheduleLiveResizeScroll, scrollConversationToBottom]);
+  }, [activeThreadID, scheduleLiveResizeScroll, scrollConversationToBottom, syncTailLayout]);
 
   useEffect(() => {
     resizeSettleStreamScrollRef.current?.cancel();
@@ -625,7 +699,9 @@ export function useConversationScrollState({
       }
       return {
         scrollTop: clampScrollTop(node, node.scrollTop),
-        autoFollow: conversationAutoFollowRef.current,
+        autoFollow: isFollowing(),
+        submissionPhase: submissionPhase(),
+        submittedMessageID: submissionRef.current?.messageID,
       };
     },
     [activePane, splitConversation],
@@ -637,6 +713,12 @@ export function useConversationScrollState({
       if (!node) {
         return;
       }
+      cancelSubmittedQueryScroll();
+      scrollModeRef.current = snapshot.submissionPhase === "placing" ? "pending" :
+        snapshot.submissionPhase ?? (snapshot.autoFollow ? "following" : "paused");
+      submissionRef.current = snapshot.submittedMessageID
+        ? { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false }
+        : undefined;
       applyProgrammaticScroll(node, snapshot.scrollTop, snapshot.autoFollow, {
         revealScrollbar: true,
       });
@@ -649,8 +731,19 @@ export function useConversationScrollState({
     if (!node) {
       return;
     }
+    if (submissionPhase()) {
+      // Wheel/key/touch/scrollbar and content actions release ownership before
+      // their scroll event. Native anchoring, clamping and coalesced rAF events
+      // must not enable bottom-follow or consume the submission's reservation.
+      if (scrollModeRef.current === "holding") {
+        node.scrollTop = clampScrollTop(node, lastConversationScrollTopRef.current);
+      }
+      programmaticScrollTopRef.current = undefined;
+      rememberActiveThreadScrollSnapshot(node, false);
+      return;
+    }
     if (isWindowResizing()) {
-      if (conversationAutoFollowRef.current) {
+      if (isFollowing()) {
         scheduleStreamScroll();
       }
       return;
@@ -664,7 +757,7 @@ export function useConversationScrollState({
           node.scrollTop
         );
         if (
-          conversationAutoFollowRef.current &&
+          isFollowing() &&
           !userScrollAwayIntentRef.current &&
           !atLatestScrollView(node, CONVERSATION_AUTO_SCROLL_THRESHOLD_PX)
         ) {
@@ -673,7 +766,7 @@ export function useConversationScrollState({
         }
         rememberActiveThreadScrollSnapshot(
           node,
-          conversationAutoFollowRef.current
+          isFollowing()
         );
         return;
       }
@@ -741,7 +834,7 @@ export function useConversationScrollState({
       scrollAwayStartTop !== undefined &&
       node.scrollTop < scrollAwayStartTop - 1;
     const movedAbovePreviousScroll = userScrollAwayIntent && scrolledUp;
-    let nextAutoFollow = conversationAutoFollowRef.current;
+    let nextAutoFollow = isFollowing();
     if (
       (movedAboveUserIntentStart || movedAbovePreviousScroll) &&
       node.scrollTop < maxScrollTop(node) - 1
@@ -752,7 +845,7 @@ export function useConversationScrollState({
       setAutoFollow(false);
       setAutoFollowOverflowAnchor(node, false);
     } else if (
-      conversationAutoFollowRef.current &&
+      isFollowing() &&
       scrolledUp &&
       !atLatestView &&
       node.scrollTop < maxScrollTop(node) - 1
@@ -802,11 +895,11 @@ export function useConversationScrollState({
       // when the user takes manual control).
       //
       // Keep the existing auto-follow value until the animation lands.
-      nextAutoFollow = conversationAutoFollowRef.current;
+      nextAutoFollow = isFollowing();
     } else if (atLatestView) {
       suppressAutoFollowRearmRef.current = false;
       if (
-        conversationAutoFollowRef.current ||
+        isFollowing() ||
         scrolledDown ||
         node.scrollHeight <= node.clientHeight
       ) {
@@ -821,7 +914,7 @@ export function useConversationScrollState({
         setAutoFollow(false);
         setAutoFollowOverflowAnchor(node, false);
       }
-    } else if (conversationAutoFollowRef.current && !userScrollAwayIntent) {
+    } else if (isFollowing() && !userScrollAwayIntent) {
       suppressAutoFollowRearmRef.current = false;
       if (isWindowResizing()) {
         nextAutoFollow = true;
@@ -845,7 +938,7 @@ export function useConversationScrollState({
       bottomOverscrollFromAwayRef.current = true;
       setNativeBottomOverscrollEnabled(node, true);
     }
-    if ((scrolledUp || scrolledDown) && !nextAutoFollow && !splitConversation) {
+    if ((scrolledUp || scrolledDown) && !layoutClamp && !nextAutoFollow && !splitConversation) {
       consumeTailSpace(Math.abs(previousScrollTop - node.scrollTop));
     }
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
@@ -853,15 +946,36 @@ export function useConversationScrollState({
 
   useLayoutEffect(() => {
     const node = conversationViewport();
+    const threadChanged = previousThreadRef.current !== activeThreadID;
+    previousThreadRef.current = activeThreadID;
+    if (threadChanged && !adoptingSubmission) {
+      submissionRef.current = undefined;
+      setAutoFollow(true);
+    }
     if (!activeThreadID || !node) {
       programmaticScrollTopRef.current = undefined;
       lastConversationScrollTopRef.current = 0;
-      setAutoFollow(true);
+      if (!submissionPhase()) setAutoFollow(true);
       return undefined;
     }
 
+    if (adoptingSubmission && submissionRef.current) {
+      submissionRef.current.threadID = activeThreadID;
+      // The draft bubble moves into the thread pane without a bottom jump,
+      // even if this short first turn has no scroll range yet.
+      setAutoFollowOverflowAnchor(node, Boolean(submissionPhase()));
+      programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+      rememberActiveThreadScrollSnapshot(node, isFollowing());
+      return;
+    }
     markSessionSwitch(activeThreadID, "scroll-restore-start");
     const snapshot = threadScrollSnapshotsRef.current.get(activeThreadID);
+    scrollModeRef.current = snapshot?.submissionPhase === "placing" ? "pending" :
+      snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following");
+    if (snapshot?.submittedMessageID) {
+      submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
+    }
     if (snapshot && !snapshot.autoFollow) {
       applyProgrammaticScroll(node, snapshot.scrollTop, false);
       bottomOverscrollFromAwayRef.current = true;
@@ -873,6 +987,18 @@ export function useConversationScrollState({
     markSessionSwitch(activeThreadID, "scroll-restore-end");
     return undefined;
   }, [activePane, activeThreadID, setAutoFollow, splitConversation]);
+
+  // Runs after restoration and every commit, including the draft's first
+  // bubble. No frame-count timeout and no fallback to a previous message.
+  useLayoutEffect(() => { positionSubmittedMessage(true); });
+
+  useLayoutEffect(() => {
+    const message = splitConversation ? undefined : submittedMessage();
+    const element = message?.querySelector<HTMLElement>("[data-message-arrival]");
+    reconcileArrivals(element && submissionRef.current
+      ? [{ id: submissionRef.current.messageID, element, own: true, fresh: submissionRef.current.animate }]
+      : []);
+  });
 
   useLayoutEffect(() => {
     if (!activeThreadID) {
@@ -903,6 +1029,7 @@ export function useConversationScrollState({
       bottomOverscrollFromAwayRef.current,
     );
     const handleWheel = (event: WheelEvent): void => {
+      if (event.deltaY !== 0 && (submittedScrollFrameRef.current !== undefined || submissionPhase())) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         if (event.deltaY < 0) {
           markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
@@ -937,6 +1064,8 @@ export function useConversationScrollState({
       }
     };
     const handlePointerDown = (event: PointerEvent): void => {
+      if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
+      cancelArrivals();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         return;
       }
@@ -959,6 +1088,10 @@ export function useConversationScrollState({
       }
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (SCROLL_TOWARD_LATEST_KEYS.has(event.key) || ((event.key === "Enter" || event.key === " ") &&
+        event.target instanceof Element && event.target.closest('button, [role="button"], summary'))) {
+        if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
+      }
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         return;
       }
@@ -973,6 +1106,7 @@ export function useConversationScrollState({
       }
     };
     const handleTouchStart = (event: TouchEvent): void => {
+      if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         touchLastYRef.current = event.touches[0]?.clientY;
         return;
@@ -1017,6 +1151,13 @@ export function useConversationScrollState({
     const handleTouchEnd = (): void => {
       touchLastYRef.current = undefined;
     };
+    // Includes keyboard activation and attachment controls, even in nested
+    // scrollers. A user's expansion must not be undone by following output.
+    const handleContentAction = (event: MouseEvent): void => {
+      if (!(event.target instanceof Element) || !event.target.closest('button, [role="button"], summary, a, input, textarea, select, video, audio')) return;
+      disableConversationAutoFollow();
+      cancelArrivals();
+    };
     node.addEventListener("wheel", handleWheel, { passive: true });
     node.addEventListener("scrollend", handleNativeScrollEnd);
     node.addEventListener("pointerdown", handlePointerDown);
@@ -1028,6 +1169,7 @@ export function useConversationScrollState({
     node.addEventListener("touchend", handleTouchEnd);
     node.addEventListener("touchcancel", handleTouchEnd);
     node.addEventListener("keydown", handleKeyDown);
+    node.addEventListener("click", handleContentAction, true);
     return () => {
       node.removeEventListener("wheel", handleWheel);
       node.removeEventListener("scrollend", handleNativeScrollEnd);
@@ -1040,6 +1182,7 @@ export function useConversationScrollState({
       node.removeEventListener("touchend", handleTouchEnd);
       node.removeEventListener("touchcancel", handleTouchEnd);
       node.removeEventListener("keydown", handleKeyDown);
+      node.removeEventListener("click", handleContentAction, true);
       node.style.removeProperty("overscroll-behavior-y");
     };
   });
@@ -1108,7 +1251,7 @@ export function useConversationScrollState({
       // or vice versa), not on every continuous resize from typing or focus
       // changes. Continuous resize firing scrollConversationToBottom used to
       // fight the user whenever they tried to scroll up.
-      if (visibilityChanged && isVisible && conversationAutoFollowRef.current) {
+      if (visibilityChanged && isVisible && isFollowing()) {
         scrollConversationToBottom();
       }
     };
@@ -1181,13 +1324,13 @@ export function useConversationScrollState({
     dockComposerRef,
     dockComposerNode,
     scheduleStreamScroll,
-    statusClusterRef,
-    statusClusterNode,
     handleConversationScroll,
     enableConversationAutoFollow,
     disableConversationAutoFollow,
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
+    acknowledgeSubmittedMessage,
+    discardSubmittedMessage,
   };
 }

@@ -345,6 +345,16 @@
   scroll-margin-top: 12px;
 }
 
+/* Animate the visual group without transforming its measured scroll anchor. */
+.user-message-motion {
+  display: grid;
+  grid-template-columns: inherit;
+  justify-items: inherit;
+  gap: inherit;
+  width: 100%;
+  min-width: 0;
+}
+
 .session-message-source {
   display: flex;
   align-items: center;
@@ -398,8 +408,8 @@
                                                                      
                                                                      
                                         
-.user-message-block.user-message-jump-flash > .user-message,
-.user-message-block.user-message-jump-flash > .user-message-edit {
+.user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
+.user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
   animation: user-message-jump-flash 800ms var(--ease-out);
 }
 
@@ -416,8 +426,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .user-message-block.user-message-jump-flash > .user-message,
-  .user-message-block.user-message-jump-flash > .user-message-edit {
+  .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
+  .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
     animation: none;
     background: var(--user-message-jump-flash-bg);
   }

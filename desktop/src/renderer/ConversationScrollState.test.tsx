@@ -92,7 +92,7 @@ function Probe({
     },
     createElement("button", {
       type: "button",
-      onClick: h.requestSubmittedQueryScroll,
+      onClick: () => h.requestSubmittedQueryScroll("submitted"),
       "data-testid": "request-submitted-query-scroll",
     }),
     createElement("div", {

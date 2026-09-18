@@ -2256,6 +2256,7 @@ export function App(): JSX.Element {
     workspaceViewTabs,
   ]);
 
+  const [statusClusterNode, statusClusterRef] = useState<HTMLDivElement | null>(null);
   const {
     conversationScrollRef,
     scrollContentRef,
@@ -2263,8 +2264,6 @@ export function App(): JSX.Element {
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
-    statusClusterRef,
-    statusClusterNode,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
@@ -2272,6 +2271,8 @@ export function App(): JSX.Element {
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
+    acknowledgeSubmittedMessage,
+    discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
     activePane: state.activePane,
@@ -4379,7 +4380,8 @@ export function App(): JSX.Element {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
     };
-    requestSubmittedQueryScroll();
+    const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
+    requestSubmittedQueryScroll(optimisticTurn.items[0].id);
     appStateRef.current = {
       ...currentState,
       running: true,
@@ -4394,7 +4396,6 @@ export function App(): JSX.Element {
     let optimisticThreadID: string | undefined;
     // Render a tab-scoped optimistic turn before a new thread exists. Once
     // thread/start returns, the same turn moves into normal thread state.
-    const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
     if (!targetThread && currentState.activeSessionTabID) {
       setPendingNewThreadTurn({
         sessionTabID: currentState.activeSessionTabID,
@@ -4502,6 +4503,8 @@ export function App(): JSX.Element {
       const acceptedTurn: Turn = interruptedBeforeAcceptance
         ? { ...result.turn, status: "interrupted" }
         : result.turn;
+      const acceptedMessage = acceptedTurn.items.find(item => item.type === "user_message");
+      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
       setState((current) =>
         updateThreadByID(
           setThreadForPane(current, targetPane, thread),
@@ -4544,6 +4547,7 @@ export function App(): JSX.Element {
                     : dropOptimisticTurn(currentThread, optimisticTurnID),
             )
           : appStateRef.current;
+      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
       appStateRef.current = {
         ...droppedState,
         running: keepAcceptedTurn,
@@ -4824,8 +4828,9 @@ export function App(): JSX.Element {
       return false;
     }
     const targetIsActive = activeThreadIDForState(currentState) === targetThread.id;
+    const optimisticTurn = createOptimisticTurn(message, Date.now());
     if (targetIsActive) {
-      enableConversationAutoFollow();
+      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
       appStateRef.current = {
         ...currentState,
         running: true,
@@ -4844,7 +4849,6 @@ export function App(): JSX.Element {
       // moment instead of waiting for the server's first turn
       // notification. The placeholder is replaced (or dropped on error)
       // once the real turn arrives or the request fails.
-      const optimisticTurn = createOptimisticTurn(message, Date.now());
       optimisticTurnID = optimisticTurn.id;
       appStateRef.current = updateThreadByID(
         appStateRef.current,
@@ -4885,6 +4889,8 @@ export function App(): JSX.Element {
       const acceptedTurn: Turn = interruptedBeforeAcceptance
         ? { ...result.turn, status: "interrupted" }
         : result.turn;
+      const acceptedMessage = acceptedTurn.items.find((item) => item.type === "user_message");
+      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
       setState((current) =>
         updateThreadByID(
           current,
@@ -4931,6 +4937,7 @@ export function App(): JSX.Element {
         running: targetIsActive ? keepAcceptedTurn : appStateRef.current.running,
         status: interrupted || keepAcceptedTurn ? "" : errorMessage,
       };
+      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
       setState((current) => ({
         ...(optimisticTurnID
           ? updateThreadByID(
