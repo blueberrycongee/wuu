@@ -1,6 +1,18 @@
 import { type RefObject, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { prefersReducedMotion } from "./motion";
 
+// Tuning knobs for the temporary ordinary-session reading clearance.
+// Leave most of the viewport below the latest user message so its dynamic
+// upper-band reading anchor does not clamp to the bottom when appended.
+export const SESSION_TAIL_SPACE_RATIO = 0.67;
+export const SESSION_TAIL_SPACE_MIN_PX = 240;
+export const SESSION_TAIL_SPACE_MAX_PX = 520;
+
+export function sessionTailSpaceForViewport(viewportHeight: number): number {
+  const proportional = Math.round(viewportHeight * SESSION_TAIL_SPACE_RATIO);
+  return Math.min(SESSION_TAIL_SPACE_MAX_PX, Math.max(SESSION_TAIL_SPACE_MIN_PX, proportional));
+}
+
 /** Session-only clearance. Scroll ownership remains with ConversationScrollState. */
 export function useSessionTailSpace({
   threadID, running, enabled, paneRef, viewportRef, followLayout,
@@ -31,13 +43,13 @@ export function useSessionTailSpace({
     space.current = height;
     paneRef.current?.style.setProperty("--session-tail-space", `${height}px`);
   }, [paneRef]);
-  const settle = useCallback((target: number) => {
+  const settle = useCallback((target: number, shouldFollow = true) => {
     cancel();
     const from = space.current;
     if (target === from) return;
     if (target >= from || prefersReducedMotion()) {
       apply(target);
-      follow.current();
+      if (shouldFollow) follow.current();
       return;
     }
     let start: number | undefined;
@@ -45,7 +57,7 @@ export function useSessionTailSpace({
       start ??= now;
       const progress = Math.min(1, (now - start) / 220);
       apply(target + (from - target) * (1 - progress) ** 3);
-      follow.current();
+      if (shouldFollow) follow.current();
       frame.current = progress < 1 ? window.requestAnimationFrame(step) : 0;
     };
     frame.current = window.requestAnimationFrame(step);
@@ -54,10 +66,11 @@ export function useSessionTailSpace({
   const reserve = useCallback(() => {
     if (!enabled) return;
     cancel();
-    // A modest reading gap, not a viewport-sized placeholder. It belongs to
-    // this run and is consumed by browsing rather than re-added on each token.
-    apply(Math.max(floor.current, 80));
-  }, [apply, cancel, enabled]);
+    // Reserve once for the run. Stream ticks only follow layout and must not
+    // restore clearance that the user has already consumed by scrolling.
+    const viewportHeight = viewportRef.current?.clientHeight ?? 0;
+    apply(Math.max(floor.current, sessionTailSpaceForViewport(viewportHeight)));
+  }, [apply, cancel, enabled, viewportRef]);
 
   const consume = useCallback((distance: number) => {
     if (distance <= 0) return;
@@ -67,7 +80,9 @@ export function useSessionTailSpace({
     const node = viewportRef.current;
     const offscreen = node ? Math.max(0, node.scrollHeight - node.clientHeight - node.scrollTop - 24) : 0;
     apply(Math.max(floor.current, space.current - Math.min(distance, offscreen)));
-    if (!running) settle(floor.current);
+    // Completion must retire temporary space without re-anchoring the
+    // viewport. ConversationScrollState owns the user's final reading place.
+    if (!running) settle(floor.current, false);
   }, [apply, cancel, viewportRef, running, settle]);
 
   useLayoutEffect(() => {
@@ -95,7 +110,7 @@ export function useSessionTailSpace({
         apply(next);
         follow.current();
       } else if (next < previous && !running) {
-        settle(next);
+        settle(next, running);
       }
     };
     measure();
@@ -111,7 +126,7 @@ export function useSessionTailSpace({
       reserve();
       follow.current();
     } else {
-      settle(floor.current);
+      settle(floor.current, running);
     }
   }, [threadID, enabled, running, reserve, settle]);
 

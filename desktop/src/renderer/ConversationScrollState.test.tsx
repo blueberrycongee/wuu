@@ -250,7 +250,7 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     fireScroll();
   });
 
-  it("finishes one submit motion while the diff receipt shrinks and layout signals keep arriving", () => {
+  it("does not animate an ordinary-session submit to the bottom", () => {
     mount({
       activeThreadID: "thread-a",
       scrollHeight: 1600,
@@ -268,7 +268,8 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
         ?.click();
     });
 
-    // An unchanged old-bottom frame must not finish before the new turn exists.
+    // Ordinary sessions place the submitted message after it is rendered;
+    // there is no preliminary bottom animation for layout signals to finish.
     frame(0);
     fireScroll();
     if (!layout || !root) throw new Error("not mounted");
@@ -280,19 +281,15 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
       fireScroll();
       tops.push(layout.scrollTop);
     }
-    // Motion starts before the card finishes, and reaches the final bottom on
-    // the original deadline despite repeated render/resize follow requests.
-    expect(tops[0]).toBeGreaterThan(1000);
-    expect(tops[0]).toBeLessThan(1500);
-    expect(tops.at(-1)).toBe(1300);
+    expect(tops).toEqual([1000, 1000, 1000, 1000]);
     frame(450);
-    expect(layout.scrollTop).toBe(1300);
+    expect(layout.scrollTop).toBe(1000);
     layout.scrollHeight = 2000;
     act(() => { root!.render(createElement(Probe, { activeThreadID: "thread-a" })); });
-    expect(layout.scrollTop).toBe(1400);
+    expect(layout.scrollTop).toBe(1000);
   });
 
-  it("follows immediately when reduced motion is enabled", () => {
+  it("keeps the ordinary-session reading position with reduced motion", () => {
     mount({ activeThreadID: "thread-a", scrollHeight: 1600, clientHeight: 600, initialScrollTop: 1000 });
     fireScroll();
     const frame = controlAnimationFrames();
@@ -300,10 +297,10 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     if (!layout || !root) throw new Error("not mounted");
     layout.scrollHeight = 1900;
     act(() => { container.querySelector<HTMLButtonElement>("[data-testid='request-submitted-query-scroll']")!.click(); });
-    expect(layout.scrollTop).toBe(1300);
+    expect(layout.scrollTop).toBe(1000);
     expect(window.requestAnimationFrame).not.toHaveBeenCalled();
     frame(230);
-    expect(layout.scrollTop).toBe(1300);
+    expect(layout.scrollTop).toBe(1000);
   });
 
   it("lets an upward user scroll interrupt a submit motion", () => {

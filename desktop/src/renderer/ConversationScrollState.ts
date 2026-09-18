@@ -52,6 +52,49 @@ export function wheelDeltaPixels(
   return event.deltaY;
 }
 
+const SUBMITTED_CONTEXT_FRACTION = 0.2;
+const SUBMITTED_CONTEXT_MIN_FRACTION = 0.16;
+const SUBMITTED_CONTEXT_MAX_FRACTION = 0.24;
+const SUBMITTED_MESSAGE_MIN_FRACTION = 0.25;
+const SUBMITTED_MESSAGE_MAX_FRACTION = 0.35;
+
+function clampFraction(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+/**
+ * Place the submitted message in the upper reading band. The message block's
+ * bottom is the anchor so a long, multi-line message cannot consume the
+ * context gap above it.
+ */
+export function submittedMessageScrollTop(
+  viewport: HTMLElement,
+  message: HTMLElement,
+): number {
+  const viewportRect = viewport.getBoundingClientRect();
+  const messageRect = message.getBoundingClientRect();
+  const viewportHeight = viewport.clientHeight;
+  const messageTop = messageRect.top;
+  const messageBottom = Number.isFinite(messageRect.bottom)
+    ? messageRect.bottom
+    : messageTop + (Number.isFinite(messageRect.height) ? messageRect.height : 0);
+  const messageHeight = Math.max(0, messageBottom - messageTop);
+  const context = clampFraction(
+    SUBMITTED_CONTEXT_FRACTION,
+    SUBMITTED_CONTEXT_MIN_FRACTION,
+    SUBMITTED_CONTEXT_MAX_FRACTION,
+  );
+  const messageBand = clampFraction(
+    context + messageHeight / Math.max(1, viewportHeight),
+    SUBMITTED_MESSAGE_MIN_FRACTION,
+    SUBMITTED_MESSAGE_MAX_FRACTION,
+  );
+  return clampScrollTop(
+    viewport,
+    viewport.scrollTop + messageBottom - viewportRect.top - viewportHeight * messageBand,
+  );
+}
+
 function cssPixelValue(value: string): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -143,6 +186,9 @@ export function useConversationScrollState({
     secondary: null
   });
   const conversationPaneRef = useRef<HTMLElement | null>(null);
+  const submittedPositionPendingRef = useRef(false);
+  const submittedPositionFrameRef = useRef<number | undefined>(undefined);
+  const submittedPositionAttemptsRef = useRef(0);
   const [dockComposerNode, setDockComposerNode] = useState<HTMLElement | null>(null);
   const dockComposerRef = useCallback((node: HTMLElement | null) => {
     setDockComposerNode(node);
@@ -342,16 +388,90 @@ export function useConversationScrollState({
     followLayout: scrollConversationToBottom,
   });
 
+  const positionSubmittedMessage = useCallback((animate = false): boolean => {
+    if (splitConversation) return false;
+    const viewport = conversationViewport();
+    if (!viewport) return false;
+    const message = Array.from(
+      viewport.querySelectorAll<HTMLElement>("[data-user-message-id]"),
+    ).at(-1);
+    if (!message) return false;
+    setAutoFollow(false);
+    setAutoFollowOverflowAnchor(viewport, false);
+    submittedPositionPendingRef.current = false;
+    const targetTop = submittedMessageScrollTop(viewport, message);
+    const startTop = clampScrollTop(viewport, viewport.scrollTop);
+    if (!animate || prefersReducedMotion() || Math.abs(targetTop - startTop) <= 1) {
+      viewport.scrollTop = targetTop;
+      programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
+      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+      return true;
+    }
+
+    let startedAt: number | undefined;
+    const duration = motionDurationMs("--query-submit-duration", 220);
+    const step = (now: number): void => {
+      submittedScrollFrameRef.current = undefined;
+      startedAt ??= now;
+      const progress = duration > 0 ? Math.min(1, (now - startedAt) / duration) : 1;
+      const eased = 1 - (1 - progress) ** 3;
+      viewport.scrollTop = startTop + (targetTop - startTop) * eased;
+      programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
+      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+      rememberActiveThreadScrollSnapshot(viewport, false);
+      if (progress < 1) {
+        submittedScrollFrameRef.current = window.requestAnimationFrame(step);
+      }
+    };
+    submittedScrollFrameRef.current = window.requestAnimationFrame(step);
+    return true;
+  }, [activePane, splitConversation]);
+
+  useLayoutEffect(() => {
+    if (!submittedPositionPendingRef.current || splitConversation) return;
+    const tryPosition = (): void => {
+      submittedPositionFrameRef.current = undefined;
+      if (positionSubmittedMessage(true) || !submittedPositionPendingRef.current) return;
+      if (++submittedPositionAttemptsRef.current >= 3) {
+        submittedPositionPendingRef.current = false;
+        return;
+      }
+      submittedPositionFrameRef.current = window.requestAnimationFrame(tryPosition);
+    };
+    tryPosition();
+    return () => {
+      if (submittedPositionFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(submittedPositionFrameRef.current);
+        submittedPositionFrameRef.current = undefined;
+      }
+    };
+  }, [positionSubmittedMessage, primaryTurns, running, splitConversation]);
+
   const requestSubmittedQueryScroll = useCallback((): void => {
-    if (!splitConversation && !conversationAutoFollowRef.current) return;
+    // Collaboration keeps its existing bottom-follow behavior. Ordinary
+    // sessions have a different lifecycle: the submitted message is the
+    // reading anchor, even when the user had previously browsed history.
+    if (splitConversation && !conversationAutoFollowRef.current) return;
     cancelSubmittedQueryScroll();
     reserveTailSpace();
+    submittedPositionPendingRef.current = !splitConversation;
+    submittedPositionAttemptsRef.current = 0;
     clearUserScrollAwayIntent();
     cancelBottomOverscroll(conversationViewport());
     selectionPausedAutoFollowRef.current = false;
-    setAutoFollow(true);
+    setAutoFollow(splitConversation);
     const node = conversationViewport();
     if (!node) {
+      return;
+    }
+    if (!splitConversation) {
+      // Do not animate to the bottom first. The optimistic user message (or
+      // the first committed turn) will be positioned at the reading anchor
+      // below, and stream growth must not get a chance to steal that anchor.
+      suppressAutoFollowRearmRef.current = false;
+      setAutoFollowOverflowAnchor(node, false);
+      rememberActiveThreadScrollSnapshot(node, false);
+      positionSubmittedMessage(true);
       return;
     }
     const smooth = !prefersReducedMotion();
@@ -395,10 +515,19 @@ export function useConversationScrollState({
     reserveTailSpace,
     setAutoFollow,
     splitConversation,
+    positionSubmittedMessage,
   ]);
 
   useLayoutEffect(() => cancelSubmittedQueryScroll,
     [activeThreadID, activePane, splitConversation, cancelSubmittedQueryScroll]);
+
+  useLayoutEffect(() => {
+    submittedPositionPendingRef.current = false;
+    if (submittedPositionFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(submittedPositionFrameRef.current);
+      submittedPositionFrameRef.current = undefined;
+    }
+  }, [activeThreadID, activePane, splitConversation]);
 
   const scheduleLiveResizeScroll = useCallback((): void => {
     if (
@@ -716,8 +845,8 @@ export function useConversationScrollState({
       bottomOverscrollFromAwayRef.current = true;
       setNativeBottomOverscrollEnabled(node, true);
     }
-    if (scrolledUp && !nextAutoFollow && !splitConversation) {
-      consumeTailSpace(previousScrollTop - node.scrollTop);
+    if ((scrolledUp || scrolledDown) && !nextAutoFollow && !splitConversation) {
+      consumeTailSpace(Math.abs(previousScrollTop - node.scrollTop));
     }
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
   }
