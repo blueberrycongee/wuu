@@ -72,6 +72,7 @@ jobs:
         run: npm run release:desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VITE_ENABLE_ACCOUNT: "false"
           NODE_OPTIONS: "--max-old-space-size=4096"
 
       - name: Verify packaged app

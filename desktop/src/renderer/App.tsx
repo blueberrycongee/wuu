@@ -99,7 +99,7 @@ import {
   AppSidebar,
 } from "./AppSidebar";
 import { ChannelView, type ChannelSection } from "./ChannelView";
-import { collaborationConversations, managedSidebarThreads, type CollaborationConversation } from "./CollaborationConversations";
+import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import type { AppMode } from "./AppModeSwitch";
@@ -220,6 +220,7 @@ import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
+  ENABLE_ACCOUNT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
@@ -4945,7 +4946,7 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("wuu:workbench-back", back);
   }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
 
-  if (accountOpen && window.wuu?.remoteAccount) {
+  if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
     return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
   }
 
@@ -5183,10 +5184,10 @@ export function App(): JSX.Element {
                 closeCompactSessionSwitcher();
                 openHarnessView();
               }}
-              onOpenAccount={() => {
+              onOpenAccount={ENABLE_ACCOUNT ? () => {
                 if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
                 else setAccountOpen(true);
-              }}
+              } : undefined}
               onOpenSettings={(page = "providers") => {
                 setSettingsInitialPage(page);
                 setSettingsOpen(true);
@@ -5299,10 +5300,10 @@ export function App(): JSX.Element {
             onPointerLeave={(event) =>
               scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
             }
-            onOpenAccount={() => {
+            onOpenAccount={ENABLE_ACCOUNT ? () => {
                 if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
                 else setAccountOpen(true);
-              }}
+              } : undefined}
             onOpenSettings={(page = "providers") => {
               setProjectMenuOpen(false);
               setRuntimeMenuOpen(false);

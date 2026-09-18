@@ -1,4 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
+import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { MobileSidebar } from "./MobileSidebar";
 import {
@@ -14,6 +15,7 @@ import {
   MessagesSquare,
   Plus,
   Search,
+  Settings,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -1968,11 +1970,19 @@ export function AppSidebar({
             id="sidebar.footer"
             context={Object.freeze({ initialized: Boolean(state.initialized) })}
           />
-          {sidebarVisible && <SidebarAccountMenu
+          {sidebarVisible && (ENABLE_ACCOUNT ? <SidebarAccountMenu
             disabled={!state.initialized}
             onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
             onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
-          />}
+          /> : <button
+            className="sidebar-settings-button"
+            type="button"
+            disabled={!state.initialized}
+            onClick={() => activateNative(onOpenSettings)}
+          >
+            <Settings className="icon-lg" />
+            <span>{t("sidebar.settings")}</span>
+          </button>)}
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu

@@ -16,6 +16,14 @@ export const ENABLE_GROUP_CHAT =
   import.meta.env.VITE_ENABLE_GROUP_CHAT !== "false";
 
 /**
+ * Account and device-linking UI stays available in development, but the
+ * current desktop release is intentionally unauthenticated until that flow
+ * is ready for users.
+ */
+export const ENABLE_ACCOUNT =
+  import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
+
+/**
  * The embedded browser remains an internal development capability. Production
  * builds do not expose its workspace surface even if the build environment
  * happens to contain the opt-in variable.
