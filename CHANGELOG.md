@@ -71,6 +71,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevented overlapping automation timer ticks from leaving a run stuck in
+  starting before the session send settled.
 - Restore draggable width adjustment for Collaboration conversation settings,
   with keyboard controls, saved width, and bounds that preserve chat space.
 
