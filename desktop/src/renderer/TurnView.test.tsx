@@ -559,6 +559,23 @@ describe("TurnView", () => {
     expect(view.textContent).toContain("查看思考过程");
   });
 
+  it("publishes a live tool or reasoning continuation without a delayed layout jump", () => {
+    vi.useFakeTimers();
+    const view = render(
+      makeTurn("in_progress", [makeCommentary("checking the files")]),
+    );
+
+    rerender(
+      makeTurn("in_progress", [
+        makeCommentary("checking the files"),
+        { ...makeReasoning("checking the result"), status: "in_progress" },
+      ]),
+    );
+
+    expect(view.textContent).toContain("正在思考");
+    expect(view.textContent).toContain("checking the result");
+  });
+
   it("publishes the completed final answer without the structural buffer delay", () => {
     vi.useFakeTimers();
     const view = render(
