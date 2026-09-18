@@ -29,6 +29,7 @@ import {
 } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { useSessionTailSpace } from "./SessionTailSpace";
 
 // Tight threshold so the conversation only re-engages auto-follow when the
 // user is effectively parked at the bottom. The previous 48px band let one
@@ -87,6 +88,7 @@ export function useConversationScrollState({
   secondaryTurns,
   emptyConversation,
   initialized,
+  running = false,
   nativeScrollBounce = window.wuu?.platform === "darwin" && window.wuu?.hostKind !== "web",
 }: {
   activeThreadID?: string;
@@ -96,6 +98,7 @@ export function useConversationScrollState({
   secondaryTurns?: Turn[];
   emptyConversation: boolean;
   initialized: boolean;
+  running?: boolean;
   /** Use the macOS/AppKit rubber band instead of synthesizing wheel motion. */
   nativeScrollBounce?: boolean;
 }): {
@@ -111,6 +114,8 @@ export function useConversationScrollState({
    * measurement — see JumpToLatestPill's anchored mode.
    */
   dockComposerNode: HTMLElement | null;
+  statusClusterRef: (node: HTMLDivElement | null) => void;
+  statusClusterNode: HTMLDivElement | null;
   scheduleStreamScroll: () => void;
   handleConversationScroll: (scrolledNode?: HTMLElement) => void;
   enableConversationAutoFollow: () => void;
@@ -328,8 +333,19 @@ export function useConversationScrollState({
     splitConversation,
   ]);
 
+  const { statusClusterRef, statusClusterNode, reserve: reserveTailSpace, consume: consumeTailSpace } = useSessionTailSpace({
+    threadID: activeThreadID,
+    running,
+    enabled: initialized && !emptyConversation && !splitConversation,
+    paneRef: conversationPaneRef,
+    viewportRef: conversationScrollRef,
+    followLayout: scrollConversationToBottom,
+  });
+
   const requestSubmittedQueryScroll = useCallback((): void => {
+    if (!splitConversation && !conversationAutoFollowRef.current) return;
     cancelSubmittedQueryScroll();
+    reserveTailSpace();
     clearUserScrollAwayIntent();
     cancelBottomOverscroll(conversationViewport());
     selectionPausedAutoFollowRef.current = false;
@@ -376,6 +392,7 @@ export function useConversationScrollState({
     clearUserScrollAwayIntent,
     scrollConversationToBottom,
     cancelSubmittedQueryScroll,
+    reserveTailSpace,
     setAutoFollow,
     splitConversation,
   ]);
@@ -698,6 +715,9 @@ export function useConversationScrollState({
     if (nativeScrollBounce && scrolledUp) {
       bottomOverscrollFromAwayRef.current = true;
       setNativeBottomOverscrollEnabled(node, true);
+    }
+    if (scrolledUp && !nextAutoFollow && !splitConversation) {
+      consumeTailSpace(previousScrollTop - node.scrollTop);
     }
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
   }
@@ -1032,6 +1052,8 @@ export function useConversationScrollState({
     dockComposerRef,
     dockComposerNode,
     scheduleStreamScroll,
+    statusClusterRef,
+    statusClusterNode,
     handleConversationScroll,
     enableConversationAutoFollow,
     disableConversationAutoFollow,

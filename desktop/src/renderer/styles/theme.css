@@ -236,7 +236,7 @@
   --token-gauge-tooltip-border: var(--wuu-color-border-strong, var(--hairline-strong));
   --token-gauge-tooltip-shadow: var(--shadow-card);
   --composer-token-gauge-focus-outline: var(--focus-ring);
-  --chat-user-message-bg: var(--wuu-message-user-background, #26282b);
+  --chat-user-message-bg: var(--wuu-message-user-background, var(--user-message-bg-color, #253247));
 
   /* environment.css */
   /* Dialog text follows the shared ink ladder. */

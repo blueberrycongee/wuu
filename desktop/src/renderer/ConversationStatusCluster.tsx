@@ -18,6 +18,7 @@ type ResolvedStatusItem = ComposerStatusItem & Readonly<{ key: string }>;
 interface ConversationStatusClusterProps {
   host: PluginHost;
   visible: boolean;
+  clusterRef?: (node: HTMLDivElement | null) => void;
   threadId?: string;
   todoUpdate: TodoUpdate | undefined;
   onOpenSession: (sessionId: string) => void;
@@ -31,6 +32,7 @@ interface ComposerStatusStore {
 export function ConversationStatusCluster({
   host,
   visible,
+  clusterRef,
   threadId,
   todoUpdate,
   onOpenSession,
@@ -78,6 +80,7 @@ export function ConversationStatusCluster({
   return (
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
+      ref={clusterRef}
       aria-label={t("channels.status")}
     >
       {todoVisible && todoUpdate ? <TodoStatusCapsule todoUpdate={todoUpdate} /> : null}

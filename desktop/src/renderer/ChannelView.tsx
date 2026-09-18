@@ -11,9 +11,12 @@ import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
+import { ManagedAgentWork } from "./ManagedAgentWork";
+import { ManagedAgentSessionPanel } from "./ManagedAgentSessionView";
+import type { ThreadSummary } from "./AppState";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { ChannelAgentSettings } from "./ChannelAgentSettings";
-import { useChannelSettingsResize } from "./ChannelSettingsResize";
+import { useChannelPanelResize, useChannelSettingsResize } from "./ChannelSettingsResize";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
@@ -312,7 +315,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -327,6 +330,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onRoomRead?: (roomID: string) => void;
   onOpenMemoryDirectory?: (path: string) => void;
   onOpenSession?: (sessionID: string) => void;
+  managedThreadsByAgentID?: Readonly<Record<string, ThreadSummary[]>>;
+  lastViewedTurnByThreadID?: Record<string, string>;
   onOpenAgentConversation?: (agentID: string) => Promise<void>;
   onCreateAgent?: () => void;
   onManageProviders?: () => void;
@@ -369,20 +374,16 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const selectedRoomID = controlledRoomID ?? internalSelectedRoomID;
   const selectedRoomIDRef = useRef(selectedRoomID);
   selectedRoomIDRef.current = selectedRoomID;
-  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; turnID?: string; name: string } | null>(null);
+  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; managedAgentID?: string; turnID?: string; name: string } | null>(null);
   const [inspectorClosing, setInspectorClosing] = useState(false);
-  const conversationRef = useRef<HTMLDivElement>(null);
+  const inspectorResize = useChannelPanelResize<HTMLDivElement>(Boolean(inspectedSession) && !inspectorClosing, {
+    storageKey: "wuu.channels.inspectorWidth", defaultWidth: 420,
+    // clientWidth is integral; preserve the inspector's existing 1040px dock threshold.
+    minWidth: 320, maxWidth: 600, dockedAbove: 1039,
+  });
   const inspectionTrigger = useRef<HTMLElement | null>(null);
-  const [inspectorOverlay, setInspectorOverlay] = useState(false);
-  useLayoutEffect(() => {
-    const node = conversationRef.current;
-    if (!node) return;
-    const update = () => setInspectorOverlay(node.getBoundingClientRect().width < 1040);
-    update();
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
-    observer?.observe(node);
-    return () => observer?.disconnect();
-  }, [section]);
+  // Keep the current presentation through the exit animation.
+  const inspectorOverlay = !inspectorResize.fitsDocked;
   const finishClosingInspector = useCallback(() => {
     setInspectedSession(null);
     setInspectorClosing(false);
@@ -590,9 +591,16 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       messageScroll.scrollToBottom();
     };
     measure();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : undefined;
+    let frame: number | undefined;
+    // Updating the stream padding during resize delivery can resize the shared
+    // grid again. Apply footer changes in the next frame, outside that delivery.
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => { frame = undefined; measure(); });
+    }) : undefined;
     observer?.observe(composerFooterNode);
     return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
       observer?.disconnect();
       stream.style.removeProperty("--channel-footer-height");
       setComposerAnchor(null);
@@ -1698,7 +1706,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : settingsResize.style}
     >
       {section === "rooms" ? <div
-        ref={conversationRef}
+        ref={inspectorResize.ref}
+        style={{ "--channel-inspector-width": `${inspectorResize.width}px` } as CSSProperties}
+        data-resizing-inspector={inspectorResize.resizing || undefined}
         data-inspector-overlay={inspectorOverlay || undefined}
         className={`channel-conversation${inspectedSession ? " has-session-inspector" : ""}${inspectorClosing ? " inspector-closing" : ""}`}
       >
@@ -1895,13 +1905,27 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           })}
 
         </div>
-        {!(inspectedSession && inspectorOverlay) ? <JumpToLatestPill
-          containerRef={messageScroll.scrollRef}
-          bottomAnchor={composerAnchor}
-          threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
-        /> : null}
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
+            <div className="channel-footer-status">
+            <JumpToLatestPill
+              inline
+              containerRef={messageScroll.scrollRef}
+              bottomAnchor={composerAnchor}
+              threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
+              companion={selectedRoom.kind === "dm" && selectedRoomAgents[0] && onOpenSession ? <ManagedAgentWork
+                key={selectedRoom.id}
+                threads={managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []}
+                expanded={Boolean(inspectedSession?.managedAgentID) && !inspectorClosing}
+                onShowAll={() => {
+                  if (savingAgent) return;
+                  if (settingsOpen) closeAgentPanel();
+                  if (inspectedSession?.managedAgentID && !inspectorClosing) { closeInspector(); return; }
+                  setInspectorClosing(false);
+                  inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                  setInspectedSession({ roomID: selectedRoomID, managedAgentID: selectedRoomAgents[0].id, name: selectedRoomAgents[0].name });
+                }} /> : null}
+            />
             <div className="channel-activity-region channel-activity-motion" aria-live="polite">
               <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={selectedRoomAgents} activeAgentIDs={responseActivities.map(response => response.agent_id)}
                 onInspectAgent={inspectAgentActivity}
@@ -1919,6 +1943,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 <ChannelAgentActivity key={agent.id} agent={agent} agentID={agent.id} state="thinking" onInspect={() => inspectAgentActivity(agent.id)} />
               )) : null}
               </ChannelActivityPresence>
+            </div>
             </div>
             {sendError?.roomID === selectedRoomID ? <div className="channel-send-error" role="alert"><span>{t("composer.sendFailed")} · {sendError.message}</span><button type="button" disabled={sending} onClick={() => void sendMessage()}>{t("channels.sessions.retry")}</button></div> : null}
             <ChannelComposer
@@ -1942,7 +1967,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           </div>
         ) : null}
         </div>
-        {inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
+        {inspectedSession ? <div className="channel-inspector-resizer" role="separator" tabIndex={0}
+          aria-label={t("app.resizeRightSidebar")} aria-orientation="vertical"
+          {...inspectorResize.separatorProps} /> : null}
+        {inspectedSession?.managedAgentID ? <ManagedAgentSessionPanel key={`${inspectedSession.roomID}:${inspectedSession.managedAgentID}`}
+          name={inspectedSession.name} threads={managedThreadsByAgentID[inspectedSession.managedAgentID] ?? []}
+          lastViewedTurnByThreadID={lastViewedTurnByThreadID} overlay={inspectorOverlay} closing={inspectorClosing}
+          onClose={closeInspector} onSelect={id => onOpenSession?.(id)} />
+          : inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
           agents={agents} onOpenSession={onOpenSession}
           roomID={inspectedSession.roomID} agentID={inspectedSession.agentID} name={inspectedSession.name}
           fallbackSessionRef={inspectedSession.sessionRef} turnID={inspectedSession.turnID} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}

@@ -2217,8 +2217,6 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
-  const [mainConversationScrolledAway, setMainConversationScrolledAway] =
-    useState(false);
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
@@ -2265,6 +2263,8 @@ export function App(): JSX.Element {
     conversationPaneRef,
     dockComposerRef,
     dockComposerNode,
+    statusClusterRef,
+    statusClusterNode,
     scheduleStreamScroll,
     handleConversationScroll,
     enableConversationAutoFollow,
@@ -2280,6 +2280,7 @@ export function App(): JSX.Element {
     secondaryTurns: state.secondaryThread?.turns,
     emptyConversation,
     initialized: Boolean(state.initialized),
+    running: isStateActiveThreadRunning(state),
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id
@@ -5182,7 +5183,7 @@ export function App(): JSX.Element {
               ...sidebarConversations.flatMap((conversation) => [{
                   id: `collaboration:${conversation.id}`, kind: "room" as const,
                   parentId: "section:collaboration", depth: 1, label: conversation.name,
-                  active: appMode === "collaboration" && !agentOnboardingActive && (conversation.room
+                  active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
                     ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
                   pinned: conversation.pinned, unread: Boolean(conversation.room?.unread_count),
                   running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
@@ -5193,22 +5194,11 @@ export function App(): JSX.Element {
                     else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
                   },
                   onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
-                }, ...(managedSidebar.byAgentID[conversation.agent?.id ?? ""] ?? []).map(thread => ({
-                  id: `thread:${thread.id}`, kind: "thread" as const,
-                  parentId: `collaboration:${conversation.id}`, depth: 2,
-                  label: thread.title?.trim() || thread.preview?.trim() || thread.id,
-                  active: appMode === "harness" && thread.id === activeThreadID,
-                  pinned: Boolean(thread.pinned), running: isThreadExecuting(thread),
-                  unread: isThreadUnread(thread, state.lastViewedTurnByThreadID[thread.id]),
-                  onActivate: () => { closeCompactSessionSwitcher(); openCollaborationHarnessSession(thread.id); },
-                  onTogglePinned: () => { void toggleThreadPinned(thread); },
-                }))]),
+                }]),
             ] : undefined}
-            managedThreadsByAgentID={managedSidebar.byAgentID}
-            collaborationNavigation={ENABLE_GROUP_CHAT ? (renderAgentSessions) => (
+            collaborationNavigation={ENABLE_GROUP_CHAT ? (
             <CollaborationSidebar
               embedded
-              renderAgentSessions={renderAgentSessions}
               initialized={Boolean(state.initialized)}
               agents={namedAgents}
               rooms={channelRooms}
@@ -5503,6 +5493,8 @@ export function App(): JSX.Element {
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
               onOpenSession={openCollaborationHarnessSession}
+              managedThreadsByAgentID={managedSidebar.byAgentID}
+              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
               onOpenAgentConversation={selectCollaborationAgent}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
@@ -5803,8 +5795,7 @@ export function App(): JSX.Element {
             {mainConversationDockVisible && !emptyConversation ? (
               <JumpToLatestPill
                 containerRef={conversationScrollRef}
-                bottomAnchor={dockComposerNode}
-                onScrolledAwayChange={setMainConversationScrolledAway}
+                bottomAnchor={statusClusterNode ?? dockComposerNode}
               />
             ) : null}
           </div>
@@ -5855,9 +5846,8 @@ export function App(): JSX.Element {
 
         <ConversationStatusCluster
           host={desktopPluginHost}
-          visible={
-            mainConversationDockVisible && !mainConversationScrolledAway
-          }
+          visible={mainConversationDockVisible}
+          clusterRef={statusClusterRef}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}

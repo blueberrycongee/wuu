@@ -32,6 +32,7 @@ export type FloatingMenuOwner =
   | "minute-clock"
   | "channel-agent"
   | "channel-mention"
+  | "managed-sessions"
   | "collaboration-new"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";

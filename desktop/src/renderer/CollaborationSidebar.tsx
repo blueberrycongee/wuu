@@ -1,6 +1,6 @@
 import { AgentOnboardingAvatar } from "./AgentOnboardingAvatar";
 import { ChevronRight, Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { AppModeSwitch } from "./AppModeSwitch";
@@ -11,13 +11,11 @@ import { copyToClipboard, ThreadContextMenu, type ThreadContextMenuItem } from "
 import { showErrorToast, showToast } from "./Toast";
 import { useI18n } from "./i18n";
 
-
 export function CollaborationSidebar({
   initialized, agents, rooms, pinnedRoomIDs = [], archivedRoomIDs = [], selectedAgentID, selectedRoomID,
   collapsed = false, onToggleCollapsed, embedded = false,
   onSelectAgent, onSelectRoom, onCreateRoom, draftAgent, draftSelected, onSelectDraft,
   onEditAgent, onEditRoom,
-  renderAgentSessions,
   onTogglePinned, onHideConversation, onDeleteConversation,
   onSwitchToHarness, onOpenSettings, onOpenAccount, onPointerEnter, onPointerLeave,
 }: {
@@ -37,7 +35,6 @@ export function CollaborationSidebar({
   onManageAgents: () => void;
   onEditAgent?: (agentID: string) => void;
   onEditRoom?: (roomID: string) => void;
-  renderAgentSessions?: (agentID: string) => ReactNode;
   onTogglePinned?: (conversation: CollaborationConversation) => void;
   onHideConversation?: (conversation: CollaborationConversation) => void;
   onDeleteConversation?: (conversation: CollaborationConversation) => void;
@@ -51,7 +48,7 @@ export function CollaborationSidebar({
   onPointerEnter?: () => void;
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
 }): JSX.Element {
-  const { t, formatDate } = useI18n();
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [sectionCollapsed, setSectionCollapsed] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -79,7 +76,6 @@ export function CollaborationSidebar({
     if (onHideConversation) contextItems.push({ label: t("channels.hideConversation"), icon: <EyeOff size={16} />, onSelect: () => onHideConversation(contextConversation) });
     if (onDeleteConversation && (agent || room?.kind === "channel")) contextItems.push({ label: t(agent ? "channels.deleteAgent" : "channels.deleteRoom"), icon: <Trash2 size={16} />, danger: true, onSelect: () => onDeleteConversation(contextConversation) });
   }
-  const agentNames = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   const newConversationButton = <button className="icon-button" type="button" disabled={!initialized}
     aria-label={t("channels.newConversation")} title={t("channels.newConversation")} onClick={onCreateRoom}>
     <Plus aria-hidden="true" />
@@ -117,20 +113,12 @@ export function CollaborationSidebar({
           {conversations.map(({ id, name, agent, room, pinned }) => {
             const selected = !draftSelected && (room ? selectedRoomID === room.id : selectedAgentID === agent?.id);
             const unread = selected ? 0 : (room?.unread_count ?? 0);
-            const message = room?.last_message;
-            const thinking = room?.activity_status === "thinking" || (agent?.activity_status === "thinking" && (!room || agent.activity_room_ids?.includes(room.id)));
-            // An agent's avatar stays active across rooms; the preview belongs to this conversation.
-            const avatarThinking = agent?.activity_status === "thinking" || thinking;
-            const text = message?.body.replace(/\s+/gu, " ").trim() || (message?.has_attachments ? t("channels.attachmentPreview") : "");
-            const author = message?.kind === "system" ? "" : message?.author_type === "human" ? t("channels.you") : room?.kind === "channel" ? agentNames.get(message?.author_id ?? "") : "";
-            const preview = thinking ? t("channels.agentStatus.thinking") : text ? `${author ? `${author}: ` : ""}${text}` : agent?.role || (room?.kind === "channel" ? t("channels.memberCount", { count: room.members.length }) : t("channels.startConversation"));
-            const date = message ? new Date(message.created_at) : undefined;
-            const timestamp = date && !Number.isNaN(date.getTime()) ? formatDate(date, date.toDateString() === new Date().toDateString()
-              ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" }) : "";
-            return <Fragment key={id}><button type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
+            // An agent's avatar stays active across all of its rooms.
+            const avatarThinking = agent?.activity_status === "thinking" || room?.activity_status === "thinking";
+            return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
               aria-current={selected ? "page" : undefined} disabled={!initialized}
               aria-label={collapsed ? `${name}${unread > 0 ? `, ${t("channels.unreadMessages", { count: unread })}` : ""}` : undefined}
-              title={collapsed ? `${name}${avatarThinking ? ` · ${t("channels.agentWorking")}` : ""}` : undefined}
+              title={`${name}${avatarThinking ? ` · ${t("channels.agentWorking")}` : ""}`}
               onContextMenu={(event) => {
                 if (!initialized) return;
                 event.preventDefault();
@@ -148,13 +136,12 @@ export function CollaborationSidebar({
               </span>
               {collapsed && unread > 0 ? <span className="collaboration-rail-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}
               <span className="collaboration-contact-copy">
-                <span className="collaboration-contact-heading"><strong>{name}</strong>{timestamp ? <time dateTime={message?.created_at}>{timestamp}</time> : null}</span>
-                <span className="collaboration-contact-detail"><span className={`collaboration-contact-preview${thinking ? " thinking" : ""}`}>{preview}</span>
+                <span className="collaboration-contact-heading"><strong>{name}</strong>
                   {unread > 0 ? <span className="collaboration-contact-unread" aria-label={t("channels.unreadMessages", { count: unread })}>{unread > 99 ? "99+" : unread}</span>
                     : pinned ? <Pin className="collaboration-contact-pin" aria-label={t("channels.pinnedConversation")} /> : null}
                 </span>
               </span>
-            </button>{agent && !collapsed ? renderAgentSessions?.(agent.id) : null}</Fragment>;
+            </button>;
           })}
           {!collapsed && query.trim() && conversations.length === 0 && !draftAgent ? <div className="collaboration-contact-empty">{t("channels.noMatchingConversations")}</div> : null}
         </nav>

@@ -1,5 +1,6 @@
 import {
   type RefObject,
+  type ReactNode,
   useCallback,
   useEffect,
   useState,
@@ -47,6 +48,10 @@ type JumpToLatestPillProps = {
    * the effect re-runs only when the boolean actually changes.
    */
   onScrolledAwayChange?: (scrolledAway: boolean) => void;
+  /** In-flow status groups reserve space instead of covering conversation content. */
+  inline?: boolean;
+  /** Remains available at the bottom; shares one centered group with the jump action. */
+  companion?: ReactNode;
 };
 
 const DEFAULT_THRESHOLD_PX = 80;
@@ -71,6 +76,8 @@ export function JumpToLatestPill({
   threshold = DEFAULT_THRESHOLD_PX,
   label,
   onScrolledAwayChange,
+  inline = false,
+  companion,
 }: JumpToLatestPillProps): React.ReactElement | null {
   const { t } = useI18n();
   const accessibleLabel = label ?? t("conversation.jumpToLatest");
@@ -185,7 +192,7 @@ export function JumpToLatestPill({
   // composer, moving its top edge). The composer frame is observed separately
   // because expanded mode moves it upward without growing the outer anchor.
   useEffect(() => {
-    if (!scrolledAway || !bottomAnchor) {
+    if (inline || !scrolledAway || !bottomAnchor) {
       return undefined;
     }
     const resizeSettleRecompute =
@@ -265,13 +272,14 @@ export function JumpToLatestPill({
     };
   }, [
     bottomAnchor,
+    inline,
     scrolledAway,
     recomputeHorizontalPosition,
     recomputePosition,
     containerRef,
   ]);
 
-  if (!scrolledAway) {
+  if (!scrolledAway && !companion) {
     return null;
   }
 
@@ -303,6 +311,13 @@ export function JumpToLatestPill({
       <span>{accessibleLabel}</span>
     </>
   );
+
+  if (inline) {
+    return <div className="jump-to-latest-cluster jump-to-latest-cluster-inline">
+      {scrolledAway ? <button type="button" className="jump-to-latest-pill" aria-label={accessibleLabel} onClick={scrollToBottom}>{pillBody}</button> : null}
+      {companion}
+    </div>;
+  }
 
   if (!bottomAnchor || !position) {
     return null;

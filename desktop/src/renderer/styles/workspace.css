@@ -4899,17 +4899,17 @@ html.resizing-workspace-file-split * {
   grid-column: 1 / -1;
 }
 
+.scroll-region[data-session-status-clearance] {
+  /* Keep Session status controls outside the painted reading area without
+     resizing the scrollport when they appear, disappear, or change height. */
+  clip-path: inset(0 0 var(--session-status-clip, 0px) 0);
+}
+
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) .conversation-width {
-  /* Reserve room for the floating dock composer so the last message's
-     overlay action row stays clear of it. The floating "jump to latest /
-     progress" pill cluster is intentionally NOT reserved here: it only mounts
-     while the user is scrolled away and unmounts the instant they reach the
-     bottom, so reserving its height would either jump the content on arrival
-     (reserved dynamically) or leave a permanent strip of empty space below the
-     last message (reserved constantly). The pill floats over the flow instead
-     and may briefly overlap the last action row while it is showing. */
+  /* Session chrome includes the at-bottom status capsules. The scroll owner
+     measures their footprint and retires the additional run space separately. */
   --conversation-flow-bottom-space: calc(
-    var(--dock-composer-height) + var(--conversation-composer-clearance)
+    var(--dock-composer-height) + var(--conversation-composer-clearance) + var(--session-tail-space, 0px)
   );
   padding-bottom: var(--conversation-flow-bottom-space);
 }

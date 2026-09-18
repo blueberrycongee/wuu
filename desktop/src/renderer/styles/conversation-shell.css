@@ -750,6 +750,8 @@
  * titlebar's grid can otherwise leave the button looking clickable while the
  * native window drag handler consumes the press. */
 .app-shell.compact-navigation .titlebar .sidebar-toggle-button {
+  /* Honor the shared control width in flex and grid titlebars alike. */
+  flex-basis: auto;
   position: relative;
   z-index: 150;
   -webkit-app-region: no-drag;
@@ -1194,6 +1196,24 @@
   -webkit-app-region: no-drag;
 }
 
+.jump-to-latest-cluster-inline {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  padding-block: 4px 8px;
+  animation: none;
+}
+.jump-to-latest-cluster-inline > .jump-to-latest-pill,
+.jump-to-latest-cluster-inline .managed-agent-work-pill {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.jump-to-latest-cluster-inline .jump-to-latest-pill > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .jump-to-latest-pill,
 .jump-to-latest-progress,
 .conversation-status-capsule {
@@ -1313,10 +1333,8 @@ button.conversation-status-capsule,
   max-width: 100%;
 }
 
-.conversation-status-todo-card {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
+.conversation-status-todo-card,
+.conversation-status-preview-card {
   display: flex;
   width: min(360px, calc(100vw - 48px));
   max-height: min(360px, 50vh);
@@ -1329,6 +1347,12 @@ button.conversation-status-capsule,
   border-radius: var(--menu-shell-radius);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
+}
+
+.conversation-status-todo-card {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
   opacity: 0;
   visibility: hidden;
   transform: translate(-50%, 4px);
@@ -1363,6 +1387,21 @@ button.conversation-status-capsule,
 .conversation-status-todo-card-header strong {
   font-weight: var(--weight-semibold);
 }
+
+.conversation-status-preview-card {
+  max-height: min(360px, var(--floating-menu-available-height, 50vh));
+  color: var(--shell-todo-card-ink);
+  font-size: var(--font-ui);
+  pointer-events: auto;
+}
+.conversation-status-preview-card .conversation-status-todo-card-header { font-size: inherit; }
+.managed-session-preview-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.managed-session-preview-list li { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 8px; }
+.managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.managed-session-preview-state { flex-shrink: 0; margin-inline-start: auto; color: var(--shell-todo-card-muted); }
+.managed-session-preview-all { align-self: stretch; min-height: 32px; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
+.managed-session-preview-all:hover { background: var(--ink-overlay-6); }
+.managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
 .conversation-status-todo-card-header span,
 .conversation-status-todo-explanation {

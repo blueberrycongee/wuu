@@ -121,8 +121,10 @@ async function selectSidebarConversation(name: string): Promise<void> {
   await act(async () => row!.click());
 }
 
-it("nests managed sessions beneath their agent without duplicating them in workspace or pinned groups", async () => {
+it("opens managed sessions through their agent conversation without duplicating workspace or pinned entries", async () => {
   agents = [{ id: "manager", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  rooms = [{ id: "manager-dm", name: "Research", kind: "dm", created_by: "human", created_at: agents[0].created_at,
+    members: [{ room_id: "manager-dm", member_type: "agent", member_id: "manager", joined_at: agents[0].created_at }] }];
   const thread = (id: string, control?: Thread["session_control"]): Thread => ({
     id, title: id, preview: id, cwd: workspace, workspace_kind: "scratch",
     model_provider: "byok", model: "reasoner", status: "idle", turns: [],
@@ -138,25 +140,33 @@ it("nests managed sessions beneath their agent without duplicating them in works
   window.wuu.resumeThread = vi.fn().mockResolvedValue({ thread: managed[0] });
   await act(async () => { root.render(<App />); });
   const sidebar = container.querySelector('[data-wuu-component="app-sidebar"]') ?? container.querySelector(".sidebar");
-  const nested = sidebar?.querySelector(".collaboration-agent-sessions");
-  expect(nested).toBeTruthy();
   for (const item of managed) {
     const buttons = [...sidebar!.querySelectorAll<HTMLButtonElement>("button.thread-row-main")].filter(button => button.textContent?.includes(item.title!));
-    expect(buttons).toHaveLength(1);
-    expect(nested!.contains(buttons[0])).toBe(true);
+    expect(buttons).toHaveLength(0);
   }
-  expect(nested?.textContent).not.toContain("ordinary");
-  expect(nested?.textContent).not.toContain("unavailable-manager");
-  const select = [...nested!.querySelectorAll<HTMLButtonElement>("button.thread-row-main")].find(button => button.textContent?.includes("managed-active"))!;
+  await selectSidebarConversation("Research");
+  const showAll = container.querySelector<HTMLButtonElement>(".managed-agent-work-pill");
+  expect(showAll).toBeTruthy();
+  await act(async () => showAll!.click());
+  const results = [...container.querySelectorAll<HTMLButtonElement>(".managed-session-result")];
+  expect(results).toHaveLength(managed.length);
+  for (const item of managed) expect(results.filter(button => button.textContent?.includes(item.title!))).toHaveLength(1);
+  expect(results.some(button => button.textContent?.includes("ordinary") || button.textContent?.includes("unavailable-manager"))).toBe(false);
+  const select = results.find(button => button.textContent?.includes("managed-active"))!;
   await act(async () => select.click());
   expect(window.wuu.resumeThread).toHaveBeenCalledWith("managed-active");
   await act(async () => { for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: workspace, message: {
     method: "thread/updated", params: { thread: { ...managed[0], session_control: undefined } },
   } }); });
-  expect(container.querySelector(".collaboration-agent-sessions")?.textContent).not.toContain("managed-active");
   const released = [...sidebar!.querySelectorAll<HTMLButtonElement>("button.thread-row-main")].filter(button => button.textContent?.includes("managed-active"));
   expect(released).toHaveLength(1);
-  expect(released[0].closest(".collaboration-agent-sessions")).toBeNull();
+  await selectSidebarConversation("Research");
+  if (!container.querySelector(".managed-session-result")) {
+    await act(async () => container.querySelector<HTMLButtonElement>(".managed-agent-work-pill")!.click());
+  }
+  const remaining = [...container.querySelectorAll<HTMLButtonElement>(".managed-session-result")];
+  expect(remaining).toHaveLength(managed.length - 1);
+  expect(remaining.some(button => button.textContent?.includes("managed-active"))).toBe(false);
 });
 
 it("pins a new Agent without navigation, persists hiding, and restores its DM from settings", async () => {
@@ -264,13 +274,15 @@ it("preserves the agent draft across provider settings and returns to the model 
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
   await confirmModel();
   await enterName("Research");
+  await click(t("slash.model.title"));
   await click(t("agentOnboarding.manageProviders"));
   await act(async () => { await vi.dynamicImportSettled(); });
   expect(container.querySelector('[data-wuu-component="settings-shell"]')).toBeTruthy();
   expect(container.querySelector(".settings-provider-card")?.textContent).toContain("reasoner");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => { window.dispatchEvent(new Event("wuu:workbench-back")); });
-  expect(document.querySelector('[data-wuu-component="agent-onboarding"]')?.textContent).toContain("Research");
+  await confirmModel();
+  expect(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")?.value).toBe("Research");
   await sendName();
   expect(window.wuu.createNamedAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "Research", provider_override: "byok", model_override: "reasoner" }));
 });

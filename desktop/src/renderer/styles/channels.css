@@ -459,9 +459,17 @@
 
 .channel-conversation.inspector-closing { transition-duration: var(--environment-panel-exit-duration); }
 
+.channel-conversation[data-resizing-inspector] { transition: none; }
+
+.channel-inspector-resizer {
+  right: calc(var(--channel-inspector-width) - 5px);
+  z-index: 18;
+  touch-action: none;
+}
+
 .channel-room-main {
   position: relative;
-  isolation: isolate;
+  /* Let the shared titlebar toggle sit above the app's sidebar drawer. */
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -716,7 +724,7 @@
 
 .channel-message.chat-row > .channel-message-content {
   /* Reserve a readable column before the bubble sizes to its actual text. */
-  width: min(var(--conversation-message-max-width, 720px), 88%);
+  width: min(var(--conversation-message-max-width, 720px), 100%);
   max-width: 100%;
   min-width: 0;
   display: flex;
@@ -725,7 +733,7 @@
 }
 
 .channel-message.own.chat-row > .channel-message-content {
-  width: min(var(--conversation-message-max-width, 720px), 78%);
+  width: var(--user-message-max-width);
   max-width: 100%;
   align-items: flex-end;
 }
@@ -786,24 +794,30 @@
   width: fit-content;
   max-width: 100%;
   margin: 0;
+  /* Collaboration retains message boundaries; Session supplies the user surface. */
   border-radius: var(--radius-md);
   padding: 9px 14px;
   background: var(--ink-overlay-6);
-  color: var(--text-primary);
+  color: var(--ink);
   font-size: var(--conversation-message-font-size, 13px);
   line-height: var(--conversation-reading-line-height, 1.5);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
+.channel-message.own .channel-message-bubble {
+  background: var(--wuu-message-user-background, var(--user-message-bg-color, #EAF1FA));
+  color: var(--wuu-message-user-color, var(--user-message-fg-color, var(--ink)));
+  /* Keep collaboration padding after .user-message, but use the session
+     radius so a two-character name stays a short bubble, not a disk. */
+  border-radius: var(--user-message-radius);
+  padding: 9px 14px;
+}
+
 .channel-message-bubble .rich-content,
 .channel-message-bubble .rich-content > * {
   min-width: 0;
   max-width: 100%;
-}
-
-.channel-message-bubble .rich-content {
-  gap: 8px;
 }
 
 .channel-message-bubble.long-card {
@@ -841,19 +855,6 @@
   width: 13px;
   height: 13px;
 }
-
-.channel-message.own .channel-message-bubble {
-  border-radius: var(--wuu-message-user-radius, var(--radius-md) var(--radius-md) 4px var(--radius-md));
-  background: var(--ink-strong);
-  color: var(--paper);
-}
-
-.channel-message.own .channel-message-bubble :is(.rich-link, .rich-heading, .rich-blockquote, .channel-message-expand-toggle) { color: inherit; }
-.channel-message.own .channel-message-bubble .rich-content :not(pre) > code {
-  color: inherit;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-}
-.channel-message.own .channel-message-bubble .rich-code-block { color: var(--ink); }
 
 .channel-orchestration-message.chat-row > .channel-message-content {
   width: 100%;
@@ -1208,6 +1209,42 @@
   inset: auto 0 0;
   height: calc(var(--channel-composer-bottom-space) + var(--channel-composer-radius));
   background: var(--paper);
+}
+
+/* Status animation and navigation share a row, not each other's footprint. */
+.channel-footer-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(var(--channel-content-max-width), calc(100% - 2 * var(--channel-horizontal-gutter)));
+  margin: 0 auto;
+}
+.channel-footer-status > .channel-activity-region {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin: 0;
+}
+
+.channel-footer-status:has(> .jump-to-latest-cluster-inline) {
+  display: grid;
+  grid-template-columns: minmax(48px, 1fr) minmax(0, max-content) minmax(48px, 1fr);
+  gap: 0;
+  /* One padded activity row gives both controls the same content centerline. */
+  min-height: 62px;
+  padding-block: 12px 8px;
+}
+.channel-footer-status > .jump-to-latest-cluster-inline {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  padding-block: 0;
+}
+.channel-footer-status:has(> .jump-to-latest-cluster-inline) > .channel-activity-region {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 0;
+  padding-block: 0;
 }
 
 .channel-conversation-footer .channel-activity-slot-content,

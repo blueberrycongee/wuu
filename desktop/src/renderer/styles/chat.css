@@ -1,6 +1,6 @@
 :root {
-  /* Chat bubbles retain their neutral surface independently of turn bubbles. */
-  --chat-user-message-bg: var(--wuu-message-user-background, #F3F3F4);
+  /* Outgoing chat bubbles share the session user-message surface. */
+  --chat-user-message-bg: var(--wuu-message-user-background, var(--user-message-bg-color, #EAF1FA));
 }
 
 /*
@@ -119,10 +119,10 @@
 
 .chat-bubble--user {
   background: var(--chat-user-message-bg);
-  color: var(--wuu-message-user-color, var(--ink));
-  /* Tail corner (bottom-right) marks the outgoing bubble as the user's
-     own — the group-chat echo of .user-message in the main stream. */
-  border-radius: var(--radius-sm) var(--radius-sm) 3px var(--radius-sm);
+  color: var(--wuu-message-user-color, var(--user-message-fg-color, var(--ink)));
+  /* Match session outgoing bubbles so a two-character name stays a short
+     bubble instead of a panel-radius disk. */
+  border-radius: var(--user-message-radius);
 }
 
 /* A sent-but-not-yet-delivered message (chat send semantics, issue #10):
