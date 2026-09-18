@@ -1,14 +1,11 @@
 import { AgentOnboardingAvatar } from "./AgentOnboardingAvatar";
-import { ChevronRight, Code2, Copy, EyeOff, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { ChevronRight, Code2, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
-import { AgentAvatarMark } from "./AgentAvatarMark";
 import { AppModeSwitch } from "./AppModeSwitch";
-import { ChannelGroupAvatar } from "./ChannelGroupAvatar";
+import { CollaborationConversationRow } from "./CollaborationConversationRow";
 import { collaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
-import { copyToClipboard, ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
-import { showErrorToast, showToast } from "./Toast";
 import { useI18n } from "./i18n";
 
 export function CollaborationSidebar({
@@ -51,31 +48,14 @@ export function CollaborationSidebar({
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [sectionCollapsed, setSectionCollapsed] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
-  useEffect(() => { setContextMenu(null); }, [query, collapsed, initialized]);
-  const conversations = useMemo(
-    () => collaborationConversations(agents, rooms, pinnedRoomIDs, collapsed ? "" : query, archivedRoomIDs),
-    [agents, rooms, pinnedRoomIDs, archivedRoomIDs, query, collapsed],
-  );
-  const contextConversation = conversations.find((conversation) => conversation.id === contextMenu?.id);
-  const contextItems: ThreadContextMenuItem[] = [];
-  if (contextConversation) {
-    const { agent, room, pinned } = contextConversation;
-    if (onTogglePinned) contextItems.push({ label: t(pinned ? "sidebar.unpin" : "sidebar.pin"), icon: pinned ? <PinOff size={16} /> : <Pin size={16} />, onSelect: () => onTogglePinned(contextConversation) });
-    if (agent && onEditAgent) contextItems.push({ label: t("channels.editAgent"), icon: <Pencil size={16} />, onSelect: () => onEditAgent(agent.id) });
-    else if (room?.kind === "channel" && onEditRoom) contextItems.push({ label: t("channels.roomDetails"), icon: <Pencil size={16} />, onSelect: () => onEditRoom(room.id) });
-    if (contextItems.length > 0) contextItems.push({ separator: true });
-    contextItems.push({
-      label: t(room ? "threadSidebar.copyConversationID" : "channels.copyAgentID"), icon: <Copy size={16} />,
-      onSelect: async () => {
-        if (await copyToClipboard(room?.id ?? agent!.id)) showToast({ message: t("settings.copied") });
-        else showErrorToast(t("common.copyFailed"));
-      },
-    });
-    if (onHideConversation || onDeleteConversation) contextItems.push({ separator: true });
-    if (onHideConversation) contextItems.push({ label: t("channels.hideConversation"), icon: <EyeOff size={16} />, onSelect: () => onHideConversation(contextConversation) });
-    if (onDeleteConversation && (agent || room?.kind === "channel")) contextItems.push({ label: t(agent ? "channels.deleteAgent" : "channels.deleteRoom"), icon: <Trash2 size={16} />, danger: true, onSelect: () => onDeleteConversation(contextConversation) });
-  }
+  const conversations = useMemo(() => {
+    const items = collaborationConversations(agents, rooms, pinnedRoomIDs, collapsed ? "" : query, archivedRoomIDs);
+    // Embedded in the shared sidebar, pinning leaves this section for the
+    // Pinned group. Standalone / rail mode still keeps pinned rooms first.
+    return embedded
+      ? items.filter((conversation) => !conversation.pinned)
+      : [...items].sort((left, right) => Number(right.pinned) - Number(left.pinned));
+  }, [agents, rooms, pinnedRoomIDs, archivedRoomIDs, query, collapsed, embedded]);
   const newConversationButton = <button className="icon-button" type="button" disabled={!initialized}
     aria-label={t("channels.newConversation")} title={t("channels.newConversation")} onClick={onCreateRoom}>
     <Plus aria-hidden="true" />
@@ -110,38 +90,23 @@ export function CollaborationSidebar({
             <span className="collaboration-contact-avatar" aria-hidden="true"><AgentOnboardingAvatar avatarKey={draftAgent.avatarKey} /></span>
             <span className="collaboration-contact-copy"><span className="collaboration-contact-heading"><strong>{draftAgent.name || t("channels.newAgent")}</strong></span></span>
           </button> : null}
-          {conversations.map(({ id, name, agent, room, pinned }) => {
+          {conversations.map((conversation) => {
+            const { agent, room } = conversation;
             const selected = !draftSelected && (room ? selectedRoomID === room.id : selectedAgentID === agent?.id);
-            const unread = selected ? 0 : (room?.unread_count ?? 0);
-            // An agent's avatar stays active across all of its rooms.
-            const avatarThinking = agent?.activity_status === "thinking" || room?.activity_status === "thinking";
-            return <button key={id} type="button" className={`collaboration-contact-row${selected ? " active" : ""}${unread > 0 ? " has-unread" : ""}${pinned ? " pinned" : ""}`}
-              aria-current={selected ? "page" : undefined} disabled={!initialized}
-              aria-label={collapsed ? `${name}${unread > 0 ? `, ${t("channels.unreadMessages", { count: unread })}` : ""}` : undefined}
-              title={`${name}${avatarThinking ? ` · ${t("channels.agentWorking")}` : ""}`}
-              onContextMenu={(event) => {
-                if (!initialized) return;
-                event.preventDefault();
-                const rect = event.currentTarget.getBoundingClientRect();
-                setContextMenu({
-                  x: event.clientX || rect.left,
-                  y: event.clientY || rect.bottom,
-                  id,
-                });
-              }}
-              onClick={() => { if (room) onSelectRoom(room.id); else if (agent) onSelectAgent(agent.id); }}>
-              <span className="collaboration-contact-avatar" aria-hidden="true">
-                {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={avatarThinking ? "thinking" : "idle"} motion="expressive" />
-                  : room ? <ChannelGroupAvatar room={room} agents={agents} /> : null}
-              </span>
-              {collapsed && unread > 0 ? <span className="collaboration-rail-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}
-              <span className="collaboration-contact-copy">
-                <span className="collaboration-contact-heading"><strong>{name}</strong>
-                  {unread > 0 ? <span className="collaboration-contact-unread" aria-label={t("channels.unreadMessages", { count: unread })}>{unread > 99 ? "99+" : unread}</span>
-                    : pinned ? <Pin className="collaboration-contact-pin" aria-label={t("channels.pinnedConversation")} /> : null}
-                </span>
-              </span>
-            </button>;
+            return <CollaborationConversationRow
+              key={conversation.id}
+              conversation={conversation}
+              agents={agents}
+              selected={selected}
+              initialized={initialized}
+              collapsed={collapsed}
+              onSelect={() => { if (room) onSelectRoom(room.id); else if (agent) onSelectAgent(agent.id); }}
+              onTogglePinned={onTogglePinned}
+              onHideConversation={onHideConversation}
+              onDeleteConversation={onDeleteConversation}
+              onEditAgent={onEditAgent}
+              onEditRoom={onEditRoom}
+            />;
           })}
           {!collapsed && query.trim() && conversations.length === 0 && !draftAgent ? <div className="collaboration-contact-empty">{t("channels.noMatchingConversations")}</div> : null}
         </nav>
@@ -154,11 +119,6 @@ export function CollaborationSidebar({
           <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
         </div> : null}
       </div>
-      {contextMenu && initialized && contextConversation ? <ThreadContextMenu
-        x={contextMenu.x} y={contextMenu.y}
-        items={contextItems}
-        onClose={() => setContextMenu(null)}
-      /> : null}
     </Container>
   );
 }

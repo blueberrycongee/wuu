@@ -2571,6 +2571,10 @@ export function App(): JSX.Element {
   const sidebarConversations = useMemo(() => ENABLE_GROUP_CHAT
     ? collaborationConversations(namedAgents, channelRooms, channelRoomPreferences.pinnedRoomIDs, "", channelRoomPreferences.archivedRoomIDs)
     : [], [namedAgents, channelRooms, channelRoomPreferences]);
+  const pinnedSidebarConversations = useMemo(
+    () => orderedPinnedCollaborationConversations(sidebarConversations, channelRoomPreferences.pinnedRoomIDs),
+    [sidebarConversations, channelRoomPreferences.pinnedRoomIDs],
+  );
   const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations),
     [sidebarThreadSummaries, sidebarConversations]);
   const sidebarScratchThreads = useMemo(
@@ -5113,19 +5117,19 @@ export function App(): JSX.Element {
             </div>
           ) : null}
           <AppSidebar
-            sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
+            sidebarCollapsed={sidebarCollapsed}
             collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
               { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
               { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
                 label: t("channels.newConversation"), disabled: !state.initialized,
                 onActivate: () => { closeCompactSessionSwitcher(); openNewChannelRoom(); } },
-              ...sidebarConversations.flatMap((conversation) => [{
+              ...sidebarConversations.filter((conversation) => !conversation.pinned).flatMap((conversation) => [{
                   id: `collaboration:${conversation.id}`, kind: "room" as const,
                   parentId: "section:collaboration", depth: 1, label: conversation.name,
                   active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
                     ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
-                  pinned: conversation.pinned, unread: Boolean(conversation.room?.unread_count),
+                  pinned: false, unread: Boolean(conversation.room?.unread_count),
                   running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
                   disabled: !state.initialized,
                   onActivate: () => {
@@ -5136,6 +5140,35 @@ export function App(): JSX.Element {
                   onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
                 }]),
             ] : undefined}
+            pinnedCollaborationConversations={ENABLE_GROUP_CHAT ? pinnedSidebarConversations : []}
+            collaborationAgents={namedAgents}
+            selectedCollaborationAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
+            selectedCollaborationRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
+            collaborationDraftSelected={appMode === "collaboration" && agentOnboardingActive}
+            onSelectCollaborationConversation={(conversation) => {
+              closeCompactSessionSwitcher();
+              if (conversation.room) selectChannelRoom(conversation.room.id);
+              else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
+            }}
+            onToggleCollaborationPinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
+            onHideCollaborationConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
+            onDeleteCollaborationConversation={(conversation) => void deleteCollaborationConversation(conversation)}
+            onEditCollaborationAgent={(agentID) => {
+              closeCompactSessionSwitcher();
+              openChannelsView();
+              setAgentOnboardingActive(false);
+              setNewRoomRequest(0);
+              setEditChannelRoomRequestID("");
+              setEditChannelAgentRequestID(agentID);
+            }}
+            onEditCollaborationRoom={(roomID) => {
+              closeCompactSessionSwitcher();
+              openChannelsView();
+              setAgentOnboardingActive(false);
+              setNewRoomRequest(0);
+              setEditChannelAgentRequestID("");
+              setEditChannelRoomRequestID(roomID);
+            }}
             collaborationNavigation={ENABLE_GROUP_CHAT ? (
             <CollaborationSidebar
               embedded

@@ -1,9 +1,10 @@
-import { act, createRef } from "react";
+import { act, createRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChannelRoom, DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
+import type { CollaborationConversation } from "./CollaborationConversations";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { NavigationSnapshotV1 } from "../shared/workbench";
 import {
@@ -72,6 +73,8 @@ interface RenderOptions {
   groupChatEnabled?: boolean;
   channelRooms?: ChannelRoom[];
   pinnedChannelRooms?: ChannelRoom[];
+  pinnedCollaborationConversations?: CollaborationConversation[];
+  collaborationNavigation?: ReactNode;
   activeChannelRoomID?: string;
   activeChannelSection?: "rooms" | "agents" | "tasks" | null;
   collapsedSidebarSectionIDs?: Set<string>;
@@ -100,6 +103,8 @@ function renderSidebar({
   groupChatEnabled = false,
   channelRooms = [],
   pinnedChannelRooms = [],
+  pinnedCollaborationConversations = [],
+  collaborationNavigation,
   activeChannelRoomID,
   activeChannelSection = null,
   collapsedSidebarSectionIDs = new Set(),
@@ -131,6 +136,8 @@ function renderSidebar({
         groupChatEnabled={groupChatEnabled}
         channelRooms={channelRooms}
         pinnedChannelRooms={pinnedChannelRooms}
+        pinnedCollaborationConversations={pinnedCollaborationConversations}
+        collaborationNavigation={collaborationNavigation}
         activeChannelRoomID={activeChannelRoomID}
         activeChannelSection={activeChannelSection}
         onSelectChannelRoom={onSelectChannelRoom}
@@ -260,6 +267,66 @@ describe("AppSidebar layout", () => {
     expect(collaborationAction).toBeNull();
   });
 
+  it("keeps plugin navigation above the collaboration section", async () => {
+    await desktopPluginHost.activateGeneration({
+      pluginId: "test:app-sidebar-navigation",
+      generation: "plugins-above-collaboration",
+      contributions: {
+        navigation: [{ id: "automations", view: "automations", title: "Automations" }],
+      },
+      register(api) {
+        api.registerViewType({ id: "automations", title: "Automations", render: () => null });
+      },
+    });
+
+    renderSidebar({
+      groupChatEnabled: true,
+      collaborationNavigation: (
+        <section data-wuu-component="collaboration-sidebar">
+          <nav aria-label="协作对话" />
+        </section>
+      ),
+    });
+
+    const plugins = container.querySelector<HTMLElement>("[data-wuu-component='plugin-navigation']");
+    const collaboration = container.querySelector<HTMLElement>("[data-wuu-component='collaboration-sidebar']");
+    expect(plugins?.textContent).toContain("Automations");
+    expect(plugins).not.toBeNull();
+    expect(collaboration).not.toBeNull();
+    expect(
+      plugins!.compareDocumentPosition(collaboration!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("moves a pinned collaboration conversation into the shared Pinned group", () => {
+    const conversation: CollaborationConversation = {
+      id: "dm",
+      name: "Alpha",
+      pinned: true,
+      updatedAt: "2026-09-12T10:00:00Z",
+      room: {
+        id: "dm",
+        kind: "dm",
+        name: "Alpha",
+        created_by: "human",
+        created_at: "2026-09-01T00:00:00Z",
+        members: [],
+      },
+    };
+    renderSidebar({
+      groupChatEnabled: true,
+      pinnedCollaborationConversations: [conversation],
+      collaborationNavigation: (
+        <section data-wuu-component="collaboration-sidebar">
+          <nav aria-label="协作对话" />
+        </section>
+      ),
+    });
+
+    const pinned = container.querySelector('[data-functional-group-id="pinned"]');
+    expect(pinned?.textContent).toContain("Alpha");
+    expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Alpha");
+  });
 
   it("renders only scratch and projects in the workspace order", () => {
     renderSidebar({

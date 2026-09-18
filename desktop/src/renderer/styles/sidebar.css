@@ -796,9 +796,13 @@
 .traffic-spacer .sidebar-collapse-toggle {
   position: relative;
   z-index: 1;
-  width: 30px;
-  height: 30px;
-  padding: 5px;
+  /* Hold the header toggle to the sidebar's trailing accessory column (bell,
+   * section actions, row actions, account chevron) instead of a local 30px
+   * box: the shared control size keeps the glyph, hit target, and hover pill
+   * centered on that one column at every appearance scale. */
+  width: var(--sidebar-row-action-size);
+  height: var(--sidebar-row-action-size);
+  padding: 0;
   -webkit-app-region: no-drag;
 }
 
@@ -1258,11 +1262,14 @@
   display: none;
 }
 
-.collaboration-sidebar-section {
+.collaboration-sidebar-section,
+.sidebar-functional-group[data-functional-group-id="pinned"] {
   --collaboration-contact-avatar-size: 24px;
 }
 
-.collaboration-sidebar-section .collaboration-contact-row {
+.collaboration-sidebar-section .collaboration-contact-row,
+.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-row {
+  width: 100%;
   min-height: var(--sidebar-row-height);
   column-gap: var(--sidebar-nav-column-gap);
   padding: 4px var(--sidebar-row-pad-x);
@@ -1341,12 +1348,20 @@
 
 .collaboration-contact-unread {
   flex-shrink: 0;
-  min-width: 18px;
+  /* Same compact box as the collapsed-rail counter: a 16px pill keeps the
+   * digit visually centered next to a 14px label, while a 18px pill plus
+   * inherited leading read as a blob twice the label's weight. Line-height
+   * is pinned so a row label's multiplier cannot resize the badge and so
+   * the digit sits on the pill's optical center. */
+  min-width: 16px;
+  height: 16px;
+  line-height: 16px;
   border-radius: var(--radius-pill);
-  padding: 2px 5px;
+  padding: 0 4px;
   background: var(--info);
   color: var(--sidebar-session-status-unread-fg);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   font-weight: var(--weight-semibold);
   text-align: center;
 }
@@ -1415,6 +1430,7 @@
   background: var(--info);
   color: var(--ink-on-info);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   line-height: 14px;
 }
 .collaboration-sidebar-rail .collaboration-sidebar-footer {
@@ -1834,12 +1850,19 @@
   padding-left: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
 }
 
+.pinned-sortable-thread:has(.collaboration-contact-row) {
+  display: flex;
+  min-width: 0;
+}
+
 .pinned-sortable-thread .thread-row-main,
+.pinned-sortable-thread .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.can-reorder {
   cursor: grab;
 }
 
 .pinned-sortable-thread[data-dragging="true"] .thread-row-main,
+.pinned-sortable-thread[data-dragging="true"] .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.dragging {
   cursor: grabbing;
 }

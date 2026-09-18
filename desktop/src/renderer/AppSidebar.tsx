@@ -15,7 +15,6 @@ import {
   MessagesSquare,
   Plus,
   Search,
-  Settings,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -51,7 +50,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ChannelRoom, DesktopProject } from "../shared/protocol";
+import type { ChannelRoom, DesktopProject, NamedAgent } from "../shared/protocol";
 import {
   isScratchThread,
   threadBelongsToProject,
@@ -86,7 +85,8 @@ import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { PluginIcon } from "./PublicIcon";
 import { AppModeSwitch } from "./AppModeSwitch";
-import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
+import { CollaborationConversationRow } from "./CollaborationConversationRow";
+import type { CollaborationConversation } from "./CollaborationConversations";
 import { useI18n } from "./i18n";
 import {
   NavigationPresentation,
@@ -99,6 +99,7 @@ import {
 import type { PluginHost } from "./plugins/PluginHost";
 import type { WorkbenchController } from "./plugins/Workbench";
 import { PluginSlot } from "./plugins/PluginSlot";
+import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 
 /**
  * Stable section identity keys for the new sidebar tree.
@@ -139,6 +140,7 @@ export function partitionAttentionThreads(
 const FOLDER_REMOVE_DROP_TARGET = "__wuu_remove_from_folder__";
 const FOLDER_SORTABLE_PREFIX = "__wuu_folder_sort__:";
 const PINNED_THREAD_SORTABLE_PREFIX = "__wuu_pinned_thread_sort__:";
+const PINNED_COLLABORATION_SORTABLE_PREFIX = "__wuu_pinned_collaboration_sort__:";
 const PINNED_APPEND_DROP_ID = "__wuu_pinned_append_drop__";
 const PINNED_SESSION_DROP_TARGET = "__wuu_pinned_session_drop__";
 const WORKSPACE_SESSION_DROP_TARGET = "__wuu_workspace_session_drop__";
@@ -149,12 +151,13 @@ const LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY = "wuu.desktop.sidebarPinnedContainer
 const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["pinned", "folders", "workspace"] as const;
 type SidebarFunctionalGroupID = (typeof SIDEBAR_FUNCTIONAL_GROUP_IDS)[number];
 type SidebarPinnedItem = {
-  kind: "thread" | "folder" | "workspace";
+  kind: "thread" | "folder" | "workspace" | "collaboration";
   id: string;
 };
 
 function pinnedItemSortableID(item: SidebarPinnedItem): string {
   if (item.kind === "thread") return `${PINNED_THREAD_SORTABLE_PREFIX}${item.id}`;
+  if (item.kind === "collaboration") return `${PINNED_COLLABORATION_SORTABLE_PREFIX}${item.id}`;
   if (item.kind === "folder") return `${FOLDER_SORTABLE_PREFIX}${item.id}`;
   return item.id;
 }
@@ -186,7 +189,8 @@ function loadSidebarPinnedItems(): SidebarPinnedItem[] {
       const candidate = value as Partial<SidebarPinnedItem>;
       if ((candidate.kind !== "thread"
         && candidate.kind !== "folder"
-        && candidate.kind !== "workspace")
+        && candidate.kind !== "workspace"
+        && candidate.kind !== "collaboration")
         || typeof candidate.id !== "string"
         || !candidate.id
       ) return [];
@@ -361,6 +365,17 @@ export function AppSidebar({
   groupChatEnabled = false,
   collaborationNavigation,
   collaborationNavigationNodes = [],
+  pinnedCollaborationConversations = [],
+  collaborationAgents = [],
+  selectedCollaborationAgentID,
+  selectedCollaborationRoomID,
+  collaborationDraftSelected = false,
+  onSelectCollaborationConversation,
+  onToggleCollaborationPinned,
+  onHideCollaborationConversation,
+  onDeleteCollaborationConversation,
+  onEditCollaborationAgent,
+  onEditCollaborationRoom,
   onToggleConversationSearch,
   onSelectThread,
   onTogglePinned,
@@ -420,6 +435,17 @@ export function AppSidebar({
   groupChatEnabled?: boolean;
   collaborationNavigation?: ReactNode;
   collaborationNavigationNodes?: readonly NavigationSourceNode[];
+  pinnedCollaborationConversations?: readonly CollaborationConversation[];
+  collaborationAgents?: NamedAgent[];
+  selectedCollaborationAgentID?: string;
+  selectedCollaborationRoomID?: string;
+  collaborationDraftSelected?: boolean;
+  onSelectCollaborationConversation?: (conversation: CollaborationConversation) => void;
+  onToggleCollaborationPinned?: (conversation: CollaborationConversation) => void;
+  onHideCollaborationConversation?: (conversation: CollaborationConversation) => void;
+  onDeleteCollaborationConversation?: (conversation: CollaborationConversation) => void;
+  onEditCollaborationAgent?: (agentID: string) => void;
+  onEditCollaborationRoom?: (roomID: string) => void;
   // Unified 协作 section: the room list (with per-room unread counts) is
   // polled at the App level and passed down so the sidebar and the channel
   // canvas never disagree about what needs attention.
@@ -586,8 +612,12 @@ export function AppSidebar({
   const availableFolderIDs = new Set(organization.folders.map((folder) => folder.id));
   const availableWorkspaceIDs = new Set(sidebarProjects.map((project) => project.id));
   const availablePinnedThreadIDs = new Set(pinnedThreads.map((thread) => thread.id));
+  const availablePinnedCollaborationIDs = new Set(
+    pinnedCollaborationConversations.map((conversation) => conversation.id),
+  );
   const validPinnedItems = pinnedItems.filter((entry) => {
     if (entry.kind === "thread") return availablePinnedThreadIDs.has(entry.id);
+    if (entry.kind === "collaboration") return availablePinnedCollaborationIDs.has(entry.id);
     if (entry.kind === "folder") return availableFolderIDs.has(entry.id);
     return availableWorkspaceIDs.has(entry.id);
   });
@@ -599,13 +629,21 @@ export function AppSidebar({
       validPinnedItems.push({ kind: "thread", id: thread.id });
     }
   }
+  const knownPinnedCollaborationIDs = new Set(
+    validPinnedItems.filter((entry) => entry.kind === "collaboration").map((entry) => entry.id),
+  );
+  for (const conversation of pinnedCollaborationConversations) {
+    if (!knownPinnedCollaborationIDs.has(conversation.id)) {
+      validPinnedItems.push({ kind: "collaboration", id: conversation.id });
+    }
+  }
   const pinnedItemSortableIDs = validPinnedItems.map(pinnedItemSortableID);
   const pinnedItemBySortableID = new Map(
     validPinnedItems.map((entry) => [pinnedItemSortableID(entry), entry]),
   );
   const validPinnedContainers = validPinnedItems.filter(
     (entry): entry is SidebarPinnedItem & { kind: "folder" | "workspace" } =>
-      entry.kind !== "thread",
+      entry.kind === "folder" || entry.kind === "workspace",
   );
   const pinnedFolderIDs = new Set(
     validPinnedContainers.filter((entry) => entry.kind === "folder").map((entry) => entry.id),
@@ -683,6 +721,15 @@ export function AppSidebar({
     onTogglePinned(thread);
   }
 
+  function toggleCollaborationPinned(conversation: CollaborationConversation): void {
+    if (conversation.pinned) {
+      unpinContainer({ kind: "collaboration", id: conversation.id });
+    } else {
+      pinContainer({ kind: "collaboration", id: conversation.id });
+    }
+    onToggleCollaborationPinned?.(conversation);
+  }
+
   function functionalGroupForSortableID(id: string | undefined): SidebarFunctionalGroupID | undefined {
     if (!id) return undefined;
     if (SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID)) {
@@ -707,7 +754,9 @@ export function AppSidebar({
           ? visibleFolderSortableIDs.length === 0 && candidateID === "folders"
           : activePinnedEntry.kind === "workspace"
             ? visibleWorkspaceSectionOrder.length === 0 && candidateID === "workspace"
-            : candidateID === "folders" || candidateID === "workspace";
+            : activePinnedEntry.kind === "thread" || activePinnedEntry.kind === "collaboration"
+              ? candidateID === "folders" || candidateID === "workspace"
+              : false;
         return returnsToEmptySource
           || candidateID === PINNED_APPEND_DROP_ID
           || pinnedItemBySortableID.has(candidateID)
@@ -844,9 +893,14 @@ export function AppSidebar({
         : entry?.kind === "workspace"
           ? "workspace"
           : undefined;
-      if (entry?.kind === "thread" && (overGroup === "folders" || overGroup === "workspace")) {
-        const thread = pinnedThreads.find((candidate) => candidate.id === entry.id);
-        if (thread) toggleThreadPinned(thread);
+      if ((entry?.kind === "thread" || entry?.kind === "collaboration") && (overGroup === "folders" || overGroup === "workspace")) {
+        if (entry.kind === "thread") {
+          const thread = pinnedThreads.find((candidate) => candidate.id === entry.id);
+          if (thread) toggleThreadPinned(thread);
+        } else {
+          const conversation = pinnedCollaborationConversations.find((candidate) => candidate.id === entry.id);
+          if (conversation) toggleCollaborationPinned(conversation);
+        }
       } else if (entry && overGroup === returnGroup) {
         if (entry.kind === "folder" && overID && visibleFolderSortableIDs.includes(overID)) {
           const next = moveSidebarItem(
@@ -934,13 +988,15 @@ export function AppSidebar({
   const pinnedRows = pinnedThreads;
   const hasPinnedRows = validPinnedItems.length > 0;
   const pinnedHeadingDropTargetID = pinnedItemSortableIDs[0] ?? PINNED_APPEND_DROP_ID;
-  const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread));
+  const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread))
+    || pinnedCollaborationConversations.some((conversation) =>
+      conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking");
   const pinnedHasUnread = pinnedRows.some((thread) =>
     sidebarThreadUnread(
       thread,
       state.lastViewedTurnByThreadID,
     ),
-  );
+  ) || pinnedCollaborationConversations.some((conversation) => Boolean(conversation.room?.unread_count));
   const allSidebarThreads = useMemo(() => {
     const byID = new Map<string, ThreadSummary>();
     for (const threads of Object.values(projectThreadsByProjectID)) {
@@ -1320,7 +1376,9 @@ export function AppSidebar({
     );
   }
 
-  const navigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
+  // Top-level actions stay above every group: new conversation, search, and the
+  // plugin catalog entry.
+  const primaryNavigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
     const nodes: NavigationSourceNode[] = [
       {
         id: "command:new-conversation",
@@ -1339,8 +1397,6 @@ export function AppSidebar({
         disabled: !hasRuntimeContext,
         onActivate: () => activateNative(onToggleConversationSearch),
       },
-    ];
-    nodes.push(
       {
         id: "command:skills",
         kind: "command",
@@ -1349,7 +1405,43 @@ export function AppSidebar({
         disabled: !hasRuntimeContext,
         onActivate: () => activateNative(onOpenSkillsTab),
       },
-    );
+    ];
+    return Object.freeze(nodes);
+  }, [
+    activateNative, hasRuntimeContext, onOpenSkillsTab, onStartNewThread,
+    onToggleConversationSearch, searchOpen, t,
+  ]);
+
+  // Plugin navigation belongs to the primary navigation: it renders directly
+  // below the top-level actions and above the collaboration section, so its
+  // entries never hide below the room list.
+  const pluginNavigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
+    if (pluginNavigationEntries.length === 0) return [];
+    const nodes: NavigationSourceNode[] = [{
+      id: "section:plugins",
+      kind: "section",
+      label: t("skills.sectionPlugins"),
+      icon: "plugin-blocks",
+      depth: 0,
+    }];
+    for (const entry of pluginNavigationEntries) {
+      nodes.push({
+        id: `plugin:${entry.pluginId}:${entry.id}`,
+        kind: "command",
+        parentId: "section:plugins",
+        depth: 1,
+        label: entry.title,
+        icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
+        active: activePluginMainView?.pluginId === entry.pluginId
+          && activePluginMainView.viewTypeId === entry.view,
+        onActivate: () => openPluginNavigation(entry.pluginId, entry.view),
+      });
+    }
+    return Object.freeze(nodes);
+  }, [activePluginMainView, openPluginNavigation, pluginNavigationEntries, t]);
+
+  const navigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
+    const nodes: NavigationSourceNode[] = [];
     const functionalGroupNodes: Record<SidebarFunctionalGroupID, NavigationSourceNode[]> = {
       pinned: [],
       folders: [],
@@ -1378,6 +1470,28 @@ export function AppSidebar({
               () => toggleThreadPinned(thread),
               1,
             ));
+          }
+          continue;
+        }
+        if (entry.kind === "collaboration") {
+          const conversation = pinnedCollaborationConversations.find((candidate) => candidate.id === entry.id);
+          if (conversation) {
+            functionalGroupNodes.pinned.push({
+              id: `collaboration:${conversation.id}`,
+              kind: "room",
+              parentId: "section:pinned",
+              depth: 1,
+              label: conversation.name,
+              active: !collaborationDraftSelected && (conversation.room
+                ? conversation.room.id === selectedCollaborationRoomID
+                : conversation.agent?.id === selectedCollaborationAgentID),
+              pinned: true,
+              unread: Boolean(conversation.room?.unread_count),
+              running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
+              disabled: !state.initialized,
+              onActivate: () => onSelectCollaborationConversation?.(conversation),
+              onTogglePinned: () => toggleCollaborationPinned(conversation),
+            });
           }
           continue;
         }
@@ -1507,28 +1621,6 @@ export function AppSidebar({
     for (const groupID of functionalGroupOrder) {
       nodes.push(...functionalGroupNodes[groupID]);
     }
-    if (pluginNavigationEntries.length > 0) {
-      nodes.push({
-        id: "section:plugins",
-        kind: "section",
-        label: t("skills.sectionPlugins"),
-        icon: "plugin-blocks",
-        depth: 0,
-      });
-      for (const entry of pluginNavigationEntries) {
-        nodes.push({
-          id: `plugin:${entry.pluginId}:${entry.id}`,
-          kind: "command",
-          parentId: "section:plugins",
-          depth: 1,
-          label: entry.title,
-          icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
-          active: activePluginMainView?.pluginId === entry.pluginId
-            && activePluginMainView.viewTypeId === entry.view,
-          onActivate: () => openPluginNavigation(entry.pluginId, entry.view),
-        });
-      }
-    }
     nodes.push({
       id: "command:settings",
       kind: "command",
@@ -1540,16 +1632,17 @@ export function AppSidebar({
     return Object.freeze(nodes);
   }, [
     activateNative, activeProjectID, activeThreadID,
-    hasPinnedRows, hasRuntimeContext,
-    onOpenSettings, onOpenSkillsTab,
+    hasPinnedRows,
+    onOpenSettings,
     onSelectProjectThread, onSelectProjectWorkspace, onSelectThread,
-    onStartNewThread, onToggleConversationSearch,
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
+    pinnedCollaborationConversations, collaborationDraftSelected,
+    selectedCollaborationAgentID, selectedCollaborationRoomID,
+    onSelectCollaborationConversation, onToggleCollaborationPinned,
     visibleProjectThreadsByProjectID,
     folderThreadsByID, functionalGroupOrder, organization.folders, pinnedFolderIDs,
-    searchOpen, sidebarProjects, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
-    activePluginMainView, openPluginNavigation, pluginNavigationEntries,
+    sidebarProjects, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
   ]);
 
@@ -1689,7 +1782,6 @@ export function AppSidebar({
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
-          {collaborationNavigation}
           {pluginNavigationEntries.length > 0 ? (
             <section
               className="sidebar-functional-group plugin-navigation-group"
@@ -1724,6 +1816,7 @@ export function AppSidebar({
               </div>
             </section>
           ) : null}
+          {collaborationNavigation}
           <DndContext
             sensors={sensors}
             collisionDetection={sidebarCollisionDetection}
@@ -1802,6 +1895,37 @@ export function AppSidebar({
                               />
                             </SortablePinnedThreadItem>
                           ) : null;
+                        }
+                        if (entry.kind === "collaboration") {
+                          const conversation = pinnedCollaborationConversations.find((candidate) => candidate.id === entry.id);
+                          if (!conversation) return null;
+                          const selected = !collaborationDraftSelected && (conversation.room
+                            ? conversation.room.id === selectedCollaborationRoomID
+                            : conversation.agent?.id === selectedCollaborationAgentID);
+                          return (
+                            <SortablePinnedThreadItem
+                              key={pinnedItemSortableID(entry)}
+                              id={pinnedItemSortableID(entry)}
+                              sortIndicator={sidebarSortIndicator?.id === pinnedItemSortableID(entry)
+                                ? sidebarSortIndicator.position
+                                : undefined}
+                              containerProps={pinnedSessionDropProps(pinnedItemSortableID(entry))}
+                            >
+                              <CollaborationConversationRow
+                                conversation={conversation}
+                                agents={collaborationAgents}
+                                selected={selected}
+                                initialized={Boolean(state.initialized)}
+                                showPinMark={false}
+                                onSelect={() => onSelectCollaborationConversation?.(conversation)}
+                                onTogglePinned={toggleCollaborationPinned}
+                                onHideConversation={onHideCollaborationConversation}
+                                onDeleteConversation={onDeleteCollaborationConversation}
+                                onEditAgent={onEditCollaborationAgent}
+                                onEditRoom={onEditCollaborationRoom}
+                              />
+                            </SortablePinnedThreadItem>
+                          );
                         }
                         if (entry.kind === "folder") {
                           const folder = organization.folders.find((candidate) => candidate.id === entry.id);
@@ -2076,12 +2200,20 @@ export function AppSidebar({
         groupChatEnabled={groupChatEnabled}
         collaborationNavigation={collaborationNavigation}
         onSwitchToCollaboration={onSwitchToCollaboration}
-        commands={navigationNodes}
+        commands={[...primaryNavigationNodes, ...pluginNavigationNodes, ...navigationNodes]}
       /> : nativeSidebar}
     </SessionOrganizationProvider>
   );
   return (
-    <NavigationPresentation nodes={[...collaborationNavigationNodes, ...navigationNodes]} fallback={organizedSidebar} />
+    <NavigationPresentation
+      nodes={[
+        ...primaryNavigationNodes,
+        ...pluginNavigationNodes,
+        ...collaborationNavigationNodes,
+        ...navigationNodes,
+      ]}
+      fallback={organizedSidebar}
+    />
   );
 }
 

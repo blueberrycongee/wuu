@@ -183,9 +183,12 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledExactlyOnceWith({ agent_id: "new-agent" });
   expect(container.querySelector(".channel-room-settings-name")?.textContent).toBe("General");
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).pinnedRoomIDs).toEqual(["new-dm"]);
+  expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Research");
+  expect(container.querySelector('[data-functional-group-id="pinned"]')?.textContent).toContain("Research");
   await manageSidebarRow("Research", t("channels.hideConversation"));
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!)).toMatchObject({ pinnedRoomIDs: [], archivedRoomIDs: ["new-dm"] });
   expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Research");
+  expect(container.querySelector('[data-functional-group-id="pinned"]')?.textContent).not.toContain("Research");
   await click(t("account.menu"));
   await click(t("sidebar.settings"));
   await act(async () => { await vi.dynamicImportSettled(); });
