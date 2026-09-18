@@ -139,6 +139,7 @@ export function useConversationScrollState({
   emptyConversation,
   initialized,
   running = false,
+  statusClusterNode = null,
   nativeScrollBounce = window.wuu?.platform === "darwin" && window.wuu?.hostKind !== "web",
 }: {
   activeThreadID?: string;
@@ -149,6 +150,7 @@ export function useConversationScrollState({
   emptyConversation: boolean;
   initialized: boolean;
   running?: boolean;
+  statusClusterNode?: HTMLElement | null;
   /** Use the macOS/AppKit rubber band instead of synthesizing wheel motion. */
   nativeScrollBounce?: boolean;
 }): {
@@ -400,6 +402,9 @@ export function useConversationScrollState({
 
   const scrollConversationToBottom = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
+    // A composer/status resize changes the readable viewport, not the answer.
+    // Keep enough range for the held anchor without leaving stale extra space.
+    if (scrollModeRef.current === "holding") ensureTailRange(lastConversationScrollTopRef.current);
     syncTailLayout();
     // Cached/windowed turns can mount in a child-only commit. The parent
     // layout effect is not guaranteed to run when the exact bubble appears.
@@ -427,6 +432,7 @@ export function useConversationScrollState({
     syncTailLayout,
     tailFilled,
     submittedMessage,
+    ensureTailRange,
   ]);
 
   // A draft can be remounted into a real thread during the same animation.
@@ -1257,6 +1263,33 @@ export function useConversationScrollState({
     scheduleLiveResizeScroll,
     splitConversation
   ]);
+
+  useLayoutEffect(() => {
+    const pane = conversationPaneRef.current;
+    if (!pane) return;
+    let frame = 0;
+    const update = (): void => {
+      const height = statusClusterNode?.getBoundingClientRect().height ?? 0;
+      const gap = statusClusterNode
+        ? cssPixelValue(window.getComputedStyle(statusClusterNode).getPropertyValue("--conversation-status-gap"))
+        : 0;
+      const value = `${height > 0 ? Math.ceil(height + gap) : 0}px`;
+      if (pane.style.getPropertyValue("--conversation-status-space") === value) return;
+      pane.style.setProperty("--conversation-status-space", value);
+      scrollConversationToBottom();
+    };
+    update();
+    if (!statusClusterNode || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(update);
+    });
+    observer.observe(statusClusterNode);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
+  }, [statusClusterNode, scrollConversationToBottom]);
 
   useLayoutEffect(() => {
     const node = dockComposerNode;

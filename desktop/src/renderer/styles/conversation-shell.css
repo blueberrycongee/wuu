@@ -1165,8 +1165,9 @@
                                                                         
                                                                        
 .jump-to-latest-cluster {
+  --conversation-status-gap: 8px;
   position: absolute;
-  bottom: calc(var(--dock-composer-height, 0px) + 8px);
+  bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
   left: var(--conversation-visible-inset-left);
   /* The pill is positioned in the pane box, but the message flow centers
      inside .scroll-region's content box, which excludes the scrollbar

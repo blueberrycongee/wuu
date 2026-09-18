@@ -4899,11 +4899,17 @@ html.resizing-workspace-file-split * {
   grid-column: 1 / -1;
 }
 
+.conversation-pane > .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region):not(.split-scroll-region):not(.skills-scroll-region) {
+  /* The reading viewport ends above the real dock footprint. Unlike trailing
+     padding alone, this also keeps capsules off text while browsing history. */
+  margin-bottom: calc(var(--dock-composer-height) + var(--conversation-status-space, 0px));
+}
+
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) .conversation-width {
-  /* Only the composer occludes the stream; floating status controls do not
-     create a separate blank band. Submission space retires as output grows. */
+  /* Dock/status space belongs to the viewport boundary, not a second padding
+     band. Only the reading gap and consumable submission space remain here. */
   --conversation-flow-bottom-space: calc(
-    var(--dock-composer-height) + var(--conversation-composer-clearance) + var(--session-tail-space, 0px)
+    var(--conversation-composer-clearance) + var(--session-tail-space, 0px)
   );
   padding-bottom: var(--conversation-flow-bottom-space);
 }

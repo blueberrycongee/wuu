@@ -78,6 +78,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   without pulling readers away from an explicitly paused reading position.
 - Position locally queued and steered messages when they enter the conversation,
   reserving response space unless the user has since scrolled or changed threads.
+- Keep the ordinary conversation viewport clear of the composer and visible
+  status capsules, without reserving empty capsule rows or duplicating bottom spacing.
 
 - Prevented overlapping automation timer ticks from leaving a run stuck in
   starting before the session send settled.
