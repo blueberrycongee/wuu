@@ -2,31 +2,33 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useConversationScrollState } from "./ConversationScrollState";
+import { submittedMessageScrollTop, useConversationScrollState } from "./ConversationScrollState";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { PluginHost } from "./plugins/PluginHost";
+import { SESSION_TAIL_SPACE_MAX_PX, SESSION_TAIL_SPACE_MIN_PX, SESSION_TAIL_SPACE_RATIO } from "./SessionTailSpace";
 
 let api: ReturnType<typeof useConversationScrollState>;
 let root: Root;
 let host: HTMLDivElement;
 let naturalHeight: number;
+let viewportHeight: number;
 let top: number;
 let pending: Map<number, FrameRequestCallback>;
 let nextFrame: number;
 
-function Probe({ id = "a", running = true, status = true, pluginHost, onOpenSession = () => undefined }: { id?: string; running?: boolean; status?: boolean; pluginHost?: PluginHost; onOpenSession?: (id: string) => void }) {
-  api = useConversationScrollState({ activeThreadID: id, activePane: "primary", splitConversation: false, emptyConversation: false, initialized: true, running, nativeScrollBounce: false });
+function Probe({ id = "a", running = true, status = true, split = false, submittedMessage = false, pluginHost, onOpenSession = () => undefined }: { id?: string; running?: boolean; status?: boolean; split?: boolean; submittedMessage?: boolean; pluginHost?: PluginHost; onOpenSession?: (id: string) => void }) {
+  api = useConversationScrollState({ activeThreadID: id, activePane: "primary", splitConversation: split, emptyConversation: false, initialized: true, running, nativeScrollBounce: false });
   return <main ref={api.conversationPaneRef}>
     <div ref={node => {
       api.conversationScrollRef.current = node;
       if (!node) return;
       Object.defineProperties(node, {
-        clientHeight: { configurable: true, get: () => 600 },
+        clientHeight: { configurable: true, get: () => viewportHeight },
         scrollHeight: { configurable: true, get: () => naturalHeight + tailSpace() },
-        scrollTop: { configurable: true, get: () => Math.min(top, node.scrollHeight - 600), set: value => { top = Math.max(0, Math.min(value, node.scrollHeight - 600)); } },
+        scrollTop: { configurable: true, get: () => Math.min(top, node.scrollHeight - viewportHeight), set: value => { top = Math.max(0, Math.min(value, node.scrollHeight - viewportHeight)); } },
       });
     }} onScroll={() => api.handleConversationScroll()}>
-      <div ref={api.scrollContentRef} />
+      <div ref={api.scrollContentRef}>{submittedMessage ? <div data-user-message-id="submitted" /> : null}</div>
     </div>
     {pluginHost ? <ConversationStatusCluster host={pluginHost} visible threadId={id}
       clusterRef={api.statusClusterRef} onOpenSession={onOpenSession}
@@ -59,6 +61,7 @@ function scrollUp(amount: number) {
 
 beforeEach(() => {
   naturalHeight = 2000;
+  viewportHeight = 600;
   top = 0;
   nextFrame = 0;
   pending = new Map();
@@ -92,6 +95,26 @@ it("consumes run space while browsing without moving the history viewport or re-
   expect(tailSpace()).toBe(consumed);
 });
 
+it("sizes ordinary-session run space from the viewport with tunable bounds", () => {
+  render();
+  expect(tailSpace()).toBe(Math.round(viewportHeight * SESSION_TAIL_SPACE_RATIO));
+
+  viewportHeight = 300;
+  render({ running: false, status: false });
+  render({ running: true });
+  expect(tailSpace()).toBe(SESSION_TAIL_SPACE_MIN_PX);
+
+  viewportHeight = 1600;
+  render({ running: false, status: false });
+  render({ running: true });
+  expect(tailSpace()).toBe(SESSION_TAIL_SPACE_MAX_PX);
+});
+
+it("does not add ordinary-session tail space to collaboration panes", () => {
+  render({ split: true });
+  expect(tailSpace()).toBe(0);
+});
+
 it("does not pull a history reader to the bottom on submit or a new run", () => {
   render({ running: false });
   scrollUp(250);
@@ -100,6 +123,36 @@ it("does not pull a history reader to the bottom on submit or a new run", () => 
   render({ running: true });
   tick(0); tick(300);
   expect(top).toBe(away);
+});
+
+it("anchors the submitted message block from live viewport and rect measurements", () => {
+  const viewport = document.createElement("div");
+  const message = document.createElement("div");
+  Object.defineProperties(viewport, {
+    clientHeight: { configurable: true, value: 600 },
+    scrollHeight: { configurable: true, value: 2000 },
+    scrollTop: { configurable: true, writable: true, value: 900 },
+  });
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+  vi.spyOn(message, "getBoundingClientRect").mockReturnValue({ top: 500, bottom: 580, height: 80 } as DOMRect);
+
+  expect(submittedMessageScrollTop(viewport, message)).toBe(1180);
+});
+
+it("anchors a long submitted message by its bottom edge", () => {
+  const viewport = document.createElement("div");
+  const message = document.createElement("div");
+  Object.defineProperties(viewport, {
+    clientHeight: { configurable: true, value: 600 },
+    scrollHeight: { configurable: true, value: 3000 },
+    scrollTop: { configurable: true, writable: true, value: 900 },
+  });
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+  vi.spyOn(message, "getBoundingClientRect").mockReturnValue({ top: 500, bottom: 900, height: 400 } as DOMRect);
+
+  // The long block is still anchored in the upper band; its top is not used
+  // as the target, which would push the reading context below the message.
+  expect(submittedMessageScrollTop(viewport, message)).toBe(1490);
 });
 
 it("keeps TODO focus and plugin actions available while browsing without reclaiming the viewport", async () => {
@@ -131,17 +184,30 @@ it("keeps TODO focus and plugin actions available while browsing without reclaim
   expect(top).toBe(away);
 });
 
-it("retires temporary space when the run ends without a one-frame jump", () => {
-  render();
-  const position = () => api.conversationScrollRef.current!.scrollTop;
-  const before = position();
-  render({ running: false, status: false });
-  expect(position()).toBe(before);
-  tick(0); tick(110);
-  expect(position()).toBeLessThan(before);
-  expect(position()).toBeGreaterThan(naturalHeight - 600);
+it("anchors a submitted message and preserves that reading position after completion", () => {
+  render({ running: false, status: false, submittedMessage: true });
+  const viewport = api.conversationScrollRef.current!;
+  const message = viewport.querySelector<HTMLElement>("[data-user-message-id]")!;
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+  vi.spyOn(message, "getBoundingClientRect").mockReturnValue({ top: 500, bottom: 580, height: 80 } as DOMRect);
+  viewport.scrollTop = 0;
+
+  act(() => api.requestSubmittedQueryScroll());
+  expect(top).toBe(0);
+  tick(0);
+  expect(top).toBe(0);
+  tick(110);
+  expect(top).toBeGreaterThan(0);
+  expect(top).toBeLessThan(280);
   tick(220);
-  expect(position()).toBe(naturalHeight - 600);
+  const anchored = top;
+  expect(anchored).toBe(280);
+
+  naturalHeight += 300;
+  render({ running: true, status: false, submittedMessage: true });
+  render({ running: false, status: false, submittedMessage: true });
+  tick(0); tick(220);
+  expect(top).toBe(anchored);
   expect(tailSpace()).toBe(0);
 });
 
