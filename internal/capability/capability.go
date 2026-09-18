@@ -20,6 +20,8 @@ const (
 	// Filesystem reading and listing.
 	CapabilityFileRead Capability = "file.read"
 	CapabilityFileList Capability = "file.list"
+	// Explicit delivery of a file snapshot to the user, not model observation.
+	CapabilityArtifactPresent Capability = "artifact.present"
 
 	// Filesystem editing. The actual model-visible tool differs per
 	// profile: Codex / OpenAI get apply_patch, Claude / generic get
@@ -90,6 +92,7 @@ func All() []Capability {
 	return []Capability{
 		CapabilityFileRead,
 		CapabilityFileList,
+		CapabilityArtifactPresent,
 		CapabilityFileEdit,
 		CapabilitySearchGrep,
 		CapabilitySearchGlob,

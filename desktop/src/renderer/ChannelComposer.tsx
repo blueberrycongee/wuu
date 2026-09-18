@@ -1,6 +1,6 @@
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { Plus } from "lucide-react";
-import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
@@ -113,26 +113,6 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
     [],
   );
 
-  const resizeInput = useCallback(() => {
-    const input = textarea();
-    if (!input || !compact) return;
-    input.style.height = "0px";
-    input.style.height = `${Math.min(160, Math.max(32, input.scrollHeight))}px`;
-  }, [compact, textarea]);
-  useLayoutEffect(resizeInput, [draft, draftRevision, resizeInput]);
-  useEffect(() => {
-    const element = composerRef.current;
-    if (!element || !compact || typeof ResizeObserver === "undefined") return;
-    let width = 0;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry.contentRect.width === width) return;
-      width = entry.contentRect.width;
-      resizeInput();
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [compact, resizeInput]);
-
   const updateMentionRange = useCallback((value: string): void => {
     const input = textarea();
     const cursor = input?.selectionStart ?? value.length;
@@ -183,7 +163,6 @@ export const ChannelComposer = forwardRef<ChannelComposerHandle, {
     <div
       ref={composerRef}
       className={`channel-composer${compact ? " channel-composer-inline" : ""}`}
-      onInput={resizeInput}
       onClick={() => updateMentionRange(draft)}
       onKeyUp={(event) => {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End") {

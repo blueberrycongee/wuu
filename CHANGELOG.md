@@ -13,8 +13,138 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Added **Approve for me** as a Standard-mode permission option. High-risk native
   tool calls are reviewed before they run; the workspace boundary is unchanged,
   and a review timeout or failure is not treated as a denial.
+- Enabled cross-session coordination through Peers, with attributed message bodies,
+  source navigation, and expandable existing chat bubbles on Desktop and native mobile.
 
 ### Changed
+
+- Unify named-agent and group-chat navigation with the desktop session sidebar,
+  nesting managed sessions beneath their named agent instead of their workspace.
+
+- Narrow outgoing desktop conversation bubbles to 560px or 80% of the message
+  area and use a mist-blue palette in light and dark themes.
+
+- Temporarily hide the Collaboration sidebar's Agent management shortcut while
+  retaining agent management capabilities and other entry points.
+
+- Temporarily hide conversation file-change summary cards and the turn navigation
+  rail while retaining edit history and the underlying review components.
+
+- Reduce excess whitespace between conversation turns while preserving message
+  action space and query-to-reply spacing.
+
+- Share spacing and density roles across desktop menus, forms, cards, dialogs,
+  and plugin UI; let controls grow with text and compact file-change summaries.
+
+- Tighten sidebar spacing with consistent row, heading, and group intervals;
+  keep the pinned drop target within the group spacing.
+
+- Keep the conversation composer 12px from the bottom across viewport widths
+  and input states, while retaining device safe-area clearance.
+- Use compact corners for embedded message-flow code, output and diff cards,
+  and smaller code-copy icons while preserving their click targets.
+
+- Use natural letter spacing across desktop UI and prose and remove global
+  proportional CJK alternates, preserving code and terminal character alignment.
+- Default new desktop UI preferences to 14.5px while preserving saved sizes;
+  remember each user's page zoom and scale message action controls with text.
+- Align titlebar and workspace controls, lighten message bubbles, and unify
+  sidebar and account-menu row heights, hover corners, and spacing.
+- Unified desktop navigation spacing, replaced workspace tool cards with a
+  centered list, and aligned file-tree text with UI font preferences.
+- Refined desktop conversation typography, prompt widths, message corners, and
+  action spacing while preserving saved text sizes and responsive reading space.
+- Use a light neutral background and dark text for outgoing messages in light mode,
+  including their inline code, links, and edit controls.
+- Removed the room-header plans and memory panel while preserving Agent capabilities,
+  saved plans, memory, and task controls.
+- Made sidebar list expansion controls lighter and kept them grouped with their
+  conversations, with consistent expand/collapse spacing and keyboard focus.
+- Set the desktop interface's default scale to one zoom-out step below actual
+  size, preserving saved font preferences and native browser alignment.
+- Simplified iOS conversation activity into desktop-shared tool summaries and
+  mascot motion, with an inline stop control and consistent, dynamically scaled
+  typography across messages, composers, and process rows.
+- Let conversation inputs grow with their contents up to the same height as
+  manual expansion, shrink when text is removed, and scroll once full.
+- Simplified the native iOS conversation directory with secondary archive/history
+  actions in its menu and project names instead of full workspace paths.
+- Kept native iOS tab switching on directory pages. Conversation pages, including
+  empty sessions, use native back navigation and reserve the bottom edge for the
+  composer; directory search also hides the tab bar.
+- Matched native iOS connection feedback to the desktop bouncing Wuu letters and
+  blinking caret, with green branding, typed status text, and reduced-motion support.
+
+### Fixed
+
+- Preserve bottom-follow when expanding or collapsing conversation tool groups,
+  without pulling readers away from an explicitly paused reading position.
+- Position locally queued and steered messages when they enter the conversation,
+  reserving response space unless the user has since scrolled or changed threads.
+- Keep the ordinary conversation viewport clear of the composer and visible
+  status capsules, without reserving empty capsule rows or duplicating bottom spacing.
+
+- Prevented overlapping automation timer ticks from leaving a run stuck in
+  starting before the session send settled.
+- Restore draggable width adjustment for Collaboration conversation settings,
+  with keyboard controls, saved width, and bounds that preserve chat space.
+
+- Prevented streamed replies from jumping at completion by preserving prose
+  geometry, reserving action space, and allowing active text fades to finish.
+- Outline inline image artifacts with a subtle border and rounded corners so
+  light images remain distinct from the conversation background.
+
+- Center code-block text within balanced vertical padding and align copy actions
+  with the first code line across code sizes and Markdown previews.
+
+- Fixed duplicate sidebar navigation nodes after forking worktree conversations
+  by preserving workspace identity and reconciling cached sidebar membership.
+
+- Prevented transient busy indicators when switching cached desktop conversation
+  tabs, while retaining send protection until background selection completes.
+- Kept newly created Named Agent-managed sessions visible in the Harness sidebar
+  immediately, without requiring a restart or losing their management relationship.
+- Preserved Named Agent room images through wake delivery and history reads, using
+  the same model media policy as ordinary conversations without duplicating attachments.
+- Fixed selecting an automatically discovered Grok Build connection in existing
+  and new conversations without changing workspace defaults.
+- Kept the extension catalog visible after a failed reload and routed reload
+  feedback through the shared top notice, with localized notices for busy tasks.
+- Kept inline images and subsequent streamed text in chronological order without
+  moving text across images at completion, and reserved stable image preview space.
+- Kept streaming process text visible when providers revise a provisional final
+  answer into commentary before tool calls, including DeepSeek V4 Pro.
+- Corrected external-engine token accounting for reasoning, cache writes, and
+  replayed usage notifications.
+- Preserved terminal failure details and distinguished interrupted external turns
+  from successful completion.
+- Read stream-result error arrays and limit subtypes, and rejected malformed
+  terminal payloads instead of reporting success.
+- Answered reverse-RPC requests with string identifiers without losing their
+  original identifiers or numeric precision.
+- Positioned Collaboration message history before paint to avoid a visible scroll
+  jump on entry, while preserving the reading position during message updates.
+
+## [2026.9.2] - 2026-09-15
+
+### Changed
+
+- Native conversation views no longer present an explicitly cancelled, interrupted turn as a new failure; partial answers and actual execution failures remain visible.
+
+- Native agent composers preserve command text instead of applying keyboard spelling corrections or iOS sentence capitalization.
+
+- Enabled desktop phone access recovers after temporary startup failures or a remote-host exit, while respecting explicit disablement, account changes, and app shutdown.
+
+- Remote hosts sharing one Wuu home now hold a process lock, preventing Dev and packaged desktops from repeatedly replacing each other at the relay. The lock is released by the OS after an exit or crash.
+
+- Native phones reconnect independently of history synchronization, retain visible messages during recovery, and keep a healthy connection when a saved conversation is unavailable.
+
+- Restored the last authorized computer, workspace, conversation, and collaboration
+  room after restarting the native iOS and Android apps.
+
+- Bundled macOS Computer Use with persistent self-signed release identity checks
+  and guidance for manual upgrades from GitHub Releases.
+- Waited for core and computer-use preview processes to stop before desktop exit.
 
 - Unified skill and plugin catalog artwork with original, theme-aware capability
   icons while preserving custom plugin artwork; removed the Herbarium test theme.

@@ -10,6 +10,7 @@ import {
   initialState,
   SCRATCH_PSEUDO_PROJECT_ID,
   type AppState,
+  type ThreadSummary,
 } from "./AppState";
 
 let container: HTMLDivElement;
@@ -62,6 +63,10 @@ const sidebarProjects: DesktopProject[] = [
 ];
 
 interface RenderOptions {
+  expandedSidebarSectionIDs?: Set<string>;
+  projectThreadsByProjectID?: Record<string, ThreadSummary[]>;
+  activeThreadID?: string;
+  onSelectProjectThread?: (projectID: string, threadID: string) => void;
   sectionOrder?: string[];
   state?: AppState;
   groupChatEnabled?: boolean;
@@ -78,6 +83,10 @@ interface RenderOptions {
 }
 
 function renderSidebar({
+  expandedSidebarSectionIDs = new Set(),
+  projectThreadsByProjectID = {},
+  activeThreadID,
+  onSelectProjectThread = () => {},
   sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
   state = {
     ...initialState,
@@ -107,12 +116,12 @@ function renderSidebar({
         state={state}
         sidebarProjects={sidebarProjects}
         pinnedThreads={[]}
-        activeThreadID={undefined}
+        activeThreadID={activeThreadID}
         pendingThreadID={undefined}
         pendingProjectID={undefined}
         collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
-        expandedSidebarSectionIDs={new Set()}
-        projectThreadsByProjectID={{}}
+        expandedSidebarSectionIDs={expandedSidebarSectionIDs}
+        projectThreadsByProjectID={projectThreadsByProjectID}
         projectMenuOpen={false}
         projectMenuRef={createRef<HTMLDivElement>()}
         searchOpen={false}
@@ -142,7 +151,7 @@ function renderSidebar({
         onOpenProjectFolder={() => {}}
         onToggleSidebarSectionCollapsed={() => {}}
         onStartNewThreadForProject={() => {}}
-        onSelectProjectThread={() => {}}
+        onSelectProjectThread={onSelectProjectThread}
         onRemoveProject={() => {}}
         onRelocateProject={() => {}}
         onOpenSettings={() => {}}
@@ -185,6 +194,30 @@ describe("AppSidebar layout", () => {
     ]);
   });
 
+  it("keeps a fork in its owning project while the scratch cache catches up", () => {
+    const fork: ThreadSummary = {
+      id: "fork-thread", title: "Forked conversation", cwd: "/repo/wuu/.worktrees/topic",
+      workspace_id: "project-1", status: "idle", pinned: false, archived: false,
+      created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    };
+    const select = vi.fn();
+    renderSidebar({
+      activeThreadID: fork.id,
+      expandedSidebarSectionIDs: new Set([SCRATCH_PSEUDO_PROJECT_ID, "project-1"]),
+      projectThreadsByProjectID: {
+        [SCRATCH_PSEUDO_PROJECT_ID]: [{ ...fork, workspace_id: undefined }],
+        "project-1": [fork],
+      },
+      onSelectProjectThread: select,
+    });
+    const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")]
+      .filter((row) => row.textContent?.includes(fork.title!));
+    expect(rows).toHaveLength(1);
+    act(() => rows[0].click());
+    expect(select).toHaveBeenCalledWith("project-1", fork.id);
+  });
+
   it("hides group chat unless the frontend flag is enabled", () => {
     renderSidebar();
 
@@ -209,6 +242,9 @@ describe("AppSidebar layout", () => {
     expect(primaryNav?.parentElement).toBe(content);
     expect(scrollRegion?.contains(primaryNav)).toBe(false);
     expect(scrollRegion?.querySelector(".project-section")).not.toBeNull();
+    expect(scrollRegion?.hasAttribute("data-scroll-fade")).toBe(true);
+    expect(primaryNav?.closest("[data-scroll-fade]")).toBeNull();
+    expect(content?.hasAttribute("data-scroll-fade")).toBe(false);
   });
 
   it("keeps the workspace add action visible and collaboration controls out of Harness", () => {

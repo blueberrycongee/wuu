@@ -164,3 +164,10 @@
 
 /* Shared SVG morphs own the working silhouette, including failure and recovery. */
 .agent-avatar-mark > [data-wuu-mascot-morph] { transform: none !important; }
+
+/* Identity placements must also stay still on hover and status changes. */
+.agent-avatar-mark[data-agent-avatar-motion="static"],
+.agent-avatar-mark[data-agent-avatar-motion="static"] * {
+  animation: none !important;
+  transition: none !important;
+}

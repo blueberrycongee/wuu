@@ -1,7 +1,8 @@
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 
 interface StubbedLayout {
   scrollHeight: number;
@@ -52,8 +53,28 @@ describe("useAutoFollowScrollContainer", () => {
   let handle: HookHandle | null = null;
   let scrollNode: HTMLDivElement | null = null;
   let layout: StubbedLayout | null = null;
+  let notifyResize: () => void;
+  let frames: Map<number, FrameRequestCallback>;
+
+  function paint(now = 0): void {
+    const pending = [...frames.values()];
+    frames.clear();
+    act(() => pending.forEach((callback) => callback(now)));
+  }
 
   beforeEach(() => {
+    frames = new Map();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { notifyResize = callback; }
+      observe() {}
+      disconnect() {}
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -70,6 +91,130 @@ describe("useAutoFollowScrollContainer", () => {
   afterEach(() => {
     act(() => root?.unmount());
     document.body.removeChild(container);
+    document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("stays at the bottom during continuous window resizing before settling", () => {
+    if (!layout || !scrollNode) throw new Error("probe not mounted");
+    document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+    for (const [height, contentHeight] of [[300, 1200], [200, 1600], [500, 1300]]) {
+      layout.clientHeight = height;
+      layout.scrollHeight = contentHeight;
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+        notifyResize();
+      });
+      paint();
+      expect(layout.scrollTop).toBe(contentHeight - height);
+      act(() => scrollNode!.dispatchEvent(new Event("scroll")));
+      expect(handle?.autoFollowRef.current).toBe(true);
+    }
+  });
+
+  it("uses one continuous arrival scroll across resize and reconciliation writes", () => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    expect(layout!.scrollTop).toBe(800);
+    paint(0); paint(180);
+    const middle = layout!.scrollTop;
+    expect(middle).toBeGreaterThan(800);
+    expect(middle).toBeLessThan(1200);
+    layout!.scrollHeight += 100;
+    act(() => { notifyResize(); handle!.scrollToBottom(); });
+    expect(layout!.scrollTop).toBe(middle);
+    paint(180);
+    expect(layout!.scrollTop).toBe(middle);
+    paint(360);
+    expect(layout!.scrollTop).toBe(1300);
+    expect(frames.size).toBe(0);
+  });
+
+  it.each(["wheel", "pointerdown", "touchstart", "keydown"])("yields an arrival to %s before another frame or resize can write", event => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(80);
+    const position = layout!.scrollTop;
+    act(() => {
+      scrollNode!.dispatchEvent(event === "wheel" ? new WheelEvent(event, { deltaY: 20 })
+        : event === "keydown" ? new KeyboardEvent(event, { key: "PageUp" })
+        : event === "touchstart" ? new TouchEvent(event, { touches: [] }) : new Event(event));
+      notifyResize();
+    });
+    paint(500);
+    expect(layout!.scrollTop).toBe(position);
+    expect(handle!.autoFollowRef.current).toBe(false);
+  });
+
+  it("keeps incoming arrivals paused until a new local send explicitly resumes following", () => {
+    act(() => handle!.pauseAutoFollow());
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(500);
+    expect(layout!.scrollTop).toBe(800);
+    act(() => handle!.scrollToBottom({ force: true, animate: true }));
+    expect(layout!.scrollTop).toBe(800);
+    paint(600); paint(1000);
+    expect(layout!.scrollTop).toBe(1200);
+  });
+
+  it("settles an active arrival before hiding and never leaves a background scroll running", () => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(80);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(layout!.scrollTop).toBe(1200);
+    expect(frames.size).toBe(0);
+  });
+
+  it("positions immediately instead of animating when reduced motion is requested", () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    expect(layout!.scrollTop).toBe(1200);
+    expect(frames.size).toBe(0);
+  });
+
+  it("respects reading history after the stream mounts on opening or returning from setup", () => {
+    function ConditionalProbe({ open }: { open: boolean }): ReactNode {
+      handle = useAutoFollowScrollContainer({ open, observeKey: "same-room" });
+      return open ? createElement("div", { ref: handle.scrollRef }) : null;
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      act(() => root?.render(createElement(ConditionalProbe, { open: false })));
+      act(() => root?.render(createElement(ConditionalProbe, { open: true })));
+      scrollNode = container.firstElementChild as HTMLDivElement;
+      layout = stubLayout(scrollNode);
+      act(() => {
+        scrollNode!.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+        layout!.scrollTop = 300;
+        scrollNode!.dispatchEvent(new Event("scroll"));
+      });
+      expect(handle?.autoFollowRef.current).toBe(false);
+      layout.scrollHeight += 200;
+      act(() => notifyResize());
+      expect(layout.scrollTop).toBe(300);
+    }
+  });
+
+  it("does not pull history to the bottom when a resize frame is pending", () => {
+    if (!layout || !scrollNode) throw new Error("probe not mounted");
+    document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+    layout.clientHeight = 200;
+    act(() => {
+      notifyResize();
+      scrollNode!.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+      layout!.scrollTop = 500;
+      scrollNode!.dispatchEvent(new Event("scroll"));
+    });
+    paint();
+    expect(layout.scrollTop).toBe(500);
+    expect(handle?.autoFollowRef.current).toBe(false);
+    act(() => notifyResize());
+    paint();
+    expect(layout.scrollTop).toBe(500);
   });
 
   it("stops following as soon as the user wheels upward", () => {

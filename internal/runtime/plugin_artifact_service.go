@@ -80,6 +80,12 @@ func (k *artifactImportInvoker) InvokeService(ctx context.Context, params plugin
 }
 
 func importPluginArtifact(ctx context.Context, wuuHome, stateDir string, scope pluginhost.ToolExecutionScope, input pluginhost.ArtifactImportParams) (pluginhost.ArtifactImportResult, error) {
+	return importArtifact(ctx, wuuHome, stateDir, scope, input, nil)
+}
+
+// An optional open file lets built-in publishers inspect and copy the same
+// descriptor, rather than reopening a path after MIME validation.
+func importArtifact(ctx context.Context, wuuHome, stateDir string, scope pluginhost.ToolExecutionScope, input pluginhost.ArtifactImportParams, opened *os.File) (pluginhost.ArtifactImportResult, error) {
 	pathValue := strings.TrimSpace(input.Path)
 	dataValue := strings.TrimSpace(input.Data)
 	if (pathValue == "") == (dataValue == "") {
@@ -105,9 +111,13 @@ func importPluginArtifact(ctx context.Context, wuuHome, stateDir string, scope p
 			}
 			pathValue = filepath.Join(scope.CWD, pathValue)
 		}
-		file, openErr := os.Open(filepath.Clean(pathValue))
-		if openErr != nil {
-			return pluginhost.ArtifactImportResult{}, serviceError("artifact_unavailable", fmt.Sprintf("open artifact: %v", openErr))
+		file := opened
+		if file == nil {
+			var openErr error
+			file, openErr = os.Open(filepath.Clean(pathValue))
+			if openErr != nil {
+				return pluginhost.ArtifactImportResult{}, serviceError("artifact_unavailable", fmt.Sprintf("open artifact: %v", openErr))
+			}
 		}
 		info, statErr := file.Stat()
 		if statErr != nil || !info.Mode().IsRegular() {

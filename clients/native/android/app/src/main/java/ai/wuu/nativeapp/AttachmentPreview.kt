@@ -2,6 +2,15 @@ package ai.wuu.nativeapp
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,6 +28,15 @@ import kotlinx.coroutines.CancellationException
     val context = LocalContext.current
     var bitmap by remember(attachment) { mutableStateOf<Bitmap?>(null) }
     var error by remember(attachment) { mutableStateOf<String?>(null) }
+    var scale by remember(attachment) { mutableFloatStateOf(1f) }
+    var offset by remember(attachment) { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    val transform = rememberTransformableState { zoom, pan, _ ->
+        scale = (scale * zoom).coerceIn(1f, 5f)
+        val next = offset + pan
+        offset = Offset(next.x.coerceIn(-viewport.width * (scale - 1) / 2, viewport.width * (scale - 1) / 2),
+            next.y.coerceIn(-viewport.height * (scale - 1) / 2, viewport.height * (scale - 1) / 2))
+    }
     val pdf = attachment.mediaType == "application/pdf"
     LaunchedEffect(attachment) {
         if (!pdf) try { bitmap = withContext(Dispatchers.Default) { decodeAttachmentImage(attachment.data) } }
@@ -36,7 +54,16 @@ import kotlinx.coroutines.CancellationException
                     Text("使用设备上的 PDF 阅读器查看文件。")
                     Button(onClick = { model.perform { model.exportAttachment(context, attachment, view = true) } }) { Text("打开 PDF") }
                 } else {
-                    bitmap?.let { Image(it.asImageBitmap(), "附件图片", Modifier.weight(1f).fillMaxWidth()) }
+                    bitmap?.let {
+                        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().onSizeChanged { viewport = it }
+                            .transformable(transform).pointerInput(attachment) {
+                                detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f; offset = Offset.Zero })
+                            }) {
+                            Image(it.asImageBitmap(), "附件图片", Modifier.fillMaxSize().graphicsLayer {
+                                scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y
+                            })
+                        }
+                    }
                     if (bitmap == null && error == null) CircularProgressIndicator()
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

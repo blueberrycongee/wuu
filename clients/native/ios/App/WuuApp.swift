@@ -8,7 +8,7 @@ import WuuCore
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
-                .tint(Color.primary)
+                .modifier(MobileTypography())
                 .task { model.foreground() }
                 .onChange(of: pushDelegate.openedHost, initial: true) { _, host in
                     if let host { pushDelegate.openedHost = nil; model.perform { try await model.openPushHost(host) } }
@@ -26,13 +26,29 @@ import WuuCore
 
 struct RootView: View {
     @Bindable var model: AppModel
+    @Environment(\.colorScheme) private var scheme
+    private var isFixture: Bool {
+        #if DEBUG
+        NativeUIFixture.enabled
+        #else
+        false
+        #endif
+    }
+    @ViewBuilder private var fixture: some View {
+        #if DEBUG
+        NativeUIFixtureView(model: model)
+        #endif
+    }
     var body: some View {
         Group {
-            if model.recovery != nil { RecoveryView(model: model) }
+            if isFixture { fixture }
+            else if model.recovery != nil { RecoveryView(model: model) }
             else if model.account == nil { LoginView(model: model) }
             else if model.host == nil { DevicesView(model: model) }
             else { HostView(model: model).id(model.host?.pub) }
         }
+        // A semantic SwiftUI primary tint can feed back into UIKit trait resolution.
+        .tint(scheme == .dark ? Color.white : Color.black)
         .alert("提示", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("知道了", role: .cancel) { model.error = nil }
         } message: { Text(model.error ?? "") }
@@ -124,15 +140,13 @@ struct LoginView: View {
 struct DevicesView: View {
     @Bindable var model: AppModel
     @State private var settings = false
-    @State private var revokeTarget: AccountDevice?
     var body: some View {
         NavigationStack {
             List {
-                if model.directoryCached { Text("显示上次登录保存的电脑；联网后会更新访问权限和在线状态。").font(.footnote).foregroundStyle(.secondary) }
                 ForEach([true, false], id: \.self) { online in
                     let group = model.devices.filter { $0.role == "host" && $0.online == online }
                     if !group.isEmpty {
-                        Section(online ? "可连接" : "离线 · 可查看已同步记录") {
+                        Section {
                             ForEach(group) { device in
                                 Button { model.perform { try await model.selectHost(device) } } label: {
                                     HStack(spacing: 16) {
@@ -150,37 +164,10 @@ struct DevicesView: View {
                 if !model.devices.contains(where: { $0.role == "host" }) {
                     ContentUnavailableView("还没有电脑", systemImage: "desktopcomputer", description: Text("在电脑上的 Wuu 登录同一账号。"))
                 }
-            }.navigationTitle("你的电脑")
+            }.listStyle(.plain).navigationTitle("你的电脑").navigationBarTitleDisplayMode(.inline)
                 .refreshable { model.perform { try await model.loadDevices() } }
                 .toolbar { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("账号设置") }
-                .sheet(isPresented: $settings) {
-                    NavigationStack {
-                        Form {
-                            Section("账号") { Text(model.account?.username ?? ""); Text(model.account?.server ?? "").font(.footnote) }
-                            if model.authMethod == "password" {
-                                NavigationLink("修改密码") { PasswordResetView(model: model, server: model.account?.server ?? "", changing: true) }
-                            }
-                            Section("设备") {
-                                ForEach(model.devices) { device in
-                                    HStack {
-                                        Text(device.name)
-                                        Spacer()
-                                        Button("移除", role: .destructive) { revokeTarget = device }
-                                    }
-                                }
-                            }
-                            Button("退出此手机登录", role: .destructive) { model.perform { try await model.logout(); settings = false } }.disabled(model.busy)
-                            NavigationLink("开源许可") { LicensesView() }
-                            NavigationLink("通知") { PushSettingsView(push: model.push) }
-                        }.navigationTitle("账号设置").toolbar { Button("完成") { settings = false } }
-                            .confirmationDialog("移除这台设备的账号访问权限？", isPresented: Binding(get: { revokeTarget != nil }, set: { if !$0 { revokeTarget = nil } }), titleVisibility: .visible) {
-                                Button("移除设备", role: .destructive) {
-                                    if let device = revokeTarget { model.perform { try await model.revoke(device) } }
-                                    revokeTarget = nil
-                                }
-                            }
-                    }
-                }
+                .sheet(isPresented: $settings) { AccountSettingsView(model: model) }
         }
     }
 }
@@ -188,8 +175,9 @@ struct DevicesView: View {
 struct ConversationView: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var drawer = true
-    @FocusState private var composerFocused: Bool
+    @State private var conversationPresented = false
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
     @State private var drafts: [String: String] = [:]
     @State private var attachmentDrafts: [String: [InputAttachment]] = [:]
     @State private var consent = false
@@ -201,6 +189,10 @@ struct ConversationView: View {
     @State private var exporting = false
     @State private var exportDocument = ConversationDocument(text: "")
     @State private var settingsThread: ChatThread?
+    init(model: AppModel) {
+        self.model = model
+        _conversationPresented = State(initialValue: model.activeID != nil)
+    }
     private var draftKey: String { (model.host?.pub ?? "") + ":" + (model.activeID ?? "new") }
     private var draft: Binding<String> {
         Binding(get: { drafts[draftKey] ?? "" }, set: { drafts[draftKey] = $0 })
@@ -211,158 +203,205 @@ struct ConversationView: View {
     }
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if !model.connected {
-                    HStack {
-                        Text(model.connecting ? "正在连接电脑…" : "电脑未连接 · 历史记录只读")
-                            .accessibilityHint(model.connectionStatus)
-                        Spacer()
-                        Button("重连") { Task { await model.connect() } }.disabled(model.connecting)
-                    }.font(.caption).padding(12).background(.secondary.opacity(0.08))
+            conversationList
+                .navigationTitle("会话")
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(isPresented: $conversationPresented) {
+                    conversation
+                        .toolbar(.visible, for: .navigationBar)
                 }
-                if model.activeID == nil {
-                    ContentUnavailableView("继续你的对话", systemImage: "bubble.left.and.bubble.right", description: Text("打开会话列表，或新建会话。"))
-                } else {
-                    ConversationTimeline(model: model).id(model.activeID)
-                }
-                if let request = model.pendingApproval {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("电脑需要处理请求：" + (request["method"].string ?? "")).font(.caption)
-                        Button("拒绝并返回对话") { model.perform { try await model.rejectRequest() } }
-                    }.padding()
-                }
-                if let request = model.questions.first(where: { $0["thread_id"].string == model.activeID }) {
-                    QuestionView(model: model, request: request).id(request["request_id"].string)
-                }
-                if !attachments.wrappedValue.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack {
-                            ForEach(attachments.wrappedValue) { attachment in
-                                Button { attachmentDrafts[draftKey]?.removeAll { $0.id == attachment.id } } label: {
-                                    Label(attachment.filename, systemImage: "xmark.circle").font(.caption).lineLimit(1)
-                                }.accessibilityLabel("移除附件 " + attachment.filename)
-                            }
-                        }.padding(.horizontal, 12)
-                    }.disabled(model.sending)
-                }
-                HStack(alignment: .bottom, spacing: 12) {
-                    AttachmentPicker(attachments: attachments, model: model).id(draftKey)
-                        .disabled(!model.connected || model.live == nil || model.sending || model.live?.readOnly == true)
-                    TextField(model.connected ? "发送消息" : "连接电脑后发送", text: draft, axis: .vertical)
-                        .accessibilityIdentifier("harness-composer")
-                        .focused($composerFocused)
-                        .lineLimit(1...6).padding(12).background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
-                    if model.live?.running == true {
-                        Button { model.perform { try await model.stop() } } label: { Image(systemName: "stop.circle.fill").font(.title) }.accessibilityLabel("停止")
-                    }
-                    Button {
-                        let key = draftKey
-                        let original = drafts[key] ?? ""
-                        let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let files = attachmentDrafts[key] ?? []
-                        model.perform {
-                            try await model.send(text, attachments: files)
-                            if drafts[key] == original { drafts[key] = "" }
-                            attachmentDrafts[key]?.removeAll { file in files.contains { $0.id == file.id } }
-                        }
-                    } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .accessibilityLabel("发送").disabled(!model.connected || model.live == nil || model.sending || model.live?.readOnly == true || model.live?.archived == true || (draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.wrappedValue.isEmpty))
-                }.padding(12)
-            }.navigationTitle(model.live?.title ?? model.saved?.title ?? "Wuu").navigationBarTitleDisplayMode(.inline)
-                .modifier(KeyboardDismissToolbar { composerFocused = false })
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button { drawer.toggle() } label: { Image(systemName: "sidebar.left") }.accessibilityLabel(drawer ? "关闭会话列表" : "会话列表") }
-                    ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread(); drawer = false } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button("会话设置", systemImage: "slider.horizontal.3") { settingsThread = model.live }
-                                .disabled(!model.connected || model.live == nil)
-                            Button("重命名") {
-                                renameID = model.activeID ?? ""; renameTitle = model.live?.title ?? ""; renaming = true
-                            }.disabled(!model.connected || model.live == nil)
-                            Button(model.live?.historyCursor.isEmpty == false || model.messages.contains(where: { !$0.contentRef.isEmpty }) ? "导出已加载文本" : "导出对话文本", systemImage: "square.and.arrow.up") {
-                                exportDocument = ConversationDocument(text: model.messages.filter { $0.tool == nil }.map { "## \($0.role)\n\n\($0.text)" }.joined(separator: "\n\n"))
-                                exporting = true
-                            }
-                        } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("会话操作")
-                    }
-                }
-                .overlay(alignment: .leading) {
-                    if drawer {
-                        ZStack(alignment: .leading) {
-                            Color.black.opacity(0.3).ignoresSafeArea()
-                                .onTapGesture { drawer = false }.accessibilityLabel("关闭会话列表")
-                            conversationList.frame(width: 310)
-                                .background(.background)
-                                .transition(.move(edge: .leading))
-                        }.accessibilityAddTraits(.isModal)
-                    }
-                }
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: drawer)
-                .confirmationDialog("同步对话到服务器？", isPresented: $consent, titleVisibility: .visible) {
-                    Button("开启文字历史同步") { model.perform { try await model.setHistory(true) } }
-                } message: { Text("服务器将保存可读取的用户消息和助手回复，电脑离线时仍可查看。不包含附件或工具输出。关闭后删除服务器副本。") }
-                .confirmationDialog("关闭并删除服务器历史？", isPresented: $disableHistory, titleVisibility: .visible) {
-                    Button("关闭并删除", role: .destructive) { model.perform { try await model.setHistory(false) } }
-                } message: { Text("此电脑已同步的服务器副本将被删除，电脑上的原始会话仍然保留。") }
-                .confirmationDialog(archiveTarget?.archived == true ? "恢复会话？" : "归档会话？", isPresented: Binding(get: { archiveTarget != nil }, set: { if !$0 { archiveTarget = nil } }), titleVisibility: .visible) {
-                    Button(archiveTarget?.archived == true ? "恢复" : "归档") { if let thread = archiveTarget { model.perform { try await model.archive(thread) } }; archiveTarget = nil }
-                }
-                .alert("重命名会话", isPresented: $renaming) {
-                    TextField("标题", text: $renameTitle)
-                    Button("保存") { let id = renameID, title = renameTitle; model.perform { try await model.rename(id, title: title) } }
-                    Button("取消", role: .cancel) {}
-                }
-                .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .plainText, defaultFilename: "conversation.txt") { result in
-                    if case .failure(let error) = result { model.error = error.localizedDescription }
-                }
-                .sheet(item: $settingsThread) { thread in ThreadSettingsView(model: model, thread: thread) }
         }
+        .toolbar(conversationPresented || searching ? .hidden : .visible, for: .tabBar)
+        .onChange(of: conversationPresented) { _, presented in
+            if !presented { searching = !model.search.isEmpty }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: searching)
+        .confirmationDialog("同步对话到服务器？", isPresented: $consent, titleVisibility: .visible) {
+            Button("开启文字历史同步") { model.perform { try await model.setHistory(true) } }
+        } message: { Text("服务器将保存可读取的用户消息和助手回复，电脑离线时仍可查看。不包含附件或工具输出。关闭后删除服务器副本。") }
+        .confirmationDialog("关闭并删除服务器历史？", isPresented: $disableHistory, titleVisibility: .visible) {
+            Button("关闭并删除", role: .destructive) { model.perform { try await model.setHistory(false) } }
+        } message: { Text("此电脑已同步的服务器副本将被删除，电脑上的原始会话仍然保留。") }
+        .confirmationDialog(archiveTarget?.archived == true ? "恢复会话？" : "归档会话？", isPresented: Binding(get: { archiveTarget != nil }, set: { if !$0 { archiveTarget = nil } }), titleVisibility: .visible) {
+            Button(archiveTarget?.archived == true ? "恢复" : "归档") { if let thread = archiveTarget { model.perform { try await model.archive(thread) } }; archiveTarget = nil }
+        }
+        .alert("重命名会话", isPresented: $renaming) {
+            TextField("标题", text: $renameTitle)
+            Button("保存") { let id = renameID, title = renameTitle; model.perform { try await model.rename(id, title: title) } }
+            Button("取消", role: .cancel) {}
+        }
+        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .plainText, defaultFilename: "conversation.txt") { result in
+            if case .failure(let error) = result { model.error = error.localizedDescription }
+        }
+        .sheet(item: $settingsThread) { thread in ThreadSettingsView(model: model, thread: thread) }
+    }
+    private var conversationTitle: String {
+        let title = model.live?.title ?? model.saved?.title ?? ""
+        return title.isEmpty ? "新会话" : title
+    }
+    private var conversation: some View {
+        VStack(spacing: 0) {
+            if !model.connected {
+                ConnectionStatusView(connecting: model.connecting, offlineMessage: "电脑未连接 · 历史记录只读", detail: model.connectionStatus) {
+                    Task { await model.connect() }
+                }
+            }
+            if model.activeID == nil {
+                ContentUnavailableView("继续你的对话", systemImage: "bubble.left.and.bubble.right", description: Text("打开会话列表，或新建会话。"))
+            } else {
+                ConversationTimeline(model: model).id(model.activeID)
+            }
+            if let request = model.pendingApproval {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("电脑需要处理请求：" + (request["method"].string ?? "")).font(.caption)
+                    Button("拒绝并返回对话") { model.perform { try await model.rejectRequest() } }
+                }.padding()
+            }
+            if let request = model.questions.first(where: { $0["thread_id"].string == model.activeID }) {
+                QuestionView(model: model, request: request).id(request["request_id"].string)
+            }
+            MobileComposer(text: draft, attachments: attachments, model: model,
+                enabled: model.connected && model.live != nil && model.live?.readOnly != true && model.live?.archived != true,
+                sending: model.sending, placeholder: model.live?.running == true ? "添加后续消息" : "发送消息", identifier: "harness-composer",
+                stop: model.live?.running == true ? { model.perform { try await model.stop() } } : nil) {
+                    let key = draftKey
+                    let original = drafts[key] ?? ""
+                    let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let files = attachmentDrafts[key] ?? []
+                    model.perform {
+                        try await model.send(text, attachments: files)
+                        if drafts[key] == original { drafts[key] = "" }
+                        attachmentDrafts[key]?.removeAll { file in files.contains { $0.id == file.id } }
+                    }
+            }
+        }.navigationTitle(conversationTitle).navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button { model.perform { try await model.startThread() } } label: { Image(systemName: "square.and.pencil") }.disabled(!model.connected).accessibilityLabel("新会话") }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("会话设置", systemImage: "slider.horizontal.3") { settingsThread = model.live }
+                            .disabled(!model.connected || model.live == nil)
+                        Button("重命名") {
+                            renameID = model.activeID ?? ""; renameTitle = model.live?.title ?? ""; renaming = true
+                        }.disabled(!model.connected || model.live == nil)
+                        Button(model.live?.historyCursor.isEmpty == false || model.messages.contains(where: { !$0.contentRef.isEmpty }) ? "导出已加载文本" : "导出对话文本", systemImage: "square.and.arrow.up") {
+                            exportDocument = ConversationDocument(text: model.messages.filter { $0.tool == nil }.map { "## \($0.role)\n\n\($0.text)" }.joined(separator: "\n\n"))
+                            exporting = true
+                        }
+                    } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("会话操作")
+                }
+            }
     }
     private var conversationList: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                MobileCircleButton(symbol: searching ? "xmark" : "magnifyingglass", label: searching ? "关闭搜索" : "搜索会话") {
+                    searching.toggle()
+                    if !searching { model.search = ""; searchFocused = false }
+                    else { searchFocused = true }
+                }
+                Text(model.archivedList && model.connected ? "已归档" : "会话")
+                    .font(.headline).lineLimit(1).frame(maxWidth: .infinity)
+                    .accessibilityAddTraits(.isHeader)
+                MobileCircleButton(symbol: "square.and.pencil", label: "新会话") {
+                    searchFocused = false
+                    model.perform { try await model.startThread(); conversationPresented = true }
+                }.disabled(!model.connected)
+                Menu {
+                    if !model.connected {
+                        Button("重新连接", systemImage: "arrow.clockwise") { Task { await model.connect() } }.disabled(model.connecting)
+                    }
+                    Button(model.archivedList ? "返回会话列表" : "已归档会话", systemImage: model.archivedList ? "bubble.left.and.bubble.right" : "archivebox") {
+                        model.archivedList.toggle()
+                        model.search = ""
+                        model.perform { try await model.loadThreads() }
+                    }.disabled(!model.connected)
+                    if model.historyEnabled {
+                        Button("关闭并删除服务器历史", systemImage: "icloud.slash", role: .destructive) { disableHistory = true }
+                    } else {
+                        Button("开启服务器历史同步", systemImage: "icloud") { consent = true }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 19))
+                        .frame(width: 44, height: 44)
+                        .background(Color(uiColor: .systemBackground), in: Circle())
+                        .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                }.accessibilityLabel("会话列表选项")
+            }.padding(.horizontal, 16).padding(.vertical, 8)
+            if searching {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField(model.connected ? "搜索全部会话内容" : "搜索历史标题", text: $model.search)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
+                        .accessibilityLabel("搜索会话")
+                        .focused($searchFocused).onSubmit { searchFocused = false }
+                    if !model.search.isEmpty {
+                        Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .accessibilityLabel("清除搜索")
+                    }
+                }.padding(12).background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16).padding(.bottom, 8)
+            }
             List {
                 Section {
-                    Button { model.perform { await model.leaveHost(); model.foreground(); drawer = false } } label: { Label(model.host?.name ?? "电脑", systemImage: "desktopcomputer") }
+                    Button { model.perform { await model.leaveHost(); model.foreground() } } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(model.host?.name ?? "电脑").lineLimit(2)
+                                if !model.connected {
+                                    Text(model.connecting ? "正在连接…" : "电脑离线").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        } icon: { Image(systemName: "desktopcomputer") }
+                    }.accessibilityHint("切换电脑")
                     if !model.workspaces.isEmpty {
-                        Picker("工作区", selection: $model.workspace) {
-                            Text("所有工作区").tag("")
-                            ForEach(model.workspaces, id: \.selfDescription) { item in Text(item["path"].string ?? "").tag(item["path"].string ?? "") }
-                        }.onChange(of: model.workspace) { _, _ in model.perform { try await model.loadThreads() } }
+                        Menu {
+                            Picker("工作区", selection: $model.workspace) {
+                                Text("所有工作区").tag("")
+                                ForEach(model.workspaces, id: \.selfDescription) { item in
+                                    let path = item["path"].string ?? ""
+                                    Text(URL(fileURLWithPath: path).lastPathComponent).tag(path)
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Label(model.workspace.isEmpty ? "所有工作区" : URL(fileURLWithPath: model.workspace).lastPathComponent,
+                                      systemImage: "folder")
+                                    .lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.down").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.accessibilityLabel("工作区")
+                            .accessibilityValue(model.workspace.isEmpty ? "所有工作区" : URL(fileURLWithPath: model.workspace).lastPathComponent)
+                            .onChange(of: model.workspace) { _, _ in model.perform { try await model.loadThreads() } }
                     }
-                    Button { model.perform { try await model.startThread(); drawer = false } } label: { Label("新会话", systemImage: "plus") }.disabled(!model.connected)
-                    Toggle("已归档", isOn: $model.archivedList).disabled(!model.connected)
-                        .onChange(of: model.archivedList) { _, _ in model.perform { try await model.loadThreads() } }
                 }
-                Section("会话") {
+                Section {
                     ForEach((model.connected ? model.threads : []).sorted { $0.pinned != $1.pinned ? $0.pinned : $0.updatedAt > $1.updatedAt }) { thread in
-                        Button { drawer = false; model.perform { try await model.open(thread.id) } } label: {
-                            HStack { if thread.pinned { Image(systemName: "pin.fill").font(.caption) }; Text(thread.title).lineLimit(2); Spacer(); if thread.running { ProgressView() } }.padding(.vertical, 8)
+                        Button { conversationPresented = true; searchFocused = false; model.perform { try await model.open(thread.id) } } label: {
+                            HStack { if thread.pinned { Image(systemName: "pin.fill").font(.caption) }; Text(thread.title.isEmpty ? "新会话" : thread.title).lineLimit(2); Spacer(); if thread.running { ProgressView() } }.padding(.vertical, 8)
                         }.swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(thread.archived ? "恢复" : "归档", systemImage: "archivebox") { archiveTarget = thread }
                             Button(thread.pinned ? "取消置顶" : "置顶", systemImage: "pin") { model.perform { try await model.pin(thread) } }.tint(.orange)
                         }
                     }
                     ForEach(model.connected ? [] : model.entries.filter { model.search.isEmpty || $0.title.localizedCaseInsensitiveContains(model.search) }) { entry in
-                        Button { drawer = false; model.perform { try await model.open(entry.id) } } label: { Label(entry.title, systemImage: "clock").padding(.vertical, 8) }
+                        Button { conversationPresented = true; searchFocused = false; model.perform { try await model.open(entry.id) } } label: { Label(entry.title.isEmpty ? "新会话" : entry.title, systemImage: "clock").padding(.vertical, 8) }
                     }
                 }
-                Section {
-                    if model.historyEnabled { Button("关闭并删除服务器历史", role: .destructive) { disableHistory = true } }
-                    else { Button("开启服务器历史同步") { consent = true } }
-                    Text("发送消息需要电脑在线。历史记录会在前台自动同步。").font(.footnote).foregroundStyle(.secondary)
-                }
-            }.searchable(text: $model.search, prompt: model.connected ? "搜索全部会话内容" : "搜索历史标题")
-                .task(id: model.search) {
-                    do { try await Task.sleep(for: .milliseconds(250)); try await model.loadThreads() }
-                    catch is CancellationError {} catch { model.error = error.localizedDescription }
-                }
-                .navigationTitle("会话").navigationBarTitleDisplayMode(.inline).toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { drawer = false } label: { Image(systemName: "sidebar.left") }.accessibilityLabel("关闭会话列表")
-                }
             }
-                .refreshable { model.perform { try await model.syncHistory(); try await model.loadThreads() } }
+            .scrollContentBackground(.hidden)
+            .contentMargins(.top, 8, for: .scrollContent)
+            .listSectionSpacing(16)
+            .scrollDismissesKeyboard(.interactively)
+            .refreshable { model.perform { try await model.syncHistory(); try await model.loadThreads() } }
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .task(id: model.search) {
+            do { try await Task.sleep(for: .milliseconds(250)); try await model.loadThreads() }
+            catch is CancellationError {} catch { model.error = error.localizedDescription }
         }
     }
 }

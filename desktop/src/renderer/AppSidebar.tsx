@@ -51,6 +51,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { ChannelRoom, DesktopProject } from "../shared/protocol";
 import {
+  isScratchThread,
+  threadBelongsToProject,
   isThreadExecuting,
   isThreadUnread,
   threadTime,
@@ -354,6 +356,8 @@ export function AppSidebar({
   onStartNewThread,
   onOpenSkillsTab,
   groupChatEnabled = false,
+  collaborationNavigation,
+  collaborationNavigationNodes = [],
   onToggleConversationSearch,
   onSelectThread,
   onTogglePinned,
@@ -409,6 +413,8 @@ export function AppSidebar({
   onStartNewThread: () => void;
   onOpenSkillsTab: () => void;
   groupChatEnabled?: boolean;
+  collaborationNavigation?: ReactNode;
+  collaborationNavigationNodes?: readonly NavigationSourceNode[];
   // Unified 协作 section: the room list (with per-room unread counts) is
   // polled at the App level and passed down so the sidebar and the channel
   // canvas never disagree about what needs attention.
@@ -937,13 +943,13 @@ export function AppSidebar({
     return [...byID.values()];
   }, [pinnedRows, projectThreadsByProjectID]);
   const attentionThreads = useMemo(() => partitionAttentionThreads(
-    allSidebarThreads,
+    organizationSourceThreads,
     activeThreadID,
     pendingThreadID,
     state.lastViewedTurnByThreadID,
   ), [
     activeThreadID,
-    allSidebarThreads,
+    organizationSourceThreads,
     pendingThreadID,
     state.lastViewedTurnByThreadID,
   ]);
@@ -952,13 +958,22 @@ export function AppSidebar({
   const attentionCount = runningThreads.length + unreadThreads.length;
   const visibleProjectThreadsByProjectID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
+    const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
+    const projects = sidebarProjects.filter((project) => project.id !== SCRATCH_PSEUDO_PROJECT_ID);
     for (const [projectID, threads] of Object.entries(projectThreadsByProjectID)) {
-      next[projectID] = threads.filter(
-        (thread) => !thread.pinned && !organization.folderByThreadID[thread.id],
+      const project = projects.find((candidate) => candidate.id === projectID);
+      // Cached buckets can overlap while a fork's workspace metadata refreshes.
+      // Classify the same session snapshot in every bucket before publishing nodes.
+      next[projectID] = threads.map((thread) => byID.get(thread.id) ?? thread).filter(
+        (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] && (
+          projectID === SCRATCH_PSEUDO_PROJECT_ID
+            ? isScratchThread(thread, projects)
+            : project !== undefined && threadBelongsToProject(thread, project)
+        ),
       );
     }
     return next;
-  }, [organization.folderByThreadID, projectThreadsByProjectID]);
+  }, [allSidebarThreads, organization.folderByThreadID, projectThreadsByProjectID, sidebarProjects]);
   const folderThreadsByID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     for (const folder of organization.folders) next[folder.id] = [];
@@ -1542,7 +1557,7 @@ export function AppSidebar({
         <div className="traffic-spacer" />
         <AppModeSwitch
           mode="harness"
-          collaborationEnabled={groupChatEnabled}
+          collaborationEnabled={groupChatEnabled && !collaborationNavigation}
           onChange={(mode) => { if (mode === "collaboration") onSwitchToCollaboration?.(); }}
           unreadViewOpen={unreadViewOpen}
           unreadCount={attentionCount}
@@ -1552,6 +1567,7 @@ export function AppSidebar({
         {unreadViewOpen ? (
           <section
             className="sidebar-unread-view scrollbar-hidden"
+            data-scroll-fade=""
             aria-label={t("sidebar.attentionConversations")}
           >
             {runningThreads.length > 0 ? (
@@ -1654,7 +1670,8 @@ export function AppSidebar({
           </button>
         </nav>
 
-        <div className="sidebar-main scrollbar-hidden">
+        <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
+          {collaborationNavigation}
           {pluginNavigationEntries.length > 0 ? (
             <section
               className="sidebar-functional-group plugin-navigation-group"
@@ -2038,13 +2055,14 @@ export function AppSidebar({
         onCreateProject={onCreateProject}
         onOpenProjectFolder={onOpenProjectFolder}
         groupChatEnabled={groupChatEnabled}
+        collaborationNavigation={collaborationNavigation}
         onSwitchToCollaboration={onSwitchToCollaboration}
         commands={navigationNodes}
       /> : nativeSidebar}
     </SessionOrganizationProvider>
   );
   return (
-    <NavigationPresentation nodes={navigationNodes} fallback={organizedSidebar} />
+    <NavigationPresentation nodes={[...collaborationNavigationNodes, ...navigationNodes]} fallback={organizedSidebar} />
   );
 }
 

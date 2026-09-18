@@ -146,6 +146,27 @@ Surface 适合结构包装和强视觉变化，不适合只添加一个按钮。
 宿主负责 Tab、关闭、滚动、持久化和区域布局。插件不会获得任意父节点、分割树或面板尺寸。
 面向用户的导航、工作区工具和设置入口应在 manifest 中声明，指向同一插件注册的 View。
 
+## 桌面端间距
+
+`desktop/src/renderer/styles/spacing.css` 统一维护间距角色。表单控件使用
+`--control-padding-*`，菜单行使用 `--menu-item-padding-*`，输出摘要使用
+`--compact-padding-*`，内容分组使用 `--card-padding`，弹窗和面板正文使用
+`--panel-padding`。页面边距与分组间距分别命名，即使默认数值相同。
+
+页面负责外沿，分组负责横向内边距，分组中的行负责纵向内边距，避免嵌套内容重复
+添加同一层留白。菜单与表单使用最小高度并由内容自然撑高；密度只调整留白，
+不缩小最小点击区域。代码字号保持独立。
+
+宿主控件与插件 UI Kit 共用已有公开变量 `--wuu-space-unit` 和
+`--wuu-space-density`。内部间距角色在 `data-wuu-density` 边界重新计算，
+让紧凑插件页面的子控件同步变化，并避免重复乘以密度。这些内部名称不是新增的
+Extension API 变量。安全区域、代码行号栏和图标对齐可保留专用几何规则。
+
+桌面 Vite 服务启动后，打开 `/dev/design-system/` 查看生产组件示例，打开
+`/dev/design-system/viewport.html` 检查窄窗口。验收应覆盖明暗主题、14px/20px
+UI 字号、标准/紧凑密度、长内容、菜单和弹窗。间距通过实际渲染检查，测试覆盖
+行为，不固定 CSS 声明。
+
 ## 可以使用标准 Web API
 
 Desktop 插件是 Renderer 中的受信任代码，因此可以使用 `selectionchange`、

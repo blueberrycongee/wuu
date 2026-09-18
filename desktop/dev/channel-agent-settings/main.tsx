@@ -39,6 +39,10 @@ host.wuu = {
     return { agent: agents.find(agent => agent.id === params.agent_id) };
   },
   listChannelMessages: async ({ room_id }: { room_id: string }) => ({ messages: [
+    ...Array.from({ length: new URLSearchParams(location.search).has("long") ? 60 : 0 }, (_, index) => ({
+      id: `history-${index}`, room_id, seq: index - 60, author_type: "human", author_id: "user", kind: "text",
+      body: `历史消息 ${index + 1}：检查聊天滚动条与设置面板调宽互不干扰。`, created_at,
+    })),
     { id: "human", room_id, seq: 1, author_type: "human", author_id: "user", kind: "text", body: "周一上午提醒我确认项目排期，顺便整理本周的待办。", created_at },
     { id: "reply", room_id, seq: 2, author_type: "agent", author_id: "agent-0", kind: "text", body: "好的。本周先完成资料整理和方案评审；周一上午确认项目排期。\n\n你也可以在聊天旁调整我的角色说明和模型。", created_at },
   ] }),

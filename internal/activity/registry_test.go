@@ -1,8 +1,10 @@
 package activity
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRegistryControlLeaseLifecycle(t *testing.T) {
@@ -251,5 +253,61 @@ func TestRegistryDoesNotApplyCUATargetExclusivityToBrowserActivities(t *testing.
 		}); err != nil {
 			t.Fatalf("browser target in %s: %v", threadID, err)
 		}
+	}
+}
+
+func TestRegistryLeaseCancellationAndAtomicPublication(t *testing.T) {
+	for _, operation := range []string{"takeover", "stop", "update_stop", "release"} {
+		t.Run(operation, func(t *testing.T) {
+			registry := NewRegistry()
+			session, lease, err := registry.Start(StartOptions{Kind: KindCUA, ThreadID: "thread", Workdir: "/repo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel, err := registry.BindControl(context.Background(), lease)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cancel()
+			switch operation {
+			case "takeover":
+				_, err = registry.Takeover("thread", session.ID)
+			case "stop":
+				_, err = registry.Stop("thread", session.ID)
+			case "update_stop":
+				_, err = registry.Update("thread", session.ID, UpdateOptions{State: StateStopped})
+			case "release":
+				_, _, err = registry.Release("thread", session.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+				t.Fatal("in-flight action was not cancelled")
+			}
+			if !errors.Is(context.Cause(ctx), ErrControlRevoked) {
+				t.Fatalf("cause: %v", context.Cause(ctx))
+			}
+			if _, err := registry.UpdateWithLease(lease, UpdateOptions{State: StateBackgroundControlled}); !errors.Is(err, ErrControlRevoked) {
+				t.Fatalf("stale publication: %v", err)
+			}
+			if _, _, err := registry.BindControl(context.Background(), lease); !errors.Is(err, ErrControlRevoked) {
+				t.Fatalf("stale registration: %v", err)
+			}
+		})
+	}
+}
+
+func TestRegistryCUATargetIsExclusiveAcrossPlugins(t *testing.T) {
+	registry := NewRegistry()
+	_, _, err := registry.Start(StartOptions{Kind: KindCUA, ThreadID: "one", PluginID: "first-driver", Workdir: "/repo", Target: "com.apple.TextEdit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = registry.Start(StartOptions{Kind: KindCUA, ThreadID: "two", PluginID: "other-driver", Workdir: "/repo", Target: "com.apple.TextEdit"})
+	if !errors.Is(err, ErrTargetBusy) {
+		t.Fatalf("shared physical target: %v", err)
 	}
 }

@@ -59,6 +59,14 @@ jobs:
         run: |
           npm test
           npm run test:cua-mac
+          npm run test:release-signing
+
+      - name: Import persistent release signing identity
+        run: node scripts/import-release-signing.cjs
+        env:
+          WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
+          WUU_RELEASE_CERTIFICATE_PASSWORD: ${{ secrets.WUU_RELEASE_CERTIFICATE_PASSWORD }}
+          WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
 
       - name: Build desktop release
         run: npm run release:desktop
@@ -68,7 +76,8 @@ jobs:
 
       - name: Verify packaged app
         run: |
-          echo "::notice::macOS desktop artifacts are unsigned preview builds; users may need to remove Gatekeeper quarantine after installing."
+          node scripts/verify-mac-release.cjs
+          echo "::notice::macOS preview uses a persistent self-signed identity and is not notarized."
 
           core="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-core"
           version_output="$("$core" --version)"
@@ -83,20 +92,9 @@ jobs:
             exit 1
           fi
 
-          cua_helper="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-cua-mac"
-          if [ -e "$cua_helper" ]; then
-            echo "::error::Packaged app must not include the internal CUA helper."
-            exit 1
-          fi
-
           speech_helper="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-speech-mac"
           if [ -e "$speech_helper" ]; then
             echo "::error::Packaged app must not include the internal speech helper."
-            exit 1
-          fi
-
-          if plutil -extract NSScreenCaptureUsageDescription raw -o - release/mac-arm64/wuu.app/Contents/Info.plist >/dev/null 2>&1; then
-            echo "::error::Packaged app must not include the CUA screen-capture permission declaration."
             exit 1
           fi
 
@@ -109,6 +107,17 @@ jobs:
 
           hdiutil verify release/wuu-*-mac-arm64.dmg
           unzip -t release/wuu-*-mac-arm64.zip >/tmp/wuu-desktop-zip-test.txt
+
+      - name: Remove release signing keychain
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/wuu-release-signing.pem" ]; then
+            sudo -n security remove-trusted-cert -d "$RUNNER_TEMP/wuu-release-signing.pem"
+            rm "$RUNNER_TEMP/wuu-release-signing.pem"
+          fi
+          if [ -f "$RUNNER_TEMP/wuu-release.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/wuu-release.keychain-db"
+          fi
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
@@ -144,19 +153,18 @@ jobs:
           node scripts/release-version.mjs notes "$GITHUB_REF_NAME" > release-notes.md
           printf '\n\n' >> release-notes.md
           cat >> release-notes.md <<'EOF'
-          This release contains only the unsigned macOS arm64 desktop app:
+          This release contains the macOS arm64 desktop app:
 
           - `wuu-<version>-mac-arm64.dmg`
           - `wuu-<version>-mac-arm64.zip`
 
           The app includes its own private wuu core. Standalone CLI archives are not published.
 
-          The app is not signed or notarized yet. After moving `wuu.app` to `/Applications`, macOS may block it. For a release asset you trust, remove the quarantine attribute:
+          The app uses a persistent self-signed identity, without Apple Developer ID or notarization. After moving `wuu.app` to `/Applications`, macOS may block it. For the official asset you trust, try opening it, then use System Settings → Privacy & Security → Open Anyway.
 
-          ```bash
-          xattr -dr com.apple.quarantine /Applications/wuu.app
-          open /Applications/wuu.app
-          ```
+          To update, quit Wuu with Cmd+Q, wait for it to exit, then replace `/Applications/wuu.app` with the new app. Open that copy, not the copy inside the DMG. No separate CUA helper installation or certificate import is needed.
+
+          Computer Use is included. macOS may request Accessibility and Screen Recording access on first use. Moving from an older unsigned/ad-hoc build can require authorization again. Persistent signing reduces identity changes; it does not guarantee permission retention across all macOS updates. Do not reset privacy permissions as a routine upgrade step.
 
           EOF
 

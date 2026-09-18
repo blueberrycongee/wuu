@@ -1,9 +1,9 @@
 # Completing your first task
 
-On first use, confirm three basics: wuu entered the right workspace, the model service
-can call tools, and you can inspect the final result.
+Choose a small project without sensitive files that you can restore. Read it first,
+make a change, then check the result.
 
-## Choose a safe workspace
+## Read the project first
 
 In the **Workspaces** area of the sidebar, choose **Add workspace → Use existing
 folder**. For the first attempt, use:
@@ -25,26 +25,25 @@ modification tasks. **Approve for me** is a Standard-mode option that reviews
 high-risk tool calls before they run; it does not raise the workspace boundary.
 
 Start a new conversation in the target workspace and send a read-only task first:
+In the sidebar, choose **Add workspace → Use existing folder**, or use **Create blank
+project** to prepare a test folder. Check the active workspace and start a conversation
+there. Before sending, select **Read only** in the permission menu next to the input:
 
 ```text
 Read this workspace without changing files. Explain what it is for, its main
 directories, and how it can be verified.
 ```
 
-Check that the directories, technology stack, and verification commands in the answer
-match your expectations. If they do not, stop the current task and confirm the
-workspace; do not let the agent keep making changes in the wrong directory.
+Check the directories and test commands in the answer. If it read the wrong project,
+stop the task and select the correct workspace.
 
-## Then hand over a small task
+Read-only mode refuses file changes; command tools also apply a filesystem sandbox.
+Network access and inherited environment variables still matter. Use a separate
+isolated environment for untrusted code; see [permission modes](../reference/permissions.md).
 
-A task that is easy to get right contains four parts:
+## Make a small change
 
-1. **Result:** what you ultimately want to get.
-2. **Scope:** which page, module, or files should be touched.
-3. **Constraints:** which behavior, data, or interfaces must not change.
-4. **Verification:** what check should be run when it is done.
-
-For example:
+Switch to **Standard** mode and describe the result, scope, and verification you want:
 
 ```text
 Fix the currently failing tests. Only change code related to the failure; do not do
@@ -52,73 +51,28 @@ unrelated refactoring. When done, run the relevant tests and tell me which files
 changed and what the test results were.
 ```
 
-For a larger feature, you can first ask wuu to investigate and produce a plan, confirm
-the direction, and only then let it implement.
+For larger features, ask for an investigation and plan before implementation.
+The conversation shows reads, edits, and command execution. If the task goes off
+track, stop it and add constraints before continuing.
 
-## Watch the execution
+## Check and continue
 
-wuu shows tool activity in the message stream: file reads, searches, edits, and
-command executions. Tool activity tells you about progress, but it does not replace a
-final check.
+Use these commands in the input box to open inspection tools:
 
-If the task is going the wrong way, stop the current reply immediately and add
-constraints. When you keep sending messages, wuu preserves the current conversation
-context.
+| Command | Purpose |
+|---|---|
+| `/files` | Browse and open project files |
+| `/diff` | View Git changes and check scope, unrelated edits, and sensitive information |
+| `/terminal` | Open a workspace shell to run checks yourself |
 
-## Check the result
+Compare the final answer with the actual output. Confirm tests or builds ran and
+passed before committing or publishing. Reply to request corrections, or reopen
+the same conversation from the sidebar later.
 
-When the task finishes, at least verify:
+The input accepts images, PDFs, and MP4, WebM, and MOV videos. Processing support
+depends on your chosen provider and model. Attachments do not automatically become
+project files; specify a target path if you want them saved in the workspace.
 
-- the final answer clearly states what was done and the verification results;
-- use `/files` to browse or open the project files you need to inspect;
-- in `/diff`, confirm the changed-file set and look for unrelated changes, debug code,
-  or sensitive information;
-- the tests, build, or other verification actually ran and passed.
-
-When you want to run commands yourself, use `/terminal` to open a shell in the current
-workspace. For important changes, a human should still review the diff before commit
-or release.
-
-## Add attachments
-
-You can attach images or PDFs in the desktop input box and explain in the message how
-you want them used. No other attachment types are currently accepted:
-
-```text
-Using this screenshot as a reference, check the current UI and only fix obvious
-inconsistencies.
-```
-
-An attachment only gives the current task read access to that content; it does not add
-the original file to the workspace automatically. If you want it kept as a project
-artifact, ask explicitly to write it to a target path in the workspace.
-
-## Continue the same conversation
-
-wuu saves sessions. Reopen the conversation in the sidebar to continue, for example:
-
-```text
-The implementation direction was right, but do not change the existing API. Adjust it
-and rerun the tests.
-```
-
-In the CLI you can list and resume sessions:
-
-```bash
-wuu session list
-wuu session show --last
-wuu exec resume --last "continue and verify"
-```
-
-Use `--ephemeral` when an automated run should not create a persistent session.
-Archiving only hides a session; deleting removes the saved history and should be used
-carefully.
-
-## Next steps
-
-- Read [the configuration model](../reference/configuration.md) to understand the
-  boundary between workspace rules and user configuration.
-- Read [the `wuu exec` guide](../automation/exec.md) to use the same workflow in
-  scripts and CI.
-- Read [the security model](../reference/security-model.md) before working with
-  untrusted repositories or sensitive data.
+For more, see [files, changes, and terminals](../desktop/workspace-tools.md) and
+[conversations](../desktop/conversations.md). To run and resume tasks from the CLI,
+see the [`wuu exec` guide](../automation/exec.md).

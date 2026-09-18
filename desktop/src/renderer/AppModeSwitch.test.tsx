@@ -235,3 +235,26 @@ describe("AppModeSwitch clear-unread hint", () => {
     expect(hintLayer()).toBeNull();
   });
 });
+
+describe("AppModeSwitch lockup", () => {
+  function lockup(): { wordmark: string | null; modes: string[] } {
+    return {
+      wordmark: container.querySelector(".sidebar-brand-wordmark")?.textContent ?? null,
+      modes: [...container.querySelectorAll(".sidebar-mode-option")].map(
+        (node) => node.textContent ?? "",
+      ),
+    };
+  }
+
+  it("keeps the wordmark and stacked mode labels in the same order in both modes", () => {
+    renderSwitch({ collaborationEnabled: true, mode: "harness" });
+    const harness = lockup();
+    expect(harness.wordmark).toBe("wuu");
+    expect(harness.modes).toEqual(["collaboration", "harness"]);
+    expect(container.querySelector(".sidebar-notifications-button")).not.toBeNull();
+
+    renderSwitch({ collaborationEnabled: true, mode: "collaboration" });
+    expect(lockup()).toEqual({ wordmark: harness.wordmark, modes: harness.modes });
+    expect(container.querySelector(".sidebar-notifications-button")).toBeNull();
+  });
+});

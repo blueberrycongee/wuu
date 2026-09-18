@@ -43,6 +43,11 @@ func Open(databaseURL string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Ping checks database connectivity without reading account or conversation data.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func migrate(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {

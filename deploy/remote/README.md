@@ -26,7 +26,9 @@ chmod 700 ./private-remote-data
 
 完整 API 和代码入口见 [服务端接口](API.md)。
 
-`GET /healthz` 返回 `ok`。从电脑和手机的账号页选择此服务端、创建账号，然后在另一端登录同一账号。用户名为 3–64 个小写字母、数字、点、连字符或下划线；密码至少 12 字节。请保存注册时显示的恢复码。
+`GET /healthz` 返回 `ok`，仅表示 HTTP 进程存活。`GET /readyz` 在服务接受连接且数据库可达时返回 `200 ok`，数据库不可用或服务停止接入时返回 `503`；数据库探测最长 2 秒，响应不缓存、不返回数据库错误细节。Compose 使用后者作为健康检查；`unhealthy` 不会自动修复数据库或重启容器，需查看数据库与进程状态。
+
+从电脑和手机的账号页选择此服务端、创建账号，然后在另一端登录同一账号。用户名为 3–64 个小写字母、数字、点、连字符或下划线；密码至少 12 字节。请保存注册时显示的恢复码。
 
 `http://127.0.0.1` 只适用于本机测试。Android 模拟器通过 `adb reverse tcp:8787 tcp:8787` 访问电脑的 localhost；iOS 模拟器直接访问电脑 localhost。真机和远程电脑使用带有效证书的 HTTPS 域名。
 
@@ -49,7 +51,7 @@ Compose 中的 Caddy 自动管理证书并代理 WebSocket。`accounts` 和 `pos
 
 后端默认按直连地址执行认证限速。Compose 为 Caddy 固定内部地址，并通过 `--trusted-proxies` 仅信任该地址的 `X-Forwarded-For`，让不同用户分别计数。自定义代理部署时，此参数接受逗号分隔的 CIDR；仅填写受控代理地址，代理必须覆盖或安全追加来源头，且后端应仅供代理访问。不要信任所有地址。若修改 Compose 子网，需同时调整 Caddy 地址和可信代理参数。
 
-也可以在自己的 systemd、容器编排或其他反向代理后运行同一二进制。将进程绑定到内部地址，代理 `/v1/account/*`、`/v1/connect` 和 `/healthz`；WebSocket 必须支持长连接。账号服务依赖 PostgreSQL，也可连接外部托管 PostgreSQL；无需 Redis 或对象存储。
+也可以在自己的 systemd、容器编排或其他反向代理后运行同一二进制。将进程绑定到内部地址，代理 `/v1/account/*`、`/v1/connect`、`/healthz` 和 `/readyz`；WebSocket 必须支持长连接。账号服务依赖 PostgreSQL，也可连接外部托管 PostgreSQL；无需 Redis 或对象存储。
 
 当前只支持一个账号/relay 服务实例。在线连接、配对窗口和撤销通知仍由该进程管理；不能把多个实例直接放在负载均衡后，即使它们共享 PostgreSQL。
 
@@ -107,7 +109,7 @@ docker compose -f deploy/remote/compose.yaml run --rm --no-deps --user 0 \
 docker compose -f deploy/remote/compose.yaml start accounts
 ```
 
-启动时在事务及 PostgreSQL advisory lock 内初始化/迁移 schema，当前版本为 2；未知版本拒绝启动。升级前备份，停止旧进程后替换并启动。若未来版本迁移了 schema，回滚应用时同时恢复迁移前备份。PostgreSQL 大版本升级需要 `pg_upgrade` 或逻辑备份恢复，不能只改镜像大版本并复用旧卷。手机资源随本地 App 构建更新，不依赖服务端分发可执行代码。
+启动时在事务及 PostgreSQL advisory lock 内初始化/迁移 schema，当前版本为 3；未知版本拒绝启动。升级前备份，停止旧进程后替换并启动。若未来版本迁移了 schema，回滚应用时同时恢复迁移前备份。PostgreSQL 大版本升级需要 `pg_upgrade` 或逻辑备份恢复，不能只改镜像大版本并复用旧卷。手机资源随本地 App 构建更新，不依赖服务端分发可执行代码。
 
 ## 验证自己的部署
 
@@ -116,8 +118,22 @@ docker compose -f deploy/remote/compose.yaml start accounts
 ```sh
 node deploy/remote/verify.mjs create https://wuu.example.com /tmp/wuu-test-state.json
 node deploy/remote/verify.mjs verify https://wuu.example.com /tmp/wuu-test-state.json
+node deploy/remote/verify.mjs relay https://wuu.example.com /tmp/wuu-test-state.json
 # 重启容器、备份并恢复后，再执行 verify，检查持久化。
 node deploy/remote/verify.mjs revoke https://wuu.example.com /tmp/wuu-test-state.json
 ```
 
-脚本创建两个随机测试账号，检查设备目录隔离、跨账号删除被拒绝、设备撤销和恢复码只能使用一次。测试状态文件包含测试令牌和恢复码，以 0600 保存且不覆盖已有文件；验证结束删除该文件。`revoke` 会改变测试账号状态；恢复之前的备份后可以再次 `verify`。本地自签 CA 通过 `NODE_EXTRA_CA_CERTS=/path/to/root.crt` 指定，不能禁用 TLS 校验。此脚本验证账号服务，手机与真实 Agent 的验证见手机 App 文档。
+脚本先检查服务及数据库就绪，再创建两个随机测试账号，检查设备目录隔离、跨账号删除被拒绝、设备撤销和恢复码只能使用一次。`relay` 使用测试设备私钥完成 WebSocket 认证，双向转发 256 KiB 随机数据并检查跨账号转发被拒绝，可发现代理升级、方向或帧大小配置错误。`revoke` 还验证在线手机立即断开、旧设备密钥无法重新连接。
+
+测试状态文件包含测试设备私钥、令牌和恢复码，以 0600 保存且不覆盖已有文件；验证结束删除该文件。旧版脚本生成的状态缺少设备密钥和服务地址，需重新 `create`。状态绑定服务地址，不向其他服务器发送已保存的令牌。`revoke` 会改变测试账号状态；恢复之前的备份后可以再次 `verify`。本地自签 CA 通过 `NODE_EXTRA_CA_CERTS=/path/to/root.crt` 指定，不能禁用 TLS 校验。中继探测不运行 Agent，也不替代原生客户端的端到端加密与真机验收。
+
+开发时用临时 PostgreSQL 验证服务重启、凭据持久化、中继与撤销（需要 Go、Node.js 22+ 和 PostgreSQL 工具）：
+
+```sh
+mkdir -p clients/native/.build
+go build -o clients/native/.build/wuu-server ./cmd/wuu-server
+WUU_DEPLOY_TESTSERVER="$PWD/clients/native/.build/wuu-server" \
+  bash clients/native/with-postgres.sh node --test deploy/remote/verify.test.mjs
+```
+
+`Remote service` CI 运行此测试和 remote 包测试，并构建部署镜像。备份恢复仍需对自己的存储和部署执行上面的手动验收。

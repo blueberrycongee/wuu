@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("./wuuCommand", () => ({ resolveWuuCommand: () => ({ command: "wuu", args: [], cwd: "/tmp" }) }));
 const roots: string[] = [];
-afterEach(async () => { vi.clearAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 // The desktop dev session exports WUU_WEB_* for its own phone listener; these
 // tests must not inherit the ambient deployment configuration.
@@ -49,6 +49,59 @@ describe("phone access lifecycle", () => {
     const changed = vi.fn();
     return { service: new PhoneAccess(host as unknown as RemoteHostManager, root, changed, appServer, settingsPath), host, child, settingsPath, appServer, changed };
   }
+
+  it("recovers a failed startup and a crashed host without reopening pairing", async () => {
+    vi.useFakeTimers();
+    const { service, host, appServer, settingsPath } = await fixture();
+    host.status.mockResolvedValue({ devices: [], account_server: "https://account.example" } as never);
+    let running = false;
+    host.isRunning = () => running;
+    host.startHost.mockImplementation(() => { running = true; });
+    appServer.start.mockRejectedValueOnce(new Error("backend temporarily unavailable"));
+    setPhoneAccessEnabled(true, settingsPath);
+    try {
+      await service.restore("/tmp");
+      expect(service.error()).toContain("backend temporarily unavailable");
+      expect(host.startHost).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.run(async () => {});
+      expect(host.startHost).toHaveBeenCalledTimes(1);
+      expect(service.error()).toBeNull();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.run(async () => {});
+      expect(host.startHost).toHaveBeenCalledTimes(1);
+      running = false;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.run(async () => {});
+      expect(host.startHost).toHaveBeenCalledTimes(2);
+      expect(host.startHost.mock.calls.every(([, options]) => options.pair === false)).toBe(true);
+      await service.setEnabled("/tmp", false);
+      running = false;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(host.startHost).toHaveBeenCalledTimes(2);
+    } finally { await service.shutdown(); }
+  });
+
+  it("invalidates a scheduled recovery queued before access is stopped", async () => {
+    vi.useFakeTimers();
+    const { service, host, settingsPath } = await fixture();
+    host.status.mockResolvedValue({ devices: [], account_server: "https://account.example" } as never);
+    setPhoneAccessEnabled(true, settingsPath);
+    await service.restore("/tmp");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    void service.run(() => gate);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await service.stop();
+    release();
+    await service.run(async () => {});
+    expect(host.startHost).toHaveBeenCalledTimes(1);
+    expect(service.url()).toBeNull();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(host.startHost).toHaveBeenCalledTimes(1);
+    await service.shutdown();
+  });
+
   it("uses an external relay without spawning a LAN server and retains desktop execution", async () => {
     vi.stubEnv("WUU_WEB_URL", "https://web.example");
     vi.stubEnv("WUU_WEB_RELAY_URL", "wss://relay.example/v1/connect");

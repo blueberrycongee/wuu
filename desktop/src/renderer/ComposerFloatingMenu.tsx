@@ -110,7 +110,9 @@ export function FloatingMenuPortal({
       const visible = visibleViewport();
       const rect = anchor.getBoundingClientRect();
       const menuWidth = matchAnchorWidth && rect.width > 0 ? rect.width : width;
-      const baseLeft = align === "right" ? rect.right - menuWidth : rect.left;
+      const baseLeft = align === "right" ? rect.right - menuWidth
+        : align === "center" ? rect.left + (rect.width - menuWidth) / 2
+        : rect.left;
       const minLeft = visible.left + viewportMargin;
       const maxLeft = Math.max(minLeft, visible.left + visible.width - menuWidth - viewportMargin);
       const left = clamp(baseLeft + crossAxisOffset, minLeft, maxLeft);

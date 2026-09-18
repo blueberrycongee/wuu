@@ -35,17 +35,10 @@
           "pages": [
             "zh-cn/customize/index.md",
             "zh-cn/customize/skills.md",
-            "zh-cn/customize/skill-authoring.md",
             "zh-cn/customize/mcp.md",
             "zh-cn/customize/hooks.md",
             "zh-cn/customize/plugins.md",
-            "zh-cn/customize/themes-settings.md",
-            "zh-cn/customize/plugin-quickstart.md",
-            "zh-cn/customize/desktop-plugin-quickstart.md",
-            "zh-cn/customize/desktop-plugins.md",
-            "zh-cn/customize/plugin-recipes.md",
-            "zh-cn/customize/plugin-authoring.md",
-            "zh-cn/customize/theme-surface-matrix.md"
+            "zh-cn/customize/themes-settings.md"
           ]
         },
         {
@@ -56,26 +49,11 @@
           ]
         },
         {
-          "title": "参考",
-          "pages": [
-            "zh-cn/reference/agent-command-system.md",
-            "zh-cn/reference/cli-commands.md",
-            "zh-cn/reference/security-model.md",
-            "zh-cn/reference/permissions.md",
-            "zh-cn/reference/configuration.md",
-            "zh-cn/reference/desktop-plugins.md",
-            "zh-cn/customize/plugin-system.md"
-          ]
-        },
-        {
-          "title": "自动化与集成",
+          "title": "自动化与远程使用",
           "pages": [
             "zh-cn/automation/scheduled-tasks.md",
             "zh-cn/automation/exec.md",
-            "zh-cn/automation/app-server.md",
-            "zh-cn/automation/remote.md",
-            "en/automation/jsonl-events.md",
-            "en/integrations/app-server-protocol.md"
+            "zh-cn/automation/remote.md"
           ]
         },
         {
@@ -85,8 +63,30 @@
           ]
         },
         {
-          "title": "项目（英文）",
+          "title": "参考",
           "pages": [
+            "zh-cn/reference/security-model.md",
+            "zh-cn/reference/permissions.md",
+            "zh-cn/reference/configuration.md",
+            "zh-cn/reference/cli-commands.md",
+            "zh-cn/reference/agent-command-system.md"
+          ]
+        },
+        {
+          "title": "开发与 API（部分英文）",
+          "pages": [
+            "zh-cn/customize/skill-authoring.md",
+            "zh-cn/customize/plugin-quickstart.md",
+            "zh-cn/customize/desktop-plugin-quickstart.md",
+            "zh-cn/customize/desktop-plugins.md",
+            "zh-cn/customize/plugin-recipes.md",
+            "zh-cn/customize/plugin-authoring.md",
+            "zh-cn/reference/desktop-plugins.md",
+            "zh-cn/customize/plugin-system.md",
+            "zh-cn/customize/theme-surface-matrix.md",
+            "zh-cn/automation/app-server.md",
+            "en/automation/jsonl-events.md",
+            "en/integrations/app-server-protocol.md",
             "en/project/development.md",
             "en/project/release.md"
           ]
@@ -118,37 +118,14 @@
           ]
         },
         {
-          "title": "Automation",
-          "pages": [
-            "en/automation/exec.md",
-            "en/automation/jsonl-events.md",
-            "en/automation/scheduled-tasks.md",
-            "en/automation/app-server.md",
-            "en/automation/remote.md"
-          ]
-        },
-        {
-          "title": "Integrations",
-          "pages": [
-            "en/integrations/app-server-protocol.md"
-          ]
-        },
-        {
           "title": "Extend Wuu",
           "pages": [
             "en/customize/index.md",
             "en/customize/skills.md",
-            "en/customize/skill-authoring.md",
             "en/customize/mcp.md",
             "en/customize/hooks.md",
             "en/customize/plugins.md",
-            "en/customize/themes-settings.md",
-            "en/customize/plugin-quickstart.md",
-            "en/customize/desktop-plugin-quickstart.md",
-            "en/customize/desktop-plugins.md",
-            "en/customize/plugin-recipes.md",
-            "en/customize/plugin-authoring.md",
-            "en/customize/theme-surface-matrix.md"
+            "en/customize/themes-settings.md"
           ]
         },
         {
@@ -159,28 +136,46 @@
           ]
         },
         {
-          "title": "Reference",
+          "title": "Automation and remote use",
           "pages": [
-            "en/reference/security-model.md",
-            "en/reference/permissions.md",
-            "en/reference/configuration.md",
-            "en/reference/cli-commands.md",
-            "en/reference/agent-command-system.md",
-            "en/reference/desktop-plugins.md",
-            "en/customize/plugin-system.md"
-          ]
-        },
-        {
-          "title": "Project",
-          "pages": [
-            "en/project/development.md",
-            "en/project/release.md"
+            "en/automation/scheduled-tasks.md",
+            "en/automation/exec.md",
+            "en/automation/remote.md"
           ]
         },
         {
           "title": "Help",
           "pages": [
             "en/help/troubleshooting.md"
+          ]
+        },
+        {
+          "title": "Reference",
+          "pages": [
+            "en/reference/security-model.md",
+            "en/reference/permissions.md",
+            "en/reference/configuration.md",
+            "en/reference/cli-commands.md",
+            "en/reference/agent-command-system.md"
+          ]
+        },
+        {
+          "title": "Development and APIs",
+          "pages": [
+            "en/customize/skill-authoring.md",
+            "en/customize/plugin-quickstart.md",
+            "en/customize/desktop-plugin-quickstart.md",
+            "en/customize/desktop-plugins.md",
+            "en/customize/plugin-recipes.md",
+            "en/customize/plugin-authoring.md",
+            "en/reference/desktop-plugins.md",
+            "en/customize/plugin-system.md",
+            "en/customize/theme-surface-matrix.md",
+            "en/automation/app-server.md",
+            "en/automation/jsonl-events.md",
+            "en/integrations/app-server-protocol.md",
+            "en/project/development.md",
+            "en/project/release.md"
           ]
         }
       ]

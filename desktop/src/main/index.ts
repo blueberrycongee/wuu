@@ -1,4 +1,5 @@
 import { readCatalogSkill } from "./remoteSkills";
+import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { PhoneAccess, phonePairLink } from "./phoneAccess";
 import {
@@ -169,9 +170,9 @@ import type {
   ChannelRoomPreferences,
   VoicePermissionStatus,
 } from "../shared/protocol";
-import { AppServerClientPool } from "./appServerClients";
+import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator } from "./cuaActivityWindows";
+import { ObservationCoordinator, activityControlMethod } from "./cuaActivityWindows";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
 import {
@@ -319,6 +320,8 @@ const appServerClientPool = new AppServerClientPool(
   () => projectManager.ensureRuntimeContext(),
   () => projectManager.activeWorkdir(),
   (event) => emitServerEvent(event),
+  undefined,
+  desktopInitializeParams,
 );
 // Cross-workdir running state (which sessions are actively turning in any
 // workspace) is aggregated in the main process from each client's own turn
@@ -390,7 +393,14 @@ const observationCoordinator = new ObservationCoordinator(
     return result.activities ?? [];
   },
   createObservationPiPFactory({ browserHost: browserHostCoordinator, isPackaged: app.isPackaged }),
+  async (activity, action) => {
+    const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
+      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id },
+    );
+    return result.activity;
+  },
 );
+observationCoordinator.setAppearance(resolvedThemeIsDark());
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden or minimized. Its
 // right-click menu disables the setting, which also tears the window down.
@@ -456,6 +466,16 @@ function appServerRequest<T>(
   return context
     ? appServerClientPool.requestInContext<T>(context, method, params)
     : appServerClientPool.request<T>(method, params);
+}
+
+function desktopInitializeParams() {
+  return {
+    protocol_version: APP_SERVER_PROTOCOL_VERSION,
+    client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
+    capabilities: {
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, WORKSPACE_HARNESS_DISPATCH] },
+    },
+  };
 }
 
 function runtimeContextForWorkspaceID(workspaceID: string): RuntimeContext {
@@ -545,6 +565,10 @@ const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
 
 function emitServerEvent(event: ServerEvent): void {
   remoteAppServerBridge.publish(event);
+  if (event.kind === "server-request" && event.message.method === WORKSPACE_HARNESS_DISPATCH) {
+    void routeHarnessWorkspaceRequest(event, appServerClientPool, runtimeContextForWorkspaceID, desktopInitializeParams());
+    return;
+  }
   // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
   // renderer auto-rejects every server-request ("unsupported server request"),
   // and server-request routes are single-shot, so letting the renderer race
@@ -615,11 +639,7 @@ const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServe
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
-  if (method === "initialize") params = {
-    protocol_version: APP_SERVER_PROTOCOL_VERSION,
-    client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
-    capabilities: { reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] } },
-  };
+  if (method === "initialize") params = desktopInitializeParams();
   if (method === "shutdown") throw new Error("Remote clients cannot shut down the shared execution service");
   if (method.startsWith("desktop/projects/")) return requestRemoteProjects(projectManager,method,params);
   const cwd = resolve(workdir);
@@ -907,6 +927,7 @@ function microphonePermissionStatus(): VoicePermissionStatus {
 function syncThemeAcrossWindows(): void {
   syncNativeThemeSource();
   syncThemedWindowChrome();
+  observationCoordinator.setAppearance(resolvedThemeIsDark());
   broadcastThemePreference();
 }
 
@@ -1169,6 +1190,7 @@ async function directorySize(path: string): Promise<number> {
 }
 
 app.whenReady().then(async () => {
+  if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
   setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
   installProductionAppShellGuards({
     isPackaged: app.isPackaged,
@@ -1514,13 +1536,7 @@ app.whenReady().then(async () => {
     },
   );
   ipcMain.handle("wuu:initialize", async (event) => {
-    const result = await appServerRequest<InitializeResult>(event, "initialize", {
-      protocol_version: APP_SERVER_PROTOCOL_VERSION,
-      client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
-      capabilities: {
-        reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS] },
-      },
-    });
+    const result = await appServerRequest<InitializeResult>(event, "initialize", desktopInitializeParams());
     if (result.core) {
       cachedCoreBuildInfo = result.core;
     }
@@ -2527,6 +2543,7 @@ app.whenReady().then(async () => {
         payload.tabID,
         senderWindow as unknown as BrowserParentWindowHandle,
         payload.rect,
+        event.sender.getZoomFactor(),
       );
       return { ok: true };
     },
@@ -2556,16 +2573,27 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+let quitCleanup: Promise<void> | undefined;
+let quitCleanupFinished = false;
+app.on("before-quit", (event) => {
+  if (quitCleanupFinished) return;
+  event.preventDefault();
+  if (quitCleanup) return;
   speechRecognitionService.stop();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts
   // down so no WebContentsView leaks past quit.
   browserHostCoordinator.destroyAll();
-  appServerClientPool.shutdown();
-  // SIGTERM goes out synchronously; the daemon's own signal handling shuts
-  // the relay connection down cleanly.
-  void phoneAccess.shutdown();
+  quitCleanup = Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()])
+    .then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") console.error("Shutdown cleanup failed", result.reason);
+      }
+    })
+    .finally(() => {
+      quitCleanupFinished = true;
+      app.quit();
+    });
 });
 
 app.on("window-all-closed", () => {

@@ -1,4 +1,5 @@
 import java.util.zip.ZipFile
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -12,8 +13,8 @@ android {
         applicationId = "ai.wuu.nativeapp"
         minSdk = 28
         targetSdk = 36
-        versionCode = 260900199
-        versionName = "2026.9.1"
+        versionCode = 260900299
+        versionName = "2026.9.2"
         for (key in listOf("APP_ID", "API_KEY", "PROJECT_ID", "SENDER_ID")) {
             val name = "WUU_FIREBASE_$key"
             val value = providers.gradleProperty(name).orElse(providers.environmentVariable(name)).getOrElse("")
@@ -23,6 +24,7 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("main").assets.srcDir("../../licenses")
+    sourceSets.getByName("main").assets.srcDir("../../shared-ui/NativeUI")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -78,3 +80,17 @@ val generatePushNotices = tasks.register("generatePushNotices") {
 }
 android.sourceSets.getByName("main").assets.srcDir(pushNoticesDirectory)
 tasks.named("preBuild").configure { dependsOn(generatePushNotices) }
+
+// Native builds verify the checked-in desktop renderer without requiring Node.js.
+val verifySharedAvatar = tasks.register("verifySharedAvatar") {
+    doLast {
+        val repository = rootProject.projectDir.resolve("../../..").canonicalFile
+        repository.resolve("clients/native/shared-ui/NativeUI/sources.sha256").readLines().filter { it.isNotBlank() }.forEach { line ->
+            val (expected, path) = line.split("  ", limit = 2)
+            val file = repository.resolve(path)
+            val actual = if (file.isFile) MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) } else ""
+            check(actual == expected) { "Shared avatar is stale: $path. Run node clients/native/shared-ui/build.mjs from the repository root." }
+        }
+    }
+}
+tasks.named("preBuild").configure { dependsOn(verifySharedAvatar) }

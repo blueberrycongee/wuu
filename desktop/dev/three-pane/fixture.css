@@ -1,0 +1,8 @@
+/* Only fixture chrome and viewport geometry live here. Production components
+ * own every row, message, tool, tree, and input style under inspection. */
+.sample-controls { display: flex; align-items: center; gap: 16px; height: 36px; padding-inline: 16px; font: 12px/1.4 system-ui; border-bottom: 1px solid var(--hairline); }
+.sample-controls select, .sample-controls button { color: var(--ink); background: var(--surface-2); }
+.sample-shell { height: calc(100dvh - 36px); --sidebar-width: 252px; --sidebar-open-width: 252px; --workspace-right-panel-width: 480px; }
+.sample-brand { height: 76px; display: flex; align-items: center; padding-inline: 8px; font-size: 20px; font-weight: 600; }
+@media (max-width: 1000px) { .sample-shell { --sidebar-width: 240px; --sidebar-open-width: 240px; --workspace-right-panel-width: 320px; } }
+@media (max-width: 760px) { .sample-shell { --sidebar-width: 0px; --workspace-right-panel-width: min(320px, 80vw); } .sample-shell > .sidebar { visibility: hidden; } }

@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/remote/conversations"
@@ -21,7 +22,13 @@ func textSnapshot(thread Thread) conversations.Thread {
 				role = "assistant"
 			}
 			if role != "" && item.Text != "" {
-				out.Messages = append(out.Messages, conversations.Message{ID: item.ID, TurnID: turn.ID, Role: role, Text: item.Text})
+				text := item.Text
+				// Account copies have a text-only schema also read by older servers.
+				// Preserve visible attribution without adding hidden input or new wire fields.
+				if item.Origin == "plugin" && item.PresentationKind == "session_message" {
+					text = fmt.Sprintf("[Sent by Wuu from %q (%s)]\n\n%s", item.Name, item.RelatedSessionID, text)
+				}
+				out.Messages = append(out.Messages, conversations.Message{ID: item.ID, TurnID: turn.ID, Role: role, Text: text})
 			}
 		}
 	}

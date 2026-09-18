@@ -230,7 +230,10 @@ func (s *Service) updateTask(ctx context.Context, params TaskUpdateParams) (Mess
 	}
 	if params.AgentID != "" {
 		sourceWorkID := message.ID
-		if binding, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.SessionRef)); err == nil && binding.WorkID == "" {
+		if binding, err := scanCollaborationSession(tx.QueryRowContext(ctx, collaborationSessionSelect+` WHERE binding.session_ref = ?`, params.SessionRef)); err == nil && (binding.WorkID == "" || binding.Primary && binding.Purpose == CollaborationSessionConversation) {
+			// The continuing conversation manages all of this identity's tasks
+			// in the room. Ownership was checked above; still validate its active
+			// turn so a cancelled or superseded turn cannot perform management.
 			sourceWorkID = ""
 		}
 		if err := validateCollaborationSessionWriteTx(

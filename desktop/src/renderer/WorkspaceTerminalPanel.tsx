@@ -18,6 +18,7 @@ import type {
   Thread,
 } from "../shared/protocol";
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
+import { codeEditorTypography, observeAppearance } from "./AppearancePreferences";
 import {
   agentRunGroupsForThread,
   selectAgentRun,
@@ -96,17 +97,29 @@ function workspaceTerminalOptions({
   readOnly?: boolean;
   host?: HTMLElement;
 }): ITerminalOptions {
+  const typography = codeEditorTypography();
   return {
     allowTransparency: false,
     convertEol: !interactive,
     cursorBlink: interactive,
     disableStdin: readOnly,
-    fontFamily: workspaceTerminalStyle(host, "--wuu-workspace-terminal-font-family", '"SFMono-Regular", Consolas, "Liberation Mono", monospace'),
-    fontSize: 12,
-    lineHeight: 1.45,
+    fontFamily: workspaceTerminalStyle(host, "--wuu-workspace-terminal-font-family", typography.fontFamily),
+    fontSize: typography.fontSize,
+    lineHeight: 1.6,
     scrollback: 10000,
     theme: workspaceTerminalTheme(currentAppliedTheme(), host),
   };
+}
+
+function observeTerminalAppearance(terminal: XtermTerminal, host: HTMLElement, resize: () => void): () => void {
+  return observeAppearance(() => {
+    const typography = codeEditorTypography();
+    const family = workspaceTerminalStyle(host, "--wuu-workspace-terminal-font-family", typography.fontFamily);
+    if (terminal.options.fontSize === typography.fontSize && terminal.options.fontFamily === family) return;
+    terminal.options.fontSize = typography.fontSize;
+    terminal.options.fontFamily = family;
+    resize();
+  });
 }
 
 export function appendPendingTerminalEvent(
@@ -430,6 +443,7 @@ function AgentTerminalPane({
     const stopObservingTheme = observeAppliedTheme((theme) => {
       terminal.options.theme = workspaceTerminalTheme(theme, container);
     });
+    const stopObservingAppearance = observeTerminalAppearance(terminal, container, fitAndResize);
 
     function updateProcess(next: ManagedProcessSummary): void {
       const preferred = preferManagedProcess(processRef.current, next);
@@ -548,6 +562,7 @@ function AgentTerminalPane({
       dataDisposable.dispose();
       resizeObserver.disconnect();
       stopObservingTheme();
+      stopObservingAppearance();
       terminal.dispose();
       terminalRef.current = null;
     };
@@ -690,6 +705,7 @@ function UserTerminalPane({
     const stopObservingTheme = observeAppliedTheme((theme) => {
       terminal.options.theme = workspaceTerminalTheme(theme, container);
     });
+    const stopObservingAppearance = observeTerminalAppearance(terminal, container, fitAndResize);
 
     function fitAndResize(): void {
       if (disposed) {
@@ -814,6 +830,7 @@ function UserTerminalPane({
       }
       unsubscribeTerminal();
       stopObservingTheme();
+      stopObservingAppearance();
       dataDisposable.dispose();
       resizeObserver.disconnect();
       pendingTerminalEventsRef.current.clear();

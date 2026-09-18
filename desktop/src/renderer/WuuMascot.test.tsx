@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WuuMascot, WuuMascotRuntimeProvider, modelMascotAccessory } from "./WuuMascot";
 import { EmptyConversationHome } from "./LoadingViews";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
+import { AgentAvatarMark } from "./AgentAvatarMark";
 
 
 let container: HTMLDivElement | null = null;
@@ -58,6 +59,73 @@ function facePaths(svg: Element): string {
 }
 
 describe("WuuMascot activity morph", () => {
+  it("skips transcript geometry work and restores the same identity across static/dynamic switches", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+    const reduced = new EventTarget() as MediaQueryList;
+    Object.defineProperty(reduced, "matches", { value: false, writable: true });
+    vi.stubGlobal("matchMedia", () => reduced);
+    const sample = vi.fn((distance: number) => ({ x: distance, y: 50 }));
+    const length = vi.fn(() => 100);
+    const names = ["getTotalLength", "getPointAtLength"] as const;
+    const original = names.map(name => Object.getOwnPropertyDescriptor(SVGElement.prototype, name));
+    Object.defineProperties(SVGElement.prototype, {
+      getTotalLength: { configurable: true, value: length },
+      getPointAtLength: { configurable: true, value: sample },
+    });
+    const avatar = (dynamic: boolean, avatarKey = "abstract-1") => (
+      <AgentAvatarMark seed="transcript" avatarKey={avatarKey} status="thinking"
+        disableMorph={!dynamic} motion={dynamic ? "expressive" : "static"} />
+    );
+    try {
+      const host = render(avatar(false));
+      const svg = host.querySelector("svg")!;
+      const identity = facePaths(svg);
+      const authored = svg.querySelector<SVGGElement>(".mo-root")!.style.cssText;
+      act(() => vi.advanceTimersByTime(1600));
+      expect(length).not.toHaveBeenCalled();
+      expect(sample).not.toHaveBeenCalled();
+
+      rerender(avatar(true));
+      expect(sample).toHaveBeenCalled();
+      expect(host.querySelector("svg")).toBe(svg);
+      act(() => vi.advanceTimersByTime(200));
+      const animated = svg.querySelector("[data-mascot-morph-art]")!.innerHTML;
+      act(() => vi.advanceTimersByTime(200));
+      expect(svg.querySelector("[data-mascot-morph-art]")!.innerHTML).not.toBe(animated);
+
+      rerender(avatar(false));
+      expect(host.querySelector("svg")).toBe(svg);
+      expect(facePaths(svg)).toBe(identity);
+      expect(svg.querySelector("[data-mascot-morph-art]")).toBeNull();
+      expect(svg.querySelector<SVGGElement>(".mo-root")!.style.cssText).toBe(authored);
+      sample.mockClear();
+      act(() => vi.advanceTimersByTime(1600));
+      expect(sample).not.toHaveBeenCalled();
+      expect(svg.querySelector<SVGGElement>(".mo-root")!.style.cssText).toBe(authored);
+
+      rerender(avatar(false, "abstract-5"));
+      expect(facePaths(host.querySelector("svg")!)).not.toBe(identity);
+      expect(sample).not.toHaveBeenCalled();
+      rerender(avatar(true, "abstract-5"));
+      expect(sample).toHaveBeenCalled();
+      Object.defineProperty(reduced, "matches", { value: true });
+      act(() => { reduced.dispatchEvent(new Event("change")); vi.advanceTimersByTime(50); });
+      const art = host.querySelector("[data-mascot-morph-art]")!;
+      const parked = art.innerHTML;
+      act(() => vi.advanceTimersByTime(1000));
+      expect(art.innerHTML).toBe(parked);
+      unmount();
+      expect(art.isConnected).toBe(false);
+    } finally {
+      unmount();
+      names.forEach((name, index) => {
+        if (original[index]) Object.defineProperty(SVGElement.prototype, name, original[index]!);
+        else Reflect.deleteProperty(SVGElement.prototype, name);
+      });
+    }
+  });
+
   it("keeps brand scenes independent of the surrounding runtime while allowing explicit accessories", () => {
     const scene = (model: string, accessory?: "beanie") => (
       <WuuMascotRuntimeProvider provider="openai" model={model}>

@@ -99,7 +99,7 @@ import {
   AppSidebar,
 } from "./AppSidebar";
 import { ChannelView, type ChannelSection } from "./ChannelView";
-import type { CollaborationConversation } from "./CollaborationConversations";
+import { collaborationConversations, managedSidebarThreads, type CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
 import type { AppMode } from "./AppModeSwitch";
@@ -217,6 +217,7 @@ import {
 } from "./RuntimeHelpers";
 import type { SettingsPage } from "./SettingsView";
 import {
+  ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
   ENABLE_MANAGEMENT_ASSISTANT,
@@ -544,8 +545,7 @@ export function App(): JSX.Element {
   // rail. Keep a docked sidebar docked; only an already-collapsed or compact
   // sidebar remains a drawer while the workspace is expanded.
   const [appMode, setAppMode] = useState<AppMode>("harness");
-  const collaborationRail = ENABLE_GROUP_CHAT && appMode === "collaboration" && sidebarCollapsed && !compactNavigation && !poppedOutMode;
-  const sidebarDrawerMode = compactNavigation || (sidebarCollapsed && !collaborationRail);
+  const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
     sidebarHoverZoneRef,
@@ -645,9 +645,12 @@ export function App(): JSX.Element {
   const [agentOnboardingDraft, setAgentOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [namedAgents, setNamedAgents] = useState<NamedAgent[]>([]);
   const directoryRefreshInFlightRef = useRef(false);
+  const channelDirectoryGenerationRef = useRef(0);
+  const [channelDirectoryLoaded, setChannelDirectoryLoaded] = useState(false);
   const [selectedCollaborationAgentID, setSelectedCollaborationAgentID] = useState("");
   const selectedCollaborationAgentRequestRef = useRef("");
-  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState("");
+  const directMessageRequestGenerationRef = useRef(0);
+  const [selectedChannelRoomIDState, setSelectedChannelRoomIDState] = useState(() => readChannelRoomPreferences().selectedRoomID ?? "");
   const [channelComposerDrafts, setChannelComposerDrafts] = useState<Record<string, ComposerDraftState>>({});
   // Rooms (with per-room unread counts) live at the App level so the unified
   // sidebar and the channel canvas share one source of truth; selection is
@@ -687,23 +690,26 @@ export function App(): JSX.Element {
     ) {
       setChannelRooms([]);
       setNamedAgents([]);
+      setChannelDirectoryLoaded(false);
       return;
     }
     let active = true;
     const refresh = async (): Promise<void> => {
       if (directoryRefreshInFlightRef.current) return;
       directoryRefreshInFlightRef.current = true;
+      const generation = ++channelDirectoryGenerationRef.current;
       try {
         const result = await window.wuu!.listChannelRooms();
-        if (active) {
+        if (active && generation === channelDirectoryGenerationRef.current) {
           const rooms = result.rooms ?? [];
           setChannelRooms((current) =>
             sameChannelRooms(current, rooms) ? current : rooms,
           );
+          setChannelDirectoryLoaded(true);
         }
         if (typeof window.wuu!.listNamedAgents === "function") {
           const agentResult = await window.wuu!.listNamedAgents();
-          if (active) {
+          if (active && generation === channelDirectoryGenerationRef.current) {
             const agents = agentResult.agents ?? [];
             setNamedAgents((current) =>
               sameNamedAgents(current, agents) ? current : agents,
@@ -903,10 +909,6 @@ export function App(): JSX.Element {
   const dismissArchiveTip = useCallback(() => {
     setArchiveTip(null);
   }, []);
-  const [checkoutErrorTip, setCheckoutErrorTip] = useState<string | null>(null);
-  const dismissCheckoutErrorTip = useCallback(() => {
-    setCheckoutErrorTip(null);
-  }, []);
   const [modelCatalogTip, setModelCatalogTip] = useState<{
     message: string;
     isError: boolean;
@@ -1080,23 +1082,26 @@ export function App(): JSX.Element {
   const draftSessionTabCounterRef = useRef(0);
   const currentSessionTab = activeSessionTab(state);
   const activeChannelRooms = useMemo(
-    () => [
-      ...visibleChannelRooms(
-        channelRooms.filter((room) => room.kind === "channel"),
-        channelRoomPreferences,
-      ),
-      ...channelRooms.filter((room) => room.kind === "dm"),
-    ],
+    () => visibleChannelRooms(channelRooms, channelRoomPreferences),
     [channelRoomPreferences, channelRooms],
   );
   const archivedChannelRooms = useMemo(
     () => channelRooms.filter((room) => channelRoomPreferences.archivedRoomIDs.includes(room.id)),
     [channelRoomPreferences.archivedRoomIDs, channelRooms],
   );
-  const selectedChannelRoomID =
-    (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
+  const selectedChannelRoomID = selectedCollaborationAgentID
+    ? activeChannelRooms.find((room) => room.kind === "dm" && room.members.some(
+      (member) => member.member_type === "agent" && member.member_id === selectedCollaborationAgentID,
+    ))?.id ?? ""
+    : (activeChannelRooms.some((room) => room.id === selectedChannelRoomIDState)
       ? selectedChannelRoomIDState
-      : activeChannelRooms[0]?.id ?? "");
+      : channelDirectoryLoaded ? activeChannelRooms[0]?.id ?? "" : "");
+  useEffect(() => {
+    if (appMode !== "collaboration" || !selectedChannelRoomID) return;
+    setSelectedChannelRoomIDState(selectedChannelRoomID);
+    if (channelRoomPreferences.selectedRoomID === selectedChannelRoomID) return;
+    updateChannelRoomPreferences((current) => ({ ...current, selectedRoomID: selectedChannelRoomID }));
+  }, [appMode, selectedChannelRoomID, channelRoomPreferences.selectedRoomID]);
   const selectedCollaborationAgent =
     namedAgents.find((agent) => agent.id === selectedCollaborationAgentID);
   const activeChannelComposerDraft = useMemo(
@@ -1220,21 +1225,23 @@ export function App(): JSX.Element {
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
   const activeThreadRunning = isThreadRunning(activeThread);
+  const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
   useEffect(() => {
     const contextCwd = state.activeContext?.cwd;
+    const executorRunning = activeThreadID !== undefined && crossWorkdirRunningThreadIDs.has(activeThreadID);
     if (
       !activeThreadID ||
-      !activeThreadRunning ||
       !contextCwd ||
-      crossWorkdirRunningThreadIDs.has(activeThreadID)
+      (!activeThreadRunning && !executorRunning) ||
+      (activeThreadHasRunningTurn && executorRunning)
     ) {
       return undefined;
     }
 
     // The aggregate main-process snapshot is independent of renderer server
-    // events. If it says the visible thread stopped while this pane still has
-    // an in-progress turn, re-read durable state instead of guessing that the
-    // turn completed. A short delay avoids racing the normal turn/start path.
+    // events. Repair both a missed start and a missed completion. An owner
+    // resume includes the new input and live items; a workspace list alone may
+    // only know that another process holds the execution lease.
     const key = `${contextCwd}\u0000${activeThreadID}`;
     let disposed = false;
     const timer = window.setTimeout(() => {
@@ -1242,8 +1249,10 @@ export function App(): JSX.Element {
         return;
       }
       runningThreadReconcileInFlightRef.current = key;
-      void window.wuu
-        .listThreads()
+      const refresh = executorRunning
+        ? window.wuu.resumeThread(activeThreadID).then(result => result.thread ? [result.thread] : [])
+        : window.wuu.listThreads().then(result => result.threads);
+      void refresh
         .then((listed) => {
           if (disposed) {
             return;
@@ -1255,7 +1264,10 @@ export function App(): JSX.Element {
             ) {
               return current;
             }
-            return reconcileListedThreadState(current, listed.threads);
+            if (executorRunning && !listed[0]) return current;
+            return reconcileListedThreadState(current, executorRunning
+              ? upsertThread(current.threads, listed[0])
+              : listed);
           });
         })
         .catch(() => {
@@ -1274,6 +1286,7 @@ export function App(): JSX.Element {
   }, [
     activeThreadID,
     activeThreadRunning,
+    activeThreadHasRunningTurn,
     crossWorkdirRunningThreadIDs,
     state.activeContext?.cwd,
   ]);
@@ -2204,8 +2217,6 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
-  const [mainConversationScrolledAway, setMainConversationScrolledAway] =
-    useState(false);
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
@@ -2245,6 +2256,7 @@ export function App(): JSX.Element {
     workspaceViewTabs,
   ]);
 
+  const [statusClusterNode, statusClusterRef] = useState<HTMLDivElement | null>(null);
   const {
     conversationScrollRef,
     scrollContentRef,
@@ -2259,6 +2271,9 @@ export function App(): JSX.Element {
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
+    requestDeferredQueryScroll,
+    acknowledgeSubmittedMessage,
+    discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
     activePane: state.activePane,
@@ -2267,6 +2282,8 @@ export function App(): JSX.Element {
     secondaryTurns: state.secondaryThread?.turns,
     emptyConversation,
     initialized: Boolean(state.initialized),
+    running: isStateActiveThreadRunning(state),
+    statusClusterNode,
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id
@@ -2567,6 +2584,11 @@ export function App(): JSX.Element {
     () => pinnedThreadSummaries(sidebarThreadSummaries),
     [sidebarThreadSummaries],
   );
+  const sidebarConversations = useMemo(() => ENABLE_GROUP_CHAT
+    ? collaborationConversations(namedAgents, channelRooms, channelRoomPreferences.pinnedRoomIDs, "", channelRoomPreferences.archivedRoomIDs)
+    : [], [namedAgents, channelRooms, channelRoomPreferences]);
+  const managedSidebar = useMemo(() => managedSidebarThreads(sidebarThreadSummaries, sidebarConversations),
+    [sidebarThreadSummaries, sidebarConversations]);
   const sidebarScratchThreads = useMemo(
     () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
     [sidebarThreadSummaries, state.projects],
@@ -2591,11 +2613,11 @@ export function App(): JSX.Element {
     [scratchPseudoProject, state.projects],
   );
   const sidebarThreadsByProjectID = useMemo(
-    () => ({
+    () => Object.fromEntries(Object.entries({
       [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
       ...sidebarProjectThreadSummariesByProjectID,
-    }),
-    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID],
+    }).map(([id, threads]) => [id, threads.filter(thread => !managedSidebar.threadIDs.has(thread.id))])),
+    [sidebarScratchThreads, sidebarProjectThreadSummariesByProjectID, managedSidebar],
   );
   const activeThreadReadOnly = Boolean(activeThread?.read_only);
   const activeThreadIsRunning = isStateActiveThreadRunning(state);
@@ -2744,7 +2766,7 @@ export function App(): JSX.Element {
     }
   }, [environmentPanelOpen, sideThread.close, sideThread.entry?.open]);
 
-  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${collaborationRail ? " collaboration-rail" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell${poppedOutMode ? " popped-out-shell" : ""}${compactNavigation ? " compact-navigation" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -2762,9 +2784,9 @@ export function App(): JSX.Element {
     resizingRightPanel ? " resizing-right-panel" : ""
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
-    "--sidebar-width": `${collaborationRail ? 88 : effectiveSidebarWidth}px`,
-    "--sidebar-open-width": `${collaborationRail ? 88 : sidebarWidth}px`,
-    "--workspace-sheet-left": `${collaborationRail ? 88 : sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
+    "--sidebar-width": `${effectiveSidebarWidth}px`,
+    "--sidebar-open-width": `${sidebarWidth}px`,
+    "--workspace-sheet-left": `${sidebarDrawerMode ? 0 : effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
     "--side-thread-width": `${sideThread.width}px`,
     "--conversation-split-left": `${splitLeftPercent}%`,
@@ -3032,7 +3054,7 @@ export function App(): JSX.Element {
           }
         }}
         gitStatus={state.gitStatus}
-        gitBusy={environmentGitBusy}
+        branchPickerDisabled={viewContextSwitchPending}
         projects={state.projects}
         activeContext={state.activeContext}
         activeProject={activeProject}
@@ -3117,13 +3139,7 @@ export function App(): JSX.Element {
         onOpenSkillsCatalog={openSkillsTab}
         onSelectProject={(id) => void selectProjectForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
-        onSelectGitBranch={async (branch) => {
-          try {
-            await checkoutBranch(branch);
-          } catch (error) {
-            setCheckoutErrorTip(error instanceof Error ? error.message : t("git.checkoutFailed"));
-          }
-        }}
+        onSelectGitBranch={checkoutBranch}
         onCreateGitBranch={async (branch) => {
           await createAndCheckoutBranch(branch);
           setBranchMenuOpen(false);
@@ -3252,7 +3268,6 @@ export function App(): JSX.Element {
         activeThreadForState(appStateRef.current),
       )?.cwd,
     setAppState: setState,
-    getAnyThreadIsRunning: () => environmentGitBusy,
     closeProjectMenus,
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
@@ -3391,6 +3406,12 @@ export function App(): JSX.Element {
     });
   }, [activateThread, revealConversationFromFocusedWorkspace]);
 
+  const openCollaborationHarnessSession = useStableCallback((id: string) => {
+    openHarnessView();
+    revealConversationFromFocusedWorkspace();
+    void activateThread(id);
+  });
+
   const {
     selectSessionTab,
     closeSessionTab,
@@ -3420,6 +3441,7 @@ export function App(): JSX.Element {
   });
 
   function prepareChannelTab(): void {
+    desktopWorkbenchController.deactivateRegion("primary");
     setProjectMenuOpen(false);
     setRuntimeMenuOpen(false);
     setCodexRuntimeMenu(null);
@@ -3468,6 +3490,7 @@ export function App(): JSX.Element {
   }
 
   function openHarnessView(): void {
+    desktopWorkbenchController.deactivateRegion("primary");
     setAppMode("harness");
     selectedCollaborationAgentRequestRef.current = "";
     setSelectedCollaborationAgentID("");
@@ -3491,6 +3514,7 @@ export function App(): JSX.Element {
   }
 
   async function openCollaborationAgentConversation(agentID: string, onboarding?: ChannelRoomOnboarding): Promise<void> {
+    const requestGeneration = ++directMessageRequestGenerationRef.current;
     selectedCollaborationAgentRequestRef.current = agentID;
     setSelectedCollaborationAgentID(agentID);
     setCollaborationSection("rooms");
@@ -3505,7 +3529,16 @@ export function App(): JSX.Element {
       setSelectedChannelRoomIDState(existingDirectMessage.id);
       clearChannelRoomUnread(existingDirectMessage.id);
     }
-    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) });
+    const isCurrentRequest = () => selectedCollaborationAgentRequestRef.current === agentID
+      && requestGeneration === directMessageRequestGenerationRef.current;
+    const result = await window.wuu.openChannelDirectMessage({ agent_id: agentID, ...(onboarding ? { onboarding } : {}) }).catch((reason: unknown) => {
+      if (!isCurrentRequest()) return null;
+      setSelectedCollaborationAgentID("");
+      throw reason;
+    });
+    if (!result || !isCurrentRequest()) return;
+    // An older directory poll must not erase the DM that was just opened.
+    channelDirectoryGenerationRef.current += 1;
     setChannelRooms((current) => {
       const existing = current.findIndex((room) => room.id === result.room.id);
       if (existing < 0) return [...current, result.room];
@@ -3513,9 +3546,9 @@ export function App(): JSX.Element {
       next[existing] = result.room;
       return next;
     });
-    if (selectedCollaborationAgentRequestRef.current !== agentID) return;
     if (channelRoomPreferences.archivedRoomIDs.includes(result.room.id)) unarchiveChannelRoom(result.room);
     setSelectedChannelRoomIDState(result.room.id);
+    setSelectedCollaborationAgentID("");
     clearChannelRoomUnread(result.room.id);
   }
 
@@ -3856,18 +3889,21 @@ export function App(): JSX.Element {
     clearThreadPendingComposerMessages,
     markOptimisticTurnInterrupted: (threadID) => {
       const interruptedAt = Date.now();
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        threadID,
-        (thread) => interruptLatestOptimisticTurn(thread, interruptedAt),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          threadID,
-          (thread) => interruptLatestOptimisticTurn(thread, interruptedAt),
-        ),
-      );
+      const interruptPendingTurn = (current: AppState): AppState => {
+        let changed = false;
+        const next = updateThreadByID(current, threadID, (thread) => {
+          const interrupted = interruptLatestOptimisticTurn(thread, interruptedAt);
+          changed = interrupted !== thread;
+          return interrupted;
+        });
+        // No server terminal event exists yet for a pending submission. Clear
+        // its local running flag as well as freezing the optimistic turn.
+        return changed && activeThreadForState(current)?.id === threadID
+          ? { ...next, running: isThreadRunning(activeThreadForState(next)) }
+          : next;
+      };
+      appStateRef.current = interruptPendingTurn(appStateRef.current);
+      setState(interruptPendingTurn);
     },
     variantByModel: runtimeVariantByModelRef.current,
   });
@@ -4160,6 +4196,7 @@ export function App(): JSX.Element {
       ...message,
       operationState: "preparing",
     });
+    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
     try {
       const encodedImages = await awaitComposerImages(message.images);
       if (
@@ -4209,6 +4246,7 @@ export function App(): JSX.Element {
         ),
       );
       removePendingComposerMessageByID(targetThread.id, message.id, "queue");
+      if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
@@ -4246,6 +4284,7 @@ export function App(): JSX.Element {
         { ...message, origin: "steer", operationState: "preparing" },
       ],
     }));
+    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
     try {
       const encodedImages = await awaitComposerImages(message.images);
       if (
@@ -4289,6 +4328,7 @@ export function App(): JSX.Element {
         ),
       );
       removePendingComposerMessageByID(targetThread.id, message.id, "guide");
+      if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
@@ -4346,7 +4386,8 @@ export function App(): JSX.Element {
       model: draftEngineRuntime.model || defaultExternalRuntime.model,
       effort: draftEngineRuntime.effort || defaultExternalRuntime.effort,
     };
-    requestSubmittedQueryScroll();
+    const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
+    requestSubmittedQueryScroll(optimisticTurn.items[0].id);
     appStateRef.current = {
       ...currentState,
       running: true,
@@ -4361,7 +4402,6 @@ export function App(): JSX.Element {
     let optimisticThreadID: string | undefined;
     // Render a tab-scoped optimistic turn before a new thread exists. Once
     // thread/start returns, the same turn moves into normal thread state.
-    const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
     if (!targetThread && currentState.activeSessionTabID) {
       setPendingNewThreadTurn({
         sessionTabID: currentState.activeSessionTabID,
@@ -4470,6 +4510,8 @@ export function App(): JSX.Element {
       const acceptedTurn: Turn = interruptedBeforeAcceptance
         ? { ...result.turn, status: "interrupted" }
         : result.turn;
+      const acceptedMessage = acceptedTurn.items.find(item => item.type === "user_message");
+      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
       setState((current) =>
         updateThreadByID(
           setThreadForPane(current, targetPane, thread),
@@ -4512,6 +4554,7 @@ export function App(): JSX.Element {
                     : dropOptimisticTurn(currentThread, optimisticTurnID),
             )
           : appStateRef.current;
+      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
       appStateRef.current = {
         ...droppedState,
         running: keepAcceptedTurn,
@@ -4792,8 +4835,9 @@ export function App(): JSX.Element {
       return false;
     }
     const targetIsActive = activeThreadIDForState(currentState) === targetThread.id;
+    const optimisticTurn = createOptimisticTurn(message, Date.now());
     if (targetIsActive) {
-      enableConversationAutoFollow();
+      requestSubmittedQueryScroll(optimisticTurn.items[0].id);
       appStateRef.current = {
         ...currentState,
         running: true,
@@ -4812,7 +4856,6 @@ export function App(): JSX.Element {
       // moment instead of waiting for the server's first turn
       // notification. The placeholder is replaced (or dropped on error)
       // once the real turn arrives or the request fails.
-      const optimisticTurn = createOptimisticTurn(message, Date.now());
       optimisticTurnID = optimisticTurn.id;
       appStateRef.current = updateThreadByID(
         appStateRef.current,
@@ -4853,6 +4896,8 @@ export function App(): JSX.Element {
       const acceptedTurn: Turn = interruptedBeforeAcceptance
         ? { ...result.turn, status: "interrupted" }
         : result.turn;
+      const acceptedMessage = acceptedTurn.items.find((item) => item.type === "user_message");
+      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
       setState((current) =>
         updateThreadByID(
           current,
@@ -4899,6 +4944,7 @@ export function App(): JSX.Element {
         running: targetIsActive ? keepAcceptedTurn : appStateRef.current.running,
         status: interrupted || keepAcceptedTurn ? "" : errorMessage,
       };
+      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
       setState((current) => ({
         ...(optimisticTurnID
           ? updateThreadByID(
@@ -4955,18 +5001,6 @@ export function App(): JSX.Element {
     </UILayerPortal>
   ) : null;
 
-  const checkoutErrorTipNode = checkoutErrorTip ? (
-    <UILayerPortal layer="notice">
-      <TopNotice
-        message={checkoutErrorTip}
-        icon={CircleAlert}
-        onDismiss={dismissCheckoutErrorTip}
-        isError
-        dismissAriaLabel={t("common.closeNotice")}
-      />
-    </UILayerPortal>
-  ) : null;
-
   const modelCatalogTipNode = modelCatalogTip ? (
     <UILayerPortal layer="notice">
       <TopNotice
@@ -4998,7 +5032,6 @@ export function App(): JSX.Element {
     return (
       <>
         {archiveTipNode}
-        {checkoutErrorTipNode}
         {modelCatalogTipNode}
         <SettingsShellRenderer
           initialized={state.initialized}
@@ -5084,7 +5117,7 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible && !collaborationRail ? (
+  const collaborationNavigation = sidebarToggleVisible ? (
     <button
       className="icon-button side-panel-toggle-button sidebar-toggle-button"
       data-wuu-component="sidebar-toggle"
@@ -5115,7 +5148,6 @@ export function App(): JSX.Element {
       model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
     >
       {archiveTipNode}
-      {checkoutErrorTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
         <div
@@ -5123,7 +5155,7 @@ export function App(): JSX.Element {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
-          data-wuu-sidebar-mode={collaborationRail ? "rail" : sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
+          data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           {!poppedOutMode ? (
             <>
@@ -5156,11 +5188,32 @@ export function App(): JSX.Element {
               </button>
             </div>
           ) : null}
-          {appMode === "collaboration" && ENABLE_GROUP_CHAT ? (
+          <AppSidebar
+            collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
+              { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
+              { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
+                label: t("channels.newConversation"), disabled: !state.initialized,
+                onActivate: () => { closeCompactSessionSwitcher(); openNewChannelRoom(); } },
+              ...sidebarConversations.flatMap((conversation) => [{
+                  id: `collaboration:${conversation.id}`, kind: "room" as const,
+                  parentId: "section:collaboration", depth: 1, label: conversation.name,
+                  active: appMode === "collaboration" && collaborationSection === "rooms" && !agentOnboardingActive && (conversation.room
+                    ? conversation.room.id === selectedChannelRoomID : conversation.agent?.id === selectedCollaborationAgent?.id),
+                  pinned: conversation.pinned, unread: Boolean(conversation.room?.unread_count),
+                  running: conversation.room?.activity_status === "thinking" || conversation.agent?.activity_status === "thinking",
+                  disabled: !state.initialized,
+                  onActivate: () => {
+                    closeCompactSessionSwitcher();
+                    if (conversation.room) selectChannelRoom(conversation.room.id);
+                    else if (conversation.agent) void selectCollaborationAgent(conversation.agent.id);
+                  },
+                  onTogglePinned: () => { void updateCollaborationConversationPreference(conversation, "pin"); },
+                }]),
+            ] : undefined}
+            collaborationNavigation={ENABLE_GROUP_CHAT ? (
             <CollaborationSidebar
+              embedded
               initialized={Boolean(state.initialized)}
-              collapsed={collaborationRail}
-              onToggleCollapsed={toggleSidebar}
               agents={namedAgents}
               rooms={channelRooms}
               pinnedRoomIDs={channelRoomPreferences.pinnedRoomIDs}
@@ -5168,8 +5221,8 @@ export function App(): JSX.Element {
               onTogglePinned={(conversation) => void updateCollaborationConversationPreference(conversation, "pin")}
               onHideConversation={(conversation) => void updateCollaborationConversationPreference(conversation, "hide")}
               onDeleteConversation={(conversation) => void deleteCollaborationConversation(conversation)}
-              selectedAgentID={collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
-              selectedRoomID={collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
+              selectedAgentID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedCollaborationAgent?.id : undefined}
+              selectedRoomID={appMode === "collaboration" && collaborationSection === "rooms" ? selectedChannelRoomID : undefined}
               onSelectAgent={(agent) => {
                 closeCompactSessionSwitcher();
                 selectCollaborationAgent(agent);
@@ -5184,6 +5237,7 @@ export function App(): JSX.Element {
               }}
               onEditAgent={(agentID) => {
                 closeCompactSessionSwitcher();
+                openChannelsView();
                 setAgentOnboardingActive(false);
                 setNewRoomRequest(0);
                 setEditChannelRoomRequestID("");
@@ -5191,13 +5245,14 @@ export function App(): JSX.Element {
               }}
               onEditRoom={(roomID) => {
                 closeCompactSessionSwitcher();
+                openChannelsView();
                 setAgentOnboardingActive(false);
                 setNewRoomRequest(0);
                 setEditChannelAgentRequestID("");
                 setEditChannelRoomRequestID(roomID);
               }}
               draftAgent={agentOnboardingDraft?.createdAgent ? undefined : agentOnboardingDraft ?? undefined}
-              draftSelected={agentOnboardingActive}
+              draftSelected={appMode === "collaboration" && agentOnboardingActive}
               onSelectDraft={openNewNamedAgent}
               onCreateRoom={() => {
                 closeCompactSessionSwitcher();
@@ -5207,8 +5262,6 @@ export function App(): JSX.Element {
                 closeCompactSessionSwitcher();
                 openHarnessView();
               }}
-              onPointerEnter={openSidebarDrawer}
-              onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
               onOpenAccount={() => {
                 if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
                 else setAccountOpen(true);
@@ -5218,8 +5271,7 @@ export function App(): JSX.Element {
                 setSettingsOpen(true);
               }}
             />
-          ) : (
-          <AppSidebar
+          ) : undefined}
             sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
             mobileNavigation={compactNavigation && isTouchWebShell()}
             drawerVisible={sidebarDrawerVisible}
@@ -5231,8 +5283,8 @@ export function App(): JSX.Element {
                 ? workspaceContext.project_id
                 : undefined
             }
-            pinnedThreads={sidebarPinnedThreads}
-            activeThreadID={activeThreadID}
+            pinnedThreads={sidebarPinnedThreads.filter(thread => !managedSidebar.threadIDs.has(thread.id))}
+            activeThreadID={appMode === "harness" ? activeThreadID : undefined}
             pendingThreadID={visiblePendingThreadID}
             pendingProjectID={visiblePendingProjectID}
             collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
@@ -5244,11 +5296,13 @@ export function App(): JSX.Element {
             searchOpen={conversationSearch.open}
             sectionOrder={sidebarSectionOrder}
             onStartNewThread={() => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadWithComposerFocus();
             }}
             onOpenSkillsTab={() => {
+              openHarnessView();
               closeCompactSessionSwitcher();
               openSkillsTab();
             }}
@@ -5262,6 +5316,7 @@ export function App(): JSX.Element {
             }}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void activateThread(id);
@@ -5293,6 +5348,7 @@ export function App(): JSX.Element {
                     if (!project || project.missing) {
                       return;
                     }
+                    openHarnessView();
                     setFocusedWorkspaceContext({
                       kind: "project",
                       project_id: project.id,
@@ -5304,11 +5360,13 @@ export function App(): JSX.Element {
                 : undefined
             }
             onStartNewThreadForProject={(id) => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               startNewThreadForProjectWithComposerFocus(id);
             }}
             onSelectProjectThread={(projectID, threadID) => {
+              openHarnessView();
               revealConversationFromFocusedWorkspace();
               closeCompactSessionSwitcher();
               void selectProjectThread(projectID, threadID);
@@ -5332,7 +5390,6 @@ export function App(): JSX.Element {
               setSettingsOpen(true);
             }}
           />
-          )}
 
           {compactNavigation ? (
             <>
@@ -5355,7 +5412,7 @@ export function App(): JSX.Element {
             </>
           ) : null}
 
-          {sidebarDrawerMode || collaborationRail ? null : (
+          {sidebarDrawerMode ? null : (
             <div
               className="sidebar-resizer"
               inert={rightPanelOpen && rightPanelGlobalized}
@@ -5385,7 +5442,10 @@ export function App(): JSX.Element {
         onClearQuery={clearConversationSearchQuery}
         onKeyDown={handleConversationSearchKeyDown}
         onSelectIndex={setConversationSearchSelectedIndex}
-        onSelectResult={selectConversationSearchResult}
+        onSelectResult={(result) => {
+          openHarnessView();
+          return selectConversationSearchResult(result);
+        }}
       />
             </>
           ) : null}
@@ -5446,7 +5506,10 @@ export function App(): JSX.Element {
               onSelectRoom={selectChannelRoom}
               onRoomRead={clearChannelRoomUnread}
               onOpenMemoryDirectory={openAgentMemoryDirectory}
-              onOpenSession={handleOpenThreadInSplit}
+              onOpenSession={openCollaborationHarnessSession}
+              managedThreadsByAgentID={managedSidebar.byAgentID}
+              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+              onOpenAgentConversation={selectCollaborationAgent}
               composerDraft={activeChannelComposerDraft}
               onComposerDraftChange={updateSelectedChannelRoomDraft}
               directoryAgents={namedAgents}
@@ -5523,7 +5586,7 @@ export function App(): JSX.Element {
         )}
         {/* Unmount the hidden rail so compact scrolling does not measure turns
             or update navigation state for controls that cannot be used. */}
-        {!compactNavigation ? (
+        {ENABLE_CONVERSATION_TURN_RAIL && !compactNavigation ? (
           <ConversationTurnRail
             turns={turns}
             activeTurnID={turns[turns.length - 1]?.id}
@@ -5554,11 +5617,7 @@ export function App(): JSX.Element {
             try {
               await checkoutBranch(branch);
             } catch (error) {
-              setCheckoutErrorTip(
-                error instanceof Error
-                  ? error.message
-                  : t("git.checkoutFailed"),
-              );
+              showErrorToast(error, t("git.checkoutFailed"));
             }
           }}
           onCreateBranch={(branch) => createAndCheckoutBranch(branch)}
@@ -5747,13 +5806,6 @@ export function App(): JSX.Element {
               </>
             )}
             </div>
-            {mainConversationDockVisible && !emptyConversation ? (
-              <JumpToLatestPill
-                containerRef={conversationScrollRef}
-                bottomAnchor={dockComposerNode}
-                onScrolledAwayChange={setMainConversationScrolledAway}
-              />
-            ) : null}
           </div>
         ) : (
           <RuntimeLoading
@@ -5802,9 +5854,15 @@ export function App(): JSX.Element {
 
         <ConversationStatusCluster
           host={desktopPluginHost}
-          visible={
-            mainConversationDockVisible && !mainConversationScrolledAway
-          }
+          visible={mainConversationDockVisible}
+          clusterRef={statusClusterRef}
+          navigation={!emptyConversation ? (
+            <JumpToLatestPill
+              containerRef={conversationScrollRef}
+              bottomAnchor={dockComposerNode}
+              inline
+            />
+          ) : null}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}

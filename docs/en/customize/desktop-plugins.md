@@ -160,6 +160,32 @@ receive arbitrary parent nodes, split trees, or panel dimensions. User-facing
 navigation, workspace-tool, and settings entries are declared in the manifest and
 point to Views registered by the same plugin.
 
+## Desktop spacing
+
+`desktop/src/renderer/styles/spacing.css` owns shared spacing roles. Use
+`--control-padding-*` for form controls, `--menu-item-padding-*` for menu rows,
+`--compact-padding-*` for output summaries, `--card-padding` for grouped content,
+and `--panel-padding` for dialog/panel bodies. Page insets and section gaps have
+separate roles even when their default values match.
+
+The page owns its outer inset, a group owns its horizontal inset, and its rows
+own their vertical padding. Avoid adding the same inset again in nested content.
+Menus and forms use minimum heights and natural content height; density changes
+whitespace without shrinking minimum targets. Code font size stays independent.
+
+Host controls and the Plugin UI Kit consume the existing public
+`--wuu-space-unit` and `--wuu-space-density` inputs. Internal roles are recomputed
+at `data-wuu-density` boundaries so compact plugin pages also scale their nested
+controls, without multiplying density twice. These internal names are not new
+Extension API tokens. Safe areas, code gutters and icon alignment may keep
+purpose-specific geometry.
+
+With the desktop Vite server running, open `/dev/design-system/` for production
+component examples and `/dev/design-system/viewport.html` for narrow layouts.
+Inspect light/dark themes, 14px/20px UI text, standard/compact density, long
+content, menus and dialogs. Rendered inspection checks spacing; tests should
+cover behavior rather than pin CSS declarations.
+
 ## Standard Web APIs are available
 
 Desktop plugins are trusted Renderer code and may use standard APIs such as

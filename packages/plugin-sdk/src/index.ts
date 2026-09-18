@@ -540,6 +540,7 @@ export const HOST_SERVICE_METHODS = [
   "host.session.list",
   "host.session.cancel",
   "host.session.inspect",
+  "host.session.control",
   "host.session.history.read",
   "host.session.history.search",
   "host.workspace.status",
@@ -572,6 +573,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.control": "host.session.control",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -994,10 +996,11 @@ export interface HostServiceContracts {
         prompt: string;
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
-      presentation?: { kind: "query_bubble"; text: string; name?: string; related_session_id?: string };
+      presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
       cause?: string;
       if_running?: "queue" | "steer";
       reply_to_turn_id?: string;
+      control_revision?: number;
     };
     result: { state: string; session_id: string; turn_id?: string; queue_id?: string; steered?: boolean };
   };
@@ -1017,8 +1020,12 @@ export interface HostServiceContracts {
     };
   };
   "host.session.cancel": {
-    params: { session_id: string; turn_id?: string; queue_id?: string };
+    params: { session_id: string; turn_id?: string; queue_id?: string; control_revision?: number };
     result: { session_id: string; turn_id?: string; queue_id?: string; cancelled: boolean };
+  };
+  "host.session.control": {
+    params: { session_id: string; state?: "active" | "paused" | "released"; revision?: number };
+    result: { session_id: string; manager_id?: string; state?: string; revision: number };
   };
   "host.session.inspect": {
     params: {

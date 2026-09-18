@@ -3,7 +3,7 @@ package ai.wuu.nativeapp
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ChatMessage(val id: String, val role: String, val text: String, val contentRef: String = "", val attachments: List<String> = emptyList(), val tool: ToolActivity? = null, val turnId: String = "")
+data class ChatMessage(val id: String, val role: String, val text: String, val contentRef: String = "", val attachments: List<String> = emptyList(), val tool: ToolActivity? = null, val turnId: String = "", val sourceSessionId: String = "", val sourceSessionName: String = "")
 data class ToolActivity(val name: String, val status: String, val arguments: String, val result: String, val error: String) {
     val statusLabel get() = when (status) { "in_progress" -> "执行中"; "completed" -> "已完成"; "failed" -> "失败"; "ended" -> "已结束"; else -> "状态未知" }
     companion object {
@@ -43,11 +43,17 @@ class ChatThread(val value: JSONObject, pending: List<JSONObject> = emptyList(),
         val messages = (turn.optJSONArray("items") ?: JSONArray()).objects().mapNotNull { item ->
             val role = when (item.optString("type")) { "user_message" -> "user"; "agent_message" -> "assistant"; "error" -> "error"; "tool_call" -> "tool"; else -> return@mapNotNull null }
             ChatMessage(turn.getString("id") + ":" + item.getString("id"), role, item.optString("text", item.optString("error")), item.optString("remote_content_ref"),
-                ((item.optJSONArray("images") ?: JSONArray()).objects() + (item.optJSONArray("files") ?: JSONArray()).objects()).map { it.toString() },
-                if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"))
+                ((item.optJSONArray("images") ?: JSONArray()).objects() + (item.optJSONArray("files") ?: JSONArray()).objects() + (item.optJSONArray("markdown_images") ?: JSONArray()).objects() +
+                    item.optJSONObject("result_detail")?.optJSONArray("content")?.objects().orEmpty().filter { it.optString("type") == "image" }.map {
+                        JSONObject(it.toString()).put("media_type", it.optString("mime_type"))
+                    }).map { it.toString() },
+                if (role == "tool") ToolActivity.from(item, turn.optString("status")) else null, turnId = turn.getString("id"),
+                sourceSessionId = if (item.optString("origin") == "plugin" && item.optString("presentation_kind") == "session_message") item.optString("related_session_id") else "",
+                sourceSessionName = item.optString("name"))
         }
         val error = turn.optJSONObject("error")?.optString("message").orEmpty()
-        if (error.isNotEmpty() && messages.none { it.role == "error" }) messages + ChatMessage(turn.getString("id") + ":error", "error", error) else messages
+        val cancelled = turn.optString("status") == "interrupted" && turn.optJSONObject("error")?.optString("category") == "cancelled"
+        if (!cancelled && error.isNotEmpty() && messages.none { it.role == "error" }) messages + ChatMessage(turn.getString("id") + ":error", "error", error) else messages
     }
     // Pages may split a turn. Live fields and item deletions take precedence over older history.
     fun prependHistory(page: JSONObject) {

@@ -74,6 +74,9 @@ type controller struct {
 	stopOnce      sync.Once
 	now           func() time.Time
 	tick          time.Duration
+	// dispatch serializes due-task firing so overlapping ticks and explicit
+	// fireDue calls cannot return while a run is still stuck in starting.
+	dispatch sync.Mutex
 }
 
 func Handler() pluginapi.Handler {
@@ -454,6 +457,8 @@ func (c *controller) remove(ctx context.Context, rawID string) error {
 }
 
 func (c *controller) fireDue(ctx context.Context) {
+	c.dispatch.Lock()
+	defer c.dispatch.Unlock()
 	now := c.now().UTC()
 	c.mu.Lock()
 	var due []Task
@@ -491,6 +496,8 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 	requestID := "automation-" + runID
 	run := Run{ID: runID, TaskID: task.ID, Task: task, RequestID: requestID, Status: "starting", TriggeredAt: now}
 	c.mu.Lock()
+	workspaceID := c.workspaceID
+	workspaceRoot := c.workspaceRoot
 	c.runs = append(c.runs, run)
 	if len(c.runs) > maxRuns {
 		c.runs = c.runs[len(c.runs)-maxRuns:]
@@ -506,7 +513,7 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 	var err error
 	if task.Mode == "new_thread" {
 		var created pluginapi.SessionCreateResult
-		if task.WorkspaceID != c.workspaceID || task.WorkspaceRoot != c.workspaceRoot {
+		if task.WorkspaceID != workspaceID || filepath.Clean(task.WorkspaceRoot) != filepath.Clean(workspaceRoot) {
 			err = errors.New("automation target workspace does not match the active plugin workspace")
 		} else {
 			err = c.host.CallHost(ctx, pluginapi.HostServiceSessionCreate, pluginapi.SessionCreateParams{RequestID: "create-" + runID, Name: task.Title, Visibility: "user", ContextSource: "fresh", Workspace: workspaceMode, WorkspaceID: task.WorkspaceID, WorkspaceRoot: task.WorkspaceRoot}, &created)
@@ -523,6 +530,9 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 	for index := range c.runs {
 		if c.runs[index].ID != runID {
 			continue
+		}
+		if runSettled(c.runs[index].Status) {
+			return
 		}
 		c.runs[index].SessionID = sessionID
 		c.runs[index].WorkspaceRoot = executionRoot
@@ -577,6 +587,15 @@ func (c *controller) snapshotRuns() []Run {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Run(nil), c.runs...)
+}
+
+func runSettled(status string) bool {
+	switch status {
+	case "completed", "failed", "interrupted", "discarded":
+		return true
+	default:
+		return false
+	}
 }
 func (c *controller) toolResult(value any) (pluginapi.ToolResult, error) {
 	encoded, err := json.Marshal(value)

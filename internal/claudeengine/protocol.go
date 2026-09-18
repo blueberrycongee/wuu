@@ -10,8 +10,7 @@ import (
 // top-level "type" field dispatches (system / assistant / user / result /
 // stream_event).
 
-// userEnvelope is the stdin input message shape for both user prompts and
-// tool results.
+// userEnvelope is the stdin user prompt shape.
 type userEnvelope struct {
 	Type            string      `json:"type"`
 	Message         userMessage `json:"message"`
@@ -62,29 +61,7 @@ func userPromptEnvelope(message providers.ChatMessage) userEnvelope {
 	}
 }
 
-func toolResultEnvelope(toolUseID, content string, isError bool) userEnvelope {
-	return userEnvelope{
-		Type: "user",
-		Message: userMessage{
-			Role: "user",
-			Content: []contentBlock{{
-				Type:      "tool_result",
-				ToolUseID: toolUseID,
-				Content:   content,
-				IsError:   isError,
-			}},
-		},
-	}
-}
-
 // incoming messages ---------------------------------------------------------
-
-// initMessage is system/subtype=init: carries the session id and version.
-type initMessage struct {
-	SessionID         string `json:"session_id"`
-	ClaudeCodeVersion string `json:"claude_code_version,omitempty"`
-	Model             string `json:"model,omitempty"`
-}
 
 // assistantContentBlock mirrors content blocks in assistant messages.
 type assistantContentBlock struct {
@@ -137,6 +114,7 @@ type resultMessage struct {
 	IsError    bool        `json:"is_error"`
 	StopReason string      `json:"stop_reason,omitempty"`
 	Result     string      `json:"result,omitempty"`
+	Errors     []string    `json:"errors,omitempty"`
 	Usage      *tokenUsage `json:"usage,omitempty"`
 	Error      *struct {
 		Message string `json:"message,omitempty"`

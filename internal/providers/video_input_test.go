@@ -35,7 +35,7 @@ func TestVideoAdmissionUsesModelAndTransport(t *testing.T) {
 }
 
 func TestVideoHistorySurvivesModelSwitchWithoutLosingPDFPolicy(t *testing.T) {
-	messages := []ChatMessage{{Role: "user", Files: []InputFile{{MediaType: "video/mp4", Data: "AAAA"}, {MediaType: "application/pdf", Data: "BBBB"}}}, {Role: "assistant", Content: "Seen"}, {Role: "user", Content: "Continue"}}
+	messages := []ChatMessage{{Role: "user", Files: []InputFile{{MediaType: "video/mp4", Data: "AAAA"}, {MediaType: "application/pdf", Data: "BBBB"}}}, {Role: "assistant", Content: "Seen"}, {Role: "user", Content: "Continue"}, {Role: "user", Hidden: true, Content: "Runtime context"}}
 	req, err := PrepareVideoInput(ChatRequest{Messages: messages, MediaInput: MediaInputPolicy{File: true, FileKnown: true}}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +49,32 @@ func TestVideoHistorySurvivesModelSwitchWithoutLosingPDFPolicy(t *testing.T) {
 	}
 	if out[0].Content != "[1 video omitted: unsupported]" {
 		t.Fatalf("missing omission marker: %q", out[0].Content)
+	}
+}
+
+func TestVideoAdmissionWithTrailingRuntimeContext(t *testing.T) {
+	for _, hiddenVideo := range []bool{false, true} {
+		messages := []ChatMessage{
+			{Role: "user", Hidden: hiddenVideo, Files: []InputFile{{MediaType: "video/mp4", Data: "AAAA"}}},
+			{Role: "user", Hidden: true, Content: "Runtime context"},
+			{Role: "system", Content: "Additional instructions"},
+			{Role: "user", Hidden: true, Content: "Plugin context"},
+		}
+		req := ChatRequest{Messages: messages, MediaInput: MediaInputPolicy{Video: true, VideoKnown: true}}
+		if _, err := PrepareVideoInput(req, false); err == nil {
+			t.Fatalf("runtime context bypassed video admission (hidden video=%v)", hiddenVideo)
+		}
+		prepared, err := PrepareVideoInput(req, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := ProjectMediaForPolicy(prepared.Messages, prepared.MediaInput)
+		if len(out[0].Files) != 1 || out[0].Files[0].Data != "AAAA" {
+			t.Fatal("supported video was lost behind runtime context")
+		}
+		if len(messages[0].Files) != 1 {
+			t.Fatal("admission mutated stored media")
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { TodoUpdate } from "../shared/protocol";
 import type {
   ComposerStatusContext,
@@ -18,6 +18,9 @@ type ResolvedStatusItem = ComposerStatusItem & Readonly<{ key: string }>;
 interface ConversationStatusClusterProps {
   host: PluginHost;
   visible: boolean;
+  /** Measures only the compact row; expanded popovers do not resize the stream. */
+  clusterRef?: (node: HTMLDivElement | null) => void;
+  navigation?: ReactNode;
   threadId?: string;
   todoUpdate: TodoUpdate | undefined;
   onOpenSession: (sessionId: string) => void;
@@ -31,6 +34,8 @@ interface ComposerStatusStore {
 export function ConversationStatusCluster({
   host,
   visible,
+  clusterRef,
+  navigation,
   threadId,
   todoUpdate,
   onOpenSession,
@@ -70,7 +75,7 @@ export function ConversationStatusCluster({
     return () => document.removeEventListener("pointerdown", dismissOverflow);
   }, []);
 
-  if (!visible || (!todoVisible && items.length === 0)) return null;
+  if (!visible || (!navigation && !todoVisible && items.length === 0)) return null;
 
   const visibleItemLimit = MAX_VISIBLE_ITEMS - (todoVisible ? 1 : 0);
   const visibleItems = items.slice(0, visibleItemLimit);
@@ -78,8 +83,10 @@ export function ConversationStatusCluster({
   return (
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
+      ref={clusterRef}
       aria-label={t("channels.status")}
     >
+      {navigation}
       {todoVisible && todoUpdate ? <TodoStatusCapsule todoUpdate={todoUpdate} /> : null}
       {visibleItems.map((item) => (
         <ComposerStatusCapsule key={item.key} item={item} onOpenSession={onOpenSession} />

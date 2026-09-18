@@ -62,6 +62,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private var live: ChatThread? = null
     var threadSettings by mutableStateOf<ThreadSettings?>(null); private set
     var threadEngine by mutableStateOf(""); private set
+    internal val imagePreviews = ImagePreviewLoader()
     private var remote: Remote? = null
     val collaboration = Collaboration { method, params ->
         val transport = checkNotNull(remote) { "电脑未连接" }; val stamp = generation
@@ -74,8 +75,10 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     val conversationDrafts = androidx.compose.runtime.mutableStateMapOf<String, String>()
     val conversationAttachments = androidx.compose.runtime.mutableStateMapOf<String, List<InputAttachment>>()
     private var history: History? = null
+    private var restoreHistory = false
     private var liveRows = emptyList<ThreadRow>()
     private var refresh: Job? = null
+    private var reconnectJob: Job? = null
     private var eventJob: Job? = null
     private var loginJob: Job? = null
     private var generation = 0L
@@ -87,8 +90,26 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         account?.let { session -> vault.read("directory")?.let { RememberedDirectory.restore(session, it) } }?.let {
             devices = it.getJSONArray("devices").objects(); authMethod = it.optString("auth_method"); directoryCached = true
         }
+        account?.let { session ->
+            vault.read("location")?.let { NavigationLocation.restore(session, devices, it) }?.let { location ->
+                host = devices.first { it.optString("pub") == location.getString("host") }
+                workspace = location.optString("workspace")
+                activeID = location.optString("thread").takeIf { it.isNotEmpty() }
+                collaboration.mode(location.optBoolean("collaboration", true))
+                collaboration.select(location.optString("room").takeIf { it.isNotEmpty() })
+                history = History(session, location.getString("host"), directory)
+                restoreHistory = true
+            }
+        }
     } catch (e: Exception) { error = e.message }
         push.bind(account)
+    }
+    fun rememberLocation() {
+        val session = account ?: return; val selected = host ?: return
+        try {
+            vault.write("location", NavigationLocation.encode(session, selected.getString("pub"), workspace,
+                activeID, collaboration.selectedID, collaboration.visible))
+        } catch (e: Exception) { error = e.message }
     }
     fun perform(block: suspend () -> Unit) {
         val stamp = generation
@@ -226,6 +247,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (selection != openGeneration || session != previous) return@perform
         require(device.optString("role") == "host" && devices.any { it.optString("pub") == device.optString("pub") })
         host = device
+        collaboration.mode(true)
+        rememberLocation()
         val store = History(session, device.getString("pub"), directory); history = store
         val stamp = generation; store.restore(); check(stamp); showHistory(); foreground()
     }
@@ -264,29 +287,44 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (refresh?.isActive == true) return
         viewModelScope.launch { push.refresh() }
         val stamp = generation
+        // History HTTP requests must never hold up the encrypted execution channel.
+        reconnectJob = viewModelScope.launch {
+            while (generation == stamp) {
+                if (host != null && !connected && !connecting) {
+                    try { connect(stamp) } catch (_: CancellationException) { return@launch }
+                    catch (e: Exception) { if (generation == stamp) connectionStatus = e.message ?: "电脑未连接" }
+                }
+                delay(3_000)
+            }
+        }
         refresh = viewModelScope.launch {
+            if (restoreHistory) {
+                try { history?.restore() } catch (_: CancellationException) { return@launch }
+                catch (e: Exception) { if (generation == stamp) report(e) }
+                check(stamp); restoreHistory = false; showHistory()
+            }
             while (generation == stamp) {
                 try {
                     loadDevices(); check(stamp)
                     history?.sync(); check(stamp); showHistory()
                 } catch (_: CancellationException) { return@launch }
-                catch (e: Exception) { check(stamp); if (e is HttpFailure && e.status == 401) report(e); connectionStatus = e.message ?: "历史同步失败" }
-                if (host != null && !connected && !connecting) {
-                    try { connect(stamp) } catch (_: CancellationException) { return@launch }
-                    catch (e: Exception) { connectionStatus = e.message ?: "电脑未连接" }
-                }
+                catch (e: Exception) { check(stamp); if (e is HttpFailure && e.status == 401) report(e); if (!connected) connectionStatus = e.message ?: "历史同步失败" }
                 delay(10_000)
             }
         }
     }
     fun background() {
         collaboration.invalidate()
-        generation++; refresh?.cancel(); refresh = null; eventJob?.cancel(); eventJob = null
+        generation++; refresh?.cancel(); refresh = null; reconnectJob?.cancel(); reconnectJob = null; eventJob?.cancel(); eventJob = null
         remote?.close(); remote = null; connected = false; connecting = false; approval = null; sending = false
-        loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
+        imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
         questions = emptyList(); questionRevision++
     }
+    fun reconnect() {
+        if (!connected && !connecting && host != null) perform { connect(generation) }
+    }
     private suspend fun connect(stamp: Long) {
+        if (connected || connecting) return
         val session = account ?: return; val selected = host ?: return
         connecting = true
         val transport = Remote(session, selected.getString("pub")); remote = transport
@@ -321,13 +359,22 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             transport.connect(); check(stamp)
             transport.call("initialize"); check(stamp)
             connected = true; connectionStatus = "已连接"
+        } catch (e: Exception) {
+            transport.close()
+            if (remote === transport) { remote = null; connected = false; connecting = false }
+            throw e
+        }
+        // A missing conversation or failed directory read is not a transport failure.
+        try {
             loadQuestions(); check(stamp)
             val result = transport.call("workspace/list"); check(stamp)
             workspaces = result.optJSONArray("workspaces")?.objects() ?: emptyList()
-            if (workspace.isBlank()) workspace = result.optString("current").ifBlank { workspaces.firstOrNull()?.optString("path") ?: "" }
+            if (workspaces.none { it.optString("path") == workspace }) workspace = result.optString("current").ifBlank { workspaces.firstOrNull()?.optString("path") ?: "" }
             loadThreads(); check(stamp)
-            activeID?.let { open(it) }
-        } catch (e: Exception) { transport.close(); if (remote === transport) { remote = null; connected = false }; throw e }
+            activeID?.let { open(it, preservingContent = true) }
+        } catch (_: CancellationException) {} catch (e: Exception) {
+            if (generation == stamp && remote === transport) report(e)
+        }
         finally { if (generation == stamp) connecting = false }
     }
     suspend fun loadThreads() {
@@ -340,10 +387,13 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (remote !== transport || workspace != selectedWorkspace || search.trim() != query || archivedList != archived || revision != listRevision) return
         liveRows = (if (query.isEmpty()) result.getJSONArray("threads").objects() else result.getJSONArray("results").objects().map { it.getJSONObject("thread") }).map { ThreadRow.from(it) }; showHistory()
     }
-    suspend fun open(id: String) {
+    suspend fun open(id: String, preservingContent: Boolean = false) {
         val stamp = generation; val opening = ++openGeneration
-        activeID = id; live = null; threadSettings = null; pending = emptyList(); messages = savedMessages(history?.snapshot?.cached(id)); running = false; readOnly = true
-        hasOlder = false; loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
+        if (!preservingContent || activeID != id) {
+            live = null; threadSettings = null; pending = emptyList(); messages = savedMessages(history?.snapshot?.cached(id)); running = false; readOnly = true
+        }
+        activeID = id
+        hasOlder = false; imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false
         title = rows.firstOrNull { it.id == id }?.title ?: "会话"
         if (connected) {
             checkNotNull(remote).call("thread/resume", json("session_id" to id, "response_only" to true, "history_page" to true), snapshotTag = opening)
@@ -391,11 +441,21 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val opening = ++openGeneration
         val result = checkNotNull(remote).call("thread/start", params); check(stamp)
         if (opening != openGeneration) return
-        live = ChatThread(result.getJSONObject("thread")); activeID = live?.id; loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false; showLive(); loadThreads()
+        live = ChatThread(result.getJSONObject("thread")); activeID = live?.id; imagePreviews.clear(); loadingHistory = false; loadingContent = emptySet(); attachmentPreview = null; loadingAttachment = false; showLive(); loadThreads()
     }
     suspend fun export(context: android.content.Context) {
         val session = account; val selection = openGeneration; val stamp = generation
         exportConversation(context, messages) { account == session && openGeneration == selection && generation == stamp }
+    }
+    suspend fun attachmentThumbnail(message: ChatMessage, index: Int): LoadedAttachment {
+        val thread = live ?: throw CancellationException()
+        val transport = remote ?: throw CancellationException()
+        val stamp = generation; val selection = openGeneration
+        require(index in message.attachments.indices && thread.messages.any { it.id == message.id })
+        val result = transport.readAttachment(JSONObject(message.attachments[index]), thread.id, message.id, preview = true)
+        check(stamp)
+        if (selection != openGeneration) throw CancellationException()
+        return result
     }
     suspend fun previewAttachment(message: ChatMessage, index: Int) {
         val thread = live ?: return; val transport = remote ?: return
@@ -405,6 +465,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             val result = transport.readAttachment(JSONObject(message.attachments[index]), thread.id, message.id); check(stamp)
             if (selection == openGeneration && remote === transport && live?.messages?.contains(message) == true) attachmentPreview = result
         } finally { if (stamp == generation && selection == openGeneration) loadingAttachment = false }
+    }
+    suspend fun previewCollaborationAttachment(message: JSONObject, field: String, index: Int) {
+        if (!connected || loadingAttachment) return
+        val stamp = generation; loadingAttachment = true
+        try { val result = collaboration.readAttachment(message, field, index); check(stamp); attachmentPreview = result }
+        finally { if (stamp == generation) loadingAttachment = false }
     }
     suspend fun exportAttachment(context: android.content.Context, attachment: LoadedAttachment, view: Boolean) {
         val stamp = generation; val selection = openGeneration
@@ -466,6 +532,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         check(stamp); questions = questions.filterNot { it.optString("request_id") == id }
     }
     suspend fun leaveHost(removeCache: Boolean = false): Long {
+        vault.delete("location")
+        restoreHistory = false
         val oldHistory = history
         collaboration.clear(); conversationDrafts.clear(); conversationAttachments.clear()
         background(); history = null; host = null; activeID = null; live = null; openGeneration++

@@ -8,7 +8,7 @@ COPY internal/statepath ./internal/statepath
 RUN CGO_ENABLED=0 go build -trimpath -o /wuu-server ./cmd/wuu-server
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --create-home wuu && mkdir /data && chown wuu:wuu /data
 COPY --from=build /wuu-server /usr/local/bin/wuu-server
 USER wuu

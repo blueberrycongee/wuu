@@ -1,8 +1,8 @@
 # Skills
 
-A Skill is a reusable task brief that makes the agent follow fixed steps, tools, and
-delivery requirements in a specific workflow. It suits recurring work such as release
-checks, documentation generation, and code review — not a standalone plugin process.
+A Skill is a reusable task brief with steps, tool guidance, and delivery requirements.
+Use it for recurring work such as release checks, documentation, and code review.
+Review the result as usual; loading a Skill does not guarantee a correct outcome.
 
 ## View and use Skills
 

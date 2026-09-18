@@ -43,7 +43,7 @@
   gap: 12px;
   padding: 14px 18px;
   color: var(--image-preview-toolbar-text);
-  font-size: 13px;
+  font-size: var(--font-ui);
   user-select: none;
 }
 
@@ -104,7 +104,7 @@
   min-width: 46px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--image-preview-zoom-text);
 }
 
@@ -154,7 +154,7 @@
   display: grid;
   place-items: center;
   color: var(--image-preview-status-text);
-  font-size: 13px;
+  font-size: var(--font-ui);
   letter-spacing: 0.02em;
 }
 

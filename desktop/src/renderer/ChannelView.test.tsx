@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import { assignmentState, ChannelView, formatChannelUnreadCount } from "./Channe
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
+import type { ThreadSummary } from "./AppState";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -228,6 +229,148 @@ afterEach(() => {
 });
 
 describe("ChannelView", () => {
+  it("keeps working sessions inside their agent conversation and preserves the chat while browsing all sessions", async () => {
+    const reduced = new EventTarget();
+    Object.assign(reduced, { matches: true });
+    vi.spyOn(window, "matchMedia").mockReturnValue(reduced as MediaQueryList);
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    const dmRooms: ChannelRoom[] = agents.map((agent, i) => ({ ...rooms[0], id: `dm-${i}`, kind: "dm",
+      members: [{ room_id: `dm-${i}`, member_id: agent.id, member_type: "agent", joined_at: agent.created_at }] }));
+    const work: ThreadSummary[] = Array.from({ length: 4 }, (_, i) => ({
+      id: `work-${i}`, title: `Alpha work ${i}`, cwd: "/repo", status: i < 3 ? "in_progress" : "idle",
+      created_at: agents[0].created_at, updated_at: new Date(Date.UTC(2026, 8, 17, 0, i)).toISOString(),
+      model_provider: "test", model: "test", preview: "", turns: [], turn_count: 1,
+    }));
+    const betaWork = { ...work[0], id: "beta-work", title: "Beta work" };
+    const openSession = vi.fn();
+    root = createRoot(container);
+    const renderRoom = (id: string, alphaWork = work) => act(async () => root!.render(<ChannelView
+      selectedRoomID={id} directoryAgents={agents} directoryRooms={[...dmRooms, rooms[0]]}
+      onOpenSession={openSession} managedThreadsByAgentID={{ [agents[0].id]: alphaWork, [agents[1].id]: [betaWork] }}
+      composerDraft={{ prompt: "Keep this draft", images: [], files: [] }} />));
+    await renderRoom(dmRooms[0].id);
+    const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const stream = container.querySelector('[role="log"]');
+    const all = container.querySelector<HTMLButtonElement>('.channel-conversation-footer .managed-agent-work-pill')!;
+    expect(all.textContent).toContain("3");
+    expect(all.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => all.click());
+    expect(all.getAttribute("aria-expanded")).toBe("true");
+    const results = container.querySelectorAll<HTMLButtonElement>('.managed-session-result');
+    expect(results).toHaveLength(4);
+    expect(results[0].textContent).toContain("Alpha work 2");
+    expect(results[3].textContent).toContain("Alpha work 3");
+    await act(async () => results[0].click());
+    expect(openSession).toHaveBeenCalledExactlyOnceWith("work-2");
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    expect(container.querySelector('textarea')).toBe(composer);
+    expect(composer.value).toBe("Keep this draft");
+    await act(async () => container.querySelector<HTMLButtonElement>('.managed-session-panel header button')!.click());
+    expect(container.querySelector('.managed-session-panel')).toBeNull();
+    expect(all.getAttribute("aria-expanded")).toBe("false");
+    await renderRoom(dmRooms[0].id, work.map(thread => ({ ...thread, status: "idle" })));
+    expect(container.querySelector('.managed-agent-work .managed-session-spinner')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.managed-agent-work-pill')!.click());
+    expect(container.querySelectorAll('.managed-session-result')).toHaveLength(4);
+    await renderRoom(dmRooms[1].id);
+    expect(container.querySelector('.managed-session-panel')).toBeNull();
+    expect(container.querySelector('.managed-agent-work-pill')?.textContent).toContain("1");
+    await act(async () => container.querySelector<HTMLButtonElement>('.managed-agent-work-pill')!.click());
+    expect(container.querySelectorAll('.managed-session-result')).toHaveLength(1);
+    expect(container.querySelector('.managed-session-result')?.textContent).toContain("Beta work");
+    await renderRoom(rooms[0].id);
+    expect(container.querySelector('.managed-agent-work')).toBeNull();
+    await renderRoom(dmRooms[0].id, []);
+    expect(container.querySelector('.managed-agent-work')).toBeNull();
+  });
+
+  it.each(["channel", "dm"] as const)("keeps %s header settings without a plans or memory management entry", async (kind) => {
+    const room = { ...rooms[0], kind, members: kind === "dm" ? rooms[0].members.slice(0, 1) : rooms[0].members };
+    const api = createApi();
+    api.bootstrapChannels = vi.fn(async () => ({ agents, rooms: [room] }));
+    api.channelContinuity = vi.fn(async () => ({}));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    await act(async () => root!.render(<ChannelView section="rooms" selectedRoomID={room.id} directoryAgents={agents} directoryRooms={[room]} />));
+    const heading = container.querySelector<HTMLElement>('header [role="heading"]')!;
+    const settings = heading.closest("button")!;
+    // The header exposes conversation settings only, even when the host supports continuity.
+    expect(Array.from(settings.closest("header")!.querySelectorAll("button"))).toEqual([settings]);
+    await act(async () => settings.click());
+    expect(settings.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(`#${settings.getAttribute("aria-controls")}`)).not.toBeNull();
+    expect(api.channelContinuity).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Human direction");
+  });
+
+  it("positions asynchronously loaded history before paint", async () => {
+    const api = createApi();
+    let resolveMessages!: (value: { messages: ChannelMessage[] }) => void;
+    api.listChannelMessages = vi.fn(() => new Promise<{ messages: ChannelMessage[] }>((resolve) => { resolveMessages = resolve; }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    const positions: number[] = [];
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <Profiler id="room" onRender={() => {
+        const stream = container.querySelector<HTMLDivElement>("[role=log]");
+        if (stream?.querySelector("[data-message-id]")) positions.push(stream.scrollTop);
+      }}>
+        <ChannelView section="rooms" selectedRoomID="room-1" directoryAgents={agents} directoryRooms={rooms} />
+      </Profiler>,
+    ));
+    const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+    let top = 0;
+    Object.defineProperties(stream, {
+      scrollHeight: { configurable: true, get: () => stream.querySelector("[data-message-id]") ? 1000 : 400 },
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.min(value, stream.scrollHeight - 400); } },
+    });
+    await act(async () => resolveMessages({ messages: [{
+      id: "history", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user",
+      kind: "text", body: "Previously loaded history", created_at: "2026-07-23T00:00:00Z",
+    }] }));
+    expect(positions.length).toBeGreaterThan(0);
+    expect(positions.every((position) => position === 600)).toBe(true);
+  });
+
+  it("keeps the reading position on refresh but starts the next room at latest", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      const renderRoom = (roomID: string) => root!.render(
+        <ChannelView section="rooms" selectedRoomID={roomID} directoryAgents={agents} directoryRooms={rooms} />,
+      );
+      await act(async () => renderRoom("room-1"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+      const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+      let top = 600;
+      Object.defineProperties(stream, {
+        scrollHeight: { configurable: true, get: () => 1000 },
+        clientHeight: { configurable: true, get: () => 400 },
+        scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.min(value, 600); } },
+      });
+      act(() => {
+        stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        top = 200;
+        stream.dispatchEvent(new Event("scroll"));
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+      vi.mocked(api.listChannelMessages!).mockResolvedValue({ messages: [{
+        id: "new-message", room_id: "room-1", seq: 99, author_type: "human", author_id: "local-user",
+        kind: "text", body: "New message while reading", created_at: "2026-07-23T00:00:00Z",
+      }] });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(stream.textContent).toContain("New message while reading");
+      expect(top).toBe(200);
+      await act(async () => renderRoom("room-2"));
+      expect(top).toBe(600);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves verifier task states for honest room activity", () => {
     expect(assignmentState("checking")).toBe("checking");
     expect(assignmentState("revising")).toBe("revising");
@@ -330,7 +473,7 @@ describe("ChannelView", () => {
     expect(card?.querySelector(".channel-agent-proposal-actions")).toBeNull();
   });
 
-  it("expands task content with actionable blockers and artifact links", async () => {
+  it("keeps task records out of chat while retaining them in the task board", async () => {
     const api = createApi();
     api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: room_id === "room-1" ? [{
       id: "work-1", room_id, seq: 1, author_type: "agent" as const, author_id: "agent-1",
@@ -368,21 +511,11 @@ describe("ChannelView", () => {
     act(() => root?.render(<ChannelView selectedRoomID="room-1" onOpenSession={onOpenSession} />));
     await settle();
 
-    const task = container.querySelector<HTMLDetailsElement>(".channel-assignment-item");
-    expect(task?.open).toBe(false);
-    const heading = task?.querySelector("summary");
-    expect(heading?.textContent).toBe("Fix callback");
-    expect(heading?.querySelector(".agent-avatar-mark")).not.toBeNull();
-    act(() => heading?.click());
-    expect(task?.open).toBe(true);
-    expect(task?.textContent).toContain("Reject callback replay");
-    expect(container.querySelector(".channel-work-activity")).toBeNull();
-    expect(container.querySelector(".channel-assignment-status")?.textContent).toBe("验收中");
-    expect(task?.textContent).toContain("full suite unavailable");
-    const artifact = task?.querySelector<HTMLAnchorElement>(".channel-assignment-artifacts a");
-    expect(artifact?.textContent).toBe("callback diff");
-    expect(artifact?.getAttribute("href")).toBe("artifact://diff-1");
-    expect(container.textContent).not.toContain("Verifier Bot");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Fix callback");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Reject callback replay");
+    act(() => root?.render(<ChannelView section="tasks" onOpenSession={onOpenSession} />));
+    await settle();
+    expect(container.querySelector(".channel-task-board")?.textContent).toContain("Fix callback");
   });
 
   it("caps channel unread counts at 99+", () => {
@@ -874,8 +1007,7 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-message.own .channel-human-avatar")).toBeNull();
     expect(container.querySelector(".channel-message.own .channel-message-meta strong")).toBeNull();
     expect(container.querySelector(".channel-task-card")).toBeNull();
-    expect(container.querySelector(".channel-orchestration-message")).not.toBeNull();
-    expect(container.querySelector(".channel-message-stream")?.textContent).toContain("Investigate flaky build");
+    expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("Investigate flaky build");
     expect(container.querySelector('[aria-label="Alpha: 处理中"]')).not.toBeNull();
     expect(container.querySelector(".channel-agent-status-card")?.textContent).toBe("处理中");
     expect(container.querySelector(".channel-agent-status-card strong")).toBeNull();
@@ -981,6 +1113,24 @@ describe("ChannelView", () => {
       images: [],
       files: [],
     });
+  });
+
+  it("keeps late history responses in their own room during rapid switching", async () => {
+    const api = createApi();
+    const pending = new Map<string, (result: { messages: ChannelMessage[] }) => void>();
+    api.listChannelMessages = vi.fn(({ room_id }) => new Promise<{ messages: ChannelMessage[] }>(resolve => pending.set(room_id, resolve)));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryRooms={rooms} directoryAgents={agents} selectedRoomID="room-1" />));
+    act(() => root?.render(<ChannelView directoryRooms={rooms} directoryAgents={agents} selectedRoomID="room-2" />));
+    const message = (room_id: string): ChannelMessage => ({ id: room_id, room_id, seq: 1, kind: "text", author_type: "human", author_id: "human", body: `Private to ${room_id}`, created_at: "2026-07-23T00:00:00Z" });
+    await act(async () => pending.get("room-2")!({ messages: [message("room-2")] }));
+    await act(async () => pending.get("room-1")!({ messages: [message("room-1")] }));
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Private to room-2");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Private to room-1");
+    act(() => root?.render(<ChannelView directoryRooms={rooms} directoryAgents={agents} selectedRoomID="room-1" />));
+    expect(container.querySelector('[role="log"]')?.textContent).toContain("Private to room-1");
+    expect(container.querySelector('[role="log"]')?.textContent).not.toContain("Private to room-2");
   });
 
   it("hydrates the next room draft without publishing the previous room draft", async () => {
@@ -1103,6 +1253,133 @@ describe("ChannelView", () => {
     expect(container.querySelectorAll(".channel-message-stream > time")).toHaveLength(2);
     expect(renderedMessages[3].querySelector(".channel-human-avatar")).toBeNull();
     expect(renderedMessages[4].querySelector(".channel-author-mention")?.textContent).toBe("@Beta");
+  });
+
+  it("resizes managed sessions without replacing the running activity or draft and restores the width after reopening", async () => {
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[0]] };
+    const work: ThreadSummary = {
+      id: "work", title: "Running work", cwd: "/repo", status: "in_progress", model: "test", model_provider: "test",
+      preview: "", turns: [], turn_count: 0, created_at: dm.created_at, updated_at: dm.created_at,
+    };
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id}
+      onOpenSession={vi.fn()} managedThreadsByAgentID={{ [agents[0].id]: [work] }} />));
+    await settle();
+    const conversation = container.querySelector<HTMLElement>(".channel-conversation")!;
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1100 });
+    const stream = container.querySelector('[role="log"]');
+    const activity = container.querySelector('.channel-activity-inspect');
+    expect(activity).not.toBeNull();
+    const composer = container.querySelector('textarea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(composer, "Keep this draft");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const toggle = container.querySelector<HTMLButtonElement>('.managed-agent-work-pill')!;
+    act(() => toggle.click());
+    const separator = () => container.querySelector<HTMLElement>('.channel-inspector-resizer')!;
+    const width = () => Number(separator().getAttribute("aria-valuenow"));
+    expect(separator().hidden).toBe(false);
+    const pointer = (target: EventTarget, type: string, x: number, pointerId = 1) => act(() => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: pointerId });
+      target.dispatchEvent(event);
+    });
+    const initial = width();
+    pointer(separator(), "pointerdown", 680);
+    pointer(window, "pointermove", 620, 2);
+    expect(width()).toBe(initial);
+    pointer(window, "pointermove", 620);
+    expect(width()).toBe(initial + 60);
+    pointer(window, "pointercancel", 620);
+    pointer(window, "pointermove", 580);
+    expect(width()).toBe(initial + 60);
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    act(() => toggle.click());
+    act(() => toggle.click());
+    expect(width()).toBe(initial + 60);
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    expect(container.querySelector('.channel-activity-inspect')).toBe(activity);
+    expect(container.querySelector('textarea')).toBe(composer);
+    expect(composer.value).toBe("Keep this draft");
+    pointer(separator(), "pointerdown", 620);
+    act(() => toggle.click());
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    pointer(window, "pointermove", 300);
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
+    act(() => toggle.click());
+    expect(separator().hidden).toBe(true);
+    expect(container.querySelector('.channel-room-main')?.hasAttribute('inert')).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>('.managed-session-panel header button')!.click());
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1100 });
+    act(() => toggle.click());
+    expect(width()).toBe(initial + 60);
+    pointer(separator(), "pointerdown", 620);
+    act(() => root?.unmount());
+    root = null;
+    expect(document.body.style.cursor).not.toBe("col-resize");
+  });
+
+  it("resizes inline settings without replacing the chat, clamps width, and ends cancelled drags", async () => {
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[1]] };
+    root = createRoot(container);
+    act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id} />));
+    await settle();
+    const view = container.querySelector<HTMLElement>(".channel-view")!;
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 1000 });
+    const stream = container.querySelector('[role="log"]');
+    const toggle = container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")!;
+    act(() => toggle.click());
+    const separator = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
+    expect(separator.hidden).toBe(false);
+    const width = () => Number(separator.getAttribute("aria-valuenow"));
+    const pointer = (target: EventTarget, type: string, x: number) => act(() => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      target.dispatchEvent(event);
+    });
+    const start = width();
+    pointer(separator, "pointerdown", 660);
+    pointer(window, "pointermove", 600);
+    expect(width()).toBe(start + 60);
+    pointer(window, "pointermove", -1000);
+    expect(width()).toBe(Number(separator.getAttribute("aria-valuemax")));
+    pointer(window, "pointermove", 2000);
+    expect(width()).toBe(Number(separator.getAttribute("aria-valuemin")));
+    pointer(window, "pointercancel", 2000);
+    const cancelledWidth = width();
+    pointer(window, "pointermove", 600);
+    expect(width()).toBe(cancelledWidth);
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    act(() => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    expect(width()).toBe(cancelledWidth + 16);
+    act(() => separator.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(width()).toBe(start);
+    expect(container.querySelector('[role="log"]')).toBe(stream);
+    pointer(separator, "pointerdown", 660);
+    act(() => toggle.click());
+    expect(document.body.style.cursor).not.toBe("col-resize");
+    pointer(window, "pointermove", 500);
+    act(() => toggle.click());
+    expect(container.querySelector('[aria-controls="channel-conversation-settings"][role="separator"]')?.getAttribute("aria-valuenow")).toBe(String(start));
+    const reopened = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
+    pointer(reopened, "pointerdown", 660);
+    pointer(window, "pointermove", 580);
+    pointer(window, "pointerup", 580);
+    pointer(window, "pointermove", 500);
+    expect(reopened.getAttribute("aria-valuenow")).toBe(String(start + 80));
+    act(() => toggle.click());
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 830 });
+    act(() => toggle.click());
+    const constrained = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
+    act(() => constrained.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    expect(Number(constrained.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(830 - 400);
+    act(() => toggle.click());
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 800 });
+    act(() => toggle.click());
+    expect(container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!.hidden).toBe(true);
   });
 
   it("opens the DM agent settings without replacing the chat and keeps a failed draft for retry", async () => {
@@ -2015,11 +2292,12 @@ describe("ChannelView", () => {
       { primary: true, session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Review integration", state: "waiting", purpose: "work", created_at: "", updated_at: "2026-09-13T00:00:00Z" },
       { session_ref: "child", parent_session_ref: "parent", principal_id: "agent-2", named_agent_id: "agent-2", room_id: "room-1", title: "Implement settings", state: "running", purpose: "work", created_at: "", updated_at: "2026-09-13T00:01:00Z" },
     ];
-    api.listChannelSessions = vi.fn(async () => ({ sessions }));
+    api.listChannelSessions = vi.fn(async () => ({ sessions, managed_sessions: [{ session_id: "ordinary", title: "Refresh docs", workspace_root: "/project", provider: "openai", model: "gpt-6", state: "running" as const, control: { manager_id: "agent-2", state: "active" as const, revision: 1 } }] }));
+    const openSession = vi.fn();
     api.readChannelSession = vi.fn().mockImplementation(async ({ sessionRef }) => ({ session: sessions.find(s => s.session_ref === sessionRef), thread: { id: sessionRef, turns: [{ id: "turn", status: "completed", items: [{ id: "text", type: "agent_message", text: `Trace for ${sessionRef}` }] }] } }));
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     root = createRoot(container);
-    await act(async () => root?.render(<ChannelView selectedRoomID="room-1" />));
+    await act(async () => root?.render(<ChannelView selectedRoomID="room-1" onOpenSession={openSession} />));
     await settle();
     const avatar = container.querySelector<HTMLButtonElement>(".channel-coordinator-member button")!;
     expect(avatar.disabled).toBe(false);
@@ -2030,6 +2308,10 @@ describe("ChannelView", () => {
     const panel = () => container.querySelector(".session-inspector-extension")!;
     expect(panel().querySelectorAll(".channel-activity-session-entry")).toHaveLength(0);
     expect(panel().textContent).toContain("Trace for parent");
+    const managed = Array.from(panel().querySelectorAll("button")).find(button => button.textContent?.includes("Refresh docs"))!;
+    await act(async () => managed.click());
+    expect(openSession).toHaveBeenCalledWith("ordinary");
+    expect(api.readChannelSession).not.toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "ordinary" }));
     expect(panel().textContent).not.toContain("Trace for child");
     expect(panel().querySelector('button[aria-label="全部会话"]')).toBeNull();
     expect(container.querySelector(".channel-message-stream")).not.toBeNull();
@@ -2170,7 +2452,7 @@ describe("ChannelView", () => {
       expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
       expect(container.querySelector(".channel-activity-slot:not([inert]) .channel-response-status")).toBeNull();
       expect(container.querySelector(".channel-message-bubble")?.textContent).toContain("the answer");
-      expect(container.querySelector('.channel-message [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-state")).toBe("idle");
+      expect(container.querySelector('.channel-message [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-motion")).toBe("static");
     } finally {
       vi.useRealTimers();
     }
@@ -2293,12 +2575,51 @@ describe("ChannelView", () => {
     act(() => container.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
     await settle();
     expect(container.querySelector(".channel-message-pending")?.textContent).toContain("Please investigate");
+    const optimisticRow = container.querySelector(".channel-message-pending");
+    const optimisticBubble = container.querySelector(".channel-message-bubble");
+    const timestamp = container.querySelector(".channel-timestamp");
+    expect(timestamp).not.toBeNull();
+    const displayTime = timestamp?.getAttribute("datetime");
     act(() => setInputValue(textarea, "And check the logs"));
     refreshStarted = true;
     await act(async () => resolveSend({ message: { id: "sent", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user", kind: "text", body: "Please investigate", created_at: "2026-07-23T00:03:00Z" } }));
     expect(container.querySelector(".channel-message-pending")).toBeNull();
     expect(container.querySelector(".channel-message-bubble")?.textContent).toBe("Please investigate");
+    expect(container.querySelector('[data-message-id="sent"]')).toBe(optimisticRow);
+    expect(container.querySelector(".channel-message-bubble")).toBe(optimisticBubble);
+    expect(container.querySelector(".channel-timestamp")).toBe(timestamp);
+    expect(timestamp?.getAttribute("datetime")).toBe(displayTime);
     expect(textarea.value).toBe("And check the logs");
+  });
+
+  it("does not duplicate a pending send when a poll sees it before acknowledgement", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      const sent: ChannelMessage = { id: "early-send", room_id: "room-1", seq: 1, author_type: "human", author_id: "local-user", kind: "text", body: "Sent once", created_at: new Date().toISOString() };
+      let durable: ChannelMessage[] = [];
+      let resolveSend!: (value: { message: ChannelMessage }) => void;
+      api.listChannelMessages = vi.fn(async () => ({ messages: durable, responses: [] }));
+      api.sendChannelMessage = vi.fn(() => new Promise<{ message: ChannelMessage }>((resolve) => { resolveSend = resolve; }));
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      act(() => setInputValue(container.querySelector<HTMLTextAreaElement>(".channel-composer textarea")!, sent.body));
+      await act(async () => container.querySelector<HTMLButtonElement>(".composer-send-button")?.click());
+      const row = container.querySelector(".channel-message-pending");
+      durable = [sent];
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(vi.mocked(api.listChannelMessages).mock.calls.length).toBeGreaterThan(1);
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
+      await act(async () => resolveSend({ message: sent }));
+      expect(container.querySelectorAll(".channel-message-bubble")).toHaveLength(1);
+      expect(container.querySelector('[data-message-id="early-send"]')).toBe(row);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelector('[data-message-id="early-send"]')).toBe(row);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a failed send in the composer with a retry action", async () => {

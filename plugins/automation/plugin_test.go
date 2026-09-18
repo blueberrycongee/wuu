@@ -3,6 +3,7 @@ package automation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestAutomationTimerUsesPublicSessionServicesAndSettlesRun(t *testing.T) {
 		t.Fatalf("sends = %+v", sends)
 	}
 	runs := c.snapshotRuns()
-	if len(runs) != 1 || runs[0].Status != "running" {
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].SessionID != "generated-session" || runs[0].TurnID != "turn-one" || runs[0].Error != "" {
 		t.Fatalf("runs = %+v", runs)
 	}
 	if err := c.settle(context.Background(), pluginapi.TurnLifecycleInput{RequestID: runs[0].RequestID, State: "completed", ThreadID: "generated-session", TurnID: "turn-one", FinalOutput: "done"}); err != nil {
@@ -96,6 +97,106 @@ func TestAutomationTimerUsesPublicSessionServicesAndSettlesRun(t *testing.T) {
 	runs = c.snapshotRuns()
 	if runs[0].Status != "completed" || runs[0].CompletedAt == nil {
 		t.Fatalf("settled run = %+v", runs[0])
+	}
+}
+
+func TestAutomationFireDueWaitsForInFlightDispatch(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	host := &blockingSendHost{started: started, release: release}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-inflight", Title: "Daily review", Prompt: "Review open work", Cron: "1 9 * * *", Timezone: "UTC", Mode: "new_thread", Recurring: true, WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+
+	first := make(chan struct{})
+	go func() {
+		defer close(first)
+		c.fireDue(context.Background())
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight session send")
+	}
+
+	second := make(chan struct{})
+	go func() {
+		defer close(second)
+		c.fireDue(context.Background())
+	}()
+	select {
+	case <-second:
+		t.Fatalf("overlapping fireDue returned while in-flight run was still starting: %+v", c.snapshotRuns())
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-first:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight fireDue")
+	}
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for overlapping fireDue")
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].SessionID != "generated-session" || runs[0].TurnID != "turn-one" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestAutomationFireDoesNotOverwriteSettledRun(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	host := &blockingSendHost{started: started, release: release}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "task-settle", Title: "Daily review", Prompt: "Review open work", Mode: "new_thread", WorkspaceID: "workspace-one", WorkspaceRoot: "/workspace/one", NextRunAt: now}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.fire(context.Background(), task, now)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight session send")
+	}
+	if err := c.settle(context.Background(), pluginapi.TurnLifecycleInput{RequestID: fmt.Sprintf("automation-run-%s-%d", task.ID, now.Unix()), State: "completed", ThreadID: "generated-session", TurnID: "turn-done"}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for late fire to finish")
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "completed" || runs[0].TurnID != "turn-done" || runs[0].CompletedAt == nil {
+		t.Fatalf("settled run = %+v", runs)
+	}
+}
+
+func TestAutomationFireFailsWhenWorkspaceDoesNotMatch(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &testHost{}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "mismatch", Title: "Daily review", Prompt: "Review open work", Cron: "1 9 * * *", Timezone: "UTC", Mode: "new_thread", Recurring: true, WorkspaceID: "workspace-two", WorkspaceRoot: "/workspace/two", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+	c.fireDue(context.Background())
+	host.mu.Lock()
+	creates := append([]pluginapi.SessionCreateParams(nil), host.creates...)
+	sends := append([]pluginapi.SessionSendParams(nil), host.sends...)
+	host.mu.Unlock()
+	if len(creates) != 0 || len(sends) != 0 {
+		t.Fatalf("mismatch created session: creates=%+v sends=%+v", creates, sends)
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "failed" || runs[0].Error == "" || runs[0].CompletedAt == nil {
+		t.Fatalf("mismatch run = %+v", runs)
 	}
 }
 
@@ -124,6 +225,24 @@ func TestAutomationPartialUpdatePreservesBooleanFields(t *testing.T) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+type blockingSendHost struct {
+	testHost
+	started chan struct{}
+	release chan struct{}
+}
+
+func (h *blockingSendHost) CallHost(ctx context.Context, method string, params, result any) error {
+	if method == pluginapi.HostServiceSessionSend {
+		select {
+		case <-h.started:
+		default:
+			close(h.started)
+		}
+		<-h.release
+	}
+	return h.testHost.CallHost(ctx, method, params, result)
+}
 
 func TestAutomationHeartbeatReusesExistingSession(t *testing.T) {
 	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)

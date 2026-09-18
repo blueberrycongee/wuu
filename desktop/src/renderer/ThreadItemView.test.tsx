@@ -306,6 +306,41 @@ describe("ThreadItemView", () => {
     expect(container?.querySelector(".user-message-pasted-text-content")?.textContent).toBe(pastedText);
   });
 
+  it.each([false, true])("collapses structured text across parts and preserves attachments (split=%s)", (split) => {
+    const paragraphs = Array.from({ length: 16 }, (_, index) =>
+      `段落 ${index + 1}：懂，你是说**折叠后的预览还是太长，占的空间太多**，不是想取消折叠。`,
+    );
+    const text = paragraphs.join("\n\n");
+    render({
+      item: {
+        ...makeUserMessage(text),
+        content_parts: [
+          { type: "pasted_text", text: "separate attachment", title: "Notes" },
+          ...(split ? paragraphs : [text]).map((part) => ({ type: "text" as const, text: part })),
+        ],
+      },
+      turnStatus: "completed",
+      streaming: false,
+    });
+
+    const bubble = container?.querySelector(".user-message");
+    const toggle = bubble?.querySelector<HTMLButtonElement>(".user-message-expand-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(bubble?.textContent).toContain("段落 1：");
+    expect(bubble?.textContent).not.toContain("段落 16：");
+    expect(container?.querySelector(".user-message-pasted-text")).not.toBeNull();
+    expect(bubble?.textContent).not.toContain("separate attachment");
+
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(bubble?.textContent).toContain("段落 16：");
+    expect(bubble?.querySelector("strong")).not.toBeNull();
+
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(bubble?.textContent).not.toContain("段落 16：");
+  });
+
   it("collapses long wrapped user messages without explicit line breaks", () => {
     const longSingleParagraph = "pasted query ".repeat(150);
 
@@ -386,6 +421,8 @@ describe("ThreadItemView", () => {
 
     expect(rawQuery?.textContent).not.toContain("line 20");
     expect(rawQuery?.textContent?.endsWith("...")).toBe(true);
+    expect(rawQuery?.textContent).toContain("line 5");
+    expect(rawQuery?.textContent).not.toContain("line 6");
     expect(toggle?.textContent).toContain("显示更多");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
 
@@ -393,7 +430,7 @@ describe("ThreadItemView", () => {
       toggle?.click();
     });
 
-    expect(rawQuery?.textContent).toContain("line 20");
+    expect(rawQuery?.textContent).toBe(longText);
     expect(toggle?.textContent).toContain("收起");
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
 
@@ -456,7 +493,8 @@ describe("ThreadItemView", () => {
       onForkMessage,
     });
 
-    expect(container?.querySelector(".agent-message-actions")).toBeNull();
+    expect(actionBar().getAttribute("aria-hidden")).toBe("true");
+    expect(actionBar().querySelector("button, [tabindex]")).toBeNull();
 
     render({
       item: makeFinalAnswer("completed"),
@@ -467,6 +505,7 @@ describe("ThreadItemView", () => {
     });
 
     const finalizingActions = actionBar();
+    expect(finalizingActions.getAttribute("aria-hidden")).toBeNull();
     expect(finalizingActions.dataset.wuuPlacement).toBe("persistent");
     expect(finalizingActions.querySelectorAll("button")).toHaveLength(2);
     const finalizingButtons = finalizingActions.querySelectorAll<HTMLButtonElement>("button");
@@ -496,7 +535,27 @@ describe("ThreadItemView", () => {
     expect(block?.classList.contains("agent-actions-enter")).toBe(true);
   });
 
-  it("renders historical answers with a hover overlay bar instead of an in-flow slot", () => {
+  it.each([undefined, false])("reserves actions before terminal is known (%s)", (terminal) => {
+    render({
+      item: { ...makeFinalAnswer("in_progress"), terminal },
+      turnStatus: "in_progress",
+      latestAgentMessageID: "final-1",
+      streaming: true,
+    });
+    expect(actionBar().getAttribute("aria-hidden")).toBe("true");
+    expect(actionBar().querySelectorAll("button")).toHaveLength(0);
+    render({
+      item: makeFinalAnswer("completed"),
+      turnStatus: "completed",
+      actionableAgentMessageID: "final-1",
+      latestAgentMessageID: "final-1",
+      streaming: false,
+    });
+    expect(actionBar().getAttribute("aria-hidden")).toBeNull();
+    expect(actionBar().querySelectorAll("button")).toHaveLength(2);
+  });
+
+  it("keeps historical answer actions hover-revealed rather than persistent", () => {
     render({
       item: makeFinalAnswer("completed"),
       turnStatus: "completed",
@@ -554,6 +613,41 @@ describe("ThreadItemView", () => {
     expect(actions).toHaveLength(1);
     expect(container?.querySelector<HTMLElement>(".user-message-actions")?.dataset.wuuPlacement).toBe("overlay");
     expect(onEditMessage).not.toHaveBeenCalled();
+  });
+
+  it("expands and copies a session message body and opens its source without exposing internal input", async () => {
+    const openInSplit = vi.fn();
+    setOpenThreadInSplitHandler(openInSplit);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
+    const body = "Coordination update.\n".repeat(100) + "End of update.";
+    const onEditMessage = vi.fn();
+    render({
+      item: {
+        id: "peer-message", type: "user_message", text: body,
+        input_text: "Private delivery instructions", related_session_id: "source-session",
+        name: "Source task", origin: "plugin", origin_id: "alternative-messenger",
+        presentation_kind: "session_message", read_only: true,
+      },
+      turnStatus: "completed", streaming: false, onEditMessage,
+    });
+    expect(container?.textContent).toContain("Source task");
+    expect(container?.textContent).not.toContain("Private delivery instructions");
+    expect(container?.textContent).not.toContain("End of update.");
+    const toggle = container!.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(container?.textContent).toContain("End of update.");
+    const actions = container!.querySelectorAll<HTMLButtonElement>(".user-message-actions button");
+    expect(actions).toHaveLength(1);
+    await act(async () => actions[0].click());
+    expect(copy).toHaveBeenCalledWith(body);
+    act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
+    expect(openInSplit).toHaveBeenCalledWith("source-session");
+    expect(onEditMessage).not.toHaveBeenCalled();
+    act(() => toggle.click());
+    expect(container?.textContent).not.toContain("End of update.");
+    setOpenThreadInSplitHandler(undefined);
   });
 
   it("does not show a related-session action without a related session", () => {

@@ -9,8 +9,8 @@ import { isMonospaceFont, listLocalFonts } from "./LocalFonts";
 export function AppearanceTypography({ section = "sizes" }: { section?: "sizes" | "fonts" | "motion" }): JSX.Element {
   const { t } = useI18n();
   const [preferences, setPreferences] = useState(readAppearance);
-  const [sizeDraft, setSizeDraft] = useState(() => String(readAppearance().uiSize));
-  useEffect(() => setSizeDraft(String(preferences.uiSize)), [preferences.uiSize]);
+  const [sizeDraft, setSizeDraft] = useState(() => String(readAppearance().codeSize));
+  useEffect(() => setSizeDraft(String(preferences.codeSize)), [preferences.codeSize]);
   const [error, setError] = useState(false);
   const [localFonts, setLocalFonts] = useState<string[]>([]);
   const [monoFonts, setMonoFonts] = useState<string[]>([]);
@@ -34,9 +34,9 @@ export function AppearanceTypography({ section = "sizes" }: { section?: "sizes" 
   }
   function commitSize(raw: string) {
     const parsed = raw.trim() ? Number(raw) : NaN;
-    const next = Number.isFinite(parsed) ? Math.min(16, Math.max(12, Math.round(parsed))) : preferences.uiSize;
+    const next = Number.isFinite(parsed) ? Math.min(24, Math.max(9, Math.round(parsed))) : preferences.codeSize;
     setSizeDraft(String(next));
-    update({ uiSize: next });
+    update({ codeSize: next });
   }
   const fonts = [
     { key: "uiFont", label: "settings.uiFont" },
@@ -44,17 +44,18 @@ export function AppearanceTypography({ section = "sizes" }: { section?: "sizes" 
   ] as const;
   return <>
     {section === "sizes" && <>
-    <SettingsRow title={t("settings.uiSize")} hint={t("settings.uiSizeHint")}>
-      <input className="settings-input settings-input-num settings-input-num-center" aria-label={t("settings.uiSize")} type="number" min={12} max={16} step={1} value={sizeDraft}
+    <SettingsRow title={t("settings.uiSize")} hint={t("settings.uiSizeHint")}><MessageFlowFontSizeControl /></SettingsRow>
+    <SettingsRow title={t("settings.codeSize")} hint={t("settings.codeSizeHint")}>
+      <input className="settings-input settings-input-num settings-input-num-center" aria-label={t("settings.codeSize")} type="number" min={9} max={24} step={1} value={sizeDraft}
         onChange={(event) => {
           setSizeDraft(event.target.value);
           const value = event.target.valueAsNumber;
-          if (Number.isInteger(value) && value >= 12 && value <= 16) update({ uiSize: value });
+          if (Number.isInteger(value) && value >= 9 && value <= 24) update({ codeSize: value });
         }}
         onBlur={(event) => commitSize(event.currentTarget.value)}
         onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </SettingsRow>
-    <SettingsRow title={t("settings.contentSize")} hint={t("settings.contentSizeHint")}><MessageFlowFontSizeControl /></SettingsRow></>}
+    </>}
     {section === "fonts" && <>{fonts.map(({ key, label }) => {
       const names = key === "codeFont" ? monoFonts : localFonts;
       const current = preferences[key];

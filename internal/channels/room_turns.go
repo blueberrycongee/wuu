@@ -234,26 +234,60 @@ func finishRoomTurnTx(ctx context.Context, tx *sql.Tx, binding CollaborationSess
 	return advanceRoomTurnTx(ctx, tx, t, now)
 }
 
-// RoomTurnPrompt is assembled at admission, so a later speaker sees earlier
+type RoomTurnContext struct {
+	Prompt   string
+	Messages []Message
+}
+
+// RoomTurnContext is assembled at admission, so a later speaker sees earlier
 // replies even if it was queued behind work in another room.
-func (s *Service) RoomTurnPrompt(ctx context.Context, deliveryID string) (string, error) {
+func (s *Service) RoomTurnContext(ctx context.Context, deliveryID string) (RoomTurnContext, error) {
 	var roomID, sourceID, memberID string
-	err := s.db.QueryRowContext(ctx, `SELECT turn.room_id,turn.source_message_id,delivery.to_agent_id FROM room_turns turn JOIN collaboration_messages delivery ON delivery.id=turn.delivery_id WHERE turn.delivery_id=?`, deliveryID).Scan(&roomID, &sourceID, &memberID)
+	var sourceSeq int64
+	var discussion bool
+	err := s.db.QueryRowContext(ctx, `SELECT source.room_id,source.id,delivery.to_agent_id,source.seq,turn.delivery_id IS NOT NULL
+		FROM collaboration_messages delivery
+		JOIN room_messages source ON source.id=delivery.source_message_id AND source.room_id=delivery.room_id
+		LEFT JOIN room_turns turn ON turn.delivery_id=delivery.id
+		WHERE delivery.id=?`, deliveryID).Scan(&roomID, &sourceID, &memberID, &sourceSeq, &discussion)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return RoomTurnContext{}, nil
 	}
 	if err != nil {
-		return "", err
+		return RoomTurnContext{}, err
 	}
-	messages, err := s.ListMessageWindow(ctx, RoomHistoryQuery{RoomID: roomID, Limit: 24, Latest: true})
+	// Attachment access follows the same current room membership boundary as chat_read.
+	if err := s.requireRoomPrincipalAccess(ctx, roomID, memberID); err != nil {
+		return RoomTurnContext{}, err
+	}
+	query := RoomHistoryQuery{RoomID: roomID, AfterSeq: sourceSeq - 1, BeforeSeq: sourceSeq + 1, Limit: 1}
+	if discussion {
+		query = RoomHistoryQuery{RoomID: roomID, Limit: 24, Latest: true}
+	}
+	messages, err := s.ListMessageWindow(ctx, query)
 	if err != nil {
-		return "", err
+		return RoomTurnContext{}, err
+	}
+	// The triggering request may have fallen outside the recent window while queued.
+	foundSource := false
+	for _, message := range messages {
+		foundSource = foundSource || message.ID == sourceID
+	}
+	if !foundSource {
+		source, err := s.ListMessageWindow(ctx, RoomHistoryQuery{RoomID: roomID, AfterSeq: sourceSeq - 1, BeforeSeq: sourceSeq + 1, Limit: 1})
+		if err != nil {
+			return RoomTurnContext{}, err
+		}
+		messages = append(source, messages...)
+	}
+	if !discussion {
+		return RoomTurnContext{Messages: messages}, nil
 	}
 	var lines []string
 	for _, message := range messages {
 		lines = append(lines, fmt.Sprintf("%s %s: %s", message.AuthorType, message.AuthorID, message.Body))
 	}
-	return fmt.Sprintf("Room discussion, source message %s. You are %s. Read the recent room history below and act on the user's latest request. Earlier speakers may already have answered it. Add useful work or information; if you have nothing new to contribute, call yield_turn. Do not repeat an answer or acknowledge a pass.\n%s", sourceID, memberID, strings.Join(lines, "\n")), nil
+	return RoomTurnContext{Prompt: fmt.Sprintf("Room discussion, source message %s. You are %s. Read the recent room history below and act on the user's latest request. Earlier speakers may already have answered it. Add useful work or information; if you have nothing new to contribute, call yield_turn. Do not repeat an answer or acknowledge a pass.\n%s", sourceID, memberID, strings.Join(lines, "\n")), Messages: messages}, nil
 }
 
 func refreshRoomTurnMembersTx(ctx context.Context, tx *sql.Tx, roomID string, now int64) ([]string, error) {

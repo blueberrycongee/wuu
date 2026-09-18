@@ -3,7 +3,7 @@ import type { GitCommitResult, GitPullRequestResult } from "../shared/protocol";
 import { sameRuntimeContext, type AppState } from "./AppState";
 import type { EnvironmentPanelMenu } from "./EnvironmentPanel";
 import { localizedText, translateCurrent } from "./i18n";
-import { showErrorToast } from "./Toast";
+import { showErrorToast, toastErrorMessage } from "./Toast";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
@@ -11,7 +11,6 @@ export type EnvironmentActionsDeps = {
   getAppState: () => AppState;
   getEnvironmentRoot: () => string | undefined;
   setAppState: SetAppState;
-  getAnyThreadIsRunning: () => boolean;
   closeProjectMenus: () => void;
   setEnvironmentPanelOpen: (open: boolean) => void;
   setEnvironmentPanelDismissed: (dismissed: boolean) => void;
@@ -57,18 +56,21 @@ export function createEnvironmentActions(
     return deps.getEnvironmentRoot() === root;
   }
 
+  function branchError(error: unknown, fallback: string): Error {
+    const message = toastErrorMessage(error, fallback);
+    return new Error(message === "cannot run Git actions while a thread is running in this working tree"
+      ? translateCurrent("git.checkoutBlockedByRunningThread")
+      : message);
+  }
+
   async function checkoutBranch(branch: string): Promise<void> {
     const root = deps.getEnvironmentRoot();
     if (!branch || !root) {
       return;
     }
-    if (deps.getAnyThreadIsRunning()) {
-      throw new Error(
-        translateCurrent("git.checkoutBlockedByRunningThread"),
-      );
-    }
-    deps.closeProjectMenus();
     try {
+      // The host checks the actual target worktree at mutation time. A cached
+      // renderer busy flag may belong to a previous context or failed lookup.
       const gitStatus = await window.wuu.checkoutGitBranch(branch, root);
       if (!environmentRootIsCurrent(root)) {
         return;
@@ -78,15 +80,12 @@ export function createEnvironmentActions(
         gitStatus,
         status: current.status === "ready" ? "ready" : current.status,
       }));
+      deps.closeProjectMenus();
     } catch (error) {
       if (!environmentRootIsCurrent(root)) {
         return;
       }
-      const message =
-        error instanceof Error
-          ? error.message
-          : translateCurrent("git.checkoutFailed");
-      throw new Error(message);
+      throw branchError(error, translateCurrent("git.checkoutFailed"));
     }
   }
 
@@ -150,7 +149,7 @@ export function createEnvironmentActions(
 
   async function createAndCheckoutBranch(branch: string): Promise<void> {
     const root = deps.getEnvironmentRoot();
-    if (!branch || !root || deps.getAnyThreadIsRunning()) {
+    if (!branch || !root) {
       return;
     }
     try {
@@ -168,8 +167,7 @@ export function createEnvironmentActions(
       if (!environmentRootIsCurrent(root)) {
         throw error;
       }
-      setStatus(error instanceof Error ? error.message : translateCurrent("git.branch.createFailed"));
-      throw error;
+      throw branchError(error, translateCurrent("git.branch.createFailed"));
     }
   }
 

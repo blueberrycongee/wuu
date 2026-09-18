@@ -22,32 +22,13 @@ import {
   isThreadExecuting,
   isThreadRunning,
   isThreadUnread,
-  threadProjectPath,
+  threadBelongsToProject,
   type ThreadSummary,
 } from "./AppState";
 import { resolveLocalizedText, useI18n } from "./i18n";
 
-function threadsForProjectPath(
-  threads: ThreadSummary[],
-  projectPath: string,
-): ThreadSummary[] {
-  return threads.filter((thread) =>
-    sameSidebarPath(threadProjectPath(thread), projectPath),
-  );
-}
-
 function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
-}
-
-function sameSidebarPath(left: string, right: string): boolean {
-  return cleanSidebarPath(left) === cleanSidebarPath(right);
-}
-
-function cleanSidebarPath(path: string): string {
-  const trimmed = path.trim();
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
-  return withoutTrailingSlash || trimmed;
 }
 
 const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 8;
@@ -288,17 +269,17 @@ export function ProjectGroup({
   const expanded = expandedSidebarSectionIDs.has(project.id);
   // The scratch pseudo project trusts the threadsByProjectID entry
   // directly: App.tsx already filtered scratch threads. Real
-  // projects still go through the cwd-path filter so stale entries
-  // can't leak into the wrong group.
+  // projects use stable workspace identity, falling back to paths for legacy
+  // sessions, so local forks inside worktrees remain in their owning project.
   const sourceProjectThreads = threadsByProjectID[project.id];
   const unorderedProjectThreads = useMemo(
     () =>
       unpinnedThreads(
         isScratchPseudo
           ? sourceProjectThreads ?? []
-          : threadsForProjectPath(sourceProjectThreads ?? [], project.path),
+          : (sourceProjectThreads ?? []).filter((thread) => threadBelongsToProject(thread, project)),
       ),
-    [isScratchPseudo, project.path, sourceProjectThreads],
+    [isScratchPseudo, project.id, project.path, sourceProjectThreads],
   );
   const [threadOrder, setThreadOrder] = useState<string[]>(() =>
     storedThreadOrder(project.id),

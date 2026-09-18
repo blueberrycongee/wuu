@@ -3,6 +3,10 @@
 /** Phone access is available on native hosts; Web hides it via host capabilities. */
 export const ENABLE_REMOTE_CONTROL = true;
 
+/** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
+export const ENABLE_TURN_EDIT_SUMMARY = false;
+export const ENABLE_CONVERSATION_TURN_RAIL = false;
+
 /**
  * Collaboration is part of the default desktop product in development and
  * release builds. Keep a build-time opt-out for emergency rollback without

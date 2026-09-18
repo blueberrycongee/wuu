@@ -102,7 +102,7 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 
 	if _, err := service.SendHuman(ctx, channels.HumanSendParams{
 		RoomID: room.ID, HumanID: "human-1", Body: "@Alpha follow up",
-		Images: []channels.MessageImage{{MediaType: "image/png", Data: "aW1hZ2U="}},
+		Images: []channels.MessageImage{{MediaType: "image/png", Data: "aW1hZ2U="}, {MediaType: "image/jpeg", Data: "c2Vjb25k"}},
 	}); err != nil {
 		t.Fatalf("SendHuman() error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rich chat_read error = %v", err)
 	}
-	if len(richRead.Content) != 2 || richRead.Content[0].Type != toolresult.ContentTypeText || richRead.Content[1].Type != toolresult.ContentTypeImage {
+	if len(richRead.Content) != 3 || richRead.Content[0].Type != toolresult.ContentTypeText || richRead.Content[1].Type != toolresult.ContentTypeImage || richRead.Content[2].Data != "c2Vjb25k" {
 		t.Fatalf("rich chat_read content = %#v", richRead.Content)
 	}
 	if richRead.Content[1].Data != "aW1hZ2U=" || strings.Contains(richRead.Content[0].Text, "aW1hZ2U=") {
@@ -130,7 +130,7 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(richRead.Content[0].Text), &read); err != nil {
 		t.Fatalf("decode rich chat_read text = %v: %s", err, richRead.Content[0].Text)
 	}
-	if len(read.Messages) != 1 || read.Messages[0].Body != "@Alpha follow up" || len(read.Messages[0].Images) != 1 {
+	if len(read.Messages) != 1 || read.Messages[0].Body != "@Alpha follow up" || len(read.Messages[0].Images) != 2 {
 		t.Fatalf("rich chat_read messages = %#v", read.Messages)
 	}
 
@@ -139,11 +139,27 @@ func TestNamedAgentChatToolsAreIsolatedAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("non-vision chat_read error = %v", err)
 	}
-	if len(omittedRead.Content) != 2 || omittedRead.Content[0].Type != toolresult.ContentTypeText || omittedRead.Content[1].Text != "[1 image omitted: unsupported]" {
-		t.Fatalf("non-vision chat_read content = %#v", omittedRead.Content)
-	}
-	if strings.Contains(omittedRead.Content[0].Text, "aW1hZ2U=") || strings.Contains(omittedRead.Content[0].Text, `"images"`) || omittedRead.Content[1].Type == toolresult.ContentTypeImage {
-		t.Fatalf("non-vision chat_read exposed image data: %#v", omittedRead.Content)
+	// Tools preserve durable media; only the common request boundary knows the
+	// current model, including when an old result is replayed with another model.
+	for _, supported := range []bool{false, true} {
+		request, err := providers.PrepareMessagesForProviderRequestWithPolicy("p", "m", []providers.ChatMessage{
+			{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "read", Name: "chat_read", Arguments: `{}`}}},
+			{Role: "tool", ToolCallID: "read", ToolResult: &omittedRead},
+		}, providers.MediaInputPolicy{ImageKnown: true, Image: supported})
+		if err != nil {
+			t.Fatal(err)
+		}
+		images, markers := 0, 0
+		for _, message := range request {
+			images += len(message.Images)
+			markers += strings.Count(message.Content, "[2 images omitted: unsupported]")
+			if strings.Contains(message.Content, "aW1hZ2U=") || strings.Contains(message.Content, "c2Vjb25k") {
+				t.Fatal("image bytes leaked into text")
+			}
+		}
+		if (supported && (images != 2 || markers != 0)) || (!supported && (images != 0 || markers != 1)) {
+			t.Fatalf("supported=%v: images=%d markers=%d", supported, images, markers)
+		}
 	}
 
 	heldJSON, err := kit.Execute(ctx, providers.ToolCall{Name: "chat_send", Arguments: `{"room_id":"` + room.ID + `","kind":"text","body":"stale answer","basis_seq":1}`})

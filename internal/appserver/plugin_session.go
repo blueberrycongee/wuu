@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/worktree"
@@ -113,11 +111,8 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	}
 	// A worktree session runs in its own git worktree based on the fork
 	// parent's directory, or on the project root for fresh context.
-	if params.WorkspaceID != "" && params.WorkspaceID != strings.TrimSpace(s.rt.WorkspaceID) {
-		return pluginhost.SessionCreateResult{}, errors.New("target workspace is not served by this app-server")
-	}
-	if params.WorkspaceRoot != "" && filepath.Clean(params.WorkspaceRoot) != filepath.Clean(s.rt.RootDir) {
-		return pluginhost.SessionCreateResult{}, errors.New("target workspace root is not served by this app-server")
+	if _, _, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot); err != nil {
+		return pluginhost.SessionCreateResult{}, err
 	}
 	owner := pluginSessionOwner(pluginID, params)
 	if existing, ok, err := session.FindManagedByRequest(s.rt.SessionDir, owner, params.RequestID); err != nil {
@@ -283,7 +278,11 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 	if metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) {
 		// Shared-session senders may inspect their own correlated request. Goal
 		// continuations and automation heartbeats both need recovery here.
-		if metadata.Visibility == pluginhost.SessionVisibilityPlugin || params.RequestID == "" {
+		control, managed, controlErr := session.ReadControl(s.rt.SessionDir, params.SessionID)
+		if controlErr != nil {
+			return pluginhost.SessionInspectResult{}, controlErr
+		}
+		if metadata.Visibility == pluginhost.SessionVisibilityPlugin || params.RequestID == "" && !(managed && control.ManagerID == "plugin:"+pluginID && control.State != session.ControlReleased) {
 			return pluginhost.SessionInspectResult{}, errors.New("shared session inspection requires a plugin request_id")
 		}
 	}
@@ -343,7 +342,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 		return result, nil
 	}
 	if requestID != "" {
-		if live, ok := s.findPluginSessionRequest(th, pluginSessionRequestClientID(pluginID, requestID)); ok {
+		if live, ok := s.findSessionInput(th, pluginSessionRequestClientID(pluginID, requestID)); ok {
 			if params.TurnID == "" || live.TurnID == params.TurnID {
 				result.Turn = &pluginhost.SessionTurnInspection{RequestID: requestID, State: live.State, TurnID: live.TurnID, QueueID: live.QueueID}
 				result.Session.State = live.State
@@ -512,7 +511,11 @@ func (s *Server) cancelPluginSession(_ context.Context, pluginID string, params 
 	if !ok {
 		return pluginhost.SessionCancelResult{}, session.ErrSessionNotFound
 	}
-	if metadata.Owner != "plugin:"+pluginID {
+	control, err := s.pluginSessionControl(pluginID, sessionID, params.ControlRevision)
+	if err != nil {
+		return pluginhost.SessionCancelResult{}, err
+	}
+	if metadata.Owner != "plugin:"+pluginID && control == nil {
 		if metadata.Visibility == pluginhost.SessionVisibilityPlugin || (turnID == "" && queueID == "") {
 			return pluginhost.SessionCancelResult{}, errors.New("shared session cancellation requires an owned turn_id or queue_id")
 		}
@@ -522,7 +525,7 @@ func (s *Server) cancelPluginSession(_ context.Context, pluginID string, params 
 				return pluginhost.SessionCancelResult{}, err
 			}
 			requestID := latestPluginRequestID(th, pluginID, turnID)
-			sent, found := s.findPluginSessionRequest(th, pluginSessionRequestClientID(pluginID, requestID))
+			sent, found := s.findSessionInput(th, pluginSessionRequestClientID(pluginID, requestID))
 			if requestID == "" || !found || sent.TurnID != turnID || sent.Steered {
 				return pluginhost.SessionCancelResult{}, errors.New("plugin does not own the turn")
 			}
@@ -614,8 +617,15 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
-	if existing, ok := s.findPluginSessionRequest(th, clientID); ok {
+	if existing, ok := s.findSessionInput(th, clientID); ok {
 		return existing, nil
+	}
+	control, err := s.pluginSessionControl(pluginID, params.SessionID, params.ControlRevision)
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	if control != nil && control.State != session.ControlActive {
+		return pluginhost.SessionSendResult{}, session.ErrControlChanged
 	}
 	msg, err := literalUserMessageFromPrompt(params.Input.Prompt, nil, nil)
 	if err != nil {
@@ -629,20 +639,37 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	msg.ReadOnly = true
 	msg.DisplayContent = "插件已唤醒 Agent"
 	if params.Presentation != nil {
-		if kind := strings.TrimSpace(params.Presentation.Kind); kind != "" && kind != pluginhost.SessionPresentationQueryBubble {
-			return pluginhost.SessionSendResult{}, errors.New("presentation.kind must be query_bubble")
+		if kind := strings.TrimSpace(params.Presentation.Kind); kind != "" {
+			if kind != pluginhost.SessionPresentationQueryBubble && kind != pluginhost.SessionPresentationSessionMessage {
+				return pluginhost.SessionSendResult{}, errors.New("presentation.kind must be query_bubble or session_message")
+			}
+			msg.PresentationKind = kind
 		}
 		if text := strings.TrimSpace(params.Presentation.Text); text != "" {
 			msg.DisplayContent = text
 		}
 		msg.Name = strings.TrimSpace(params.Presentation.Name)
 		msg.RelatedSessionID = strings.TrimSpace(params.Presentation.RelatedSessionID)
+		if msg.PresentationKind == pluginhost.SessionPresentationSessionMessage {
+			if msg.RelatedSessionID == "" || msg.RelatedSessionID == params.SessionID || strings.TrimSpace(params.Presentation.Text) == "" {
+				return pluginhost.SessionSendResult{}, errors.New("session_message requires text and a distinct related_session_id as its source")
+			}
+			if metadata.ArchivedAt != nil {
+				return pluginhost.SessionSendResult{}, errors.New("cannot deliver a session message to an archived session")
+			}
+		}
 		if msg.RelatedSessionID != "" {
 			related, exists, findErr := session.Find(s.rt.SessionDir, msg.RelatedSessionID)
 			if findErr != nil {
 				return pluginhost.SessionSendResult{}, findErr
 			}
-			if !exists || related.Owner != owner {
+			if msg.PresentationKind == pluginhost.SessionPresentationSessionMessage {
+				if !exists || related.ArchivedAt != nil || (related.Visibility == pluginhost.SessionVisibilityPlugin && related.Owner != owner) {
+					return pluginhost.SessionSendResult{}, errors.New("session message source must be an active shared session or owned by the plugin")
+				}
+				// Snapshot the host's title, not a caller-supplied display identity.
+				msg.Name = strings.TrimSpace(related.Title)
+			} else if !exists || related.Owner != owner {
 				return pluginhost.SessionSendResult{}, errors.New("related_session_id must name a session owned by the plugin")
 			}
 		}
@@ -680,27 +707,21 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			return pluginhost.SessionSendResult{}, err
 		}
 	}
-	if params.IfRunning == pluginhost.SessionIfRunningSteer {
-		if turnID, steered := s.steerPluginSession(th, msg); steered {
-			return pluginhost.SessionSendResult{
-				State: pluginhost.TurnLifecycleRunning, SessionID: th.ID, TurnID: turnID, Steered: true,
-			}, nil
-		}
-	}
 	permissions, err := s.resolveThreadTurnPermissions(th, nil)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
 	snapshot.RequestContext = requestContext
+	snapshot.Control = control
 	snapshot.PluginTurn = &pluginTurnReference{PluginID: pluginID, RequestID: params.RequestID}
 
-	started, ok, err := s.startPluginSubmittedTurn(ctx, th, msg, snapshot)
+	result, ok, err := s.trySubmitSessionInput(ctx, th, msg, params.IfRunning, snapshot)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
 	if ok {
-		return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleRunning, SessionID: th.ID, TurnID: started.turnID}, nil
+		return result, nil
 	}
 
 	queueID := session.NewID()
@@ -729,78 +750,17 @@ func pluginSessionRequestFromClientID(clientID string) (string, string, bool) {
 	return pluginID, requestID, ok && pluginID != "" && requestID != ""
 }
 
-func (s *Server) steerPluginSession(th *threadState, msg providers.ChatMessage) (string, bool) {
-	if th == nil {
-		return "", false
-	}
-	th.mu.Lock()
-	defer th.mu.Unlock()
-	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact || th.interrupting {
-		return "", false
-	}
-	for _, existing := range th.pendingSteers {
-		if existing.ClientID == msg.ClientID {
-			return th.currentTurn, true
-		}
-	}
-	msg.Steered = true
-	th.pendingSteers = append(th.pendingSteers, msg)
-	th.signalSteerWakeLocked()
-	return th.currentTurn, true
-}
-
-func (s *Server) findPluginSessionRequest(th *threadState, clientID string) (pluginhost.SessionSendResult, bool) {
-	if th == nil || strings.TrimSpace(clientID) == "" {
-		return pluginhost.SessionSendResult{}, false
-	}
-	th.mu.Lock()
-	for _, pending := range th.pendingSteers {
-		if pending.ClientID == clientID {
-			result := pluginhost.SessionSendResult{
-				State: pluginhost.TurnLifecycleRunning, SessionID: th.ID, TurnID: th.currentTurn, Steered: true,
-			}
-			th.mu.Unlock()
-			return result, true
-		}
-	}
-	steered := false
-	for _, message := range th.History {
-		if message.ClientID == clientID && message.Steered {
-			steered = true
-			break
-		}
-	}
-	for _, turn := range th.Turns {
-		for _, item := range turn.Items {
-			if item.Type != ThreadItemUserMessage || item.SourceID != clientID {
-				continue
-			}
-			state := pluginhost.TurnLifecycleCompleted
-			if turn.Status == TurnStatusInProgress {
-				state = pluginhost.TurnLifecycleRunning
-			}
-			result := pluginhost.SessionSendResult{State: state, SessionID: th.ID, TurnID: turn.ID, Steered: steered}
-			th.mu.Unlock()
-			return result, true
-		}
-	}
-	th.mu.Unlock()
-
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	for _, entry := range s.pendingQueuedTurns[th.ID] {
-		if entry.msg.ClientID == clientID {
-			return pluginhost.SessionSendResult{State: pluginhost.TurnLifecycleQueued, SessionID: th.ID, QueueID: entry.id}, true
-		}
-	}
-	return pluginhost.SessionSendResult{}, false
-}
-
 func (s *Server) createPluginSessionThread(owner string, params pluginhost.SessionCreateParams) (*threadState, error) {
+	return s.createHostSessionThread(owner, pluginSessionSource(owner, params), "", params)
+}
+
+func (s *Server) createHostSessionThread(owner, source, id string, params pluginhost.SessionCreateParams) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
-	id := session.NewID()
+	if id == "" {
+		id = session.NewID()
+	}
 	threadCWD := s.rt.RootDir
 	managed := session.ManagedMetadata{Owner: owner, Visibility: params.Visibility, ParentID: params.ParentSessionID, ContextSource: params.ContextSource, CreationRequestID: params.RequestID}
 	var history []providers.ChatMessage
@@ -857,8 +817,14 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 		selection.Variant = resolved.Runtime.Variant
 		selection.Effort = resolved.Runtime.Effort
 	}
-	source := pluginSessionSource(owner, params)
 	workspaceID := strings.TrimSpace(s.rt.WorkspaceID)
+	if params.WorkspaceID != "" || params.WorkspaceRoot != "" {
+		root, resolvedID, err := s.resolveSessionWorkspace(params.WorkspaceID, params.WorkspaceRoot)
+		if err != nil {
+			return nil, err
+		}
+		threadCWD, workspaceID = root, resolvedID
+	}
 	if len(history) == 0 {
 		history = make([]providers.ChatMessage, 0, 1)
 	}
@@ -971,7 +937,9 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility
-	th.ParentID = params.ParentSessionID
+	// Session lineage stays in persisted metadata for management and cancellation.
+	// Thread.ParentID identifies internal agent workers, not ordinary sessions
+	// created from another session; keep this consistent with applySessionMetadata.
 	th.WorktreePath = createdWorktreePath
 	if created != nil {
 		th.WorktreeBaseHEAD = created.WorktreeBaseHEAD
@@ -1072,47 +1040,8 @@ func (s *Server) dispatchHandoffLaunchTurn(th *threadState, params pluginhost.Se
 	if err != nil {
 		return err
 	}
-	_, _, err = s.startPluginSubmittedTurn(context.Background(), th, msg, turnRuntimeSnapshot{}.withPermissions(permissions))
+	_, _, err = s.startSubmittedSessionTurn(context.Background(), th, msg, turnRuntimeSnapshot{}.withPermissions(permissions))
 	return err
-}
-
-func (s *Server) startPluginSubmittedTurn(ctx context.Context, th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot) (startedThreadTurn, bool, error) {
-	// The host call only admits the turn. Once accepted, the turn belongs to the
-	// target session and must outlive the plugin invocation that submitted it.
-	ctx = context.WithoutCancel(ctx)
-	var threadRuntime *runtime.ThreadRuntime
-	started, ok, err := s.startThreadUserTurnWithAdmission(
-		ctx, th, msg, snapshot, false, turnReadOnlyFail,
-		turnAdmissionHooks{afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
-			var runtimeErr error
-			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
-			if runtimeErr == nil {
-				s.foldFrozenWorkerTree(admitted, threadRuntime)
-			}
-			return runtimeErr
-		}},
-	)
-	if err != nil {
-		if errors.Is(err, errThreadExecutionBusy) {
-			return startedThreadTurn{}, false, nil
-		}
-		return startedThreadTurn{}, false, err
-	}
-	if !ok {
-		return startedThreadTurn{}, false, nil
-	}
-	launch, accepted := s.reserveBackground(func() {
-		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
-	})
-	if !accepted {
-		return startedThreadTurn{}, false, errors.Join(errServerClosed, s.abortStartedThreadTurnDurably(th, started, errServerClosed))
-	}
-	defer launch.Cancel()
-	if err := s.writeNotification(NotificationTurnStarted, TurnStartedNotification{ThreadID: th.ID, Turn: started.turn}); err != nil {
-		return startedThreadTurn{}, false, errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
-	}
-	launch.Commit()
-	return started, true, nil
 }
 
 func normalizeSessionToolPolicy(policy pluginhost.SessionToolPolicy) (pluginhost.SessionToolPolicy, error) {

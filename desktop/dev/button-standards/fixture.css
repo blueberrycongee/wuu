@@ -1,0 +1,27 @@
+body { overflow: auto; }
+.button-standard { max-width: 1100px; margin: 0 auto; padding: 28px; color: var(--ink); }
+.standard-heading, .standard-heading nav, .standard-heading label { display: flex; align-items: center; gap: 12px; }
+.standard-heading { justify-content: space-between; flex-wrap: wrap; }
+.standard-heading select { background: var(--surface-2); color: var(--ink); padding: 5px; border: 0; border-radius: var(--radius-xs); }
+.button-standard h1 { font-size: 20px; margin: 0; }
+.button-standard h2 { font-size: 14px; margin: 0 0 12px; }
+.button-standard h3 { font-size: 12px; font-weight: 500; margin: 0 0 8px; color: var(--ink-soft); }
+.button-standard section { margin-top: 32px; }
+.button-standard p { max-width: 720px; color: var(--ink-soft); line-height: 1.7; }
+.standard-shell { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr); background: var(--paper); }
+.standard-shell.narrow { max-width: 600px; }
+.standard-shell .titlebar { height: 48px; padding: 0 12px; }
+.standard-tabs { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.standard-tab { display: flex; align-items: center; gap: 8px; background: var(--surface-3); border-radius: var(--radius-xs); padding: 0 8px; height: 32px; min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; }
+.standard-tab .session-tab-close { margin-left: auto; }
+.standard-panel-space { flex: 1; }
+.standard-shell .workspace-panel-tabbar { border-left: 1px solid var(--hairline-soft); }
+.standard-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.standard-states { display: grid; gap: 12px; }
+.standard-state { display: flex; align-items: center; gap: 20px; }
+.standard-state > span { width: 48px; color: var(--ink-soft); font-size: 12px; }
+.standard-examples { display: flex; gap: 40px; flex-wrap: wrap; }
+.button-standard :is(.session-tab-close, .workspace-tool-tab-close) { opacity: 1; }
+@media(max-width: 640px) { .button-standard { padding: 16px; } .standard-shell { grid-template-columns: minmax(0, 1fr); } .standard-heading nav { flex-wrap: wrap; } }
+
+.standard-tab > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

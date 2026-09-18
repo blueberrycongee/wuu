@@ -1,6 +1,6 @@
 {
   "name": "@blueberrycongee/wuu-desktop",
-  "version": "2026.9.1",
+  "version": "2026.9.2",
   "description": "Desktop app for the Wuu AI coding agent",
   "author": "Andy wu <lpageo@163.com>",
   "private": true,
@@ -21,11 +21,11 @@
     "build:core": "node scripts/build-core.cjs",
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
     "build": "node scripts/build-web.cjs && electron-vite build",
-    "pack:mac": "npm run build:core && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish=never --config.electronDist=node_modules/electron/dist",
-    "dist:mac": "npm run build:core && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
+    "pack:mac": "npm run build:core && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:mac": "npm run build:core && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
     "pack:win": "npm run build:core:win && npm run build && electron-builder --win dir --publish=never",
     "dist:win": "npm run build:core:win && npm run build && electron-builder --win nsis zip --publish=never",
-    "release:desktop": "npm run dist:mac",
+    "release:desktop": "node scripts/check-release-signing.cjs && npm run dist:mac",
     "test": "npm run test:dev-launcher && npm run test:unit",
     "test:dev-launcher": "node scripts/test-dev-launcher.cjs",
     "test:unit": "vitest run --exclude=src/main/gitService.test.ts --exclude=src/main/remoteGit.test.ts && vitest run src/main/gitService.test.ts src/main/remoteGit.test.ts --maxWorkers=1 --minWorkers=1 --testTimeout=15000",
@@ -37,10 +37,12 @@
     "test:e2e:window-resize": "npm run build && electron scripts/window-resize-perf-e2e.cjs",
     "test:e2e:document-composer-width": "npm run build && electron scripts/document-composer-width-e2e.cjs",
     "test:e2e:session-composer-width": "npm run build && electron scripts/session-composer-width-e2e.cjs",
+    "test:e2e:composer-height": "npm run build && electron scripts/composer-height-e2e.cjs",
     "test:e2e:sidebar-touch": "npm run build && electron scripts/sidebar-touch-e2e.cjs",
     "test:e2e:settings-sidebar-hit": "npm run build && electron scripts/settings-sidebar-hit-e2e.cjs",
     "test:e2e:browser-pip": "node scripts/browser-pip-e2e.cjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:release-signing": "node --test scripts/test-release-signing.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -76,6 +78,7 @@
     "afterPack": "scripts/after-pack.cjs",
     "files": [
       "out/**/*",
+      "vendor/zeron/LICENSE",
       "package.json"
     ],
     "extraResources": [
@@ -86,7 +89,9 @@
           "wuu-core",
           "wuu-core.exe",
           "wuu-*-plugin",
-          "wuu-*-plugin.exe"
+          "wuu-*-plugin.exe",
+          "wuu-cua-mac",
+          "wuu-cua-mac-pip"
         ]
       },
       {
@@ -103,7 +108,13 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "identity": "-",
+      "sign": "scripts/sign-mac.cjs",
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Wuu uses screen capture to observe apps during computer-use tasks."
+      }
     },
     "dmg": {
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
@@ -133,6 +144,7 @@
     "jsdom": "^25.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "@electron/osx-sign": "1.3.3"
   }
 }

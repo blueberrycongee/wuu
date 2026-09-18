@@ -5,6 +5,7 @@ public enum ComputerAction: String, CaseIterable, Sendable {
     case requestPermissions = "request_permissions"
     case listApps = "list_apps"
     case observe
+    case querySnapshot = "query_snapshot"
     case click
     case drag
     case pressKey = "press_key"
@@ -15,6 +16,7 @@ public enum ComputerAction: String, CaseIterable, Sendable {
     case selectText = "select_text"
     case performAction = "perform_action"
     case waitForChange = "wait_for_change"
+    case waitFor = "wait_for"
     case sequence
     case activateControl = "activate_control"
     case concealApp = "conceal_app"
@@ -35,6 +37,8 @@ public enum CaptureScope: String, Sendable {
     case app
     case screen
 }
+
+public enum ObservationMode: String, Sendable { case ax, vision, both }
 
 public struct ComputerCommand: @unchecked Sendable {
     public let action: ComputerAction
@@ -63,6 +67,20 @@ public struct ComputerCommand: @unchecked Sendable {
     public let foregroundPolicy: ForegroundPolicy
     public let scope: CaptureScope
     public let disableDiff: Bool
+    public let snapshotID: String?
+    public let controlEpoch: String
+    public let observationMode: ObservationMode
+    public let query: String?
+    public let offset: Int
+    public let limit: Int
+    public let rootElementID: Int?
+    public let after: ObservationMode?
+    public let expectation: AXExpectation?
+
+    public var isMutation: Bool {
+        ![.permissionStatus, .requestPermissions, .listApps, .observe, .querySnapshot, .waitForChange, .waitFor, .sequence].contains(action)
+    }
+    public var referencesSnapshot: Bool { elementID != nil || x != nil || y != nil || action == .drag || rootElementID != nil }
 
     public init(arguments: [String: Any]) throws {
         guard let rawAction = arguments["action"] as? String,
@@ -70,6 +88,24 @@ public struct ComputerCommand: @unchecked Sendable {
             throw ComputerError.invalidArguments("action is required and must be supported")
         }
         self.action = action
+        snapshotID = arguments["snapshot_id"] as? String
+        controlEpoch = arguments["control_epoch"] as? String ?? ""
+        let rawMode = arguments["mode"] as? String ?? "both"
+        guard let mode = ObservationMode(rawValue: rawMode) else { throw ComputerError.invalidArguments("mode must be ax, vision, or both") }
+        observationMode = mode
+        if let rawAfter = arguments["after"] as? String {
+            guard let mode = ObservationMode(rawValue: rawAfter) else { throw ComputerError.invalidArguments("after must be ax, vision, or both") }
+            after = mode
+        } else { after = nil }
+        if let value = arguments["expect"] {
+            guard let fields = value as? [String: Any] else { throw ComputerError.invalidArguments("expect must be an object") }
+            expectation = try AXExpectation(fields)
+        } else { expectation = nil }
+        if action == .waitFor && expectation == nil { throw ComputerError.invalidArguments("wait_for requires expect") }
+        query = arguments["query"] as? String
+        offset = max(0, Self.int(arguments["offset"]) ?? 0)
+        limit = max(1, min(Self.int(arguments["limit"]) ?? 160, 300))
+        rootElementID = Self.int(arguments["root_element_id"])
         app = arguments["app"] as? String
         elementID = Self.int(arguments["element_id"])
         x = Self.double(arguments["x"] ?? arguments["from_x"])
@@ -143,7 +179,10 @@ public struct ComputerResult: @unchecked Sendable {
 
 public protocol ComputerBackend: AnyObject {
     func perform(_ command: ComputerCommand) throws -> ComputerResult
+    func shutdown()
 }
+
+public extension ComputerBackend { func shutdown() {} }
 
 public enum ComputerError: LocalizedError, Equatable {
     case invalidArguments(String)
@@ -153,6 +192,8 @@ public enum ComputerError: LocalizedError, Equatable {
     case unsupported(String)
     case requiresForeground(String)
     case operationFailed(String)
+    case cancelled(String)
+    case staleSnapshot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -162,6 +203,8 @@ public enum ComputerError: LocalizedError, Equatable {
         case let .elementNotFound(id): "element_not_found: \(id); observe again for fresh element ids"
         case let .unsupported(message): "unsupported_action: \(message)"
         case let .requiresForeground(message): "requires_foreground: \(message)"
+        case let .cancelled(message): "cancelled: \(message)"
+        case let .staleSnapshot(message): "stale_snapshot: \(message); observe again"
         case let .operationFailed(message): "operation_failed: \(message)"
         }
     }
@@ -175,7 +218,9 @@ public final class MCPServer {
         self.backend = backend
     }
 
-    public func handle(_ request: [String: Any]) throws -> [String: Any]? {
+    public func shutdown() { backend.shutdown() }
+
+    public func handle(_ request: [String: Any], execution: ComputerExecution = ComputerExecution()) throws -> [String: Any]? {
         let method = request["method"] as? String ?? ""
         let id = request["id"]
         if id == nil && method.hasPrefix("notifications/") {
@@ -189,27 +234,30 @@ public final class MCPServer {
             return response(id: id, result: [
                 "protocolVersion": selected,
                 "capabilities": ["tools": ["listChanged": false]],
-                "serverInfo": ["name": "wuu-cua-mac", "version": "0.1.0"],
+                "serverInfo": ["name": "wuu-cua-mac", "version": "0.2.0"],
             ])
         case "ping":
             return response(id: id, result: [:])
         case "tools/list":
             return response(id: id, result: ["tools": [toolDefinition()]])
         case "tools/call":
-            return callTool(id: id, params: request["params"] as? [String: Any])
+            return callTool(id: id, params: request["params"] as? [String: Any], execution: execution)
         default:
             return rpcError(id: id, code: -32601, message: "method not found: \(method)")
         }
     }
 
-    private func callTool(id: Any?, params: [String: Any]?) -> [String: Any] {
+    private func callTool(id: Any?, params: [String: Any]?, execution: ComputerExecution) -> [String: Any] {
         guard params?["name"] as? String == "computer" else {
             return rpcError(id: id, code: -32602, message: "unknown tool")
         }
         do {
             let arguments = params?["arguments"] as? [String: Any] ?? [:]
             let command = try ComputerCommand(arguments: arguments)
-            let result = try backend.perform(command)
+            let result = try execution.run {
+                try execution.check()
+                return try backend.perform(command)
+            }
             var content: [[String: Any]] = [["type": "text", "text": result.text]]
             if let screenshot = result.screenshot,
                let mimeType = result.screenshotMIMEType,
@@ -230,7 +278,7 @@ public final class MCPServer {
             let code = errorCode(error)
             return response(id: id, result: [
                 "content": [["type": "text", "text": message]],
-                "structuredContent": ["error": message, "error_code": code],
+                "structuredContent": execution.evidence.merging(["error": message, "error_code": code]) { _, new in new },
                 "isError": true,
             ])
         }
@@ -246,6 +294,8 @@ public final class MCPServer {
         case .unsupported: "unsupported_action"
         case .requiresForeground: "requires_foreground"
         case .operationFailed: "operation_failed"
+        case .cancelled: "cancelled"
+        case .staleSnapshot: "stale_snapshot"
         }
     }
 
@@ -264,22 +314,24 @@ public final class MCPServer {
             variant(.requestPermissions, required: []),
             variant(.listApps, required: []),
             variant(.observe, required: ["app"]),
+            variant(.querySnapshot, required: ["app", "snapshot_id"]),
             variant(.click, required: ["app"], anyOf: [
-                ["required": ["element_id"]],
-                ["required": ["x", "y", "coordinate_space"]],
+                ["required": ["element_id", "snapshot_id"]],
+                ["required": ["x", "y", "coordinate_space", "snapshot_id"]],
             ]),
-            variant(.drag, required: ["app", "from_x", "from_y", "to_x", "to_y", "coordinate_space"]),
+            variant(.drag, required: ["app", "snapshot_id", "from_x", "from_y", "to_x", "to_y", "coordinate_space"]),
             variant(.pressKey, required: ["app", "key"]),
             variant(.pressKeys, required: ["app", "keys"]),
             variant(.scroll, required: ["app", "direction"]),
-            variant(.setValue, required: ["app", "element_id"], anyOf: [
+            variant(.setValue, required: ["app", "element_id", "snapshot_id"], anyOf: [
                 ["required": ["value"]],
                 ["required": ["text"]],
             ]),
             variant(.typeText, required: ["app", "text"]),
-            variant(.selectText, required: ["app", "element_id", "text"]),
-            variant(.performAction, required: ["app", "element_id", "action_name"]),
+            variant(.selectText, required: ["app", "element_id", "text", "snapshot_id"]),
+            variant(.performAction, required: ["app", "element_id", "action_name", "snapshot_id"]),
             variant(.waitForChange, required: ["app"]),
+            variant(.waitFor, required: ["app", "expect"]),
             variant(.sequence, required: ["app", "steps"]),
             variant(.activateControl, required: ["app"], anyOf: [
                 ["required": ["description"]],
@@ -291,7 +343,7 @@ public final class MCPServer {
         return [
             "name": "computer",
             "title": "Computer Use for Mac",
-            "description": "Observe and control macOS apps without disturbing the user. The runtime picks the lowest-disruption control level automatically: background Accessibility actions, then background directed input (keyboard and mouse delivered straight to the target process without activating it), and a visible foreground takeover only when foreground_policy asks for it. By default the user's frontmost app and real pointer stay put. Observe returns a canonical app target and fresh UI state. Input actions only deliver the requested event; they do not infer success from AX or pixels. Call observe after an action when the outcome matters. wait_for_change waits up to timeout seconds and returns changed=false when nothing changes; a normal timeout is not an error. conceal_app moves the target window off-screen so the user never sees it while background control and live capture keep working; reveal_app restores it.",
+            "description": "Observe and control macOS apps without disturbing the user. The runtime picks the lowest-disruption control level automatically: background Accessibility actions, then background directed input (keyboard and mouse delivered straight to the target process without activating it), and a visible foreground takeover only when foreground_policy asks for it. By default the user's frontmost app and real pointer stay put. Observe returns a canonical app target and snapshot_id. Pass snapshot_id with element IDs or coordinates; each input consumes it. query_snapshot pages or searches stored AX state. mode=ax supports text-only models; after optionally returns a fresh post-action observation. Input actions only deliver the requested event; they do not infer success from AX or pixels. Call observe after an action when the outcome matters. wait_for_change waits up to timeout seconds and returns changed=false when nothing changes; a normal timeout is not an error. conceal_app moves the target window off-screen so the user never sees it while background control and live capture keep working; reveal_app restores it.",
             "inputSchema": [
                 "type": "object",
                 "required": ["action"],
@@ -300,6 +352,17 @@ public final class MCPServer {
                 "properties": [
                     "action": ["type": "string", "enum": ComputerAction.allCases.map(\.rawValue)],
                     "app": ["type": "string", "description": "Target app display name, bundle identifier, or path. Required for every action except permission_status, request_permissions, and list_apps."],
+                    "snapshot_id": ["type": "string", "description": "Required with element IDs or coordinates. Copy from observe; every input consumes it. A replaced, consumed, or stale snapshot is rejected before input."],
+                    "control_epoch": ["type": "string", "description": "Runtime-owned control generation; Wuu supplies this value."],
+                    "mode": ["type": "string", "enum": ["ax", "vision", "both"], "description": "Observation evidence. ax avoids screenshots and works with text-only models; vision skips AX traversal; both returns both. Wuu defaults using model capabilities."],
+                    "after": ["type": "string", "enum": ["ax", "vision", "both"], "description": "Optionally observe after input and return a fresh snapshot. Delivery alone is not proof the intended outcome occurred."],
+                    "expect": ["type": "object", "additionalProperties": false,
+                        "description": "Optional AX postcondition for an input action, or required for wait_for. Exact role/title/description/value matching. A timeout never means the input had no side effects; do not automatically replay.",
+                        "properties": ["role": stringProperty, "title": stringProperty, "description": stringProperty, "value": stringProperty, "exists": ["type": "boolean"]]],
+                    "query": ["type": "string", "description": "Case-insensitive text filter for query_snapshot on the stored tree."],
+                    "offset": ["type": "integer", "minimum": 0],
+                    "limit": ["type": "integer", "minimum": 1, "maximum": 300],
+                    "root_element_id": ["type": "integer", "description": "Observe only this subtree from snapshot_id, producing a new snapshot and element IDs."],
                     "element_id": ["type": "integer"],
                     "x": ["type": "number", "description": "Horizontal coordinate in the declared coordinate_space. For scroll, this targets the intended scrollable region; omit x/y only when the primary window center is correct."],
                     "y": ["type": "number", "description": "Vertical coordinate in the declared coordinate_space. For scroll, this targets the intended scrollable region; omit x/y only when the primary window center is correct."],
@@ -335,7 +398,7 @@ public final class MCPServer {
                     "disable_diff": [
                         "type": "boolean",
                         "default": false,
-                        "description": "When true, observe returns the full accessibility snapshot text every time instead of a compact diff against the previous observe. The structured changes list is still populated, so wait_for_change is unaffected. Use only when the whole tree is needed regardless of how little changed.",
+                        "description": "Retained for compatibility. Observations always return a bounded full page with fresh IDs; query_snapshot retrieves additional pages.",
                     ],
                     "steps": [
                         "type": "array",

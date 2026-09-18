@@ -108,24 +108,15 @@ func (t *ChatReadTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		return toolresult.Result{}, err
 	}
 	parts := make([]toolresult.ContentPart, 0, 1)
-	omittedImages := 0
-	imageInputSupported := t.env.ImageInputSupported == nil || *t.env.ImageInputSupported
 	for messageIndex := range payload.Messages {
 		message := &payload.Messages[messageIndex]
 		for imageIndex := range message.Images {
 			image := &message.Images[imageIndex]
-			if imageInputSupported {
-				parts = append(parts, toolresult.ContentPart{
-					Type: toolresult.ContentTypeImage, Data: image.Data, MIMEType: image.MediaType,
-					Name: message.ID + "-image",
-				})
-			} else {
-				omittedImages++
-			}
+			parts = append(parts, toolresult.ContentPart{
+				Type: toolresult.ContentTypeImage, Data: image.Data, MIMEType: image.MediaType,
+				Name: fmt.Sprintf("%s-image-%d", message.ID, imageIndex+1),
+			})
 			image.Data = ""
-		}
-		if !imageInputSupported {
-			message.Images = nil
 		}
 		for fileIndex := range message.Files {
 			file := &message.Files[fileIndex]
@@ -141,16 +132,6 @@ func (t *ChatReadTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 		return toolresult.Result{}, err
 	}
 	parts = append([]toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: projection}}, parts...)
-	if omittedImages > 0 {
-		label := "image"
-		if omittedImages != 1 {
-			label = "images"
-		}
-		parts = append(parts, toolresult.ContentPart{
-			Type: toolresult.ContentTypeText,
-			Text: fmt.Sprintf("[%d %s omitted: unsupported]", omittedImages, label),
-		})
-	}
 	return toolresult.Result{Content: parts}, nil
 }
 
@@ -163,8 +144,10 @@ func (t *ChatSendTool) IsConcurrencySafe() bool { return false }
 func (t *ChatSendTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: "chat_send",
-		Description: "Send one short text message as this named agent to the room's public timeline. basis_seq is required and records the room version used to compose the message. " +
-			"A stale basis is preserved as a held draft instead of being posted.",
+		Description: "Publish one conversational bubble as this named agent immediately, without ending the turn. " +
+			"For several complete thoughts, send short bubbles sequentially in the same turn; each committed message.seq is the next basis_seq. " +
+			"basis_seq is required and records the room version used to compose the message. A stale basis is held as a draft, not delivered; read the delta before continuing. " +
+			"Your final answer can be the last bubble, or call yield_turn alone when the complete answer has already been sent.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

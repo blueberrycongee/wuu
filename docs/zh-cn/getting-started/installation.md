@@ -1,34 +1,37 @@
 # 安装 wuu
 
-wuu 当前提供 macOS 桌面预览版，也可以通过 Go 安装命令行工具。桌面应用适合交互式
-工作；CLI 适合终端、脚本、CI 和其他 Agent。
+wuu 桌面预览版支持 Apple 芯片 Mac，自带运行所需的 core，无需另装 Go 或 CLI。
 
 ## 安装 macOS 桌面应用
-
-当前 GitHub Release 提供 Apple 芯片 Mac 使用的 arm64 DMG 和 ZIP：
 
 1. 打开 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases)。
 2. 下载 `wuu-<version>-mac-arm64.dmg` 或 `wuu-<version>-mac-arm64.zip`。
 3. 将 `wuu.app` 放入 `/Applications`。
 4. 打开 wuu。
 
-桌面安装包自带运行所需的私有 core，不需要另外安装 `wuu` CLI。
+预览版使用固定的自签身份，没有 Apple Developer ID 和公证。确认下载来自官方 GitHub
+Release 后，尝试打开 `/Applications/wuu.app`。如果被 macOS 拦截，前往**系统设置 →
+隐私与安全性 → 仍要打开**。无需安装证书，也不要全局关闭系统安全保护。
 
-## 处理 macOS 的安全提示
+## 从 GitHub Releases 更新
 
-当前预览版没有 Apple Developer ID 签名和公证，因此 Gatekeeper 可能阻止首次启动。
-先确认文件来自项目的官方 GitHub Releases，再运行：
+1. 从官方 Release 页面下载新版 DMG 或 ZIP。
+2. 按 **Cmd+Q** 退出 Wuu，等待退出完成。关闭窗口不等于退出应用。
+3. 用下载的应用替换 `/Applications/wuu.app`，保持名称和位置不变；不要从 DMG 或下载目录
+   同时运行另一份 Wuu。
+4. 打开 `/Applications/wuu.app`。会话和设置保存在 Wuu 用户数据中，升级不需要删除这些数据。
 
-```bash
-xattr -dr com.apple.quarantine /Applications/wuu.app
-open /Applications/wuu.app
-```
+## 电脑操作权限
 
-这条命令会移除下载文件的 quarantine 标记。不要对来源不明的应用运行它。
+使用 Computer Use 时，按提示在系统设置中授予**辅助功能**或**屏幕录制**权限。
+Wuu 会提供设置入口，授权需由你完成；无需安装开发工具或自行签名。
+
+升级后可能需要重新授权，尤其是从旧的未签名版本升级时。请授权当前的
+`/Applications/wuu.app`，不要重置全部隐私权限或删除用户数据。
 
 ## 安装 CLI
 
-产品版本使用日期版本，日期标签不是 Go 模块主版本。请从源码工作树构建 CLI，构建后检查版本：
+需要终端或脚本调用时，安装 [go.mod](../../../go.mod) 要求的 Go 版本，再从源码构建：
 
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
@@ -37,31 +40,15 @@ make install
 wuu --version
 ```
 
-GitHub Releases 不提供独立 CLI 压缩包。通过 Go 安装的 CLI 与桌面应用内置的 core
-相互独立，可以同时存在，也可能处于不同版本。
-
-### 找不到 `wuu` 命令
-
-确认 Go 的二进制目录在 `PATH` 中：
+找不到 `wuu` 命令时，将 Go 的二进制目录加入 `PATH`；如果设置过 `GOBIN`，请使用该目录：
 
 ```bash
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-如果这样可以找到 `wuu`，再把等价设置加入你的 shell 启动文件。
-
-## 从源码运行
-
-需要参与开发时，克隆仓库后可以直接运行 CLI：
-
-```bash
-git clone https://github.com/blueberrycongee/wuu.git
-cd wuu
-go run ./cmd/wuu --version
-```
-
-桌面开发环境和完整检查命令见[开发指南](../../en/project/development.md)（英文）。
-
-## 下一步
+确认生效后，可将设置加入 shell 启动文件。CLI 与桌面内置 core 独立，版本可能不同。
+GitHub Releases 不提供独立 CLI 压缩包；产品的日期版本标签也不适用于
+`go install ...@latest`，请使用上面的源码安装方式。
 
 安装完成后，继续[连接模型服务](model-services.md)。
+桌面源码构建见[开发指南](../../en/project/development.md)（英文）。

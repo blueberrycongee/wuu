@@ -10,7 +10,8 @@ import CryptoKit
     var host: AccountDevice?
     var entries: [HistoryEntry] = []
     var threads: [ChatThread] = []
-    var activeID: String?
+    var activeID: String? { didSet { rememberLocation() } }
+    var mode = "collaboration" { didSet { rememberLocation() } }
     var live: ChatThread?
     var saved: HistoryThread?
     var connected = false
@@ -19,6 +20,7 @@ import CryptoKit
     var sending = false
     var loadingHistory = false
     var loadingContent: Set<String> = []
+    let imagePreviews = ImagePreviewLoader()
     var attachmentPreview: LoadedAttachment?
     var loadingAttachment = false
     var archivedList = false
@@ -27,7 +29,7 @@ import CryptoKit
     var connectionStatus = ""
     var error: String?
     var workspaces: [JSONValue] = []
-    var workspace = ""
+    var workspace = "" { didSet { rememberLocation() } }
     var pendingApproval: JSONValue?
     var questions: [JSONValue] = []
     private var questionRevision = 0
@@ -44,6 +46,7 @@ import CryptoKit
     private var history: ConversationHistory?
     private var events: Task<Void, Never>?
     private var refresh: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private var loginTask: Task<Void, Never>?
     private var epoch = UUID()
     private var authEpoch = UUID()
@@ -56,17 +59,38 @@ import CryptoKit
     var messages: [ChatMessage] {
         live?.messages ?? saved?.messages.map { ChatMessage(id: $0.stableID, role: $0.role, text: $0.text) } ?? []
     }
+    var conversationRows: [ConversationRow] { live?.rows ?? ConversationRow.grouped(messages) }
     init() {
+        #if DEBUG
+        if NativeUIFixture.enabled {
+            live = NativeUIFixture.thread(); activeID = live?.id; connected = true
+            if let live { NativeUIFixture.configure(collaboration, thread: live) }
+            return
+        }
+        #endif
         clearAbandonedAttachmentPreviews()
         do {
             account = try vault.load("session", as: AccountSession.self)
             resetRecovery = try vault.load("recovery", as: String.self)
             if let account, let directory = try vault.load("directory", as: RememberedDirectory.self)?.restore(account: account) {
                 devices = directory.devices; authMethod = directory.auth_method; directoryCached = true
+                if let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
+                    host = devices.first { $0.pub == location.host }
+                    activeID = location.thread; workspace = location.workspace; mode = location.mode
+                    collaboration.select(location.room)
+                    history = try ConversationHistory(account: account, host: location.host, directory: cacheDirectory)
+                }
             }
         }
         catch { self.error = error.localizedDescription }
         push.bind(account)
+    }
+    func rememberLocation() {
+        guard let account, let host else { return }
+        do {
+            try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace,
+                thread: activeID, room: collaboration.roomID, mode: mode), key: "location")
+        } catch { self.error = error.localizedDescription }
     }
     func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         let stamp = epoch
@@ -218,6 +242,7 @@ import CryptoKit
         guard opening == selection, let account, account == session,
               devices.contains(where: { $0.pub == device.pub && $0.role == "host" }) else { return }
         host = device
+        rememberLocation()
         let store = try ConversationHistory(account: account, host: device.pub, directory: cacheDirectory)
         history = store
         let cached = await store.current()
@@ -232,6 +257,9 @@ import CryptoKit
         else if !snapshot.enabled || !entries.contains(where: { $0.id == activeID }) { saved = nil }
     }
     func foreground() {
+        #if DEBUG
+        if NativeUIFixture.enabled { return }
+        #endif
         isForeground = true
         if account == nil {
             if let pending = try? vault.load("github", as: GitHubPending.self), pending.expires > Date() {
@@ -245,7 +273,19 @@ import CryptoKit
         guard refresh == nil else { return }
         Task { await push.refresh() }
         let stamp = epoch
+        // History HTTP requests must never hold up the encrypted execution channel.
+        reconnectTask = Task {
+            while !Task.isCancelled, epoch == stamp {
+                if !connected && !connecting { await connect() }
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            }
+        }
         refresh = Task {
+            if let history {
+                let cached = await history.current()
+                guard epoch == stamp else { return }
+                show(cached)
+            }
             while !Task.isCancelled, epoch == stamp {
                 do {
                     try await loadDevices()
@@ -254,10 +294,9 @@ import CryptoKit
                 } catch is CancellationError { return } catch {
                     guard epoch == stamp else { return }
                     if case NativeError.http(401, _) = error { report(error) }
-                    connectionStatus = error.localizedDescription
+                    if !connected { connectionStatus = error.localizedDescription }
                 }
                 guard !Task.isCancelled, epoch == stamp else { return }
-                if !connected && !connecting { await connect() }
                 do { try await Task.sleep(for: .seconds(10)) } catch { return }
             }
         }
@@ -266,19 +305,22 @@ import CryptoKit
         isForeground = false
         epoch = UUID()
         refresh?.cancel(); refresh = nil
+        reconnectTask?.cancel(); reconnectTask = nil
         loginTask?.cancel()
         events?.cancel(); events = nil
         let oldRemote = remote; remote = nil
         connected = false; connecting = false; pendingApproval = nil; sending = false
-        loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         questions = []; questionRevision += 1
         await oldRemote?.disconnect()
     }
     @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
+        try? vault.delete("location")
+        host = nil
         collaboration.reset()
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
-        workspace = ""; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
+        workspace = ""; mode = "collaboration"; workspaces = []; historyEnabled = false; opening = UUID(); search = ""; archivedList = false
         let selection = opening
         await background()
         try? await oldHistory?.invalidate(removeCache: removeCache)
@@ -349,7 +391,7 @@ import CryptoKit
             events?.cancel()
             events = Task {
                 for await event in connection.events {
-                    guard !Task.isCancelled, epoch == stamp else { return }
+                    guard !Task.isCancelled, epoch == stamp, remote === connection else { return }
                     switch event {
                     case .snapshot(let tag, let result):
                         if opening.uuidString == tag {
@@ -379,20 +421,28 @@ import CryptoKit
             _ = try await connection.call("initialize")
             guard epoch == stamp else { await connection.disconnect(); return }
             connected = true
-            try await loadQuestions()
-            let result = try await connection.call("workspace/list")
-            guard epoch == stamp else { return }
-            workspaces = result["workspaces"].array
-            if workspace.isEmpty { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
-            try await loadThreads()
-            guard epoch == stamp else { return }
-            if let id = activeID { try await open(id) }
+            connectionStatus = ""
         } catch {
             if epoch == stamp {
                 let old = remote; remote = nil; connected = false; events?.cancel(); events = nil
                 if !(error is CancellationError) { connectionStatus = error.localizedDescription }
                 await old?.disconnect()
             }
+            return
+        }
+        // A missing conversation or failed directory read is not a transport failure.
+        guard let connection = remote, epoch == stamp else { return }
+        do {
+            try await loadQuestions()
+            let result = try await connection.call("workspace/list")
+            guard epoch == stamp else { return }
+            workspaces = result["workspaces"].array
+            if !workspaces.contains(where: { $0["path"].string == workspace }) { workspace = result["current"].string ?? workspaces.first?["path"].string ?? "" }
+            try await loadThreads()
+            guard epoch == stamp else { return }
+            if let id = activeID { try await open(id, preservingContent: true) }
+        } catch is CancellationError {} catch {
+            if epoch == stamp, remote === connection { report(error) }
         }
     }
     func loadThreads() async throws {
@@ -408,9 +458,10 @@ import CryptoKit
               search.trimmingCharacters(in: .whitespacesAndNewlines) == query, archivedList == archived else { return }
         threads = (query.isEmpty ? result["threads"].array : result["results"].array.map { $0["thread"] }).map { ChatThread($0) }
     }
-    func open(_ id: String) async throws {
+    func open(_ id: String, preservingContent: Bool = false) async throws {
         opening = UUID(); let selection = opening
-        activeID = id; live = nil; saved = nil; loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        if !preservingContent || activeID != id { live = nil; saved = nil }
+        activeID = id; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         let stamp = epoch
         if connected, let remote {
             _ = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true], snapshotTag: selection.uuidString)
@@ -461,7 +512,7 @@ import CryptoKit
         let result = try await remote.call("thread/start", params: params)
         guard epoch == stamp, opening == selection else { return }
         let thread = ChatThread(result["thread"])
-        activeID = thread.id; live = thread; saved = nil; loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
+        activeID = thread.id; live = thread; saved = nil; imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         try await loadThreads()
     }
     func send(_ text: String, attachments: [InputAttachment] = []) async throws {
@@ -472,7 +523,21 @@ import CryptoKit
         _ = try await remote.call(live.running ? "turn/queue" : "turn/start", params: input.params(threadID: live.id, queued: live.running))
         guard epoch == stamp else { throw CancellationError() }
     }
+    func attachmentThumbnail(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
+        #if DEBUG
+        if NativeUIFixture.enabled { return try await fixtureAttachment(message, index: index) }
+        #endif
+        guard connected, let remote, let live, message.attachments.indices.contains(index),
+              live.messages.contains(where: { $0.id == message.id }) else { throw CancellationError() }
+        let stamp = epoch, selected = opening
+        let result = try await remote.readAttachment(message.attachments[index], threadID: live.id, messageID: message.id, preview: true)
+        guard epoch == stamp, opening == selected else { throw CancellationError() }
+        return result
+    }
     func previewAttachment(_ message: ChatMessage, index: Int) async throws {
+        #if DEBUG
+        if NativeUIFixture.enabled { attachmentPreview = try await fixtureAttachment(message, index: index); return }
+        #endif
         guard connected, let remote, let live, !loadingAttachment, message.attachments.indices.contains(index),
               live.messages.contains(where: { $0 == message }) else { return }
         let stamp = epoch, selection = opening
@@ -481,6 +546,21 @@ import CryptoKit
         let result = try await remote.readAttachment(message.attachments[index], threadID: live.id, messageID: message.id)
         guard epoch == stamp, opening == selection, self.remote === remote,
               self.live?.messages.contains(where: { $0 == message }) == true else { return }
+        attachmentPreview = result
+    }
+    #if DEBUG
+    private func fixtureAttachment(_ message: ChatMessage, index: Int) async throws -> LoadedAttachment {
+        try await readMessageAttachment(message.attachments[index], scopeID: "local-ui-fixture", messageID: message.id) { _, _ in
+            throw NativeError.invalid("Fixture must not access the network")
+        }
+    }
+    #endif
+    func previewCollaborationAttachment(_ message: CollaborationMessage, field: String, index: Int) async throws {
+        guard connected, !loadingAttachment else { return }
+        let stamp = epoch; loadingAttachment = true
+        defer { if epoch == stamp { loadingAttachment = false } }
+        let result = try await collaboration.readAttachment(message, field: field, index: index, app: self)
+        guard stamp == epoch else { return }
         attachmentPreview = result
     }
     func stop() async throws {

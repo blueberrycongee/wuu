@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
@@ -291,12 +292,13 @@ func TestExecuteActivityBoundToolCreatesRefAndHonorsTakeover(t *testing.T) {
 	}
 }
 
-func TestCUAInputActionPublishesActivityButReturnsNeutralReceipt(t *testing.T) {
+func TestCUAInputActionPreservesEvidenceAndPublishesActivity(t *testing.T) {
 	registry := activity.NewRegistry()
 	tool := &activityTestTool{structuredContent: json.RawMessage(`{
-		"status":"verified_visual",
+		"delivery":"delivered",
+		"verification":"not_requested",
 		"mechanism":"background_directed",
-		"changes":["stale inferred change"],
+		"snapshot_id":"snapshot-1",
 		"interaction":{"kind":"click","x":0.25,"y":0.75}
 	}`)}
 	kit := &Toolkit{
@@ -312,11 +314,8 @@ func TestCUAInputActionPublishesActivityButReturnsNeutralReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute click: %v", err)
 	}
-	if got := result.TextProjection(); got != "Input delivered. Call observe when the outcome matters." {
-		t.Fatalf("input action receipt = %q", got)
-	}
-	if len(result.StructuredContent) != 0 || len(result.Meta) != 0 {
-		t.Fatalf("input action leaked inferred state to model: %+v", result)
+	if string(result.StructuredContent) != string(tool.structuredContent) {
+		t.Fatalf("input evidence lost: %+v", result)
 	}
 	if result.Activity == nil || result.Activity.Kind != string(activity.KindCUA) {
 		t.Fatalf("activity reference missing: %+v", result.Activity)
@@ -440,5 +439,85 @@ func TestExecuteActivityBoundToolRequiresThreadContext(t *testing.T) {
 	}
 	if tool.calls != 0 {
 		t.Fatalf("missing-thread call reached helper: calls=%d", tool.calls)
+	}
+}
+
+// A protocol-capable extension, independent of the bundled plugin's identity.
+type snapshotActivityTool struct {
+	activityTestTool
+	arguments []map[string]any
+}
+
+func (t *snapshotActivityTool) Definition() providers.ToolDefinition {
+	return providers.ToolDefinition{Name: t.Name(), InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+		"snapshot_id": map[string]any{"type": "string"}, "control_epoch": map[string]any{"type": "string"},
+		"mode": map[string]any{"type": "string"}, "after": map[string]any{"type": "string"},
+	}}}
+}
+func (t *snapshotActivityTool) ExecuteResult(_ context.Context, raw string) (toolresult.Result, error) {
+	var args map[string]any
+	_ = json.Unmarshal([]byte(raw), &args)
+	if args["action"] == "list_apps" {
+		return toolresult.Result{}, nil
+	}
+	t.arguments = append(t.arguments, args)
+	return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "snapshot"}}, StructuredContent: json.RawMessage(`{"snapshot_id":"fresh-state"}`)}, nil
+}
+
+func TestCUABYOKCapabilityAndControlEpochReachExtension(t *testing.T) {
+	images := false
+	tool := &snapshotActivityTool{}
+	registry := activity.NewRegistry()
+	kit := &Toolkit{env: &Env{RootDir: "/repo", SessionID: "thread", SessionDir: t.TempDir(), ImageInputSupported: &images}, registry: NewRegistry(tool), boundary: StandardBoundary(), activityRegistry: registry,
+		mcpActivityBindings: map[string]MCPActivityBinding{"third-party": {Kind: activity.KindCUA, PluginID: "other-driver"}}}
+	call := providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"observe","app":"test.app","mode":"vision","control_epoch":"forged"}`}
+	for i := 0; i < 4; i++ {
+		if _, err := kit.executeActivityBoundToolResult(context.Background(), call, tool, "third-party"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(tool.arguments) != 4 {
+		t.Fatalf("repeated observation suppressed: %d", len(tool.arguments))
+	}
+	first := tool.arguments[0]
+	if first["mode"] != "ax" || first["control_epoch"] == "forged" || first["control_epoch"] == "" {
+		t.Fatalf("runtime context missing: %+v", first)
+	}
+	session := registry.List("thread")[0]
+	if _, err := registry.Takeover("thread", session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := registry.Release("thread", session.ID); err != nil {
+		t.Fatal(err)
+	}
+	images = true
+	if _, err := kit.executeActivityBoundToolResult(context.Background(), call, tool, "third-party"); err != nil {
+		t.Fatal(err)
+	}
+	next := tool.arguments[len(tool.arguments)-1]
+	if next["control_epoch"] == first["control_epoch"] || next["mode"] != "vision" {
+		t.Fatalf("model/control change not applied: %+v", next)
+	}
+}
+
+func TestCUASequenceThreadsFreshSnapshotIntoReferencedAction(t *testing.T) {
+	tool := &snapshotActivityTool{}
+	registry := activity.NewRegistry()
+	kit := &Toolkit{env: &Env{RootDir: "/repo", SessionID: "thread", SessionDir: t.TempDir()}, registry: NewRegistry(tool), boundary: StandardBoundary(), activityRegistry: registry,
+		mcpActivityBindings: map[string]MCPActivityBinding{"driver": {Kind: activity.KindCUA, PluginID: "other-driver"}}}
+	call := providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"sequence","app":"test.app","steps":[{"action":"observe","risk":"safe"},{"action":"click","element_id":7,"risk":"safe"}]}`}
+	result, err := kit.executeActivityBoundToolResult(context.Background(), call, tool, "driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tool.arguments) != 2 || tool.arguments[1]["snapshot_id"] != "fresh-state" {
+		t.Fatalf("step did not use observed state: %+v", tool.arguments)
+	}
+	var payload struct {
+		Steps []map[string]any `json:"steps"`
+	}
+	_ = json.Unmarshal(result.StructuredContent, &payload)
+	if !strings.Contains(string(result.StructuredContent), `"snapshot_id":"fresh-state"`) {
+		t.Fatalf("batch dropped evidence: %s", result.StructuredContent)
 	}
 }

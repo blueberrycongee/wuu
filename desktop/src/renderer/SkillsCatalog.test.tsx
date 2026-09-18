@@ -6,10 +6,13 @@ import { SkillsCatalog } from "./SkillsCatalog";
 
 const toastMocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
+  showToast: vi.fn(),
 }));
 
-vi.mock("./Toast", () => ({
+vi.mock("./Toast", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./Toast")>(),
   showErrorToast: toastMocks.showErrorToast,
+  showToast: toastMocks.showToast,
 }));
 
 vi.mock("./RichContent", () => ({
@@ -21,6 +24,7 @@ let root: Root | null = null;
 
 beforeEach(() => {
   toastMocks.showErrorToast.mockClear();
+  toastMocks.showToast.mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -103,6 +107,82 @@ describe("SkillsCatalog", () => {
 
     expect(onRefreshCatalog).toHaveBeenCalledOnce();
     expect(container.textContent).toContain("fresh-skill");
+  });
+
+  it.each([
+    'cannot refresh plugin packages while a turn is running or background work remains on thread "thread-busy"',
+    "cannot refresh plugin packages while another app-server is running a turn or background work",
+    "cannot refresh plugin packages while another plugin change is running",
+    "cannot refresh plugin packages while another app-server is changing the plugin catalog",
+  ])("keeps the catalog and reports admission refusals through the shared notice: %s", async (reason) => {
+    installSkillList([existingSkill]);
+    const onRefreshCatalog = vi.fn().mockRejectedValue(new Error(
+      `Error invoking remote method 'wuu:extension-catalog-refresh': Error: ${reason}`,
+    ));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    const existingRow = skillButton(existingSkill.name);
+    expect(existingRow).toBeTruthy();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".catalog-refresh")!.click();
+    });
+
+    expect(skillButton(existingSkill.name)).toBe(existingRow);
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledOnce();
+    const notice = toastMocks.showToast.mock.calls[0][0];
+    expect(notice.tone).toBe("info");
+    expect(notice.message).toBeTruthy();
+    expect(notice.message).not.toMatch(/thread-busy|wuu:|cannot refresh|app-server/);
+  });
+
+  it("preserves rows during refresh and failure, blocks duplicate clicks, and permits retry", async () => {
+    installSkillList([existingSkill]);
+    let rejectRefresh!: (error: Error) => void;
+    const onRefreshCatalog = vi.fn()
+      .mockImplementationOnce(() => new Promise<SkillSummary[]>((_, reject) => { rejectRefresh = reject; }))
+      .mockResolvedValue([{ ...existingSkill, name: "updated-skill" }]);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    const refresh = container.querySelector<HTMLButtonElement>(".catalog-refresh")!;
+    const existingRow = skillButton(existingSkill.name);
+    expect(existingRow).toBeTruthy();
+    await act(async () => { refresh.click(); });
+    expect(refresh.disabled).toBe(true);
+    expect(skillButton(existingSkill.name)).toBe(existingRow);
+    await act(async () => { refresh.click(); });
+    expect(onRefreshCatalog).toHaveBeenCalledOnce();
+
+    const failure = new Error("Catalog unavailable");
+    await act(async () => { rejectRefresh(failure); });
+    expect(refresh.disabled).toBe(false);
+    expect(skillButton(existingSkill.name)).toBe(existingRow);
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(failure, expect.any(String));
+    await act(async () => { refresh.click(); });
+    expect(onRefreshCatalog).toHaveBeenCalledTimes(2);
+    expect(skillButton("updated-skill")).toBeTruthy();
+    expect(skillButton(existingSkill.name)).toBeUndefined();
+  });
+
+  it("releases the refresh button when the parent discards a result", async () => {
+    installSkillList([existingSkill]);
+    const onRefreshCatalog = vi.fn().mockResolvedValue(undefined);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    const refresh = container.querySelector<HTMLButtonElement>(".catalog-refresh")!;
+    await act(async () => { refresh.click(); });
+    expect(refresh.disabled).toBe(false);
+    expect(skillButton(existingSkill.name)).toBeTruthy();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
   });
 
   it("separates official and personal skills and shows concise descriptions", async () => {
@@ -339,10 +419,8 @@ describe("SkillsCatalog", () => {
       buttonByText("重新授权")?.click();
     });
 
-    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(
-      busyError,
-      "无法更新插件状态",
-    );
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: "info" }));
     expect(container.textContent).not.toContain("cannot change plugin packages");
   });
 
@@ -611,6 +689,14 @@ describe("SkillsCatalog", () => {
     expect(onTrySkill).not.toHaveBeenCalled();
   });
 });
+
+const existingSkill: SkillSummary = {
+  name: "existing-skill",
+  description: "A previously loaded skill",
+  source: "user",
+  user_invocable: true,
+  disable_model_invoke: false,
+};
 
 function installSkillList(skills: SkillSummary[]): void {
   const stub: Partial<WuuDesktopApi> = {

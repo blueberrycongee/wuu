@@ -3,7 +3,7 @@ import type { GitStatusResult, RuntimeContext } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
 import { createEnvironmentActions } from "./EnvironmentActions";
 import type { EnvironmentPanelMenu } from "./EnvironmentPanel";
-import { resolveLocalizedText } from "./i18n";
+import { resolveLocalizedText, translateCurrent as t } from "./i18n";
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -35,9 +35,11 @@ function installWuuApi(): {
   checkoutGitBranch: ReturnType<typeof vi.fn>;
   gitStatus: ReturnType<typeof vi.fn>;
   commitGitChanges: ReturnType<typeof vi.fn>;
+  createCheckoutGitBranch: ReturnType<typeof vi.fn>;
 } {
   const checkoutGitBranch = vi.fn().mockResolvedValue(gitStatus("feature"));
   const gitStatusMock = vi.fn().mockResolvedValue(gitStatus("main"));
+  const createCheckoutGitBranch = vi.fn().mockResolvedValue({ status: gitStatus("feature") });
   const commitGitChanges = vi.fn().mockResolvedValue({
     commit: "abc123",
     status: gitStatus("main"),
@@ -48,9 +50,7 @@ function installWuuApi(): {
       checkoutGitBranch,
       gitStatus: gitStatusMock,
       commitGitChanges,
-      createCheckoutGitBranch: vi.fn().mockResolvedValue({
-        status: gitStatus("feature"),
-      }),
+      createCheckoutGitBranch,
       createPullRequest: vi.fn().mockResolvedValue({
         url: "https://example.test/pr/1",
         already_exists: false,
@@ -58,19 +58,17 @@ function installWuuApi(): {
       }),
     },
   });
-  return { checkoutGitBranch, gitStatus: gitStatusMock, commitGitChanges };
+  return { checkoutGitBranch, gitStatus: gitStatusMock, commitGitChanges, createCheckoutGitBranch };
 }
 
 function buildActions({
   initial = { ...initialState, activeContext: projectContext(), status: "ready" },
   environmentRoot = "/tmp/project-1",
-  anyThreadIsRunning = false,
   environmentPanelVisible = false,
   panelContainsFocus = false,
 }: {
   initial?: AppState;
   environmentRoot?: string;
-  anyThreadIsRunning?: boolean;
   environmentPanelVisible?: boolean;
   panelContainsFocus?: boolean;
 } = {}) {
@@ -88,7 +86,6 @@ function buildActions({
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },
-    getAnyThreadIsRunning: () => anyThreadIsRunning,
     closeProjectMenus,
     setEnvironmentPanelOpen: (open) => {
       panelOpen = open;
@@ -134,13 +131,34 @@ describe("createEnvironmentActions", () => {
     expect(harness.getAppState().status).toBe("ready");
   });
 
-  it("does not check out a branch while a thread is running", async () => {
+  it("allows a new session to check out while other sessions are running", async () => {
     const api = installWuuApi();
-    const harness = buildActions({ anyThreadIsRunning: true });
+    const harness = buildActions({ initial: { ...initialState, activeContext: projectContext(), running: true } });
+    await harness.actions.checkoutBranch("feature");
+    expect(api.checkoutGitBranch).toHaveBeenCalledWith("feature", "/tmp/project-1");
+    expect(harness.getAppState().gitStatus?.branch).toBe("feature");
+  });
 
-    await expect(harness.actions.checkoutBranch("feature")).rejects.toThrow();
+  it.each(["checkoutBranch", "createAndCheckoutBranch"] as const)("surfaces host occupancy conflicts for %s without silently succeeding", async (action) => {
+    const api = installWuuApi();
+    const mutation = action === "checkoutBranch" ? api.checkoutGitBranch : api.createCheckoutGitBranch;
+    mutation.mockRejectedValueOnce(new Error("Error invoking remote method 'wuu:git-checkout': Error: cannot run Git actions while a thread is running in this working tree"));
+    const harness = buildActions();
 
-    expect(api.checkoutGitBranch).not.toHaveBeenCalled();
+    await expect(harness.actions[action]("feature")).rejects.toThrow(t("git.checkoutBlockedByRunningThread"));
+    expect(mutation).toHaveBeenCalledWith("feature", "/tmp/project-1");
+    expect(harness.getAppState().gitStatus).toBeUndefined();
+    expect(harness.closeProjectMenus).not.toHaveBeenCalled();
+
+    await harness.actions[action]("feature");
+    expect(harness.getAppState().gitStatus?.branch).toBe("feature");
+  });
+
+  it("preserves Git conflict details without the Electron wrapper", async () => {
+    const api = installWuuApi();
+    api.checkoutGitBranch.mockRejectedValueOnce(new Error("Error invoking remote method 'wuu:git-checkout': Error: Your local changes would be overwritten by checkout"));
+    const harness = buildActions();
+    await expect(harness.actions.checkoutBranch("feature")).rejects.toThrow(/^Your local changes would be overwritten by checkout$/);
     expect(harness.closeProjectMenus).not.toHaveBeenCalled();
   });
 

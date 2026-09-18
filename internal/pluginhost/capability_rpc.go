@@ -185,6 +185,7 @@ const (
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
 	HostServiceSessionCreate        HostServiceMethod = "host.session.create"
+	HostServiceSessionControl       HostServiceMethod = "host.session.control"
 	HostServiceSessionSend          HostServiceMethod = "host.session.send"
 	HostServiceSessionList          HostServiceMethod = "host.session.list"
 	HostServiceSessionCancel        HostServiceMethod = "host.session.cancel"
@@ -211,19 +212,20 @@ const (
 )
 
 const (
-	SessionVisibilityUser          = "user"
-	SessionVisibilityPlugin        = "plugin"
-	SessionListScopeOwned          = "owned"
-	SessionListScopeShared         = "shared"
-	SessionContextFresh            = "fresh"
-	SessionContextFork             = "fork"
-	SessionContextSourceSeed       = "seed"
-	SessionInputPlugin             = "plugin"
-	SessionPresentationQueryBubble = "query_bubble"
-	SessionIfRunningQueue          = "queue"
-	SessionIfRunningSteer          = "steer"
-	SessionInspectWaitNone         = "none"
-	SessionInspectWaitTerminal     = "terminal"
+	SessionVisibilityUser             = "user"
+	SessionVisibilityPlugin           = "plugin"
+	SessionListScopeOwned             = "owned"
+	SessionListScopeShared            = "shared"
+	SessionContextFresh               = "fresh"
+	SessionContextFork                = "fork"
+	SessionContextSourceSeed          = "seed"
+	SessionInputPlugin                = "plugin"
+	SessionPresentationQueryBubble    = "query_bubble"
+	SessionPresentationSessionMessage = "session_message"
+	SessionIfRunningQueue             = "queue"
+	SessionIfRunningSteer             = "steer"
+	SessionInspectWaitNone            = "none"
+	SessionInspectWaitTerminal        = "terminal"
 )
 
 // SessionToolPolicy can only remove tools from the child session's ordinary
@@ -321,6 +323,7 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
+	ControlRevision int64 `json:"control_revision,omitempty"`
 	// ReplyToTurnID preserves the original turn scope when a plugin returns deferred work.
 	ReplyToTurnID string                    `json:"reply_to_turn_id,omitempty"`
 	RequestID     string                    `json:"request_id"`
@@ -362,7 +365,8 @@ type SessionListResult struct {
 }
 
 type SessionCancelParams struct {
-	SessionID string `json:"session_id"`
+	ControlRevision int64  `json:"control_revision,omitempty"`
+	SessionID       string `json:"session_id"`
 	// TurnID narrows cancellation to one exact accepted turn. Empty preserves
 	// the legacy session-scoped operation for callers that intentionally own
 	// the whole session.
@@ -384,6 +388,21 @@ type SessionInspectParams struct {
 	RequestID string `json:"request_id,omitempty"`
 	Wait      string `json:"wait,omitempty"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
+}
+
+// SessionControlParams coordinates automatic execution without changing Owner
+// or ParentID. Omit State to read; writes compare Revision with durable state.
+type SessionControlParams struct {
+	SessionID string `json:"session_id"`
+	State     string `json:"state,omitempty"`
+	Revision  int64  `json:"revision,omitempty"`
+}
+
+type SessionControlResult struct {
+	SessionID string `json:"session_id"`
+	ManagerID string `json:"manager_id,omitempty"`
+	State     string `json:"state,omitempty"`
+	Revision  int64  `json:"revision"`
 }
 
 type SessionInspectResult struct {

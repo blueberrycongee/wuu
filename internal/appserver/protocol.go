@@ -2094,19 +2094,27 @@ const (
 	WorkspaceKindScratch WorkspaceKind = "scratch"
 )
 
+type ThreadSessionControl struct {
+	ManagerID   string `json:"manager_id"`
+	ManagerName string `json:"manager_name"`
+	State       string `json:"state"`
+	Revision    int64  `json:"revision"`
+}
+
 type Thread struct {
-	ID             string `json:"id"`
-	Source         string `json:"source,omitempty"`
-	ParentID       string `json:"parent_id,omitempty"`
-	AgentPath      string `json:"agent_path,omitempty"`
-	Preview        string `json:"preview"`
-	Title          string `json:"title,omitempty"`
-	ModelProvider  string `json:"model_provider"`
-	Model          string `json:"model"`
-	ModelVariant   string `json:"model_variant"`
-	ModelEffort    string `json:"model_effort"`
-	PermissionMode string `json:"permission_mode"`
-	ApproveForMe   bool   `json:"approve_for_me"`
+	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
+	ID             string                `json:"id"`
+	Source         string                `json:"source,omitempty"`
+	ParentID       string                `json:"parent_id,omitempty"`
+	AgentPath      string                `json:"agent_path,omitempty"`
+	Preview        string                `json:"preview"`
+	Title          string                `json:"title,omitempty"`
+	ModelProvider  string                `json:"model_provider"`
+	Model          string                `json:"model"`
+	ModelVariant   string                `json:"model_variant"`
+	ModelEffort    string                `json:"model_effort"`
+	PermissionMode string                `json:"permission_mode"`
+	ApproveForMe   bool                  `json:"approve_for_me"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).
@@ -2217,8 +2225,9 @@ const (
 )
 
 type ThreadItem struct {
-	RemoteContentRef string `json:"remote_content_ref,omitempty"`
-	ID               string `json:"id"`
+	MarkdownImages   []ThreadItemImage `json:"markdown_images,omitempty"`
+	RemoteContentRef string            `json:"remote_content_ref,omitempty"`
+	ID               string            `json:"id"`
 	// Seq is the message's stable per-thread address (session_messages.seq),
 	// present on persisted chat messages.
 	// 0/absent for synthetic or not-yet-persisted items.

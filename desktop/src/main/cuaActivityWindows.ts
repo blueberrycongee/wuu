@@ -45,11 +45,10 @@ export function nativePiPInitialBounds(mainBounds: Rectangle | undefined, workAr
   return { x, y, width: PIP_WIDTH, height: PIP_HEIGHT };
 }
 
-// Activities worth a live observation surface: the CUA mac backend and every
-// embedded-browser activity. Other plugins/kinds never reach the PiP.
+// Native preview needs a resolved process, regardless of which extension owns it.
 export function isObservableActivity(activity: ActivitySession): boolean {
   if (activity.kind === "browser") return true;
-  return activity.kind === "cua" && activity.plugin_id === "cua-mac";
+  return activity.kind === "cua" && (activity.process_id ?? 0) > 0;
 }
 
 // While the user watches the real page full-size (browser visibility takeover
@@ -72,6 +71,7 @@ type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
 export type ObservationPiPHandle = Pick<CUANativePiP, "start" | "setVisible" | "animateInteraction" | "stop"> & {
   updateActivity?(activity: ActivitySession): void;
   setLive?(live: boolean): void;
+  setAppearance?(dark: boolean): void;
 };
 
 // Surface→coordinator reporting. onEvent carries ready/user_close/geometry
@@ -117,15 +117,19 @@ export class ObservationCoordinator {
   private current: PiPEntry | undefined;
   private replacement: { activity: ActivitySession; key: string } | undefined;
   private replacementInFlight = false;
+  private pendingStop: Promise<void> = Promise.resolve();
+  private closed = false;
   private userBounds: Rectangle | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconcileInFlight = false;
   private activeThreadID: string | undefined;
+  private darkAppearance: boolean | undefined;
 
   constructor(
     private readonly registry: WindowRegistry,
     private readonly snapshot?: ActivitySnapshot,
     private readonly pipFactory?: ObservationPiPFactory,
+    private readonly control?: (activity: ActivitySession, action: ActivityControlAction) => Promise<ActivitySession>,
   ) {}
 
   handleServerEvent(event: ServerEvent): void {
@@ -137,7 +141,13 @@ export class ObservationCoordinator {
     this.scheduleReconcile();
   }
 
+  setAppearance(dark: boolean): void {
+    this.darkAppearance = dark;
+    this.current?.pip.setAppearance?.(dark);
+  }
+
   setActiveThread(threadID?: string): void {
+    if (this.closed) return;
     this.activeThreadID = threadID?.trim() || undefined;
     if (this.current?.threadID !== this.activeThreadID) this.current?.pip.setVisible(false);
     if (this.replacement?.activity.thread_id !== this.activeThreadID) this.replacement = undefined;
@@ -146,24 +156,20 @@ export class ObservationCoordinator {
   }
 
   update(activity: ActivitySession): void {
+    if (this.closed) return;
     if (!isObservableActivity(activity)) return;
-    if (activity.state === "stopped" || !activity.target?.trim()) {
-      // A stopped control lease is not the end of the user's observation: the
-      // surface keeps the last target until the session changes, the user
-      // closes it, or a new target replaces it. A live surface is still told
-      // to freeze frame production so a finished page stops burning captures.
-      if (activity.state === "stopped" && this.current && observationKey(activity) === this.current.key) {
-        this.current.pip.setLive?.(false);
-        this.current.pip.updateActivity?.(activity);
-      }
-      return;
-    }
+    if (!activity.target?.trim()) return;
     const current = this.observations.get(activity.thread_id);
-    if (!current || current.updated_at <= activity.updated_at) {
-      this.observations.set(activity.thread_id, activity);
+    if (current && (current.updated_at > activity.updated_at || (current.id === activity.id && current.state === "stopped" && activity.state !== "stopped"))) return;
+    if (current && observationKey(current) !== observationKey(activity)) {
+      this.retryAttempts.delete(activity.thread_id);
+      const timer = this.retryTimers.get(activity.thread_id);
+      if (timer) clearTimeout(timer);
+      this.retryTimers.delete(activity.thread_id);
     }
+    this.observations.set(activity.thread_id, activity);
     const dismissed = this.dismissedAt.get(activity.thread_id);
-    if (dismissed && dismissed < activity.updated_at) this.dismissedAt.delete(activity.thread_id);
+    if (dismissed && dismissed < activity.updated_at && activity.state !== "stopped") this.dismissedAt.delete(activity.thread_id);
     if (activity.thread_id === this.activeThreadID) this.syncActiveObservation();
   }
 
@@ -176,6 +182,18 @@ export class ObservationCoordinator {
     }
     if (this.replacement?.activity.workdir === workdir) this.replacement = undefined;
     if (this.current?.activity.workdir === workdir) this.stopCurrent();
+  }
+
+  shutdown(): Promise<void> {
+    this.closed = true;
+    this.activeThreadID = undefined;
+    this.replacement = undefined;
+    this.observations.clear();
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
+    this.stopCurrent();
+    return this.pendingStop;
   }
 
   private syncActiveObservation(): void {
@@ -193,11 +211,12 @@ export class ObservationCoordinator {
     if (this.current?.key === key) {
       this.current.activity = activity;
       this.current.pip.setVisible(pipVisibleForActivity(activity));
-      this.current.pip.setLive?.(true);
+      this.current.pip.setLive?.(activity.state !== "stopped");
       this.current.pip.updateActivity?.(activity);
       this.animateInteractionIfNew(activity, this.current.pip);
       return;
     }
+    if (activity.state === "stopped" || this.retryTimers.has(threadID) || (this.retryAttempts.get(threadID) ?? 0) >= 4) return;
     if (this.replacement?.key === key) {
       this.replacement.activity = activity;
       return;
@@ -214,7 +233,9 @@ export class ObservationCoordinator {
     if (!pip) return;
     this.current = { key, threadID: activity.thread_id, activity, pip, phase: "preparing" };
     pip.start();
+    if (this.darkAppearance !== undefined) pip.setAppearance?.(this.darkAppearance);
     pip.setVisible(pipVisibleForActivity(activity));
+    pip.setLive?.(activity.state !== "stopped");
     pip.updateActivity?.(activity);
     this.animateInteractionIfNew(activity, pip);
   }
@@ -239,9 +260,12 @@ export class ObservationCoordinator {
     // cannot let a replacement start before the old process has closed.
     this.replacementInFlight = true;
     this.current = undefined;
-    outgoing.pip.stop(() => {
-      this.replacementInFlight = false;
-      this.startReplacement();
+    this.pendingStop = new Promise<void>((resolve) => {
+      outgoing.pip.stop(() => {
+        this.replacementInFlight = false;
+        this.startReplacement();
+        resolve();
+      });
     });
   }
 
@@ -291,6 +315,18 @@ export class ObservationCoordinator {
         this.dismissedAt.set(entry.threadID, new Date().toISOString());
         if (this.current?.key === key) this.stopCurrent();
         return;
+      case "control":
+        if (this.control && (event.action === "takeover" || event.action === "release" || event.action === "stop")) {
+          void this.control(entry.activity, event.action)
+            .then((activity) => this.update(activity))
+            .catch((error: unknown) => {
+              if (this.current === entry) entry.pip.updateActivity?.({ ...entry.activity, error: error instanceof Error ? error.message : String(error) });
+            });
+        }
+        return;
+      case "gone":
+        this.handlePiPGone(key);
+        return;
       case "user_input":
         return;
       case "geometry":
@@ -310,6 +346,7 @@ export class ObservationCoordinator {
     if (entry.threadID !== this.activeThreadID || this.dismissedAt.has(entry.threadID)) return;
     const attempts = (this.retryAttempts.get(entry.threadID) ?? 0) + 1;
     this.retryAttempts.set(entry.threadID, attempts);
+    if (attempts >= 4) return;
     const timer = setTimeout(() => {
       this.retryTimers.delete(entry.threadID);
       this.syncActiveObservation();
@@ -374,15 +411,10 @@ export class ObservationCoordinator {
 }
 
 export function observationKey(activity: ActivitySession): string {
-  // Key the surface lifecycle by session + target only. A single CUA call
-  // emits `started` with no window identity (0/0) and then `updated` with the
-  // resolved process/window id; including those here changed the key mid-call
-  // and spawned a second helper, so two ScreenCaptureKit streams raced for
-  // the same window and tripped "application connection interrupted". One
-  // target = one surface = one stream. For browser activities the target is
-  // the tab id, so a tab switch swaps the surface the same way an app switch
-  // does for CUA. The exact identity is still passed to the surface as a hint.
-  return [activity.thread_id, activity.target?.trim()].join(":");
+  // Replacement is serialized by stopCurrent; resolved identity changes must
+  // rebind capture instead of silently following the old process/window.
+  return [activity.thread_id, activity.id, activity.target?.trim(),
+    ...(activity.kind === "cua" ? [activity.process_id ?? 0, activity.window_id ?? 0] : [])].join(":");
 }
 
 export function observationActivityFromServerEvent(event: ServerEvent): ActivitySession | undefined {

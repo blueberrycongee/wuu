@@ -88,7 +88,7 @@
 .composer-token-gauge-label {
   min-width: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -107,7 +107,7 @@
   border: 1px solid var(--token-gauge-tooltip-border);
   border-radius: var(--radius-xs);
   box-shadow: var(--token-gauge-tooltip-shadow);
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: 500;
   line-height: 1.45;
   color: var(--ink);

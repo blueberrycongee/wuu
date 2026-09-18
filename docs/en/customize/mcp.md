@@ -58,13 +58,8 @@ the stdio child process and overrides same-named variables in the Wuu process.
 omitted, streamable HTTP is tried first; if protocol probing and the legacy
 initialization POST indicate the endpoint does not support it, it falls back to SSE.
 
-For stdio and streamable HTTP, Wuu first probes the MCP `2026-07-28` stateless
-protocol; when the server does not support it, it automatically falls back to the
-legacy protocol with an initialize handshake. Servers pinned to `sse` always use the
-legacy protocol. `tools/list`, pagination, and `tools/call` work in both the new and
-legacy versions; if a new-version tool call returns a multi-turn result requiring
-extra user input, the current implementation reports an explicit error instead of
-treating an unfinished result as success.
+Wuu negotiates the supported protocol automatically. Tool results requiring an
+additional user-input exchange are not currently supported and report an error.
 
 `headers` only apply to remote requests. Native `mcp_servers` does not expand
 `${VAR}`, so values such as the token in the example are used literally; do not write

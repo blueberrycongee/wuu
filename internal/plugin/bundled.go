@@ -28,10 +28,6 @@ const bundledFingerprintFile = ".fingerprint"
 // normal releases while the native integration is under internal evaluation.
 const EnableCUAMacEnv = "WUU_ENABLE_CUA_MAC"
 
-// EnablePeersEnv gates the bundled peers plugin. It remains off in normal
-// releases while the peer coordination model is under internal evaluation.
-const EnablePeersEnv = "WUU_ENABLE_PEERS"
-
 type DiscoverOptions struct {
 	GOOS       string
 	WuuVersion string
@@ -96,8 +92,6 @@ func bundledPluginEnabled(item Plugin, lookupEnv func(string) (string, bool)) bo
 	switch item.ID {
 	case "cua-mac":
 		key = EnableCUAMacEnv
-	case "peers":
-		key = EnablePeersEnv
 	default:
 		return true
 	}

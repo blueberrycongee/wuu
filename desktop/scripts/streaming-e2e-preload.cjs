@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
 const runtimeContext = { kind: "no_project", cwd };
 let startedThreadCount = 0;
+const threads = new Map();
 
 function projectList() {
   return {
@@ -70,12 +71,12 @@ contextBridge.exposeInMainWorld("wuu", {
     provider: "e2e",
     model: "mock-stream",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-stream" }]
+    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true }]
   }),
   updateRuntimeSettings: async (provider, model) => ({
     provider,
     model,
-    providers: [{ name: provider, type: "mock", model }]
+    providers: [{ name: provider, type: "mock", model, connection_locked: true }]
   }),
   startThread: async (params = {}) => {
     startedThreadCount += 1;
@@ -84,9 +85,11 @@ contextBridge.exposeInMainWorld("wuu", {
       : startedThreadCount === 2
         ? "thread-streaming-e2e"
         : `thread-started-e2e-${startedThreadCount}`;
-    return { thread: mockThread(id) };
+    const thread = mockThread(id);
+    threads.set(id, thread);
+    return { thread };
   },
-  resumeThread: async () => ({ thread: null }),
+  resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
   forkThread: async () => ({ thread: null }),
   listThreads: async () => ({ threads: [] }),
   listArchivedThreads: async () => ({ threads: [] }),
@@ -114,7 +117,11 @@ contextBridge.exposeInMainWorld("wuu", {
   respondToServerRequest: async () => undefined,
   rejectServerRequest: async () => undefined,
   onServerEvent: (handler) => {
-    const listener = (_event, payload) => handler(payload);
+    const listener = (_event, payload) => {
+      const thread = payload.message?.params?.thread;
+      if (thread) threads.set(thread.id, thread);
+      handler(payload);
+    };
     ipcRenderer.on("test:server-event", listener);
     return () => ipcRenderer.removeListener("test:server-event", listener);
   },

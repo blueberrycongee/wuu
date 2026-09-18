@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronDown, ChevronUp, FileText, Info, Plus, Send } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "lucide-react";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
 import {
@@ -265,12 +265,13 @@ function BuiltInThreadItemView({
       // separate inspector plugin.
       const deliveryText = item.input_text?.trim() ?? "";
       const relatedSessionID = item.related_session_id?.trim() || undefined;
+      const sessionMessage = item.origin === "plugin" && item.presentation_kind === "session_message";
+      const sourceLabel = t("message.fromSession", { name: item.name?.trim() || relatedSessionID || t("message.anotherSession") });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a
       // related session get a navigation action.
-      const relatedSessionAvailable = deliveryText !== ""
-        && deliveryText !== displayText.trim()
-        && relatedSessionID !== undefined;
+      const relatedSessionAvailable = relatedSessionID !== undefined
+        && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
           requestOpenThreadInSplit(relatedSessionID);
@@ -278,13 +279,26 @@ function BuiltInThreadItemView({
       };
       return (
         <div
-          className={`user-message-block${copyable || editActionVisible ? " user-message-block-with-actions" : ""}`}
+          className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable ? " user-message-block-with-actions" : ""}`}
           data-wuu-component="message"
           data-wuu-variant="user"
           id={userMessageAnchorID(turnID, item.id)}
           data-user-message-id={item.id}
           data-turn-id={turnID}
         >
+          <div className="user-message-motion" data-message-arrival>
+          {sessionMessage ? (
+            <button
+              type="button"
+              className="session-message-source"
+              onClick={openRelatedSession}
+              disabled={!relatedSessionAvailable}
+              title={sourceLabel}
+            >
+              <MessagesSquare size={15} aria-hidden="true" />
+              <span>{sourceLabel}</span>
+            </button>
+          ) : null}
           {editing ? (
             <UserMessageInlineEditor
               item={item}
@@ -305,6 +319,7 @@ function BuiltInThreadItemView({
               onOpenFile={onOpenFile}
             />
           )}
+          </div>
           {!editing && (copyable || editActionVisible || relatedSessionAvailable) ? (
             <div
               className="message-actions user-message-actions"
@@ -328,7 +343,7 @@ function BuiltInThreadItemView({
                   iconSize={15}
                 />
               ) : null}
-              {relatedSessionAvailable ? (
+              {relatedSessionAvailable && !sessionMessage ? (
                 <button
                   type="button"
                   className="message-action-button"
@@ -377,16 +392,17 @@ function BuiltInThreadItemView({
       const actionsPersistent =
         actionsVisible &&
         (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
-      // Copy/fork always paint into the existing turn-boundary band.
-      // Latest answers stay visible; older ones appear on hover. Neither
-      // reserves in-flow height, so completion cannot shift auto-follow.
+      // The provider may confirm terminal only at completion. Reserve actions
+      // for live candidates too, so confirmation cannot grow the answer.
+      const reserveActionSlot = (!isProcessText || item.status === "in_progress") &&
+        (copyable || item.status === "in_progress");
       return (
         <article
           data-wuu-component="message"
           data-wuu-variant="agent"
           className={`agent-block${
-            actionsVisible
-              ? ` agent-block-with-action-slot agent-actions-available${settleEntered ? " agent-actions-enter" : ""}${actionsPersistent ? " agent-actions-persistent" : " agent-actions-overlay"}`
+            reserveActionSlot
+              ? ` agent-block-with-action-slot${actionsVisible ? ` agent-actions-available${settleEntered ? " agent-actions-enter" : ""}${actionsPersistent ? " agent-actions-persistent" : " agent-actions-overlay"}` : ""}`
               : ""
           }`}
         >
@@ -412,6 +428,8 @@ function BuiltInThreadItemView({
                   : undefined
               }
             />
+          ) : reserveActionSlot ? (
+            <div className="message-actions agent-message-actions" aria-hidden="true" />
           ) : null}
         </article>
       );
@@ -483,9 +501,10 @@ function UserMessageContent({
   // numbers. The hook's `{text, expanded}` state shape is what makes
   // the toggle survive a parent re-render with a new message body
   // without flashing the previous expansion — see the module doc.
-  const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(structured ? "" : text);
+  const bubbleText = structured ? textParts.map((part) => part.text).join("\n\n") : text;
+  const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
-  const displayedText = collapsed ? collapsedLongTextPreview(text) : text;
+  const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
 
   return (
     <>
@@ -508,7 +527,9 @@ function UserMessageContent({
           data-wuu-component="message-bubble"
           data-wuu-variant="user"
         >
-          {structured ? (
+          {collapsed ? (
+            <div className="user-message-raw-query">{displayedText}</div>
+          ) : structured ? (
             <div className="user-message-content-parts">
               {textParts.map((part, index) =>
                 part.text ? (

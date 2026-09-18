@@ -125,6 +125,7 @@ type turnRuntimeSnapshot struct {
 	ProcessCompletionIDs     []string
 	ExecutionRunID           string
 	PluginTurn               *pluginTurnReference
+	Control                  *session.Control
 	RequestContext           []agent.ContextSegment
 	ActiveDocument           *ActiveDocument
 }
@@ -192,6 +193,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	userMsg, err := userMessageFromPrompt(params.Prompt, images, files, params.ContentParts)
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
@@ -498,6 +502,9 @@ func (s *Server) handleTurnQueue(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	msg.ClientID = queueID
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	entry := queuedTurn{id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
@@ -687,6 +694,19 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	// Reject an obsolete UI submission before it revokes automatic management.
+	// The admission checks below still run after the control transition.
+	th.mu.Lock()
+	if !isHeld || th.running {
+		err = th.validateSteerTargetLocked(params.ExpectedTurnID)
+	}
+	th.mu.Unlock()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 
 	th.mu.Lock()
 	if s.isCancelledPendingSubmission(params.ThreadID, clientID, session.HeldUserWorkOriginSteer) {
@@ -721,18 +741,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
 	}
-	if params.ExpectedTurnID == "" {
+	if err := th.validateSteerTargetLocked(params.ExpectedTurnID); err != nil {
 		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("expected_turn_id is required"))
-	}
-	if params.ExpectedTurnID != th.currentTurn {
-		actual := th.currentTurn
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, fmt.Errorf("expected active turn id `%s` but found `%s`", params.ExpectedTurnID, actual))
-	}
-	if th.currentTurnKind == TurnKindCompact {
-		th.mu.Unlock()
-		return s.writeResponse(req.ID, nil, errors.New("cannot steer a compact turn"))
+		return s.writeResponse(req.ID, nil, err)
 	}
 	turnID := th.currentTurn
 	for _, pendingSteer := range th.pendingSteers {
@@ -797,6 +808,22 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}),
 	})
 	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+}
+
+func (th *threadState) validateSteerTargetLocked(expectedTurnID string) error {
+	if !th.running || th.currentTurn == "" {
+		return errors.New("no active turn to steer")
+	}
+	if expectedTurnID == "" {
+		return errors.New("expected_turn_id is required")
+	}
+	if expectedTurnID != th.currentTurn {
+		return fmt.Errorf("expected active turn id `%s` but found `%s`", expectedTurnID, th.currentTurn)
+	}
+	if th.currentTurnKind == TurnKindCompact {
+		return errors.New("cannot steer a compact turn")
+	}
+	return nil
 }
 
 func (th *threadState) signalSteerWakeLocked() {
@@ -982,6 +1009,22 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if s == nil || s.closed.Load() {
 		return nil, errServerClosed
 	}
+	// A correct CWD alone is insufficient: configuration, plugins and artifacts
+	// belong to the host runtime. Fence every admission, including user takeover
+	// of a managed session and reuse of a runtime cached before rerouting.
+	th.mu.Lock()
+	boundProject := th.NamedAgentID == "" && (th.WorkspaceID != "" || th.Source == "collaboration")
+	binding := session.Session{WorkspaceID: th.WorkspaceID, CWD: th.CWD, WorktreeBaseRepo: th.WorktreeBaseRepo}
+	th.mu.Unlock()
+	if boundProject {
+		root, id, err := s.sessionWorkspace(binding)
+		if err != nil {
+			return nil, err
+		}
+		if !s.ownsSessionWorkspace(root, id) {
+			return nil, errors.New("session must execute in its bound project runtime")
+		}
+	}
 	// External-engine threads (codex, later claude) carry no native
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.
@@ -1083,6 +1126,22 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		threadRuntime, err = s.newAgentExecutionRuntimeForSession(th.ID, collaborationSessionRef, principal, selection)
 	} else {
 		threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
+	}
+	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
+		// Draft selections arrive through thread/start, not config/model/update.
+		// Register a discovered connection before treating the pin as removed.
+		cfg, _, loadErr := s.rt.LoadEffectiveConfig()
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		cfg, registerErr := s.registerDiscoveredProvider(cfg, modelProvider)
+		if registerErr != nil {
+			return nil, registerErr
+		}
+		// Another app server may have registered it since the failed build.
+		if _, _, resolveErr := cfg.ResolveProvider(modelProvider); resolveErr == nil {
+			threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
+		}
 	}
 	if namedAgentID == "" && errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// The pinned provider was removed from config after this session
@@ -1640,6 +1699,9 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
+	if err := s.takeHarnessControl(threadID, session.ControlPaused); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	_, err := s.interruptThreadExecution(threadID, "", "")
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
@@ -1688,7 +1750,14 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 		}
 		return false, nil
 	}
-	pendingSteers := queuedTurnsFromSteers(th.pendingSteers)
+	s.pruneRevokedSteersLocked(th)
+	var humanSteers []providers.ChatMessage
+	for _, msg := range th.pendingSteers {
+		if msg.Origin != "plugin" {
+			humanSteers = append(humanSteers, msg)
+		}
+	}
+	pendingSteers := queuedTurnsFromSteers(humanSteers)
 	th.applySteerDocumentOverridesLocked(pendingSteers)
 	for index := range pendingSteers {
 		pendingSteers[index].origin = session.HeldUserWorkOriginSteer
@@ -2449,8 +2518,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 				messages = append(messages, baseBeforeStep()...)
 			}
 			th.mu.Lock()
+			s.pruneRevokedSteersLocked(th)
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
 			th.resetSteerWakeLocked()
+			for _, msg := range steers {
+				delete(th.pendingSteerControls, msg.ClientID)
+			}
 			th.mu.Unlock()
 			notifyBatch(batch)
 			reviewIntent.append(steers)
@@ -2696,13 +2769,31 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// Keep the execution lease through trace persistence and runner cleanup so
 	// the next turn cannot observe a half-restored runtime.
 	th.interrupting = false
+	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
+	// Collaboration retains a durable outbox. An unconsumed correction must
+	// return through that scheduler so its scope and capacity are checked again.
+	remainingSteers := unconsumedSteers[:0]
+	for _, msg := range unconsumedSteers {
+		if msg.Cause == "session_management" {
+			delete(th.pendingSteerControls, msg.ClientID)
+			continue
+		}
+		remainingSteers = append(remainingSteers, msg)
+	}
+	unconsumedSteers = remainingSteers
 	if len(unconsumedSteers) > 0 {
 		if threadRuntime != nil && threadRuntime.AgentControl != nil {
 			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.AgentControl)
 		}
 		if len(unconsumedSteers) > 0 {
 			queuedSteers := coalescedQueuedTurnsFromSteers(unconsumedSteers)
+			for i := range queuedSteers {
+				if c, ok := th.pendingSteerControls[queuedSteers[i].msg.ClientID]; ok {
+					queuedSteers[i].snapshot.Control = &c
+					delete(th.pendingSteerControls, queuedSteers[i].msg.ClientID)
+				}
+			}
 			th.applySteerDocumentOverridesLocked(queuedSteers)
 			s.prependQueuedUserTurns(th.ID, queuedSteers)
 		}
@@ -2809,6 +2900,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 		})
 	}
+	s.kickHarnessSessions()
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""
@@ -3436,6 +3528,18 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.mu.Unlock()
 		cancel()
 	}
+	if snapshot.Control != nil {
+		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
+			abortAdmission()
+			return startedThreadTurn{}, false, err
+		}
+	}
+	if userMsg.ClientID != "" && userMsg.Origin == "plugin" {
+		if _, found := s.findSessionInput(th, userMsg.ClientID); found {
+			abortAdmission()
+			return startedThreadTurn{}, false, errSessionInputApplied
+		}
+	}
 	if hooks.afterLease != nil {
 		if err := hooks.afterLease(th, &userMsg); err != nil {
 			abortAdmission()
@@ -3515,7 +3619,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendChatMessage(s.rt.SessionDir, th.ID, userMsg)
+		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()

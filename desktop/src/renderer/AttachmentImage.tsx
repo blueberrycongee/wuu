@@ -22,7 +22,7 @@ export function AttachmentImage({ image, label, className, previewDisabled, onOp
     return () => { generation.current++; };
   }, [image.remote_ref]);
   useEffect(() => {
-    if (!image.remote_ref?.startsWith("thread:") || image.data || !window.wuu.readRemoteAttachmentPreview || !element.current || typeof IntersectionObserver === "undefined") return;
+    if (!(image.remote_ref?.startsWith("thread:") || image.remote_ref?.startsWith("channel:")) || image.data || !window.wuu.readRemoteAttachmentPreview || !element.current || typeof IntersectionObserver === "undefined") return;
     const requestGeneration = generation.current;
     const observer = new IntersectionObserver(entries => {
       if (!entries.some(entry => entry.isIntersecting)) return;

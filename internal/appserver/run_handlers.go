@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/structuredoutput"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
@@ -72,6 +73,9 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	userMsg, err := userMessageFromPrompt(prompt, images, files)
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
+	}
+	if err := s.takeHarnessControl(params.ThreadID, session.ControlTakenOver); err != nil {
+		return s.writeRunError(req.ID, "internal_error", err)
 	}
 
 	params.Request.HasPrompt = params.Prompt != ""
@@ -181,6 +185,9 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	}
 	if !view.Attached {
 		return s.writeRunError(req.ID, "run_not_attached", fmt.Errorf("run %q is not attached to this app-server", runID))
+	}
+	if err := s.takeHarnessControl(view.Run.ThreadID, session.ControlPaused); err != nil {
+		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	interruptStatus := execution.StatusInterrupted
 	if strings.EqualFold(strings.TrimSpace(params.Reason), "timeout") {

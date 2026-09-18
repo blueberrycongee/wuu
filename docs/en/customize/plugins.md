@@ -15,28 +15,6 @@ normally develop and release plugins from their own repositories. The current in
 accepts a local directory or zip package; direct npm and Git-source installation are not
 available yet.
 
-## What one package can contain
-
-| Type | What it contributes | Code required? |
-| --- | --- | --- |
-| Declarative contributions | Themes, settings, Skills, Hooks, MCP servers, and commands | Depends on the contribution |
-| Agent plugin | Tools, context, request transforms, turn observers, provided and consumed services | Yes, separate process |
-| Desktop plugin | Views, Slots, Presenters, Surfaces, styles, and interactive cards | Yes, Renderer code |
-
-One package may declare both `runtime` and `desktop.entry`. For example, the runtime
-can query a private service while the Desktop module presents the result. Both share
-the plugin ID and the one install/trust lifecycle.
-
-Plugin management, safe mode, crash recovery, and native window lifecycle remain
-host-owned. Plugins cannot replace those recovery paths.
-
-Choose a first path:
-
-- [Agent plugin quickstart](plugin-quickstart.md) — register a model-visible tool and use Storage;
-- [Desktop plugin quickstart](desktop-plugin-quickstart.md) — add a real Composer control;
-- [Desktop UI extension map](desktop-plugins.md) — choose a View, Slot, Presenter, or Surface;
-- [Desktop plugin recipes](plugin-recipes.md) — compose selection UI, draft actions, and full panels.
-
 ## Get and install plugins
 
 In Wuu Desktop, choose a local directory or zip package in the plugin catalog. Wuu then
@@ -50,11 +28,8 @@ wuu plugin install ./foo
 wuu plugin install ./foo-1.0.0.zip
 ```
 
-The CLI stages the local package; use `wuu plugin approve <id>` to activate that staged
-fingerprint. This split CLI is a compatibility surface, not an extra trust model. Wuu
-installs packages under `~/.wuu/plugins/`, or below `WUU_HOME` when set. In every entry
-point, approving and enabling code is the trust decision: it runs with your user
-authority.
+The current CLI stages the local package; use `wuu plugin approve <id>` to enable it.
+Packages are stored under `~/.wuu/plugins/`, or below `WUU_HOME` when set.
 
 ## Trust, update, and user-visible state
 
@@ -105,18 +80,31 @@ wuu plugin remove my-plugin
 - **Compose extension types:** carry Skills, Hooks, MCP servers, commands, Agent code,
   and Desktop code in one package with one install and upgrade lifecycle.
 
+## Coordinate existing sessions
+
+The bundled **Peers** plugin lets an agent contact another existing conversation.
+It is enabled by default; an explicit disabled preference is preserved. Enable it
+in plugin settings if needed, then ask the agent to contact a session by its copied
+ID, or use `/peer` to discover available conversations. Private and archived
+sessions are excluded from discovery.
+
+Requests start a turn on an idle target or queue behind its current work. The
+target's final response is returned once; that return does not automatically send
+another reply. Messages keep their own source label and use the normal bubble,
+including long-text expansion and copying. On Desktop, clicking the source opens
+that conversation alongside the current one. Native phones also show the source.
+Opt-in account history copies preserve attribution as a text heading for older
+server compatibility; offline copies do not provide source navigation.
+Cross-session messages are not direct user instructions and do not change the
+target's permissions or goal. The agent can decline a request; `peer_policy` can
+refuse incoming requests for a session. Disabling Peers removes its tools and
+automatic coordination behavior.
+
 ## Trust boundary
 
-- Agent runtime processes run with the same user authority as Wuu.
-- Desktop modules run in the Renderer and may register arbitrary CSS.
-- Hooks have the same risk as running the declared local command directly.
-- The Renderer never receives an absolute plugin path. App-server records the source
-  identity; Electron imports desktop code through a content-addressed `wuu-plugin:`
-  URL. CSP does not enable `unsafe-eval`.
-- Wuu does not review, certify, or sandbox plugin code. Updates keep trust by source
-  identity, not by per-change approval.
-
-Install code plugins only from sources you trust.
+Install code plugins only from sources you trust. Runtime processes have your user
+authority, desktop modules can change the interface, and Hooks can run local commands.
+Wuu does not review, certify, or sandbox third-party plugin code.
 
 ## Current compatibility boundary
 
@@ -130,19 +118,6 @@ There is no version-range solver or automatic conflict resolution today.
 
 ## Develop and publish
 
-```bash
-wuu plugin create --type agent my-agent
-wuu plugin create --type desktop my-ui
-wuu plugin create --type full my-extension
-
-wuu plugin validate ./my-extension
-wuu plugin build ./my-extension
-wuu plugin test ./my-extension
-wuu plugin dev ./my-extension
-wuu plugin pack ./my-extension
-```
-
-See the [plugin authoring reference](plugin-authoring.md) for the complete manifest,
-Agent protocol, Desktop API, lifecycle, and security boundaries. See the
-[plugin system architecture](plugin-system.md) for the design rationale and host
-ownership model.
+Start with the [Agent plugin quickstart](plugin-quickstart.md) or
+[Desktop plugin quickstart](desktop-plugin-quickstart.md). For package formats and
+development commands, see the [authoring reference](plugin-authoring.md).

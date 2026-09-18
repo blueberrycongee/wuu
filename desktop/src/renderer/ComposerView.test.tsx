@@ -105,7 +105,7 @@ function renderComposer(props: {
   variant?: ComposerVariant;
   canSelectProject?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
-  gitBusy?: boolean;
+  branchPickerDisabled?: boolean;
   onToggleBranchMenu?: () => void;
   onToggleMenu?: () => void;
   mainConversation?: boolean;
@@ -176,7 +176,7 @@ function renderComposer(props: {
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
           gitStatus={props.gitStatus}
-          gitBusy={props.gitBusy}
+          branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
           activeProject={props.activeProject}
@@ -1694,16 +1694,28 @@ describe("Composer send control", () => {
     expect(textarea?.selectionEnd).toBe(8);
   });
 
-  it("shares the plus menu width and available-height contract", () => {
-    renderComposer({
-      variant: "dock",
-      prompt: "/",
+  it.each(["hero", "dock"] as const)("anchors %s slash suggestions to the input, over the content above it", (variant) => {
+    renderComposer({ variant, canSelectProject: true });
+    const frame = container.querySelector<HTMLElement>(".composer-frame")!;
+    const shell = container.querySelector<HTMLElement>(".composer-shell")!;
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(new DOMRect(80, 400, 640, 120));
+    vi.spyOn(shell, "getBoundingClientRect").mockReturnValue(new DOMRect(80, 340, 640, 180));
+
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "/");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     const slashLayer = document.body.querySelector<HTMLElement>(
       '[data-floating-menu-owner="composer-slash"]',
     );
     expect(slashLayer).not.toBeNull();
+    const menuBottom = window.innerHeight - parseFloat(slashLayer!.style.bottom);
+    expect(menuBottom).toBeGreaterThan(shell.getBoundingClientRect().top);
+    expect(menuBottom).toBeLessThanOrEqual(frame.getBoundingClientRect().top);
+    expect(slashLayer!.style.width).toBe(`${frame.getBoundingClientRect().width}px`);
+    expect(slashLayer!.style.left).toBe(`${frame.getBoundingClientRect().left}px`);
   });
 
   it("shows the hero project selector above the input card", () => {
@@ -1730,6 +1742,26 @@ describe("Composer send control", () => {
     act(() => branch?.click());
     expect(onToggleBranchMenu).toHaveBeenCalledOnce();
     expect(onToggleMenu).not.toHaveBeenCalled();
+  });
+
+  it.each(["hero", "dock"] as const)("keeps the %s branch picker accessible while tasks run", (variant) => {
+    const onToggleBranchMenu = vi.fn();
+    renderComposer({ variant, canSelectProject: true, running: true,
+      gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu });
+    const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
+    expect(branch.disabled).toBe(false);
+    act(() => branch.click());
+    expect(onToggleBranchMenu).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ readOnly: true }, { branchPickerDisabled: true }])("blocks the branch picker for a read-only or switching context: %j", (props) => {
+    const onToggleBranchMenu = vi.fn();
+    renderComposer({ variant: "hero", canSelectProject: true,
+      gitStatus: { is_repo: true, branch: "main", dirty_count: 0 }, onToggleBranchMenu, ...props });
+    const branch = container.querySelector<HTMLButtonElement>('button[aria-label="切换分支：main"]')!;
+    expect(branch.disabled).toBe(true);
+    act(() => branch.click());
+    expect(onToggleBranchMenu).not.toHaveBeenCalled();
   });
 
   it("opens project selection from a new session's bottom composer", () => {
@@ -3036,33 +3068,21 @@ describe("ComposerTokenGauge", () => {
 });
 
 describe("Composer expand button", () => {
-  it("anchors the expanded frame to the original bottom edge in the hero composer", () => {
-    renderComposer({ variant: "hero" });
-    const stack = container.querySelector(".composer-stack");
-    const frame = container.querySelector<HTMLDivElement>(".composer-frame");
+  it("keeps manual expansion through draft replacement and send-clear", () => {
+    const { replacePrompt } = renderStatefulComposer({});
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
-    expect(stack).not.toBeNull();
-    expect(frame).not.toBeNull();
-    expect(button).not.toBeNull();
-
-    Object.defineProperty(frame!, "offsetHeight", {
-      configurable: true,
-      get: () => (stack?.classList.contains("is-expanded") ? 420 : 136),
-    });
-
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-
-    expect(stack?.classList.contains("is-expanded")).toBe(true);
-    expect(frame?.style.getPropertyValue("--composer-expanded-offset")).toBe("284px");
-
+    act(() => replacePrompt("Replacement draft"));
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(textarea.value).toBe("Replacement draft");
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
     act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
-
-    expect(stack?.classList.contains("is-expanded")).toBe(false);
-    expect(frame?.style.getPropertyValue("--composer-expanded-offset")).toBe("");
+    expect(textarea.value).toBe("");
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("renders the expand button inside the composer input area", () => {

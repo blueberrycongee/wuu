@@ -1,7 +1,8 @@
 import { ArrowRight, Shuffle, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ChannelRoomOnboarding, ChannelAgentCreateParams, InitializeResult, NamedAgent, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
-import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";
+import { randomAgentAvatarKey } from "./AgentAvatarMark";
+import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { AgentOnboardingAvatar, AGENT_BUBBLE_DELAY_MS } from "./AgentOnboardingAvatar";
 import { useChannelMessageMotion } from "./useChannelMessageMotion";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
@@ -130,7 +131,8 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
     if (pendingRef.current || draftRef.current.createdAgent) return;
     const current = draftRef.current;
     if (Object.entries(patch).every(([key, value]) => value === current[key as keyof AgentOnboardingDraft])) return;
-    const next = { ...current, ...patch, requestId: newRequestID() };
+    const contentChanged = Object.entries(patch).some(([key, value]) => key !== "step" && value !== current[key as keyof AgentOnboardingDraft]);
+    const next = { ...current, ...patch, requestId: contentChanged ? newRequestID() : current.requestId };
     draftRef.current = next;
     onDraftChange(next);
     setError("");
@@ -201,7 +203,7 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
       <button type="button" className="icon-button" data-action="close" aria-label={t("agentOnboarding.cancel")} onClick={() => { if (!pendingRef.current) onClose(); }} disabled={Boolean(busy)}><X size={18} /></button>
     </header>
     <div className="agent-onboarding-scroll" ref={scrollRef}>
-      <div className="agent-onboarding-first-message">
+      {step === "model" ? <div className="agent-onboarding-first-message">
       {intro >= 1 ? <div className="agent-onboarding-intro-avatar"><AgentOnboardingAvatar avatarKey={draft.avatarKey} /></div> : null}
       {intro >= 2 ? <MessageBubbleRow messageID="model" outgoing={false} className="channel-message agent" contentClassName="channel-message-content"
 
@@ -234,22 +236,22 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
           </form>
         </MessageBubble>
       </MessageBubbleRow> : null}
-      </div>
-      {step === "name" ? <MessageBubbleRow messageID="name" outgoing={false} className="channel-message agent" contentClassName="channel-message-content" avatar={<AgentAvatarMark seed="draft-agent" avatarKey={draft.avatarKey} />}>
-        <MessageBubble outgoing={false} className="channel-message-bubble">
-          <p className="agent-onboarding-name-prompt">{t("agentOnboarding.askName")}</p>
-          {!locked ? <button type="button" className="agent-onboarding-manage" data-action="random-name" onClick={() => {
-            const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
-            const value = crypto.getRandomValues(new Uint32Array(1))[0];
-            update({ name: names[value % names.length] });
-            composerRef.current?.focus();
-          }}><Shuffle size={14} />{t("agentOnboarding.randomName")}</button> : null}
-        </MessageBubble>
-      </MessageBubbleRow> : null}
-      {sentName ? <MessageBubbleRow messageID="answer" outgoing className="channel-message own" contentClassName="channel-message-content"><MessageBubble outgoing className="channel-message-bubble">{sentName}</MessageBubble></MessageBubbleRow> : null}
+      </div> : <AgentOnboardingHistory onboarding={{
+        model_prompt: t("agentOnboarding.selectBeforeChat"), name_prompt: t("agentOnboarding.askName"),
+        name: sentName, provider: draft.provider, model: model?.display_name || draft.model,
+        effort: draft.effort, avatar_key: draft.avatarKey,
+      }} modelAction={<button type="button" className="agent-onboarding-manage" data-action="edit-model" disabled={locked} onClick={() => update({ step: "model" })}>{t("slash.model.title")}</button>} />}
       {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span><button type="button" className="agent-onboarding-manage" data-action="submit" onClick={() => void submit()} disabled={Boolean(busy)}>{t("agentOnboarding.openConversation")}</button></div> : null}
     </div>
     {step === "name" ? <div className="channel-conversation-footer">
+      <div className="agent-onboarding-name-actions">
+        <button type="button" className="agent-onboarding-manage" data-action="random-name" disabled={locked} onClick={() => {
+          const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
+          const value = crypto.getRandomValues(new Uint32Array(1))[0];
+          update({ name: names[value % names.length] });
+          composerRef.current?.focus();
+        }}><Shuffle size={14} />{t("agentOnboarding.randomName")}</button>
+      </div>
       <ChannelComposer allowAttachments={false} ref={composerRef} draft={draft.name} placeholder={t("agentOnboarding.namePlaceholder")} compact disabled={locked} sending={Boolean(busy)} files={[]} images={[]} onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}} onChangeDraft={(name) => update({ name })} onSend={() => void submit()} />
     </div> : null}
   </section>;

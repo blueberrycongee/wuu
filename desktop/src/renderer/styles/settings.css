@@ -133,7 +133,7 @@
   height: 32px;
   align-items: center;
   gap: 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
@@ -249,8 +249,8 @@
   container-name: settings-page;
   container-type: inline-size;
   --settings-page-max-width: 880px;
-  --settings-pad: 32px;
-  --settings-gap: 32px;
+  --settings-pad: var(--page-padding);
+  --settings-gap: var(--section-gap);
   width: min(var(--settings-page-max-width), 100%);
   /* flex-shrink: 0 keeps the bottom padding inside the scrollable area
    * when content exceeds the viewport height. */
@@ -289,7 +289,7 @@
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--section-heading-gap);
 }
 
 .settings-section-header {
@@ -321,9 +321,10 @@
 }
 
 .settings-section > .settings-group {
-  padding: 0 16px;
+  padding: 0 var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  /* Control-wrapping shell: one tier below panel. */
+  border-radius: var(--radius-sm);
 }
 
 .settings-group .settings-row:last-child {
@@ -343,9 +344,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 24px;
+  gap: var(--space-6);
   border-bottom: 1px solid var(--hairline-soft);
-  padding: 16px 0;
+  padding: var(--card-padding) 0;
 }
 
 .settings-row-block {
@@ -370,7 +371,7 @@
 }
 
 .settings-row-label-description {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   font-size: var(--font-sm);
   font-weight: 400;
   line-height: 1.5;
@@ -427,14 +428,16 @@
 .settings-input,
 .settings-select {
   width: 100%;
-  height: 32px;
+  min-height: var(--control-field-height);
+  height: auto;
+  line-height: 1.5;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--field-bg);
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: 400;
-  padding: 0 12px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
     background var(--motion-fast) var(--menu-enter-easing),
     border-color var(--motion-fast) var(--menu-enter-easing),
@@ -481,7 +484,7 @@
     5px 5px,
     5px 5px;
   background-repeat: no-repeat;
-  padding-right: 28px;
+  padding-right: calc(var(--control-padding-inline) + 16px);
   text-overflow: ellipsis;
 }
 
@@ -550,7 +553,7 @@
   min-height: 112px;
   resize: vertical;
   line-height: var(--line-body);
-  padding: 8px 12px;
+  padding: var(--compact-padding-block) var(--control-padding-inline);
 }
 
 /* Inline flag occupying a control slot (e.g. "新的模型服务", "暂无模型服务").
@@ -581,7 +584,9 @@
 
 .settings-button {
   display: inline-flex;
-  height: 32px;
+  min-height: var(--control-field-height);
+  height: auto;
+  line-height: 1.5;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -591,7 +596,7 @@
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
-  padding: 0 12px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   transition:
     background var(--motion-fast) var(--menu-enter-easing),
     color var(--motion-fast) var(--menu-enter-easing),
@@ -653,9 +658,9 @@
   background: var(--danger-border);
 }
 
-/* Square icon-only variant, same 32px box. */
+/* Match the field height after appearance font scaling. */
 .settings-icon-button {
-  width: 32px;
+  width: max(32px, 2.6em);
   flex: 0 0 auto;
   padding: 0;
 }
@@ -750,13 +755,13 @@
 }
 
 .settings-engine-body {
-  padding: 0 16px;
+  padding: 0 var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
 }
 
 .settings-engine-body .settings-row {
-  padding: 16px 0;
+  padding: var(--card-padding) 0;
   border: 0;
 }
 
@@ -965,10 +970,11 @@
   min-height: 64px;
   align-items: center;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: 16px 48px 16px 16px;
+  padding: var(--card-padding);
+  padding-right: calc(var(--card-padding) + 24px + var(--space-2));
   text-align: left;
   transition: background var(--motion-fast);
 }
@@ -1013,8 +1019,8 @@
 
 .settings-provider-remove {
   position: absolute;
-  top: 14px;
-  right: 12px;
+  top: var(--card-padding);
+  right: var(--card-padding);
   display: grid;
   place-items: center;
   width: 24px;
@@ -1038,9 +1044,9 @@
 
 .settings-provider-editor {
   min-width: 0;
-  padding: 16px;
+  padding: var(--card-padding);
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
 }
 
 .settings-provider-editor-header {
@@ -2477,10 +2483,10 @@
   white-space: nowrap;
 }
 
-/* Stack only when the column itself can no longer fit label + control.
- * 360px = the widest minimum control (160px select) + 24px gap + a label
- * that stays readable; the archive toolbar stacks at its own minimum. */
-@container settings-page (max-width: 360px) {
+/* Reserve reading space for the label as well as the control. The threshold
+ * follows text size so compact page insets cannot leave a one-character
+ * label column next to a wide selector. */
+@container settings-page (max-width: 32em) {
   .settings-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;

@@ -54,10 +54,7 @@ Wuu 会把 `command` 作为子进程启动，并通过 stdin/stdout 使用 MCP�
 `transport` 可设为 `http`、`streamable-http` 或兼容旧服务器的 `sse`。省略时会先尝试
 streamable HTTP；若协议探测和旧版初始化 POST 表明该端点不支持它，再回退到 SSE。
 
-对 stdio 和 streamable HTTP，Wuu 会先探测 MCP `2026-07-28` 的无状态协议；服务端不
-支持时自动回退到使用 initialize 握手的旧协议。固定为 `sse` 的服务器始终使用旧协议。
-新版和旧版的 tools/list、分页及 tools/call 都可用；新版工具调用若返回需要额外用户输入
-的多轮结果，当前会明确报错，不会把未完成结果误当成成功。
+Wuu 会自动协商支持的协议。当前不支持需要额外用户输入交互的工具结果，遇到时会报错。
 
 `headers` 只用于远程请求。原生 `mcp_servers` 不展开 `${VAR}`，示例中的 token 等值会
 按字面量使用；不要把密钥写进团队共享的项目配置。

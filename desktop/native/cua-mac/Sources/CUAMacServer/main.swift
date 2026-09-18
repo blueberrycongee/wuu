@@ -1,6 +1,7 @@
 import AppKit
 import CUAMacCore
 import Foundation
+import Darwin
 
 _ = NSApplication.shared
 if CommandLine.arguments.count >= 8, CommandLine.arguments[1] == "--native-pip" {
@@ -36,29 +37,36 @@ if CommandLine.arguments.count >= 8, CommandLine.arguments[1] == "--native-pip" 
     NSApplication.shared.run()
     exit(0)
 }
-let server = MCPServer(backend: MacComputerBackend())
-
-while let line = readLine(strippingNewline: true) {
-    guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-    do {
+let requests = MCPRequestQueue(backend: MacComputerBackend())
+let outputLock = NSLock()
+let terminationSignals = [SIGTERM, SIGINT].map { code in
+    signal(code, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: code, queue: .global())
+    source.setEventHandler { requests.shutdown { exit(0) } }
+    source.resume()
+    return source
+}
+DispatchQueue.global(qos: .userInitiated).async {
+    while let line = readLine(strippingNewline: true) {
+        guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
         guard let data = line.data(using: .utf8),
-              let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ComputerError.invalidArguments("request must be a JSON object")
+              let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            DispatchQueue.main.async {
+                writeResponse(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "request must be a JSON object"]])
+            }
+            continue
         }
-        guard let response = try server.handle(request) else { continue }
-        let encoded = try JSONSerialization.data(withJSONObject: response, options: [.sortedKeys])
-        FileHandle.standardOutput.write(encoded)
-        FileHandle.standardOutput.write(Data([0x0A]))
-    } catch {
-        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        let response: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": NSNull(),
-            "error": ["code": -32700, "message": message],
-        ]
-        if let encoded = try? JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]) {
-            FileHandle.standardOutput.write(encoded)
-            FileHandle.standardOutput.write(Data([0x0A]))
-        }
+        requests.submit(request, reply: writeResponse)
+    }
+    requests.shutdown { exit(0) }
+}
+NSApplication.shared.run()
+
+@Sendable func writeResponse(_ response: [String: Any]) {
+    if var data = try? JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]) {
+        data.append(0x0A)
+        outputLock.lock()
+        FileHandle.standardOutput.write(data)
+        outputLock.unlock()
     }
 }

@@ -387,9 +387,7 @@ export function SelectMenu({
                             <span className="select-menu-item-hint">{option.hint}</span>
                           ) : null}
                         </span>
-                        {isSelected ? (
-                          <Check className="select-menu-check icon-lg" aria-hidden="true" />
-                        ) : null}
+                        <Check className="select-menu-check icon-lg" aria-hidden="true" />
                       </button>
                     );
                   })}

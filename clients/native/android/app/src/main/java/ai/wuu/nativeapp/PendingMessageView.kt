@@ -16,7 +16,17 @@ import androidx.compose.ui.unit.dp
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text(if (message.held) "已暂停 · 等待继续" else "等待处理", style = MaterialTheme.typography.labelMedium)
-            SelectionContainer { Text(message.text) }
+            if (message.text.isNotBlank()) SelectionContainer { Text(message.text) }
+            message.value.optJSONArray("images")?.objects().orEmpty().forEachIndexed { index, attachment ->
+                MessageImage("pending:${message.id}:$index", true, model.imagePreviews,
+                    read = { decodeInlineAttachment(attachment) },
+                    open = { model.perform { model.attachmentPreview = decodeInlineAttachment(attachment) } })
+            }
+            message.value.optJSONArray("files")?.objects().orEmpty().forEach { attachment ->
+                TextButton(onClick = { model.perform { model.attachmentPreview = decodeInlineAttachment(attachment) } }) {
+                    Text(attachment.optString("filename", "文件"))
+                }
+            }
             Row {
                 if (message.held) TextButton(onClick = { act(true) }, enabled = !working && model.connected && !model.readOnly && !model.running) { Text("继续处理") }
                 TextButton(onClick = { act(false) }, enabled = !working && model.connected && !model.readOnly) { Text("移除") }

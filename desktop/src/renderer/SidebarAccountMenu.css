@@ -6,13 +6,15 @@
 
 .sidebar-account-trigger {
   display: grid;
-  grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr) auto;
+  grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr) var(--sidebar-row-action-size);
   align-items: center;
   gap: var(--sidebar-nav-column-gap, 8px);
   width: 100%;
-  min-height: 46px;
-  padding: 7px var(--sidebar-row-pad-x);
-  border-radius: var(--radius-sm);
+  min-height: var(--sidebar-row-height, 2.5em);
+  font-size: var(--sidebar-label-size, var(--font-ui));
+  line-height: 1.45;
+  padding: 0.35em var(--sidebar-row-pad-x);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   text-align: left;
@@ -39,6 +41,10 @@
 
 .sidebar-account-trigger .sidebar-account-avatar {
   justify-self: center;
+  /* Override the standalone avatar's flex basis as well as its dimensions.
+     Without this, the 30px basis can make the trigger avatar overflow the
+     sidebar's icon column even though width/height are reduced to 16px. */
+  flex-basis: var(--sidebar-primary-icon-size, 16px);
   width: var(--sidebar-primary-icon-size, 16px);
   height: var(--sidebar-primary-icon-size, 16px);
   font-size: 9px;
@@ -59,10 +65,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: var(--weight-medium);
+  font-weight: var(--sidebar-label-weight, 500);
 }
 
-.sidebar-account-trigger > svg { flex-shrink: 0; color: var(--ink-muted); }
+.sidebar-account-trigger > svg { justify-self: center; flex-shrink: 0; color: var(--ink-muted); }
 .sidebar-account-menu {
   position: absolute;
   inset-inline: 0;
@@ -75,16 +81,19 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 5px;
-  border-radius: 14px;
+  padding: var(--menu-inset);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--menu-shadow);
   --menu-enter-y: 4px;
 }
 .sidebar-account-menu .select-menu-item {
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  justify-content: flex-start;
+  gap: var(--menu-item-gap);
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 .sidebar-account-menu .select-menu-item > span {
   min-width: 0;
@@ -92,7 +101,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sidebar-account-menu .select-menu-item { justify-content: flex-start; min-height: 38px; flex-shrink: 0; }
 .sidebar-account-menu .select-menu-item > svg { flex-shrink: 0; color: var(--ink-soft); }
 .sidebar-account-profile { display: flex; align-items: center; gap: 10px; padding: 10px 9px; }
 .sidebar-account-profile > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }

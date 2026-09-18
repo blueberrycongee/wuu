@@ -209,6 +209,10 @@ owner、visibility、parent、fresh/fork、workspace（`shared` 项目目录，�
 `workspace_root`，便于插件记录 Session 的真实运行目录。`host.session.send` 向已有
 Session 投递输入。send 请求包含插件生成的 `request_id`、模型输入、有大小上限的 request-only
 context blocks、稳定 cause，以及可选的 `presentation: { kind: "query_bubble", text, name }`。
+会话间消息使用 `kind: "session_message"`，`text` 填可见消息正文，`related_session_id` 填来源
+Session。宿主记录来源标题快照，历史恢复保留来源 ID，并在现有只读消息气泡上方显示来源。
+来源必须是未归档的共享 Session，或当前插件拥有的私有 Session；不允许向自身或已归档目标发送。
+所有扩展都可以使用这一展示契约，不仅限于内置 Peers 插件；它不会授予额外执行权限。
 插件通过 `if_running: "queue" | "steer"` 决定目标繁忙时的投递方式：`queue` 在当前 Turn 之后
 再启动一个 Turn，`steer` 则把输入注入当前 Turn。默认仍为 `queue`；steer 成功时返回
 `steered: true` 和当前 `turn_id`。steer 不会创建第二组生命周期事件，也不能携带
@@ -741,3 +745,11 @@ previous/current 的 SDK 与宿主兼容矩阵。在矩阵验证完成前，不�
   受信任的桌面代码插件。
 - runtime 进程与 Wuu 同权限，安装第三方 runtime 与直接运行第三方本地命令具有
   相同风险；安装前检查来源。同一来源身份的更新延续信任，来源身份改变时重新确认。
+
+`host.session.control` 读取或改变 Session 的自动管理者，管理关系与所有权、
+父会话无关。修改时传入上次读取的 `revision`，过期修改会失败。
+`state` 可设为 `active`、`paused` 或 `released`；受管理的发送和停止请求
+携带 `control_revision`。用户直接发消息会接管会话，停止会暂停自动跟进。
+只有用户要求继续时才恢复管理。解除管理不会停止当前轮次，也不会删除历史。
+创建时可通过注册项目的 `workspace_id` 或 `workspace_root` 明确选择工作区，
+不会用父身份的主目录覆盖项目路径。

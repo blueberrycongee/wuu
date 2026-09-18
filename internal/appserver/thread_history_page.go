@@ -93,6 +93,9 @@ func RemoteThreadItem(threadID, turnID string, item ThreadItem) ThreadItem {
 func historyItem(threadID, turnID string, item ThreadItem) ThreadItem {
 	source := item
 	item = cloneThreadItem(item)
+	if item.Type == ThreadItemAgentMessage {
+		item.MarkdownImages = markdownImageReferences("thread", threadID, turnID, item.ID, item.Text)
+	}
 	for index, img := range item.Images {
 		if len(img.Data) <= 16*1024 {
 			continue
@@ -210,7 +213,7 @@ func (s *Server) historyThread(id string) (*threadState, error) {
 			return nil, agentErr
 		}
 		if ok {
-			return &threadState{ID: thread.ID, Turns: thread.Turns}, nil
+			return &threadState{ID: thread.ID, CWD: thread.CWD, Turns: thread.Turns}, nil
 		}
 	}
 	return th, err

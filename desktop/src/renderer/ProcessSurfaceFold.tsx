@@ -96,6 +96,7 @@ export function ProcessSurfaceFold({
       {hasDetails ? (
         <div
           className="process-surface-body"
+          data-scroll-fade="compact"
           ref={bodyRef}
           {...bodyProps}
         >

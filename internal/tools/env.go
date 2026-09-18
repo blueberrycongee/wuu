@@ -268,6 +268,8 @@ type Env struct {
 	// so tabs survive core restarts and can be rebuilt on the first observe.
 	// Nil means tab state is not durable in this environment.
 	BrowserTabs BrowserTabStore
+	// ArtifactPublisher snapshots explicitly presented files into session storage.
+	ArtifactPublisher ArtifactPublisher
 	// FileScopeRoots, when non-empty, replaces the single-RootDir file
 	// boundary with a whitelist: file tools (read/write/edit/glob/grep/…)
 	// may only touch paths inside one of these roots — the agent home,

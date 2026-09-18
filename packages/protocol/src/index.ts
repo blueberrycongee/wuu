@@ -856,6 +856,8 @@ export type ChannelAgentCreationProposal = {
 };
 
 export type ChannelMessage = {
+  /** Local images explicitly embedded in the reply; projected for remote clients. */
+  markdown_images?: InputImage[];
   source_session_ref?: string;
   source_turn_id?: string;
   id: string;
@@ -1071,7 +1073,12 @@ export type ChannelContinuityParams = {
 export type ChannelContinuityResult = { arrangements?: CollaborationArrangement[]; entries?: CollaborationMemoryEntry[]; next?: string };
 
 export type ChannelSessionListParams = { agentId?: string; roomId?: string };
-export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[] };
+export type ManagedHarnessSession = {
+ session_id: string; title: string; workspace_root: string; workspace_id?: string;
+ provider: string; model: string; effort?: string; state: "running" | "idle";
+ control?: { manager_id: string; state: "active" | "paused" | "taken_over"; revision: number };
+};
+export type ChannelSessionListResult = { sessions: CollaborationSessionBinding[]; managed_sessions?: ManagedHarnessSession[] };
 export type ChannelSessionCreateParams = {
   agentId: string;
   roomId: string;
@@ -1168,7 +1175,42 @@ export type ChannelRoomReadResult = { read: boolean };
 export type ChannelMessageListParams = {
   room_id: string;
   after_seq?: number;
+  before_seq?: number;
   limit?: number;
+  latest?: boolean;
+  attachment_metadata_only?: boolean;
+};
+
+/** Offset and total count base64 characters; each chunk is at most 128 KiB. */
+export type AttachmentReadResult = {
+  data: string;
+  total: number;
+  offset: number;
+  content_type: string;
+  sha256?: string;
+};
+export type ChannelAttachmentReadParams = {
+  room_id: string;
+  message_id: string;
+  seq: number;
+  field: "images" | "files";
+  index: number;
+  sha256: string;
+  offset?: number;
+  preview?: boolean;
+};
+/** Source must be an image embedded in this assistant reply. No remote URLs are fetched. */
+export type MessageImageReadParams = {
+  kind: "channel" | "thread";
+  scope_id: string;
+  turn_id?: string;
+  message_id: string;
+  seq?: number;
+  source: string;
+  offset?: number;
+  preview?: boolean;
+  /** Echo the first response digest for every later original-image chunk. */
+  sha256?: string;
 };
 export type ChannelResponse = {
   id: string;
@@ -1867,6 +1909,7 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+ session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
   id: string;
   parent_id?: string;
   agent_path?: string;
@@ -2349,6 +2392,8 @@ export type TurnEventNotification = {
 };
 
 export type ThreadItem = {
+  /** Local Markdown images, readable through message/image/read. */
+  markdown_images?: InputImage[];
   /** Complete content is fetched separately when a history item exceeds the page budget. */
   remote_content_ref?: string;
   id: string;
@@ -2418,13 +2463,16 @@ export type TodoUpdate = {
 export type InputImage = {
   media_type: string;
   data: string;
-  /** Remote images may retain bytes on the desktop until explicitly viewed. */
+  width?: number;
+  height?: number;
+  /** Bytes stay on the host; previews load on visibility and originals on activation. */
   remote_ref?: string;
 };
 
 export type InputFile = {
   media_type: string;
   data: string;
+  remote_ref?: string;
   filename?: string;
 };
 
@@ -2549,20 +2597,16 @@ export type SettingsUsageResponse = {
 
 // Appearance preference for the desktop shell. "system" follows the OS
 // light/dark setting via prefers-color-scheme.
-// Continuous px value the user picks for the message-stream font size.
-// Range mirrors the developer-only design-tokens mixer
-// (ConversationDesignTokens.ts → msg-font-size: 13–20 step 0.5 default
-// 14) so the user setting and the mixer operate in the same coordinate
-// space. The renderer clamps incoming values to this range before
-// applying them; the main process keeps the same range check at the
-// IPC boundary.
+// UI and message-stream size in CSS pixels. The renderer clamps incoming
+// values to this range; the main process validates the same range at the IPC
+// boundary. A new default must not replace a valid saved preference.
 export type MessageFlowFontSize = number;
 
 export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   min: 13,
   max: 20,
   step: 0.5,
-  default: 14,
+  default: 14.5,
 } as const;
 
 export type ThemePreference = "system" | "light" | "dark";
@@ -2615,6 +2659,7 @@ export type VoiceInputSettingsSnapshot = {
 export type ChannelRoomPreferences = {
   pinnedRoomIDs: string[];
   archivedRoomIDs: string[];
+  selectedRoomID?: string;
 };
 
 // The three OS families the desktop shell distinguishes. Anything more

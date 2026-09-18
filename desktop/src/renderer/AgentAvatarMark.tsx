@@ -125,15 +125,17 @@ export function agentAvatarConfig(value: string): AgentAvatarConfig {
   return DEFAULT_AGENT_AVATAR_CONFIG;
 }
 
-export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "expressive", turnSignal = 0, morph }: {
+export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle", activity, motion = "static", turnSignal = 0, morph, disableMorph = false }: {
   morph?: MascotMorph;
+  /** Static transcript identities do not need the activity morph renderer. */
+  disableMorph?: boolean;
   seed: string;
   avatarKey: string;
   avatarImage?: string;
   status?: AgentAvatarStatus;
   activity?: WuuMascotActivity;
-  /** Secondary placements retain state cues without the working gaze loop. */
-  motion?: "expressive" | "subtle";
+  /** Identity avatars stay still; activity indicators opt into motion. */
+  motion?: "static" | "expressive" | "subtle";
   /** Increment to replay a deliberate character gesture, independent of status. */
   turnSignal?: number;
 }): JSX.Element {
@@ -147,13 +149,14 @@ export function AgentAvatarMark({ seed, avatarKey, avatarImage, status = "idle",
       data-agent-avatar-turn={turn || undefined} style={{ "--agent-avatar-hue": config.hue, "--agent-turn-duration": `${AGENT_TURN_MS}ms` } as CSSProperties} aria-hidden="true">
       {turn ? <AgentAvatarRibbon key={`rear-${turn}`} front={false} /> : null}
       {avatarImage ? <img className="agent-avatar-image" src={avatarImage} alt="" draggable={false} /> : <WuuMascot
-        morph={morph}
+        disableMorph={disableMorph}
+        morph={motion === "static" ? "idle" : morph}
         identityName={`agent-avatar:${avatarKey}`}
         identityHue={config.hue}
         identityTraits={{ ...WUU_MASCOT_TRAITS, shape: shape.trait }}
         accessory={config.accessory}
-        activity={activity ?? status}
-        motionPaused={motion === "subtle"}
+        activity={motion === "static" ? "idle" : activity ?? status}
+        motionPaused={motion !== "expressive"}
         ambient={motion === "expressive"}
         idlePerspective={{ yaw: 0, pitch: 2, strength: 1 }}
         animate={active && motion === "expressive" ? "always" : "hover"}

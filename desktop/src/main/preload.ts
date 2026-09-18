@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
@@ -35,6 +35,12 @@ import {
   type WuuDesktopApi,
   type VoiceInputSettings,
 } from "../shared/protocol";
+
+import { initializeDesktopPageZoom } from "../shared/DesktopPageZoom";
+
+// The default is one Zoom Out step; subsequent loads honor the user's choice.
+// Browser/PiP contents do not use this preload.
+initializeDesktopPageZoom(webFrame, window);
 
 // Read the persisted theme preference synchronously so the very first
 // paint carries the right data-theme — an async round-trip would flash

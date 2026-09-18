@@ -49,6 +49,9 @@ var b64 = base64.RawURLEncoding
 // relay link is down.
 var ErrNotConnected = errors.New("relay not connected")
 
+// ErrHostAlreadyRunning means another process owns this store's remote host.
+var ErrHostAlreadyRunning = errors.New("remote host already running for this Wuu home; close the other host before starting another")
+
 // PairingConfig opens a pairing window when the host starts.
 type PairingConfig struct {
 	// Timeout closes the window after this long. Zero means 10 minutes.
@@ -213,6 +216,13 @@ func (h *Host) StartPairing(cfg PairingConfig) (string, error) {
 // with capped exponential backoff; device app-server connections survive
 // relay drops.
 func (h *Host) Run(ctx context.Context) error {
+	// Dev and packaged desktops can share remote.json. Competing authenticated
+	// hosts would repeatedly supersede each other at the relay.
+	unlock, err := lockHostStore(h.store.path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	h.baseCtx = ctx
 	defer h.shutdownSessions()
 	syncCtx, stopSync := context.WithCancel(ctx)

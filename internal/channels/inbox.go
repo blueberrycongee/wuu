@@ -53,27 +53,9 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 	}
 	checkedAt := fromMillis(toMillis(s.now()))
 	items := make([]CheckItem, 0, 1)
-	inboxScope := ""
-	var inboxArgs []any
-	if binding.WorkID != "" {
-		inboxScope = `
-				AND inbox.message_id = ? AND inbox.kind = 'task' AND inbox.pulled_at IS NULL
-				AND EXISTS (
-					SELECT 1 FROM collaboration_messages assignment
-					WHERE assignment.to_agent_id = inbox.member_id
-						AND assignment.work_id = inbox.message_id AND assignment.kind = 'assignment'
-						AND assignment.invalidated_at IS NULL
-						AND (assignment.target_session_ref = ? OR
-							(assignment.target_session_ref IS NULL AND assignment.pulled_at IS NULL))
-				)`
-		inboxArgs = []any{actor.ID, binding.WorkID, binding.SessionRef}
-	} else if binding.Purpose == CollaborationSessionConversation && binding.RoomID != "" {
-		inboxScope = ` AND inbox.room_id = ? AND inbox.kind IN ('mention', 'reply', 'thread_update', 'reminder') AND inbox.pulled_at IS NULL
-			AND NOT EXISTS (SELECT 1 FROM works work WHERE work.id = message.id OR work.id = message.thread_id)
-			AND NOT EXISTS (SELECT 1 FROM collaboration_messages delivery WHERE delivery.to_agent_id = inbox.member_id AND delivery.source_message_id = inbox.message_id AND delivery.target_session_ref IS NOT NULL AND delivery.target_session_ref != ? AND delivery.invalidated_at IS NULL)`
-		inboxArgs = []any{actor.ID, binding.RoomID, binding.SessionRef}
-	}
+	inboxScope, inboxArgs := sessionPublicInboxScope(binding)
 	if inboxScope != "" {
+		inboxArgs = append([]any{actor.ID}, inboxArgs...)
 		rows, err := tx.QueryContext(ctx, `
 			SELECT inbox.id, inbox.room_id, inbox.message_id, inbox.kind, inbox.created_at,
 				COALESCE(message.thread_id, ''), message.author_type, message.author_id,
@@ -117,15 +99,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		}
 	}
 
-	scopeSQL := "0"
-	scopeArgs := make([]any, 0, 2)
-	if binding.WorkID != "" {
-		scopeSQL = "delivery.room_id = ? AND delivery.work_id = ?"
-		scopeArgs = append(scopeArgs, binding.RoomID, binding.WorkID)
-	} else if binding.RoomID != "" && (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination) {
-		scopeSQL = "delivery.room_id = ? AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion') OR delivery.kind='control' AND EXISTS(SELECT 1 FROM works WHERE works.id=delivery.work_id AND works.state IN ('completed','cancelled','failed')))"
-		scopeArgs = append(scopeArgs, binding.RoomID)
-	}
+	scopeSQL, scopeArgs := sessionCollaborationInboxScope(binding)
 	query := `
 		SELECT delivery.id, delivery.room_id, delivery.from_type,
 			CASE WHEN delivery.from_type = 'human' OR sender.kind = 'named_agent' THEN delivery.from_id ELSE '' END,
@@ -415,6 +389,21 @@ func (s *Service) checkAgent(ctx context.Context, agentID string) (CheckResult, 
 }
 
 func recomputeAgentWakeTx(ctx context.Context, tx *sql.Tx, agentID string, now int64) error {
+	// Task updates can reopen their room notification after the assignment was
+	// consumed. Only a pending assignment can admit that task into a session;
+	// retire its duplicate notification before counting or selecting wake input.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbox_items SET pulled_at = ?
+		WHERE member_type = 'agent' AND member_id = ? AND kind = 'task' AND pulled_at IS NULL
+			AND EXISTS (SELECT 1 FROM works work WHERE work.id = inbox_items.message_id)
+			AND NOT EXISTS (
+				SELECT 1 FROM collaboration_messages assignment
+				WHERE assignment.to_agent_id = inbox_items.member_id
+					AND assignment.work_id = inbox_items.message_id AND assignment.kind = 'assignment'
+					AND assignment.pulled_at IS NULL AND assignment.invalidated_at IS NULL
+			)`, now, agentID); err != nil {
+		return fmt.Errorf("retire handled task notifications: %w", err)
+	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
@@ -591,4 +580,42 @@ func preview(value string, limit int) string {
 	}
 	runes := []rune(value)
 	return strings.TrimSpace(string(runes[:limit])) + "…"
+}
+
+// These selectors are shared by chat_check and its non-consuming unread reminder.
+func sessionPublicInboxScope(binding CollaborationSessionBinding) (string, []any) {
+	inboxScope := ""
+	var inboxArgs []any
+	if binding.WorkID != "" {
+		inboxScope = `
+				AND inbox.message_id = ? AND inbox.kind = 'task' AND inbox.pulled_at IS NULL
+				AND EXISTS (
+					SELECT 1 FROM collaboration_messages assignment
+					WHERE assignment.to_agent_id = inbox.member_id
+						AND assignment.work_id = inbox.message_id AND assignment.kind = 'assignment'
+						AND assignment.invalidated_at IS NULL
+						AND (assignment.target_session_ref = ? OR
+							(assignment.target_session_ref IS NULL AND assignment.pulled_at IS NULL))
+				)`
+		inboxArgs = []any{binding.WorkID, binding.SessionRef}
+	} else if binding.Purpose == CollaborationSessionConversation && binding.RoomID != "" {
+		inboxScope = ` AND inbox.room_id = ? AND inbox.kind IN ('mention', 'reply', 'thread_update', 'reminder') AND inbox.pulled_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM works work WHERE work.id = message.id OR work.id = message.thread_id)
+			AND NOT EXISTS (SELECT 1 FROM collaboration_messages delivery WHERE delivery.to_agent_id = inbox.member_id AND delivery.source_message_id = inbox.message_id AND delivery.target_session_ref IS NOT NULL AND delivery.target_session_ref != ? AND delivery.invalidated_at IS NULL)`
+		inboxArgs = []any{binding.RoomID, binding.SessionRef}
+	}
+	return inboxScope, inboxArgs
+}
+
+func sessionCollaborationInboxScope(binding CollaborationSessionBinding) (string, []any) {
+	scopeSQL := "0"
+	scopeArgs := make([]any, 0, 2)
+	if binding.WorkID != "" {
+		scopeSQL = "delivery.room_id = ? AND delivery.work_id = ?"
+		scopeArgs = append(scopeArgs, binding.RoomID, binding.WorkID)
+	} else if binding.RoomID != "" && (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination) {
+		scopeSQL = "delivery.room_id = ? AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion') OR delivery.kind='control' AND EXISTS(SELECT 1 FROM works WHERE works.id=delivery.work_id AND works.state IN ('completed','cancelled','failed')))"
+		scopeArgs = append(scopeArgs, binding.RoomID)
+	}
+	return scopeSQL, scopeArgs
 }

@@ -1,0 +1,53 @@
+/* Shared spacing roles. Recompute at density boundaries: inherited custom
+ * properties otherwise retain the parent's already-resolved density. Keep
+ * these internal; themes customize the existing public unit/density inputs. */
+:root,
+[data-wuu-density] {
+  --space-1: calc(var(--wuu-space-unit, 4px) * var(--wuu-space-density, 1));
+  --space-2: calc(var(--space-1) * 2);
+  --space-3: calc(var(--space-1) * 3);
+  --space-4: calc(var(--space-1) * 4);
+  --space-5: calc(var(--space-1) * 5);
+  --space-6: calc(var(--space-1) * 6);
+  --space-8: calc(var(--space-1) * 8);
+
+  --page-padding: var(--space-8);
+  --content-column-width: 816px;
+  --section-gap: var(--space-8);
+  --section-heading-gap: var(--space-4);
+  --card-padding: var(--space-4);
+  --panel-padding: var(--space-5);
+  --compact-padding-block: var(--space-2);
+  --compact-padding-inline: var(--space-3);
+
+  --control-padding-block: var(--space-1);
+  --control-padding-inline: var(--space-3);
+  --menu-inset: calc(var(--space-1) * 1.5);
+  --menu-item-padding-block: var(--space-1);
+  --menu-item-padding-inline: var(--space-2);
+  --menu-item-gap: var(--space-2);
+  --menu-shell-radius: calc(var(--radius-xs) + var(--menu-inset));
+
+  /* Density changes whitespace, never the minimum target. Text can grow
+   * beyond these floors; consumers use auto height and natural line boxes. */
+  --control-field-height: max(32px, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px));
+  --control-row-height: max(32px, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2));
+  --control-search-height: var(--control-field-height);
+}
+
+@media (max-width: 560px) {
+  :root,
+  [data-wuu-density] {
+    --page-padding: var(--space-4);
+    --panel-padding: var(--space-4);
+    --card-padding: var(--space-3);
+  }
+}
+
+@media (pointer: coarse) {
+  :root,
+  [data-wuu-density] {
+    --control-field-height: max(44px, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px));
+    --control-row-height: max(44px, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2));
+  }
+}

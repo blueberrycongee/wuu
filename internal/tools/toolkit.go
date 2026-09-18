@@ -281,6 +281,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		// precedent below is the same hazard).
 		BrowserBridge:             t.env.BrowserBridge,
 		BrowserTabs:               t.env.BrowserTabs,
+		ArtifactPublisher:         t.env.ArtifactPublisher,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
 		Skills:                    t.env.Skills,
 		OnFileChanged:             t.env.OnFileChanged,
@@ -371,9 +372,12 @@ func (t *Toolkit) rebuildRegistry() {
 		// Deferred tool discovery
 		NewToolSearchTool(t),
 	}
+	if e.ArtifactPublisher != nil {
+		registered = append(registered, NewPresentArtifactTool(e))
+	}
 	if e.ChatAgent != nil {
 		registered = append(registered, NewYieldTurnTool())
-		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewChatSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
+		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
 		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
 	}
 	// Code-mode entry tools appear only when a host service is attached to the

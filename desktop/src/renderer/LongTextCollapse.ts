@@ -46,7 +46,7 @@ export const COLLAPSIBLE_CHAR_THRESHOLD = 1200;
  * preview lands on the same number of visible rows on both surfaces.
  */
 export const COLLAPSIBLE_SOFT_LINE_CHARS = 84;
-export const COLLAPSIBLE_PREVIEW_LINES = 14;
+export const COLLAPSIBLE_PREVIEW_LINES = 5;
 
 export function isCollapsibleLongText(text: string): boolean {
   if (text.length > COLLAPSIBLE_CHAR_THRESHOLD) {

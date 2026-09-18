@@ -77,23 +77,32 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 	if found.Data == "" || hex.EncodeToString(hash.Sum(nil)) != params.SHA256 {
 		return s.writeResponse(req.ID, nil, errors.New("attachment changed or was removed"))
 	}
-	data, mediaType := found.Data, found.MediaType
-	if params.Preview {
+	result, err := readAttachmentChunk(found.Data, found.MediaType, params.Offset, params.Preview)
+	return s.writeResponse(req.ID, result, err)
+}
+
+// Channels and harness messages use the same bounded original/thumbnail format.
+type attachmentChunk struct {
+	SHA256    string `json:"sha256,omitempty"`
+	Data      string `json:"data"`
+	Total     int    `json:"total"`
+	Offset    int    `json:"offset"`
+	MediaType string `json:"content_type"`
+}
+
+func readAttachmentChunk(data, mediaType string, offset int, preview bool) (attachmentChunk, error) {
+	if preview {
+		var err error
 		data, err = attachmentThumbnail(data)
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return attachmentChunk{}, err
 		}
 		mediaType = "image/jpeg"
 	}
-	if params.Offset > len(data) {
-		return s.writeResponse(req.ID, nil, errors.New("attachment offset exceeds its size"))
+	if offset < 0 || offset > len(data) {
+		return attachmentChunk{}, errors.New("attachment offset exceeds its size")
 	}
-	return s.writeResponse(req.ID, struct {
-		Data      string `json:"data"`
-		Total     int    `json:"total"`
-		Offset    int    `json:"offset"`
-		MediaType string `json:"content_type"`
-	}{data[params.Offset:min(len(data), params.Offset+128*1024)], len(data), params.Offset, mediaType}, nil)
+	return attachmentChunk{Data: data[offset:min(len(data), offset+128*1024)], Total: len(data), Offset: offset, MediaType: mediaType}, nil
 }
 
 func attachmentThumbnail(data string) (string, error) {

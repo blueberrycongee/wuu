@@ -121,6 +121,8 @@ type threadState struct {
 	runtimePluginRevision          uint64
 	admissionReserved              bool
 	pendingSteers                  []providers.ChatMessage
+	pendingSteerControls           map[string]session.Control
+	SessionControl                 *ThreadSessionControl
 	steerWake                      chan struct{}
 	steerWakeClosed                bool
 	activeSteerDocument            *ActiveDocument
@@ -297,6 +299,7 @@ type Server struct {
 	channelMaintenanceDone      chan struct{}
 	channelMaintenanceStopOnce  sync.Once
 	namedAgentMu                sync.Mutex
+	harnessMu                   sync.Mutex
 	namedAgentMCPMu             sync.Mutex
 	namedAgentMCPServer         *http.Server
 	namedAgentMCPBaseURL        string
@@ -433,6 +436,7 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		s.pluginTurnUnbind = rt.PluginSessionRouter.BindExtended(
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
+			s.controlPluginSession,
 		)
 		s.startBackground(s.replayPendingPluginTurnLifecycles)
 	}
@@ -680,6 +684,9 @@ func (s *Server) startChannelMaintenance() {
 func (s *Server) runChannelMaintenance(ctx context.Context) {
 	if s == nil || s.channelService == nil {
 		return
+	}
+	if err := s.reconcileHarnessSessions(ctx); err != nil {
+		log.Printf("wuu: Harness session recovery: %v", err)
 	}
 	if err := s.channelService.ExpireDrafts(ctx); err != nil {
 		log.Printf("wuu: channels maintenance: %v", err)
@@ -1208,6 +1215,10 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadResume(req)
 	case "thread/history/read":
 		return s.handleThreadHistoryRead(req)
+	case "message/image/read":
+		return s.handleMarkdownImageRead(ctx, req)
+	case "channel/attachment/read":
+		return s.handleChannelAttachmentRead(ctx, req)
 	case "thread/attachment/read", "thread/content/read":
 		return s.handleThreadAttachmentRead(req)
 	case MethodThreadFork:
@@ -1275,6 +1286,11 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleWorkspaceView(req)
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)
+	case MethodHarnessDispatch:
+		if !s.startBackground(func() { _ = s.handleHarnessDispatch(ctx, req) }) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodWorkspaceStateCleanup:
 		return s.handleWorkspaceStateCleanup(req)
 	case MethodThreadRegenerateTitle:

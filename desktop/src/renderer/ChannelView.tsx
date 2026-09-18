@@ -9,11 +9,14 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
-import { ChannelContinuity } from "./ChannelContinuity";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
+import { ManagedAgentWork } from "./ManagedAgentWork";
+import { ManagedAgentSessionPanel } from "./ManagedAgentSessionView";
+import type { ThreadSummary } from "./AppState";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { ChannelAgentSettings } from "./ChannelAgentSettings";
+import { useChannelPanelResize, useChannelSettingsResize } from "./ChannelSettingsResize";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
@@ -79,7 +82,7 @@ export function formatChannelUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(Math.max(0, count));
 }
 
-function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, expressive = false, focusable = true }: {
+function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, model, modelLabel, compact = false, focusable = true, disableMorph = false }: {
   id: string;
   name: string;
   avatarKey: string;
@@ -89,13 +92,13 @@ function AgentAvatar({ id, name, avatarKey, avatarImage, status, statusText, mod
   model?: string;
   modelLabel: string;
   compact?: boolean;
-  expressive?: boolean;
   focusable?: boolean;
+  disableMorph?: boolean;
 }): JSX.Element {
   const accessibleDescription = model ? `${name}: ${statusText}, ${modelLabel}: ${model}` : `${name}: ${statusText}`;
   return (
     <span className={`channel-agent-avatar${compact ? " compact" : ""}`} tabIndex={focusable ? 0 : undefined} aria-label={accessibleDescription}>
-      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={expressive ? status : "idle"} motion={expressive ? "expressive" : "subtle"} />
+      <AgentAvatarMark seed={id} avatarKey={avatarKey} avatarImage={avatarImage} status={status} disableMorph={disableMorph} />
       <span className="channel-agent-status-card" role="tooltip">
         <span>{statusText}</span>
         {model ? <span className="channel-agent-model">{model}</span> : null}
@@ -118,10 +121,6 @@ function ChannelAuthorName({ name, mentionLabel, onMention }: {
   );
 }
 
-type ChannelTimelineItem =
-  | { kind: "message"; message: ChannelMessage }
-  | { kind: "orchestration"; tasks: ChannelMessage[] };
-
 async function readChannelMessages(roomID: string): Promise<ChannelMessageListResult> {
   const result = await window.wuu!.listChannelMessages({ room_id: roomID, limit: 500 });
   const messages = [...(result.messages ?? [])];
@@ -137,25 +136,6 @@ async function readChannelMessages(roomID: string): Promise<ChannelMessageListRe
   return { ...result, messages };
 }
 
-function buildChannelTimeline(messages: ChannelMessage[]): ChannelTimelineItem[] {
-  const timeline: ChannelTimelineItem[] = [];
-  for (const message of messages) {
-    // Work cards share the timeline with public conversation replies.
-    if (message.kind === "task") {
-      const previous = timeline[timeline.length - 1];
-      const previousTask = previous?.kind === "orchestration" ? previous.tasks[previous.tasks.length - 1] : undefined;
-      if (previous?.kind === "orchestration" && previousTask && previousTask.seq + 1 === message.seq) {
-        previous.tasks.push(message);
-      } else {
-        timeline.push({ kind: "orchestration", tasks: [message] });
-      }
-      continue;
-    }
-    timeline.push({ kind: "message", message });
-  }
-  return timeline;
-}
-
 export function assignmentState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" {
   if (state === "checking") return "checking";
   if (state === "revising") return "revising";
@@ -167,99 +147,6 @@ export function assignmentState(state?: string): "open" | "doing" | "checking" |
 
 function assignmentStatusKey(state: ReturnType<typeof assignmentState>): "open" | "doing" | "checking" | "revising" | "needsHuman" | "done" {
   return state === "needs_human" ? "needsHuman" : state;
-}
-
-// Work records use a wider state vocabulary than the lightweight chat-task
-// states (working/completed/integrating plus terminal failure states). Collapse
-// them into one user-facing set so a card never shows raw "open → working"
-// style transitions, and terminal states stay visually distinct.
-function workDisplayState(state?: string): "open" | "doing" | "checking" | "revising" | "needs_human" | "done" | "integrating" | "failed" | "cancelled" | "interrupted" {
-  if (state === "working" || state === "doing") return "doing";
-  if (state === "checking") return "checking";
-  if (state === "revising") return "revising";
-  if (state === "needs_human") return "needs_human";
-  if (state === "integrating") return "integrating";
-  if (state === "done" || state === "completed") return "done";
-  if (state === "failed") return "failed";
-  if (state === "cancelled") return "cancelled";
-  if (state === "interrupted") return "interrupted";
-  return "open";
-}
-
-function ChannelOrchestrationCluster({
-  room,
-  tasks,
-  agents,
-}: {
-  room: ChannelRoom;
-  tasks: ChannelMessage[];
-  agents: NamedAgent[];
-}): JSX.Element {
-  const { t } = useI18n();
-  const agentByID = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
-  return (
-    <MessageBubbleRow
-      outgoing={false}
-      className="channel-message channel-orchestration-message channel-orchestration-row"
-      contentClassName="channel-message-content"
-    >
-      <div className="channel-assignment-list">
-        {tasks.map((task, index) => {
-          const owner = agentByID.get(task.task_owner ?? "");
-          const ownerName = owner?.name ?? task.task_owner ?? t("channels.taskOwnerLabel");
-          const work = task.work;
-          const workState = workDisplayState(work?.state ?? task.task_state);
-          const statusLabel = workState === "cancelled"
-            ? t("channels.workStatus.cancelled")
-            : workState === "failed"
-              ? t("channels.workStatus.failed")
-              : workState === "interrupted"
-                ? t("channels.workStatus.interrupted")
-                : workState === "integrating"
-                  ? t("channels.workStatus.integrating")
-                  : t(`channels.assignmentStatus.${assignmentStatusKey(workState)}`);
-          const title = task.task_title?.trim() || task.body.trim() || t("channels.newTask");
-          const body = task.task_title?.trim() && task.body.trim() !== task.task_title.trim()
-            ? task.body.trim()
-            : "";
-          return (
-            <details
-              className="stream-event-card channel-assignment-item"
-              data-state={workState}
-              key={task.id}
-              style={{ "--channel-assignment-index": index } as CSSProperties}
-            >
-              <summary className="channel-assignment-heading" title={ownerName}>
-                <span className="channel-assignment-target" aria-hidden="true">
-                  <AgentAvatarMark seed={owner?.id ?? task.task_owner ?? task.id}
-                    avatarKey={owner?.avatar_key ?? "abstract-1"} avatarImage={owner?.avatar_image} />
-                </span>
-                <span className="channel-assignment-copy"><strong>{title}</strong></span>
-                <ChevronDown className="channel-assignment-chevron" aria-hidden="true" />
-              </summary>
-              <div className="channel-assignment-content">
-                <div className="channel-assignment-context">
-                  {room.kind !== "dm" ? <span>{ownerName}</span> : null}
-                  <span className="channel-assignment-status" data-state={workState}>{statusLabel}</span>
-                </div>
-                {body ? <RichContent text={body} /> : null}
-                {work?.unresolved_items?.trim() && work.unresolved_items.trim() !== body ? (
-                  <RichContent text={work.unresolved_items.trim()} />
-                ) : null}
-                {work?.artifacts?.length ? (
-                  <div className="channel-assignment-artifacts">
-                    {work.artifacts.map((artifact) => (
-                      <a key={artifact.id} href={artifact.uri}>{artifact.label || artifact.summary || artifact.kind}</a>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </details>
-          );
-        })}
-      </div>
-    </MessageBubbleRow>
-  );
 }
 
 function ChannelMessageBubble({
@@ -292,8 +179,8 @@ function ChannelMessageBubble({
     <>
       {message.images?.length || message.files?.length ? (
         <ComposerAttachmentStrip
-          images={(message.images ?? []).map((image, index) => ({ id: `${message.id}-${attachmentIDPrefix}-image-${index}`, ...image }))}
-          files={(message.files ?? []).map((file, index) => ({ id: `${message.id}-${attachmentIDPrefix}-file-${index}`, ...file }))}
+          images={(message.images ?? []).map((image, index) => ({ id: `${attachmentIDPrefix}-image-${index}`, ...image }))}
+          files={(message.files ?? []).map((file, index) => ({ id: `${attachmentIDPrefix}-file-${index}`, ...file }))}
           removable={false}
         />
       ) : null}
@@ -369,7 +256,7 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
         title={`${agent?.name ?? agentID} · ${status}`}
         aria-label={`${agent?.name ?? agentID} · ${status} · ${t("channels.sessions.history")}`}>
       <span className="channel-response-status-avatar" aria-hidden="true">
-        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} />
+        <AgentAvatarMark seed={agentID} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={state} turnSignal={avatarTurn} motion="expressive" />
       </span>
       <span className="channel-response-status-copy channel-activity-accessible">
         <strong>{agent?.name ?? agentID}</strong>
@@ -428,7 +315,7 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -443,6 +330,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   onRoomRead?: (roomID: string) => void;
   onOpenMemoryDirectory?: (path: string) => void;
   onOpenSession?: (sessionID: string) => void;
+  managedThreadsByAgentID?: Readonly<Record<string, ThreadSummary[]>>;
+  lastViewedTurnByThreadID?: Record<string, string>;
+  onOpenAgentConversation?: (agentID: string) => Promise<void>;
   onCreateAgent?: () => void;
   onManageProviders?: () => void;
   composerDraft?: {
@@ -482,20 +372,18 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     directoryAgents !== undefined && directoryRooms !== undefined;
   const [internalSelectedRoomID, setInternalSelectedRoomID] = useState("");
   const selectedRoomID = controlledRoomID ?? internalSelectedRoomID;
-  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; turnID?: string; name: string } | null>(null);
+  const selectedRoomIDRef = useRef(selectedRoomID);
+  selectedRoomIDRef.current = selectedRoomID;
+  const [inspectedSession, setInspectedSession] = useState<{ roomID: string; sessionRef?: string; agentID?: string; managedAgentID?: string; turnID?: string; name: string } | null>(null);
   const [inspectorClosing, setInspectorClosing] = useState(false);
-  const conversationRef = useRef<HTMLDivElement>(null);
+  const inspectorResize = useChannelPanelResize<HTMLDivElement>(Boolean(inspectedSession) && !inspectorClosing, {
+    storageKey: "wuu.channels.inspectorWidth", defaultWidth: 420,
+    // clientWidth is integral; preserve the inspector's existing 1040px dock threshold.
+    minWidth: 320, maxWidth: 600, dockedAbove: 1039,
+  });
   const inspectionTrigger = useRef<HTMLElement | null>(null);
-  const [inspectorOverlay, setInspectorOverlay] = useState(false);
-  useLayoutEffect(() => {
-    const node = conversationRef.current;
-    if (!node) return;
-    const update = () => setInspectorOverlay(node.getBoundingClientRect().width < 1040);
-    update();
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
-    observer?.observe(node);
-    return () => observer?.disconnect();
-  }, [section]);
+  // Keep the current presentation through the exit animation.
+  const inspectorOverlay = !inspectorResize.fitsDocked;
   const finishClosingInspector = useCallback(() => {
     setInspectedSession(null);
     setInspectorClosing(false);
@@ -513,7 +401,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     const timer = window.setTimeout(finishClosingInspector, motionDurationMs("--environment-panel-exit-duration", 220));
     return () => window.clearTimeout(timer);
   }, [inspectorClosing, finishClosingInspector]);
-  const inspectSession = (sessionRef: string, turnID: string | undefined, name: string) => {
+  const inspectSession = (sessionRef: string, turnID: string | undefined, name: string, agentID?: string) => {
     if (savingAgent) return;
     if (settingsOpen) closeAgentPanel();
     if (!inspectorClosing && inspectedSession?.sessionRef === sessionRef && inspectedSession.turnID === turnID) {
@@ -522,7 +410,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     }
     setInspectorClosing(false);
     inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setInspectedSession({ roomID: selectedRoomID, sessionRef, turnID, name });
+    setInspectedSession({ roomID: selectedRoomID, sessionRef, turnID, name, agentID });
   };
   const inspectAgentActivity = (agentID: string, fallbackSessionRef?: string) => {
     if (!inspectorClosing && inspectedSession?.agentID === agentID) { closeInspector(); return; }
@@ -531,8 +419,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setInspectedSession({ roomID: selectedRoomID, agentID, sessionRef: fallbackSessionRef, name: agents.find(agent => agent.id === agentID)?.name ?? agentID });
   };
   const setSelectedRoomID = useCallback((value: string | ((current: string) => string)): void => {
-    const base = controlledRoomID ?? internalSelectedRoomID;
+    const base = selectedRoomIDRef.current;
     const next = typeof value === "function" ? value(base) : value;
+    selectedRoomIDRef.current = next;
     setInternalSelectedRoomID(next);
     if (next !== base) onSelectRoom?.(next);
   }, [controlledRoomID, internalSelectedRoomID, onSelectRoom]);
@@ -556,6 +445,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   ), [messagesByRoomID, responsesByRoomID, selectedRoomID]);
   const [sendError, setSendError] = useState<{ roomID: string; message: string } | null>(null);
   const [pendingMessage, setPendingMessage] = useState<ChannelMessage | null>(null);
+  const sendingRoomRef = useRef<string | null>(null);
+  // Keep the optimistic row's identity and display time through acknowledgement
+  // and subsequent polls. Durable message data remains untouched.
+  const sentPresentationRef = useRef(new Map<string, { key: string; createdAt: string }>());
   const [loadedRoomIDs, setLoadedRoomIDs] = useState<Set<string>>(() => new Set());
   const messages = messagesByRoomID[selectedRoomID] ?? [];
   const [trackedTasks, setTrackedTasks] = useState<ChannelMessage[]>([]);
@@ -567,6 +460,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const agentEditorGeneration = useRef(0);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const settingsOpen = section === "rooms" && settingsRoomID === selectedRoomID && Boolean(settingsRoomID);
+  const settingsResize = useChannelSettingsResize(settingsOpen);
   useEffect(() => {
     agentEditorGeneration.current += 1;
     setSettingsRoomID("");
@@ -683,7 +577,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const sendingTimersRef = useRef<Map<string, number>>(new Map());
   const splitResizeStartRef = useRef({ x: 0, width: CHANNEL_SPLIT_DEFAULT_WIDTH });
   const messageScroll = useAutoFollowScrollContainer({
-    open: section === "rooms" && Boolean(selectedRoomID),
+    open: section === "rooms" && Boolean(selectedRoomID) && !onboardingDraft,
     observeKey: selectedRoomID,
   });
   useLayoutEffect(() => {
@@ -697,18 +591,29 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       messageScroll.scrollToBottom();
     };
     measure();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : undefined;
+    let frame: number | undefined;
+    // Updating the stream padding during resize delivery can resize the shared
+    // grid again. Apply footer changes in the next frame, outside that delivery.
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => { frame = undefined; measure(); });
+    }) : undefined;
     observer?.observe(composerFooterNode);
     return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
       observer?.disconnect();
       stream.style.removeProperty("--channel-footer-height");
       setComposerAnchor(null);
     };
   }, [composerFooterNode, messageScroll]);
+  const followMessageArrival = useCallback((localSend: boolean) => {
+    messageScroll.scrollToBottom({ force: localSend, animate: true });
+  }, [messageScroll]);
   const acknowledgeMessageMotion = useChannelMessageMotion(
     messageScroll.scrollRef, section === "rooms" ? selectedRoomID : "",
     loadedRoomIDs.has(selectedRoomID), messages,
     pendingMessage?.room_id === selectedRoomID ? pendingMessage.id : undefined,
+    followMessageArrival,
   );
 
   const updateSplitWidth = useCallback((width: number): void => {
@@ -856,7 +761,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         : (taskOwnerAgents[0]?.id ?? "")
     ));
   }, [setupPanel, taskOwnerAgents]);
-  const channelTimeline = useMemo(() => buildChannelTimeline(messages), [messages]);
+  // Keep task records for the board and read cursors, but out of the chat stream.
+  const channelTimeline = useMemo(() => [
+    ...messages.filter((message) => message.kind !== "task").map((message) => {
+      const presentation = sentPresentationRef.current.get(message.id);
+      return presentation ? { ...message, created_at: presentation.createdAt } : message;
+    }),
+    ...(pendingMessage?.room_id === selectedRoomID ? [pendingMessage] : []),
+  ], [messages, pendingMessage, selectedRoomID]);
   const activityFor = useCallback((agent?: NamedAgent): AgentActivityStatus => {
     if (!agent) return "idle";
     if (sendingAgentIDs.has(agent.id)) return "sending";
@@ -940,12 +852,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setRooms((current) =>
       sameChannelRooms(current, nextRooms) ? current : nextRooms,
     );
-    setSelectedRoomID((current) =>
-      current && result.rooms.some((room) => room.id === current)
-        ? current
-        : (result.rooms[0]?.id ?? ""),
-    );
-  }, [setAgents, setRooms]);
+    if (!directoryIsControlled) {
+      setSelectedRoomID((current) =>
+        current && result.rooms.some((room) => room.id === current)
+          ? current
+          : (result.rooms[0]?.id ?? ""),
+      );
+    }
+  }, [directoryIsControlled, setAgents, setRooms]);
 
   const markRoomRead = useCallback((roomID: string, latestMessageSeq: number): void => {
     if (!roomID || !window.wuu) return;
@@ -983,6 +897,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         const nextResponses = result.responses.map(({ body: _body, ...activity }) => activity);
         setResponsesByRoomID((current) => JSON.stringify(current[roomID]) === JSON.stringify(nextResponses) ? current : { ...current, [roomID]: nextResponses });
       }
+      // A poll can see the durable send before its RPC returns its identity.
+      // Do not briefly show it alongside the optimistic row or guess by body.
+      if (sendingRoomRef.current === roomID) return;
       const nextMessages = result.messages ?? [];
       const previousMessages = messagesByRoomIDRef.current.get(roomID) ?? [];
       const messagesUnchanged = sameChannelMessages(previousMessages, nextMessages);
@@ -1190,9 +1107,21 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     };
   }, [refreshTrackedTasks, section]);
 
-  useEffect(() => {
-    messageScroll.scrollToBottom();
-  }, [messageScroll, messages.length, messages.at(-1)?.id, pendingMessage]);
+  const positionedStreamRef = useRef<{ roomID: string; node: HTMLDivElement } | null>(null);
+  useLayoutEffect(() => {
+    const node = messageScroll.scrollRef.current;
+    if (section !== "rooms" || !node) {
+      positionedStreamRef.current = null;
+      return;
+    }
+    const previous = positionedStreamRef.current;
+    // Position fetched history before paint, not after showing its first rows.
+    // A new room starts at latest; updates within it respect reading history.
+    messageScroll.scrollToBottom({
+      force: previous?.roomID !== selectedRoomID || previous.node !== node,
+    });
+    positionedStreamRef.current = { roomID: selectedRoomID, node };
+  }, [messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
 
   async function submitAgent(): Promise<void> {
     if (!window.wuu || !editingAgentID || !agentName.trim() || savingAgent) return;
@@ -1272,10 +1201,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     const sentImageIDs = new Set(composerImages.map((image) => image.id));
     const sentFileIDs = new Set(composerFiles.map((file) => file.id));
     const pending: ChannelMessage = { id: `pending:${crypto.randomUUID()}`, room_id: roomID, seq: 0, author_type: "human", author_id: "local-user", kind: "text", body: messageBody, created_at: new Date().toISOString() };
+    sendingRoomRef.current = roomID;
     setSending(true);
     setSendError(null);
     setPendingMessage(pending);
-    messageScroll.scrollToBottom({ force: true });
     try {
       const resolvedImages = await awaitComposerImages(composerImages);
       const images = inputImagesFromComposer(resolvedImages);
@@ -1283,6 +1212,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       setPendingMessage({ ...pending, images, files });
       const result = await window.wuu.sendChannelMessage({ room_id: roomID, body: messageBody, images, files });
       acknowledgeMessageMotion(pending.id, result.message.id);
+      sentPresentationRef.current.set(result.message.id, { key: pending.id, createdAt: pending.created_at });
       // The acknowledged message is already durable. Show it immediately and
       // invalidate any list snapshot that started before this send completed.
       messageRefreshGenerationByRoomRef.current.set(roomID, (messageRefreshGenerationByRoomRef.current.get(roomID) ?? 0) + 1);
@@ -1305,6 +1235,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         setDraftRevision((revision) => revision + 1);
       }
     } finally {
+      sendingRoomRef.current = null;
       setPendingMessage(null);
       setSending(false);
     }
@@ -1523,6 +1454,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setCreatingRoom(true);
     setNewRoomError("");
     try {
+      if (onOpenAgentConversation) {
+        closeRoomPanel();
+        await onOpenAgentConversation(agentID);
+        return;
+      }
       const { room } = await window.wuu.openChannelDirectMessage({ agent_id: agentID });
       setRooms((current) => [...current.filter((entry) => entry.id !== room.id), room]);
       closeRoomPanel();
@@ -1765,14 +1701,17 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
 
   return (
     <section
+      ref={settingsResize.ref}
       className={`channel-view channel-mode-${section}${settingsOpen ? " has-agent-settings" : ""}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
       aria-label={t("channels.title")}
       data-wuu-component="channel-view"
       data-wuu-variant={section}
-      style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : undefined}
+      style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : settingsResize.style}
     >
       {section === "rooms" ? <div
-        ref={conversationRef}
+        ref={inspectorResize.ref}
+        style={{ "--channel-inspector-width": `${inspectorResize.width}px` } as CSSProperties}
+        data-resizing-inspector={inspectorResize.resizing || undefined}
         data-inspector-overlay={inspectorOverlay || undefined}
         className={`channel-conversation${inspectedSession ? " has-session-inspector" : ""}${inspectorClosing ? " inspector-closing" : ""}`}
       >
@@ -1807,7 +1746,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   </span> : null}
                   <span className="channel-room-settings-name" role="heading" aria-level={2}>{selectedRoomTitle || t("channels.rooms")}</span><ChevronDown className="icon" aria-hidden="true" />
                 </button>
-                {selectedRoom ? <ChannelContinuity key={selectedRoom.id} roomId={selectedRoom.id} agents={selectedRoomAgents} /> : null}
               </>}
             </header>
           {composingNewRoom ? <div className="channel-new-room-surface">
@@ -1846,19 +1784,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
         <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
           {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}
-          {channelTimeline.map((item, index) => {
-            if (item.kind === "orchestration" && selectedRoom) {
-              return (
-                <ChannelOrchestrationCluster
-                  key={`orchestration-${item.tasks[0].id}`}
-                  room={selectedRoom}
-                  tasks={item.tasks}
-                  agents={agents}
-                />
-              );
-            }
-            if (item.kind !== "message") return null;
-            const message = item.message;
+          {channelTimeline.map((message, index) => {
             const proposal = message.agent_creation_proposal;
             if (proposal) {
               const pending = proposal.state === "pending";
@@ -1923,8 +1849,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             const agent = own ? undefined : messageAgents.find((candidate) => candidate.id === message.author_id);
             const status = activityFor(agent);
             const reply = message.reply_to ? messages.find((candidate) => candidate.id === message.reply_to) : undefined;
-            const previousItem = channelTimeline[index - 1];
-            const previous = previousItem?.kind === "message" ? previousItem.message : previousItem?.tasks.at(-1);
+            const previous = channelTimeline[index - 1];
             const date = new Date(message.created_at);
             const gap = previous ? date.getTime() - Date.parse(previous.created_at) : Infinity;
             const showTimestamp = !previous || gap < 0 || gap >= 5 * 60_000 || date.toDateString() !== new Date(previous.created_at).toDateString();
@@ -1943,10 +1868,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               avatarKey: agent?.avatar_key ?? "abstract-1", avatarImage: agent?.avatar_image,
               model, effort,
               onEdit: agent ? () => openConversationAgent(agent) : undefined,
-              onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author),
+              onInspect: () => inspectSession(message.source_session_ref!, message.source_turn_id, author, message.author_id),
             } : undefined;
             return (
-              <Fragment key={message.id}>
+              <Fragment key={sentPresentationRef.current.get(message.id)?.key ?? message.id}>
               {showTimestamp ? <time className="channel-timestamp" dateTime={message.created_at}>
                 {formatDate(message.created_at, date.toDateString() === new Date().toDateString()
                   ? { hour: "2-digit", minute: "2-digit" }
@@ -1955,10 +1880,10 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               <MessageBubbleRow
                 outgoing={own}
                 messageID={message.id}
-                className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}`}
+                className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}${message.id === pendingMessage?.id ? " channel-message-pending" : ""}`}
                 contentClassName="channel-message-content"
                 avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
-                  <AgentAvatar id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
+                  <AgentAvatar disableMorph id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
                 ) : undefined}
                 meta={!own && !direct && !continued ? (
                   <div className="channel-message-meta">
@@ -1973,28 +1898,37 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   outgoing={own}
                   allowCollapse={own}
                   onExpand={messageScroll.pauseAutoFollow}
-                  attachmentIDPrefix="main"
+                  attachmentIDPrefix={sentPresentationRef.current.get(message.id)?.key ?? message.id}
                   beforeBody={reply ? <blockquote className="channel-message-reply"><strong>{reply.author_type === "human" ? t("channels.you") : (agentNames.get(reply.author_id) ?? reply.author_id)}</strong><span>{reply.body || reply.task_title}</span></blockquote> : undefined}
                 />
+                {message.id === pendingMessage?.id ? <span className="channel-send-status" role="status">{t("channels.messageSending")}</span> : null}
               </MessageBubbleRow>
               </Fragment>
             );
           })}
-          {pendingMessage?.room_id === selectedRoomID ? (
-            <MessageBubbleRow outgoing messageID={pendingMessage.id} className="channel-message own channel-message-pending" contentClassName="channel-message-content">
-              <ChannelMessageBubble message={pendingMessage} outgoing allowCollapse={false} attachmentIDPrefix="pending" />
-              <span className="channel-send-status" role="status">{t("channels.messageSending")}</span>
-            </MessageBubbleRow>
-          ) : null}
 
         </div>
-        {!(inspectedSession && inspectorOverlay) ? <JumpToLatestPill
-          containerRef={messageScroll.scrollRef}
-          bottomAnchor={composerAnchor}
-          threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
-        /> : null}
         {selectedRoom ? (
           <div ref={setComposerFooterNode} className="channel-conversation-footer">
+            <div className="channel-footer-status">
+            <JumpToLatestPill
+              inline
+              containerRef={messageScroll.scrollRef}
+              bottomAnchor={composerAnchor}
+              threshold={AUTO_FOLLOW_BOTTOM_THRESHOLD_PX}
+              companion={selectedRoom.kind === "dm" && selectedRoomAgents[0] && onOpenSession ? <ManagedAgentWork
+                key={selectedRoom.id}
+                threads={managedThreadsByAgentID[selectedRoomAgents[0].id] ?? []}
+                expanded={Boolean(inspectedSession?.managedAgentID) && !inspectorClosing}
+                onShowAll={() => {
+                  if (savingAgent) return;
+                  if (settingsOpen) closeAgentPanel();
+                  if (inspectedSession?.managedAgentID && !inspectorClosing) { closeInspector(); return; }
+                  setInspectorClosing(false);
+                  inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                  setInspectedSession({ roomID: selectedRoomID, managedAgentID: selectedRoomAgents[0].id, name: selectedRoomAgents[0].name });
+                }} onSelect={onOpenSession} /> : null}
+            />
             <div className="channel-activity-region channel-activity-motion" aria-live="polite">
               <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={selectedRoomAgents} activeAgentIDs={responseActivities.map(response => response.agent_id)}
                 onInspectAgent={inspectAgentActivity}
@@ -2012,6 +1946,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 <ChannelAgentActivity key={agent.id} agent={agent} agentID={agent.id} state="thinking" onInspect={() => inspectAgentActivity(agent.id)} />
               )) : null}
               </ChannelActivityPresence>
+            </div>
             </div>
             {sendError?.roomID === selectedRoomID ? <div className="channel-send-error" role="alert"><span>{t("composer.sendFailed")} · {sendError.message}</span><button type="button" disabled={sending} onClick={() => void sendMessage()}>{t("channels.sessions.retry")}</button></div> : null}
             <ChannelComposer
@@ -2035,10 +1970,17 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           </div>
         ) : null}
         </div>
-        {inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
-          agents={agents}
+        {inspectedSession ? <div className="channel-inspector-resizer" role="separator" tabIndex={0}
+          aria-label={t("app.resizeRightSidebar")} aria-orientation="vertical"
+          {...inspectorResize.separatorProps} /> : null}
+        {inspectedSession?.managedAgentID ? <ManagedAgentSessionPanel key={`${inspectedSession.roomID}:${inspectedSession.managedAgentID}`}
+          name={inspectedSession.name} threads={managedThreadsByAgentID[inspectedSession.managedAgentID] ?? []}
+          lastViewedTurnByThreadID={lastViewedTurnByThreadID} overlay={inspectorOverlay} closing={inspectorClosing}
+          onClose={closeInspector} onSelect={id => onOpenSession?.(id)} />
+          : inspectedSession?.agentID ? <ChannelActivityInspector key={`${inspectedSession.roomID}:${inspectedSession.agentID}`}
+          agents={agents} onOpenSession={onOpenSession}
           roomID={inspectedSession.roomID} agentID={inspectedSession.agentID} name={inspectedSession.name}
-          fallbackSessionRef={inspectedSession.sessionRef} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
+          fallbackSessionRef={inspectedSession.sessionRef} turnID={inspectedSession.turnID} overlay={inspectorOverlay} closing={inspectorClosing} onClose={closeInspector}
         /> : inspectedSession?.sessionRef ? <ChannelSessionInspector
           agents={agents}
           key={`${inspectedSession.sessionRef}:${inspectedSession.turnID ?? "latest"}`}
@@ -2089,7 +2031,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
               return (
                 <div className={`channel-directory-row channel-agent-directory-row${selectedAgentID === agent.id ? " selected" : ""}`} key={agent.id}>
                   <button className="channel-directory-avatar" type="button" aria-label={t("channels.viewAgent", { name: agent.name })} onClick={() => selectAgentDetails(agent)}>
-                    <AgentAvatar id={agent.id} name={agent.name} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={status} statusText={activityText(status)} model={agent.model_override || initialized?.model} modelLabel={t("channels.model")} expressive />
+                    <AgentAvatar id={agent.id} name={agent.name} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={status} statusText={activityText(status)} model={agent.model_override || initialized?.model} modelLabel={t("channels.model")} />
                   </button>
                   <button className="channel-directory-identity channel-agent-directory-identity" type="button" aria-current={selectedAgentID === agent.id ? "page" : undefined} onClick={() => selectAgentDetails(agent)}>
                     <span><strong>{agent.name}</strong><small>{agent.role || model} · {t("channels.agentRoomCount", { count: roomCount })}</small></span>
@@ -2332,6 +2274,15 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           {selectedRoom ? <button className="channel-settings-manage" type="button" onClick={() => { closeAgentPanel(); editRoom(selectedRoom); }}>{t("channels.manageRoom", { name: selectedRoom.name })}</button> : null}
         </div>
       </aside> : null}
+      {settingsOpen ? <div
+        className="channel-settings-resizer"
+        role="separator"
+        aria-label={t("app.resizeRightSidebar")}
+        aria-controls="channel-conversation-settings"
+        aria-orientation="vertical"
+        tabIndex={0}
+        {...settingsResize.separatorProps}
+      /> : null}
       <ChannelAgentSettings
         inline={settingsOpen}
         busy={savingAgent}

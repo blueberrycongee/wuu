@@ -229,13 +229,30 @@ describe("GitService worktree roots", () => {
     expect(realpathSync.native(frontendRoot)).toBe(realpathSync.native(root));
   });
 
-  it("treats a non-Git running cwd as unresolved", () => {
+  it("does not let a running non-Git session block a different project", () => {
     const repository = makeRepository();
     const root = mkdtempSync(join(tmpdir(), "wuu-non-git-service-"));
     roots.push(root);
 
     expect(() => serviceFor(root).worktreeRoot(root)).toThrow();
-    expect(gitWorkingTreeBusy(repository, [root])).toBe(true);
+    expect(gitWorkingTreeBusy(repository, [root])).toBe(false);
+    execFileSync("git", ["-C", repository, "branch", "feature"]);
+    const service = serviceFor(repository, [root]);
+    expect(service.checkoutBranch("feature").branch).toBe("feature");
+    expect(service.createCheckoutBranch("next").status.branch).toBe("next");
+    expect(gitWorkingTreeBusy(repository, [root, repository])).toBe(true);
+  });
+
+  it("stays locked when a running cwd is missing rather than a confirmed non-repository", () => {
+    const repository = makeRepository();
+    expect(gitWorkingTreeBusy(repository, [join(repository, "missing")])).toBe(true);
+  });
+
+  it("does not let a running session in another repository block checkout", () => {
+    const repository = makeRepository();
+    const other = makeRepository();
+    execFileSync("git", ["-C", repository, "branch", "feature"]);
+    expect(serviceFor(repository, [other]).checkoutBranch("feature").branch).toBe("feature");
   });
 
   it("stays locked when the target root cannot be resolved", () => {
@@ -317,6 +334,9 @@ describe("GitService worktree roots", () => {
     execFileSync("git", ["-C", root, "branch", "feature"]);
 
     expect(() => serviceFor(frontend, [backend]).checkoutBranch("feature")).toThrow(
+      "cannot run Git actions while a thread is running in this working tree",
+    );
+    expect(() => serviceFor(frontend, [backend]).createCheckoutBranch("new")).toThrow(
       "cannot run Git actions while a thread is running in this working tree",
     );
   });

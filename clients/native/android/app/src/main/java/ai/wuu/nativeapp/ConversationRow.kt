@@ -39,7 +39,6 @@ import kotlin.math.roundToInt
             }
         }
         ListItem(headlineContent = { Text(row.title.ifBlank { "新会话" }, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-            supportingContent = if (row.saved) { { Text("服务器历史", style = MaterialTheme.typography.bodySmall) } } else null,
             leadingContent = if (row.pinned) { { Icon(Icons.Default.PushPin, "已置顶", Modifier.size(16.dp)) } } else null,
             colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.offset { IntOffset(offset.roundToInt(), 0) }

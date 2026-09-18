@@ -29,7 +29,7 @@ import { PluginIcon } from "./PublicIcon";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
 import { RichContent } from "./RichContent";
 import { ThreadContextMenu, type ThreadContextMenuItem } from "./ThreadContextMenu";
-import { showErrorToast } from "./Toast";
+import { showErrorToast, showToast, toastErrorMessage } from "./Toast";
 
 type LoadState = {
   loading: boolean;
@@ -61,6 +61,23 @@ const initialLoadState: LoadState = {
   error: "",
   skills: [],
 };
+
+function showExtensionMutationError(error: unknown, fallback: string): void {
+  // These admission errors currently cross IPC as text, without a typed code.
+  // Keep their translation here, shared by refresh and package actions.
+  const message = toastErrorMessage(error);
+  const busyExecution = /^cannot .+ plugin packages while (?:a turn is running or background work remains on thread .+|another app-server is running a turn or background work)$/.test(message);
+  const busyMutation = /^cannot .+ plugin packages while (?:another plugin change is running|another app-server is changing the plugin catalog)$/.test(message);
+  if (busyExecution || busyMutation) {
+    showToast({
+      message: translateCurrent(busyExecution ? "skills.executionBusy" : "skills.changeBusy"),
+      tone: "info",
+      dedupeKey: busyExecution ? "extensions-execution-busy" : "extensions-change-busy",
+    });
+    return;
+  }
+  showErrorToast(error, fallback);
+}
 
 export function SkillsCatalog({
   activeContext,
@@ -182,6 +199,7 @@ export function SkillsCatalog({
   const selectedPlugin = plugins.find((record) => record.id === selectedPluginID);
 
   async function refreshSkills(): Promise<void> {
+    if (state.loading || packageMutation) return;
     const requestedContextKey = contextKey;
     setState((current) => ({ ...current, loading: true, error: "" }));
     try {
@@ -200,12 +218,11 @@ export function SkillsCatalog({
       if (contextKeyRef.current !== requestedContextKey) {
         return;
       }
-      setState({
-        loading: false,
-        error:
-          error instanceof Error ? error.message : translateCurrent("skills.loadFailed"),
-        skills: [],
-      });
+      showExtensionMutationError(error, translateCurrent("skills.refreshFailed"));
+    } finally {
+      if (contextKeyRef.current === requestedContextKey) {
+        setState((current) => ({ ...current, loading: false }));
+      }
     }
   }
 
@@ -221,7 +238,7 @@ export function SkillsCatalog({
           : record.fingerprint;
       await onUpdateExtensionPackage({ id: record.id, fingerprint, action });
     } catch (error) {
-      showErrorToast(error, translateCurrent("skills.pluginUpdateFailed"));
+      showExtensionMutationError(error, translateCurrent("skills.pluginUpdateFailed"));
     } finally {
       setPackageMutation("");
     }
@@ -252,7 +269,7 @@ export function SkillsCatalog({
       }
     } catch (error) {
       if (contextKeyRef.current === requestedContextKey) {
-        showErrorToast(error, translateCurrent("skills.pluginInstallFailed"));
+        showExtensionMutationError(error, translateCurrent("skills.pluginInstallFailed"));
       }
     } finally {
       setPackageMutation("");
@@ -277,7 +294,7 @@ export function SkillsCatalog({
       setState({ loading: false, error: "", skills: result.skills });
     } catch (error) {
       if (contextKeyRef.current === requestedContextKey) {
-        showErrorToast(error, translateCurrent("skills.pluginRemoveFailed"));
+        showExtensionMutationError(error, translateCurrent("skills.pluginRemoveFailed"));
       }
     } finally {
       setPackageMutation("");
@@ -338,9 +355,12 @@ export function SkillsCatalog({
             className="icon-button catalog-refresh"
             type="button"
             aria-label={t("skills.refresh")}
+            title={t("skills.refresh")}
+            disabled={state.loading || Boolean(packageMutation)}
+            aria-busy={state.loading}
             onClick={() => void refreshSkills()}
           >
-            <RefreshCw className="icon" />
+            <RefreshCw className="icon" aria-hidden="true" />
           </button>
         </div>
       </header>

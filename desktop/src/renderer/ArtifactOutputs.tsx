@@ -24,6 +24,7 @@ export type TurnArtifact = Readonly<{
   data?: string;
   remoteRef?: string;
   text?: string;
+  foldText?: boolean;
   uri?: string;
   resource?: unknown;
   placement: "inline" | "turn_end";
@@ -34,16 +35,25 @@ export type TurnArtifact = Readonly<{
 
 export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
   const artifacts: TurnArtifact[] = [];
+  const presented = new Map<string, string>();
   for (const item of turn.items) {
     if (item.type !== "tool_call" || !item.result_detail?.content) continue;
     const content = item.result_detail.content;
-    // Text-only results remain in process presentation. Once a result contains
-    // media or a resource, retain every part so [image, text, image] cannot be
-    // silently projected as [image, image].
+    // Retain ordered mixed results here. Presentation decides which parts belong
+    // in the image stream or document output, without modifying the tool result.
     if (!content.some((part) => part.type !== "text")) continue;
     content.forEach((part, index) => {
       const artifact = artifactFromContentPart(item, part, index, contentPartPlacement(content, index));
-      if (artifact) artifacts.push(artifact);
+      if (!artifact) return;
+      // Re-publishing an unchanged snapshot in the same turn should not repeat
+      // its preview. Preserve ordered mixed results and different file versions.
+      if (artifact.type !== "text" && artifact.sha256) {
+        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement]);
+        const owner = presented.get(key);
+        if (owner && owner !== item.id) return;
+        presented.set(key, item.id);
+      }
+      artifacts.push(artifact);
     });
   }
   return artifacts;
@@ -59,7 +69,8 @@ export function TurnInlineArtifactOutputs({
   onOpenFile?: (path: string) => void;
 }): JSX.Element | null {
   const [preview, setPreview] = useState<TurnArtifact>();
-  const inline = artifacts.filter((artifact) => artifact.placement === "inline");
+  // The image stream is visual output, not another tool-result inspector.
+  const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text");
   if (inline.length === 0) return null;
   return (
     <>
@@ -149,7 +160,7 @@ function ArtifactRenderer({
 }): JSX.Element {
   const fallback = artifact.type === "text" ? (
     <div className="turn-artifact-text-part">
-      <ToolResultText text={artifact.text ?? ""} cwd={cwd} onOpenFile={onOpenFile} />
+      <ToolResultText text={artifact.text ?? ""} folded={artifact.foldText} cwd={cwd} onOpenFile={onOpenFile} />
     </div>
   ) : variant === "inline" && artifact.mimeType.startsWith("image/") ? (
     <InlineArtifact artifact={artifact} cwd={cwd} />
@@ -188,7 +199,7 @@ function ArtifactRenderer({
   );
 }
 
-function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string; onOpenFile?: (path: string) => void }): JSX.Element {
+function ToolResultText({ text, folded, cwd, onOpenFile }: { text: string; folded?: boolean; cwd?: string; onOpenFile?: (path: string) => void }): JSX.Element {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const structured = useMemo(() => {
@@ -197,13 +208,13 @@ function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string;
       return value !== null && typeof value === "object" ? JSON.stringify(value, null, 2) : undefined;
     } catch { return undefined; }
   }, [text]);
-  // Mixed image/data results retain every part, but machine-readable metadata
-  // must not turn into a page of answer prose merely because an image follows.
-  if (structured === undefined) return <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />;
+  // Tool observations are not answer prose, even when their metadata is plain
+  // text. Explicitly presented artifacts can still carry visible captions.
+  if (!folded && structured === undefined) return <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />;
   return <div className="process-surface tool-result-data">
     <ProcessSurfaceFold open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}
       summary={<span className="process-surface-summary-line">{t("artifacts.structuredData")}</span>}>
-      {expanded ? <pre className="tool-result-data-json">{structured}</pre> : null}
+      {expanded ? <pre className="tool-result-data-json">{structured ?? text}</pre> : null}
     </ProcessSurfaceFold>
   </div>;
 }
@@ -211,26 +222,38 @@ function ToolResultText({ text, cwd, onOpenFile }: { text: string; cwd?: string;
 function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: string }): JSX.Element {
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
+  const [failedSource, setFailedSource] = useState<string>();
   const source = artifactSource(artifact, cwd);
+  let image: ReactNode;
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) {
-    return <figure className="composer-image-attachment turn-artifact-inline-image">
-      <AttachmentImage image={{media_type:artifact.mimeType,data:artifact.data ?? "",remote_ref:artifact.remoteRef}} label={t("composer.imageNumber", { number: artifact.index + 1 })}
-        onOpen={src => openPreview({src,alt:artifact.name,title:artifact.name})} />
-    </figure>;
-  }
-  if (!source || !artifact.mimeType.startsWith("image/")) {
-    return <div className="turn-artifact-unavailable">{artifact.name}</div>;
-  }
-  const open = (): void => openPreview({ src: source, alt: artifact.name, title: artifact.name });
-  return (
-    <figure className="composer-image-attachment turn-artifact-inline-image">
+    image = (
+      <AttachmentImage
+        image={{ media_type: artifact.mimeType, data: artifact.data ?? "", remote_ref: artifact.remoteRef }}
+        label={t("imagePreview.label")}
+        onOpen={src => openPreview({ src, alt: artifact.name, title: artifact.name })}
+      />
+    );
+  } else if (!source || !artifact.mimeType.startsWith("image/")) {
+    return <div className="turn-artifact-unavailable">{t("imagePreview.loadFailed")}</div>;
+  } else {
+    image = (
       <button
         type="button"
-        onClick={open}
+        onClick={() => openPreview({ src: source, alt: artifact.name, title: artifact.name })}
         aria-label={t("artifacts.previewNamed", { name: artifact.name })}
+        disabled={failedSource === source}
       >
-        <img src={source} alt={artifact.name} />
+        {failedSource === source ? (
+          <span className="turn-artifact-unavailable">{t("imagePreview.loadFailed")}</span>
+        ) : (
+          <img src={source} alt={artifact.name} loading="lazy" onError={() => setFailedSource(source)} />
+        )}
       </button>
+    );
+  }
+  return (
+    <figure className="turn-artifact-inline-image">
+      <div className="turn-artifact-image-preview">{image}</div>
     </figure>
   );
 }
@@ -436,6 +459,7 @@ function artifactFromContentPart(
     remoteRef: part.remote_ref,
     data,
     text,
+    foldText: part.type === "text" && !part.artifact?.placement,
     uri,
     resource: part.resource,
     placement,

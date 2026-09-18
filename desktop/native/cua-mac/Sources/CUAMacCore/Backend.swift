@@ -25,6 +25,10 @@ private final class ApplicationBox: @unchecked Sendable {
 
 public final class MacComputerBackend: ComputerBackend {
     private let snapshotter = AXSnapshotter()
+    private var snapshotTicket: SnapshotTicket?
+    private var resourceRevision = ""
+    private var snapshotWindows: [CGWindowID: CGRect] = [:]
+    private var storedSnapshotText = ""
     private var snapshotProcessID: pid_t?
     private var lastSnapshotText: [pid_t: String] = [:]
     private var axRevisions: [pid_t: UInt64] = [:]
@@ -33,11 +37,20 @@ public final class MacComputerBackend: ComputerBackend {
     private var lastCaptureGeometry: [pid_t: CaptureGeometry] = [:]
     private var lastWindowIDs: [pid_t: CGWindowID] = [:]
     private var foregroundCaptureProcessIDs = Set<pid_t>()
-    private var concealedWindowOrigins: [pid_t: [CGPoint]] = [:]
+    private var restoration: WindowRestorationJournal?
 
-    public init() {}
+    public init() {
+        restoration = try? WindowRestorationJournal()
+        restoration?.recoverAbandoned(using: restoreWindow)
+    }
+
+    public func shutdown() {
+        _ = try? restoration?.restore(using: restoreWindow)
+        restoration?.finish()
+    }
 
     public func perform(_ command: ComputerCommand) throws -> ComputerResult {
+        try ComputerExecution.checkpoint()
         switch command.action {
         case .permissionStatus:
             return permissionStatus()
@@ -53,11 +66,21 @@ public final class MacComputerBackend: ComputerBackend {
             throw ComputerError.invalidArguments("app is required for \(command.action.rawValue)")
         }
         let frontmostBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let app = try resolveApplication(target)
+        let app = try resolveApplication(target, launch: !command.isMutation)
         let appActionLock = try AppActionLock.acquire(processID: app.processIdentifier)
         defer { withExtendedLifetime(appActionLock) {} }
+        resourceRevision = appActionLock.revision
+        try ComputerExecution.checkpoint()
         let axApplication = AXUIElementCreateApplication(app.processIdentifier)
         enableElectronAccessibility(axApplication)
+        if command.action == .querySnapshot {
+            return try querySnapshot(command, app: app)
+        }
+        if command.isMutation {
+            try validateSnapshot(command, app: app)
+            resourceRevision = try appActionLock.advanceRevision()
+            snapshotTicket?.invalidate(resourceRevision: resourceRevision)
+        }
         if command.foregroundPolicy == .require {
             try ForegroundInputLock.withLock {
                 restoreConcealedWindows(app: app, application: axApplication)
@@ -69,7 +92,7 @@ public final class MacComputerBackend: ComputerBackend {
             // screen edge and hit whatever is there). Bring the windows back first, so
             // element frames and coordinates resolve against the on-screen window.
             switch command.action {
-            case .observe, .concealApp, .revealApp, .waitForChange,
+            case .observe, .querySnapshot, .concealApp, .revealApp, .waitForChange, .waitFor,
                  .permissionStatus, .requestPermissions, .listApps, .sequence:
                 break
             default:
@@ -111,17 +134,28 @@ public final class MacComputerBackend: ComputerBackend {
             mechanism = "background_ax"
         case .waitForChange:
             return try waitForChange(command, app: app, axApplication: axApplication)
+        case .waitFor:
+            let status = try verify(command.expectation!, application: axApplication, timeout: command.timeout ?? 5)
+            let observation = try observe(command, app: app, axApplication: axApplication)
+            var structured = observation.structured
+            structured["verification"] = status
+            return ComputerResult(text: "Postcondition: \(status).\n" + observation.text,
+                screenshot: observation.screenshot, screenshotMIMEType: observation.screenshotMIMEType, structured: structured)
         case .sequence:
             throw ComputerError.unsupported("sequence is coordinated by the Wuu runtime")
         case .activateControl:
             try activateControl(command, app: app, application: axApplication)
             mechanism = "background_ax"
-        case .permissionStatus, .requestPermissions, .listApps:
+        case .permissionStatus, .requestPermissions, .listApps, .querySnapshot:
             preconditionFailure("global actions returned before target resolution")
         }
+        ComputerExecution.current?.finishInput()
+        let verification = try command.expectation.map { try verify($0, application: axApplication, timeout: command.timeout ?? 5) } ?? "not_requested"
         let frontmostAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? target
         var structured: [String: Any] = [
+            "delivery": "delivered",
+            "verification": verification,
             "action": command.action.rawValue,
             "app": canonicalTarget,
             "display_name": app.localizedName ?? "Unknown",
@@ -135,10 +169,22 @@ public final class MacComputerBackend: ComputerBackend {
         if let interaction = intendedInteraction {
             structured["interaction"] = interaction
         }
-        return ComputerResult(
-            text: "Input delivered to app=\"\(canonicalTarget)\". Call observe when the outcome matters.",
-            structured: structured
-        )
+        if let mode = command.after {
+            do {
+                let next = try ComputerCommand(arguments: ["action": "observe", "app": canonicalTarget,
+                    "mode": mode.rawValue, "control_epoch": command.controlEpoch])
+                let observation = try observe(next, app: app, axApplication: axApplication)
+                structured["observation"] = observation.structured
+                structured["snapshot_id"] = observation.structured["snapshot_id"]
+                structured["window_id"] = observation.structured["window_id"]
+                return ComputerResult(text: "Input delivered; verification=\(verification).\n" + observation.text,
+                    screenshot: observation.screenshot, screenshotMIMEType: observation.screenshotMIMEType, structured: structured)
+            } catch {
+                structured["observation_error"] = error.localizedDescription
+                return ComputerResult(text: "Input delivered; post-action observation failed: \(error.localizedDescription). Do not replay without observing.", structured: structured)
+            }
+        }
+        return ComputerResult(text: "Input delivered to app=\"\(canonicalTarget)\"; verification=\(verification). Snapshot consumed. Observe when the outcome matters.", structured: structured)
     }
 
     private func interactionMetadata(
@@ -288,7 +334,7 @@ public final class MacComputerBackend: ComputerBackend {
         return ComputerResult(text: text, structured: structured)
     }
 
-    private func resolveApplication(_ target: String) throws -> NSRunningApplication {
+    private func resolveApplication(_ target: String, launch: Bool = true) throws -> NSRunningApplication {
         let normalized = target.lowercased()
         let running = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated && isProcessAlive($0.processIdentifier) }
         let exactMatches = running.filter {
@@ -311,6 +357,7 @@ public final class MacComputerBackend: ComputerBackend {
            let existing = preferWindowedInstance(running.filter({ $0.bundleIdentifier == bundleIdentifier })) {
             return existing
         }
+        guard launch else { throw ComputerError.staleSnapshot("target app is no longer running") }
         let semaphore = DispatchSemaphore(value: 0)
         let box = ApplicationBox()
         let configuration = NSWorkspace.OpenConfiguration()
@@ -398,15 +445,24 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func observe(_ command: ComputerCommand, app: NSRunningApplication, axApplication: AXUIElement) throws -> ComputerResult {
-        let accessibility = AXIsProcessTrusted()
+        var root = command.scope == .window ? preferredAXWindow(axApplication) ?? axApplication : axApplication
+        if let rootID = command.rootElementID {
+            try validateSnapshot(command, app: app)
+            guard snapshotter.isCurrent(id: rootID), let element = snapshotter.element(id: rootID) else { throw ComputerError.staleSnapshot("subtree changed") }
+            root = element
+        }
+        snapshotTicket = nil
+        lastCaptureGeometry[app.processIdentifier] = nil
+        lastWindowIDs[app.processIdentifier] = nil
+        let accessibility = AXIsProcessTrusted() && command.observationMode != .vision
         let snapshot: AXSnapshot
         let previousText = lastSnapshotText[app.processIdentifier]
         if accessibility {
-            snapshot = snapshotter.snapshot(application: axApplication)
+            snapshot = snapshotter.snapshot(application: root)
         } else {
             snapshotter.clear()
             snapshot = AXSnapshot(
-                text: "Accessibility permission is unavailable; use the screenshot and coordinate input.",
+                text: command.observationMode == .vision ? "Vision observation; AX tree omitted." : "Accessibility permission is unavailable.",
                 elements: [:]
             )
         }
@@ -425,11 +481,13 @@ public final class MacComputerBackend: ComputerBackend {
             "ax_truncated": snapshot.truncated,
         ]
         var screenshot: Data?
+        if command.observationMode != .ax {
         do {
             if command.scope == .window {
                 // Legacy single-window path: unchanged so scope=window (the default)
                 // stays byte-for-byte identical to the pre-composite behaviour.
-                let capture = try captureWindowWithForegroundFallback(command, app: app)
+                let rootWindow = axString(root, kAXRoleAttribute as String) == kAXWindowRole as String ? root : (axValue(root, kAXWindowAttribute as String) as! AXUIElement?)
+                let capture = try captureWindowWithForegroundFallback(command, app: app, preferredFrame: rootWindow.flatMap(axFrame))
                 screenshot = capture.data
                 if lastScreenshotData[app.processIdentifier] != capture.data {
                     visualRevisions[app.processIdentifier, default: 0] += 1
@@ -495,21 +553,33 @@ public final class MacComputerBackend: ComputerBackend {
         } catch {
             structured["screenshot_error"] = error.localizedDescription
         }
+        }
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? String(app.processIdentifier)
         var header = "Target app=\"\(canonicalTarget)\" display_name=\"\(app.localizedName ?? "Unknown")\" pid=\(app.processIdentifier). Reuse this exact app value for follow-up actions."
         if let geometry = lastCaptureGeometry[app.processIdentifier], screenshot != nil {
             header += " Screenshot=\(geometry.imageWidth)×\(geometry.imageHeight) pixels maps to window_frame=(\(Int(geometry.windowFrame.origin.x)),\(Int(geometry.windowFrame.origin.y)),\(Int(geometry.windowFrame.width)),\(Int(geometry.windowFrame.height))). Prefer coordinate_space=\"normalized\" (0-1000) for visual targets so provider image resizing does not affect clicks; use coordinate_space=\"screenshot\" only for original image pixels."
         }
         let changes = previousText.map { snapshotChanges(from: $0, to: snapshot.text) } ?? []
-        // disable_diff only suppresses the compact diff in the returned text body; the
-        // structured changes array below is still populated so wait_for_change can keep
-        // deriving `changed` from it.
-        let returnDiff = !command.disableDiff && previousText != nil && !changes.isEmpty && changes.count <= 120
+        let ticket = SnapshotTicket(processID: app.processIdentifier, launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, controlEpoch: command.controlEpoch, resourceRevision: resourceRevision)
+        snapshotTicket = ticket
+        snapshotWindows = currentWindowFrames(processID: app.processIdentifier)
+        if structured["window_id"] == nil, let frame = axFrame(root) {
+            let matches = snapshotWindows.filter { $0.value == frame }.map(\.key)
+            if matches.count == 1 { structured["window_id"] = Int(matches[0]) }
+        }
+        storedSnapshotText = snapshot.text
+        let page = SnapshotPage(text: snapshot.text, query: nil, offset: command.offset, limit: command.limit)
+        structured["snapshot_id"] = ticket.id
+        structured["mode"] = command.observationMode.rawValue
         structured["ax_revision"] = axRevisions[app.processIdentifier] ?? 0
         structured["visual_revision"] = visualRevisions[app.processIdentifier] ?? 0
-        structured["full_snapshot"] = !returnDiff
+        structured["full_snapshot"] = true
         structured["changes"] = changes
-        let stateText = returnDiff ? "Changes since the previous observe:\n" + changes.joined(separator: "\n") : snapshot.text
+        structured["total_lines"] = page.total
+        structured["next_offset"] = page.nextOffset
+        header += " snapshot_id=\"\(ticket.id)\"."
+        if let next = page.nextOffset { header += " More AX lines: query_snapshot offset=\(next)." }
+        let stateText = page.text
         return ComputerResult(
             text: header + "\n" + stateText,
             screenshot: screenshot,
@@ -530,7 +600,7 @@ public final class MacComputerBackend: ComputerBackend {
         return try captureAppCompositePNG(processID: app.processIdentifier, scope: command.scope)
     }
 
-    private func captureWindowWithForegroundFallback(_ command: ComputerCommand, app: NSRunningApplication) throws -> WindowCapture {
+    private func captureWindowWithForegroundFallback(_ command: ComputerCommand, app: NSRunningApplication, preferredFrame: CGRect? = nil) throws -> WindowCapture {
         guard #available(macOS 14.0, *) else {
             throw ComputerError.unsupported("window screenshots require macOS 14 or newer")
         }
@@ -538,7 +608,7 @@ public final class MacComputerBackend: ComputerBackend {
         // this Core Graphics call through the system capture service; the PiP's
         // separate executable path keeps that proxy connection from replacing the
         // live stream's client identity.
-        if let background = try? captureForegroundWindowPNG(processID: app.processIdentifier) {
+        if let background = try? captureForegroundWindowPNG(processID: app.processIdentifier, preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier)) {
             return background
         }
         // Test-only isolation switch: skip the explicit SCScreenshotManager path.
@@ -549,19 +619,19 @@ public final class MacComputerBackend: ComputerBackend {
         }
         if foregroundCaptureProcessIDs.contains(app.processIdentifier) {
             return try withForegroundInput(command, app: app) {
-                try captureForegroundWindowPNG(processID: app.processIdentifier)
+                try captureForegroundWindowPNG(processID: app.processIdentifier, preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier))
             }
         }
         do {
             return try captureWindowPNG(
                 processID: app.processIdentifier,
-                preferredWindowFrame: focusedWindowFrame(processID: app.processIdentifier)
+                preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier)
             )
         } catch let backgroundError {
             foregroundCaptureProcessIDs.insert(app.processIdentifier)
             do {
                 return try withForegroundInput(command, app: app) {
-                    try captureForegroundWindowPNG(processID: app.processIdentifier)
+                    try captureForegroundWindowPNG(processID: app.processIdentifier, preferredWindowFrame: preferredFrame ?? focusedWindowFrame(processID: app.processIdentifier))
                 }
             } catch let foregroundError {
                 throw ComputerError.operationFailed(
@@ -571,12 +641,19 @@ public final class MacComputerBackend: ComputerBackend {
         }
     }
 
+    private func preferredAXWindow(_ application: AXUIElement) -> AXUIElement? {
+        if let focused = axValue(application, kAXFocusedWindowAttribute as String), CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            return (focused as! AXUIElement)
+        }
+        return appWindows(application).max {
+            let left = axFrame($0) ?? .zero
+            let right = axFrame($1) ?? .zero
+            return left.width * left.height < right.width * right.height
+        }
+    }
+
     private func focusedWindowFrame(processID: pid_t) -> CGRect? {
-        let application = AXUIElementCreateApplication(processID)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &value) == .success,
-              let window = value as! AXUIElement? else { return nil }
-        return axFrame(window)
+        preferredAXWindow(AXUIElementCreateApplication(processID)).flatMap(axFrame)
     }
 
     private func element(_ command: ComputerCommand, app: NSRunningApplication) throws -> AXUIElement {
@@ -589,16 +666,9 @@ public final class MacComputerBackend: ComputerBackend {
         guard let element = snapshotter.element(id: id), let descriptor = snapshotter.descriptor(id: id) else {
             throw ComputerError.elementNotFound(id)
         }
-        var role: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success {
-            return element
-        }
-        let application = AXUIElementCreateApplication(app.processIdentifier)
-        _ = snapshotter.snapshot(application: application)
-        guard let recovered = snapshotter.uniqueElement(matching: descriptor) else {
-            throw ComputerError.elementNotFound(id)
-        }
-        return recovered
+        guard snapshotter.isCurrent(id: id) else { throw ComputerError.staleSnapshot("element \(id) changed") }
+        _ = descriptor
+        return element
     }
 
     private func settleAccessibility(app: NSRunningApplication, application: AXUIElement, previous: String) -> AXSnapshot {
@@ -642,26 +712,42 @@ public final class MacComputerBackend: ComputerBackend {
 
     private func snapshotChanges(from previous: String, to current: String) -> [String] {
         guard previous != current else { return [] }
-        let old = Set(previous.split(separator: "\n").map { semanticAXLine(String($0)) })
-        let new = Set(current.split(separator: "\n").map { semanticAXLine(String($0)) })
-        let removed = old.subtracting(new).sorted().map { "- \($0)" }
-        let added = new.subtracting(old).sorted().map { "+ \($0)" }
-        let all = removed + added
-        // Stay within a line budget; when the delta overflows, keep the leading
-        // lines and summarise the rest instead of silently dropping them, so the
-        // model knows the diff is partial and can observe for the full tree.
-        let budget = 240
-        guard all.count > budget else { return all }
-        return Array(all.prefix(budget - 1)) + ["… \(all.count - (budget - 1)) more changed line(s) elided; observe for the full tree."]
+        return Array(current.components(separatedBy: "\n").difference(from: previous.components(separatedBy: "\n")).prefix(240)).map { change in
+            switch change {
+            case let .insert(offset, line, _): return "+ line \(offset): \(line)"
+            case let .remove(offset, line, _): return "- line \(offset): \(line)"
+            }
+        }
     }
 
-    private func semanticAXLine(_ line: String) -> String {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.first == "[", let closing = trimmed.firstIndex(of: "]") else { return trimmed }
-        return String(trimmed[trimmed.index(after: closing)...]).trimmingCharacters(in: .whitespaces)
+    private func currentWindowFrames(processID: pid_t) -> [CGWindowID: CGRect] {
+        windowFrames(processID: processID)
+    }
+
+    private func validateSnapshot(_ command: ComputerCommand, app: NSRunningApplication) throws {
+        guard let ticket = snapshotTicket else { throw ComputerError.staleSnapshot("observe the target first") }
+        try ticket.validate(reference: command.snapshotID, processID: app.processIdentifier,
+            launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, epoch: command.controlEpoch,
+            requiresReference: command.referencesSnapshot || command.action == .querySnapshot, resourceRevision: resourceRevision)
+        if command.referencesSnapshot {
+            guard currentWindowFrames(processID: app.processIdentifier) == snapshotWindows else {
+                throw ComputerError.staleSnapshot("target window geometry or identity changed")
+            }
+        }
+    }
+
+    private func querySnapshot(_ command: ComputerCommand, app: NSRunningApplication) throws -> ComputerResult {
+        try validateSnapshot(command, app: app)
+        let page = SnapshotPage(text: storedSnapshotText, query: command.query, offset: command.offset, limit: command.limit)
+        let id = snapshotTicket!.id
+        var structured: [String: Any] = ["snapshot_id": id, "total_lines": page.total, "process_id": Int(app.processIdentifier)]
+        structured["next_offset"] = page.nextOffset
+        let suffix = page.nextOffset.map { " Next offset=\($0)." } ?? ""
+        return ComputerResult(text: "Stored snapshot_id=\"\(id)\".\(suffix)\n" + page.text, structured: structured)
     }
 
     private func activate(_ app: NSRunningApplication) throws {
+        try ComputerExecution.input()
         app.unhide()
         guard app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) else {
             throw ComputerError.operationFailed("could not activate \(app.localizedName ?? "target app")")
@@ -692,7 +778,15 @@ public final class MacComputerBackend: ComputerBackend {
         return try ForegroundInputLock.withLock {
             restoreConcealedWindows(app: app, application: AXUIElementCreateApplication(app.processIdentifier))
             try activate(app)
-            return try body()
+            if command.referencesSnapshot, currentWindowFrames(processID: app.processIdentifier) != snapshotWindows {
+                throw ComputerError.staleSnapshot("window moved during foreground activation")
+            }
+            guard let execution = ComputerExecution.current else { return try body() }
+            return try execution.withInputGuard({
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+                    throw ComputerError.cancelled("foreground focus changed; input interrupted")
+                }
+            }, body: body)
         }
     }
 
@@ -726,26 +820,32 @@ public final class MacComputerBackend: ComputerBackend {
             throw ComputerError.operationFailed("no window to conceal yet; observe the app or wait for its window before concealing")
         }
         let target = offscreenOrigin()
-        var origins = concealedWindowOrigins[app.processIdentifier] ?? []
+        guard let restoration else { throw ComputerError.operationFailed("window restoration journal is unavailable") }
+        let frames = currentWindowFrames(processID: app.processIdentifier)
         var concealed = 0
         var clamped = 0
         for (index, window) in windows.enumerated() {
-            let current = axFrame(window)?.origin ?? .zero
-            // Only record an original that is still on-screen so a re-conceal does not
-            // overwrite the saved position with the off-screen one.
-            if index < origins.count {
-                if current.x < target.x - 1 { origins[index] = current }
-            } else {
-                origins.append(current)
+            try ComputerExecution.checkpoint()
+            guard let frame = axFrame(window) else { clamped += 1; continue }
+            let ids = frames.filter { $0.value == frame }.map(\.key)
+            guard ids.count == 1 else { clamped += 1; continue }
+            let parked = CGPoint(x: target.x + CGFloat(index) * 32, y: target.y + CGFloat(index) * 32)
+            if let previous = restoration.records.first(where: { $0.processID == app.processIdentifier && $0.windowID == ids[0] }) {
+                if previous.parked == frame { concealed += 1; continue }
+                try restoration.discard(processID: app.processIdentifier, windowID: ids[0])
             }
-            guard setWindowOrigin(window, to: target) else { continue }
-            if (axFrame(window)?.origin.x ?? current.x) >= target.x - 1 {
-                concealed += 1
-            } else {
-                clamped += 1
-            }
+            try restoration.record(WindowRestorationRecord(processID: app.processIdentifier,
+                launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, windowID: ids[0],
+                identifier: axString(window, kAXIdentifierAttribute as String) ?? "", original: frame,
+                parked: CGRect(origin: parked, size: frame.size)))
+            try ComputerExecution.input()
+            guard setWindowOrigin(window, to: parked) else { clamped += 1; continue }
+            if let actual = axFrame(window) {
+                try restoration.updateParked(processID: app.processIdentifier, windowID: ids[0], frame: actual)
+                if abs(actual.minX - parked.x) < 2, abs(actual.minY - parked.y) < 2 { concealed += 1 }
+                else { clamped += 1 }
+            } else { clamped += 1 }
         }
-        concealedWindowOrigins[app.processIdentifier] = origins
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? String(app.processIdentifier)
         var text = "Concealed \(concealed) window(s) for app=\"\(canonicalTarget)\" off-screen; Accessibility control and live capture continue."
         if clamped > 0 {
@@ -783,14 +883,7 @@ public final class MacComputerBackend: ComputerBackend {
 
     @discardableResult
     private func restoreConcealedWindows(app: NSRunningApplication, application: AXUIElement) -> Int {
-        guard let origins = concealedWindowOrigins[app.processIdentifier] else { return 0 }
-        let windows = appWindows(application)
-        var restored = 0
-        for (index, window) in windows.enumerated() where index < origins.count {
-            if setWindowOrigin(window, to: origins[index]) { restored += 1 }
-        }
-        concealedWindowOrigins[app.processIdentifier] = nil
-        return restored
+        (try? restoration?.restore(processID: app.processIdentifier, using: restoreWindow)) ?? 0
     }
 
     private func click(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -839,6 +932,7 @@ public final class MacComputerBackend: ComputerBackend {
         case "middle": button = .center; downType = .otherMouseDown; upType = .otherMouseUp
         default: button = .left; downType = .leftMouseDown; upType = .leftMouseUp
         }
+        try ComputerExecution.input()
         markSynthetic(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button))?.post(tap: .cghidEventTap)
         usleep(20_000)
         for click in 1...max(1, min(count, 3)) {
@@ -848,6 +942,7 @@ public final class MacComputerBackend: ComputerBackend {
             }
             down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+            try ComputerExecution.input()
             down.post(tap: .cghidEventTap)
             usleep(35_000)
             up.post(tap: .cghidEventTap)
@@ -874,17 +969,23 @@ public final class MacComputerBackend: ComputerBackend {
               let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)) else {
             throw ComputerError.operationFailed("could not create drag event")
         }
+        try ComputerExecution.input()
         down.post(tap: .cghidEventTap)
+        var lastPoint = start
+        defer { up.location = lastPoint; up.post(tap: .cghidEventTap) }
         for step in 1...12 {
+            try ComputerExecution.input()
             let progress = Double(step) / 12
             let point = CGPoint(
                 x: start.x + (end.x - start.x) * progress,
                 y: start.y + (end.y - start.y) * progress
             )
-            markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left))?.post(tap: .cghidEventTap)
+            if let dragged = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)) {
+                dragged.post(tap: .cghidEventTap)
+                lastPoint = point
+            }
             usleep(8_000)
         }
-        up.post(tap: .cghidEventTap)
     }
 
     private func inputPoint(x: Double, y: Double, coordinateSpace: String?, app: NSRunningApplication) throws -> CGPoint {
@@ -896,20 +997,27 @@ public final class MacComputerBackend: ComputerBackend {
             guard let frame, frame.contains(point) else {
                 throw ComputerError.invalidArguments("screen coordinates must be inside the target window frame")
             }
-            return point
+            return try ownedInputPoint(point, app: app)
         case "normalized":
             guard let geometry = lastCaptureGeometry[app.processIdentifier] else {
                 throw ComputerError.invalidArguments("observe the app before using normalized coordinates")
             }
-            return try geometry.screenPoint(normalizedX: x, normalizedY: y)
+            return try ownedInputPoint(geometry.screenPoint(normalizedX: x, normalizedY: y), app: app)
         case "screenshot":
             guard let geometry = lastCaptureGeometry[app.processIdentifier] else {
                 throw ComputerError.invalidArguments("observe the app before using screenshot coordinates")
             }
-            return try geometry.screenPoint(x: x, y: y)
+            return try ownedInputPoint(geometry.screenPoint(x: x, y: y), app: app)
         default:
             throw ComputerError.invalidArguments("coordinate_space must be normalized, screenshot, or screen")
         }
+    }
+
+    private func ownedInputPoint(_ point: CGPoint, app: NSRunningApplication) throws -> CGPoint {
+        guard currentWindowFrames(processID: app.processIdentifier).values.contains(where: { $0.contains(point) }) else {
+            throw ComputerError.invalidArguments("coordinates must belong to a window of the target app")
+        }
+        return point
     }
 
     private func pressKey(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -949,6 +1057,7 @@ public final class MacComputerBackend: ComputerBackend {
         }
         down.flags = chord.modifiers.eventFlags
         up.flags = chord.modifiers.eventFlags
+        try ComputerExecution.input()
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
     }
@@ -992,12 +1101,14 @@ public final class MacComputerBackend: ComputerBackend {
 
     private func postScrollGlobal(vertical: Int32, horizontal: Int32, steps: Int, at point: CGPoint?) throws {
         if let point {
+            try ComputerExecution.input()
             markSynthetic(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left))?.post(tap: .cghidEventTap)
         }
         for _ in 0..<max(1, steps) {
             guard let event = markSynthetic(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: vertical, wheel2: horizontal, wheel3: 0)) else {
                 throw ComputerError.operationFailed("could not create scroll event")
             }
+            try ComputerExecution.input()
             event.post(tap: .cghidEventTap)
             usleep(16_000)
         }
@@ -1018,12 +1129,14 @@ public final class MacComputerBackend: ComputerBackend {
         if command.elementID != nil {
             let resolved = try element(command, app: app)
             target = resolved
+            try ComputerExecution.input()
             _ = AXUIElementSetAttributeValue(resolved, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         }
         return try performDirectedOrForeground(command, app: app,
             directed: { try postUnicodeToPid(pid, text: text) },
             foreground: {
                 if let target {
+                    try ComputerExecution.input()
                     _ = AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                 }
                 try self.postUnicodeGlobal(text: text)
@@ -1031,19 +1144,21 @@ public final class MacComputerBackend: ComputerBackend {
     }
 
     private func postUnicodeGlobal(text: String) throws {
-        let units = Array(text.utf16)
-        if units.isEmpty { return }
-        guard let down = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)),
-              let up = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)) else {
-            throw ComputerError.operationFailed("could not create text input event")
+        for units in unicodeChunks(text) {
+            guard let down = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)),
+                  let up = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)) else {
+                throw ComputerError.operationFailed("could not create text input event")
+            }
+            units.withUnsafeBufferPointer { buffer in
+                guard let baseAddress = buffer.baseAddress else { return }
+                down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+                up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+            }
+            try ComputerExecution.input()
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            usleep(4_000)
         }
-        units.withUnsafeBufferPointer { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
-            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-        }
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
     }
 
     private func selectText(_ command: ComputerCommand, app: NSRunningApplication) throws {
@@ -1081,6 +1196,20 @@ public final class MacComputerBackend: ComputerBackend {
             throw ComputerError.operationFailed("activate_control selector did not match exactly one element; observe and refine role, title, or description")
         }
         try performAXAction(target, action: kAXPressAction as String)
+    }
+
+    private func verify(_ expectation: AXExpectation, application: AXUIElement, timeout: TimeInterval) throws -> String {
+        guard AXIsProcessTrusted() else { return "unavailable" }
+        let deadline = Date().addingTimeInterval(max(0.1, min(timeout, 30)))
+        let reader = AXSnapshotter()
+        repeat {
+            try ComputerExecution.checkpoint()
+            let tree = reader.snapshot(application: application)
+            let outcome = expectation.evaluate(Array(reader.descriptors.values), truncated: tree.truncated)
+            if outcome == "matched" || outcome == "ambiguous" { return outcome }
+            if Date() >= deadline { return outcome == "unavailable" ? outcome : "timed_out" }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while true
     }
 
     private func waitForChange(_ command: ComputerCommand, app: NSRunningApplication, axApplication: AXUIElement) throws -> ComputerResult {

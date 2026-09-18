@@ -63,6 +63,8 @@ export class PhoneAccess {
   private queue: Promise<unknown> = Promise.resolve();
   private restoreError: string | null = null;
   private shuttingDown = false;
+  private restoreTimer: ReturnType<typeof setTimeout> | undefined;
+  private restoreGeneration = 0;
   constructor(private readonly host: RemoteHostManager, private readonly webRoot: string, private readonly changed: () => void, private readonly appServer?: { start(workdir: string): Promise<unknown>; stop(): void }, private readonly settingsPath?: string) {}
   url(): string | null { return this.base; }
   error(): string | null { return this.restoreError; }
@@ -74,6 +76,7 @@ export class PhoneAccess {
   }
   async restore(workdir: string): Promise<void> {
     if (this.shuttingDown || !getPhoneAccessEnabled(this.settingsPath)) return;
+    if (this.base && this.host.isRunning()) { this.scheduleRestore(workdir); return; }
     try {
       // Restarting the desktop restores access, never permission to enroll a
       // new device. Existing browser credentials remain valid across restarts.
@@ -83,7 +86,23 @@ export class PhoneAccess {
       if (this.shuttingDown) return;
       this.restoreError = error instanceof Error ? error.message : String(error);
       this.changed();
+    } finally {
+      this.scheduleRestore(workdir);
     }
+  }
+  private scheduleRestore(workdir: string): void {
+    clearTimeout(this.restoreTimer);
+    const generation = ++this.restoreGeneration;
+    if (this.shuttingDown || !this.enabled()) return;
+    // A child can exit after spawn succeeds. Retry the saved intent through
+    // the same queue as account changes, without reopening device enrollment.
+    this.restoreTimer = setTimeout(() => {
+      this.restoreTimer = undefined;
+      void this.run(async () => {
+        if (generation === this.restoreGeneration) await this.restore(workdir);
+      });
+    }, 10_000);
+    this.restoreTimer.unref();
   }
   async setEnabled(workdir: string, enabled: boolean): Promise<void> {
     if (!enabled) {
@@ -96,10 +115,12 @@ export class PhoneAccess {
     const status = await this.host.status(workdir);
     await this.start(workdir, status.devices.length === 0);
     setPhoneAccessEnabled(true, this.settingsPath);
+    this.scheduleRestore(workdir);
   }
   async openPairing(workdir: string): Promise<void> {
     await this.start(workdir, true);
     setPhoneAccessEnabled(true, this.settingsPath);
+    this.scheduleRestore(workdir);
   }
   private async start(workdir: string, pair = false): Promise<void> {
     this.assertOpen();
@@ -166,6 +187,7 @@ export class PhoneAccess {
   }
   async stop(): Promise<void> {
     // Process shutdown is not user disablement: preserve the saved preference.
+    clearTimeout(this.restoreTimer); this.restoreTimer = undefined; this.restoreGeneration++;
     this.restoreError = null;
     const hostStopped = this.host.stopHost();
     this.appServer?.stop();

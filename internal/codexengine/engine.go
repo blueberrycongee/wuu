@@ -598,6 +598,7 @@ func (sub *turnSubscription) run() {
 		text         strings.Builder
 		reasoning    strings.Builder
 		usage        providers.TokenUsage
+		usageCursor  int
 		reconnecting bool
 	)
 	for notification := range sub.events {
@@ -606,17 +607,14 @@ func (sub *turnSubscription) run() {
 			continue
 		}
 		var envelope struct {
-			TurnID       string `json:"turnId"`
-			ItemID       string `json:"itemId"`
-			Delta        string `json:"delta"`
-			SummaryIndex int    `json:"summaryIndex"`
-			Turn         struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"turn"`
-			Message   string `json:"message"`
-			WillRetry bool   `json:"willRetry"`
-			Error     *struct {
+			TurnID       string            `json:"turnId"`
+			ItemID       string            `json:"itemId"`
+			Delta        string            `json:"delta"`
+			SummaryIndex int               `json:"summaryIndex"`
+			Turn         TurnCompletedInfo `json:"turn"`
+			Message      string            `json:"message"`
+			WillRetry    bool              `json:"willRetry"`
+			Error        *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 			TokenUsage *struct {
@@ -678,15 +676,18 @@ func (sub *turnSubscription) run() {
 			sub.emitAgentActivities(envelope.Item)
 			sub.emitItem(notification.method, envelope.Item)
 		case NotifyTokenUsageUpdated:
-			if envelope.TokenUsage != nil {
-				// "last" is this turn's increment; "total" is the thread
-				// lifetime cumulative. Convert to wuu's TokenUsage shape:
-				// uncached input, output incl. reasoning, cached read.
+			if envelope.TokenUsage != nil && envelope.TokenUsage.Total.TotalTokens > usageCursor {
+				// The lifetime total is a cursor, not this turn's bill. Only
+				// accept advancing snapshots; retries can replay the last call.
+				usageCursor = envelope.TokenUsage.Total.TotalTokens
 				last := envelope.TokenUsage.Last
-				usage.InputTokens += last.InputTokens - last.CachedInputTokens
-				usage.OutputTokens += last.OutputTokens + last.ReasoningOutputTokens
+				usage.InputTokens += max(0, last.InputTokens-last.CachedInputTokens-last.CacheWriteInputTokens)
+				// Reasoning is already included in outputTokens.
+				usage.OutputTokens += last.OutputTokens
 				usage.CacheReadTokens += last.CachedInputTokens
-				sub.emit(providers.StreamEvent{Type: providers.EventUsage, Usage: &usage})
+				usage.CacheCreationTokens += last.CacheWriteInputTokens
+				snapshot := usage
+				sub.emit(providers.StreamEvent{Type: providers.EventUsage, Usage: &snapshot})
 			}
 		case NotifyError:
 			lastErr := errors.New("codex app-server reported an error")
@@ -710,9 +711,20 @@ func (sub *turnSubscription) run() {
 			return
 		case NotifyTurnCompleted:
 			status := envelope.Turn.Status
+			var turnErr error
 			finishReason := providers.FinishReasonStop
 			if status != "" && status != "completed" {
 				finishReason = providers.FinishReasonError
+				if status == "interrupted" {
+					turnErr = context.Canceled
+				} else {
+					message := "engine turn ended with status " + status
+					if envelope.Turn.Error != nil && strings.TrimSpace(envelope.Turn.Error.Message) != "" {
+						message = envelope.Turn.Error.Message
+					}
+					turnErr = errors.New(message)
+					sub.emit(providers.StreamEvent{Type: providers.EventError, Error: turnErr})
+				}
 			}
 			if reconnecting {
 				phase := providers.StreamPhaseConnected
@@ -731,12 +743,13 @@ func (sub *turnSubscription) run() {
 				content = sub.lastAgentText
 			}
 			result := agent.LoopResult{
-				Content:         strings.TrimSpace(content),
-				FinishReason:    finishReason,
-				StopReason:      status,
-				InputTokens:     usage.InputTokens,
-				OutputTokens:    usage.OutputTokens,
-				CacheReadTokens: usage.CacheReadTokens,
+				Content:             strings.TrimSpace(content),
+				FinishReason:        finishReason,
+				StopReason:          status,
+				InputTokens:         usage.InputTokens,
+				OutputTokens:        usage.OutputTokens,
+				CacheReadTokens:     usage.CacheReadTokens,
+				CacheCreationTokens: usage.CacheCreationTokens,
 				NewMessages: []providers.ChatMessage{{
 					Role:             "assistant",
 					Content:          content,
@@ -745,7 +758,7 @@ func (sub *turnSubscription) run() {
 					ProviderItemID:   sub.lastAgentItemID,
 				}},
 			}
-			sub.finish(result, nil)
+			sub.finish(result, turnErr)
 			return
 		}
 	}

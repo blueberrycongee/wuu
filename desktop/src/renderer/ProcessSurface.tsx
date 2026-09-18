@@ -21,6 +21,7 @@ import {
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { translateCurrent as translate, useI18n } from "./i18n";
+import { CONDENSED_SUMMARY_MIN_TOOL_COUNT, processSegmentText, mascotActivityForToolKind, condensedToolActivityText } from "./ProcessSummary";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
@@ -52,7 +53,7 @@ export function ProcessSurfaceMascot({
   if (agent) return active ? (
     <span className="process-surface-blobatar">
       <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
-        activity={activity} status={activity === "responding" ? "responding" : "thinking"} />
+        activity={activity} status={activity === "responding" ? "responding" : "thinking"} motion="expressive" />
     </span>
   ) : null;
   return (
@@ -114,54 +115,8 @@ type ProcessSurfaceProps = {
 
 const TOOL_ACTIVITY_ITEM_TYPES = new Set<string>(["tool_call"]);
 
-// Mixed activity becomes harder to scan than a sentence once a group reaches
-// this size. Same-kind groups keep their more useful count summary.
-const CONDENSED_SUMMARY_MIN_TOOL_COUNT = 4;
-
-function processSegmentText(segment: ToolActivityProcessSegment): string {
-  return typeof segment.count === "number"
-    ? `${segment.countPrefix}${segment.count}${segment.countSuffix}`
-    : (segment.text ?? "");
-}
-
-function mascotActivityForToolKind(
-  kind: ToolActivityProcessSegment["kind"] | undefined,
-): WuuMascotActivity {
-  switch (kind) {
-    case "search":
-    case "list":
-    case "browser":
-      return "search";
-    case "edit":
-    case "create":
-      return "edit";
-    case "command":
-      return "command";
-    case "read":
-    case "context":
-    case "skill":
-      return "read";
-    default:
-      return "tool";
-  }
-}
-
 function isToolActivityItem(item: ThreadItem): boolean {
   return TOOL_ACTIVITY_ITEM_TYPES.has(item.type);
-}
-
-function condensedToolActivityText(
-  segments: ToolActivityProcessSegment[],
-  toolCount: number,
-  reasoningStreaming: boolean,
-): string {
-  if (reasoningStreaming && !segments.some((segment) => segment.status === "running")) {
-    return translate("process.thinkingAfterOperations", { count: toolCount });
-  }
-  const parts = segments.slice(0, 3).map(processSegmentText);
-  if (segments.length > 3) parts.push("…");
-  if (reasoningStreaming) parts.push(translate("process.thinking"));
-  return parts.join(translate("process.actionSeparator"));
 }
 
 export function ProcessSurface({

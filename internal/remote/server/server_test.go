@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,12 +28,15 @@ func TestRunStartsAccountServiceAndStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("web fallback"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	databaseURL := pgtest.URL(t)
 	t.Setenv("WUU_DATABASE_URL", databaseURL)
 	ready := startupWriter{address: make(chan string, 1)}
 	done := make(chan error, 1)
 	go func() {
-		done <- RunStandalone(ctx, []string{"--addr", "127.0.0.1:0", "--state", filepath.Join(dir, "relay.json")}, ready)
+		done <- RunStandalone(ctx, []string{"--addr", "127.0.0.1:0", "--state", filepath.Join(dir, "relay.json"), "--web-root", dir}, ready)
 	}()
 	var address string
 	select {
@@ -43,6 +47,15 @@ func TestRunStartsAccountServiceAndStopsOnCancellation(t *testing.T) {
 		t.Fatal("service did not start")
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
+	probe, err := client.Get("http://" + address + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(probe.Body)
+	probe.Body.Close()
+	if err != nil || probe.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("readiness must reach relay with web root enabled: status=%d body=%q err=%v", probe.StatusCode, body, err)
+	}
 	response, err := client.Get(fmt.Sprintf("http://%s/v1/account/config", address))
 	if err != nil {
 		t.Fatal(err)

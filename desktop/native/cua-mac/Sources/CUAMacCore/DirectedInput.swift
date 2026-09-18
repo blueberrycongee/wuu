@@ -14,7 +14,7 @@ import Foundation
 // point boundaries (never inside a UTF-16 surrogate pair).
 private let unicodeChunkUnits = 16
 
-private func unicodeChunks(_ text: String) -> [[UniChar]] {
+func unicodeChunks(_ text: String) -> [[UniChar]] {
     var chunks: [[UniChar]] = []
     var current: [UniChar] = []
     for scalar in text.unicodeScalars {
@@ -45,6 +45,7 @@ func postKeyChordToPid(_ pid: pid_t, chord: KeyChord) throws {
     }
     down.flags = chord.modifiers.eventFlags
     up.flags = chord.modifiers.eventFlags
+    try ComputerExecution.input()
     down.postToPid(pid)
     up.postToPid(pid)
 }
@@ -60,6 +61,7 @@ func postUnicodeToPid(_ pid: pid_t, text: String) throws {
             down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
             up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
         }
+        try ComputerExecution.input()
         down.postToPid(pid)
         up.postToPid(pid)
         usleep(4_000)
@@ -70,6 +72,7 @@ func postClickToPid(_ pid: pid_t, point: CGPoint, button name: String?, count: I
     let source = syntheticEventSource()
     let (button, downType, upType) = mouseTypes(for: name)
     if let move = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button)) {
+        try ComputerExecution.input()
         move.postToPid(pid)
     }
     for click in 1...max(1, min(count, 3)) {
@@ -79,6 +82,7 @@ func postClickToPid(_ pid: pid_t, point: CGPoint, button name: String?, count: I
         }
         down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
         up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+        try ComputerExecution.input()
         down.postToPid(pid)
         up.postToPid(pid)
     }
@@ -93,6 +97,7 @@ func postScrollToPid(_ pid: pid_t, vertical: Int32, horizontal: Int32, steps: In
         // postToPid does not move the cursor, so pin the scroll to the target point;
         // otherwise the app hit-tests it at the global origin.
         if let point { event.location = point }
+        try ComputerExecution.input()
         event.postToPid(pid)
         usleep(16_000)
     }
@@ -104,8 +109,12 @@ func postDragToPid(_ pid: pid_t, from start: CGPoint, to end: CGPoint) throws {
           let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)) else {
         throw ComputerError.operationFailed("could not create drag event")
     }
+    try ComputerExecution.input()
     down.postToPid(pid)
+    var lastPoint = start
+    defer { up.location = lastPoint; up.postToPid(pid) }
     for step in 1...12 {
+        try ComputerExecution.checkpoint()
         let progress = Double(step) / 12
         let point = CGPoint(
             x: start.x + (end.x - start.x) * progress,
@@ -113,8 +122,8 @@ func postDragToPid(_ pid: pid_t, from start: CGPoint, to end: CGPoint) throws {
         )
         if let dragged = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)) {
             dragged.postToPid(pid)
+            lastPoint = point
         }
         usleep(8_000)
     }
-    up.postToPid(pid)
 }

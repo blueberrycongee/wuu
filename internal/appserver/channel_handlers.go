@@ -381,12 +381,7 @@ func (s *Server) handleChannelMessageList(ctx context.Context, req Request) erro
 	})
 	if params.AttachmentMetadataOnly {
 		for i := range messages {
-			for j := range messages[i].Images {
-				messages[i].Images[j].Data = ""
-			}
-			for j := range messages[i].Files {
-				messages[i].Files[j].Data = ""
-			}
+			messages[i] = remoteChannelMessage(messages[i])
 		}
 	}
 	return s.writeResponse(req.ID, ChannelMessageListResult{Messages: messages, Responses: responses, Coordinator: coordinator}, err)

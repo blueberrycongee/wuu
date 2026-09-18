@@ -1,7 +1,7 @@
 .user-question-card {
   box-sizing: border-box;
   margin: 4px 0 24px;
-  padding: 16px 18px 14px;
+  padding: var(--card-padding);
   border: 0;
   border-radius: var(--radius-lg);
   background: var(--surface-1);
@@ -21,7 +21,7 @@
 .user-question-kicker {
   margin: 0 0 12px;
   color: var(--ink-tertiary);
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }
 
@@ -40,7 +40,7 @@
 .user-question-prompt {
   margin: 0;
   color: var(--ink);
-  font-size: 15px;
+  font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
   line-height: 1.5;
 }
@@ -48,14 +48,14 @@
 .user-question-body {
   margin: 4px 0 0;
   color: var(--ink-soft);
-  font-size: 13px;
+  font-size: var(--font-ui);
   line-height: 1.55;
 }
 
 .user-question-detail {
   margin: 4px 0 0;
-  color: var(--ink-muted);
-  font-size: 13px;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
   line-height: 1.55;
 }
 
@@ -100,7 +100,7 @@
   place-items: center;
   width: 16px;
   height: 16px;
-  margin-top: 1px;
+  margin-top: max(1px, calc((var(--font-ui) * 1.45 - 16px) / 2));
   color: var(--ink-tertiary);
   transition: color var(--motion-fast) var(--ease-out);
 }
@@ -122,7 +122,7 @@
 }
 
 .user-question-option-label {
-  font-size: 13px;
+  font-size: var(--font-ui);
   line-height: 1.45;
 }
 
@@ -131,13 +131,13 @@
 }
 
 .user-question-option-description {
-  color: var(--ink-muted);
-  font-size: 12px;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   line-height: 1.45;
 }
 
 .user-question-card-offer {
-  padding: 16px 16px 12px;
+  padding: var(--card-padding);
   background: var(--paper);
 }
 
@@ -201,9 +201,9 @@
   width: 24px;
   height: 24px;
   border-radius: var(--radius-circle);
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   background: var(--surface-2);
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
 }
@@ -265,7 +265,7 @@
   border: 0;
   color: var(--ink-tertiary);
   background: transparent;
-  font-size: 13px;
+  font-size: var(--font-ui);
   text-align: left;
   cursor: pointer;
 }
@@ -289,7 +289,7 @@
   color: var(--ink);
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-ui);
   line-height: 28px;
   outline: 0;
   box-shadow: none;
@@ -314,7 +314,7 @@
   border-radius: var(--radius-pill);
   color: var(--ink-soft);
   background: var(--paper);
-  font-size: 13px;
+  font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -335,7 +335,7 @@
   color: var(--ink);
   background: var(--paper);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-ui);
   line-height: 1.5;
   transition: border-color var(--motion-fast) var(--ease-out);
 }
@@ -363,7 +363,7 @@
   padding: 7px 16px;
   border: 0;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
   cursor: pointer;
   transition:
@@ -377,7 +377,7 @@
 }
 
 .user-question-actions .user-question-cancel {
-  color: var(--ink-muted);
+  color: var(--ink-soft);
   background: transparent;
 }
 
@@ -396,7 +396,7 @@
   min-height: 32px;
   padding: 0 14px;
   border-radius: var(--radius-pill);
-  font-size: 13px;
+  font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
 }
 
@@ -449,7 +449,7 @@
 
 .dock-composer-wrap {
   --composer-dock-bottom-space: max(
-    clamp(12px, calc(2.5vw + 2px), 24px),
+    12px,
     env(safe-area-inset-bottom, 0px)
   );
   position: relative;
@@ -457,8 +457,7 @@
   grid-column: 1;
   grid-row: 2;
   align-self: end;
-  /* Keep the bottom spacing continuous across the navigation breakpoint,
-     just like the shared fluid horizontal gutters. */
+  /* Keep the bottom inset stable across viewport widths and composer states. */
   padding-block: clamp(12px, calc(0.833333vw + 8.666667px), 16px)
     var(--composer-dock-bottom-space);
   /* Match the scroll region's stable scrollbar gutter so the dock composer
@@ -506,8 +505,8 @@
 
 .composer-stack {
   --composer-collapsed-min-height: 100px;
-  --composer-expanded-min-height: clamp(240px, 44vh, 420px);
-  --composer-expanded-delta: calc(var(--composer-expanded-min-height) - var(--composer-collapsed-min-height));
+  --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
+  --composer-expanded-offset: var(--composer-input-growth, 0px);
   display: flex;
   width: min(
     var(--session-composer-width),
@@ -579,7 +578,7 @@
   min-height: 46px;
   margin: 0 14px -10px;
   padding: 4px 8px 12px;
-  border-radius: 18px 18px 0 0;
+  border-radius: calc(var(--radius-md) - 4px) calc(var(--radius-md) - 4px) 0 0;
   background: var(--surface-1);
 }
 
@@ -606,7 +605,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid var(--hairline-soft);
+  border: 1px solid var(--hairline);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -726,19 +725,13 @@
   overflow: visible;
 }
 
-.composer-stack.is-expanded .composer-frame-shell {
-  margin-bottom: calc(var(--composer-expanded-offset, var(--composer-expanded-delta)) * -1);
-  transform: translateY(calc(var(--composer-expanded-offset, var(--composer-expanded-delta)) * -1));
+.composer-stack .composer-frame-shell {
+  margin-bottom: calc(var(--composer-expanded-offset) * -1);
+  transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
-.composer-stack.is-expanded .composer-pending-drawer {
-  transform: translateY(calc(var(--composer-expanded-offset, var(--composer-expanded-delta)) * -1));
-}
-
-.composer-stack.is-expanded .composer {
-  display: flex;
-  flex-direction: column;
-  min-height: var(--composer-expanded-min-height);
+.composer-stack .composer-pending-drawer {
+  transform: translateY(calc(var(--composer-expanded-offset) * -1));
 }
 
 .hero-composer-wrap .composer {
@@ -1137,6 +1130,8 @@
   width: 100%;
   height: 60px;
   min-height: 60px;
+  max-height: calc(var(--composer-expanded-min-height) - var(--composer-chrome-height, 40px));
+  overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;
@@ -1159,12 +1154,6 @@
   top: 14px;
 }
 
-.composer-stack.is-expanded .composer textarea {
-  flex: 1 1 0;
-  height: auto;
-  min-height: clamp(180px, 34vh, 320px);
-}
-
 .composer.has-collapsed-prompt textarea {
   height: 52px;
   min-height: 52px;
@@ -1175,10 +1164,6 @@
   height: 56px;
   min-height: 56px;
   padding-top: 8px;
-}
-
-.composer-stack.is-expanded .composer.has-collapsed-prompt textarea {
-  min-height: clamp(120px, 24vh, 240px);
 }
 
 .document-composer-wrap .composer-stack {
@@ -1213,7 +1198,7 @@
   box-shadow: var(--shadow-tray);
 }
 
-.document-composer-wrap .composer-stack:not(.is-expanded) .composer textarea {
+.document-composer-wrap .composer-stack .composer textarea {
   height: 44px;
   min-height: 44px;
   /* Match the canonical dock first-row axis: 10px + half of the 24px line
@@ -1924,8 +1909,8 @@
 }
 
 .composer-send-button svg.lucide-arrow-up {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   stroke-width: 1.75;
   transform: none;
 }
@@ -1956,11 +1941,11 @@
   color: var(--paper);
 }
 
-/* Solid stop glyph: a filled square reads as "stop" better than an outline,
- * and the extra ink weight means it can sit smaller inside the 28px circle. */
+/* The solid stop glyph needs less area than the send arrow for balanced
+ * visual weight; keep the circle and hit target unchanged between states. */
 .composer-stop-button svg {
-  width: 11px;
-  height: 11px;
+  width: 8px;
+  height: 8px;
   fill: currentColor;
 }
 
@@ -2080,7 +2065,8 @@
 
 .composer-send-button::before,
 .composer-stop-button::before {
-  inset: 1px;
+  /* Reduce visual weight without shrinking the button's hit target. */
+  inset: 2px;
 }
 
 .composer-tool-button:hover:not(:disabled)::before,
@@ -2176,14 +2162,14 @@
   bottom: 42px;
   z-index: 30;
   display: grid;
-  width: 300px;
+  width: 280px;
   max-height: min(360px, calc(100vh - 180px));
   overflow: hidden;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 6px;
+  padding: var(--menu-inset);
   transform-origin: bottom left;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2200,10 +2186,10 @@
   gap: 1px;
   overflow-y: auto;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 6px;
+  padding: var(--menu-inset);
   transform-origin: bottom left;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2249,9 +2235,9 @@
   width: min(460px, 100%);
   max-height: min(320px, calc(100vh - 190px));
   overflow: hidden;
-  padding: 6px;
+  padding: var(--menu-inset);
   border: 1px solid var(--hairline);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--paper);
   box-shadow: var(--shadow-pop);
   transform-origin: bottom center;
@@ -2342,7 +2328,7 @@
 .access-menu {
   gap: 2px;
   background: var(--paper);
-  padding: 5px;
+  padding: var(--menu-inset);
   width: 176px;
 }
 
@@ -2358,16 +2344,18 @@
 
 .composer-context-menu button {
   display: flex;
-  height: 34px;
+  height: auto;
+  min-height: var(--control-row-height);
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--menu-item-gap);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 0 9px;
+  font-weight: 400;
+  line-height: var(--line-ui);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
@@ -2380,13 +2368,13 @@
 }
 
 .composer-context-menu .permission-mode-option {
-  height: 30px;
-  min-height: 30px;
+  height: auto;
+  min-height: var(--control-row-height);
   justify-content: flex-start;
   gap: 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
-  padding: 0 10px;
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
@@ -2433,11 +2421,7 @@
     var(--floating-menu-available-height, calc(100vh - 180px))
   );
   gap: 0;
-  padding: 4px;
-  border-color: var(--hairline-soft);
-  border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--paper);
-  box-shadow: var(--composer-frame-shadow);
+  padding: var(--menu-inset);
   overscroll-behavior: contain;
 }
 
@@ -2456,11 +2440,11 @@
 
 .composer-context-menu.composer-plus-menu button {
   height: auto;
-  min-height: 28px;
+  min-height: var(--control-row-height);
   gap: 8px;
-  padding: 5px 8px;
-  line-height: 18px;
-  border-radius: var(--radius-pill);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  line-height: 1.4;
+  border-radius: var(--radius-xs);
   color: var(--ink-soft);
   font-weight: 400;
 }
@@ -2532,19 +2516,21 @@
 
 .composer-project-menu button {
   display: flex;
-  height: 34px;
+  height: auto;
+  min-height: var(--control-row-height);
   align-items: center;
-  gap: 8px;
+  gap: var(--menu-item-gap);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  padding: 0 9px;
+  font-weight: 400;
+  line-height: var(--line-ui);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
 
-.composer-project-menu button:hover {
+.composer-project-menu button:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
@@ -2561,6 +2547,12 @@
   height: 16px;
   color: var(--composer-project-menu-icon);
   flex: 0 0 auto;
+}
+
+.composer-project-menu .menu-search {
+  gap: 8px;
+  font-weight: 400;
+  line-height: var(--line-ui);
 }
 
 .project-picker-empty {
@@ -2596,7 +2588,7 @@
   z-index: 2147482000;
   min-width: 116px;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: calc(var(--radius-xs) + 4px);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
   padding: 4px;
@@ -2881,14 +2873,13 @@
 .composer-branch-menu {
   width: 280px;
   max-height: min(280px, calc(100vh - 120px));
-  padding: 4px;
 }
 
 .composer-branch-menu .project-picker-list button {
   width: 100%;
   height: auto;
-  min-height: 30px;
-  padding: 4px 7px;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
 }
 
 .composer-branch-menu small {
@@ -2941,22 +2932,5 @@
     width: 14px;
     height: 14px;
     flex-basis: 14px;
-  }
-
-  .composer-branch-menu button,
-  .composer-branch-menu input {
-    font-size: var(--font-sm);
-  }
-
-  .composer-branch-menu .menu-search {
-    height: 30px;
-    min-height: 30px;
-    margin: 0 0 3px;
-    padding: 4px 7px;
-  }
-
-  .composer-branch-menu svg {
-    width: 14px;
-    height: 14px;
   }
 }

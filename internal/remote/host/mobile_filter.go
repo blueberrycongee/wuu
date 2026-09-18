@@ -289,9 +289,18 @@ func (f mobileChatFilter) item(raw json.RawMessage, turnID string) (json.RawMess
 		return raw, true
 	}
 	switch appserver.ThreadItemType(jsonString(item["type"])) {
-	case appserver.ThreadItemUserMessage,
-		appserver.ThreadItemAgentMessage:
+	case appserver.ThreadItemUserMessage:
 		return raw, true
+	case appserver.ThreadItemAgentMessage:
+		if !f.tools {
+			return raw, true
+		}
+		var message appserver.ThreadItem
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return raw, true
+		}
+		out, err := json.Marshal(appserver.RemoteThreadItem(f.threadID, turnID, message))
+		return out, err == nil
 	case appserver.ThreadItemToolCall:
 		if !f.tools {
 			return nil, false

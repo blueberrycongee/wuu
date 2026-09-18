@@ -11,28 +11,6 @@ Wuu Plugin。
 插件平台当前是本地优先的：没有市场或中心仓库，插件作者通常在自己的仓库中开发和发布。
 当前安装器只接受本地目录或 zip 包，尚不能直接从 npm 或 Git source 安装。
 
-## 一个插件包可以包含什么
-
-| 类型 | 做什么 | 是否需要代码 |
-| --- | --- | --- |
-| 声明式贡献 | 主题、设置、Skills、Hooks、MCP servers 和命令 | 视贡献而定 |
-| Agent 插件 | 注册工具、贡献上下文、变换请求、观察 Turn、提供或消费服务 | 是，独立进程 |
-| Desktop 插件 | 添加 View、Slot、Presenter、Surface、样式和交互卡片 | 是，Renderer 代码 |
-
-同一个包可以同时声明 `runtime` 和 `desktop.entry`。例如，Agent runtime 负责查询私有
-服务，Desktop 模块负责展示结果；两部分共享插件 ID 和同一次安装/信任生命周期。
-
-插件管理、安全模式、崩溃恢复和原生窗口生命周期始终由 Wuu 控制，
-插件不能替换这些恢复路径。强风格外观插件可以通过公开 Token、UI Kit 和语义锚点统一改变
-整个产品，但窗口安全区、导航结构、Tab、滚动、溢出和恢复入口仍由宿主管理。
-
-第一次开发时直接选择一条路径：
-
-- [Agent 插件快速上手](plugin-quickstart.md)：注册模型可见工具并调用宿主 Storage；
-- [Desktop 插件快速上手](desktop-plugin-quickstart.md)：在 Composer 加入一个真实按钮；
-- [Desktop UI 扩展地图](desktop-plugins.md)：按界面位置选择 View、Slot、Presenter 或 Surface；
-- [插件场景教程](plugin-recipes.md)：输入框按钮、选区浮层和完整面板等组合方式。
-
 ## 获取与安装
 
 在 Wuu Desktop 的插件目录中选择本地目录或 zip 包。安装后会直接打开该插件详情；点击一次
@@ -45,9 +23,8 @@ wuu plugin install ./foo
 wuu plugin install ./foo-1.0.0.zip
 ```
 
-CLI 会先暂存本地包；使用 `wuu plugin approve <id>` 激活该 fingerprint。这个拆分的 CLI
-属于兼容入口，并不代表另一套信任模型。插件文件安装在 `~/.wuu/plugins/`（设置 `WUU_HOME`
-时在其下）。无论从哪个入口操作，批准并启用代码都是信任决定：代码以你的用户权限执行。
+当前 CLI 会先暂存本地包，使用 `wuu plugin approve <id>` 启用。
+插件文件保存在 `~/.wuu/plugins/`；设置 `WUU_HOME` 时保存在其下。
 
 ## 信任延续、更新与用户可见状态
 
@@ -94,15 +71,23 @@ wuu plugin remove my-plugin
 - **组合多种扩展**：插件包可以携带 Skills、Hooks 和 MCP server 定义，让安装、
   更新和卸载使用同一条生命周期。
 
+## 联系已有会话
+
+内置 **Peers** 插件让 Agent 联系另一个已有会话，默认启用，并保留用户明确保存的禁用选择。
+需要时可在插件设置中启用，再把复制的会话 ID 交给 Agent，或通过 `/peer` 查找可联系的会话。
+查找结果不包含私有或已归档会话。
+
+目标空闲时开始一轮执行，繁忙时排在当前工作之后。目标的最终回复自动回传一次；回传本身不会
+再次自动回复，避免循环。消息保留来源标注，复用普通气泡、长文本展开和复制操作。桌面点击来源
+可并排打开原会话；原生手机也显示来源。跨会话消息不是用户直接指令，不改变目标的权限或任务。
+主动开启账号历史同步后，文字副本会以正文标题保留来源，兼容旧账号服务器；离线副本不提供来源跳转。
+Agent 可以拒绝请求，也可通过 `peer_policy` 拒收当前会话的外来请求。禁用 Peers 会移除其工具
+并停止自动协调行为。
+
 ## 信任边界
 
-- 声明式主题只能修改公开的语义 Token，适合直接安装。
-- Agent 插件的 runtime 进程与 Wuu 拥有相同用户权限；桌面插件可以注册任意 CSS。
-  这两类只安装你信任的来源。
-- Renderer 不读取插件绝对路径，加载前由 app-server 记录来源身份，Electron 主进程
-  通过内容寻址的 `wuu-plugin:` 协议加载；CSP 不开放 `unsafe-eval`。
-- Wuu 不审核、不认证、也不沙箱插件代码；更新按来源身份延续信任，不按内容逐次审批。
-- 插件声明的 Hook 与直接运行第三方本地命令具有相同风险。
+只安装你信任的代码来源。运行进程拥有你的用户权限，桌面模块可以改变界面，Hook 可以
+运行本地命令。Wuu 不审核、不认证，也不沙箱第三方插件代码。
 
 ## 当前边界
 
@@ -116,20 +101,6 @@ wuu plugin remove my-plugin
 
 ## 开发与发布
 
-CLI 提供完整的本地开发闭环：
-
-```bash
-wuu plugin create --type agent my-agent
-wuu plugin create --type desktop my-ui
-wuu plugin create --type full my-extension
-
-wuu plugin validate ./my-extension
-wuu plugin build ./my-extension
-wuu plugin test ./my-extension
-wuu plugin dev ./my-extension
-wuu plugin pack ./my-extension
-```
-
-完整 manifest、Agent 协议、Desktop API、生命周期和安全边界见
-[插件开发参考](plugin-authoring.md)。底层设计和宿主所有权见
-[插件系统架构](plugin-system.md)。
+从 [Agent 插件快速上手](plugin-quickstart.md)或
+[Desktop 插件快速上手](desktop-plugin-quickstart.md)开始。包格式和开发命令见
+[插件开发参考](plugin-authoring.md)。

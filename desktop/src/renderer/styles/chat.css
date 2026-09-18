@@ -1,7 +1,6 @@
 :root {
-  /* Component color tokens for chat.css.
-     Light-theme values; the dark theme overrides these in base.css theme blocks. */
-  --chat-user-message-bg: var(--wuu-message-user-background, #F3F3F4);
+  /* Outgoing chat bubbles share the session user-message surface. */
+  --chat-user-message-bg: var(--wuu-message-user-background, var(--user-message-bg-color, #EAF1FA));
 }
 
 /*
@@ -55,7 +54,7 @@
   align-items: center;
   gap: 10px;
   color: var(--ink-tertiary);
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .chat-inline-divider::before,
@@ -97,7 +96,7 @@
   padding: 8px 12px;
   background: var(--ink-overlay-4);
   color: var(--ink);
-  font-size: var(--conversation-message-font-size, 14px);
+  font-size: var(--conversation-message-font-size, 13px);
   line-height: var(--conversation-reading-line-height, 1.5);
   /*
    * Last-resort wrapping for unbreakable inline tokens (file paths like
@@ -120,9 +119,10 @@
 
 .chat-bubble--user {
   background: var(--chat-user-message-bg);
-  /* Tail corner (bottom-right) marks the outgoing bubble as the user's
-     own — the group-chat echo of .user-message in the main stream. */
-  border-radius: var(--radius-sm) var(--radius-sm) 3px var(--radius-sm);
+  color: var(--wuu-message-user-color, var(--user-message-fg-color, var(--ink)));
+  /* Match session outgoing bubbles so a two-character name stays a short
+     bubble instead of a panel-radius disk. */
+  border-radius: var(--user-message-radius);
 }
 
 /* A sent-but-not-yet-delivered message (chat send semantics, issue #10):
@@ -196,12 +196,12 @@
   align-self: flex-end;
 }
 .chat-pending-hint {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--ink-muted);
   padding: 0 4px;
 }
 
 .chat-pending-attachments {
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--ink-muted);
 }

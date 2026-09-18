@@ -1,25 +1,8 @@
 # `wuu exec`
 
-`wuu exec` is the agent-friendly text entrypoint for Wuu.
-
-Wuu has no TUI. Use Electron for human interaction and `wuu exec` for agents,
-scripts, CI, and automation.
-
-## Goal
-
-`wuu exec` lets a caller drive the same Go core, app-server protocol, session
-store, tool system, and permission model used by the Electron desktop. It is
-not a terminal UI and it is not a second runtime.
-
-The intended loop is:
-
-```text
-agent or script sends a task
--> wuu exec starts or resumes a Wuu thread through app-server
--> the normal tool loop runs
--> stdout/stderr or JSONL expose progress and final state
--> another agent or Electron can resume the same session
-```
+Use `wuu exec` to run tasks from scripts, CI, or another Agent. It shares sessions,
+tools, and permissions with the desktop and returns text or JSONL without opening a UI.
+First [configure a model](../getting-started/model-services.md).
 
 ## Basic Usage
 
@@ -256,14 +239,10 @@ On a native `mcp_servers` name clash the native entry wins; `disabled` wins over
 - `read_only` keeps the same file reach and denies mutations;
 - `unconfined` removes Wuu's path confinement and permits mutations.
 
-The mode is an in-process tool boundary, not an operating-system sandbox.
-Permitted child processes keep Wuu's OS identity, inherited environment, and
-network stack. `standard` and `read_only` retain path confinement and additional
-hard tool guards. `unconfined` removes those Wuu restrictions, but common
-secret patterns are still redacted from tool output in every mode. Redaction is
-best effort, not a guarantee that every secret is recognized. See the
-[security model](../reference/security-model.md) before unattended or untrusted-repository
-use.
+In `standard` and `read_only`, Agent commands also use a filesystem-write sandbox.
+Without an available sandbox backend, commands fail rather than silently running
+unrestricted. This does not isolate the inherited environment or network access.
+See [permission modes](../reference/permissions.md) for the full boundaries.
 
 ## Session Inspection
 
@@ -288,10 +267,7 @@ workspace-scoped artifacts Wuu can locate for that thread.
 
 ## Safety
 
-Unless `unconfined` is selected, `wuu exec` runs through the same workspace
-boundary and tool guards as the desktop app. Unsafe Git operations, common
-secret reads and environment dumps, and other high-risk command patterns
-receive hard checks. Common credential patterns are redacted from tool output
-in every permission mode. These controls are defense in depth, not OS isolation
-and not a guarantee that every secret format or indirect access path is
-recognized.
+Use read-only mode for unattended inspection and review the task's configuration
+before allowing edits. Common credential patterns are redacted from tool output in
+every mode, but redaction is best effort. Read the
+[security model](../reference/security-model.md) before running untrusted repositories.

@@ -1,10 +1,14 @@
+import { shutdownChild } from "./childShutdown";
+import { StringDecoder } from "node:string_decoder";
+import type { ActivitySession } from "../shared/protocol";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Rectangle } from "electron";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "control" | "gone";
+  action?: "takeover" | "release" | "stop";
   x?: number;
   y?: number;
   width?: number;
@@ -17,9 +21,11 @@ export const CUA_PIP_FORCE_STOP_TIMEOUT_MS = 2_000;
 
 export class CUALineDecoder {
   private buffer = "";
+  private readonly decoder = new StringDecoder("utf8");
 
   push(chunk: Buffer | string): CUANativePiPEvent[] {
-    this.buffer += chunk.toString();
+    this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
+    if (this.buffer.length > 1_048_576) throw new Error("native PiP event exceeds the size limit");
     const lines = this.buffer.split("\n");
     this.buffer = lines.pop() ?? "";
     return lines
@@ -104,12 +110,25 @@ export class CUANativePiP {
       if (this.child !== child) return;
       this.child = undefined;
       trace(`exit code=${code} signal=${signal}`);
-      if (code && code !== 0) this.onError(stderr.trim() || `native PiP exited with code ${code}`);
+      if (code !== 0) this.onError(stderr.trim() || `native PiP exited with code ${code}, signal ${signal}`);
+      else this.onEvent({ event: "gone" });
     });
   }
 
   setVisible(visible: boolean): void {
     this.send({ type: "visible", visible });
+  }
+
+  setAppearance(dark: boolean): void {
+    this.send({ type: "appearance", dark });
+  }
+
+  setLive(live: boolean): void {
+    this.send({ type: "live", live });
+  }
+
+  updateActivity(activity: ActivitySession): void {
+    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "" });
   }
 
   animateInteraction(interaction?: Interaction): void {
@@ -127,17 +146,15 @@ export class CUANativePiP {
     // Native staging and state restoration use public AX APIs. Leave enough
     // time for a graceful close to put a hidden/minimized target back before a
     // genuinely stuck helper is terminated.
-    const forceStop = setTimeout(() => child.kill("SIGTERM"), CUA_PIP_FORCE_STOP_TIMEOUT_MS);
-    forceStop.unref?.();
-    child.once("close", () => {
-      clearTimeout(forceStop);
-      onStopped?.();
-    });
-    if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-      child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
-    } else {
-      child.kill("SIGTERM");
-    }
+    void shutdownChild(child, () => {
+      if (!child.stdin.destroyed && !child.stdin.writableEnded) {
+        child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
+      } else {
+        child.kill("SIGTERM");
+      }
+    }, CUA_PIP_FORCE_STOP_TIMEOUT_MS)
+      .catch((error) => this.onError(error.message))
+      .finally(() => onStopped?.());
   }
 
   isLive(): boolean { return this.child !== undefined; }

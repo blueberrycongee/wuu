@@ -173,8 +173,10 @@ public actor ConversationHistory {
                 try check(stamp)
                 guard page.host == host else { throw NativeError.invalid("Wrong history host") }
                 let previousCursor = snapshot.cursor
+                let changed = snapshot.generation != page.generation || snapshot.enabled != page.enabled ||
+                    previousCursor != page.cursor || !page.entries.isEmpty
                 try snapshot.merge(page)
-                try persist()
+                if changed { try persist() }
                 if !page.more { return snapshot }
                 guard page.cursor != previousCursor else { throw NativeError.invalid("History pagination stalled") }
             } catch NativeError.http(409, _) where conflicts == 0 {

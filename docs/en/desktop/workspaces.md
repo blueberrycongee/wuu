@@ -1,54 +1,42 @@
 # Workspaces and projects
 
-The workspace determines which local files wuu can operate on directly, which
-directory commands run in, and where sessions appear in the sidebar. Before starting
-a file task, confirming the current workspace matters more than tuning the prompt.
-
-## Conversations and real projects
-
-The desktop has two kinds of entries:
-
-- **Conversations:** a shared area not bound to a user project directory. All
-  project-less sessions use a Wuu-managed persistent scratch workspace, where you can
-  create temporary files and open a terminal.
-- **Projects:** bound to a local directory you choose, suited to reading and editing
-  files, running commands, and reviewing Git changes.
-
-If the answer shows the wrong directory, technology stack, or stale sessions, stop the
-task and check the current project first.
+A workspace is a local folder. Select the right directory before starting a task
+so the agent does not change files in the wrong project.
 
 ## Add a workspace
 
 In the **Workspaces** area of the sidebar, choose **Add workspace**:
 
 - **Use existing folder:** register an existing project directory;
-- **New blank project:** create and register a new empty directory.
+- **Create blank project:** create and register a new empty directory.
 
-Adding a workspace does not upload the project to wuu. Files stay in their original
-location; when interacting with a model, only the prompts, file content, and tool
-results the task needs are sent to the current model service.
+Files stay in their original location. Adding a workspace does not itself upload the
+whole project. During tasks, prompts, relevant file contents, and tool results may
+be sent to your chosen provider; see [security](../reference/security-model.md).
+
+Without a project, you can start in **Conversations**. Project-less conversations
+share a persistent Wuu-managed directory where they can create files and open a
+terminal. To keep results in your own project, specify the target workspace.
 
 ## Switch between and organize projects
 
-- Select a project name to enter its workspace and see the sessions that belong to it.
-- You can collapse and reorder the project area, and pin frequently used sessions.
-- Removing a project from the sidebar does not delete its files on disk. By default it
-  only removes wuu's registration and keeps local state; you can then choose to clean
-  up that project's sessions, goals, and artifacts, while memory is archived and kept.
-- If a directory was moved or renamed, the project shows as unavailable. Use
-  **Relocate** to choose the new directory and keep the original project identity and
-  session ownership.
+Select a project name in the sidebar to see its conversations, reopen one, or start
+a new one there. Multiple conversations may change the same folder at once. Use a
+[worktree fork](conversations.md#fork-from-an-earlier-message) when you need file isolation.
+
+After moving or renaming a directory, choose **Relocate…** from the workspace menu
+and select its new location. This preserves the project identity and conversation
+ownership without adding a second project with the same name.
+
+**Remove workspace** removes the sidebar registration, leaving files and saved
+conversations intact. Use conversation archive or delete actions to manage history;
+see [conversations and branches](conversations.md).
 
 ## Workspace boundary
 
-The default `standard` permission mode restricts file tools to the current runtime
-root, registered workspaces, system temporary directories, and explicitly attached
-scopes — but it is not an operating-system sandbox. Commands that are allowed to run
-still execute as the current logged-in user. Before working with untrusted
-repositories or sensitive data, read [permission modes](../reference/permissions.md)
-and the [security model](../reference/security-model.md).
+Choose **Read only** for inspection and **Standard** for edits. If access is denied
+outside the workspace, check that the target directory has been added before
+considering unconfined mode. See [permission modes](../reference/permissions.md)
+for command sandbox and sensitive-path restrictions.
 
-## Next steps
-
-- [Conversations and branches](conversations.md)
-- [Files, changes, terminal, and browser](workspace-tools.md)
+Use [files, diffs, and terminals](workspace-tools.md) to check the result.

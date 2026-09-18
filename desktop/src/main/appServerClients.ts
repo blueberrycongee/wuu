@@ -1,3 +1,4 @@
+import { shutdownChild } from "./childShutdown";
 import { app } from "electron";
 import {
   spawn as spawnChild,
@@ -63,6 +64,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export class AppServerClientPool {
+  private closing = false;
   private clients = new Map<string, AppServerClient>();
   private sessionOwners = new Map<string, AppServerClient>();
   private nextServerRequestRouteID = 1;
@@ -84,6 +86,7 @@ export class AppServerClientPool {
     private readonly getActiveWorkdir: () => string | undefined,
     private readonly emitToRenderer: (event: ServerEvent) => void,
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
+    private readonly getInitializeParams?: () => unknown,
   ) {}
 
   // A workdir the check pins (e.g. it owns a live agent browser tab) is treated
@@ -101,7 +104,7 @@ export class AppServerClientPool {
   }
 
   request<T>(method: string, params?: unknown): Promise<T> {
-    return this.client().request<T>(method, params);
+    return this.requestInContext<T>(this.getRuntimeContext(), method, params);
   }
 
   prewarmContexts(contexts: readonly RuntimeContext[]): void {
@@ -167,7 +170,14 @@ export class AppServerClientPool {
     params?: unknown,
     onResponse?: (response: AppServerResponse) => void,
   ): Promise<T> {
-    return this.clientForContext(context).request<T>(method, params, onResponse);
+    // A session may execute in a resident process other than its project
+    // client. Reads and controls must reach that same live runtime.
+    const sessionID = isRecord(params)
+      ? params.thread_id ?? params.session_id ?? params.main_thread_id
+      : undefined;
+    return typeof sessionID === "string" && sessionID
+      ? this.requestForSession<T>(context, sessionID, method, params, onResponse)
+      : this.clientForContext(context).request<T>(method, params, onResponse);
   }
 
   requestForSession<T>(
@@ -244,14 +254,20 @@ export class AppServerClientPool {
       .join("|");
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
+    this.closing = true;
+    const stopping: Promise<void>[] = [];
     for (const client of this.clients.values()) {
-      client.dispose();
+      stopping.push(client.dispose());
       this.clientTorndownHandler?.(client.workdir);
     }
     this.clients.clear();
     this.sessionOwners.clear();
     this.serverRequestRoutes.clear();
+    const results = await Promise.allSettled(stopping);
+    for (const result of results) {
+      if (result.status === "rejected") console.error("App-server shutdown failed", result.reason);
+    }
   }
 
   /**
@@ -267,11 +283,8 @@ export class AppServerClientPool {
     }
   }
 
-  private client(): AppServerClient {
-    return this.clientForContext(this.getRuntimeContext());
-  }
-
   private clientForContext(context: RuntimeContext): AppServerClient {
+    if (this.closing) throw new Error("App-server pool is shutting down");
     const workdir = resolve(context.cwd);
     // Only registered projects carry a stable id; the no-project (对话)
     // workspace stays path-keyed (its scratch dir never moves).
@@ -287,6 +300,8 @@ export class AppServerClientPool {
           this.maybeBroadcastRunningThreads();
         },
         this.spawnAppServer,
+        undefined,
+        this.getInitializeParams,
       );
       this.clients.set(workdir, client);
     }
@@ -407,6 +422,7 @@ export class AppServerClient {
     private readonly onStateChange: () => void,
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
     private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
+    private readonly getInitializeParams?: () => unknown,
   ) {}
 
   start(): void {
@@ -448,25 +464,28 @@ export class AppServerClient {
     });
   }
 
-  shutdown(): void {
+  private shutdownPromise: Promise<void> | undefined;
+
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
     const child = this.child;
-    if (!child) {
-      return;
-    }
-    try {
+    if (!child) return Promise.resolve();
+    this.shutdownPromise = shutdownChild(child, () => {
       this.write({ id: "shutdown", method: "shutdown" });
-    } catch {
-      child.kill();
-    }
+    });
+    // Idle eviction also uses dispose without awaiting it. Keep failures visible
+    // without producing unhandled promise rejections in those callers.
+    void this.shutdownPromise.catch((error) => console.error("App-server shutdown failed", error));
+    return this.shutdownPromise;
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
     this.disposing = true;
     for (const pending of this.pending.values()) {
       pending.reject(new Error("app-server stopped"));
     }
     this.pending.clear();
-    this.shutdown();
+    return this.shutdown();
   }
 
   touch(): void {
@@ -524,6 +543,7 @@ export class AppServerClient {
   }
 
   private ensureStarted(): void {
+    if (this.disposing) throw new Error("App-server client has been disposed");
     if (this.child) {
       if (!this.child.killed) {
         return;
@@ -560,10 +580,9 @@ export class AppServerClient {
     );
     if (app.isPackaged) {
       delete helperEnv.WUU_ENABLE_BROWSER;
-      delete helperEnv.WUU_ENABLE_CUA_MAC;
-      delete helperEnv.WUU_CUA_MAC_HELPER;
-      delete helperEnv.WUU_CUA_MAC_PIP_HELPER;
+      configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }
+    this.shutdownPromise = undefined;
     const child = this.spawnAppServer(command.command, appServerArgs, {
       cwd: command.cwd,
       env: helperEnv,
@@ -628,6 +647,15 @@ export class AppServerClient {
     child.on("close", (code) => {
       this.finalizeChild(child, code);
     });
+    // Prewarmed and restarted cores can host background identities before a
+    // renderer opens that project. Negotiate host routing on every spawn.
+    if (this.getInitializeParams) {
+      void this.request("initialize", this.getInitializeParams()).catch(error => {
+        if (this.child === child && !this.disposing) {
+          this.emit(this, { kind: "server-error", message: String(error) });
+        }
+      });
+    }
   }
 
   private write(payload: unknown): void {
@@ -1006,4 +1034,24 @@ function wuuSourceRoot(): string | undefined {
       existsSync(join(candidate, "go.mod")) &&
       existsSync(join(candidate, "cmd", "wuu")),
   );
+}
+
+// Packaged apps resolve CUA only inside their own bundle. Developer overrides
+// must not accidentally attach a released app to an old checkout's helper.
+export function configurePackagedCUA(
+  env: NodeJS.ProcessEnv,
+  resourcesPath: string | undefined,
+  platform: NodeJS.Platform,
+  exists: (path: string) => boolean = existsSync,
+): void {
+  delete env.WUU_ENABLE_CUA_MAC;
+  delete env.WUU_CUA_MAC_HELPER;
+  delete env.WUU_CUA_MAC_PIP_HELPER;
+  if (platform !== "darwin" || !resourcesPath) return;
+  const helper = join(resourcesPath, "bin", "wuu-cua-mac");
+  const pip = join(resourcesPath, "bin", "wuu-cua-mac-pip");
+  if (!exists(helper) || !exists(pip)) return;
+  env.WUU_ENABLE_CUA_MAC = "1";
+  env.WUU_CUA_MAC_HELPER = helper;
+  env.WUU_CUA_MAC_PIP_HELPER = pip;
 }

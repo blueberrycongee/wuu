@@ -8981,6 +8981,10 @@ func TestServerRejectsSteerForCompactTurn(t *testing.T) {
 		t.Fatalf("thread/start: %v", err)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
+	control, err := session.ChangeControl(rt.SessionDir, threadID, "manager", session.ControlActive, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	th := srv.thread(threadID)
 	if th == nil {
 		t.Fatal("expected loaded thread")
@@ -9008,6 +9012,10 @@ func TestServerRejectsSteerForCompactTurn(t *testing.T) {
 	errObj, ok := resp["error"].(map[string]any)
 	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "cannot steer a compact turn") {
 		t.Fatalf("expected compact steer rejection, got %+v", resp)
+	}
+	current, _, err := session.ReadControl(rt.SessionDir, threadID)
+	if err != nil || current != control {
+		t.Fatalf("rejected input took over session: %+v %v", current, err)
 	}
 }
 

@@ -135,7 +135,7 @@ private func screenshotWindowFrameDistance(_ left: CGRect, _ right: CGRect) -> C
 }
 
 @available(macOS 14.0, *)
-func captureForegroundWindowPNG(processID: pid_t) throws -> WindowCapture {
+func captureForegroundWindowPNG(processID: pid_t, preferredWindowFrame: CGRect? = nil) throws -> WindowCapture {
     guard CGPreflightScreenCaptureAccess() else {
         throw ComputerError.permissionDenied("Screen Recording permission is required for window screenshots")
     }
@@ -149,15 +149,18 @@ func captureForegroundWindowPNG(processID: pid_t) throws -> WindowCapture {
               let bounds = info[kCGWindowBounds as String] as? [String: Any],
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width > 1,
-              frame.height > 1 else {
+              frame.height > 1,
+              preferredWindowFrame != nil || info[kCGWindowIsOnscreen as String] as? Bool == true else {
             return nil
         }
         let shareable = (info[kCGWindowSharingState as String] as? NSNumber)?.intValue != 0
         return (CGWindowID(number.uint32Value), frame, shareable)
     }
-    guard let window = candidates.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+    let index = preferredCaptureFrameIndex(candidates.map(\.frame), preferred: preferredWindowFrame)
+    guard let index else {
         throw ComputerError.operationFailed("no foreground window found")
     }
+    let window = candidates[index]
     let windowImage = window.shareable
         ? CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution])
         : nil
@@ -449,4 +452,11 @@ func captureAppCompositePNG(processID: pid_t, scope: CaptureScope) throws -> (ca
         windowID: infos[0].windowID
     )
     return (capture, windows)
+}
+
+func preferredCaptureFrameIndex(_ frames: [CGRect], preferred: CGRect?) -> Int? {
+    if let preferred {
+        return frames.indices.min { screenshotWindowFrameDistance(frames[$0], preferred) < screenshotWindowFrameDistance(frames[$1], preferred) }
+    }
+    return frames.indices.max { frames[$0].width * frames[$0].height < frames[$1].width * frames[$1].height }
 }

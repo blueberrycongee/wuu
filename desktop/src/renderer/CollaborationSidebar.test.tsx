@@ -43,9 +43,7 @@ afterEach(() => { act(() => root.unmount()); host.remove(); });
 it("mixes recent groups and DMs, keeps new agents reachable, and opens each target exactly once", () => {
   render();
   expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["Design", "Alpha", "Beta"]);
-  expect(rows()[0].textContent).toContain("Updated mockups");
   expect(rows()[0].textContent).toContain("3");
-  expect(rows()[1].textContent).toContain("The report is ready");
   expect(rows()[1].getAttribute("aria-current")).toBe("page");
   act(() => rows()[1].click());
   expect(callbacks.onSelectRoom).toHaveBeenCalledWith("dm");
@@ -54,11 +52,11 @@ it("mixes recent groups and DMs, keeps new agents reachable, and opens each targ
   expect(callbacks.onSelectRoom).toHaveBeenCalledTimes(1);
 });
 
-it("keeps pinned rooms first, updates incoming previews, and filters by the current agent name", () => {
+it("keeps pinned rooms first, reorders incoming conversations, and filters by the current agent name", () => {
   render([dm, group], ["dm"]);
   expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
   render([{ ...dm, last_message: { ...dm.last_message!, body: "Next reply", created_at: "2026-09-12T12:00:00Z" } }, group]);
-  expect(rows()[0].textContent).toContain("Next reply");
+  expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
   const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "ALPHA");
@@ -132,6 +130,20 @@ it("opens the conversation picker directly from the add button", () => {
   expect(document.querySelector('[role="menu"]')).toBeNull();
 });
 
+it("keeps embedded navigation flat and opens each conversation directly after collapsing the section", () => {
+  act(() => root.render(<WuuUIRoot><CollaborationSidebar embedded initialized agents={[agent]} rooms={[dm, group]}
+    {...callbacks} /></WuuUIRoot>));
+  const toggle = host.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+  const nav = host.querySelector("nav")!;
+  expect(nav.children).toHaveLength(2);
+  act(() => toggle.click());
+  expect(nav.hidden).toBe(true);
+  act(() => toggle.click());
+  expect(nav.hidden).toBe(false);
+  act(() => rows()[1].click());
+  expect(callbacks.onSelectRoom).toHaveBeenCalledExactlyOnceWith(dm.id);
+});
+
 it("keeps the shared mode switch in the sidebar with Collaboration selected", () => {
   render();
   const modes = host.querySelector('[role="group"]')!;
@@ -162,6 +174,19 @@ it("keeps collapsed conversations accessible, selected and unread while exposing
   expect(callbacks.onCreateRoom).toHaveBeenCalledOnce();
 });
 
+it.each([false, true])("hides the management shortcut but keeps the account menu usable (collapsed=%s)", (collapsed) => {
+  render([dm, group], [], collapsed);
+  expect(host.querySelector(`button[aria-label="${t("channels.manageAgents")}"]`)).toBeNull();
+  const account = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("account.menu")}"]`)!;
+  expect(account.disabled).toBe(false);
+  act(() => account.click());
+  expect(account.getAttribute("aria-expanded")).toBe("true");
+  act(() => host.querySelector<HTMLButtonElement>('[data-settings-page="providers"]')!.click());
+  expect(callbacks.onOpenSettings).toHaveBeenCalledExactlyOnceWith("providers");
+  expect(account.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(account);
+});
+
 it("does not let a hidden search filter remove rail shortcuts", () => {
   render();
   const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
@@ -189,7 +214,6 @@ it.each([false, true])("keeps an agent active across group work until all its wo
   expect(identity.getAttribute("data-agent-avatar-state")).toBe("thinking");
   expect(identity.getAttribute("data-agent-avatar-motion")).toBe("expressive");
   expect(avatar(beta.id).getAttribute("data-agent-avatar-state")).toBe("idle");
-  expect(rows().find(row => row.contains(identity))?.textContent).toContain(dm.last_message!.body);
   update(["other-group"]);
   expect(identity.getAttribute("data-agent-avatar-state")).toBe("thinking");
   update([]);

@@ -22,6 +22,14 @@ export function mergeTurnItemsInOrder(
   previous: Turn,
   next: Turn,
 ): ThreadItem[] {
+  // A terminal notification carries the full, authoritative item list. Keeping
+  // local-only items here can preserve an obsolete identity of an answer beside
+  // its final item, making one response appear twice only after completion.
+  // In-progress snapshots still merge below so a lagging snapshot cannot drop
+  // newer streamed work. Do not dedupe by text: repeated messages can be valid.
+  if (next.status !== "in_progress" && next.items_view === "full") {
+    return orderedTurnItems(next.items);
+  }
   const nextByID = new Map(next.items.map((item) => [item.id, item]));
   const used = new Set<string>();
   const merged: ThreadItem[] = [];

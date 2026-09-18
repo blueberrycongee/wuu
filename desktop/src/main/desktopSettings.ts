@@ -54,7 +54,7 @@ export type DesktopSettings = {
   phone_access_enabled?: boolean;
   // User-facing reading size for the message stream, in pixels. The
   // renderer clamps incoming values to MESSAGE_FLOW_FONT_SIZE_RANGE
-  // (13–20 step 0.5 default 14) before applying and the IPC boundary
+  // (13–20 in 0.5px steps) before applying and the IPC boundary
   // keeps the same range check; an out-of-range persisted value here
   // falls back to the default.
   message_flow_font_size?: MessageFlowFontSize;
@@ -129,6 +129,8 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
           (id) => !archived.has(id),
         ),
         archivedRoomIDs,
+        ...(typeof preferences.selectedRoomID === "string" && preferences.selectedRoomID.trim() && !archived.has(preferences.selectedRoomID.trim())
+          ? { selectedRoomID: preferences.selectedRoomID.trim() } : {}),
       };
     }
     if (typeof record.codex_pet === "object" && record.codex_pet !== null && !Array.isArray(record.codex_pet)) {
@@ -318,6 +320,8 @@ export function setChannelRoomPreferences(
       (id) => !archived.has(id),
     ),
     archivedRoomIDs,
+    ...(typeof preferences.selectedRoomID === "string" && preferences.selectedRoomID.trim() && !archived.has(preferences.selectedRoomID.trim())
+      ? { selectedRoomID: preferences.selectedRoomID.trim() } : {}),
   };
   const settings = readDesktopSettings(filePath);
   writeDesktopSettings({ ...settings, channel_room_preferences: next }, filePath);

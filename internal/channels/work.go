@@ -1245,7 +1245,10 @@ func activeWorkSessionInterruptTargetsTx(ctx context.Context, tx *sql.Tx, workID
         SELECT binding.named_agent_id, binding.session_ref FROM collaboration_session_bindings binding
         JOIN named_agent_conversations primary_session ON primary_session.session_ref=binding.session_ref
         WHERE binding.work_id=? AND binding.state IN ('starting','running','interrupted')
-        ORDER BY 1, 2`, workID, workID)
+        UNION
+        SELECT '', session_id FROM harness_session_links
+        WHERE active=1 AND json_extract(payload,'$.work_id')=?
+        ORDER BY 1, 2`, workID, workID, workID)
 	if err != nil {
 		return nil, fmt.Errorf("list active work sessions for cancellation: %w", err)
 	}
@@ -1578,17 +1581,21 @@ func (s *Service) workRunAdmissionTx(ctx context.Context, tx *sql.Tx, roomID, na
 	if err != nil {
 		return "", "", err
 	}
-	identityLimit := s.agentRunLimit
 	if namedAgentID != "" {
 		var continuing bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM named_agent_conversations WHERE agent_id=?)`, namedAgentID).Scan(&continuing); err != nil {
+		var executors int
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM named_agent_conversations WHERE agent_id=?),
+			(SELECT COUNT(*) FROM harness_session_admissions WHERE agent_id=? AND session_id!=?)`, namedAgentID, namedAgentID, sessionRef).Scan(&continuing, &executors); err != nil {
 			return "", "", err
 		}
-		if continuing {
-			identityLimit = 1
+		// Serialize the identity's own turns, not the ordinary sessions it
+		// manages. Those sessions reserve a manager slot for human follow-ups.
+		if continuing && agentActive-executors >= 1 {
+			return WorkRunQueued, "named_agent_capacity", nil
 		}
 	}
-	if namedAgentID != "" && agentActive >= identityLimit {
+	if namedAgentID != "" && agentActive >= s.agentRunLimit {
 		return WorkRunQueued, "named_agent_capacity", nil
 	}
 	if roomActive >= s.roomRunLimit {

@@ -110,8 +110,7 @@ func New(opts Options) *Server {
 	return s
 }
 
-// Handler returns the HTTP mux: GET /healthz and the websocket endpoint at
-// /v1/connect.
+// Handler serves liveness, readiness, account APIs and the WebSocket endpoint.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	if s.accountHTTP != nil {
@@ -121,8 +120,27 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("/v1/connect", s.handleConnect)
 	return mux
+}
+
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	s.mu.Lock()
+	closing := s.closing
+	s.mu.Unlock()
+	if !closing && s.accounts != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		closing = s.accounts.Ping(ctx) != nil
+	}
+	if closing {
+		// Database errors can reveal deployment details; the public probe stays generic.
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+		return
+	}
+	_, _ = w.Write([]byte("ok"))
 }
 
 // Close stops accepting devices and waits until existing WebSocket handlers exit.

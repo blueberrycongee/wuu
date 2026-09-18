@@ -26,7 +26,8 @@ type ChannelSessionListParams struct {
 	RoomID  string `json:"roomId"`
 }
 type ChannelSessionListResult struct {
-	Sessions []channels.CollaborationSessionBinding `json:"sessions"`
+	Sessions        []channels.CollaborationSessionBinding `json:"sessions"`
+	ManagedSessions []harnessSessionView                   `json:"managed_sessions"`
 }
 type ChannelSessionCreateParams struct {
 	AgentID   string `json:"agentId"`
@@ -70,7 +71,32 @@ func (s *Server) handleChannelSession(ctx context.Context, req Request) error {
 				matches = append(matches, binding)
 			}
 		}
-		return s.writeResponse(req.ID, ChannelSessionListResult{Sessions: matches}, err)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		links, err := s.channelService.HarnessLinks(ctx, params.AgentID, params.RoomID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		managed := make([]harnessSessionView, 0, len(links))
+		for _, link := range links {
+			if !link.Active {
+				continue
+			}
+			metadata, err := s.sharedHarnessSession(link.SessionID)
+			if errors.Is(err, session.ErrSessionNotFound) {
+				continue
+			}
+			if err != nil {
+				continue
+			}
+			view, err := s.harnessSessionView(ctx, metadata)
+			if err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			managed = append(managed, view)
+		}
+		return s.writeResponse(req.ID, ChannelSessionListResult{Sessions: matches, ManagedSessions: managed}, nil)
 	}
 	if req.Method == MethodChannelSessionCreate {
 		var params ChannelSessionCreateParams
@@ -204,6 +230,7 @@ func (s *Server) StopSession(ctx context.Context, params channels.CollaborationS
 	if err != nil {
 		return binding, err
 	}
+	s.kickHarnessSessions()
 	// Persist cancellation and parent notifications before interrupting execution.
 	// Retry every target even when one lease reset fails; the durable fence keeps
 	// late callbacks from reviving any member of the cancelled subtree.

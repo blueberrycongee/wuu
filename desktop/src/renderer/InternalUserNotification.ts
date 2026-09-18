@@ -4,6 +4,8 @@ export const AGENT_NOTIFICATION_NAME = "wuu_agent_notification";
 type InternalUserNotificationItem = {
   name?: string;
   text?: string;
+  origin?: string;
+  presentation_kind?: string;
 };
 
 export function isProcessNotificationText(text: string | undefined): boolean {
@@ -20,6 +22,7 @@ export function isProcessNotificationItem(
   if (!item) {
     return false;
   }
+  if (item.origin === "plugin" && item.presentation_kind === "session_message") return false;
   if (item.name === PROCESS_NOTIFICATION_NAME) {
     return true;
   }
@@ -61,6 +64,7 @@ export function isAgentNotificationItem(
   if (!item) {
     return false;
   }
+  if (item.origin === "plugin" && item.presentation_kind === "session_message") return false;
   if (item.name === AGENT_NOTIFICATION_NAME) {
     return true;
   }

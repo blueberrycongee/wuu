@@ -710,3 +710,8 @@ func replaceBaseSystemPrompt(history []providers.ChatMessage, prompt string) []p
 	}
 	return append([]providers.ChatMessage{{Role: "system", Content: prompt}}, out...)
 }
+
+func appendControlledChatMessage(dir, id string, msg providers.ChatMessage, control *sessionstore.Control) (int, error) {
+	rec := historyRecordFromPersistedMessage(persistedMessageFromChatMessage(msg))
+	return sessionstore.AppendControlledHistoryRecord(dir, id, rec, control)
+}

@@ -91,6 +91,33 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 }
 
 describe("AgentOnboarding", () => {
+  it("keeps model management in model selection and lets the selected card reopen it without losing the name", async () => {
+    const manage = vi.fn();
+    const { create } = await mount({ onManageProviders: manage });
+    expect(container.querySelector('[data-action="confirm-model"]')).not.toBeNull();
+    expect(container.querySelector('[data-action="edit-model"]')).toBeNull();
+    await click('[data-action="manage-providers"]');
+    expect(manage).toHaveBeenCalledOnce();
+    await click('[data-action="confirm-model"]');
+    const footer = query(".channel-conversation-footer");
+    expect(footer.querySelector('[data-action="edit-model"]')).toBeNull();
+    expect(container.querySelector('[data-action="manage-providers"]')).toBeNull();
+    expect(footer.querySelector('[data-action="random-name"]')).not.toBeNull();
+    expect(document.activeElement).toBe(query(".channel-composer textarea"));
+    await type("agent-name", "Ada");
+    const edit = query('[data-action="edit-model"]');
+    expect(edit.closest(".agent-onboarding-form")?.querySelector(".agent-onboarding-history-model")).toBeTruthy();
+    await click('[data-action="edit-model"]');
+    expect(currentDraft.step).toBe("model");
+    expect(container.querySelector('[data-action="manage-providers"]')).not.toBeNull();
+    await choose("agent-model", "plain");
+    await click('[data-action="confirm-model"]');
+    expect(query<HTMLTextAreaElement>(".channel-composer textarea").value).toBe("Ada");
+    expect(currentDraft.model).toBe("plain");
+    expect(container.querySelector('[data-action="manage-providers"]')).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("shows the avatar before the model bubble and reveals controls after the formation", async () => {
     vi.useFakeTimers();
     vi.mocked(prefersReducedMotion).mockReturnValue(false);
@@ -144,9 +171,30 @@ describe("AgentOnboarding", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("keeps the confirmed transcript mounted while creation and conversation opening complete", async () => {
+    const creation = deferred<NamedAgent>();
+    const opening = deferred<void>();
+    const open = vi.fn().mockReturnValue(opening.promise);
+    await mount({ onCreate: () => creation.promise, onOpenConversation: open });
+    await next();
+    const modelRow = query('[data-message-id="model"]');
+    const nameRow = query('[data-message-id="name"]');
+    await click('[data-action="submit"]');
+    const answerRow = query('[data-message-id="answer"]');
+    expect(query('[data-message-id="model"]')).toBe(modelRow);
+    expect(query('[data-message-id="name"]')).toBe(nameRow);
+    await act(async () => creation.resolve(agent));
+    expect(query('[data-message-id="answer"]')).toBe(answerRow);
+    expect(query('[data-message-id="model"]')).toBe(modelRow);
+    expect(query('[data-message-id="name"]')).toBe(nameRow);
+    expect(open).toHaveBeenCalledOnce();
+    await act(async () => opening.resolve());
+  });
+
   it("switches to each model's supported effort and excludes unavailable providers", async () => {
     await mount();
     await next();
+    await click('[data-action="edit-model"]');
     await click(".runtime-panel-context button");
     expect(document.querySelector(".runtime-provider-options")?.textContent).not.toContain("not-connected");
     await act(async () => [...document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")].find(item => item.textContent === "primary")?.click());
@@ -196,7 +244,9 @@ describe("AgentOnboarding", () => {
     await click('[data-action="submit"]');
     expect(create.mock.calls[0][0].request_id).toBe(requestID);
     expect(create.mock.calls[1][0].request_id).toBe(requestID);
+    await click('[data-action="edit-model"]');
     await choose("agent-model", "reasoner");
+    await click('[data-action="confirm-model"]');
     expect(currentDraft.requestId).toBe(requestID);
     await type("agent-name", "Grace");
     expect(currentDraft.requestId).not.toBe(requestID);
@@ -214,7 +264,7 @@ describe("AgentOnboarding", () => {
     expect(currentDraft.createdAgent).toEqual(agent);
     expect(query('[role="alert"]').textContent).toContain("connection lost");
     expect(document.activeElement).toBe(query('[data-action="submit"]'));
-    expect(query<HTMLFieldSetElement>(".agent-onboarding-runtime").disabled).toBe(true);
+    expect(query<HTMLButtonElement>('[data-action="edit-model"]').disabled).toBe(true);
     expect(close).not.toHaveBeenCalled();
     await click('[data-action="submit"]');
     expect(create).toHaveBeenCalledOnce();
@@ -251,6 +301,8 @@ describe("AgentOnboarding", () => {
   it("embeds the shared provider and model views without an engine switch", async () => {
     const { close } = await mount();
     expect(query(".runtime-panel-context").textContent).toBe("primary");
+    expect(query(".runtime-panel-model .runtime-panel-effort-value").textContent).toBe("High");
+    expect(document.querySelector(".runtime-panel-effort-row .runtime-panel-effort-value")).toBeNull();
     await click(".runtime-panel-model");
     expect(document.querySelector('input[type="search"]')).not.toBeNull();
     expect(close).not.toHaveBeenCalled();

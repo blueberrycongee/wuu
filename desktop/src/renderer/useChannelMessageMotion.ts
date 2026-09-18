@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import type { ChannelMessage } from "../shared/protocol";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
-
-type Arrival = { element: HTMLElement; animation?: Animation };
+import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 
 export function useChannelMessageMotion(
   scrollRef: RefObject<HTMLDivElement | null>,
@@ -10,64 +8,50 @@ export function useChannelMessageMotion(
   ready: boolean,
   messages: readonly Pick<ChannelMessage, "id" | "seq">[],
   pendingID?: string,
+  onArrival?: (localSend: boolean) => void,
 ): (pendingID: string, messageID: string) => void {
-  const previous = useRef({ roomID, ready: false, seq: 0, rows: new Map<string, Arrival>() });
-  const handoffs = useRef(new Map<string, Animation | undefined>());
-  const running = useRef(new Set<Animation>());
+  const previous = useRef({ roomID, ready: false, seq: 0 });
+  const localAcknowledgements = useRef(new Set<string>());
+  const { reconcile, acknowledge, cancel } = useMessageArrivalMotion();
+  const acknowledgeLocalSend = useCallback((pending: string, message: string) => {
+    acknowledge(pending, message);
+    localAcknowledgements.current.add(message);
+  }, [acknowledge]);
 
   useLayoutEffect(() => {
     const last = previous.current;
     const baseline = last.roomID !== roomID || !last.ready || !ready;
-    const canAnimate = !baseline && !document.hidden && !prefersReducedMotion();
     const seqByID = new Map(messages.map(message => [message.id, message.seq]));
-    const rows = new Map<string, Arrival>();
-    const duration = motionDurationMs("--motion-slow", 280);
-    const easing = getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim() || "cubic-bezier(0.16, 1, 0.3, 1)";
-    for (const element of scrollRef.current?.querySelectorAll<HTMLElement>("[data-message-id]") ?? []) {
+    const arrivals = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>("[data-message-id]") ?? []).map(element => {
       const id = element.dataset.messageId!;
-      const old = last.rows.get(id);
-      if (!baseline && old?.element === element) { rows.set(id, old); continue; }
-      const arrival: Arrival = { element };
-      rows.set(id, arrival);
-      const acknowledged = handoffs.current.has(id);
-      const source = handoffs.current.get(id);
-      // A fast acknowledgement replaces the optimistic row before its entrance
-      // finishes. Continue from that frame instead of blinking or replaying it.
-      const elapsed = source && source.playState !== "finished" && source.playState !== "idle"
-        && typeof source.currentTime === "number" ? source.currentTime : undefined;
-      const fresh = id === pendingID || (seqByID.get(id) ?? 0) > last.seq;
-      if (!canAnimate || duration <= 0 || !element.animate || (acknowledged ? elapsed === undefined : !fresh)) continue;
-      const own = element.classList.contains("own");
-      const animation = element.animate([
-        { opacity: 0, transform: own ? "translateY(12px) scale(.985)" : "translateY(8px)", transformOrigin: own ? "right bottom" : "left top" },
-        { opacity: 1, transform: "none", transformOrigin: own ? "right bottom" : "left top" },
-      ], { duration, easing });
-      if (elapsed !== undefined) animation.currentTime = elapsed;
-      arrival.animation = animation;
-      running.current.add(animation);
-      const release = () => running.current.delete(animation);
-      animation.addEventListener("finish", release, { once: true });
-      animation.addEventListener("cancel", release, { once: true });
-    }
-    for (const [id, old] of last.rows) {
-      if (rows.get(id) !== old) { old.animation?.cancel(); if (old.animation) running.current.delete(old.animation); }
-    }
-    handoffs.current.clear();
-    previous.current = { roomID, ready, seq: Math.max(baseline ? 0 : last.seq, ...messages.map(message => message.seq)), rows };
-  }, [messages, pendingID, ready, roomID, scrollRef]);
+      return { id, element, own: element.classList.contains("own"), fresh: id === pendingID || (seqByID.get(id) ?? 0) > last.seq };
+    });
+    const fresh = reconcile(arrivals, baseline);
+    // Only a local send may resume a paused reader, not an incoming human row.
+    // Include sends acknowledged before their optimistic row could mount.
+    if (fresh.length) onArrival?.(fresh.some(arrival => arrival.id === pendingID || localAcknowledgements.current.has(arrival.id)));
+    localAcknowledgements.current.clear();
+    previous.current = { roomID, ready, seq: Math.max(baseline ? 0 : last.seq, ...messages.map(message => message.seq)) };
+  }, [messages, pendingID, ready, roomID, scrollRef, reconcile, onArrival]);
 
-  useEffect(() => {
-    const cancel = () => { for (const animation of running.current) animation.cancel(); running.current.clear(); };
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const reduce = () => { if (media?.matches) cancel(); };
-    const hide = () => { if (document.hidden) cancel(); };
-    media?.addEventListener("change", reduce);
-    document.addEventListener("visibilitychange", hide);
-    return () => { cancel(); media?.removeEventListener("change", reduce); document.removeEventListener("visibilitychange", hide); };
-  }, []);
+  useLayoutEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const keydown = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) cancel();
+    };
+    node.addEventListener("wheel", cancel, { passive: true });
+    node.addEventListener("pointerdown", cancel);
+    node.addEventListener("touchstart", cancel, { passive: true });
+    node.addEventListener("keydown", keydown);
+    return () => {
+      cancel();
+      node.removeEventListener("wheel", cancel);
+      node.removeEventListener("pointerdown", cancel);
+      node.removeEventListener("touchstart", cancel);
+      node.removeEventListener("keydown", keydown);
+    };
+  }, [cancel, ready, roomID, scrollRef]);
 
-  return useCallback((pending: string, message: string) => {
-    const arrival = previous.current.rows.get(pending);
-    if (arrival) handoffs.current.set(message, arrival.animation);
-  }, []);
+  return acknowledgeLocalSend;
 }

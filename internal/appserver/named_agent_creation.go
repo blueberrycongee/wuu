@@ -30,6 +30,10 @@ func (s *Server) validateNamedAgentCreation(params *ChannelAgentCreateParams) er
 	if err != nil {
 		return err
 	}
+	cfg, err = s.registerDiscoveredProvider(cfg, params.ProviderOverride)
+	if err != nil {
+		return err
+	}
 	provider, name, err := cfg.ResolveProvider(params.ProviderOverride)
 	if err != nil {
 		return err

@@ -1,132 +1,72 @@
 # Automations
 
-Automations let Wuu execute a task brief on a schedule in a workspace you choose. They
-suit periodic checks, recurring summaries, and one-shot tasks you want to run later —
-not a cloud cron service running independently.
+Automations run a task prompt on a schedule in a chosen workspace. Use them for
+periodic checks, summaries, or a one-time follow-up. Wuu must be running on an awake
+device, with the Automation plugin enabled.
 
 ## Create an automation
 
-1. Install and enable the first-party Automation plugin, then open **Automations** from
-   the navigation entry contributed by the plugin.
-2. Use the **Workspace** selector at the top of the page to choose the project workspace
-   where the task should run. This does not switch the conversation currently open in Desktop.
-3. Choose **New automation**, and fill in the name and the task content.
-4. Fill in the five-field Cron expression and an IANA timezone, and choose whether it
-   repeats.
-5. Choose **Create** to save. The request is routed to the selected workspace's plugin
-   runtime, and the task records its workspace ID and root. Task state, next execution time, and run records
-   are stored in the plugin's workspace storage.
+1. Open **Automations**. If the entry is missing, check that the bundled Automation
+   plugin is available and enabled.
+2. Choose **Workspace** at the top. This selects where tasks run without switching
+   your open conversation.
+3. Choose **New automation**, fill in the name and instructions, or start from
+   **Suggestions**.
+4. In **Runs in**, choose **New chat each run** or search for an existing chat.
+5. Choose Daily, Weekdays, Weekly, or **Custom**. **More settings** contains the
+   timezone, **Run once**, and **Isolated run** options.
+6. Choose **Create** to save.
 
-The task content is the prompt handed to the agent on every trigger. Write the scope,
-expected result, and verification explicitly, for example:
+State the scope, expected result, and restrictions in the prompt, for example:
 
 ```text
-Check the TODOs added in this workspace over the past day. Summarize by file and only
-report items that are still unresolved; do not modify files. If there are no new TODOs,
-say there is no change.
+Check TODOs added in this workspace over the past day. Group unresolved items by
+file. Do not modify files. If there are no new TODOs, say so.
 ```
 
-## Set the time
+## Time and execution
 
-The plugin accepts five-field Cron expressions directly, for example `0 9 * * 1-5`
-means 9:00 on weekdays. The timezone uses an IANA name, such as `Asia/Shanghai`; the
-system timezone is used by default at creation. The plugin checks for due tasks about
-every 15 seconds, so a trigger may be delayed by up to one check cycle; no extra
-random jitter is added.
+Schedules use the task's timezone, initially your system timezone. Custom schedules
+accept five-field Cron expressions: `0 9 * * 1-5` means 9:00 on weekdays. Timezones
+use IANA names such as `Asia/Shanghai`. Due tasks are checked about every 15 seconds;
+execution is not guaranteed to start at an exact second.
 
-## Choose the session mode
+**New chat each run** creates a visible conversation in the selected workspace.
+Enable **Isolated run** to give each run a Git worktree based on the project's current
+`HEAD`. Uncommitted changes are not included. Review results in the created conversation.
 
-### New session each time
+Choosing an existing chat continues its context. If it is busy, the scheduled message
+queues behind its current work. That chat keeps its own workspace, so worktree isolation
+is only available for new chats. The Agent's `cron` tool calls these modes `new_thread`
+and `thread_heartbeat`.
 
-Desktop-created tasks use `new_thread`, which suits independent checks. Every trigger
-creates a new user-visible session in the bound workspace through the public
-`host.session.create/send`, and the results appear in that workspace's normal session
-list. The app server verifies the workspace ID and root before creating the session.
+New-chat runs can overlap; they do not automatically wait for the previous run to
+finish. Use worktree isolation for concurrent edits or choose an existing chat to queue
+follow-ups in one place.
 
-A task can also govern its own execution workspace. Create it with
-`workspace: "worktree"` (the Desktop form exposes this as "Run in an isolated git
-worktree") and every trigger runs the new session in a dedicated git worktree based
-on the workspace's current HEAD, so scheduled edits never touch the live project
-directory. The worktree persists with its session for review and is reclaimed with
-the session or workspace state cleanup. The run record and the trigger context block
-carry the effective execution root. Worktree isolation applies to `new_thread` tasks
-only; a `thread_heartbeat` target session already has its own workspace binding.
+## Manage tasks and results
 
-### Continue a specific session
+Choose the workspace, then search or filter by All, Active, Paused, or Completed.
+Select a task to edit it and choose **Save changes**. Closing the editor or switching
+tasks discards unsaved edits. Use **Pause** or **Resume** to control future triggers;
+**Delete** is in the more-actions menu. Deleting a task does not delete the conversations
+it created or stop work already running in them. Stop that work in its conversation.
 
-The plugin's `cron` tool can also create `thread_heartbeat` tasks that deliver the
-generated ordinary query to an existing session. This suits following up in the same
-context, but the current Desktop form does not edit this mode directly. It has two
-limitations:
+The detail panel shows the five most recent runs, including failures. **Completed**
+contains read-only snapshots of successful one-shot tasks whose run records are still
+retained. A successful recurring run does not complete its task. Each workspace keeps
+up to 100 tasks and 500 recent run records. There is no **Run now** button.
 
-- the session must still exist and be loadable in the current Wuu data;
-- if that session is already running another turn, the automation message queues
-  instead of writing into the same session in parallel.
+## When a run is missing or fails
 
-## Manage tasks
+Check that the Automation plugin was enabled, Wuu was running, the device was awake,
+the task was not paused, and the workspace still exists. Check the timezone and next
+run time. Model availability, quotas, network access, and permissions can also cause
+a run to fail; inspect its error and conversation.
 
-The workspace selector also controls which workspace's tasks the list displays. The
-automation list shows the task content, Cron, timezone, and session mode, and
-supports pausing, resuming, or deleting. The current page does not offer search,
-in-place editing, or manual immediate runs; to change task content, delete and
-recreate it.
+After Wuu returns, a missed one-shot task runs once. Missed recurring triggers are
+combined rather than replayed one by one. One-shot tasks leave the schedule after
+running; look in recent runs for their outcome. For a missing target chat, select an
+existing one or switch to **New chat each run**.
 
-Each workspace stores at most 100 automation tasks and the latest 500 run records.
-Deleting a task is irreversible, but it does not delete the sessions the task created
-or woke.
-
-The current desktop page has no "run now" button and does not show a separate
-automation run history. `New session` results appear in the normal session list;
-`Continue a specific session` results are written into the target session.
-
-## Run conditions and lifecycle
-
-Automations are maintained by the Automation plugin runtime's own Timer, not by a Wuu
-core scheduler. Tasks are only checked while the Wuu process hosting that plugin
-generation is running; when the plugin is disabled, upgraded, or closed, the host
-waits for the Timer loop to exit. When the computer sleeps or Wuu quits completely,
-tasks do not execute in the background.
-
-- a missed one-shot task is executed once as a catch-up when the scheduler next
-  starts;
-- recurring tasks do not catch up missed time points one by one; multiple missed runs
-  merge into the next due execution;
-- a one-shot task is removed from the schedule after it runs.
-
-One scheduled occurrence uses stable create and send request IDs. If two Wuu processes
-briefly load the same workspace, the app server converges duplicate requests on the same
-session and turn instead of executing the task twice.
-
-Each due run in new-session mode creates an independent session; `thread_heartbeat`
-uses the core's ordinary Turn queueing and execution lease, so runs queue when the
-target session is busy. The plugin currently does not implement an additional
-"skip overlapping runs" product policy.
-
-Tasks use the model, tools, and permission configuration at execution time. Even if
-the schedule itself is saved, permission limits, network state, model quotas, or a
-missing workspace can still make a run fail.
-
-## Troubleshooting
-
-### It did not run at the scheduled time
-
-Confirm that the Wuu core was running at that time, the task is not paused, the
-workspace path still exists, and check the timezone and the next execution time in the
-list. Due tasks are discovered by a fixed-period background check, so the start may
-wait until the next check.
-
-### The task disappeared
-
-A one-shot task is removed after running. A recurring task only disappears when a
-user/agent deletes it or the plugin state is corrupted.
-
-### Continuing a session fails
-
-Check that you filled in a session ID, not a title, and confirm the session was not
-deleted. If the task does not depend on historical context, switching to `New session`
-is usually more robust.
-
-### Need to trigger from CI or a script
-
-Desktop scheduled tasks suit local scheduled execution. When driven by an external
-scheduler, CI, or another agent, use [`wuu exec`](exec.md).
+For CI or an external scheduler, use [`wuu exec`](exec.md).

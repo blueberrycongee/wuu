@@ -443,3 +443,48 @@ func TestIdentityTaskCompletionReturnsToVisibleRequester(t *testing.T) {
 		t.Fatalf("requester received no result: %+v %v", received, err)
 	}
 }
+
+func TestIdentityConversationCanFinishAnotherOwnedTask(t *testing.T) {
+	ctx := context.Background()
+	s, owner, agent, room, current := newIdentityTaskFixture(t)
+	other, err := owner.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, OwnerID: agent.Agent.ID, Title: "Finish the previous UI request"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, binding := prepareIdentityTestTurn(t, s, agent.Agent.ID)
+	if _, err := client.UpdateCollaborationSessionState(ctx, CollaborationSessionStateParams{SessionRef: binding.SessionRef, State: CollaborationSessionRunning, TurnID: "manage-multiple-tasks"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateTask(ctx, TaskUpdateParams{TaskID: other.ID, State: TaskStateDone}); err != nil {
+		t.Fatalf("identity could not finish its other task: %v", err)
+	}
+	work, err := owner.GetWork(ctx, current.ID)
+	if err != nil || terminalWorkState(work.State) {
+		t.Fatalf("finishing another task ended the current responsibility: %+v, %v", work, err)
+	}
+	peer := createTestAgent(t, s, "Peer")
+	if _, err := owner.InviteRoomAgent(ctx, room.ID, peer.Agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	peerClient, err := s.BindAgent(ctx, peer.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerTask, err := peerClient.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, OwnerID: peer.Agent.ID, Title: "Peer responsibility"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateTask(ctx, TaskUpdateParams{TaskID: peerTask.ID, State: TaskStateDone}); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("identity changed a task it does not own: %v", err)
+	}
+	pending, err := owner.CreateTask(ctx, TaskCreateParams{RoomID: room.ID, OwnerID: agent.Agent.ID, Title: "Another owned responsibility"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.CancelWork(ctx, current.ID, "User stopped the current turn"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateTask(ctx, TaskUpdateParams{TaskID: pending.ID, State: TaskStateDone}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cancelled turn changed another task: %v", err)
+	}
+}

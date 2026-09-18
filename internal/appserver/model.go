@@ -53,6 +53,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		status = ThreadStatusInProgress
 	}
 	return Thread{
+		SessionControl:  th.SessionControl,
 		ID:              th.ID,
 		Source:          th.Source,
 		ParentID:        th.ParentID,
@@ -634,12 +635,10 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 		if ev.Content == "" {
 			return nil
 		}
-		// Streaming text usually has unknown phase. If the provider exposes
-		// Codex-style phase metadata on the active output item, keep it.
+		// A streaming phase is provisional: Responses-compatible providers can
+		// start with final_answer and finish with commentary plus tool calls.
+		// Only message completion may promote text into the answer region.
 		item, started := th.ensureActiveAgentItemLocked(turnID, now)
-		if ev.Phase == providers.MessagePhaseFinalAnswer {
-			item.Terminal = true
-		}
 		if started {
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
@@ -659,9 +658,6 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			return nil
 		}
 		item, started := th.ensureActiveAgentItemLocked(turnID, now)
-		if ev.Phase == providers.MessagePhaseFinalAnswer {
-			item.Terminal = true
-		}
 		if started {
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}

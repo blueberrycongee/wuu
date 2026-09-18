@@ -63,6 +63,8 @@ func displayCapabilityForKnownToolName(name string) string {
 		return "command.bash"
 	case "read_file":
 		return "file.read"
+	case "present_artifact":
+		return "artifact.present"
 	case "list_files":
 		return "file.list"
 	case "write_file", "edit_file", "apply_patch":
@@ -86,6 +88,8 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 	switch name {
 	case "read_file":
 		return toolDisplay("read", "读取 "+displayPathTarget(displayString(args, "path", "file"), "文件"))
+	case "present_artifact":
+		return toolDisplay("read", "展示产物 "+displayPathTarget(displayString(args, "path"), "文件"))
 	case "list_files":
 		target := displayPathTarget(displayString(args, "path"), "项目目录")
 		if target == "项目目录" {

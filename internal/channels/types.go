@@ -332,6 +332,7 @@ type ResolveAgentCreationProposalParams struct {
 }
 
 type Message struct {
+	MarkdownImages []MessageImage `json:"markdown_images,omitempty"`
 	// Execution source is distinct from ThreadID, which addresses a room reply thread.
 	SourceSessionRef         string                 `json:"source_session_ref,omitempty"`
 	SourceTurnID             string                 `json:"source_turn_id,omitempty"`
@@ -359,6 +360,7 @@ type Message struct {
 }
 
 type MessageImage struct {
+	RemoteRef string `json:"remote_ref,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
 	Width     uint32 `json:"width,omitempty"`
@@ -366,6 +368,7 @@ type MessageImage struct {
 }
 
 type MessageFile struct {
+	RemoteRef string `json:"remote_ref,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
 	Filename  string `json:"filename,omitempty"`

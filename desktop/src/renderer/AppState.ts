@@ -328,7 +328,19 @@ function serverEventTargetsActiveContext(
   event: ServerEvent,
   state: AppState,
 ): boolean {
-  return event.workdir === state.activeContext?.cwd;
+  if (event.workdir === state.activeContext?.cwd) return true;
+  if (event.kind !== "notification") return false;
+  const params = event.message.params as Record<string, unknown> | undefined;
+  const threadID = threadIDFromParams(params)
+    ?? threadFromRecord(recordValue(params, "thread"))?.id;
+  // Execution ownership can differ from the conversation's workspace. Keep
+  // session events flowing to loaded conversations without admitting another
+  // runtime's configuration or unscoped lifecycle events.
+  return Boolean(threadID && (
+    state.thread?.id === threadID
+    || state.secondaryThread?.id === threadID
+    || state.threads.some(thread => thread.id === threadID)
+  ));
 }
 
 type StreamingNotificationHandling =
@@ -1496,6 +1508,8 @@ function summarizeThreadForSidebar(
     workspace_id: thread.workspace_id,
     workspace_kind: thread.workspace_kind,
     status: runningThreadIDs?.has(thread.id) && !answerReady ? "in_progress" : status,
+    session_control: thread.session_control,
+    ephemeral: thread.ephemeral,
     read_only: thread.read_only,
     pinned: thread.pinned,
     folder_id: thread.folder_id,

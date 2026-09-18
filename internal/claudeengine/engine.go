@@ -489,12 +489,6 @@ func (sub *turnSubscription) handleLine(line string) {
 		if envelope.SessionID != "" {
 			sub.observeSessionID(envelope.SessionID)
 		}
-		if envelope.Subtype == "init" {
-			var init initMessage
-			if err := json.Unmarshal(envelope.Message, &init); err == nil && init.SessionID != "" {
-				sub.observeSessionID(init.SessionID)
-			}
-		}
 		sub.handleTaskEvent(envelope)
 	case "assistant":
 		sub.handleAssistant(envelope)
@@ -913,12 +907,18 @@ func (sub *turnSubscription) accumulateUsage(u tokenUsage) {
 
 func (sub *turnSubscription) handleResult(envelope claudeLine) {
 	var res resultMessage
-	_ = json.Unmarshal(sub.lastRawResult, &res)
+	if err := json.Unmarshal(sub.lastRawResult, &res); err != nil {
+		protocolErr := fmt.Errorf("invalid terminal result: %w", err)
+		sub.emit(providers.StreamEvent{Type: providers.EventError, Error: protocolErr})
+		sub.finish(sub.loopResult(sub.text.String(), ""), protocolErr)
+		return
+	}
 	stopReason := firstNonEmpty(res.StopReason, envelope.StopReason)
+	failed := res.IsError || strings.HasPrefix(res.Subtype, "error_")
 
 	// Close any in-flight tool rendering.
 	state := providers.AgentActivityCompleted
-	if envelope.IsError {
+	if failed {
 		state = providers.AgentActivityFailed
 	}
 	for toolID := range sub.tools {
@@ -932,12 +932,22 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 			sub.accumulateUsage(usage)
 		}
 	}
-	if envelope.IsError {
+	if failed {
 		message := "claude turn failed"
-		if res.Error != nil && strings.TrimSpace(res.Error.Message) != "" {
+		var details []string
+		for _, detail := range res.Errors {
+			if detail = strings.TrimSpace(detail); detail != "" {
+				details = append(details, detail)
+			}
+		}
+		if len(details) > 0 {
+			message = strings.Join(details, "\n")
+		} else if res.Error != nil && strings.TrimSpace(res.Error.Message) != "" {
 			message = res.Error.Message
 		} else if strings.TrimSpace(res.Result) != "" {
 			message = res.Result
+		} else if res.Subtype != "" {
+			message = "engine turn failed: " + res.Subtype
 		}
 		err := errors.New(message)
 		sub.emit(providers.StreamEvent{Type: providers.EventError, Error: err})
@@ -1011,6 +1021,9 @@ func (sub *turnSubscription) emit(ev providers.StreamEvent) {
 
 func (sub *turnSubscription) finish(result agent.LoopResult, err error) {
 	sub.finishOnce.Do(func() {
+		if err != nil {
+			result.FinishReason = providers.FinishReasonError
+		}
 		sub.mu.Lock()
 		sub.closed = true
 		sub.mu.Unlock()

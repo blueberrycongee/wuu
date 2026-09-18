@@ -114,6 +114,10 @@ func Open(dir string, wake WakeSink) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := service.migrateHarnessSessions(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := service.initializeRoomScheduling(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -1742,17 +1746,20 @@ func (s *Service) GetRoom(ctx context.Context, id string) (Room, error) {
 	var createdAt int64
 	var preview RoomMessagePreview
 	var messageCreatedAt int64
+	// Match the visible conversation, not task bookkeeping. Select the whole
+	// message so preview text and the sidebar's activity time stay in sync.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT room.id, room.kind, room.name, room.avatar_image, room.created_by, room.membership_revision, room.created_at,
 			COALESCE(runtime.id, ''), COALESCE(message.id, ''), COALESCE(message.author_type, ''),
 			COALESCE(message.author_id, ''), COALESCE(message.kind, ''),
-			substr(COALESCE(NULLIF(message.body, ''), message.task_title, ''), 1, 240),
+			substr(COALESCE(message.body, ''), 1, 240),
 			COALESCE(json_array_length(message.images_json) + json_array_length(message.files_json), 0) > 0,
 			COALESCE(message.created_at, 0)
 		FROM rooms room
 		LEFT JOIN room_runtimes runtime ON runtime.room_id = room.id
 		LEFT JOIN room_messages message ON message.id = (
-			SELECT id FROM room_messages WHERE room_id = room.id ORDER BY seq DESC LIMIT 1
+			SELECT id FROM room_messages WHERE room_id = room.id AND kind IN ('text', 'system')
+			ORDER BY seq DESC LIMIT 1
 		)
 		WHERE room.id = ?`, id,
 	).Scan(&room.ID, &room.Kind, &room.Name, &room.AvatarImage, &room.CreatedBy, &room.MembershipRevision, &createdAt, &room.RuntimeID,

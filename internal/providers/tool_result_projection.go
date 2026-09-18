@@ -132,6 +132,9 @@ func ApplyToolResultProjections(messages []ChatMessage) []ChatMessage {
 
 func unsupportedContentNote(part toolresult.ContentPart) string {
 	if uri := strings.TrimSpace(part.URI); uri != "" {
+		if part.Artifact != nil && part.Artifact.Ref != "" && strings.HasPrefix(uri, "wuu-artifact:") {
+			return fmt.Sprintf("[%s artifact %q saved at %s; presented separately to the user, not attached as model input. Do not duplicate its preview with Markdown images.]", part.Type, part.Name, uri)
+		}
 		return fmt.Sprintf("[%s content is available at %s but cannot be attached directly]", part.Type, uri)
 	}
 	return fmt.Sprintf("[%s content could not be projected to this provider]", part.Type)

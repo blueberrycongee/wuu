@@ -158,19 +158,7 @@ func TestDiscoverWithOptionsHidesBundledCUAMacByDefault(t *testing.T) {
 	}
 }
 
-func TestDiscoverWithOptionsHidesBundledPeersByDefault(t *testing.T) {
-	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS:      "darwin",
-		LookupEnv: func(string) (string, bool) { return "", false },
-	})
-	for _, item := range plugins {
-		if item.ID == "peers" {
-			t.Fatalf("peers must stay hidden until %s=1: %+v", EnablePeersEnv, item)
-		}
-	}
-}
-
-func TestDiscoverWithOptionsIncludesBundledPeersWhenEnabled(t *testing.T) {
+func TestDiscoverWithOptionsIncludesBundledPeers(t *testing.T) {
 	helper := filepath.Join(t.TempDir(), "wuu-peers-plugin")
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -180,8 +168,6 @@ func TestDiscoverWithOptionsIncludesBundledPeersWhenEnabled(t *testing.T) {
 		GOOS: "darwin",
 		LookupEnv: func(key string) (string, bool) {
 			switch key {
-			case EnablePeersEnv:
-				return "1", true
 			case "WUU_PEERS_PLUGIN_HELPER":
 				return helper, true
 			}

@@ -32,10 +32,11 @@ export type FloatingMenuOwner =
   | "minute-clock"
   | "channel-agent"
   | "channel-mention"
+  | "managed-sessions"
   | "collaboration-new"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";
-export type FloatingMenuAlign = "left" | "right";
+export type FloatingMenuAlign = "left" | "center" | "right";
 export type PermissionMode =
   | "standard"
   | "read_only"

@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // containsProfileDef reports whether the given name appears in the
@@ -646,6 +647,10 @@ func TestDefinitionsFilterStaysWithinSurfaceAndAllowsDeferredTools(t *testing.T)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// Runtime-backed tools are advertised only when their dependency is wired.
+	kit.SetArtifactPublisher(func(context.Context, ArtifactPublishRequest) (toolresult.ContentPart, error) {
+		return toolresult.ContentPart{}, nil
+	})
 	kit.SetActiveProfile(modelprofile.Resolve("anthropic", "claude-sonnet-4-5"), true)
 	loadedDeferred := map[string]struct{}{
 		"thread_get": {},

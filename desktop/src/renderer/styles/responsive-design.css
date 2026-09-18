@@ -66,11 +66,6 @@
     min-width: 0;
   }
 
-  .permission-menu-anchor {
-    max-width: 120px;
-    flex-basis: 92px;
-  }
-
   .codex-runtime-anchor {
     max-width: 240px;
     flex: 0 1 auto;
@@ -309,7 +304,7 @@
   width: 320px;
   background: var(--paper);
   box-shadow: var(--shadow-drawer-left);
-  font-size: 13px;
+  font-size: var(--font-ui);
   line-height: 1.5;
   color: var(--ink);
 }
@@ -331,7 +326,7 @@
 
 .design-tokens-title h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-ui);
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -388,7 +383,7 @@
 .design-token-value {
   color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
                                                               
@@ -461,7 +456,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 500;
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out);
@@ -475,7 +470,7 @@
 
 .design-tokens-hint {
   color: var(--ink-muted);
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -492,6 +487,10 @@
 @media (pointer: coarse) {
   /* Keep the desktop lockup: wordmark, stacked mode labels, then the bell.
    * Give the labels a little more vertical room without turning them into tabs. */
+  .sidebar-brand {
+    grid-template-columns: auto minmax(0, 1fr) 44px;
+  }
+
   .sidebar-mode-switch {
     gap: 2px;
   }
@@ -503,7 +502,6 @@
   .sidebar-notifications-button {
     width: 44px;
     height: 44px;
-    flex-basis: 44px;
     margin-right: -8px;
   }
 }
@@ -584,7 +582,7 @@
 
   .app-shell.compact-navigation :is(.composer-send-button, .composer-stop-button)::before {
     /* Keep the circle compact without shrinking its touch target. */
-    inset: 6px;
+    inset: 8px;
   }
 
   .app-shell.compact-navigation :is(.nav-item, .thread-row, .project-row) {

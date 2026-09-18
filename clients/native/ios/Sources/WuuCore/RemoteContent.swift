@@ -26,50 +26,98 @@ extension RemoteConnection {
         return item
     }
 
-    /// Only inline bytes or a reference to this message are accepted; attachment URLs are never fetched.
-    public func readAttachment(_ attachment: JSONValue, threadID: String, messageID: String) async throws -> LoadedAttachment {
-        let media = attachment["media_type"].string ?? ""
-        guard ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"].contains(media) else {
-            throw NativeError.invalid("手机暂不支持此附件格式")
+    public func readAttachment(_ attachment: JSONValue, threadID: String, messageID: String, preview: Bool = false) async throws -> LoadedAttachment {
+        try await readMessageAttachment(attachment, scopeID: threadID, messageID: messageID, preview: preview) { method, params in
+            try await self.call(method, params: params)
         }
-        var encoded = attachment["data"].string ?? ""
-        if let ref = attachment["remote_ref"].string, !ref.isEmpty {
-            guard ref.hasPrefix("thread:"), ref.utf8.count < 8192 else { throw NativeError.invalid("无效的附件引用") }
-            let parts = try JSONDecoder().decode(JSONValue.self, from: Data(base64URL: String(ref.dropFirst(7)))).array
-            guard parts.count == 5, parts[0].string == threadID,
-                  let turn = parts[1].string, let item = parts[2].string, turn + ":" + item == messageID,
-                  let index = parts[3].number, index >= 0, index.rounded() == index,
-                  let digest = parts[4].string, digest.count == 64 else { throw NativeError.invalid("附件不属于当前消息") }
-            encoded = try await readEncoded("thread/attachment/read", params: [
-                "thread_id": .string(threadID), "turn_id": .string(turn), "item_id": .string(item),
-                "index": .number(index), "sha256": .string(digest)], mediaType: media)
-            guard SHA256.hash(data: Data((media + "\0" + encoded).utf8)).map({ String(format: "%02x", $0) }).joined() == digest else {
-                throw NativeError.invalid("附件内容校验失败")
-            }
-        }
-        guard !encoded.isEmpty, encoded.utf8.count <= 16 * 1024 * 1024, let data = Data(base64Encoded: encoded), !data.isEmpty else {
-            throw NativeError.invalid("附件过大或内容无效，请在电脑上查看")
-        }
-        if media == "application/pdf", !data.starts(with: Data("%PDF-".utf8)) { throw NativeError.invalid("文件不是有效的 PDF") }
-        return LoadedAttachment(mediaType: media, filename: attachment["filename"].string ?? "图片", data: data)
     }
 
     private func readEncoded(_ method: String, params: JSONValue, mediaType: String) async throws -> String {
-        var encoded = "", total: Int?
-        repeat {
-            try Task.checkCancellation()
-            guard case .object(var request) = params else { throw NativeError.invalid("无效的读取参数") }
-            request["offset"] = .number(Double(encoded.utf8.count))
-            let result = try await call(method, params: .object(request))
-            guard let count = result["total"].number, count > 0, count <= 16 * 1024 * 1024, count.rounded() == count,
-                  result["content_type"].string == mediaType,
-                  result["offset"].number == Double(encoded.utf8.count),
-                  let chunk = result["data"].string, !chunk.isEmpty, chunk.utf8.count <= 128 * 1024,
-                  encoded.utf8.count + chunk.utf8.count <= Int(count), total == nil || total == Int(count) else {
-                throw NativeError.invalid("消息过大或读取不完整，请在电脑上查看")
-            }
-            total = Int(count); encoded += chunk
-        } while encoded.utf8.count < (total ?? 0)
-        return encoded
+        try await readAttachmentChunks(method, params: params, mediaType: mediaType) { method, params in
+            try await self.call(method, params: params)
+        }
     }
+}
+
+public func readMessageAttachment(_ attachment: JSONValue, scopeID: String, messageID: String, preview: Bool = false,
+    call: @Sendable (String, JSONValue) async throws -> JSONValue) async throws -> LoadedAttachment {
+    let media = attachment["media_type"].string ?? ""
+    guard ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"].contains(media) else { throw NativeError.invalid("手机暂不支持此附件格式") }
+    var encoded = attachment["data"].string ?? ""
+    let ref = attachment["remote_ref"].string ?? ""
+    if ref.hasPrefix("markdown:") {
+        guard ref.utf8.count < 8192 else { throw NativeError.invalid("无效的图片引用") }
+        let parts = try JSONDecoder().decode([String].self, from: Data(base64URL: String(ref.dropFirst(9))))
+        guard parts.count == 5, ["thread", "channel"].contains(parts[0]), parts[1] == scopeID,
+              (parts[0] == "thread" ? parts[2] + ":" + parts[3] : parts[3]) == messageID else { throw NativeError.invalid("图片不属于当前消息") }
+        var params: JSONValue = ["kind": .string(parts[0]), "scope_id": .string(scopeID), "turn_id": .string(parts[2]),
+            "message_id": .string(parts[3]), "source": .string(parts[4]), "preview": .bool(preview)]
+        if parts[0] == "channel" {
+            guard let seq = Double(parts[2]), case .object(var fields) = params else { throw NativeError.invalid("无效的图片引用") }
+            fields["seq"] = .number(seq); params = .object(fields)
+        }
+        encoded = try await readAttachmentChunks("message/image/read", params: params, mediaType: preview ? "image/jpeg" : media,
+            limit: preview ? 128 * 1024 : 16 * 1024 * 1024, verifyDigest: !preview, call: call)
+    } else if !ref.isEmpty {
+        guard ref.utf8.count < 8192, ref.hasPrefix("thread:") || ref.hasPrefix("channel:") else { throw NativeError.invalid("无效的附件引用") }
+        let channel = ref.hasPrefix("channel:")
+        let parts = try JSONDecoder().decode(JSONValue.self, from: Data(base64URL: String(ref.dropFirst(channel ? 8 : 7)))).array
+        guard (channel ? parts.count == 6 : (5...6).contains(parts.count)), parts[0].string == scopeID,
+              let index = parts[3].number, index >= 0, index.rounded() == index,
+              let digest = parts[4].string, digest.count == 64 else { throw NativeError.invalid("附件不属于当前消息") }
+        var params: [String: JSONValue]
+        if channel {
+            guard parts[1].string == messageID, let seq = parts[2].number, seq > 0, seq.rounded() == seq,
+                  let field = parts[5].string, ["images", "files"].contains(field) else { throw NativeError.invalid("附件不属于当前消息") }
+            params = ["room_id": .string(scopeID), "message_id": .string(messageID), "seq": .number(seq), "field": .string(field)]
+        } else {
+            guard let turn = parts[1].string, let item = parts[2].string, turn + ":" + item == messageID,
+                  parts.count == 5 || parts[5].string == "result" else { throw NativeError.invalid("附件不属于当前消息") }
+            params = ["thread_id": .string(scopeID), "turn_id": .string(turn), "item_id": .string(item), "kind": .string(parts.count == 6 ? "result" : "")]
+        }
+        params["index"] = .number(index); params["sha256"] = .string(digest); params["preview"] = .bool(preview)
+        encoded = try await readAttachmentChunks(channel ? "channel/attachment/read" : "thread/attachment/read", params: .object(params),
+            mediaType: preview ? "image/jpeg" : media, limit: preview ? 128 * 1024 : 16 * 1024 * 1024, call: call)
+        if !preview {
+            guard SHA256.hash(data: Data((media + "\0" + encoded).utf8)).map({ String(format: "%02x", $0) }).joined() == digest else { throw NativeError.invalid("附件内容校验失败") }
+        }
+    }
+    let descriptor: JSONValue = preview && !ref.isEmpty ? ["media_type": "image/jpeg", "filename": attachment["filename"]] : attachment
+    return try decodeInlineAttachment(descriptor, encoded: encoded)
+}
+
+private func readAttachmentChunks(_ method: String, params: JSONValue, mediaType: String, limit: Int = 16 * 1024 * 1024,
+    verifyDigest: Bool = false, call: @Sendable (String, JSONValue) async throws -> JSONValue) async throws -> String {
+    var encoded = "", total: Int?, digest: String?
+    repeat {
+        try Task.checkCancellation()
+        guard case .object(var request) = params else { throw NativeError.invalid("无效的读取参数") }
+        request["offset"] = .number(Double(encoded.utf8.count))
+        if let digest { request["sha256"] = .string(digest) }
+        let result = try await call(method, .object(request))
+        guard let count = result["total"].number, count > 0, count <= Double(limit), count.rounded() == count,
+              result["content_type"].string == mediaType, result["offset"].number == Double(encoded.utf8.count),
+              let chunk = result["data"].string, !chunk.isEmpty, chunk.utf8.count <= 128 * 1024,
+              encoded.utf8.count + chunk.utf8.count <= Int(count), total == nil || total == Int(count) else {
+            throw NativeError.invalid("消息过大或读取不完整，请在电脑上查看")
+        }
+        if verifyDigest {
+            guard let next = result["sha256"].string, next.count == 64, digest == nil || digest == next else { throw NativeError.invalid("图片读取时发生变化") }
+            digest = next
+        }
+        total = Int(count); encoded += chunk
+    } while encoded.utf8.count < (total ?? 0)
+    if verifyDigest, SHA256.hash(data: Data((mediaType + "\0" + encoded).utf8)).map({ String(format: "%02x", $0) }).joined() != digest { throw NativeError.invalid("图片内容校验失败") }
+    return encoded
+}
+
+func decodeInlineAttachment(_ attachment: JSONValue, encoded: String? = nil) throws -> LoadedAttachment {
+    let media = attachment["media_type"].string ?? ""
+    guard ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"].contains(media) else { throw NativeError.invalid("手机暂不支持此附件格式") }
+    let encoded = encoded ?? attachment["data"].string ?? ""
+    guard !encoded.isEmpty, encoded.utf8.count <= 16 * 1024 * 1024, let data = Data(base64Encoded: encoded), !data.isEmpty else {
+        throw NativeError.invalid("附件过大或内容无效，请在电脑上查看")
+    }
+    if media == "application/pdf", !data.starts(with: Data("%PDF-".utf8)) { throw NativeError.invalid("文件不是有效的 PDF") }
+    return LoadedAttachment(mediaType: media, filename: attachment["filename"].string ?? "图片", data: data)
 }

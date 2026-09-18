@@ -18,6 +18,7 @@ import type {
 } from "./AssistantTurnDisplay";
 import { CollapsibleDetails } from "./CollapsibleMotion";
 import { ThreadItemView } from "./ThreadItemView";
+import { layoutAssistantTurn } from "./AssistantTurnLayout";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 import { useLiveTextWave } from "./LiveTextWave";
 import { streamFieldValue } from "./ThreadItemText";
@@ -115,13 +116,17 @@ export function AssistantTurnShell({
    */
   editSummaryCard?: JSX.Element;
 }): JSX.Element {
-  const processEntries = display.entries.filter(
-    (entry) => entry.position === "process",
-  );
   const answerEntries = display.entries.filter(
     (entry) => entry.position === "answer",
   );
   const artifacts = useMemo(() => collectTurnArtifacts(turn), [turn]);
+  const { processEntries, output } = layoutAssistantTurn(turn, display, artifacts);
+  const activeGrayEntryKey = turn.status === "in_progress"
+    ? latestActiveGrayProcessEntryKey([
+      ...processEntries,
+      ...output.flatMap((item) => item.entry?.position === "process" ? [item.entry] : []),
+    ])
+    : undefined;
   // Sources derive from the full turn — web_search and web_fetch happen
   // in the process region, but the source affordance belongs beside the
   // process header so it reads as turn metadata instead of extra answer
@@ -193,6 +198,7 @@ export function AssistantTurnShell({
       {hasProcess ? (
         <TurnProcessFold
           entries={processEntries}
+          activeGrayEntryKey={activeGrayEntryKey}
           collapseRequested={processCollapseRequested}
           latestPreview={
             answerHandoffRequested ? undefined : display.latestProcessPreview
@@ -202,11 +208,12 @@ export function AssistantTurnShell({
           {...entryProps}
         />
       ) : null}
-      <TurnInlineArtifactOutputs artifacts={artifacts} cwd={cwd} onOpenFile={onOpenFile} />
-      {hasAnswer ? (
+      {output.length > 0 ? (
         <div className="turn-answer-body">
-          {answerEntries.map((entry) => (
-            <EntryRenderer key={entry.key} entry={entry} {...entryProps} />
+          {output.map((item) => item.artifact ? (
+            <TurnInlineArtifactOutputs key={item.key} artifacts={[item.artifact]} cwd={cwd} onOpenFile={onOpenFile} />
+          ) : (
+            <EntryRenderer key={item.key} entry={item.entry} activeGray={item.key === activeGrayEntryKey} {...entryProps} />
           ))}
         </div>
       ) : null}
@@ -219,6 +226,7 @@ export function AssistantTurnShell({
 function TurnProcessFold({
   turn,
   entries,
+  activeGrayEntryKey,
   collapseRequested,
   latestPreview,
   sources,
@@ -235,6 +243,7 @@ function TurnProcessFold({
 }: {
   turn: Turn;
   entries: TurnEntry[];
+  activeGrayEntryKey?: string;
   collapseRequested: boolean;
   latestPreview?: TurnProcessPreview;
   sources: ReturnType<typeof collectTurnSources>;
@@ -403,11 +412,6 @@ function TurnProcessFold({
   const previewWaveRef = useLiveTextWave<HTMLSpanElement>(
     turn.status === "in_progress" && hasPreview,
   );
-  const activeGrayEntryKey =
-    turn.status === "in_progress"
-      ? latestActiveGrayProcessEntryKey(entries)
-      : undefined;
-
   const toggleContent = (
     <>
       <span className="turn-process-header">
@@ -731,6 +735,7 @@ function ReasoningFold({
         <div className="turn-reasoning-body-inner">
           <div
             className="turn-reasoning-scroll"
+            data-scroll-fade="compact"
             ref={reasoningScroll.scrollRef}
             {...{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
           >

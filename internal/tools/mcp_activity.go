@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,9 @@ type cuaSequenceRequest struct {
 	App              string           `json:"app"`
 	ForegroundPolicy string           `json:"foreground_policy"`
 	Steps            []map[string]any `json:"steps"`
+	SnapshotID       string           `json:"snapshot_id"`
+	Mode             string           `json:"mode"`
+	After            string           `json:"after"`
 }
 
 func (t *Toolkit) SetActivityRegistry(registry *activity.Registry) {
@@ -97,6 +101,13 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 			if isSequence {
 				return t.executeCUASequence(ctx, tool, threadID, session.ID, lease.Token, sequence)
 			}
+			if binding.Kind == activity.KindCUA {
+				call.Arguments = t.prepareCUAArguments(tool, call.Arguments, lease.Token)
+				if cuaObservationAction(call.Arguments) {
+					result, err := t.executeKnownToolResultAllowRepeated(ctx, call, tool)
+					return result, "", err
+				}
+			}
 			result, err := t.executeKnownToolResult(ctx, call, tool)
 			return result, "", err
 		},
@@ -109,19 +120,7 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 			return t.persistActivityPreview(session.ID, result)
 		},
 	}
-	result, err := t.runActivityBoundAction(ctx, spec, hooks)
-	if err == nil && cuaActionIsDeliveryOnly(call.Arguments) {
-		// Input delivery is intentionally not treated as proof that the app
-		// accepted the action. Keep the model-facing result non-empty, though:
-		// provider protocols require every tool call to have a result payload.
-		result.Content = []toolresult.ContentPart{{
-			Type: toolresult.ContentTypeText,
-			Text: "Input delivered. Call observe when the outcome matters.",
-		}}
-		result.StructuredContent = nil
-		result.Meta = nil
-	}
-	return result, err
+	return t.runActivityBoundAction(ctx, spec, hooks)
 }
 
 func cuaActivityWindowIdentity(result toolresult.Result) (int, uint32) {
@@ -147,21 +146,6 @@ func cuaActionIsGlobal(arguments string) bool {
 	case "list_apps":
 		return strings.TrimSpace(input.App) == ""
 	case "permission_status", "request_permissions":
-		return true
-	default:
-		return false
-	}
-}
-
-func cuaActionIsDeliveryOnly(arguments string) bool {
-	var input struct {
-		Action string `json:"action"`
-	}
-	if json.Unmarshal([]byte(arguments), &input) != nil {
-		return false
-	}
-	switch input.Action {
-	case "click", "drag", "press_key", "press_keys", "scroll", "set_value", "type_text", "select_text", "perform_action", "activate_control":
 		return true
 	default:
 		return false
@@ -300,6 +284,8 @@ func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, a
 	// machine lives in runRiskSequence; only the CUA-specific envelope inheritance,
 	// mechanism accumulation, per-step interaction publish, and result shape stay.
 	control := sequenceControl{}
+	latestSnapshot := request.SnapshotID
+	supportsSnapshots := cuaSchemaProperty(tool, "snapshot_id")
 	hooks := riskSequenceHooks{
 		augment: func(step map[string]any) {
 			if _, ok := step["app"]; !ok && request.App != "" {
@@ -308,9 +294,31 @@ func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, a
 			if _, ok := step["foreground_policy"]; !ok && request.ForegroundPolicy != "" {
 				step["foreground_policy"] = request.ForegroundPolicy
 			}
+			if supportsSnapshots {
+				if _, ok := step["snapshot_id"]; !ok && latestSnapshot != "" {
+					step["snapshot_id"] = latestSnapshot
+				}
+				if _, ok := step["mode"]; !ok && request.Mode != "" {
+					step["mode"] = request.Mode
+				}
+				if _, ok := step["after"]; !ok && request.After != "" {
+					step["after"] = request.After
+				}
+			}
+			encoded, _ := json.Marshal(step)
+			prepared := t.prepareCUAArguments(tool, string(encoded), leaseToken)
+			_ = json.Unmarshal([]byte(prepared), &step)
 		},
 		observe: func(stepArgs string, result toolresult.Result) {
 			control.observe(stepArgs, result)
+			var state struct {
+				SnapshotID string `json:"snapshot_id"`
+			}
+			if json.Unmarshal(result.StructuredContent, &state) == nil && state.SnapshotID != "" {
+				latestSnapshot = state.SnapshotID
+			} else if !cuaObservationAction(stepArgs) {
+				latestSnapshot = ""
+			}
 		},
 		afterStep: func(_ int, stepResult toolresult.Result) (string, error) {
 			interaction := cuaActivityInteraction(stepResult)
@@ -320,7 +328,7 @@ func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, a
 			if err := t.activityRegistry.CheckControl(threadID, activityID, leaseToken); err != nil {
 				return "control_revoked", err
 			}
-			if _, err := t.activityRegistry.Update(threadID, activityID, activity.UpdateOptions{Interaction: interaction}); err != nil {
+			if _, err := t.activityRegistry.UpdateWithLease(activity.Lease{ThreadID: threadID, ActivityID: activityID, Token: leaseToken}, activity.UpdateOptions{Interaction: interaction}); err != nil {
 				return "partial", err
 			}
 			return "", nil
@@ -481,4 +489,52 @@ func mcpActivityTarget(arguments string) string {
 		}
 	}
 	return ""
+}
+
+func cuaSchemaProperty(tool Tool, name string) bool {
+	properties, _ := tool.Definition().InputSchema["properties"].(map[string]any)
+	_, ok := properties[name]
+	return ok
+}
+
+// Capability-driven defaults apply at the shared invocation boundary, including
+// Code Mode. Alternative CUA extensions opt in by declaring these schema fields.
+func (t *Toolkit) prepareCUAArguments(tool Tool, arguments, leaseToken string) string {
+	var args map[string]any
+	if json.Unmarshal([]byte(arguments), &args) != nil || args == nil {
+		return arguments
+	}
+	if cuaSchemaProperty(tool, "control_epoch") {
+		args["control_epoch"] = fmt.Sprintf("%x", sha256.Sum256([]byte(leaseToken)))
+	}
+	textOnly := t.env != nil && t.env.ImageInputSupported != nil && !*t.env.ImageInputSupported
+	if cuaSchemaProperty(tool, "mode") {
+		if _, present := args["mode"]; !present || textOnly {
+			if textOnly {
+				args["mode"] = "ax"
+			} else {
+				args["mode"] = "both"
+			}
+		}
+	}
+	if textOnly && cuaSchemaProperty(tool, "after") {
+		if _, present := args["after"]; present {
+			args["after"] = "ax"
+		}
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return arguments
+	}
+	return string(encoded)
+}
+
+func cuaObservationAction(arguments string) bool {
+	var input struct {
+		Action string `json:"action"`
+	}
+	if json.Unmarshal([]byte(arguments), &input) != nil {
+		return false
+	}
+	return input.Action == "observe" || input.Action == "query_snapshot" || input.Action == "wait_for_change" || input.Action == "wait_for"
 }

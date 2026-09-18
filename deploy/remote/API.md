@@ -14,7 +14,7 @@
 | 握手与帧加密 | `internal/remote/secure` |
 | 连接消息类型 | `internal/remote/wire/wire.go` |
 | Go 客户端账号操作 | `internal/remote/account/client.go`、`cmd/wuu/remote_account.go` |
-| 手机账号客户端 | `clients/core/src/account.ts` |
+| 原生手机账号客户端 | `clients/native/ios/Sources/WuuCore/AccountAPI.swift`、`clients/native/android/app/src/main/java/ai/wuu/nativeapp/Account.kt` |
 
 ## HTTP 接口
 
@@ -23,6 +23,7 @@
 | 方法与路径 | 身份 | 请求或结果 |
 | --- | --- | --- |
 | `GET /healthz` | 无 | 存活检查，返回 `ok`，不代表任何电脑在线。 |
+| `GET /readyz` | 无 | 就绪检查：配置账号服务时要求 PostgreSQL 可连接（超时 2 秒）；成功返回 200 `ok`，中继关闭或数据库不可用返回 503。不缓存，不代表电脑在线或推送可用。 |
 | `GET /v1/account/config` | 无 | `registration`、协议 `version`、可用 `push_platforms`。 |
 | `POST /v1/account/register` | 设备公钥持有证明 | 创建账号并登记首台设备，返回 `token`、`username`、`pub`、一次性展示的 `recovery`。 |
 | `POST /v1/account/login` | 密码及设备公钥持有证明 | 登录并登记设备，返回 `token`、`username`、`pub`。 |

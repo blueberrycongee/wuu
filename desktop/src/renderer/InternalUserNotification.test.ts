@@ -12,6 +12,12 @@ const processNotificationText =
   '<process_notification>{"process_id":"proc-1"}</process_notification>';
 
 describe("process notification classification", () => {
+  it("keeps attributed session messages visible even when they quote internal envelopes", () => {
+    for (const name of [PROCESS_NOTIFICATION_NAME, AGENT_NOTIFICATION_NAME]) {
+      expect(isInternalUserNotificationItem({ name, text: processNotificationText, origin: "plugin", presentation_kind: "session_message" })).toBe(false);
+    }
+  });
+
   it("uses the protocol name as the primary signal", () => {
     expect(
       isProcessNotificationItem({

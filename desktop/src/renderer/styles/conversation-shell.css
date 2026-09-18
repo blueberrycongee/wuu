@@ -34,9 +34,9 @@
   --shell-turn-rail-bar-bg: rgba(60, 60, 67, 0.4);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
-     without being shadowed by a more specific selector. Default 14px
-     matches the value the .conversation-pane block below used to carry;
-     see renderer/main.tsx for the apply path. font-family and
+     without being shadowed by a more specific selector. Default 13px
+     matches MESSAGE_FLOW_FONT_SIZE_RANGE; see renderer/main.tsx for the
+     apply path. font-family and
      font-weight moved here too so the settings preview (which is NOT
      inside .conversation-pane) and any future surface can read the
      same values without duplicating the cascade. */
@@ -45,7 +45,7 @@
     "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC",
     "Noto Sans SC", sans-serif;
-  --conversation-message-font-size: 14px;
+  --conversation-message-font-size: 13px;
   /* Normal (400) body weight: the stream previously held 450 to add
      presence to 14px type, but in practice it read as denser, heavier
      gray walls across long answers. Default weight lets the font's own
@@ -55,9 +55,10 @@
   /* Outer message-flow rhythm. Structural containers must consume these
      landmarks instead of adding their own anonymous gaps on top. */
   --conversation-flow-top-gap: 36px;
-  --conversation-turn-boundary-gap: 48px;
+  /* Answer actions already reserve their own row inside the preceding turn. */
+  --conversation-turn-boundary-gap: 16px;
   --conversation-turn-item-gap: 8px;
-  --conversation-composer-clearance: 12px;
+  --conversation-composer-clearance: 20px;
 }
 
 .conversation-pane {
@@ -99,17 +100,16 @@
    * closer than sections, with headings attached to the text below.
    * Prose, previews and composer share the same column measure. */
   --conversation-reading-line-height: 1.75;
-  /* Commentary is short process narration, not long-form answer prose. A
-     tighter pitch avoids the excess optical whitespace that Latin glyphs
-     leave inside the mixed-script reading line box. */
-  --conversation-commentary-line-height: 1.6;
+  /* Providers may confirm an answer only after streaming finishes. Its
+     provisional process placement must use the final reading rhythm. */
+  --conversation-commentary-line-height: var(--conversation-reading-line-height);
   --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.15);
   --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 2);
   --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.5);
   --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.5);
   --conversation-prose-indent: 1.4em;
   --conversation-prose-max-width: 100%;
-  --conversation-message-element-gap: 18px;
+  --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
   /* Process rows share the message size and weight; color and spacing,
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
@@ -131,21 +131,24 @@
    * One spacing ladder, one value per meaning. These landmarks match
    * the visible message flow from top to bottom: user query -> assistant
    * reply (whitespace only, no rule), process header -> expanded details,
-   * process cluster -> final answer. Copy/fork overlay the turn
-   * boundary instead of adding a second in-flow row.
+   * process cluster -> final answer. Copy/fork reserve an in-flow row;
+   * the turn boundary adds only the remaining separation to the next query.
    * `--conversation-user-rule-gap` keeps its name for the query -> reply
-   * gap (there is no longer a hairline rule; the 32px band stays under the
-   * 48px turn boundary so a Q&A pair reads as one group).
+   * gap (there is no longer a hairline rule). The action row plus the turn
+   * boundary keep separate Q&A pairs farther apart than query and reply.
    */
-  --conversation-user-rule-gap: 32px;
+  --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
   --conversation-user-message-trailing-gap: 8px;
   --conversation-rule-process-gap: 16px;
   --conversation-process-detail-gap: 16px;
-  --conversation-process-answer-gap: var(--conversation-answer-hover-action-gap);
+  /* Reading groups do not inherit the independently configurable action-bar gap. */
+  --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
   --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 16px);
-  --conversation-message-action-size: var(--wuu-message-action-size, 24px);
+  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
+  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
+  --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
   --conversation-activity-gap: 8px;
   --conversation-visible-inset-left: 0px;
   --conversation-visible-inset-right: 0px;
@@ -238,12 +241,12 @@
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
-  column-gap: 10px;
+  column-gap: var(--control-toolbar-gap);
   overflow: hidden;
   box-shadow: inset 0 -1px 0 var(--surface-3);
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(24px, var(--window-controls-inset-right)) 0 24px;
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 24px;
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
 }
@@ -251,7 +254,7 @@
 /* With the right panel open the panel's tabbar owns the top-right corner
  * instead, so the titlebar keeps its neutral padding. No-op on macOS. */
 .app-shell.right-panel-open .titlebar {
-  padding-right: 24px;
+  padding-right: var(--control-toolbar-inset);
 }
 
 .title-block,
@@ -393,8 +396,10 @@
 /* Keep the tab rail's available width stable when the active surface does
  * not support creating a conversation (for example, a channel room). */
 .session-tab-new-slot {
-  width: 30px;
-  height: 30px;
+  display: grid;
+  place-items: center;
+  width: max(30px, var(--control-size-toolbar));
+  height: max(30px, var(--control-size-toolbar));
 }
 
 .session-tab-list-shell {
@@ -597,8 +602,9 @@
   animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
 }
 
-.session-tab.pending-switch .session-tab-status,
-.session-tab.has-unread .session-tab-status {
+/* Selection loading must not turn an existing running spinner into a dot. */
+.session-tab.pending-switch:not(.running) .session-tab-status,
+.session-tab.has-unread:not(.running) .session-tab-status {
   width: 7px;
   background: var(--sidebar-accent);
   opacity: 1;
@@ -674,8 +680,8 @@
 
 .icon-button {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: var(--control-size-roomy);
+  height: var(--control-size-roomy);
   place-items: center;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -739,6 +745,18 @@
   background-clip: content-box;
 }
 
+/* The compact titlebar is still a native Electron drag region. Keep the
+ * sidebar control explicitly above that region: at narrow desktop widths the
+ * titlebar's grid can otherwise leave the button looking clickable while the
+ * native window drag handler consumes the press. */
+.app-shell.compact-navigation .titlebar .sidebar-toggle-button {
+  /* Honor the shared control width in flex and grid titlebars alike. */
+  flex-basis: auto;
+  position: relative;
+  z-index: 150;
+  -webkit-app-region: no-drag;
+}
+
 .compact-conversation-actions > .icon-button:disabled {
   color: var(--ink-tertiary);
   cursor: default;
@@ -750,7 +768,7 @@
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: calc(var(--radius-xs) + 4px);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
 }
@@ -763,7 +781,7 @@
   min-height: 44px;
   padding: 8px 10px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -786,40 +804,11 @@
   height: 36px;
 }
 
-/* Titlebar icon buttons (left/right sidebar, task board, info panel, new thread):
- * uniform 26×26 visible size with a 30×30 click hit area. The padding
- * is transparent because `background-clip: content-box` restricts the
- * hover and pressed backgrounds to the inner 26×26, so the icon reads
- * as a tight, proportional control and the titlebar keeps clear
- * top/bottom breathing room. The 30×30 hit area sits below the
- * original 34×34 `.icon-button` base, so the flakiness-fix margin
- * from commit 4e69bef7 is no longer guaranteed — this is a deliberate
- * trade toward visual proportion; if titlebar click reliability
- * regresses we can revisit. */
-.titlebar .sidebar-toggle-button,
-.settings-titlebar .sidebar-toggle-button,
-.titlebar .side-panel-toggle-button,
-.titlebar .environment-toggle-button,
-.titlebar .task-board-button {
-  width: 30px;
-  height: 30px;
-  padding: 2px;
-  background-clip: content-box;
-}
-
-/* The four top toolbar buttons (task board, info panel toggle, right
- * panel toggle, "+" new conversation) form one visual cluster at
- * the top of the conversation area. They share a uniform 30×30
- * hit-area and 30×30 background — no titlebar inset — so the visible
- * spacing between any two of them is the same. The other titlebar
- * buttons (sidebar-toggle etc.) keep the inset because they sit in a
- * different cluster on the left. The "+" shares `.workspace-panel-add`
- * with the right-panel "select tool" `+`, which keeps the two `+`
- * controls visually identical across surfaces. */
-.titlebar .task-board-button,
-.titlebar .environment-toggle-button,
-.titlebar .side-panel-toggle-button,
-.workspace-panel-add.session-tab-new {
+/* Main and tool-panel headers share the toolbar control geometry. */
+:where(.titlebar, .settings-titlebar, .workspace-panel-tabbar) .icon-button,
+.globalized-sidebar-toggle-region .globalized-sidebar-toggle {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   padding: 0;
   background-clip: border-box;
 }
@@ -829,17 +818,6 @@
   color: var(--ink-tertiary);
   cursor: default;
   opacity: 0.38;
-}
-
-.icon-button:hover {
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.icon-button.active,
-.workspace-toggle-button[aria-pressed="true"] {
-  background: var(--surface-3);
-  color: var(--ink);
 }
 
 .side-panel-toggle-button[aria-pressed="true"] {
@@ -861,20 +839,12 @@
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.45;
-}
-
-.side-panel-toggle-frame {
-  opacity: 0.62;
-}
-
-.side-panel-toggle-divider {
-  opacity: 0.42;
+  stroke-width: var(--icon-stroke);
 }
 
 .side-panel-toggle-pane {
   fill: currentColor;
-  opacity: 0.18;
+  opacity: 0;
   transition: opacity var(--motion-base) var(--ease-out);
 }
 
@@ -1195,8 +1165,9 @@
                                                                         
                                                                        
 .jump-to-latest-cluster {
+  --conversation-status-gap: 8px;
   position: absolute;
-  bottom: calc(var(--dock-composer-height, 0px) + 8px);
+  bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
   left: var(--conversation-visible-inset-left);
   /* The pill is positioned in the pane box, but the message flow centers
      inside .scroll-region's content box, which excludes the scrollbar
@@ -1224,6 +1195,24 @@
   animation: jump-to-latest-enter var(--motion-base) var(--ease-out) both;
   pointer-events: none;
   -webkit-app-region: no-drag;
+}
+
+.jump-to-latest-cluster-inline {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  padding-block: 4px 8px;
+  animation: none;
+}
+.jump-to-latest-cluster-inline > .jump-to-latest-pill,
+.jump-to-latest-cluster-inline .managed-agent-work-pill {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.jump-to-latest-cluster-inline .jump-to-latest-pill > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .jump-to-latest-pill,
@@ -1311,6 +1300,15 @@ button.conversation-status-capsule,
   display: flex;
 }
 
+/* Navigation and status share one floating row, not two stacked anchors. */
+.conversation-status-cluster > .jump-to-latest-cluster-inline {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
 .conversation-status-label {
   min-width: 0;
   overflow: hidden;
@@ -1345,21 +1343,26 @@ button.conversation-status-capsule,
   max-width: 100%;
 }
 
-.conversation-status-todo-card {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
+.conversation-status-todo-card,
+.conversation-status-preview-card {
   display: flex;
   width: min(360px, calc(100vw - 48px));
   max-height: min(360px, 50vh);
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: var(--menu-inset);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
-  border-radius: var(--radius-md);
+  /* Compact shell: inner row radius + inset, not a panel-sized corner. */
+  border-radius: var(--menu-shell-radius);
   background: var(--shell-todo-card-bg);
   box-shadow: var(--shadow-pop);
+}
+
+.conversation-status-todo-card {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
   opacity: 0;
   visibility: hidden;
   transform: translate(-50%, 4px);
@@ -1385,6 +1388,7 @@ button.conversation-status-capsule,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 6px 8px 2px;
   color: var(--shell-todo-card-ink);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -1394,6 +1398,24 @@ button.conversation-status-capsule,
   font-weight: var(--weight-semibold);
 }
 
+.conversation-status-preview-card {
+  max-height: min(360px, var(--floating-menu-available-height, 50vh));
+  color: var(--shell-todo-card-ink);
+  font-size: var(--font-ui);
+  pointer-events: auto;
+}
+.conversation-status-preview-card .conversation-status-todo-card-header { font-size: inherit; }
+.managed-session-preview-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.managed-session-preview-list li { min-width: 0; }
+.managed-session-preview-item { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
+.managed-session-preview-item:hover { background: var(--ink-overlay-6); }
+.managed-session-preview-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.managed-session-preview-state { flex-shrink: 0; margin-inline-start: auto; color: var(--shell-todo-card-muted); }
+.managed-session-preview-all { align-self: stretch; min-height: 32px; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
+.managed-session-preview-all:hover { background: var(--ink-overlay-6); }
+.managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
 .conversation-status-todo-card-header span,
 .conversation-status-todo-explanation {
   color: var(--shell-todo-card-muted);
@@ -1401,13 +1423,15 @@ button.conversation-status-capsule,
 
 .conversation-status-todo-explanation {
   margin: 0;
+  padding: 0 8px 4px;
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .conversation-status-todo-list {
   display: grid;
-  gap: 8px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1417,9 +1441,12 @@ button.conversation-status-capsule,
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 7px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
   color: var(--shell-todo-card-soft);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .conversation-status-todo-list li > span:first-child {
@@ -1429,6 +1456,7 @@ button.conversation-status-capsule,
 }
 
 .conversation-status-todo-list li.is-in_progress {
+  background: var(--menu-hover);
   color: var(--shell-todo-card-ink);
   font-weight: var(--weight-medium);
 }
@@ -1715,4 +1743,3 @@ button.conversation-status-capsule,
     transform: none;
   }
 }
-

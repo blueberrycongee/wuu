@@ -183,7 +183,7 @@
   box-shadow: inset 0 -1px 0 var(--surface-3);
   /* The docked panel sits at the window's right edge, so the tabbar is
    * what clears the Windows controls overlay; a no-op elsewhere. */
-  padding: 0 max(8px, var(--window-controls-inset-right)) 0 8px;
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 8px;
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -278,7 +278,7 @@
   gap: 12px;
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
-  padding: 12px 14px 12px 16px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
 }
 
 .turn-file-diff-heading {
@@ -328,7 +328,7 @@
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
-  padding: 12px 0 32px;
+  padding: var(--compact-padding-block) 0 var(--card-padding);
 }
 
 .turn-artifact-toolbar {
@@ -517,8 +517,8 @@
 .workspace-panel-sidebar,
 .workspace-panel-add,
 .workspace-panel-globalize {
-  width: 30px;
-  height: 30px;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
   flex: 0 0 auto;
 }
 
@@ -2647,7 +2647,7 @@ html.resizing-workspace-file-split * {
 .plugin-settings-editor-page {
   padding: 0 16px;
   border: 1px solid var(--hairline);
-  border-radius: var(--session-composer-radius);
+  border-radius: var(--radius-sm);
 }
 
 .plugin-settings-editor-page .plugin-setting {
@@ -3398,6 +3398,8 @@ html.resizing-workspace-file-split * {
 /* Block code: keeps the existing rich-code-block chrome (header + copy
    button) and only overrides the inner <pre><code> and the outer frame. */
 .workspace-markdown-reading .rich-code-block {
+  --rich-code-padding-block: 12px;
+  --rich-code-line-height: 1.55;
   margin: 14px 0;
   border: 1px solid var(--rule);
   border-radius: var(--radius-md);
@@ -3407,14 +3409,18 @@ html.resizing-workspace-file-split * {
 
 .workspace-markdown-reading .rich-code-block .rich-code {
   margin: 0;
-  padding: 12px 14px;
+  padding: var(--rich-code-padding-block) 14px;
   background: transparent;
   color: var(--ink);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: var(--rich-code-line-height);
   white-space: pre;
   overflow-x: auto;
+}
+
+.workspace-markdown-reading .rich-code-block--no-header > .rich-code {
+  padding-right: 40px;
 }
 
 .workspace-markdown-reading .rich-code-header {
@@ -4369,10 +4375,10 @@ html.resizing-workspace-file-split * {
   gap: 1px;
   overflow-y: auto;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-radius);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 6px;
+  padding: var(--menu-inset);
   transform-origin: bottom right;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -4389,7 +4395,7 @@ html.resizing-workspace-file-split * {
   flex-direction: column;
   gap: 0;
   overflow: hidden;
-  padding: 6px;
+  padding: var(--menu-inset);
 }
 
 .runtime-engine-options {
@@ -4893,17 +4899,19 @@ html.resizing-workspace-file-split * {
   grid-column: 1 / -1;
 }
 
+.conversation-pane > .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region):not(.split-scroll-region):not(.skills-scroll-region) {
+  /* Floating controls cover only their own footprint. History remains readable
+     down to the input's upper edge, including the space around those controls. */
+  margin-bottom: var(--conversation-input-inset, var(--dock-composer-height));
+}
+
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) .conversation-width {
-  /* Reserve room for the floating dock composer so the last message's
-     overlay action row stays clear of it. The floating "jump to latest /
-     progress" pill cluster is intentionally NOT reserved here: it only mounts
-     while the user is scrolled away and unmounts the instant they reach the
-     bottom, so reserving its height would either jump the content on arrival
-     (reserved dynamically) or leave a permanent strip of empty space below the
-     last message (reserved constantly). The pill floats over the flow instead
-     and may briefly overlap the last action row while it is showing. */
+  /* At the latest position, leave room for the controls. Unlike a viewport
+     cutoff, this trailing space scrolls away when reading earlier messages. */
   --conversation-flow-bottom-space: calc(
-    var(--dock-composer-height) + var(--conversation-composer-clearance)
+    var(--conversation-composer-clearance) + var(--session-tail-space, 0px) +
+    var(--conversation-status-space, 0px) + var(--dock-composer-height) -
+    var(--conversation-input-inset, var(--dock-composer-height))
   );
   padding-bottom: var(--conversation-flow-bottom-space);
 }

@@ -1,8 +1,11 @@
 @import "./styles/base.css";
+@import "./styles/spacing.css";
 @import "./styles/tooltip.css";
 @import "./styles/session.css";
 @import "./styles/scrollbars.css";
+@import "./styles/scroll-fade.css";
 @import "./styles/sidebar.css";
+@import "./styles/managed-sessions.css";
 @import "./styles/sidebar-touch.css";
 @import "./styles/settings.css";
 @import "./styles/conversation-shell.css";
@@ -29,3 +32,5 @@
 @import "./styles/onboarding.css";
 @import "./styles/fields.css";
 @import "./styles/appearance.css";
+
+@import "./styles/icon-controls.css";

@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowLeft, PanelRightClose } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ConversationTurnList } from "./ConversationTurnList";
 import { latestAgentMessageItemID, TurnView } from "./TurnView";
@@ -9,7 +9,8 @@ import type { NamedAgent } from "../shared/protocol";
 import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { AgentIdentityContext } from "./AgentIdentityContext";
 
-export function ChannelSessionInspector({ sessionRef, turnID, name, agents, overlay = false, closing = false, onBack, onClose }: {
+export function ChannelSessionInspector({ sessionRef, turnID, name, agents, overlay = false, closing = false, onBack, onClose, children }: {
+  children?: ReactNode;
   sessionRef: string;
   turnID?: string;
   name: string;
@@ -97,6 +98,7 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
       <>{isCoordinator ? <RoomCoordinatorAvatar size={24} /> : null}<strong>{isCoordinator ? `Room · ${name}` : name}</strong></>
       {status ? <div className="channel-session-meta">{status}</div> : null}
     </header>
+    {children}
     {error ? <div className="channel-error" role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>{t("channels.sessions.retry")}</button></div> : null}
     {!detail && !error ? <p role="status">{t("channels.sessions.loading")}</p> : null}
     {detail && turnID && !targetTurn ? <p role="status">{t("channels.traceTurnUnavailable")}</p> : null}

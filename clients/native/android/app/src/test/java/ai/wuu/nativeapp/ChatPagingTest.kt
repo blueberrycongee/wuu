@@ -5,6 +5,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ChatPagingTest {
+    @Test fun sessionMessageSourceSurvivesLiveDeliveryAndReload() {
+        val item = json("id" to "message", "type" to "user_message", "text" to "Coordination update",
+            "input_text" to "Internal delivery context", "origin" to "plugin", "presentation_kind" to "session_message",
+            "name" to "Source task", "related_session_id" to "source")
+        val live = ChatThread(JSONObject("""{"id":"target","turns":[{"id":"turn","items":[]}]}"""))
+        live.apply("item/completed", json("thread_id" to "target", "turn_id" to "turn", "item" to item))
+        val restored = ChatThread(JSONObject("""{"id":"target","turns":[{"id":"turn","items":[$item]}]}"""))
+        assertEquals(restored.messages, live.messages)
+        assertEquals("source", live.messages.single().sourceSessionId)
+        assertEquals("Source task", live.messages.single().sourceSessionName)
+        assertEquals("Coordination update", live.messages.single().text)
+    }
+
+    @Test fun userStopPreservesPartialAnswerWithoutSynthesizingFailure() {
+        for ((status, category, failure) in listOf(Triple("interrupted", "cancelled", false), Triple("failed", "provider", true), Triple("interrupted", "provider", true))) {
+            val turn = json("id" to "turn", "status" to status, "error" to json("message" to "diagnostic", "category" to category),
+                "items" to org.json.JSONArray().put(json("id" to "answer", "type" to "agent_message", "text" to "partial answer")))
+            val live = ChatThread(json("id" to "t", "status" to "in_progress"))
+            live.apply("turn/error", json("thread_id" to "t", "turn" to turn))
+            val restored = ChatThread(json("id" to "t", "status" to "idle", "turns" to org.json.JSONArray().put(turn)))
+            assertFalse(live.running)
+            assertEquals(restored.messages, live.messages)
+            assertEquals("assistant", live.messages.first().role)
+            assertEquals(failure, live.messages.any { it.role == "error" })
+        }
+    }
+
     @Test fun toolCompletionWinsOverStaleExpansionAndHistory() {
         val thread = ChatThread(JSONObject("""{"id":"t","history_cursor":"page","turns":[{"id":"turn","status":"in_progress","items":[]}]}"""))
         val started = json("id" to "tool", "type" to "tool_call", "name" to "read_file", "status" to "in_progress", "remote_content_ref" to "old")

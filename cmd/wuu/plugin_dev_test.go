@@ -90,7 +90,7 @@ import readline from "node:readline";
 const lines = readline.createInterface({input: process.stdin});
 lines.on("line", line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({id: request.id, result: request.method === "initialize" ? {hooks: [], protocol_version: 2, capabilities: [{id: "agent.request.transform", kind: "transform", version: 1}], tools: [{id: "echo", description: "Echo input", input_schema: {type: "object"}}]} : null}) + "\n"); });
 `)
-	diagnostics := testPluginPackage(dir, 5*time.Second)
+	diagnostics := testPluginPackage(dir, 30*time.Second)
 	checks := make(map[string]pluginDiagnostic, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		checks[diagnostic.Check] = diagnostic

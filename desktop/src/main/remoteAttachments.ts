@@ -2,13 +2,24 @@ import { createHash } from "node:crypto";
 
 const CHUNK_CHARS = 128 * 1024;
 const CACHE_CHARS = 128 * 1024 * 1024;
-type Location = { thread?: string; turn?: string; item?: string; index?: number; kind?: "result" };
+type Location = { room?: string; message?: string; seq?: number; thread?: string; turn?: string; item?: string; index?: number; kind?: "result" };
 
 export function threadAttachmentParams(ref: string): { thread_id: string; turn_id: string; item_id: string; index: number; sha256: string; kind?: "result" } | undefined {
   if (!ref.startsWith("thread:")) return undefined;
   const value: unknown = JSON.parse(Buffer.from(ref.slice(7), "base64url").toString());
   if (!Array.isArray(value) || (value.length !== 5 && value.length !== 6) || (value.length === 6 && value[5] !== "result") || value.slice(0, 3).some(part => typeof part !== "string" || !part) || !Number.isSafeInteger(value[3]) || value[3] < 0 || typeof value[4] !== "string" || !/^[a-f0-9]{64}$/.test(value[4])) throw new Error("Invalid thread attachment reference");
   return { thread_id: value[0], turn_id: value[1], item_id: value[2], index: value[3], sha256: value[4], ...(value[5] === "result" ? {kind: "result" as const} : {}) };
+}
+
+export function attachmentReadTarget(ref: string): { method: string; params: Record<string, unknown> } | undefined {
+  const thread = threadAttachmentParams(ref);
+  if (thread) return { method: "thread/attachment/read", params: thread };
+  if (!ref.startsWith("channel:")) return undefined;
+  const value: unknown = JSON.parse(Buffer.from(ref.slice(8), "base64url").toString());
+  if (!Array.isArray(value) || value.length !== 6 || value.slice(0, 2).some(part => typeof part !== "string" || !part) ||
+      !Number.isSafeInteger(value[2]) || value[2] <= 0 || !Number.isSafeInteger(value[3]) || value[3] < 0 ||
+      typeof value[4] !== "string" || !/^[a-f0-9]{64}$/.test(value[4]) || !["images", "files"].includes(value[5])) throw new Error("Invalid channel attachment reference");
+  return { method: "channel/attachment/read", params: { room_id: value[0], message_id: value[1], seq: value[2], index: value[3], sha256: value[4], field: value[5] } };
 }
 
 export function threadContentParams(ref: string): { thread_id: string; turn_id: string; item_id: string; sha256: string } {
@@ -28,6 +39,8 @@ export class RemoteAttachments {
     if (Array.isArray(value)) return value.map(item => this.project(item, location));
     if (!value || typeof value !== "object") return value;
     const record = value as Record<string, unknown>;
+    if (typeof record.room_id === "string" && typeof record.id === "string" && Number.isSafeInteger(record.seq))
+      location = { room: record.room_id, message: record.id, seq: record.seq as number };
     if (typeof record.thread_id === "string") location = { ...location, thread: record.thread_id };
     if (typeof record.turn_id === "string") location = { ...location, turn: record.turn_id };
     if (typeof record.id === "string" && Array.isArray(record.turns)) location = { thread: record.id };
@@ -36,6 +49,9 @@ export class RemoteAttachments {
     const mediaType = record.media_type ?? record.mime_type;
     if (typeof mediaType === "string" && mediaType.startsWith("image/") && typeof record.data === "string" && record.data.length > 16 * 1024) {
       const ref = createHash("sha256").update(mediaType).update("\0").update(record.data).digest("hex");
+      if (location.room && location.message && location.seq && location.index !== undefined) {
+        return { ...record, data: "", remote_ref: "channel:" + Buffer.from(JSON.stringify([location.room, location.message, location.seq, location.index, ref, "images"])).toString("base64url") };
+      }
       if (location.thread && location.turn && location.item && location.index !== undefined) {
         return { ...record, data: "", remote_ref: "thread:" + Buffer.from(JSON.stringify([location.thread, location.turn, location.item, location.index, ref, ...(location.kind ? [location.kind] : [])])).toString("base64url") };
       }
@@ -54,7 +70,7 @@ export class RemoteAttachments {
     if (Array.isArray(value)) return Promise.all(value.map(item => this.hydrateRemote(item, read)));
     if (!value || typeof value !== "object") return value;
     const record = value as Record<string, unknown>;
-    if (typeof record.remote_ref === "string" && record.remote_ref.startsWith("thread:") && typeof record.media_type === "string" && record.media_type.startsWith("image/")) {
+    if (typeof record.remote_ref === "string" && (record.remote_ref.startsWith("thread:") || record.remote_ref.startsWith("channel:")) && typeof record.media_type === "string" && record.media_type.startsWith("image/")) {
       const { remote_ref, ...image } = record;
       return { ...image, data: typeof image.data === "string" && image.data ? image.data : await read(remote_ref) };
     }

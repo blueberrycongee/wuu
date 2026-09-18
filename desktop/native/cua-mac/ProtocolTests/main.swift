@@ -56,9 +56,9 @@ private func testInitializesAndAdvertisesFullComputerTool() throws {
     let actions = action?["enum"] as? [String]
     let app = properties?["app"] as? [String: Any]
     try expect(actions == [
-        "permission_status", "request_permissions", "list_apps", "observe",
+        "permission_status", "request_permissions", "list_apps", "observe", "query_snapshot",
         "click", "drag", "press_key", "press_keys", "scroll", "set_value", "type_text",
-        "select_text", "perform_action", "wait_for_change",
+        "select_text", "perform_action", "wait_for_change", "wait_for",
         "sequence",
         "activate_control",
         "conceal_app", "reveal_app",
@@ -84,8 +84,8 @@ private func testInitializesAndAdvertisesFullComputerTool() throws {
         return (actionProperty?["enum"] as? [String]) == ["click"]
     })
     let clickAlternatives = clickVariant?["anyOf"] as? [[String: Any]]
-    try expect(clickAlternatives?.contains(where: { ($0["required"] as? [String]) == ["element_id"] }) == true, "click accepts element id")
-    try expect(clickAlternatives?.contains(where: { ($0["required"] as? [String]) == ["x", "y", "coordinate_space"] }) == true, "click accepts explicit coordinates")
+    try expect(clickAlternatives?.contains(where: { ($0["required"] as? [String]) == ["element_id", "snapshot_id"] }) == true, "click accepts element id")
+    try expect(clickAlternatives?.contains(where: { ($0["required"] as? [String]) == ["x", "y", "coordinate_space", "snapshot_id"] }) == true, "click accepts explicit coordinates")
     let coordinateProperty = properties?["coordinate_space"] as? [String: Any]
     try expect((coordinateProperty?["enum"] as? [String])?.contains("normalized") == true, "coordinate space supports resize-independent normalized points")
     let foregroundPolicy = properties?["foreground_policy"] as? [String: Any]

@@ -10,7 +10,7 @@ You can return to a conversation to continue the work, or bring several agents i
 
 ## Get started
 
-The desktop preview supports Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it. The preview is unsigned and not notarized; if macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
+The desktop preview supports Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it. The preview is self-signed, without Apple Developer ID or notarization; if macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
 
 Connect your model provider in Settings, then add a local project folder as a workspace. Try a small task and check the changes and test results. The [quick start](docs/en/getting-started/index.md) walks through an example.
 
@@ -23,11 +23,16 @@ git clone https://github.com/blueberrycongee/wuu.git
 cd wuu
 make install
 wuu init
-cd /path/to/your/project
-wuu exec "review this project and explain how to run its tests"
 ```
 
-Make sure Go's binary directory is on your `PATH`. The [`wuu exec` guide](docs/en/automation/exec.md) covers scripts, JSONL output, and session controls.
+Make sure Go's binary directory is on your `PATH` and [configure a model provider](docs/en/getting-started/model-services.md#configure-the-cli), then run:
+
+```bash
+cd /path/to/your/project
+wuu exec --permission-mode read_only "review this project and explain how to run its tests"
+```
+
+The [`wuu exec` guide](docs/en/automation/exec.md) covers scripts, JSONL output, and session controls.
 
 ## Your files and data
 

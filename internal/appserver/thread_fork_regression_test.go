@@ -219,3 +219,55 @@ func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing
 		t.Fatalf("fork final answer is wrong: %+v", visible[5])
 	}
 }
+
+func TestServerThreadForkPublishesPersistedWorkspaceIdentity(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WorkspaceID = "project-stable"
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	sourceID := "fork-workspace-source"
+	// A local fork can live outside the project's root, including in a worktree.
+	sourceCWD := t.TempDir()
+	if _, err := session.CreateWithMetadata(rt.SessionDir, sourceID, sourceCWD); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SetWorkspaceID(rt.SessionDir, sourceID, rt.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	history := []providers.ChatMessage{
+		{Seq: 1, Role: "user", Content: "prompt"},
+		{Seq: 2, Role: "assistant", Content: "answer", Phase: providers.MessagePhaseFinalAnswer},
+	}
+	if err := rewriteChatHistory(rt.SessionDir, sourceID, history); err != nil {
+		t.Fatal(err)
+	}
+	display, err := loadPersistedMessages(rt.SessionDir, sourceID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turns := turnsFromPersistedHistory(sourceID, display, time.Now().UTC(), nil)
+	turn, item := finalAnswerItemForForkTest(t, turns, "answer")
+	payload, err := json.Marshal(map[string]any{
+		"id": "fork-workspace", "method": MethodThreadFork,
+		"params": ThreadForkParams{ThreadID: sourceID, TurnID: turn.ID, ItemID: item.ID, Mode: "local"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	messages := parseOutput(t, out.String())
+	response := responseByID(t, messages, "fork-workspace")
+	if response["error"] != nil {
+		t.Fatalf("fork failed: %+v", response["error"])
+	}
+	fork := remarshal[ThreadForkResult](t, response["result"]).Thread
+	started := remarshal[ThreadStartedNotification](t, notificationByMethod(t, messages, NotificationThreadStarted)["params"]).Thread
+	for _, snapshot := range []Thread{fork, started} {
+		if snapshot.WorkspaceID != rt.WorkspaceID || snapshot.CWD != sourceCWD {
+			t.Fatalf("fork snapshot lost workspace identity: id=%s workspace=%q cwd=%q", snapshot.ID, snapshot.WorkspaceID, snapshot.CWD)
+		}
+	}
+}
