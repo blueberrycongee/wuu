@@ -24,7 +24,7 @@
     "dist:mac": "npm run build:core && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
     "pack:win": "npm run build:core:win && npm run build && electron-builder --win dir --publish=never",
     "dist:win": "npm run build:core:win && npm run build && electron-builder --win nsis zip --publish=never",
-    "release:desktop": "node scripts/check-release-signing.cjs && npm run dist:mac",
+    "release:desktop": "node scripts/check-release-signing.cjs && WUU_SKIP_CUA_MAC=1 npm run dist:mac",
     "test": "npm run test:dev-launcher && npm run test:unit",
     "test:dev-launcher": "node scripts/test-dev-launcher.cjs",
     "test:unit": "vitest run --exclude=src/main/gitService.test.ts --exclude=src/main/remoteGit.test.ts && vitest run src/main/gitService.test.ts src/main/remoteGit.test.ts --maxWorkers=1 --minWorkers=1 --testTimeout=15000",

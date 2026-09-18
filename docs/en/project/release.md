@@ -65,6 +65,10 @@ unauthenticated desktop experience. The sidebar identifies the mode as
 settings are hidden. Those surfaces remain available in development builds
 while the flow is being completed.
 
+The release also sets `WUU_SKIP_CUA_MAC=1`. Computer Use is not included: the
+native CUA helper is neither compiled nor packaged, and the release verifier
+rejects either helper if one is present.
+
 The current desktop macOS job does not require Apple signing or notarization
 secrets. It builds unsigned arm64 preview artifacts because the project does
 not yet have a Developer ID certificate.
@@ -110,8 +114,8 @@ and that the DMG and ZIP are structurally valid before creating the GitHub
 Release.
 
 The app contains its required private `wuu-core` subprocess. No standalone CLI
-archive is published; a separately source-installed `wuu` CLI can coexist with
-the app and may have a different version.
+archive or CUA helper is published; a separately source-installed `wuu` CLI can
+coexist with the app and may have a different version.
 
 The final GitHub Release contains only:
 

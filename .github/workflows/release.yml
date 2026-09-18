@@ -12,6 +12,9 @@ jobs:
   desktop-macos:
     name: Desktop macOS
     runs-on: macos-15
+    env:
+      WUU_SKIP_CUA_MAC: "1"
+      WUU_ENABLE_CUA_MAC: "0"
     defaults:
       run:
         working-directory: desktop
@@ -58,7 +61,6 @@ jobs:
       - name: Test
         run: |
           npm test
-          npm run test:cua-mac
           npm run test:release-signing
 
       - name: Import persistent release signing identity
@@ -79,7 +81,7 @@ jobs:
       - name: Verify packaged app
         run: |
           node scripts/verify-mac-release.cjs
-          echo "::notice::macOS preview uses a persistent self-signed identity and is not notarized."
+          echo "::notice::macOS preview uses a persistent self-signed identity, excludes CUA, and is not notarized."
 
           core="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-core"
           version_output="$("$core" --version)"
@@ -153,7 +155,7 @@ jobs:
 
           To update, quit Wuu with Cmd+Q, wait for it to exit, then replace `/Applications/wuu.app` with the new app. Open that copy, not the copy inside the DMG. No separate CUA helper installation or certificate import is needed.
 
-          Computer Use is included. macOS may request Accessibility and Screen Recording access on first use. Moving from an older unsigned/ad-hoc build can require authorization again. Persistent signing reduces identity changes; it does not guarantee permission retention across all macOS updates. Do not reset privacy permissions as a routine upgrade step.
+          Computer Use is not included in this release. The macOS preview does not build or package the native CUA helper.
 
           EOF
 
