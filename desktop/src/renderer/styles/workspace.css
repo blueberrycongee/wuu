@@ -4900,16 +4900,18 @@ html.resizing-workspace-file-split * {
 }
 
 .conversation-pane > .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region):not(.split-scroll-region):not(.skills-scroll-region) {
-  /* The reading viewport ends above the real dock footprint. Unlike trailing
-     padding alone, this also keeps capsules off text while browsing history. */
-  margin-bottom: calc(var(--dock-composer-height) + var(--conversation-status-space, 0px));
+  /* Floating controls cover only their own footprint. History remains readable
+     down to the input's upper edge, including the space around those controls. */
+  margin-bottom: var(--conversation-input-inset, var(--dock-composer-height));
 }
 
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) .conversation-width {
-  /* Dock/status space belongs to the viewport boundary, not a second padding
-     band. Only the reading gap and consumable submission space remain here. */
+  /* At the latest position, leave room for the controls. Unlike a viewport
+     cutoff, this trailing space scrolls away when reading earlier messages. */
   --conversation-flow-bottom-space: calc(
-    var(--conversation-composer-clearance) + var(--session-tail-space, 0px)
+    var(--conversation-composer-clearance) + var(--session-tail-space, 0px) +
+    var(--conversation-status-space, 0px) + var(--dock-composer-height) -
+    var(--conversation-input-inset, var(--dock-composer-height))
   );
   padding-bottom: var(--conversation-flow-bottom-space);
 }
