@@ -2445,18 +2445,16 @@
 
 @keyframes process-text-rise-in {
   0% {
-    opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(4px);
   }
   100% {
-    opacity: 1;
     transform: translateY(0);
   }
 }
 
 @keyframes process-text-rise-out {
   0% {
-    opacity: 0.72;
+    opacity: 1;
     transform: translateY(0);
   }
   100% {

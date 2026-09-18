@@ -846,6 +846,39 @@ describe("ChannelView", () => {
     expect(status?.textContent).not.toContain("Beta");
   });
 
+  it("keeps the activity capsule when a live response replaces optimistic activity", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      let result: { messages: ChannelMessage[]; responses?: ChannelResponse[] } = { messages: [] };
+      api.listChannelMessages = vi.fn(async () => result);
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      const status = container.querySelector(".channel-response-status");
+      expect(status?.textContent).toContain("Alpha");
+      result = {
+        messages: [],
+        responses: [{
+          id: "reply-live",
+          room_id: "room-1",
+          agent_id: "agent-1",
+          session_ref: "room-session",
+          turn_id: "turn-live",
+          state: "thinking",
+          body: "",
+          created_at: "2026-07-23T00:02:00Z",
+        }],
+      };
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelector(".channel-response-status")).toBe(status);
+      expect(status?.hasAttribute("data-activity-live")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps an active room member visible when cross-server activity has no room scope", async () => {
     const unscopedAgent: NamedAgent = {
       ...agents[1],
@@ -2442,9 +2475,14 @@ describe("ChannelView", () => {
       expect(container.querySelector(".channel-response")).toBeNull();
       expect(container.querySelector(".channel-response-status")?.textContent).toContain("Alpha");
       expect(container.querySelector(".channel-room-header [role=status]")).toBeNull();
+      const status = container.querySelector(".channel-response-status");
+      expect(status?.hasAttribute("data-activity-live")).toBe(true);
       responses = [{ ...responses[0], state: "responding", body: "Here is **the answer**" }];
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("the answer");
+      expect(container.querySelector(".channel-response-status")).toBe(status);
+      expect(status?.getAttribute("data-activity-state")).toBe("responding");
+      expect(status?.hasAttribute("data-activity-live")).toBe(true);
       expect(container.querySelector('.channel-activity-region [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-state")).toBe("responding");
       messages = [{ id: "reply-live", room_id: "room-1", seq: 1, author_type: "agent", author_id: "agent-1", kind: "text", body: responses[0].body, created_at: responses[0].created_at }];
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
@@ -2476,12 +2514,15 @@ describe("ChannelView", () => {
       expect(container.querySelector(".channel-message-stream .channel-response-status")).toBeNull();
       const activityNames = (): string[] => Array.from(container.querySelectorAll(".channel-activity-slot:not([inert]) strong"), (node) => node.textContent ?? "");
       expect(activityNames()).toEqual(["Alpha", "Beta"]);
+      const activitySlots = (): HTMLElement[] => Array.from(container.querySelectorAll(".channel-activity-slot:not([inert])"));
+      const slotsBefore = activitySlots();
       const authors = (): string[] => Array.from(container.querySelectorAll(".channel-message-stream .channel-author-mention"), (node) => (node.textContent ?? "").replace(/^@/, ""));
       const refresh = async (): Promise<void> => { await act(async () => { await vi.advanceTimersByTimeAsync(2_000); }); };
       responses = [alpha, { ...beta, state: "responding", body: "Beta starts first" }];
       await refresh();
       expect(authors()).toEqual([]);
       expect(activityNames()).toEqual(["Alpha", "Beta"]);
+      expect(activitySlots()).toEqual(slotsBefore);
       responses = [{ ...alpha, state: "responding", body: "Alpha starts second" }, responses[1]];
       await refresh();
       expect(authors()).toEqual([]);

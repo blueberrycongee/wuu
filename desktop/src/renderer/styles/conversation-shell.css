@@ -1317,6 +1317,9 @@ button.conversation-status-capsule,
 
 .conversation-status-cluster {
   display: flex;
+  /* Status items appear and change while this row is already mounted.
+   * Replaying the jump-to-latest entrance makes the whole capsule row blink. */
+  animation: none;
 }
 
 /* Navigation and status share one floating row, not two stacked anchors. */

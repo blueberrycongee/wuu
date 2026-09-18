@@ -249,7 +249,12 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
     }
   };
   return (
-    <div className={`channel-response-status channel-animated-activity${failed ? " failed" : ""}`} data-activity-state={state} role={failed ? "alert" : "status"}>
+    <div
+      className={`channel-response-status channel-animated-activity${failed ? " failed" : ""}`}
+      data-activity-state={state}
+      data-activity-live={state === "thinking" || state === "responding" || undefined}
+      role={failed ? "alert" : "status"}
+    >
       <button className={`channel-activity-inspect${selected ? " selected" : ""}`} type="button" disabled={!onInspect} onClick={onInspect}
         onPointerEnter={(event) => { if (onInspect && event.pointerType !== "touch") setAvatarTurn(value => value + 1); }}
         aria-expanded={onInspect ? selected : undefined}
@@ -1964,7 +1969,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 onInspectCoordinator={ref => inspectSession(ref, undefined, t("channels.sessions.coordination"))}
                 onRetry={async (sessionRef) => { await window.wuu!.resumeChannelSession({ sessionRef }); await refreshMessages(selectedRoomID, true); }} />
               <ChannelActivityPresence key={`members:${selectedRoomID}`}>
-              {responseActivities.filter((response, index, items) => items.findIndex(item => item.agent_id === response.agent_id) === index).map((response) => <ChannelAgentActivity key={response.id}
+              {responseActivities.filter((response, index, items) => items.findIndex(item => item.agent_id === response.agent_id) === index).map((response) => <ChannelAgentActivity key={response.agent_id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}
                 selected={!inspectorClosing && inspectedSession?.agentID === response.agent_id}
