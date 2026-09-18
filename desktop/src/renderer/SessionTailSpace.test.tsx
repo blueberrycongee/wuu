@@ -16,6 +16,7 @@ let host: HTMLDivElement;
 let naturalHeight: number;
 let viewportHeight: number;
 let statusHeight: number;
+let composerHeight: number;
 let messageBottom: number;
 let messageHeight: number;
 let top: number;
@@ -36,12 +37,13 @@ type Props = {
   mountKey?: string;
   processItems?: ThreadItem[];
   todoComplete?: boolean;
+  composer?: boolean;
 };
 function LayoutSignal() {
   React.useLayoutEffect(() => { api.scheduleStreamScroll(); });
   return null;
 }
-function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete }: Props) {
+function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer }: Props) {
   const [statusClusterNode, setStatusClusterNode] = React.useState<HTMLDivElement | null>(null);
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
   api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false, statusClusterNode });
@@ -50,7 +52,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
       api.conversationScrollRef.current = node;
       if (!node) return;
       Object.defineProperties(node, {
-        clientHeight: { configurable: true, get: () => viewportHeight - statusSpace() },
+        clientHeight: { configurable: true, get: () => viewportHeight - statusSpace() - Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--dock-composer-height") || "0") },
         scrollHeight: { configurable: true, get: () => Math.max(node.clientHeight, naturalHeight + tailSpace()) },
         scrollTop: { configurable: true, get: () => { top = Math.max(0, Math.min(top, node.scrollHeight - node.clientHeight)); return top; }, set: value => { top = Math.max(0, Math.min(value, node.scrollHeight - node.clientHeight)); } },
       });
@@ -63,6 +65,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
         {signalLayout ? <LayoutSignal /> : null}
       </div>
     </div>
+    {composer ? <div data-dock ref={api.dockComposerRef} /> : null}
     {pluginHost ? <ConversationStatusCluster host={pluginHost} visible threadId={id ?? undefined}
       clusterRef={setStatusClusterNode}
       onOpenSession={onOpenSession}
@@ -111,6 +114,7 @@ beforeEach(() => {
   naturalHeight = 2000;
   viewportHeight = 600;
   statusHeight = 34;
+  composerHeight = 100;
   messageBottom = 1850;
   messageHeight = 80;
   top = 0;
@@ -135,6 +139,7 @@ beforeEach(() => {
     if (this.hasAttribute("data-content")) return { height: naturalHeight + tailSpace() } as DOMRect;
     if (this.hasAttribute("data-viewport")) return { top: 100, height: this.clientHeight } as DOMRect;
     if (this.classList.contains("conversation-status-cluster")) return { height: statusHeight } as DOMRect;
+    if (this.hasAttribute("data-dock")) return { height: composerHeight } as DOMRect;
     if (this.hasAttribute("data-user-message-id")) return { top: 100 + messageBottom - messageHeight - top, bottom: 100 + messageBottom - top, height: messageHeight } as DOMRect;
     return { height: 34 } as DOMRect;
   });
@@ -246,16 +251,52 @@ it("does not mistake another client's message for a local queued input", () => {
   expect(tailSpace()).toBeGreaterThan(0);
 });
 
-it("positions a delayed child-only mount from a layout signal", () => {
+it("starts placement and entrance together for a delayed child-only mount", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   const message = document.createElement("div");
   message.dataset.userMessageId = "submitted";
+  const bubble = document.createElement("div");
+  bubble.dataset.messageArrival = "";
+  message.append(bubble);
   host.querySelector("[data-content]")!.append(message);
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+  expect(animations).toHaveLength(1);
+  expect(animations[0].element).toBe(bubble);
   tick(0); tick(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
+  animations[0].playState = "finished";
+  render({ messageID: "old", running: true });
+  expect(animations).toHaveLength(1);
+});
+
+it.each(["following", "placing", "holding", "paused"] as const)("settles queue drawer removal in the same frame while %s", mode => {
+  composerHeight = 200;
+  render({ messageID: "old", composer: true });
+  if (mode === "holding") submit({ composer: true });
+  if (mode === "placing") {
+    act(() => api.requestSubmittedQueryScroll("submitted"));
+    render({ messageID: "submitted", running: true, composer: true });
+    tick(0); tick(180);
+  }
+  if (mode === "paused") scrollUp(200);
+  const before = scrollTop();
+  composerHeight = 100;
+  act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+  tick(mode === "placing" ? 180 : 400);
+  const node = api.conversationScrollRef.current!;
+  expect(scrollTop()).toBe(mode === "following" ? node.scrollHeight - node.clientHeight : before);
+  // The next observer delivery must not produce a second correction.
+  act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+  if (mode === "placing") {
+    tick(360);
+    const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
+    expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(node, message, false));
+    return;
+  }
+  tick(416);
+  expect(scrollTop()).toBe(mode === "following" ? node.scrollHeight - node.clientHeight : before);
 });
 
 it("discards failed submission ownership and reserve without affecting a later submission", () => {
