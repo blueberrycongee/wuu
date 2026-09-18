@@ -5086,7 +5086,7 @@ export function App(): JSX.Element {
           ) : null}
           <AppSidebar
             sidebarCollapsed={sidebarCollapsed}
-            onToggleSidebar={toggleSessionSwitcher}
+            onToggleSidebar={sidebarDrawerMode ? undefined : toggleSessionSwitcher}
             collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
               { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
               { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
@@ -5425,16 +5425,24 @@ export function App(): JSX.Element {
         {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
-            {sidebarToggleVisible && sidebarCollapsed ? (
+            {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
               <button
                 className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
                 data-wuu-component="sidebar-toggle"
                 type="button"
-                aria-label={t("app.expandLeftSidebar")}
-                aria-pressed={false}
+                aria-label={t(
+                  sidebarDrawerVisible
+                    ? "app.collapseLeftSidebar"
+                    : "app.expandLeftSidebar",
+                )}
+                aria-pressed={sidebarDrawerVisible}
                 onClick={toggleSessionSwitcher}
+                onPointerEnter={scheduleSidebarDrawerOpen}
+                onPointerLeave={(event) =>
+                  scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+                }
               >
-                <SidePanelToggleIcon side="left" open={false} />
+                <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
             <ConversationTitleContent
