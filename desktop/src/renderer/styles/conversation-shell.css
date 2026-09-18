@@ -1426,16 +1426,53 @@ button.conversation-status-capsule,
   font-size: var(--font-ui);
   pointer-events: auto;
 }
-.conversation-status-preview-card .conversation-status-todo-card-header { font-size: inherit; }
-.managed-session-preview-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+
+/* Preview rows keep one text column: the running spinner trails the title
+ * where the old "running" label sat, so rows never repeat that status as text. */
+.managed-session-preview-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
 .managed-session-preview-list li { min-width: 0; }
-.managed-session-preview-item { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
+.managed-session-preview-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--icon-size);
+  align-items: center;
+  gap: var(--menu-item-gap);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
 .managed-session-preview-item:hover { background: var(--ink-overlay-6); }
 .managed-session-preview-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.managed-session-preview-status { display: grid; place-items: center; color: var(--shell-todo-card-muted); }
+.managed-session-preview-status > svg { width: var(--icon-size); height: var(--icon-size); }
 .managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.managed-session-preview-state { flex-shrink: 0; margin-inline-start: auto; color: var(--shell-todo-card-muted); }
-.managed-session-preview-all { align-self: stretch; min-height: 32px; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
-.managed-session-preview-all:hover { background: var(--ink-overlay-6); }
+.managed-session-preview-empty { margin: 0; padding: var(--menu-inset) var(--menu-item-padding-inline); color: var(--shell-todo-card-muted); }
+
+/* Quiet footer action: separated from the rows, secondary until hovered, and
+ * trailing a chevron so it reads as navigation rather than another session. */
+.managed-session-preview-separator { height: 1px; background: var(--shell-todo-card-border); }
+.managed-session-preview-all {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--menu-item-gap);
+  width: 100%;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--shell-todo-card-muted);
+  font: inherit;
+  text-align: start;
+}
+.managed-session-preview-all:hover { background: var(--ink-overlay-6); color: var(--shell-todo-card-ink); }
 .managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
 .conversation-status-todo-card-header span,

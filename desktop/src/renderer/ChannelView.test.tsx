@@ -1053,11 +1053,11 @@ describe("ChannelView", () => {
     expect(detailsToggle).not.toBeNull();
     act(() => detailsToggle?.click());
     act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
-    const detailsDialog = document.querySelector(".sidebar-name-dialog");
-    expect(detailsDialog?.textContent).toContain("群聊详情");
-    expect(detailsDialog?.textContent).toContain("群成员");
-    expect(detailsDialog?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
-    const roomNameInput = detailsDialog?.querySelector<HTMLInputElement>(".channel-room-settings-section input");
+    const detailsPanel = container.querySelector(".channel-settings-panel");
+    expect(detailsPanel?.textContent).toContain("群聊详情");
+    expect(detailsPanel?.textContent).toContain("群成员");
+    expect(detailsPanel?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
+    const roomNameInput = detailsPanel?.querySelector<HTMLInputElement>(".channel-room-settings-section input");
     act(() => {
       setInputValue(roomNameInput!, "renamed group");
       roomNameInput?.focus();
@@ -1072,12 +1072,8 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-conversation")?.classList.contains("details-open")).toBe(false);
     expect(container.querySelector(".channel-room-main")).not.toBeNull();
     expect(container.querySelector(".channel-conversation-heading")).toBeNull();
-    const detailsOverlay = document.querySelector<HTMLElement>(".sidebar-name-dialog-overlay-drawer");
-    act(() => detailsOverlay?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
-    expect(detailsDialog?.classList.contains("closing")).toBe(true);
-    expect(document.querySelector(".sidebar-name-dialog")).not.toBeNull();
-    act(() => detailsDialog?.dispatchEvent(new Event("animationend", { bubbles: true })));
-    expect(document.querySelector(".sidebar-name-dialog")).toBeNull();
+    act(() => container.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(container.querySelector(".channel-settings-panel")).toBeNull();
     act(() => root?.render(<ChannelView selectedRoomID="room-2" />));
     await settle();
     expect(api.listChannelMessages).toHaveBeenCalledWith({ room_id: "room-2", limit: 500 });
@@ -1367,65 +1363,23 @@ describe("ChannelView", () => {
     expect(document.body.style.cursor).not.toBe("col-resize");
   });
 
-  it("resizes inline settings without replacing the chat, clamps width, and ends cancelled drags", async () => {
+  it("keeps conversation settings as a floating panel over the chat", async () => {
     Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
     const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[1]] };
     root = createRoot(container);
     act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id} />));
     await settle();
-    const view = container.querySelector<HTMLElement>(".channel-view")!;
-    Object.defineProperty(view, "clientWidth", { configurable: true, value: 1000 });
     const stream = container.querySelector('[role="log"]');
     const toggle = container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")!;
     act(() => toggle.click());
-    const separator = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
-    expect(separator.hidden).toBe(false);
-    const width = () => Number(separator.getAttribute("aria-valuenow"));
-    const pointer = (target: EventTarget, type: string, x: number) => act(() => {
-      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 });
-      Object.defineProperty(event, "pointerId", { value: 1 });
-      target.dispatchEvent(event);
-    });
-    const start = width();
-    pointer(separator, "pointerdown", 660);
-    pointer(window, "pointermove", 600);
-    expect(width()).toBe(start + 60);
-    pointer(window, "pointermove", -1000);
-    expect(width()).toBe(Number(separator.getAttribute("aria-valuemax")));
-    pointer(window, "pointermove", 2000);
-    expect(width()).toBe(Number(separator.getAttribute("aria-valuemin")));
-    pointer(window, "pointercancel", 2000);
-    const cancelledWidth = width();
-    pointer(window, "pointermove", 600);
-    expect(width()).toBe(cancelledWidth);
-    expect(document.body.style.cursor).not.toBe("col-resize");
-    act(() => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
-    expect(width()).toBe(cancelledWidth + 16);
-    act(() => separator.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    expect(width()).toBe(start);
+    const panel = container.querySelector("aside.channel-settings-panel");
+    expect(panel).not.toBeNull();
+    expect(container.querySelector('[role="separator"][aria-controls="channel-conversation-settings"]')).toBeNull();
+    expect(container.querySelector(".channel-view")?.classList.contains("has-agent-settings")).toBe(false);
     expect(container.querySelector('[role="log"]')).toBe(stream);
-    pointer(separator, "pointerdown", 660);
+    expect(container.querySelector(".channel-room-main")?.hasAttribute("inert")).toBe(false);
     act(() => toggle.click());
-    expect(document.body.style.cursor).not.toBe("col-resize");
-    pointer(window, "pointermove", 500);
-    act(() => toggle.click());
-    expect(container.querySelector('[aria-controls="channel-conversation-settings"][role="separator"]')?.getAttribute("aria-valuenow")).toBe(String(start));
-    const reopened = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
-    pointer(reopened, "pointerdown", 660);
-    pointer(window, "pointermove", 580);
-    pointer(window, "pointerup", 580);
-    pointer(window, "pointermove", 500);
-    expect(reopened.getAttribute("aria-valuenow")).toBe(String(start + 80));
-    act(() => toggle.click());
-    Object.defineProperty(view, "clientWidth", { configurable: true, value: 830 });
-    act(() => toggle.click());
-    const constrained = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
-    act(() => constrained.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
-    expect(Number(constrained.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(830 - 400);
-    act(() => toggle.click());
-    Object.defineProperty(view, "clientWidth", { configurable: true, value: 800 });
-    act(() => toggle.click());
-    expect(container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!.hidden).toBe(true);
+    expect(container.querySelector("aside.channel-settings-panel")).toBeNull();
   });
 
   it("opens the DM agent settings without replacing the chat and keeps a failed draft for retry", async () => {
@@ -2152,26 +2106,26 @@ describe("ChannelView", () => {
     expect(manageResearch).not.toBeNull();
     act(() => manageResearch?.click());
     act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
-    const detailsDialog = document.querySelector(".sidebar-name-dialog");
-    expect(detailsDialog?.textContent).toContain("群聊详情");
-    expect(document.querySelector(".sidebar-name-dialog-overlay-drawer")).not.toBeNull();
-    expect(detailsDialog?.classList.contains("sidebar-name-dialog-drawer")).toBe(true);
-    expect(detailsDialog?.textContent).toContain("群成员");
-    expect(detailsDialog?.textContent).not.toContain("群公告");
-    expect(detailsDialog?.querySelectorAll(".channel-room-member-row")).toHaveLength(0);
-    expect(detailsDialog?.textContent).toContain("危险操作");
-    expect(detailsDialog?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
-    const addMemberButton = detailsDialog?.querySelector<HTMLButtonElement>(".channel-room-member-add");
+    const detailsPanel = container.querySelector(".channel-settings-panel");
+    expect(detailsPanel?.textContent).toContain("群聊详情");
+    expect(document.querySelector(".sidebar-name-dialog-overlay-drawer")).toBeNull();
+    expect(detailsPanel?.classList.contains("sidebar-name-dialog-drawer")).toBe(false);
+    expect(detailsPanel?.textContent).toContain("群成员");
+    expect(detailsPanel?.textContent).not.toContain("群公告");
+    expect(detailsPanel?.querySelectorAll(".channel-room-member-row")).toHaveLength(0);
+    expect(detailsPanel?.textContent).toContain("危险操作");
+    expect(detailsPanel?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
+    const addMemberButton = detailsPanel?.querySelector<HTMLButtonElement>(".channel-room-member-add");
     expect(addMemberButton?.textContent).toContain("新增成员");
     act(() => addMemberButton?.click());
     const memberDialog = document.querySelector<HTMLFormElement>(".channel-room-member-dialog");
     expect(memberDialog?.textContent).toContain("添加 Agent");
     expect(memberDialog?.classList.contains("sidebar-name-dialog-drawer")).toBe(false);
-    expect(document.querySelectorAll('.sidebar-name-dialog[role="dialog"]')).toHaveLength(2);
+    expect(document.querySelectorAll('.sidebar-name-dialog[role="dialog"]')).toHaveLength(1);
     expect(memberDialog?.querySelector(".sidebar-name-dialog-actions")).not.toBeNull();
     expect(memberDialog?.querySelector(".select-menu")).toBeNull();
-    expect(detailsDialog?.getAttribute("aria-hidden")).toBe("true");
-    expect(detailsDialog?.textContent).toContain("群聊详情");
+    expect(detailsPanel?.getAttribute("aria-hidden")).toBe("true");
+    expect(detailsPanel?.textContent).toContain("群聊详情");
     const addAgent = memberDialog?.querySelector<HTMLButtonElement>('.channel-member-picker-option[role="option"]');
     expect(addAgent).not.toBeNull();
     act(() => addAgent?.click());
@@ -2186,7 +2140,7 @@ describe("ChannelView", () => {
     });
 
     expect(document.querySelector(".channel-room-member-dialog")).toBeNull();
-    expect(document.querySelector(".sidebar-name-dialog-drawer")?.textContent).toContain("群聊详情");
+    expect(container.querySelector(".channel-settings-panel")?.textContent).toContain("群聊详情");
     const confirmDelete = vi.spyOn(window, "confirm").mockReturnValue(true);
     const deleteButton = document.querySelector<HTMLButtonElement>(".channel-room-danger-zone button");
     expect(deleteButton?.textContent).toBe("删除频道");
@@ -2209,9 +2163,9 @@ describe("ChannelView", () => {
     act(() => container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")?.click());
     act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
 
-    const detailsDialog = document.querySelector(".sidebar-name-dialog");
-    expect(detailsDialog?.querySelectorAll(".channel-room-member-row")).toHaveLength(2);
-    const alphaRow = Array.from(detailsDialog?.querySelectorAll<HTMLDivElement>(".channel-room-member-row") ?? [])
+    const detailsPanel = container.querySelector(".channel-settings-panel");
+    expect(detailsPanel?.querySelectorAll(".channel-room-member-row")).toHaveLength(2);
+    const alphaRow = Array.from(detailsPanel?.querySelectorAll<HTMLDivElement>(".channel-room-member-row") ?? [])
       .find((row) => row.textContent?.includes("Alpha"));
     expect(alphaRow).not.toBeNull();
     const removeButton = alphaRow?.querySelector<HTMLButtonElement>('button[aria-label="移除 Alpha"]');

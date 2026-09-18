@@ -48,6 +48,7 @@
 .channel-agent-editor-dialog .sidebar-name-dialog-actions { padding: 0; }
 .channel-agent-editor-dialog .sidebar-name-dialog-actions button,
 .channel-settings-actions button { min-width: 64px; min-height: 36px; font-size: var(--font-ui); border-radius: var(--radius-xs); transform: none; }
+.channel-settings-panel.channel-agent-editor-dialog { width: min(380px, calc(100% - 24px)); }
 .channel-agent-editor-appearance { display: grid; gap: 12px; padding: 0; }
 .channel-agent-editor-appearance .agent-avatar-creator { gap: 10px; }
 .channel-agent-editor-appearance .agent-avatar-creator legend { margin-bottom: 5px; font-size: var(--font-sm); font-weight: 400; }

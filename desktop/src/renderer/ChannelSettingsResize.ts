@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 interface ChannelPanelResizeOptions {
   storageKey: string;
@@ -16,15 +16,7 @@ function initialWidth(options: ChannelPanelResizeOptions): number {
   return Number.isFinite(width) ? Math.max(options.minWidth, Math.min(options.maxWidth, width)) : options.defaultWidth;
 }
 
-export function useChannelSettingsResize(open: boolean) {
-  const resize = useChannelPanelResize(open, {
-    storageKey: "wuu.channels.settingsWidth", defaultWidth: 340,
-    minWidth: 280, maxWidth: 560, dockedAbove: 820,
-  });
-  return { ...resize, style: { "--channel-settings-width": `${resize.width}px` } as CSSProperties };
-}
-
-// Settings and session inspectors share drag cleanup, persistence and chat clearance.
+// Session inspectors share drag cleanup, persistence and chat clearance.
 export function useChannelPanelResize<T extends HTMLElement = HTMLElement>(open: boolean, options: ChannelPanelResizeOptions) {
   const { storageKey, defaultWidth, minWidth, maxWidth: limit, dockedAbove } = options;
   const ref = useRef<T>(null);
