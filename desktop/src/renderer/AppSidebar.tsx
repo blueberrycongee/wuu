@@ -86,6 +86,7 @@ import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { PluginIcon } from "./PublicIcon";
 import { AppModeSwitch } from "./AppModeSwitch";
+import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useI18n } from "./i18n";
 import {
   NavigationPresentation,
@@ -387,7 +388,9 @@ export function AppSidebar({
   mobileNavigation = false,
   drawerVisible = false,
   sidebarVisible = true,
+  sidebarCollapsed = false,
   onNavigateAway,
+  onToggleSidebar,
 }: {
   state: AppState;
   // The sidebar renders scratch conversations through the same ProjectList
@@ -466,7 +469,9 @@ export function AppSidebar({
   mobileNavigation?: boolean;
   drawerVisible?: boolean;
   sidebarVisible?: boolean;
+  sidebarCollapsed?: boolean;
   onNavigateAway?: () => void;
+  onToggleSidebar?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
@@ -1556,7 +1561,20 @@ export function AppSidebar({
       onPointerLeave={onPointerLeave}
     >
       <div className="sidebar-content">
-        <div className="traffic-spacer" />
+        <div className="traffic-spacer">
+          {onToggleSidebar ? (
+            <button
+              className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
+              data-wuu-component="sidebar-toggle"
+              type="button"
+              aria-label={t(sidebarCollapsed ? "app.expandLeftSidebar" : "app.collapseLeftSidebar")}
+              aria-pressed={!sidebarCollapsed}
+              onClick={onToggleSidebar}
+            >
+              <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
+            </button>
+          ) : null}
+        </div>
         <AppModeSwitch
           mode="harness"
           unreadViewOpen={unreadViewOpen}

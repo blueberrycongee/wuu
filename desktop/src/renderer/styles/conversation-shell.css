@@ -258,6 +258,24 @@
 }
 
 .title-block,
+.conversation-title-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversation-title-heading h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-title-heading .session-tab-new {
+  flex: 0 0 auto;
+}
+
 .title-actions {
   display: flex;
   min-width: 0;

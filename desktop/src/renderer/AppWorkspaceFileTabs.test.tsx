@@ -243,8 +243,8 @@ describe("workspace file tabs", () => {
 
     const fileLink = container.querySelector<HTMLButtonElement>(".rich-file-link");
     expect(fileLink).not.toBeNull();
-    expect(container.querySelectorAll(".session-tab")).toHaveLength(1);
-    expect(container.querySelector(".session-tab.active")?.textContent).toContain(
+    expect(container.querySelectorAll(".session-tab")).toHaveLength(0);
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toContain(
       "artifact conversation",
     );
     expect(
@@ -257,8 +257,8 @@ describe("workspace file tabs", () => {
     });
     await flushAsync();
 
-    expect(container.querySelectorAll(".session-tab")).toHaveLength(1);
-    expect(container.querySelector(".session-tab.active")?.textContent).toContain(
+    expect(container.querySelectorAll(".session-tab")).toHaveLength(0);
+    expect(container.querySelector(".conversation-title-heading h1")?.textContent).toContain(
       "artifact conversation",
     );
     expect(container.querySelector(".rich-file-link")).not.toBeNull();

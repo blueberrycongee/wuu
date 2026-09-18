@@ -1513,17 +1513,10 @@ export function App(): JSX.Element {
   // empty frame.
   const cachedThreadPaneIDs = useMemo(() => {
     const activeID = state.thread?.id;
-    const openThreadIDs = new Set(
-      state.sessionTabs
-        .filter(
-          (tab): tab is Extract<SessionTab, { kind: "thread" }> =>
-            tab.kind === "thread",
-        )
-        .map((tab) => tab.threadID),
-    );
-    if (activeID) {
-      openThreadIDs.add(activeID);
-    }
+    // Conversation navigation lives in the sidebar. Keep only the active
+    // pane mounted so opening many sessions cannot retain their full DOM and
+    // markdown trees in the renderer.
+    const openThreadIDs = new Set(activeID ? [activeID] : []);
     const next = selectCachedConversationPaneIDs({
       activeThreadID: activeID,
       previousThreadIDs: cachedThreadPaneHistoryRef.current,
@@ -2736,9 +2729,10 @@ export function App(): JSX.Element {
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";
-  const sessionTabsVisible = Boolean(
-    state.initialized && !poppedOutMode && !compactNavigation,
-  );
+  // The sidebar is the single conversation switcher. Session state remains
+  // available for recovery and drafts, but the titlebar no longer renders a
+  // growing tab strip or keeps background conversation panes mounted.
+  const sessionTabsVisible = false;
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 
@@ -5041,29 +5035,7 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = sidebarToggleVisible ? (
-    <button
-      className="icon-button side-panel-toggle-button sidebar-toggle-button"
-      data-wuu-component="sidebar-toggle"
-      type="button"
-      aria-label={t(
-        sidebarDrawerMode && !sidebarDrawerVisible
-          ? "app.expandLeftSidebar"
-          : "app.collapseLeftSidebar",
-      )}
-      aria-pressed={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
-      onClick={toggleSessionSwitcher}
-      onPointerEnter={scheduleSidebarDrawerOpen}
-      onPointerLeave={(event) =>
-        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-      }
-    >
-      <SidePanelToggleIcon
-        side="left"
-        open={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
-      />
-    </button>
-  ) : null;
+  const collaborationNavigation = null;
 
   return (
     <WuuMascotRuntimeProvider
@@ -5113,6 +5085,8 @@ export function App(): JSX.Element {
             </div>
           ) : null}
           <AppSidebar
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSessionSwitcher}
             collaborationNavigationNodes={ENABLE_GROUP_CHAT ? [
               { id: "section:collaboration", kind: "section", label: t("sidebar.collaboration") },
               { id: "command:new-channel", kind: "command", parentId: "section:collaboration", depth: 1,
@@ -5451,27 +5425,16 @@ export function App(): JSX.Element {
         {composerNavigation ? <div aria-hidden="true" /> : (
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
-            {sidebarToggleVisible ? (
+            {sidebarToggleVisible && sidebarCollapsed ? (
               <button
-                className="icon-button side-panel-toggle-button sidebar-toggle-button"
+                className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
                 data-wuu-component="sidebar-toggle"
                 type="button"
-                aria-label={t(
-                  sidebarDrawerMode && !sidebarDrawerVisible
-                    ? "app.expandLeftSidebar"
-                    : "app.collapseLeftSidebar",
-                )}
-                aria-pressed={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
+                aria-label={t("app.expandLeftSidebar")}
+                aria-pressed={false}
                 onClick={toggleSessionSwitcher}
-                onPointerEnter={scheduleSidebarDrawerOpen}
-                onPointerLeave={(event) =>
-                  scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-                }
               >
-                <SidePanelToggleIcon
-                  side="left"
-                  open={sidebarDrawerMode ? sidebarDrawerVisible : !sidebarCollapsed}
-                />
+                <SidePanelToggleIcon side="left" open={false} />
               </button>
             ) : null}
             <ConversationTitleContent

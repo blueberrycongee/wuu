@@ -780,13 +780,24 @@
 }
 
 .traffic-spacer {
-  /* macOS: reserve room for traffic lights (trafficLightPosition ~18,15)
-   * so the brand row sits under them. Other desktops put window controls
-   * on the right (or draw them in the titlebar), so keep only a short
-   * drag strip here and let the brand sit higher. */
+  /* Keep window controls and sidebar navigation in the first chrome row. */
+  position: relative;
+  display: flex;
   height: 46px;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: var(--sidebar-row-pad-x);
   -webkit-app-region: drag;
+}
+
+.traffic-spacer .sidebar-collapse-toggle {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  -webkit-app-region: no-drag;
 }
 
 :root[data-platform="linux"] .traffic-spacer,
