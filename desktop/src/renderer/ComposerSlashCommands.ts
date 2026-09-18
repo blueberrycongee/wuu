@@ -273,19 +273,6 @@ export function buildComposerSlashCommands({
       disabledReason: needsRuntime ?? needsIdleThread ?? compactDisabledReason
     },
     {
-      id: "handoff",
-      name: "handoff",
-      title: t("slash.handoff.title"),
-      description: t("slash.handoff.description"),
-      tag: t("slash.tag.conversation"),
-      kind: "action",
-      action: "handoff",
-      argumentHint: t("slash.handoff.argumentHint"),
-      aliases: ["hand-off"],
-      keywords: ["handoff", "model", "交接", "换模型", "新会话"],
-      disabledReason: needsRuntime ?? needsIdleThread ?? handoffDisabledReason
-    },
-    {
       id: "terminal",
       name: "terminal",
       title: t("slash.terminal.title"),

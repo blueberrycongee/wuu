@@ -66,10 +66,6 @@ describe("composer slash commands", () => {
       title: "Reset side chat",
       tag: "Side chat",
     });
-    expect(commands.find((command) => command.name === "handoff")).toMatchObject({
-      title: "Handoff to a new session",
-      action: "handoff",
-    });
   });
   it("shows /fast only when the current provider exposes a fast model", () => {
     const commands = buildComposerSlashCommands({
