@@ -16,7 +16,6 @@
     "dev:direct": "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
     "lab:mascot": "vite dev/mascot --host 127.0.0.1 --port 5177",
     "build:cua-mac": "node scripts/build-cua-mac.cjs",
-    "build:speech-mac": "node scripts/build-speech-mac.cjs",
     "icon:generate": "bun scripts/generate-icon.ts",
     "build:core": "node scripts/build-core.cjs",
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
@@ -75,7 +74,6 @@
     "directories": {
       "output": "release"
     },
-    "afterPack": "scripts/after-pack.cjs",
     "files": [
       "out/**/*",
       "vendor/zeron/LICENSE",

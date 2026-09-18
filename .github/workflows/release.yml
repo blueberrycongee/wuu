@@ -92,19 +92,6 @@ jobs:
             exit 1
           fi
 
-          speech_helper="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-speech-mac"
-          if [ -e "$speech_helper" ]; then
-            echo "::error::Packaged app must not include the internal speech helper."
-            exit 1
-          fi
-
-          for permission in NSMicrophoneUsageDescription NSSpeechRecognitionUsageDescription; do
-            if plutil -extract "$permission" raw -o - release/mac-arm64/wuu.app/Contents/Info.plist >/dev/null 2>&1; then
-              echo "::error::Packaged app must not include $permission."
-              exit 1
-            fi
-          done
-
           hdiutil verify release/wuu-*-mac-arm64.dmg
           unzip -t release/wuu-*-mac-arm64.zip >/tmp/wuu-desktop-zip-test.txt
 

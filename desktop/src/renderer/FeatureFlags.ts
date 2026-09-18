@@ -16,28 +16,9 @@ export const ENABLE_GROUP_CHAT =
   import.meta.env.VITE_ENABLE_GROUP_CHAT !== "false";
 
 /**
- * Voice input and its optional BYOK text polish are hidden while the native
- * recognition flow and polish experience are still being stabilized.
- *
- * Use `VITE_ENABLE_VOICE_INPUT=true npm run dev` for internal testing.
- */
-export const ENABLE_VOICE_INPUT =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_VOICE_INPUT === "true";
-
-/**
  * The embedded browser remains an internal development capability. Production
  * builds do not expose its workspace surface even if the build environment
  * happens to contain the opt-in variable.
  */
 export const ENABLE_EMBEDDED_BROWSER =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_BROWSER === "true";
-
-/**
- * The Skills management assistant is an early surface-assistant experiment.
- * Keep it out of release builds until its
- * ephemeral-session and correction UX have been validated through dogfooding.
- *
- * Use `VITE_ENABLE_MANAGEMENT_ASSISTANT=true npm run dev` for internal testing.
- */
-export const ENABLE_MANAGEMENT_ASSISTANT =
-  import.meta.env.VITE_ENABLE_MANAGEMENT_ASSISTANT === "true";

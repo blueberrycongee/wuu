@@ -1,4 +1,5 @@
 import { readCatalogSkill } from "./remoteSkills";
+import { inheritSystemProxy } from "./systemProxy";
 import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { PhoneAccess, phonePairLink } from "./phoneAccess";
@@ -165,10 +166,7 @@ import type {
   SideThreadHistoryResult,
   SideThreadSendParams,
   SideThreadSendResult,
-  VoiceInputSettings,
-  VoiceInputSettingsSnapshot,
   ChannelRoomPreferences,
-  VoicePermissionStatus,
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
@@ -191,7 +189,6 @@ import {
   getThemePreference,
   getLanguagePreference,
   getPluginConflictPreferences,
-  getVoiceInputSettings,
   getChannelRoomPreferences,
   isOnboardingComplete,
   completeOnboarding,
@@ -200,7 +197,6 @@ import {
   setThemePreference,
   setLanguagePreference,
   setPluginConflictPreference,
-  setVoiceInputSettings,
   setChannelRoomPreferences,
   type MessageFlowFontSize,
   type ThemePreference,
@@ -215,7 +211,6 @@ import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigat
 import { ProjectManager, wuuHomePath } from "./projects";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
-import { createSpeechRecognitionService } from "./speechRecognition";
 import {
   registerRenderableFileProtocol,
   registerRenderableFileScheme,
@@ -269,8 +264,6 @@ const DARK_WINDOW_BACKGROUND = "#1d2024";
 const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 48;
 const ENABLE_EMBEDDED_BROWSER =
   !app.isPackaged && process.env.WUU_ENABLE_BROWSER === "1";
-const ENABLE_VOICE_INPUT =
-  !app.isPackaged && process.env.VITE_ENABLE_VOICE_INPUT === "true";
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
@@ -283,10 +276,6 @@ let mainWindow: BrowserWindow | null = null;
 const activeSystemNotifications = new Set<Notification>();
 const windowRegistry: WindowRegistry = createWindowRegistry();
 const projectManager = new ProjectManager();
-const speechRecognitionService = createSpeechRecognitionService({
-  askForMicrophoneAccess: () =>
-    systemPreferences.askForMediaAccess("microphone"),
-});
 
 // Build-time globals injected by electron.vite.config.ts. TypeScript
 // doesn't know about them by default; declare them so we can reference
@@ -905,25 +894,6 @@ function broadcastLanguagePreference(): void {
   broadcastToAll("wuu:language-preference-changed", getLanguagePreference());
 }
 
-function broadcastVoiceInputSettings(): void {
-  broadcastToAll("wuu:voice-input-settings-changed", getVoiceInputSettings());
-}
-
-function microphonePermissionStatus(): VoicePermissionStatus {
-  if (process.platform !== "darwin") return "unavailable";
-  const status = systemPreferences.getMediaAccessStatus("microphone");
-  if (status === "not-determined") return "not_determined";
-  if (
-    status === "granted" ||
-    status === "denied" ||
-    status === "restricted" ||
-    status === "unknown"
-  ) {
-    return status;
-  }
-  return "unknown";
-}
-
 function syncThemeAcrossWindows(): void {
   syncNativeThemeSource();
   syncThemedWindowChrome();
@@ -1190,6 +1160,7 @@ async function directorySize(path: string): Promise<number> {
 }
 
 app.whenReady().then(async () => {
+  await inheritSystemProxy();
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
   setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
   installProductionAppShellGuards({
@@ -1605,20 +1576,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:text-polish", (event, text: string) =>
     appServerRequest<TextPolishResult>(event, "text/polish", { text }),
   );
-  ipcMain.handle("wuu:speech-start", (event, locale: string) => {
-    if (!ENABLE_VOICE_INPUT) {
-      return { ok: false as const, error: "platform_unsupported" as const };
-    }
-    return speechRecognitionService.start(locale, (payload) => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send("wuu:speech-event", payload);
-      }
-    });
-  });
-  ipcMain.handle("wuu:speech-stop", () => {
-    speechRecognitionService.stop();
-    return { ok: true as const };
-  });
   ipcMain.handle("wuu:open-external", async (_event, url: string) => {
     await openExternalNavigation(url);
   });
@@ -2140,9 +2097,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-conflict-preferences-get", () => getPluginConflictPreferences());
   ipcMain.handle("wuu:plugin-conflict-preference-set", (_event, key: string, pluginId: string) =>
     setPluginConflictPreference(String(key), String(pluginId)));
-  ipcMain.on("wuu:voice-input-settings-get-sync", (event) => {
-    event.returnValue = getVoiceInputSettings();
-  });
   ipcMain.on("wuu:channel-room-preferences-get-sync", (event) => {
     event.returnValue = getChannelRoomPreferences();
   });
@@ -2150,44 +2104,6 @@ app.whenReady().then(async () => {
     "wuu:channel-room-preferences-set",
     (_event, preferences: ChannelRoomPreferences): ChannelRoomPreferences =>
       setChannelRoomPreferences(preferences),
-  );
-  ipcMain.handle(
-    "wuu:voice-input-settings-get",
-    async (): Promise<VoiceInputSettingsSnapshot> => ({
-      settings: getVoiceInputSettings(),
-      microphone_permission: microphonePermissionStatus(),
-      speech_permission: ENABLE_VOICE_INPUT
-        ? await speechRecognitionService.permissionStatus()
-        : "unavailable",
-    }),
-  );
-  ipcMain.handle(
-    "wuu:voice-input-settings-set",
-    (_event, settings: VoiceInputSettings): VoiceInputSettings => {
-      const next: VoiceInputSettings = {
-        polish_enabled: settings?.polish_enabled === true,
-        language: isAppLocale(settings?.language) ? settings.language : "system",
-      };
-      setVoiceInputSettings(next);
-      broadcastVoiceInputSettings();
-      return next;
-    },
-  );
-  ipcMain.handle(
-    "wuu:voice-input-open-privacy-settings",
-    async (_event, permission: "microphone" | "speech") => {
-      if (!ENABLE_VOICE_INPUT || process.platform !== "darwin") {
-        throw new Error("Voice privacy settings are available only on macOS");
-      }
-      const pane =
-        permission === "speech"
-          ? "Privacy_SpeechRecognition"
-          : "Privacy_Microphone";
-      await shell.openExternal(
-        `x-apple.systempreferences:com.apple.preference.security?${pane}`,
-      );
-      return { ok: true as const };
-    },
   );
   ipcMain.on("wuu:language-preference-get-sync", (event) => {
     event.returnValue = getLanguagePreference();
@@ -2579,7 +2495,6 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
-  speechRecognitionService.stop();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts
   // down so no WebContentsView leaks past quit.

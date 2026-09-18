@@ -5,13 +5,11 @@ const {
   helperPathForApp,
   pipHelperPathForApp,
   prepareDevElectronApp,
-  speechHelperPathForApp,
 } = require("./prepare-dev-electron-app.cjs");
 const { ensureDevSigningIdentity } = require("./dev-signing.cjs");
 
 const desktopRoot = resolve(__dirname, "..");
 const buildHelper = join(__dirname, "build-cua-mac.cjs");
-const buildSpeechHelper = join(__dirname, "build-speech-mac.cjs");
 const buildCoreAndPluginHelpers = join(__dirname, "build-core.cjs");
 const electronVitePackage = require.resolve("electron-vite/package.json", { paths: [desktopRoot] });
 const electronViteManifest = JSON.parse(readFileSync(electronVitePackage, "utf8"));
@@ -31,17 +29,6 @@ const build = spawnSync(process.execPath, [buildHelper], {
 });
 if (build.status !== 0) {
   process.exit(build.status ?? 1);
-}
-const speechBuild = spawnSync(process.execPath, [buildSpeechHelper], {
-  cwd: desktopRoot,
-  env: {
-    ...process.env,
-    ...(devSigning ? { WUU_SPEECH_MAC_SIGN_ID: devSigning.identity } : {}),
-  },
-  stdio: "inherit",
-});
-if (speechBuild.status !== 0) {
-  process.exit(speechBuild.status ?? 1);
 }
 const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers], {
   cwd: desktopRoot,
@@ -69,9 +56,6 @@ if (process.platform === "darwin") {
   env.WUU_DEV_ELECTRON_APP = prepareDevElectronApp(devSigning);
   env.WUU_CUA_MAC_HELPER = helperPathForApp(env.WUU_DEV_ELECTRON_APP);
   env.WUU_CUA_MAC_PIP_HELPER = pipHelperPathForApp(env.WUU_DEV_ELECTRON_APP);
-  env.WUU_SPEECH_MAC_HELPER = speechHelperPathForApp(
-    env.WUU_DEV_ELECTRON_APP,
-  );
   env.ELECTRON_EXEC_PATH = join(__dirname, "launch-electron-via-open.cjs");
 }
 

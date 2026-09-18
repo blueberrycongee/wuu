@@ -220,7 +220,6 @@ import {
   ENABLE_CONVERSATION_TURN_RAIL,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_GROUP_CHAT,
-  ENABLE_MANAGEMENT_ASSISTANT,
 } from "./FeatureFlags";
 import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
@@ -236,7 +235,7 @@ import { JumpToLatestPill } from "./JumpToLatestPill";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { externalAgentActivityStore } from "./ExternalAgentActivityStore";
 import { SkillsCatalog } from "./SkillsCatalog";
-import { skillsAssistantPrompt, userVisibleThreads } from "./SkillsAssistant";
+import { userVisibleThreads } from "./SkillsAssistant";
 import { useBrowserVisibility } from "./BrowserVisibility";
 import { useSideThreadController } from "./SideThreadController";
 import {
@@ -1116,22 +1115,8 @@ export function App(): JSX.Element {
     [activeChannelRooms],
   );
 
-  const [skillsAssistantDraft, setSkillsAssistantDraft] = useState("");
-  const [skillsAssistantThreadID, setSkillsAssistantThreadID] = useState<string>();
-  const [skillsAssistantStatus, setSkillsAssistantStatus] = useState("");
-  const previousSkillsTabIDRef = useRef<string | undefined>(undefined);
   const currentSkillsTabID =
     currentSessionTab?.kind === "skills" ? currentSessionTab.id : undefined;
-
-  useEffect(() => {
-    if (previousSkillsTabIDRef.current === currentSkillsTabID) {
-      return;
-    }
-    previousSkillsTabIDRef.current = currentSkillsTabID;
-    setSkillsAssistantDraft("");
-    setSkillsAssistantThreadID(undefined);
-    setSkillsAssistantStatus("");
-  }, [currentSkillsTabID]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
@@ -2145,12 +2130,6 @@ export function App(): JSX.Element {
     currentSessionTab?.kind === "skills",
   );
   const showingManagementCatalog = showingSkillsCatalog;
-  const skillsAssistantThread = skillsAssistantThreadID
-    ? state.threads.find((thread) => thread.id === skillsAssistantThreadID)
-    : undefined;
-  const skillsAssistantRunning = Boolean(
-    skillsAssistantThread && isThreadRunning(skillsAssistantThread),
-  );
   const activeTitle = showingSkillsCatalog
     ? t("skills.title")
     : currentSessionTab?.kind === "channel-room"
@@ -3724,64 +3703,6 @@ export function App(): JSX.Element {
       withExtensionInventoryForContext(current, context, result.extension_inventory),
     );
     return result;
-  }
-
-  async function sendSkillsAssistantPrompt(query: string): Promise<void> {
-    const currentState = appStateRef.current;
-    const context = currentState.activeContext;
-    if (!context || !currentState.initialized) {
-      return;
-    }
-    setSkillsAssistantDraft("");
-    let thread = skillsAssistantThreadID
-      ? currentState.threads.find((candidate) => candidate.id === skillsAssistantThreadID)
-      : undefined;
-    try {
-      if (!thread) {
-        setSkillsAssistantStatus(t("skills.assistantStarting"));
-        appStateRef.current = {
-          ...currentState,
-          allowThreadAutoActivation: false,
-        };
-        setState((current) => ({
-          ...current,
-          allowThreadAutoActivation: false,
-        }));
-        thread = requireThread(
-          await window.wuu.startThread({ ephemeral: true }),
-          "thread/start did not return an ephemeral thread",
-        );
-        setSkillsAssistantThreadID(thread.id);
-        appStateRef.current = {
-          ...appStateRef.current,
-          threads: upsertThread(appStateRef.current.threads, thread),
-        };
-        setState((current) => ({
-          ...current,
-          threads: upsertThread(current.threads, thread),
-        }));
-      }
-      setSkillsAssistantStatus("");
-      const message = createComposerMessage(
-        skillsAssistantPrompt(query, context),
-        [],
-        [],
-      );
-      if (!message || !(await sendComposerMessageToThread(message, thread))) {
-        setSkillsAssistantDraft(query);
-      }
-    } catch (error) {
-      setSkillsAssistantStatus("");
-      setSkillsAssistantDraft(query);
-      showErrorToast(error, t("skills.assistantStartFailed"));
-    }
-  }
-
-  async function interruptSkillsAssistant(): Promise<void> {
-    if (!skillsAssistantThreadID) {
-      return;
-    }
-    await window.wuu.interruptTurn(skillsAssistantThreadID);
   }
 
   function startNewThreadForProjectWithComposerFocus(id: string): void {
@@ -5458,11 +5379,7 @@ export function App(): JSX.Element {
           appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
-        }${sessionTabsVisible && appMode === "harness" ? " session-tabs-visible" : ""}${
-          showingSkillsCatalog && ENABLE_MANAGEMENT_ASSISTANT
-            ? " skills-assistant-visible"
-            : ""
-        }`}
+        }${sessionTabsVisible && appMode === "harness" ? " session-tabs-visible" : ""}`}
         ref={conversationPaneRef}
       >
         {ENABLE_GROUP_CHAT && appMode === "collaboration" ? (
@@ -5826,31 +5743,6 @@ export function App(): JSX.Element {
         ) : null}
         {mainConversationDockVisible ? renderComposer("dock") : null}
 
-        {showingSkillsCatalog && ENABLE_MANAGEMENT_ASSISTANT ? (
-          <div className="skills-assistant-composer" data-testid="skills-assistant-composer">
-            <WorkspaceDocumentTurnDock
-              key={skillsAssistantThreadID ?? currentSkillsTabID}
-              cwd={state.activeContext?.cwd}
-              onOpenFile={openWorkspaceFile}
-              turns={skillsAssistantThread?.turns ?? []}
-            >
-              <SideThreadComposer
-                variant="document"
-                placeholder={t("skills.assistantPlaceholder")}
-                draft={skillsAssistantDraft}
-                running={skillsAssistantRunning}
-                disabledReason={skillsAssistantStatus || undefined}
-                queryHistorySessionID={
-                  skillsAssistantThreadID ?? currentSkillsTabID ?? "skills"
-                }
-                queryHistory={[]}
-                onChangeDraft={setSkillsAssistantDraft}
-                onSend={(query) => void sendSkillsAssistantPrompt(query)}
-                onInterrupt={() => void interruptSkillsAssistant()}
-              />
-            </WorkspaceDocumentTurnDock>
-          </div>
-        ) : null}
 
         <ConversationStatusCluster
           host={desktopPluginHost}

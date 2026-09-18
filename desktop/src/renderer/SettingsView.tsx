@@ -75,7 +75,7 @@ export type ArchivedRoomView = {
   created_at: string;
 };
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
-import { ENABLE_REMOTE_CONTROL, ENABLE_VOICE_INPUT } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { SettingsRow } from "./SettingsRow";
 import { EngineSettingsSection } from "./EngineSettingsSection";
@@ -85,7 +85,6 @@ import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
-import { VoiceInputSettingsSection } from "./VoiceInputSettingsSection";
 import { SettingsPresentation } from "./plugins/SettingsPresentation";
 import {
   desktopPluginHost,
@@ -2136,14 +2135,6 @@ function SettingsGeneralPage({
           </> : null}
         </SettingsCard>
       </SettingsSection>
-
-      {ENABLE_VOICE_INPUT && hostSupports("startSpeechRecognition") ? (
-        <VoiceInputSettingsSection
-          polishAvailable={Boolean(
-            initialized && initialized.status !== "needs_setup",
-          )}
-        />
-      ) : null}
 
       <SettingsSection title={t("settings.behavior")} testID="settings-general">
         <SettingsCard>

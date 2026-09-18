@@ -2638,24 +2638,6 @@ export function resolveAppLocale(
   return systemLocale.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
 }
 
-export type VoiceInputLanguage = "system" | AppLocale;
-export type VoicePermissionStatus =
-  | "granted"
-  | "denied"
-  | "restricted"
-  | "not_determined"
-  | "unavailable"
-  | "unknown";
-export type VoiceInputSettings = {
-  polish_enabled: boolean;
-  language: VoiceInputLanguage;
-};
-export type VoiceInputSettingsSnapshot = {
-  settings: VoiceInputSettings;
-  microphone_permission: VoicePermissionStatus;
-  speech_permission: VoicePermissionStatus;
-};
-
 export type ChannelRoomPreferences = {
   pinnedRoomIDs: string[];
   archivedRoomIDs: string[];
@@ -2809,22 +2791,6 @@ export type ActiveDocumentContext = {
   path: string;
 };
 
-export type SpeechRecognitionState =
-  | "requesting_microphone_permission"
-  | "requesting_speech_permission"
-  | "listening"
-  | "stopped";
-
-export type SpeechRecognitionEvent =
-  | { type: "state"; state: SpeechRecognitionState }
-  | { type: "level"; level: number }
-  | { type: "result"; text: string; is_final: boolean }
-  | { type: "error"; code: string; message: string };
-
-export type SpeechRecognitionStartResult =
-  | { ok: true; session_id: string }
-  | { ok: false; error: string };
-
 export type WuuDesktopApi = {
   /** Host operations that this adapter cannot perform. Omitted means the
    * desktop contract; renderers must hide or disable unavailable actions. */
@@ -2905,13 +2871,6 @@ export type WuuDesktopApi = {
     params: SystemNotificationParams,
   ) => Promise<SystemNotificationResult>;
   getBuildInfo: () => Promise<BuildInfoResult>;
-  startSpeechRecognition: (
-    locale: string,
-  ) => Promise<SpeechRecognitionStartResult>;
-  stopSpeechRecognition: () => Promise<{ ok: true }>;
-  onSpeechRecognitionEvent: (
-    handler: (event: SpeechRecognitionEvent) => void,
-  ) => () => void;
   loadCodexModels: (provider?: string) => Promise<ConfigCodexModelsResult>;
   refreshModelCatalog: () => Promise<ConfigModelCatalogRefreshResult>;
   // provider/model may be omitted when threadId is set: the server inherits
@@ -3071,21 +3030,10 @@ export type WuuDesktopApi = {
   onLanguagePreferenceChange: (
     handler: (language: LanguagePreference) => void,
   ) => () => void;
-  initialVoiceInputSettings?: VoiceInputSettings;
-  getVoiceInputSettings: () => Promise<VoiceInputSettingsSnapshot>;
-  updateVoiceInputSettings: (
-    settings: VoiceInputSettings,
-  ) => Promise<VoiceInputSettings>;
-  onVoiceInputSettingsChange: (
-    handler: (settings: VoiceInputSettings) => void,
-  ) => () => void;
   initialChannelRoomPreferences?: ChannelRoomPreferences;
   updateChannelRoomPreferences: (
     preferences: ChannelRoomPreferences,
   ) => Promise<ChannelRoomPreferences>;
-  openVoicePrivacySettings: (
-    permission: "microphone" | "speech",
-  ) => Promise<{ ok: true }>;
   // The preference is app-global: the main process broadcasts every change
   // (explicit choice, or an OS dark-mode flip while on "system") to all
   // windows, and each renderer re-applies data-theme. Returns a disposer.

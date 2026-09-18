@@ -25,9 +25,9 @@ import type {
   PermissionSummary,
   RuntimeContext,
   SkillSummary,
-  SpeechRecognitionEvent,
   WuuDesktopApi,
 } from "../shared/protocol";
+
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -607,14 +607,6 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
 }
 
 describe("Composer send control", () => {
-  const voiceInputTest = import.meta.env.VITE_ENABLE_VOICE_INPUT === "true" ? it : it.skip;
-
-  it("hides voice input and BYOK polish by default", () => {
-    renderComposer({ prompt: "" });
-
-    expect(container.querySelector(".composer-voice-input")).toBeNull();
-  });
-
   it("keeps the draft editable but disables send when the workbench is disconnected", () => {
     const commitPrompt = vi.fn();
     const onSend = vi.fn();
@@ -700,62 +692,6 @@ describe("Composer send control", () => {
     expect(stopButton).not.toBeNull();
     act(() => stopButton.click());
     expect(onInterrupt).not.toHaveBeenCalled();
-  });
-
-  voiceInputTest("stops recording and steers the running turn with the final transcript", async () => {
-    let speechHandler: ((event: SpeechRecognitionEvent) => void) | undefined;
-    const stopSpeechRecognition = vi.fn().mockResolvedValue({ ok: true });
-    const onSend = vi.fn();
-    const onSteer = vi.fn();
-    const voiceInputSettings = {
-      polish_enabled: true,
-      language: "system" as const,
-    };
-    (window as unknown as { wuu: WuuDesktopApi }).wuu = {
-      platform: "darwin",
-      initialVoiceInputSettings: voiceInputSettings,
-      getVoiceInputSettings: vi.fn().mockResolvedValue({
-        settings: voiceInputSettings,
-        microphone_permission: "granted",
-        speech_permission: "granted",
-      }),
-      updateVoiceInputSettings: vi.fn().mockResolvedValue(voiceInputSettings),
-      onVoiceInputSettingsChange: vi.fn(() => () => undefined),
-      startSpeechRecognition: vi.fn().mockResolvedValue({
-        ok: true,
-        session_id: "speech-1",
-      }),
-      stopSpeechRecognition,
-      onSpeechRecognitionEvent: vi.fn((handler) => {
-        speechHandler = handler;
-        return () => undefined;
-      }),
-      polishText: vi.fn().mockResolvedValue({ text: "润色后直接发送" }),
-    } as unknown as WuuDesktopApi;
-    renderComposer({ running: true, onSend, onSteer });
-
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>(".composer-voice-button")?.click();
-    });
-    act(() => {
-      speechHandler?.({ type: "state", state: "listening" });
-      speechHandler?.({ type: "result", text: "直接发送这段话", is_final: false });
-    });
-
-    const sendButton = container.querySelector<HTMLButtonElement>(
-      ".composer-action-button",
-    );
-    expect(sendButton?.classList.contains("composer-send-button")).toBe(true);
-    expect(sendButton?.getAttribute("aria-label")).toBe("发送引导");
-    expect(sendButton?.disabled).toBe(false);
-    await act(async () => {
-      sendButton?.click();
-    });
-
-    expect(stopSpeechRecognition).toHaveBeenCalledOnce();
-    expect(onSteer).toHaveBeenCalledOnce();
-    expect(onSteer).toHaveBeenCalledWith("润色后直接发送");
-    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("sends on Enter when Chromium leaves a stale IME keyCode", () => {

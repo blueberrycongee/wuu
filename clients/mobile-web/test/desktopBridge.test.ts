@@ -62,8 +62,6 @@ describe("browser host contract", () => {
     expect(host.unsupportedMethods).toContain("getRemoteControlSnapshot");
     await expect(host.getRemoteControlSnapshot()).rejects.toBeInstanceOf(UnavailableHostOperationError);
     await expect(host.getRemoteControlSnapshot()).rejects.toMatchObject({ code: "host_operation_unavailable" });
-    await expect(host.updateVoiceInputSettings({ polish_enabled: true, language: "en-US" }))
-      .rejects.toBeInstanceOf(UnavailableHostOperationError);
     await expect(host.selectProject("another-computer")).rejects.toThrow("Unknown remote workspace");
     expect(remote.call).not.toHaveBeenCalled();
   });

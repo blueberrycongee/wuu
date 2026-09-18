@@ -37,7 +37,6 @@ composer.css .composer-frame.composer-frame-drop-active::after box-shadow --ink-
 composer.css .composer-input-header-action:hover:not(:disabled) background --ink-overlay-8
 composer.css .composer-plus-button[aria-expanded="true"]::before background --ink-overlay-4
 composer.css .composer-queue-row:hover .composer-queue-preview, .composer-queue-row:focus-within .composer-queue-preview background --ink-overlay-4
-composer.css .composer-voice-button:hover:not(:disabled) background --ink-overlay-8
 composer.css .group-members-capsule:hover, .group-members-capsule:focus-visible background --ink-overlay-6
 composer.css .user-question-actions .user-question-cancel:hover:not(:disabled) background --ink-overlay-6
 conversation-shell.css .conversation-turn-rail-bar background --shell-turn-rail-bar-bg

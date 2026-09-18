@@ -104,8 +104,6 @@ import { composerStatusIsLiveProgress, composerStatusText } from "./ComposerType
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
-import { ComposerVoiceInput, type ComposerVoiceInputHandle } from "./ComposerVoiceInput";
-import { ENABLE_VOICE_INPUT } from "./FeatureFlags";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
@@ -452,16 +450,8 @@ export function Composer({
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
-  const [voiceRecording, setVoiceRecording] = useState(false);
-  const [voiceSendPending, setVoiceSendPending] = useState(false);
-  const voiceInputRef = useRef<ComposerVoiceInputHandle>(null);
-  const voiceSendPendingRef = useRef(false);
-  const showComposerStopAction =
-    showComposerStop && !voiceRecording && !voiceSendPending;
-  const voiceActionLabel =
-    (voiceRecording || voiceSendPending) && running && onSteer
-      ? t("composer.steerSend")
-      : composerSendLabel;
+  const showComposerStopAction = showComposerStop;
+  const voiceActionLabel = composerSendLabel;
   const [expandedDrawer, setExpandedDrawer] = useState<ExpandedComposerDrawer>(null);
   const [dropActive, setDropActive] = useState(false);
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
@@ -785,10 +775,6 @@ export function Composer({
   }
 
   function submitComposer(): void {
-    if (voiceRecording) {
-      void stopVoiceAndSubmit();
-      return;
-    }
     submitDraft();
   }
 
@@ -802,21 +788,6 @@ export function Composer({
       running && submittingHasDraft && onSteer ? onSteer : onSend,
       promptOverride,
     );
-  }
-
-  async function stopVoiceAndSubmit(): Promise<void> {
-    if (voiceSendPendingRef.current) return;
-    voiceSendPendingRef.current = true;
-    setVoiceSendPending(true);
-    try {
-      const finalPrompt = await voiceInputRef.current?.stop();
-      if (!finalPrompt?.trim()) return;
-      const sendFinalPrompt = running && onSteer ? onSteer : onSend;
-      submitComposerWith(() => sendFinalPrompt(finalPrompt), finalPrompt);
-    } finally {
-      voiceSendPendingRef.current = false;
-      setVoiceSendPending(false);
-    }
   }
 
   function updateVisiblePrompt(value: string): void {
@@ -1047,11 +1018,7 @@ export function Composer({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (voiceRecording) {
-        submitComposer();
-      } else {
-        submitDraft(currentPrompt);
-      }
+      submitDraft(currentPrompt);
     }
   }
 
@@ -1322,7 +1289,7 @@ export function Composer({
               </button>
             ) : null}
             <div
-              className={`composer-bar${voiceRecording ? " is-voice-recording" : ""}`}
+              className="composer-bar"
               data-wuu-component="composer-toolbar"
             >
               <div className="composer-bar-left">
@@ -1441,16 +1408,6 @@ export function Composer({
                     />
                   </span>
                 ) : null}
-                {ENABLE_VOICE_INPUT ? (
-                  <ComposerVoiceInput
-                    ref={voiceInputRef}
-                    prompt={prompt}
-                    setPrompt={setPrompt}
-                    disabled={readOnly}
-                    locale={locale}
-                    onRecordingChange={setVoiceRecording}
-                  />
-                ) : null}
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
@@ -1468,7 +1425,7 @@ export function Composer({
                   title={showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                   disabled={
                     !showComposerStopAction &&
-                    (voiceSendPending || effectiveSendDisabled || readOnly || (!voiceRecording && !hasDraft) || (handoffMode && !canConfirmHandoff))
+                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff))
                   }
                 >
                   {showComposerStopAction ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
