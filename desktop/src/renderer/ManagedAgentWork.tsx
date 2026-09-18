@@ -5,10 +5,11 @@ import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { sortManagedSessions } from "./ManagedAgentSessions";
 import { useI18n } from "./i18n";
 
-export function ManagedAgentWork({ threads, expanded, onShowAll }: {
+export function ManagedAgentWork({ threads, expanded, onShowAll, onSelect }: {
   threads: ThreadSummary[];
   expanded: boolean;
   onShowAll: () => void;
+  onSelect?: (threadID: string) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -59,14 +60,16 @@ export function ManagedAgentWork({ threads, expanded, onShowAll }: {
       {!working.length ? <List size={14} aria-hidden="true" /> : null}
       <span>{label}</span>
     </button>
-    {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="managed-sessions" placement="above" align="right" width={360}>
+    {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="managed-sessions" placement="above" align="center" width={360}>
       <div ref={cardRef} id={cardID} className="conversation-status-preview-card" role="region" aria-label={t("channels.managedSessions.history")}
         onPointerEnter={() => { hovered.current = true; clearClose(); }} onPointerLeave={() => { hovered.current = false; leave(); }} onFocus={clearClose} onBlur={leave}>
         <div className="conversation-status-todo-card-header"><strong>{label}</strong></div>
         {preview.length ? <ul className="managed-session-preview-list">
           {preview.map(thread => <li key={thread.id}>
-            <span className="managed-session-preview-title">{thread.title || t("channels.sessions.untitled")}</span>
+            <button type="button" className="managed-session-preview-item" onClick={() => { dismiss(); onSelect?.(thread.id); }}>
+              <span className="managed-session-preview-title">{thread.title || t("channels.sessions.untitled")}</span>
             {isThreadExecuting(thread) ? <span className="managed-session-preview-state">{t("channels.sessions.state.running")}</span> : null}
+            </button>
           </li>)}
         </ul> : <p className="conversation-status-todo-explanation">{t("channels.managedSessions.empty")}</p>}
         {preview.length ? <button type="button" className="managed-session-preview-all" onClick={() => { dismiss(); if (!expanded) onShowAll(); }}>{t("channels.managedSessions.all")}</button> : null}

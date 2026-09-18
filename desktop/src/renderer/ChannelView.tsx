@@ -1924,7 +1924,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                   setInspectorClosing(false);
                   inspectionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
                   setInspectedSession({ roomID: selectedRoomID, managedAgentID: selectedRoomAgents[0].id, name: selectedRoomAgents[0].name });
-                }} /> : null}
+                }} onSelect={onOpenSession} /> : null}
             />
             <div className="channel-activity-region channel-activity-motion" aria-live="polite">
               <ChannelCoordinatorActivity key={selectedRoomID} status={coordinatorsByRoomID[selectedRoomID]} agents={selectedRoomAgents} activeAgentIDs={responseActivities.map(response => response.agent_id)}

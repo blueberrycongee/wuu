@@ -8,17 +8,18 @@ import { translateCurrent as t } from "./i18n";
 let host: HTMLDivElement;
 let root: Root;
 const showAll = vi.fn();
+const selectSession = vi.fn();
 const threads: ThreadSummary[] = Array.from({ length: 8 }, (_, i) => ({
   id: `session-${i}`, title: `Session ${i}`, cwd: "/private/long/workspace/path", status: i === 0 || i === 3 ? "in_progress" : "idle",
   model: "test", model_provider: "test", preview: "", turns: [], turn_count: 0,
   created_at: "2026-09-01T00:00:00Z", updated_at: new Date(Date.UTC(2026, 8, 1, 0, i)).toISOString(),
 }));
 beforeEach(() => {
-  vi.useFakeTimers(); showAll.mockClear();
+  vi.useFakeTimers(); showAll.mockClear(); selectSession.mockClear();
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
-const render = (items = threads, expanded = false, key = "agent") => act(() => root.render(<ManagedAgentWork key={key} threads={items} expanded={expanded} onShowAll={showAll} />));
+const render = (items = threads, expanded = false, key = "agent") => act(() => root.render(<ManagedAgentWork key={key} threads={items} expanded={expanded} onShowAll={showAll} onSelect={selectSession} />));
 const trigger = () => host.querySelector<HTMLButtonElement>("button")!;
 const card = () => document.querySelector<HTMLElement>(".conversation-status-preview-card");
 const titles = () => [...document.querySelectorAll(".managed-session-preview-title")].map(node => node.textContent);
@@ -32,8 +33,16 @@ it("previews at most five sessions with running first, then recent history, with
   expect(card()?.querySelector("[title]")).toBeNull();
   render(threads.map(thread => ({ ...thread, status: "idle" })));
   expect(titles()).toEqual(["Session 7", "Session 6", "Session 5", "Session 4", "Session 3"]);
-  act(() => card()!.querySelector<HTMLButtonElement>("button")!.click());
+  act(() => card()!.querySelector<HTMLButtonElement>(".managed-session-preview-all")!.click());
   expect(showAll).toHaveBeenCalledOnce();
+  expect(card()).toBeNull();
+});
+
+it("navigates to the selected Harness session instead of creating a new one", () => {
+  render(); pointer(trigger(), "pointerover");
+  act(() => document.querySelector<HTMLButtonElement>(".managed-session-preview-item")!.click());
+  expect(selectSession).toHaveBeenCalledWith("session-3");
+  expect(showAll).not.toHaveBeenCalled();
   expect(card()).toBeNull();
 });
 
@@ -76,7 +85,7 @@ it("offers an empty preview and retires the old card when the active agent chang
 
 it("dismisses outside and does not toggle an already open all-sessions view from the preview", () => {
   render(threads, true); act(() => trigger().focus());
-  act(() => card()!.querySelector<HTMLButtonElement>("button")!.click());
+  act(() => card()!.querySelector<HTMLButtonElement>(".managed-session-preview-all")!.click());
   expect(showAll).not.toHaveBeenCalled();
   expect(card()).toBeNull();
   pointer(trigger(), "pointerover");
