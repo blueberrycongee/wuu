@@ -1151,11 +1151,12 @@ export function useConversationScrollState({
     const handleTouchEnd = (): void => {
       touchLastYRef.current = undefined;
     };
-    // Includes keyboard activation and attachment controls, even in nested
-    // scrollers. A user's expansion must not be undone by following output.
+    // Inspecting a submitted attachment interrupts its placement. Ordinary
+    // content actions do not change reading ownership: a fold expanded at
+    // the bottom must keep following, while an away viewport stays paused.
     const handleContentAction = (event: MouseEvent): void => {
       if (!(event.target instanceof Element) || !event.target.closest('button, [role="button"], summary, a, input, textarea, select, video, audio')) return;
-      disableConversationAutoFollow();
+      if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       cancelArrivals();
     };
     node.addEventListener("wheel", handleWheel, { passive: true });

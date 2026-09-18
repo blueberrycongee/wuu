@@ -74,6 +74,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve bottom-follow when expanding or collapsing conversation tool groups,
+  without pulling readers away from an explicitly paused reading position.
+
 - Prevented overlapping automation timer ticks from leaving a run stuck in
   starting before the session send settled.
 - Restore draggable width adjustment for Collaboration conversation settings,

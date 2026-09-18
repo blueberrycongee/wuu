@@ -8,6 +8,7 @@ import { PluginHost } from "./plugins/PluginHost";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { TurnView } from "./TurnView";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ProcessSurface } from "./ProcessSurface";
 
 let api: ReturnType<typeof useConversationScrollState>;
 let root: Root;
@@ -32,12 +33,13 @@ type Props = {
   signalLayout?: boolean;
   item?: Partial<ThreadItem>;
   mountKey?: string;
+  processItems?: ThreadItem[];
 };
 function LayoutSignal() {
   React.useLayoutEffect(() => { api.scheduleStreamScroll(); });
   return null;
 }
-function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey }: Props) {
+function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems }: Props) {
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
   api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false });
   return <main ref={api.conversationPaneRef}>
@@ -54,6 +56,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
         {messageID ? item ? <ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider>
           : <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div> : null}
         <div aria-hidden="true"><div data-user-message-id="hidden" /></div>
+        {processItems ? <ProcessSurface processItems={processItems} streaming={running} /> : null}
         {signalLayout ? <LayoutSignal /> : null}
       </div>
     </div>
@@ -143,6 +146,30 @@ it("does not invent submission space when opening a running thread", () => {
   expect(tailSpace()).toBe(0);
   render({ messageID: "old", running: false });
   expect(tailSpace()).toBe(0);
+});
+
+it.each([false, true])("preserves reading ownership when toggling grouped tools (away: %s)", away => {
+  render({ messageID: "old", processItems: [
+    { id: "read-1", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"one.ts"}' },
+    { id: "read-2", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"two.ts"}' },
+  ] });
+  if (away) scrollUp(200);
+  const readingTop = scrollTop();
+  const fold = host.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
+  const summary = fold.querySelector<HTMLElement>("summary")!;
+  for (const open of [true, false]) {
+    act(() => {
+      summary.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      summary.click();
+      fold.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    expect(fold.open).toBe(open);
+    naturalHeight += open ? 300 : -300;
+    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
+  }
+  grow(100);
+  expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
 });
 
 it("positions a delayed child-only mount from a layout signal", () => {
