@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -112,6 +113,11 @@ func (s *Server) handleThreadStart(req Request) error {
 		// full-access setting and remains visible in the composer.
 		selection.PermissionMode = config.PermissionModeUnconfined
 	}
+	if params.ApproveForMe != nil {
+		selection.ApproveForMe = *params.ApproveForMe
+	}
+	// Review is owned by the built-in engine and never expands permission mode.
+	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
 	if params.Handoff != nil {
 		th, err := s.startHandoffThread(selection, params)
 		if err != nil {
@@ -528,6 +534,7 @@ type forkSourceThread struct {
 	modelVariant   string
 	modelEffort    string
 	permissionMode string
+	approveForMe   bool
 	cwd            string
 	thread         Thread
 }
@@ -647,6 +654,7 @@ func (s *Server) handleThreadFork(req Request) error {
 		Variant:        source.modelVariant,
 		Effort:         source.modelEffort,
 		PermissionMode: source.permissionMode,
+		ApproveForMe:   source.approveForMe,
 	})
 	if err != nil {
 		_, _ = session.Delete(s.rt.SessionDir, sess.ID)
@@ -822,6 +830,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 			modelVariant:   th.ModelVariant,
 			modelEffort:    th.ModelEffort,
 			permissionMode: th.PermissionMode,
+			approveForMe:   th.ApproveForMe,
 			cwd:            th.CWD,
 			thread:         th.snapshotLocked(),
 		}
@@ -887,6 +896,7 @@ func (s *Server) loadForkSourceThread(id string, now time.Time) (forkSourceThrea
 		modelVariant:   th.ModelVariant,
 		modelEffort:    th.ModelEffort,
 		permissionMode: th.PermissionMode,
+		approveForMe:   th.ApproveForMe,
 		cwd:            th.CWD,
 		thread:         thread,
 	}, nil
@@ -1419,6 +1429,7 @@ func runtimeSelectionFromSession(sess session.Session) session.RuntimeSelection 
 		Variant:        strings.TrimSpace(sess.Variant),
 		Effort:         strings.TrimSpace(sess.Effort),
 		PermissionMode: strings.TrimSpace(sess.PermissionMode),
+		ApproveForMe:   sess.ApproveForMe,
 	}
 }
 
@@ -1433,6 +1444,7 @@ func applyThreadRuntimeSelection(th *threadState, selection session.RuntimeSelec
 	if mode := strings.TrimSpace(selection.PermissionMode); mode != "" {
 		th.PermissionMode = config.NormalizePermissionMode(mode)
 	}
+	th.ApproveForMe = selection.ApproveForMe
 }
 
 func threadEntryFromSession(sess session.Session, provider, model string) threadListEntry {
@@ -1456,6 +1468,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ModelVariant:          selection.Variant,
 			ModelEffort:           selection.Effort,
 			PermissionMode:        permissionMode,
+			ApproveForMe:          sess.ApproveForMe,
 			EngineID:              string(agentengine.NormalizeEngineID(sess.EngineID)),
 			CWD:                   sess.CWD,
 			WorkspaceID:           sess.WorkspaceID,

@@ -6,6 +6,7 @@
 # pnpm/npm (→ node_modules/).
 
 /bin/
+.gocache-approve-for-me/
 dist/
 node_modules/
 # Also ignore a `node_modules` symlink (worktrees sometimes link a shared

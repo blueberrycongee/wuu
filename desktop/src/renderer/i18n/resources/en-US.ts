@@ -1203,6 +1203,7 @@ export const enUS = {
   "runtime.permission.standard": "Standard",
   "runtime.permission.readOnly": "Read-only",
   "runtime.permission.unconfined": "Unconfined",
+  "runtime.permission.approveForMe": "Approve for me",
   "runtime.searchModels": "Search models",
   "runtime.model": "Model",
   "runtime.provider": "Model provider",

@@ -21,6 +21,7 @@ export function runtimeViewForSession(
     permissions: {
       ...initialized.permissions,
       mode: thread.permission_mode || initialized.permissions?.mode,
+      approve_for_me: thread.approve_for_me ?? initialized.permissions?.approve_for_me,
     },
   };
 }

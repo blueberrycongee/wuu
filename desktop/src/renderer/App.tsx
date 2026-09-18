@@ -3123,13 +3123,13 @@ export function App(): JSX.Element {
         onSelectRuntimeEffort={(nextVariant) =>
           selectRuntimeEffort(nextVariant)
         }
-        onSelectPermissionMode={(mode) => {
+        onSelectPermissionMode={(mode, approveForMe) => {
           if (!activeThread && effectiveEngine !== "wuu") {
             setDraftPermissionMode(mode);
             setAccessMenuOpen(false);
             return;
           }
-          void selectPermissionMode(mode);
+          void selectPermissionMode(mode, approveForMe);
         }}
         onOpenSettings={() => {
           closeProjectMenus();
@@ -4424,6 +4424,7 @@ export function App(): JSX.Element {
                   model: currentState.initialized?.model,
                   effort: currentState.initialized?.variant || currentState.initialized?.effort,
                   permission_mode: currentState.initialized?.permissions?.mode,
+                  approve_for_me: currentState.initialized?.permissions?.approve_for_me,
                 } satisfies ThreadStartParams),
           }),
           "thread/start did not return a thread",

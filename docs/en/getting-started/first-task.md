@@ -5,6 +5,26 @@ make a change, then check the result.
 
 ## Read the project first
 
+In the **Workspaces** area of the sidebar, choose **Add workspace → Use existing
+folder**. For the first attempt, use:
+
+- a code repository you can re-clone;
+- a test folder prepared for this purpose;
+- or a directory created with **New blank project**.
+
+The workspace is the primary boundary for files and commands. Sessions are also
+organized by workspace; if you see the wrong files or stale sessions, check the
+currently selected workspace first.
+
+## Let wuu read first
+
+Before sending, you can use the permission button next to the input box to select
+**Read only**. The permission mode only controls Wuu's tool boundary; it does not put
+the project inside an operating-system sandbox. Keep **Standard** for ordinary
+modification tasks. **Approve for me** is a Standard-mode option that reviews
+high-risk tool calls before they run; it does not raise the workspace boundary.
+
+Start a new conversation in the target workspace and send a read-only task first:
 In the sidebar, choose **Add workspace → Use existing folder**, or use **Create blank
 project** to prepare a test folder. Check the active workspace and start a conversation
 there. Before sending, select **Read only** in the permission menu next to the input:

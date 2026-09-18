@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -1257,6 +1258,7 @@ func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) session.
 		Variant:        strings.TrimSpace(th.ModelVariant),
 		Effort:         strings.TrimSpace(th.ModelEffort),
 		PermissionMode: strings.TrimSpace(th.PermissionMode),
+		ApproveForMe:   th.ApproveForMe,
 	}
 	applyThreadRuntimeSelection(th, healed)
 	persist := th.PersistHistory
@@ -2359,8 +2361,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		runner.ForceInitialCompact = turnRuntime.ForceCompact
 		runner.CompactOnly = turnRuntime.CompactOnly
 	}
+	reviewIntent := &nativeReviewIntent{}
+	reviewIntent.append(history)
 	if threadRuntime != nil && threadRuntime.Toolkit != nil {
 		runtime.ConfigureToolkitPermissions(threadRuntime.Toolkit, turnPermissions)
+		th.mu.Lock()
+		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
+		th.mu.Unlock()
+		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID, runner: runner, intent: reviewIntent})
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.
@@ -2518,6 +2526,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 			th.mu.Unlock()
 			notifyBatch(batch)
+			reviewIntent.append(steers)
 			for _, steer := range steers {
 				if ids := agentCompletionResultIDs(steer.ClientID); len(ids) > 0 {
 					turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, ids...)
@@ -4296,10 +4305,12 @@ func (s *Server) hasQueuedAgentCompletionWork(threadID string) bool {
 
 func combineAgentCompletionMessages(turns []agentCompletionTurn) providers.ChatMessage {
 	if len(turns) == 0 {
-		return providers.ChatMessage{Role: "user"}
+		return providers.ChatMessage{Role: "user", ReadOnly: true}
 	}
 	if len(turns) == 1 {
-		return turns[0].msg
+		msg := turns[0].msg
+		msg.ReadOnly = true
+		return msg
 	}
 	contents := make([]string, 0, len(turns))
 	name := ""
@@ -4313,9 +4324,12 @@ func combineAgentCompletionMessages(turns []agentCompletionTurn) providers.ChatM
 		}
 	}
 	return providers.ChatMessage{
-		Role:    "user",
-		Name:    name,
-		Content: strings.Join(contents, "\n\n"),
+		Role: "user",
+		Name: name,
+		// A merged completion is generated evidence even when its parts have
+		// different (or legacy missing) names/origins and lose their envelopes.
+		ReadOnly: true,
+		Content:  strings.Join(contents, "\n\n"),
 	}
 }
 

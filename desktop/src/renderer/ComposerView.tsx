@@ -6,6 +6,7 @@ import {
   FolderOpen,
   FolderX,
   ArrowUp,
+  ShieldCheck,
   Square
 } from "lucide-react";
 import {
@@ -286,7 +287,7 @@ export function Composer({
   onSelectEngine?: (id: string) => void;
   onSelectEngineModel?: (model: string, effort: string) => void;
   onSelectEngineEffort?: (effort: string) => void;
-  onSelectPermissionMode: (mode: PermissionMode) => void;
+  onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void;
   onToggleBranchMenu: () => void;
   onOpenSettings: () => void;
   onOpenSkillsCatalog: () => void;
@@ -611,7 +612,11 @@ export function Composer({
   const fastModelTarget = useMemo(() => runtimeFastModelTarget(initialized), [initialized]);
   const permissionMode = permissionModeFromSummary(initialized?.permissions);
   const permissionOption = permissionModeOption(permissionMode, activeEngine);
-  const permissionChipLabel = permissionOption.chipLabel;
+  const approveForMeOn = permissionMode === "standard" && Boolean(initialized?.permissions?.approve_for_me);
+  const permissionChipLabel = approveForMeOn
+    ? t("runtime.permission.approveForMe")
+    : permissionOption.chipLabel;
+  const PermissionChipIcon = approveForMeOn ? ShieldCheck : permissionOption.icon;
   const projectPillLabel = heroProjectPillLabel(activeContext, activeProject);
   const projectPillTitle =
     activeContext?.kind === "project" && activeProject?.path
@@ -1353,7 +1358,7 @@ export function Composer({
                       onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
                     >
-                      <permissionOption.icon aria-hidden="true" />
+                      <PermissionChipIcon aria-hidden="true" />
                       <span>{permissionChipLabel}</span>
                       <ChevronDown aria-hidden="true" />
                     </button>
