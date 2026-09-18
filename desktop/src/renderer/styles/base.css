@@ -281,8 +281,9 @@
   --search-motion-easing: var(--ease-out);
   --collapse-motion-duration: var(--motion-slower);
   --query-submit-duration: 220ms;
-  /* Matches the submitted-query scroll's cubic ease-out. */
+  /* Receipt collapse and collaboration's bottom-follow share this deadline. */
   --query-submit-easing: cubic-bezier(0.333333, 1, 0.666667, 1);
+  --query-scroll-duration: 360ms;
   --collapse-chevron-duration: var(--motion-base);
   --collapse-motion-easing: var(--ease-out);
   /* Globalized-sheet pair: the workspace right panel "takes the stage" as a
@@ -406,6 +407,7 @@
     --motion-slow: 0ms;
     --motion-slower: 0ms;
     --query-submit-duration: 0ms;
+    --query-scroll-duration: 0ms;
     --environment-panel-motion-duration: 0ms;
     --environment-panel-exit-duration: 0ms;
     --environment-flow-motion-duration: 0ms;

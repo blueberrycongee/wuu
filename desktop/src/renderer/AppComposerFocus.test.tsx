@@ -7,6 +7,7 @@ import type {
   RuntimeContext,
   ServerEvent,
   Thread,
+  Turn,
   WuuDesktopApi,
 } from "../shared/protocol";
 
@@ -97,6 +98,7 @@ let root: Root | null = null;
 let serverEventHandlers: Array<(event: ServerEvent) => void> = [];
 let releaseProjectSelection: (() => void) | null = null;
 let releaseThreadStart: (() => void) | null = null;
+let resizeCallbacks = new Set<ResizeObserverCallback>();
 
 function initialized(cwd: string): InitializeResult {
   return {
@@ -170,9 +172,10 @@ function newThread(): Thread {
 
 function installWindowStubs(): void {
   class MockResizeObserver {
+    constructor(private callback: ResizeObserverCallback) { resizeCallbacks.add(callback); }
     observe(): void {}
     unobserve(): void {}
-    disconnect(): void {}
+    disconnect(): void { resizeCallbacks.delete(this.callback); }
   }
   (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver =
     MockResizeObserver as typeof ResizeObserver;
@@ -385,6 +388,7 @@ describe("main composer focus continuity", () => {
   beforeEach(() => {
     installWindowStubs();
     serverEventHandlers = [];
+    resizeCallbacks = new Set();
     releaseProjectSelection = null;
     releaseThreadStart = null;
     container = document.createElement("div");
@@ -399,6 +403,62 @@ describe("main composer focus continuity", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+    vi.restoreAllMocks();
+  });
+
+  it.each(["composer", "history edit"])("places a %s submission through the real App send and acknowledgement flow", async (entry) => {
+    await renderApp(true);
+    vi.mocked(window.matchMedia).mockImplementation(query => ({
+      matches: query.includes("prefers-reduced-motion"),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+    const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
+    const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
+    let natural = 2000;
+    let top = 500;
+    const tail = () => Number.parseFloat(viewport.parentElement!.style.getPropertyValue("--session-tail-space") || "0");
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, get: () => 600 },
+      scrollHeight: { configurable: true, get: () => natural + tail() },
+      scrollTop: { configurable: true, get: () => top, set: value => { top = Math.max(0, Math.min(value, natural + tail() - 600)); } },
+      scrollTo: { configurable: true, value: (options: ScrollToOptions) => { viewport.scrollTop = options.top ?? 0; } },
+    });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === viewport) return { top: 100, bottom: 700, height: 600 } as DOMRect;
+      if (this === content) return { top: 100 - top, height: natural + tail() } as DOMRect;
+      if (this.hasAttribute("data-user-message-id")) return { top: 1870 - top, bottom: 1950 - top, height: 80 } as DOMRect;
+      return originalRect.call(this);
+    });
+    let accept!: (result: { turn: Turn }) => void;
+    vi.mocked(window.wuu.startTurn).mockImplementation(() => new Promise(resolve => { accept = resolve; }));
+    window.wuu.editThreadMessage = vi.fn().mockResolvedValue({ thread: { ...persistedThread(), turns: [] } });
+
+    if (entry === "history edit") {
+      await act(async () => container.querySelector<HTMLButtonElement>(".message-edit-button")!.click());
+      const editor = container.querySelector<HTMLTextAreaElement>("[data-user-message-id] textarea")!;
+      expect(editor).not.toBeNull();
+      await enterCommand(editor, "replacement query");
+      expect(window.wuu.editThreadMessage).toHaveBeenCalledWith("thread-focus", "turn-existing", "item-existing");
+    } else {
+      await enterCommand(mainComposer("dock"), "replacement query");
+    }
+    expect(window.wuu.startTurn).toHaveBeenCalled();
+    expect(tail()).toBeGreaterThan(0);
+    const placedTop = viewport.scrollTop;
+    expect(placedTop).toBeCloseTo(1650);
+    await act(async () => accept({ turn: {
+      id: "accepted", status: "in_progress", items_view: "full",
+      items: [{ id: "accepted-user", type: "user_message", text: "replacement query" }],
+    } }));
+    await flushAsync();
+    expect(container.querySelector('[data-user-message-id="accepted-user"]')).not.toBeNull();
+    natural += 100;
+    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    expect(viewport.scrollTop).toBe(placedTop);
+    natural += 500;
+    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    expect(viewport.scrollTop).toBe(natural - 600);
   });
 
   it("focuses the dock composer after /new", async () => {

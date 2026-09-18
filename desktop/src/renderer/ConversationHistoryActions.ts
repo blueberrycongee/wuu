@@ -392,7 +392,8 @@ deps.rememberConversationScrollForEdit();
         { thread: result.thread },
         "thread/edit-message did not return a thread",
       );
-      deps.enableConversationAutoFollow();
+      // The sender owns placement of the new user message. Enabling follow
+      // here lets the history truncation jump to bottom before it mounts.
       const targetPane = pane ?? deps.appStateRef.current.activePane;
       deps.setHistoryMessageEdit(undefined);
       deps.appStateRef.current = updateThreadByID(

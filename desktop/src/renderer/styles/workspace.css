@@ -4899,15 +4899,9 @@ html.resizing-workspace-file-split * {
   grid-column: 1 / -1;
 }
 
-.scroll-region[data-session-status-clearance] {
-  /* Keep Session status controls outside the painted reading area without
-     resizing the scrollport when they appear, disappear, or change height. */
-  clip-path: inset(0 0 var(--session-status-clip, 0px) 0);
-}
-
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region) .conversation-width {
-  /* Session chrome includes the at-bottom status capsules. The scroll owner
-     measures their footprint and retires the additional run space separately. */
+  /* Only the composer occludes the stream; floating status controls do not
+     create a separate blank band. Submission space retires as output grows. */
   --conversation-flow-bottom-space: calc(
     var(--dock-composer-height) + var(--conversation-composer-clearance) + var(--session-tail-space, 0px)
   );
