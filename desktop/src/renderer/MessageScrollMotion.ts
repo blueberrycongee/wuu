@@ -4,34 +4,38 @@ export function messageMotionTime(): number | undefined {
   return typeof time === "number" ? time : undefined;
 }
 
-const ease = (progress: number): number => {
-  const p = Math.max(0, Math.min(1, progress));
-  return p * p * (3 - 2 * p);
-};
-
-/** A bounded scroll with continuous corrections when the layout target moves. */
+/** One decelerating trajectory. Retargeting preserves position, velocity and deadline. */
 export function createMessageScrollMotion(from: number, target: number, maxDuration: number) {
   const duration = Math.max(0, Math.min(maxDuration, 140 + Math.sqrt(Math.abs(target - from)) * 8));
   let startedAt = messageMotionTime();
-  let previousTarget = target;
-  let settledCorrection = 0;
-  const corrections: { delta: number; start: number }[] = [];
-  return (now: number, liveTarget: number): { top: number; done: boolean } => {
+  let segmentStart = 0;
+  let segmentDuration = duration;
+  let origin = from;
+  let destination = target;
+  let velocity = duration > 0 ? 3 * (target - from) / duration : 0;
+  const evaluate = (elapsed: number) => {
+    const p = Math.max(0, Math.min(1, (elapsed - segmentStart) / segmentDuration));
+    const distance = destination - origin;
+    const tangent = velocity * segmentDuration;
+    // Cubic Hermite interpolation ends at rest. Initially this is cubic ease-out;
+    // a new destination replaces the remaining segment, never adds another one.
+    return {
+      position: origin + distance * p * p * (3 - 2 * p) + tangent * p * (1 - p) ** 2,
+      velocity: (6 * distance * p * (1 - p) + tangent * (1 - 4 * p + 3 * p * p)) / segmentDuration,
+    };
+  };
+  return (now: number, liveTarget: number): { position: number; done: boolean } => {
     startedAt ??= now;
-    if (duration === 0) return { top: liveTarget, done: true };
-    if (liveTarget !== previousTarget) {
-      // Add a zero-position, zero-velocity correction instead of multiplying
-      // the new target by progress (which jumps near the end of an entrance).
-      corrections.push({ delta: liveTarget - previousTarget, start: now });
-      previousTarget = liveTarget;
+    const elapsed = Math.max(0, now - startedAt);
+    if (elapsed >= duration) return { position: liveTarget, done: true };
+    const current = evaluate(elapsed);
+    if (liveTarget !== destination) {
+      origin = current.position;
+      velocity = current.velocity;
+      destination = liveTarget;
+      segmentStart = elapsed;
+      segmentDuration = duration - elapsed;
     }
-    const correctionDuration = Math.min(140, duration);
-    while (corrections.length && now - corrections[0].start >= correctionDuration) {
-      settledCorrection += corrections.shift()!.delta;
-    }
-    let top = from + (target - from) * ease((now - startedAt) / duration) + settledCorrection;
-    for (const correction of corrections) top += correction.delta * ease((now - correction.start) / correctionDuration);
-    const done = now - startedAt >= duration && corrections.length === 0;
-    return { top: done ? liveTarget : top, done };
+    return { position: current.position, done: false };
   };
 }

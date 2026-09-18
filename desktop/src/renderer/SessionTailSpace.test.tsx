@@ -544,19 +544,48 @@ it("cancels an in-flight bubble animation when the user scrolls", () => {
   expect(scrollTop()).toBe(away);
 });
 
-it("tracks the bubble when an earlier receipt collapses during submission", () => {
+it("keeps the bubble on its screen trajectory when earlier content collapses during submission", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ messageID: "submitted", running: true });
   tick(0); tick(80);
+  const screenTop = messageBottom - messageHeight - scrollTop();
   naturalHeight -= 120;
   messageBottom -= 120;
   render({ messageID: "submitted", running: true });
-  const beforeCorrection = scrollTop();
+  expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(screenTop);
   tick(80);
-  expect(scrollTop()).toBe(beforeCorrection);
+  expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(screenTop);
   tick(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
+});
+
+it.each([-240, 240])("keeps the same visible trajectory while preceding layout moves by %ipx", displacement => {
+  const run = (id: string, moving: boolean) => {
+    naturalHeight = 2000;
+    messageBottom = 1850;
+    render({ id, messageID: "old" });
+    act(() => api.requestSubmittedQueryScroll("submitted"));
+    render({ id, messageID: "submitted", running: true });
+    const positions: number[] = [];
+    for (let now = 0; now <= 360; now += 20) {
+      if (moving && now >= 80 && now < 240) {
+        const before = messageBottom - messageHeight - scrollTop();
+        messageBottom += displacement / 8;
+        naturalHeight += displacement / 8;
+        render({ id, messageID: "submitted", running: true });
+        // A React commit must compensate before paint, not wait for another
+        // animation frame after showing the bubble at its reflowed position.
+        expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(before);
+      }
+      tick(now);
+      positions.push(messageBottom - messageHeight - scrollTop());
+    }
+    return positions;
+  };
+  const fixed = run("fixed", false);
+  const moving = run("moving", true);
+  moving.forEach((position, index) => expect(position).toBeCloseTo(fixed[index]));
 });
 
 it("places the bubble without animation with reduced motion", () => {
@@ -616,7 +645,7 @@ it.each([400, 900])("keeps the beginning of a %ipx message visible instead of cl
   expect(scrollTop()).toBeLessThan(messageBottom - messageHeight);
 });
 
-it("eases into scrolling instead of starting at maximum speed", () => {
+it("moves immediately and decelerates into the reading position", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ messageID: "submitted" });
@@ -625,7 +654,8 @@ it("eases into scrolling instead of starting at maximum speed", () => {
   tick(60);
   const first = scrollTop() - start;
   tick(120);
-  expect(scrollTop() - start - first).toBeGreaterThan(first);
+  expect(first).toBeGreaterThan(0);
+  expect(scrollTop() - start - first).toBeLessThan(first);
   tick(360);
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(api.conversationScrollRef.current!, host.querySelector('[data-user-message-id="submitted"]')!));
 });
@@ -640,7 +670,7 @@ it("hands off optimistic motion and positioning without restarting at acknowledg
   act(() => api.acknowledgeSubmittedMessage("submitted", "accepted"));
   messageBottom -= 60;
   render({ messageID: "accepted" });
-  expect(scrollTop()).toBe(before);
+  expect(scrollTop()).toBeCloseTo(before - 60);
   expect(animations).toHaveLength(2);
   expect(animations[1].currentTime).toBe(80);
   expect(animations[0].cancel).toHaveBeenCalled();

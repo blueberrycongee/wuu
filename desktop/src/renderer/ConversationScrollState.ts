@@ -29,7 +29,7 @@ import {
 } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { createMessageScrollMotion } from "./MessageScrollMotion";
+import { createMessageScrollMotion, messageMotionTime } from "./MessageScrollMotion";
 import { useSessionTailSpace } from "./SessionTailSpace";
 import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 
@@ -74,7 +74,13 @@ export function submittedMessageScrollTop(
   message: HTMLElement,
   clamp = true,
 ): number {
+  const { targetTop } = submittedMessagePlacement(viewport, message);
+  return clamp ? clampScrollTop(viewport, targetTop) : targetTop;
+}
+
+function submittedMessagePlacement(viewport: HTMLElement, message: HTMLElement) {
   const viewportRect = viewport.getBoundingClientRect();
+  const scrollTop = viewport.scrollTop;
   const messageRect = message.getBoundingClientRect();
   const viewportHeight = viewport.clientHeight;
   const messageTop = messageRect.top;
@@ -92,10 +98,15 @@ export function submittedMessageScrollTop(
     SUBMITTED_MESSAGE_MIN_FRACTION,
     SUBMITTED_MESSAGE_MAX_FRACTION,
   );
-  const bottomTarget = viewport.scrollTop + messageBottom - viewportRect.top - viewportHeight * messageBand;
-  const topLimit = viewport.scrollTop + messageTop - viewportRect.top - viewportHeight * 0.08;
-  const target = Math.max(0, Math.min(bottomTarget, topLimit));
-  return clamp ? clampScrollTop(viewport, target) : target;
+  const bottomTarget = scrollTop + messageBottom - viewportRect.top - viewportHeight * messageBand;
+  const topLimit = scrollTop + messageTop - viewportRect.top - viewportHeight * 0.08;
+  const screenTop = messageTop - viewportRect.top;
+  return {
+    targetTop: Math.max(0, Math.min(bottomTarget, topLimit)),
+    documentTop: scrollTop + screenTop,
+    screenTop,
+    messageHeight,
+  };
 }
 
 function cssPixelValue(value: string): number {
@@ -223,6 +234,7 @@ export function useConversationScrollState({
   const suppressAutoFollowRearmRef = useRef(false);
   const smoothAutoFollowRef = useRef(false);
   const submittedScrollFrameRef = useRef<number | undefined>(undefined);
+  const reflowSubmittedMotionRef = useRef<(() => void) | undefined>(undefined);
   const positionSubmittedMessageRef = useRef<((animate: boolean) => boolean) | undefined>(undefined);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
@@ -329,6 +341,7 @@ export function useConversationScrollState({
   }, []);
 
   const cancelSubmittedQueryScroll = useCallback((): void => {
+    reflowSubmittedMotionRef.current = undefined;
     if (smoothAutoFollowRef.current) suppressAutoFollowRearmRef.current = false;
     smoothAutoFollowRef.current = false;
     if (submittedScrollFrameRef.current !== undefined) {
@@ -410,10 +423,11 @@ export function useConversationScrollState({
 
   const scrollConversationToBottom = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
-    // A composer/status resize changes the readable viewport, not the answer.
-    // Keep the held or in-flight position valid in the same frame. Measuring
-    // the enlarged viewport can already clamp scrollTop, so restore it too.
-    if (scrollModeRef.current === "holding" || scrollModeRef.current === "placing") {
+    // Active placement owns the screen-space trajectory. Once it has settled,
+    // preserve the held scroll position if a larger viewport clamps its range.
+    if (scrollModeRef.current === "placing") {
+      reflowSubmittedMotionRef.current?.();
+    } else if (scrollModeRef.current === "holding") {
       const ownedTop = lastConversationScrollTopRef.current;
       ensureTailRange(ownedTop);
       const viewport = conversationViewport();
@@ -503,8 +517,9 @@ export function useConversationScrollState({
     if (!message) return false;
     scrollModeRef.current = "placing";
     setAutoFollowOverflowAnchor(viewport, true);
-    const targetTop = submittedMessageScrollTop(viewport, message, false);
-    reserveTailSpace(targetTop, message.getBoundingClientRect().height);
+    const placement = submittedMessagePlacement(viewport, message);
+    const targetTop = placement.targetTop;
+    reserveTailSpace(targetTop, placement.messageHeight);
     const startTop = clampScrollTop(viewport, viewport.scrollTop);
     if (!animate || !submissionRef.current?.animate || prefersReducedMotion() || Math.abs(targetTop - startTop) <= 1) {
       viewport.scrollTop = targetTop;
@@ -516,33 +531,51 @@ export function useConversationScrollState({
     }
 
     const duration = motionDurationMs("--query-scroll-duration", 360);
-    const sample = createMessageScrollMotion(startTop, targetTop, duration);
-    const step = (now: number): void => {
-      submittedScrollFrameRef.current = undefined;
+    const screenStart = placement.documentTop - startTop;
+    const sample = createMessageScrollMotion(screenStart, placement.documentTop - targetTop, duration);
+    let lastFrameTime: number | undefined;
+    let animatedMessage = message;
+    const paint = (now: number | undefined): void => {
       if (scrollModeRef.current !== "placing") return;
       viewport = conversationViewport();
       if (!viewport) {
         scrollModeRef.current = "pending";
         return;
       }
-      // A previous turn's receipt can collapse during this same animation.
-      // Follow the bubble's live position without restarting the deadline.
-      const liveMessage = submittedMessage();
-      if (!liveMessage) {
-        scrollModeRef.current = "pending";
-        return;
+      // Animate the bubble's position in the reading viewport, not scrollTop.
+      // Reflow moves its document anchor; compensate that displacement directly
+      // so it cannot become a second visible movement or a delayed correction.
+      if (animatedMessage.dataset.userMessageId !== submissionRef.current?.messageID || !viewport.contains(animatedMessage)) {
+        const replacement = submittedMessage();
+        if (!replacement) {
+          scrollModeRef.current = "pending";
+          return;
+        }
+        animatedMessage = replacement;
       }
-      const liveTarget = submittedMessageScrollTop(viewport, liveMessage, false);
-      const { top, done } = sample(now, liveTarget);
-      submissionFrameCallbacks.current.ensureTailRange(Math.max(top, liveTarget));
+      const live = submittedMessagePlacement(viewport, animatedMessage);
+      const { position, done } = now === undefined
+        ? { position: screenStart, done: false }
+        : sample(now, live.documentTop - live.targetTop);
+      const top = live.documentTop - position;
+      submissionFrameCallbacks.current.ensureTailRange(Math.max(top, live.targetTop));
       viewport.scrollTop = top;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      if (done) scrollModeRef.current = "holding";
+      if (done) {
+        scrollModeRef.current = "holding";
+        reflowSubmittedMotionRef.current = undefined;
+      }
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false);
-      if (!done) {
+    };
+    reflowSubmittedMotionRef.current = () => paint(messageMotionTime() ?? lastFrameTime);
+    const step = (now: number): void => {
+      submittedScrollFrameRef.current = undefined;
+      lastFrameTime = now;
+      paint(now);
+      if (scrollModeRef.current === "placing") {
         submittedScrollFrameRef.current = window.requestAnimationFrame(step);
-      } else {
+      } else if (scrollModeRef.current === "holding") {
         submissionFrameCallbacks.current.scrollConversationToBottom();
       }
     };
