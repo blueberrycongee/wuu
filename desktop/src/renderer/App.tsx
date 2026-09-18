@@ -2283,6 +2283,7 @@ export function App(): JSX.Element {
     emptyConversation,
     initialized: Boolean(state.initialized),
     running: isStateActiveThreadRunning(state),
+    statusClusterNode,
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id

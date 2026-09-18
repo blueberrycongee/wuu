@@ -18,6 +18,7 @@ type ResolvedStatusItem = ComposerStatusItem & Readonly<{ key: string }>;
 interface ConversationStatusClusterProps {
   host: PluginHost;
   visible: boolean;
+  /** Measures only the compact row; expanded popovers do not resize the stream. */
   clusterRef?: (node: HTMLDivElement | null) => void;
   threadId?: string;
   todoUpdate: TodoUpdate | undefined;
