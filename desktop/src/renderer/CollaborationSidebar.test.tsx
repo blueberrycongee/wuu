@@ -144,16 +144,11 @@ it("keeps embedded navigation flat and opens each conversation directly after co
   expect(callbacks.onSelectRoom).toHaveBeenCalledExactlyOnceWith(dm.id);
 });
 
-it("keeps the shared mode switch in the sidebar with Collaboration selected", () => {
+it("keeps the shared brand lockup without a mode switch", () => {
   render();
-  const modes = host.querySelector('[role="group"]')!;
-  const currentMode = modes.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!;
-  expect(currentMode).not.toBeNull();
-  act(() => currentMode.click());
+  expect(host.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
+  expect(host.querySelector('[role="group"]')).toBeNull();
   expect(callbacks.onSwitchToHarness).not.toHaveBeenCalled();
-  const harness = modes.querySelector<HTMLButtonElement>('[aria-pressed="false"]')!;
-  act(() => harness.click());
-  expect(callbacks.onSwitchToHarness).toHaveBeenCalledOnce();
 });
 
 it("keeps collapsed conversations accessible, selected and unread while exposing expand and creation actions", () => {

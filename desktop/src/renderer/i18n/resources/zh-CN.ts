@@ -593,7 +593,6 @@ export const zhCN = {
   "sidebar.agents": "Agents",
   "sidebar.collaboration": "collaboration",
   "sidebar.harness": "harness",
-  "sidebar.productMode": "Wuu 模式",
   "sidebar.notifications": "未读会话",
   "sidebar.notificationsHint": "{count} 个需要关注的会话。点击切换关注视图，长按将未读会话标为已读",
   "sidebar.attentionConversations": "需要关注",

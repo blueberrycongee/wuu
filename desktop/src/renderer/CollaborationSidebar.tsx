@@ -97,7 +97,7 @@ export function CollaborationSidebar({
           {!collapsed ? newConversationButton : null}
 
         </div>}
-        {!embedded && !collapsed ? <AppModeSwitch mode="collaboration" collaborationEnabled onChange={(mode) => { if (mode === "harness") onSwitchToHarness(); }} /> : null}
+        {!embedded && !collapsed ? <AppModeSwitch mode="collaboration" /> : null}
         {!embedded && !collapsed ? <div className="collaboration-sidebar-tools">
           <label className="collaboration-sidebar-search">
             <Search aria-hidden="true" />

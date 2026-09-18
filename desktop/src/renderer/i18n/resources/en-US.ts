@@ -596,7 +596,6 @@ export const enUS = {
   "sidebar.agents": "Agents",
   "sidebar.collaboration": "collaboration",
   "sidebar.harness": "harness",
-  "sidebar.productMode": "Wuu mode",
   "sidebar.notifications": "Unread conversations",
   "sidebar.notificationsHint": "{count} conversations need attention. Click to toggle attention view; press and hold to mark unread conversations as read",
   "sidebar.attentionConversations": "Needs attention",

@@ -1559,8 +1559,6 @@ export function AppSidebar({
         <div className="traffic-spacer" />
         <AppModeSwitch
           mode="harness"
-          collaborationEnabled={groupChatEnabled && !collaborationNavigation}
-          onChange={(mode) => { if (mode === "collaboration") onSwitchToCollaboration?.(); }}
           unreadViewOpen={unreadViewOpen}
           unreadCount={attentionCount}
           onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}

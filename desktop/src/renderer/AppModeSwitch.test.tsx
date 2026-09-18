@@ -99,7 +99,6 @@ function renderSwitch(
         <I18nProvider>
           <AppModeSwitch
             mode="harness"
-            collaborationEnabled={false}
             unreadCount={props.unreadCount ?? 0}
             unreadViewOpen={props.unreadViewOpen}
             onClearUnread={props.onClearUnread}
@@ -237,24 +236,15 @@ describe("AppModeSwitch clear-unread hint", () => {
 });
 
 describe("AppModeSwitch lockup", () => {
-  function lockup(): { wordmark: string | null; modes: string[] } {
-    return {
-      wordmark: container.querySelector(".sidebar-brand-wordmark")?.textContent ?? null,
-      modes: [...container.querySelectorAll(".sidebar-mode-option")].map(
-        (node) => node.textContent ?? "",
-      ),
-    };
-  }
-
-  it("keeps the wordmark and stacked mode labels in the same order in both modes", () => {
-    renderSwitch({ collaborationEnabled: true, mode: "harness" });
-    const harness = lockup();
-    expect(harness.wordmark).toBe("wuu");
-    expect(harness.modes).toEqual(["collaboration", "harness"]);
+  it("keeps the wordmark without a harness descriptor", () => {
+    renderSwitch({ mode: "harness" });
+    expect(container.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
+    expect(container.querySelector(".sidebar-mode-switch")).toBeNull();
     expect(container.querySelector(".sidebar-notifications-button")).not.toBeNull();
 
-    renderSwitch({ collaborationEnabled: true, mode: "collaboration" });
-    expect(lockup()).toEqual({ wordmark: harness.wordmark, modes: harness.modes });
+    renderSwitch({ mode: "collaboration" });
+    expect(container.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
+    expect(container.querySelector(".sidebar-mode-switch")).toBeNull();
     expect(container.querySelector(".sidebar-notifications-button")).toBeNull();
   });
 });

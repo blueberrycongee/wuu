@@ -804,12 +804,11 @@
 }
 
 .sidebar-brand {
-  /* Three tracks so the wordmark and stacked mode labels stay put when the
-   * bell mounts or unmounts (harness vs collaboration). Column 3 is reserved
-   * even when the button is absent. */
+  /* Two tracks so the wordmark stays put when the bell mounts or unmounts.
+   * Column 2 is reserved even when the button is absent. */
   display: grid;
   flex-shrink: 0;
-  grid-template-columns: auto minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   column-gap: 8px;
   min-height: 44px;
@@ -826,65 +825,12 @@
   line-height: 1;
 }
 
-.sidebar-mode-switch {
-  display: flex;
-  grid-column: 2;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 1px;
-  transform: none;
-  -webkit-app-region: no-drag;
-}
-
-.sidebar-mode-option {
-  min-width: 0;
-  max-width: 100%;
-  height: auto;
-  padding: 0;
-  overflow: hidden;
-  background: transparent;
-  color: var(--ink-strong);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.03em;
-  line-height: 1.05;
-  opacity: 0.32;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color 120ms ease, opacity 120ms ease;
-}
-
-.sidebar-mode-option:hover,
-.sidebar-mode-option:focus-visible {
-  color: var(--ink-strong);
-  opacity: 0.68;
-}
-
-.sidebar-mode-option[aria-pressed="true"] {
-  color: var(--ink-strong);
-  opacity: 1;
-}
-
-.sidebar-mode-option-static {
-  color: var(--ink-strong);
-  opacity: 1;
-}
-
-.sidebar-brand-descriptor {
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.03em;
-  line-height: 1;
-}
-
 .sidebar-notifications-button {
   display: grid;
   width: 32px;
   height: 32px;
   position: relative;
-  grid-column: 3;
+  grid-column: 2;
   justify-self: end;
   place-items: center;
   /* Keep the larger bell hit target centered on the row accessory column. */

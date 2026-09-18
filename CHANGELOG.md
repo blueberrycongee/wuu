@@ -18,6 +18,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Drop the sidebar `harness` descriptor so the brand lockup shows only `wuu`.
+
 - Unify named-agent and group-chat navigation with the desktop session sidebar,
   nesting managed sessions beneath their named agent instead of their workspace.
 
