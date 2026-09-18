@@ -69,6 +69,7 @@ async function renderComposerPendingState({
   restorePrimaryComposerDraft: ReturnType<typeof vi.fn>;
   restoreComposerDraftForThread: ReturnType<typeof vi.fn>;
   sendComposerMessageToThread: ReturnType<typeof vi.fn>;
+  requestDeferredQueryScroll: ReturnType<typeof vi.fn>;
   setPrimaryDraft: (draft: ComposerDraftState) => void;
   setAppState: (state: AppState) => void;
 }> {
@@ -84,6 +85,7 @@ async function renderComposerPendingState({
       restorePrimaryComposerDraft(draft),
   );
   const sendComposerMessageToThread = vi.fn();
+  const requestDeferredQueryScroll = vi.fn();
 
   function Probe() {
     latest = useComposerPendingState({
@@ -92,6 +94,7 @@ async function renderComposerPendingState({
       restoreComposerDraftForThread,
       setStatus,
       sendComposerMessageToThread,
+      requestDeferredQueryScroll,
     });
     return null;
   }
@@ -117,6 +120,7 @@ async function renderComposerPendingState({
     restorePrimaryComposerDraft,
     restoreComposerDraftForThread,
     sendComposerMessageToThread,
+    requestDeferredQueryScroll,
     setPrimaryDraft: (draft) => {
       currentPrimaryDraft = draft;
     },
@@ -643,6 +647,65 @@ describe("useComposerPendingState", () => {
         activeDocument: { path: "docs/next.md" },
       }),
     ]);
+  });
+
+  it("registers deferred placement when a queued message is steered from the drawer", async () => {
+    const steerTurn = vi.fn().mockResolvedValue({ turn_id: "turn-running" });
+    installWuuStub({ steerTurn });
+    const runningThread = thread("thread-a", true);
+    const hook = await renderComposerPendingState({
+      appState: {
+        ...initialState,
+        thread: runningThread,
+        threads: [runningThread],
+      },
+    });
+
+    act(() => {
+      hook
+        .get()
+        .enqueueComposerMessage("thread-a", message("queue-1", "Revise it"));
+    });
+    await act(async () => {
+      await hook.get().guideQueuedMessage("queue-1");
+    });
+
+    expect(hook.requestDeferredQueryScroll).toHaveBeenCalledWith("queue-1");
+    expect(steerTurn).toHaveBeenCalled();
+  });
+
+  it("registers deferred placement when a guide is requeued from the drawer", async () => {
+    const requeueTurn = vi.fn().mockResolvedValue({
+      ok: true,
+      state: "queued",
+      queued: { id: "guide-1", thread_id: "thread-a" },
+    });
+    installWuuStub({ requeueTurn });
+    const runningThread = thread("thread-a", true);
+    const hook = await renderComposerPendingState({
+      appState: {
+        ...initialState,
+        thread: runningThread,
+        threads: [runningThread],
+      },
+    });
+
+    act(() => {
+      hook.get().setPendingComposerMessagesByThreadNow({
+        "thread-a": {
+          queued: [],
+          guides: [
+            { ...message("guide-1", "Send me next"), origin: "steer" as const },
+          ],
+        },
+      });
+    });
+    await act(async () => {
+      await hook.get().guideQueuedMessage("guide-1");
+    });
+
+    expect(hook.requestDeferredQueryScroll).toHaveBeenCalledWith("guide-1");
+    expect(requeueTurn).toHaveBeenCalledWith("thread-a", "guide-1");
   });
 
   it("restores a queued message into the primary composer for editing", async () => {

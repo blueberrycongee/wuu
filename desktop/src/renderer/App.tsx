@@ -1032,6 +1032,10 @@ export function App(): JSX.Element {
     fullPanel: false,
     open: false,
   });
+  // The conversation scroll state is created later in the component, but the
+  // composer pending state needs to register deferred placement intent from
+  // drawer actions. Route it through a ref assigned after that hook mounts.
+  const requestDeferredQueryScrollRef = useRef<(sourceID: string) => void>(() => {});
   const {
     pendingComposerMessagesByThread,
     pendingComposerMessagesByThreadRef,
@@ -1077,6 +1081,8 @@ export function App(): JSX.Element {
         status,
       })),
     sendComposerMessageToThread,
+    requestDeferredQueryScroll: (sourceID) =>
+      requestDeferredQueryScrollRef.current(sourceID),
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
@@ -2259,6 +2265,9 @@ export function App(): JSX.Element {
     initialized: Boolean(state.initialized),
     running: isStateActiveThreadRunning(state),
     statusClusterNode,
+  });
+  useLayoutEffect(() => {
+    requestDeferredQueryScrollRef.current = requestDeferredQueryScroll;
   });
   const activeManagementTabID = showingManagementCatalog
     ? currentSessionTab?.id

@@ -226,6 +226,12 @@ type ComposerPendingStateOptions = {
     message: QueuedComposerMessage,
     targetThread: Thread,
   ) => Promise<boolean>;
+  /**
+   * Register placement intent for a pending input whose client id will
+   * materialize as a user message `source_id`. The conversation scrolls to the
+   * message and reserves space for its streamed response once it appears.
+   */
+  requestDeferredQueryScroll: (sourceID: string) => void;
 };
 
 export function useComposerPendingState({
@@ -233,6 +239,7 @@ export function useComposerPendingState({
   getPrimaryComposerDraft,
   restoreComposerDraftForThread,
   setStatus,
+  requestDeferredQueryScroll,
 }: ComposerPendingStateOptions): ComposerPendingStateController {
   const [pendingComposerMessagesByThread, setPendingComposerMessagesByThread] =
     useState<PendingComposerMessagesByThread>({});
@@ -624,6 +631,13 @@ export function useComposerPendingState({
       setStatus(localizedText("composer.noActiveTurnToGuide"));
       return;
     }
+    // The steered input materializes under the same client id later. Register
+    // placement intent now so the conversation scrolls to it and reserves
+    // space for the response, matching the composer queue/steer paths. On a
+    // rejected steer the entry stays queued and still materializes.
+    if (activeThreadIDForState(currentState) === target.threadID) {
+      requestDeferredQueryScroll(target.message.id);
+    }
     updateThreadPendingComposerMessages(target.threadID, (previous) => ({
       ...previous,
       queued: previous.queued.map((message) =>
@@ -697,6 +711,11 @@ export function useComposerPendingState({
         }));
         setStatus(localizedText("composer.guideAlreadyHandled"));
         return;
+      }
+      // The requeued input materializes as a queued user message; the
+      // conversation should scroll to it and reserve response space.
+      if (activeThreadIDForState(getAppState()) === target.threadID) {
+        requestDeferredQueryScroll(id);
       }
       updateThreadPendingComposerMessages(target.threadID, (previous) => {
         const withoutGuide = {
