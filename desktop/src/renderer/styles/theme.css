@@ -321,14 +321,14 @@
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.08));
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.05);
-  --sidebar-project-loading-notch: rgba(120, 160, 132, 0.3);
+  --sidebar-project-loading-notch: rgba(228, 232, 235, 0.22);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(240, 112, 95, 0.15);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-6);
   --sidebar-thread-row-dot-default: var(--ink-overlay-18);
   --sidebar-thread-row-dot-hover: var(--ink-overlay-18);
   --sidebar-thread-row-dot-active: var(--ink-overlay-18);
-  --sidebar-thread-spinner-notch: rgba(120, 160, 132, 0.3);
+  --sidebar-thread-spinner-notch: rgba(228, 232, 235, 0.22);
   --sidebar-thread-child-agent-separator: var(--ink-overlay-12);
   --sidebar-thread-child-agent-hover-bg: rgba(120, 160, 132, 0.1);
   --sidebar-thread-child-agent-focus-shadow: rgba(120, 160, 132, 0.25);

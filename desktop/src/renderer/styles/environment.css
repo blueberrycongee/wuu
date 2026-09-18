@@ -1640,7 +1640,7 @@
 .fork-dialog-option-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid var(--info);
+  border: 2px solid color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-right-color: transparent;
   border-radius: var(--radius-circle);
   margin-left: auto;

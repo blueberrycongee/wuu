@@ -36,14 +36,14 @@
   /* Location uses the same neutral surface as tabs and settings navigation. */
   --sidebar-row-selected-bg: var(--selection-surface);
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
-  --sidebar-project-loading-notch: rgba(95, 126, 104, 0.22);
+  --sidebar-project-loading-notch: rgba(17, 19, 21, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
   --sidebar-thread-row-dot-default: var(--ink-overlay-18);
   --sidebar-thread-row-dot-hover: var(--ink-overlay-18);
   --sidebar-thread-row-dot-active: var(--ink-overlay-18);
-  --sidebar-thread-spinner-notch: rgba(95, 126, 104, 0.22);
+  --sidebar-thread-spinner-notch: rgba(17, 19, 21, 0.18);
   --sidebar-thread-child-agent-separator: var(--ink-overlay-8);
   --sidebar-thread-child-agent-hover-bg: rgba(95, 126, 104, 0.08);
   --sidebar-thread-child-agent-focus-shadow: rgba(95, 126, 104, 0.18);
@@ -2252,7 +2252,7 @@
    * peers in the sidebar do not imply different levels of activity.
    */
   border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--sidebar-accent) 65%, transparent);
+    color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--sidebar-project-loading-notch);
   border-radius: var(--radius-pill);
   animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
@@ -2582,11 +2582,11 @@
    * Session-row running-state spinner. Same inverted "light notch on a
    * dark ring" treatment as `.session-tab.running .session-tab-status`
    * and `.project-row .project-row-loading` — heavy dark mass anchors
-   * the rotation at this 9px size. 65% of `--sidebar-accent` for the
-   * ring keeps it from going inky against the sidebar surface.
+   * the rotation at this 9px size. 65% of `--ink-strong` for the ring
+   * keeps it from going inky against the sidebar surface.
    */
   border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--sidebar-accent) 65%, transparent);
+    color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--sidebar-thread-spinner-notch);
   border-radius: var(--radius-pill);
   animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
