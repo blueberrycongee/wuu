@@ -605,7 +605,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid var(--hairline-soft);
+  border: 1px solid var(--hairline);
   border-radius: inherit;
   pointer-events: none;
 }

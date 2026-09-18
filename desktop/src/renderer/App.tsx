@@ -5805,12 +5805,6 @@ export function App(): JSX.Element {
               </>
             )}
             </div>
-            {mainConversationDockVisible && !emptyConversation ? (
-              <JumpToLatestPill
-                containerRef={conversationScrollRef}
-                bottomAnchor={statusClusterNode ?? dockComposerNode}
-              />
-            ) : null}
           </div>
         ) : (
           <RuntimeLoading
@@ -5861,6 +5855,13 @@ export function App(): JSX.Element {
           host={desktopPluginHost}
           visible={mainConversationDockVisible}
           clusterRef={statusClusterRef}
+          navigation={!emptyConversation ? (
+            <JumpToLatestPill
+              containerRef={conversationScrollRef}
+              bottomAnchor={dockComposerNode}
+              inline
+            />
+          ) : null}
           threadId={activeThreadID}
           todoUpdate={activeTodoUpdateForThread(activeThread)}
           onOpenSession={handleOpenThreadInSplit}
