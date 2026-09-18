@@ -39,10 +39,9 @@ export function useMessageArrivalMotion() {
       // A remount/acknowledgement continues a live entrance, never a finished
       // or cancelled one. An acknowledgement before the first paint is fresh.
       if (!canAnimate || !element.animate || (source ? elapsed === undefined : !fresh)) continue;
-      const origin = own ? "right bottom" : "left top";
       const entrance = element.animate([
-        { opacity: 0.45, transform: "translateY(6px)", transformOrigin: origin },
-        { opacity: 1, transform: "none", transformOrigin: origin },
+        { opacity: 0.85 },
+        { opacity: 1 },
       ], { duration, easing });
       if (elapsed !== undefined) entrance.currentTime = elapsed;
       else if (startTime !== undefined) entrance.startTime = startTime;

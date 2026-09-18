@@ -213,8 +213,8 @@ export function useAutoFollowScrollContainer({
         const step = (now: number): void => {
           motionFrameRef.current = undefined;
           if (scrollRef.current !== node || !autoFollowRef.current) return;
-          const { top, done } = sample(now, maxScrollTop(node));
-          node.scrollTop = top;
+          const { position, done } = sample(now, maxScrollTop(node));
+          node.scrollTop = position;
           programmaticScrollTopRef.current = node.scrollTop;
           lastScrollTopRef.current = node.scrollTop;
           if (!done) motionFrameRef.current = window.requestAnimationFrame(step);
