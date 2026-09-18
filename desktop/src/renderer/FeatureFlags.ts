@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
-/** Phone access is available on native hosts; Web hides it via host capabilities. */
-export const ENABLE_REMOTE_CONTROL = true;
+/** Phone access is available in development; the local desktop release hides it. */
+export const ENABLE_REMOTE_CONTROL =
+  import.meta.env.VITE_ENABLE_REMOTE_CONTROL !== "false";
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;

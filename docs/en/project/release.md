@@ -58,9 +58,12 @@ package. It requires:
 
 - `GITHUB_TOKEN` (provided by GitHub Actions)
 
-The release build sets `VITE_ENABLE_ACCOUNT=false`, so this version is the local,
-unauthenticated desktop experience. Account sign-in and device-linking UI remains
-available in development builds while that flow is being completed.
+The release build sets `VITE_ENABLE_ACCOUNT=false` and
+`VITE_ENABLE_REMOTE_CONTROL=false`, so this version is the local,
+unauthenticated desktop experience. The sidebar identifies the mode as
+“Local mode”, and account, device-linking, phone pairing, and remote-control
+settings are hidden. Those surfaces remain available in development builds
+while the flow is being completed.
 
 The current desktop macOS job does not require Apple signing or notarization
 secrets. It builds unsigned arm64 preview artifacts because the project does

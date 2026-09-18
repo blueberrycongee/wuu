@@ -1970,19 +1970,12 @@ export function AppSidebar({
             id="sidebar.footer"
             context={Object.freeze({ initialized: Boolean(state.initialized) })}
           />
-          {sidebarVisible && (ENABLE_ACCOUNT ? <SidebarAccountMenu
+          {sidebarVisible && <SidebarAccountMenu
             disabled={!state.initialized}
+            localOnly={!ENABLE_ACCOUNT}
             onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
             onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
-          /> : <button
-            className="sidebar-settings-button"
-            type="button"
-            disabled={!state.initialized}
-            onClick={() => activateNative(onOpenSettings)}
-          >
-            <Settings className="icon-lg" />
-            <span>{t("sidebar.settings")}</span>
-          </button>)}
+          />}
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu
