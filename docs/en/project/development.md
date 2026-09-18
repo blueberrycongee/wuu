@@ -52,8 +52,8 @@ Pull requests and pushes to `main` run:
 - **Go check:** module consistency, format, vet, tests, and CLI build;
 - **Desktop check:** install, typecheck, unit tests, and Electron build;
 - **Clients check:** protocol/core/mobile typecheck, client tests, and mobile web export;
-- **macOS native check:** Swift/native tests and a directory-packaged Electron app;
-- **Windows native check:** Windows process/sandbox boundaries, Desktop typecheck, and unpacked packaging. Typecheck only; the full Desktop unit suite already runs on Ubuntu.
+- **macOS native check:** Swift/native tests on pull requests and a directory-packaged Electron app on `main`;
+- **Windows native check:** Windows process/sandbox boundaries and Desktop typecheck on pull requests, with unpacked packaging on `main`. The full Desktop unit suite already runs on Ubuntu.
 
 Tagged releases add unsigned macOS DMG/ZIP verification. GitHub Releases do not
 publish standalone CLI archives. See the [release guide](release.md).

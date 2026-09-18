@@ -17,8 +17,10 @@ on:
       - "desktop/src/renderer/styles/*avatar*.css"
       - "desktop/src/renderer/styles/wuu-mascot.css"
       - "desktop/vendor/blobatar/**"
-      - "internal/**"
-      - "packages/plugin-go/**"
+      # PRs exercise mobile-facing boundaries; main retains broad Go coverage.
+      - "internal/remote/**"
+      - "internal/appserver/**"
+      - "packages/protocol/**"
       - "go.mod"
       - "go.sum"
       - "VERSION"
@@ -42,6 +44,7 @@ on:
       - "desktop/vendor/blobatar/**"
       - "internal/**"
       - "packages/plugin-go/**"
+      - "packages/protocol/**"
       - "go.mod"
       - "go.sum"
       - "VERSION"
@@ -75,6 +78,9 @@ jobs:
           brew install postgresql@18
           echo "WUU_TEST_PG_BIN=$(brew --prefix postgresql@18)/bin" >> "$GITHUB_ENV"
       - name: Core, real-server integration and simulator build
+        env:
+          # CI Go check owns these Go tests; standalone dispatch remains complete.
+          WUU_NATIVE_SKIP_GO_TESTS: ${{ github.event_name != 'workflow_dispatch' && '1' || '0' }}
         run: bash clients/native/verify.sh ios | tee native-ios-core.log
       - name: Unsigned iOS device Release build
         run: |
@@ -110,6 +116,8 @@ jobs:
           sudo apt-get install -y postgresql
           echo "WUU_TEST_PG_BIN=$(pg_config --bindir)" >> "$GITHUB_ENV"
       - name: Core, real-server integration and APK build
+        env:
+          WUU_NATIVE_SKIP_GO_TESTS: ${{ github.event_name != 'workflow_dispatch' && '1' || '0' }}
         run: bash clients/native/verify.sh android | tee native-android-core.log
       - name: Unsigned Android Release and lint
         run: |

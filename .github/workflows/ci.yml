@@ -64,6 +64,7 @@ jobs:
         run: make test-go
 
       - name: Build
+        if: github.event_name == 'push'
         run: make build-go
 
   desktop-check:
@@ -115,6 +116,7 @@ jobs:
             packages/protocol/package-lock.json
 
       - name: Install dependencies
+        # mobile-web imports renderer sources whose dependencies live in desktop.
         run: |
           pids=()
           for workspace in \
@@ -173,11 +175,14 @@ jobs:
         run: make test-native
 
       - name: Install phone Web dependencies
+        if: github.event_name == 'push'
         run: |
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
 
       - name: Package macOS app
+        # Keep packaging on main; PRs still exercise the native helper above.
+        if: github.event_name == 'push'
         run: make build-macos
 
   windows-check:
@@ -216,9 +221,11 @@ jobs:
         run: npm --prefix desktop run typecheck
 
       - name: Install phone Web dependencies
+        if: github.event_name == 'push'
         run: |
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
 
       - name: Package unpacked Windows app
+        if: github.event_name == 'push'
         run: npm --prefix desktop run pack:win
