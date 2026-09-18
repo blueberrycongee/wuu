@@ -2113,6 +2113,16 @@
   overflow: hidden;
 }
 
+/* Both fold wrappers clip, so both reserve the mascot paint room: the negative
+ * margin moves each clip edge left, and the matching padding keeps the content —
+ * the text column and every process row — exactly where it was. The child
+ * selector outranks the `padding` shorthand on `.turn-process-fold-body`. */
+.collapsible-details,
+.collapsible-details > .collapsible-details-inner {
+  margin-left: calc(-1 * var(--process-mascot-room, 0px));
+  padding-left: var(--process-mascot-room, 0px);
+}
+
 .turn-process-fold-body {
   padding: var(--conversation-process-detail-gap) 0 0 0;
 }
@@ -2500,6 +2510,16 @@
   min-width: 0;
 }
 
+/* Paint room reserved on the boxes that clip a process fold (the fold wrappers
+ * below). `--process-mascot-inset` shifts the mascot's painted silhouette onto
+ * the row's left edge, and that edge is exactly where the fold body's clip box
+ * ends, so the silhouette gets shaved whenever a morph, a morph blend, or the
+ * entry slide reaches further left. Keep this token at or above the largest
+ * inset in the block below (`bang`, 12px). */
+:root {
+  --process-mascot-room: 12px;
+}
+
 .process-surface-fold {
   --process-summary-icon-size: 28px;
   --process-summary-icon-gap: 8px;
@@ -2567,6 +2587,10 @@
   align-self: center;
   overflow: visible;
   transform-origin: center;
+  /* The entry/exit slide moves the whole slot, so cap it to the reserved paint
+   * room: a full-size slide would push the painted silhouette past the fold's
+   * clip edge and shove the summary text sideways on the way in. */
+  --wuu-mascot-slide-shift: var(--process-mascot-room, 12px);
 }
 
 .process-surface-summary-line .process-surface-blobatar {

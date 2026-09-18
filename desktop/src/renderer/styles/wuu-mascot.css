@@ -8,7 +8,10 @@
 
 @keyframes wuu-mascot-enter {
   from {
-    margin-inline-start: calc(-1 * var(--wuu-mascot-size));
+    /* Slide-in distance. Callers whose slot sits against a clip edge (process
+       rows) cap it with --wuu-mascot-slide-shift so the entry cannot paint
+       outside that edge. */
+    margin-inline-start: calc(-1 * var(--wuu-mascot-slide-shift, var(--wuu-mascot-size)));
     margin-inline-end: 0;
     opacity: 0;
     transform: translateY(2px) scale(0.8);
@@ -17,7 +20,7 @@
 
 @keyframes wuu-mascot-exit {
   to {
-    margin-inline-start: calc(-1 * var(--wuu-mascot-size));
+    margin-inline-start: calc(-1 * var(--wuu-mascot-slide-shift, var(--wuu-mascot-size)));
     margin-inline-end: 0;
     opacity: 0;
     transform: translateY(-2px) scale(0.8);

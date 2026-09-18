@@ -1,4 +1,4 @@
-import { List } from "lucide-react";
+import { ChevronRight, List, LoaderCircle } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { isThreadExecuting, type ThreadSummary } from "./AppState";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
@@ -61,18 +61,28 @@ export function ManagedAgentWork({ threads, expanded, onShowAll, onSelect }: {
       <span>{label}</span>
     </button>
     {open ? <FloatingMenuPortal anchorRef={anchorRef} owner="managed-sessions" placement="above" align="center" width={360}>
-      <div ref={cardRef} id={cardID} className="conversation-status-preview-card" role="region" aria-label={t("channels.managedSessions.history")}
+      <div ref={cardRef} id={cardID} className="conversation-status-preview-card" role="region" aria-label={label}
         onPointerEnter={() => { hovered.current = true; clearClose(); }} onPointerLeave={() => { hovered.current = false; leave(); }} onFocus={clearClose} onBlur={leave}>
-        <div className="conversation-status-todo-card-header"><strong>{label}</strong></div>
+        {/* The trigger already names this list, so the card carries no title of
+            its own; running sessions are marked by a trailing spinner glyph
+            instead of a repeated status label. */}
         {preview.length ? <ul className="managed-session-preview-list">
           {preview.map(thread => <li key={thread.id}>
             <button type="button" className="managed-session-preview-item" onClick={() => { dismiss(); onSelect?.(thread.id); }}>
               <span className="managed-session-preview-title">{thread.title || t("channels.sessions.untitled")}</span>
-            {isThreadExecuting(thread) ? <span className="managed-session-preview-state">{t("channels.sessions.state.running")}</span> : null}
+              <span className="managed-session-preview-status">
+                {isThreadExecuting(thread) ? <LoaderCircle className="managed-session-spinner" aria-label={t("threadSidebar.responding")} /> : null}
+              </span>
             </button>
           </li>)}
-        </ul> : <p className="conversation-status-todo-explanation">{t("channels.managedSessions.empty")}</p>}
-        {preview.length ? <button type="button" className="managed-session-preview-all" onClick={() => { dismiss(); if (!expanded) onShowAll(); }}>{t("channels.managedSessions.all")}</button> : null}
+        </ul> : <p className="managed-session-preview-empty">{t("channels.managedSessions.empty")}</p>}
+        {preview.length ? <>
+          <span className="managed-session-preview-separator" aria-hidden="true" />
+          <button type="button" className="managed-session-preview-all" onClick={() => { dismiss(); if (!expanded) onShowAll(); }}>
+            <span>{t("channels.managedSessions.all")}</span>
+            <ChevronRight className="icon" aria-hidden="true" />
+          </button>
+        </> : null}
       </div>
     </FloatingMenuPortal> : null}
   </>;
