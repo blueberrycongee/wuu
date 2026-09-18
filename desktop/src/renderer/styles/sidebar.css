@@ -780,10 +780,12 @@
 }
 
 .traffic-spacer {
-  /* Keep window controls and sidebar navigation in the first chrome row. */
+  /* Keep window controls and sidebar navigation in the first chrome row.
+   * 48px matches the conversation/settings titlebar so the collapse
+   * toggle shares the traffic-light center at 24px. */
   position: relative;
   display: flex;
-  height: 46px;
+  height: 48px;
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
@@ -1178,7 +1180,7 @@
   align-items: center;
   justify-content: flex-end;
   flex: 0 0 auto;
-  min-height: 46px;
+  min-height: 48px;
   padding: 0 4px 0 max(4px, var(--window-controls-inset-left));
   -webkit-app-region: drag;
 }

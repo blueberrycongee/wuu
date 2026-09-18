@@ -820,7 +820,9 @@ function windowFrameOptions(): Pick<
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 18, y: 15 },
+      // 14px lights at y=17 sit on the 24px center of the 48px renderer
+      // titlebar, matching the CSS-centered toolbar controls beside them.
+      trafficLightPosition: { x: 18, y: 17 },
     };
   }
   if (usesWindowControlsOverlay()) {
