@@ -227,6 +227,24 @@ it("positions a materialized running input without freezing the preceding output
   expect(scrollTop()).toBe(naturalHeight - viewportHeight);
 });
 
+it.each([false, true])("preserves earlier queued placement when another input is queued (later fails: %s)", fails => {
+  render({ messageID: "old", running: true });
+  act(() => {
+    api.requestDeferredQueryScroll("first-input");
+    api.requestDeferredQueryScroll("second-input");
+    if (fails) api.discardSubmittedMessage("second-input");
+  });
+  render({ messageID: "first", item: { text: "First", source_id: "first-input" } });
+  tick(0); tick(360);
+  expect(scrollTop()).toBeCloseTo(messageBottom - 200);
+  expect(tailSpace()).toBeGreaterThan(0);
+  grow(600);
+  messageBottom += 600;
+  render({ messageID: "second", item: { text: "Second", source_id: "second-input" } });
+  tick(1000); tick(1360);
+  expect(tailSpace() > 0).toBe(!fails);
+});
+
 it.each(["scroll", "switch", "failure"])("does not reposition a delayed input after %s", reason => {
   render({ messageID: "old", running: true });
   act(() => api.requestDeferredQueryScroll("local-input"));
