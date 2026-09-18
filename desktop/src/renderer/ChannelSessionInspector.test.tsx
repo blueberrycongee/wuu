@@ -197,6 +197,7 @@ it("uses the Room identity for coordination sessions without a named agent", asy
   });
   await render();
   expect(host.querySelector(".session-inspector-header")?.textContent).toContain("Room");
+  expect(host.querySelector(".session-inspector-header .channel-session-meta")).toBeNull();
   expect(host.querySelector(".session-inspector-header .channel-coordinator-mascot")).not.toBeNull();
   expect(host.querySelector(".process-surface-blobatar .channel-coordinator-mascot")).not.toBeNull();
   expect(host.querySelector("[data-agent-avatar-id]")).toBeNull();

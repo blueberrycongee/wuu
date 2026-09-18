@@ -2463,7 +2463,7 @@ describe("ChannelView", () => {
     expect(api.readChannelSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "original-session" }));
     const panel = container.querySelector<HTMLElement>(".session-inspector-extension")!;
     expect(panel.textContent).toContain("Original evidence");
-    expect(panel.querySelector(".channel-session-meta")?.textContent).toBe("完成");
+    expect(panel.querySelector(".session-inspector-header .channel-session-meta")).toBeNull();
     vi.useFakeTimers();
     try {
       await act(async () => { panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
