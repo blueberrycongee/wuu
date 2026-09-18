@@ -118,7 +118,7 @@
   --workspace-panel-title-icon: var(--wuu-color-text-muted, #9aa0a5);
   --workspace-tool-tab-text: var(--wuu-color-text-muted, #a2a8ad);
   --workspace-tab-highlight: rgba(255, 255, 255, 0.07);
-  --workspace-tab-active-bg: var(--selection-surface);
+  --workspace-tab-active-bg: var(--surface-3);
   --workspace-tab-close-icon: var(--wuu-color-text-muted, #969ba0);
   --workspace-tab-focus-ring: var(--focus-ring);
   --workspace-menu-item-hover-bg: #2b2f34;
@@ -393,7 +393,7 @@
   --turn-source-icon-color-fallback: rgba(255, 255, 255, 0.85);
   /* conversation-shell.css */
   --shell-process-control-color: var(--ink-tertiary);
-  --shell-session-tab-active-bg: var(--selection-surface);
+  --shell-session-tab-active-bg: var(--surface-3);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
   --shell-session-tab-status-default: rgba(228, 232, 235, 0.28);
   --shell-session-tab-status-running-notch: rgba(228, 232, 235, 0.22);

@@ -2,7 +2,7 @@
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
   --shell-process-control-color: var(--wuu-color-text-muted, #BCBCBD);
-  --shell-session-tab-active-bg: var(--selection-surface);
+  --shell-session-tab-active-bg: var(--surface-3);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
   --shell-session-tab-status-default: rgba(17, 19, 21, 0.22);
   --shell-session-tab-status-running-notch: rgba(17, 19, 21, 0.18);
