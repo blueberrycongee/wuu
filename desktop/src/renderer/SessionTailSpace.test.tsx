@@ -172,6 +172,48 @@ it.each([false, true])("preserves reading ownership when toggling grouped tools 
   expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
 });
 
+it("positions a materialized running input without freezing the preceding output", () => {
+  render({ messageID: "old", running: true });
+  act(() => api.requestDeferredQueryScroll("local-input"));
+  grow(100);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+  expect(tailSpace()).toBe(0);
+  messageBottom += 100;
+  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
+  tick(0); tick(360);
+  const placed = scrollTop();
+  expect(placed).toBeCloseTo(messageBottom - 200);
+  expect(tailSpace()).toBeGreaterThan(0);
+  grow(50);
+  expect(scrollTop()).toBe(placed);
+  grow(1000);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it.each(["scroll", "switch", "failure"])("does not reposition a delayed input after %s", reason => {
+  render({ messageID: "old", running: true });
+  act(() => api.requestDeferredQueryScroll("local-input"));
+  if (reason === "scroll") scrollUp(200);
+  if (reason === "switch") { render({ id: "b", messageID: "other" }); render({ messageID: "old" }); }
+  if (reason === "failure") act(() => api.discardSubmittedMessage("local-input"));
+  const before = scrollTop();
+  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
+  tick(0); tick(360);
+  expect(scrollTop()).toBe(before);
+  expect(tailSpace()).toBe(0);
+});
+
+it("does not mistake another client's message for a local queued input", () => {
+  render({ messageID: "old", running: true });
+  act(() => api.requestDeferredQueryScroll("local-input"));
+  render({ messageID: "remote", item: { text: "Other client", source_id: "remote-input" } });
+  tick(0); tick(360);
+  expect(tailSpace()).toBe(0);
+  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
+  tick(400); tick(760);
+  expect(tailSpace()).toBeGreaterThan(0);
+});
+
 it("positions a delayed child-only mount from a layout signal", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));

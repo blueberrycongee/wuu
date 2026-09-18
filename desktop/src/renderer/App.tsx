@@ -2271,6 +2271,7 @@ export function App(): JSX.Element {
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
+    requestDeferredQueryScroll,
     acknowledgeSubmittedMessage,
     discardSubmittedMessage,
   } = useConversationScrollState({
@@ -4194,6 +4195,7 @@ export function App(): JSX.Element {
       ...message,
       operationState: "preparing",
     });
+    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
     try {
       const encodedImages = await awaitComposerImages(message.images);
       if (
@@ -4243,6 +4245,7 @@ export function App(): JSX.Element {
         ),
       );
       removePendingComposerMessageByID(targetThread.id, message.id, "queue");
+      if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
@@ -4280,6 +4283,7 @@ export function App(): JSX.Element {
         { ...message, origin: "steer", operationState: "preparing" },
       ],
     }));
+    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
     try {
       const encodedImages = await awaitComposerImages(message.images);
       if (
@@ -4323,6 +4327,7 @@ export function App(): JSX.Element {
         ),
       );
       removePendingComposerMessageByID(targetThread.id, message.id, "guide");
+      if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         setState((current) => ({
           ...current,
