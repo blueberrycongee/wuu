@@ -52,6 +52,14 @@
   stroke-width: calc(var(--control-icon-stroke) * 6 / 7);
 }
 
+/* SquarePen's nib reaches the viewBox edge, so at the shared toolbar size it
+ * reads larger than the side-panel toggle. Shrink the glyph; keep the 1.75px
+ * stroke so line weight still matches the toggle beside it. */
+.titlebar .session-tab-new > svg.lucide-square-pen {
+  width: calc(var(--control-icon-size) * 15.5 / 16);
+  height: calc(var(--control-icon-size) * 15.5 / 16);
+}
+
 :is(.session-tab-close, .workspace-tool-tab-close) {
   width: var(--control-size-inline);
   height: var(--control-size-inline);
