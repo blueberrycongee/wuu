@@ -240,11 +240,12 @@ export function AgentOnboarding({ draft, onDraftChange, initialized, navigation,
         model_prompt: t("agentOnboarding.selectBeforeChat"), name_prompt: t("agentOnboarding.askName"),
         name: sentName, provider: draft.provider, model: model?.display_name || draft.model,
         effort: draft.effort, avatar_key: draft.avatarKey,
-      }} modelAction={<button type="button" className="agent-onboarding-manage" data-action="edit-model" disabled={locked} onClick={() => update({ step: "model" })}>{t("slash.model.title")}</button>} />}
+      }} />}
       {error ? <div className="agent-onboarding-error" role="alert">{draft.createdAgent ? <strong>{t("agentOnboarding.openFailed")}</strong> : null}<span>{error}</span><button type="button" className="agent-onboarding-manage" data-action="submit" onClick={() => void submit()} disabled={Boolean(busy)}>{t("agentOnboarding.openConversation")}</button></div> : null}
     </div>
     {step === "name" ? <div className="channel-conversation-footer">
       <div className="agent-onboarding-name-actions">
+        <button type="button" className="agent-onboarding-manage" data-action="edit-model" disabled={locked} onClick={() => update({ step: "model" })}>{t("slash.model.title")}</button>
         <button type="button" className="agent-onboarding-manage" data-action="random-name" disabled={locked} onClick={() => {
           const names = t("agentOnboarding.randomNames").split("|").filter(name => name !== draft.name);
           const value = crypto.getRandomValues(new Uint32Array(1))[0];

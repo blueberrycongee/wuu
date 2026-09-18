@@ -91,7 +91,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 }
 
 describe("AgentOnboarding", () => {
-  it("keeps model management in model selection and lets the selected card reopen it without losing the name", async () => {
+  it("lets the composer reopen model selection without changing the transcript or losing the name", async () => {
     const manage = vi.fn();
     const { create } = await mount({ onManageProviders: manage });
     expect(container.querySelector('[data-action="confirm-model"]')).not.toBeNull();
@@ -100,13 +100,13 @@ describe("AgentOnboarding", () => {
     expect(manage).toHaveBeenCalledOnce();
     await click('[data-action="confirm-model"]');
     const footer = query(".channel-conversation-footer");
-    expect(footer.querySelector('[data-action="edit-model"]')).toBeNull();
+    expect(footer.querySelector('[data-action="edit-model"]')).not.toBeNull();
     expect(container.querySelector('[data-action="manage-providers"]')).toBeNull();
     expect(footer.querySelector('[data-action="random-name"]')).not.toBeNull();
     expect(document.activeElement).toBe(query(".channel-composer textarea"));
     await type("agent-name", "Ada");
     const edit = query('[data-action="edit-model"]');
-    expect(edit.closest(".agent-onboarding-form")?.querySelector(".agent-onboarding-history-model")).toBeTruthy();
+    expect(query('[data-message-id="model"]').contains(edit)).toBe(false);
     await click('[data-action="edit-model"]');
     expect(currentDraft.step).toBe("model");
     expect(container.querySelector('[data-action="manage-providers"]')).not.toBeNull();

@@ -86,8 +86,8 @@ beforeEach(() => {
       agents = [agent];
       return { agent };
     }),
-    openChannelDirectMessage: vi.fn(async () => {
-      const room = { id: "new-dm", name: "Research", kind: "dm", members: [{ member_type: "agent", member_id: "new-agent" }], created_at: "2026-09-12T00:00:00Z" } as ChannelRoom;
+    openChannelDirectMessage: vi.fn(async (params: Parameters<WuuDesktopApi["openChannelDirectMessage"]>[0]) => {
+      const room = { id: "new-dm", name: "Research", kind: "dm", onboarding: params.onboarding, members: [{ member_type: "agent", member_id: "new-agent" }], created_at: "2026-09-12T00:00:00Z" } as ChannelRoom;
       rooms = [room];
       return { room };
     }),
@@ -230,11 +230,16 @@ it("opens a newly created identity's conversation before the next directory refr
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
   await confirmModel();
   await enterName("Research");
+  // Setup controls must not become transcript content that disappears on handoff.
+  const modelMessage = container.querySelector('[data-message-id="model"]')!.textContent;
+  const nameMessage = container.querySelector('[data-message-id="name"]')!.textContent;
   await sendName();
   expect(window.wuu.createNamedAgent).toHaveBeenCalledTimes(1);
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "new-agent" }));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(container.querySelector(".channel-room-header")?.textContent).toContain("Research");
+  expect(container.querySelector('[data-message-id="model"]')?.textContent).toBe(modelMessage);
+  expect(container.querySelector('[data-message-id="name"]')?.textContent).toBe(nameMessage);
   expect(container.querySelector(".collaboration-contact-row.active")?.textContent).toContain("Research");
 });
 
