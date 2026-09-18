@@ -5035,7 +5035,26 @@ export function App(): JSX.Element {
     );
   }
 
-  const collaborationNavigation = null;
+  const collaborationNavigation = sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
+    <button
+      className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
+      data-wuu-component="sidebar-toggle"
+      type="button"
+      aria-label={t(
+        sidebarDrawerVisible
+          ? "app.collapseLeftSidebar"
+          : "app.expandLeftSidebar",
+      )}
+      aria-pressed={sidebarDrawerVisible}
+      onClick={toggleSessionSwitcher}
+      onPointerEnter={scheduleSidebarDrawerOpen}
+      onPointerLeave={(event) =>
+        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+      }
+    >
+      <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
+    </button>
+  ) : null;
 
   return (
     <WuuMascotRuntimeProvider
