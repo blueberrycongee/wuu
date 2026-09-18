@@ -29,6 +29,7 @@ import {
 } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { createMessageScrollMotion } from "./MessageScrollMotion";
 import { useSessionTailSpace } from "./SessionTailSpace";
 import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 
@@ -514,8 +515,8 @@ export function useConversationScrollState({
       return true;
     }
 
-    let startedAt: number | undefined;
     const duration = motionDurationMs("--query-scroll-duration", 360);
+    const sample = createMessageScrollMotion(startTop, targetTop, duration);
     const step = (now: number): void => {
       submittedScrollFrameRef.current = undefined;
       if (scrollModeRef.current !== "placing") return;
@@ -524,9 +525,6 @@ export function useConversationScrollState({
         scrollModeRef.current = "pending";
         return;
       }
-      startedAt ??= now;
-      const progress = duration > 0 ? Math.min(1, (now - startedAt) / duration) : 1;
-      const eased = progress * progress * (3 - 2 * progress);
       // A previous turn's receipt can collapse during this same animation.
       // Follow the bubble's live position without restarting the deadline.
       const liveMessage = submittedMessage();
@@ -535,13 +533,14 @@ export function useConversationScrollState({
         return;
       }
       const liveTarget = submittedMessageScrollTop(viewport, liveMessage, false);
-      submissionFrameCallbacks.current.ensureTailRange(liveTarget);
-      viewport.scrollTop = startTop + (liveTarget - startTop) * eased;
+      const { top, done } = sample(now, liveTarget);
+      submissionFrameCallbacks.current.ensureTailRange(Math.max(top, liveTarget));
+      viewport.scrollTop = top;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      if (progress >= 1) scrollModeRef.current = "holding";
+      if (done) scrollModeRef.current = "holding";
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false);
-      if (progress < 1) {
+      if (!done) {
         submittedScrollFrameRef.current = window.requestAnimationFrame(step);
       } else {
         submissionFrameCallbacks.current.scrollConversationToBottom();

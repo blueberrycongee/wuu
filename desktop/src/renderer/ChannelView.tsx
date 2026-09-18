@@ -606,10 +606,14 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       setComposerAnchor(null);
     };
   }, [composerFooterNode, messageScroll]);
+  const followMessageArrival = useCallback((localSend: boolean) => {
+    messageScroll.scrollToBottom({ force: localSend, animate: true });
+  }, [messageScroll]);
   const acknowledgeMessageMotion = useChannelMessageMotion(
     messageScroll.scrollRef, section === "rooms" ? selectedRoomID : "",
     loadedRoomIDs.has(selectedRoomID), messages,
     pendingMessage?.room_id === selectedRoomID ? pendingMessage.id : undefined,
+    followMessageArrival,
   );
 
   const updateSplitWidth = useCallback((width: number): void => {
@@ -1201,7 +1205,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setSending(true);
     setSendError(null);
     setPendingMessage(pending);
-    messageScroll.scrollToBottom({ force: true });
     try {
       const resolvedImages = await awaitComposerImages(composerImages);
       const images = inputImagesFromComposer(resolvedImages);
