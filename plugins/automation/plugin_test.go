@@ -88,7 +88,7 @@ func TestAutomationTimerUsesPublicSessionServicesAndSettlesRun(t *testing.T) {
 		t.Fatalf("sends = %+v", sends)
 	}
 	runs := c.snapshotRuns()
-	if len(runs) != 1 || runs[0].Status != "running" {
+	if len(runs) != 1 || runs[0].Status != "running" || runs[0].SessionID != "generated-session" || runs[0].TurnID != "turn-one" || runs[0].Error != "" {
 		t.Fatalf("runs = %+v", runs)
 	}
 	if err := c.settle(context.Background(), pluginapi.TurnLifecycleInput{RequestID: runs[0].RequestID, State: "completed", ThreadID: "generated-session", TurnID: "turn-one", FinalOutput: "done"}); err != nil {
@@ -177,6 +177,26 @@ func TestAutomationFireDoesNotOverwriteSettledRun(t *testing.T) {
 	runs := c.snapshotRuns()
 	if len(runs) != 1 || runs[0].Status != "completed" || runs[0].TurnID != "turn-done" || runs[0].CompletedAt == nil {
 		t.Fatalf("settled run = %+v", runs)
+	}
+}
+
+func TestAutomationFireFailsWhenWorkspaceDoesNotMatch(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	host := &testHost{}
+	c := &controller{host: host, workspaceID: "workspace-one", workspaceRoot: "/workspace/one", tasks: map[string]Task{}, now: func() time.Time { return now }}
+	task := Task{ID: "mismatch", Title: "Daily review", Prompt: "Review open work", Cron: "1 9 * * *", Timezone: "UTC", Mode: "new_thread", Recurring: true, WorkspaceID: "workspace-two", WorkspaceRoot: "/workspace/two", NextRunAt: now.Add(-time.Minute)}
+	c.tasks[task.ID] = task
+	c.fireDue(context.Background())
+	host.mu.Lock()
+	creates := append([]pluginapi.SessionCreateParams(nil), host.creates...)
+	sends := append([]pluginapi.SessionSendParams(nil), host.sends...)
+	host.mu.Unlock()
+	if len(creates) != 0 || len(sends) != 0 {
+		t.Fatalf("mismatch created session: creates=%+v sends=%+v", creates, sends)
+	}
+	runs := c.snapshotRuns()
+	if len(runs) != 1 || runs[0].Status != "failed" || runs[0].Error == "" || runs[0].CompletedAt == nil {
+		t.Fatalf("mismatch run = %+v", runs)
 	}
 }
 

@@ -496,6 +496,8 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 	requestID := "automation-" + runID
 	run := Run{ID: runID, TaskID: task.ID, Task: task, RequestID: requestID, Status: "starting", TriggeredAt: now}
 	c.mu.Lock()
+	workspaceID := c.workspaceID
+	workspaceRoot := c.workspaceRoot
 	c.runs = append(c.runs, run)
 	if len(c.runs) > maxRuns {
 		c.runs = c.runs[len(c.runs)-maxRuns:]
@@ -511,7 +513,7 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 	var err error
 	if task.Mode == "new_thread" {
 		var created pluginapi.SessionCreateResult
-		if task.WorkspaceID != c.workspaceID || task.WorkspaceRoot != c.workspaceRoot {
+		if task.WorkspaceID != workspaceID || filepath.Clean(task.WorkspaceRoot) != filepath.Clean(workspaceRoot) {
 			err = errors.New("automation target workspace does not match the active plugin workspace")
 		} else {
 			err = c.host.CallHost(ctx, pluginapi.HostServiceSessionCreate, pluginapi.SessionCreateParams{RequestID: "create-" + runID, Name: task.Title, Visibility: "user", ContextSource: "fresh", Workspace: workspaceMode, WorkspaceID: task.WorkspaceID, WorkspaceRoot: task.WorkspaceRoot}, &created)
