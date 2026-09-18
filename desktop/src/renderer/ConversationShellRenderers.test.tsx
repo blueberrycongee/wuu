@@ -136,12 +136,12 @@ describe("ConversationTitleContent presentation boundary", () => {
     ));
 
     const heading = container.querySelector(".conversation-title-heading");
-    const button = heading?.querySelector("button.session-tab-new");
+    const button = heading?.querySelector<HTMLButtonElement>("button.session-tab-new");
     const title = heading?.querySelector("h1");
     expect(button).not.toBeNull();
     expect(title).not.toBeNull();
-    expect(button?.compareDocumentPosition(title!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(button?.disabled).toBe(false);
+    expect(button!.compareDocumentPosition(title!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(button!.disabled).toBe(false);
   });
 
   it("replaces its native title root with the conversation header presenter", async () => {
