@@ -76,6 +76,9 @@
   --channel-avatar-size: 30px;
   --channel-message-column-gap: 10px;
   --channel-content-max-width: 1120px;
+  /* Collaboration assistant bubbles keep a chat measure, not the session
+     composer column. The previous 100% cap made long replies fill the pane. */
+  --channel-agent-message-max-width: min(640px, 78%);
   --channel-horizontal-gutter: clamp(16px, 2vw, 24px);
   --bg-primary: var(--paper);
   --bg-secondary: var(--surface-1);
@@ -724,7 +727,7 @@
 
 .channel-message.chat-row > .channel-message-content {
   /* Reserve a readable column before the bubble sizes to its actual text. */
-  width: min(var(--conversation-message-max-width, 720px), 100%);
+  width: var(--channel-agent-message-max-width);
   max-width: 100%;
   min-width: 0;
   display: flex;
