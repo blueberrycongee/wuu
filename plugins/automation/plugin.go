@@ -74,6 +74,9 @@ type controller struct {
 	stopOnce      sync.Once
 	now           func() time.Time
 	tick          time.Duration
+	// dispatch serializes due-task firing so overlapping ticks and explicit
+	// fireDue calls cannot return while a run is still stuck in starting.
+	dispatch sync.Mutex
 }
 
 func Handler() pluginapi.Handler {
@@ -454,6 +457,8 @@ func (c *controller) remove(ctx context.Context, rawID string) error {
 }
 
 func (c *controller) fireDue(ctx context.Context) {
+	c.dispatch.Lock()
+	defer c.dispatch.Unlock()
 	now := c.now().UTC()
 	c.mu.Lock()
 	var due []Task
@@ -524,6 +529,9 @@ func (c *controller) fire(ctx context.Context, task Task, now time.Time) {
 		if c.runs[index].ID != runID {
 			continue
 		}
+		if runSettled(c.runs[index].Status) {
+			return
+		}
 		c.runs[index].SessionID = sessionID
 		c.runs[index].WorkspaceRoot = executionRoot
 		if err != nil {
@@ -577,6 +585,15 @@ func (c *controller) snapshotRuns() []Run {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Run(nil), c.runs...)
+}
+
+func runSettled(status string) bool {
+	switch status {
+	case "completed", "failed", "interrupted", "discarded":
+		return true
+	default:
+		return false
+	}
 }
 func (c *controller) toolResult(value any) (pluginapi.ToolResult, error) {
 	encoded, err := json.Marshal(value)
