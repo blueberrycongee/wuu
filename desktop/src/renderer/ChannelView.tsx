@@ -572,6 +572,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const markedMessageSeqByRoomRef = useRef<Map<string, number>>(new Map());
   const directoryRefreshInFlightRef = useRef(false);
   const trackedTasksRefreshInFlightRef = useRef(false);
+  const taskMessagesByRoomIDRef = useRef<Map<string, ChannelMessage[]>>(new Map());
   const visibleRoomIDRef = useRef("");
   visibleRoomIDRef.current = section === "rooms" ? selectedRoomID : "";
   const sendingTimersRef = useRef<Map<string, number>>(new Map());
@@ -957,11 +958,33 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         setTrackedTasks((current) => current.length === 0 ? current : []);
         return;
       }
-      const results = await Promise.all(
-        rooms.map((room) => readChannelMessages(room.id)),
-      );
+      const results = await Promise.all(rooms.map(async (room) => {
+        // The first refresh needs the complete task history. Subsequent
+        // refreshes only inspect the recent window, which captures new and
+        // updated tasks without replaying every room message over IPC.
+        if (!taskMessagesByRoomIDRef.current.has(room.id)) {
+          const result = await readChannelMessages(room.id);
+          taskMessagesByRoomIDRef.current.set(room.id, result.messages ?? []);
+          return result.messages ?? [];
+        }
+        const result = await window.wuu!.listChannelMessages({
+          room_id: room.id,
+          latest: true,
+          limit: 100,
+        });
+        const previous = taskMessagesByRoomIDRef.current.get(room.id) ?? [];
+        const byID = new Map(previous.map((message) => [message.id, message]));
+        for (const message of result.messages ?? []) byID.set(message.id, message);
+        const merged = [...byID.values()];
+        taskMessagesByRoomIDRef.current.set(room.id, merged);
+        return merged;
+      }));
+      const activeRoomIDs = new Set(rooms.map((room) => room.id));
+      for (const roomID of taskMessagesByRoomIDRef.current.keys()) {
+        if (!activeRoomIDs.has(roomID)) taskMessagesByRoomIDRef.current.delete(roomID);
+      }
       const nextTasks = results
-        .flatMap((result) => result.messages ?? [])
+        .flatMap((messages) => messages)
         .filter((message) => message.kind === "task")
         .sort((left, right) => right.created_at.localeCompare(left.created_at));
       setTrackedTasks((current) =>
