@@ -1,111 +1,52 @@
 # Release
 
-Tagged releases are published by `.github/workflows/release.yml`.
+The [release workflow](../../../.github/workflows/release.yml) publishes the macOS arm64 Electron desktop preview when a `v*` tag is pushed. It builds from the tagged commit, verifies the package, and then creates a GitHub Release. This page is for maintainers preparing that release; users should follow [installation](../getting-started/installation.md).
 
-## Trigger
+## Prepare and tag a release
 
-`VERSION` is the product version source. Do not edit package versions by hand.
+`VERSION` is the product version source. Prepare a release in a clean checkout with the required [development tools](development.md):
 
-1. Add user-visible changes under `CHANGELOG.md`'s `[Unreleased]` section.
-2. Run `make release-prepare` to select the next UTC CalVer automatically, or
-   run `make release-prepare RELEASE_VERSION=2026.9.2` when the release number
-   is already decided. The command updates `VERSION`, the desktop manifest and
-   lockfile, and the active native app metadata, then moves the unreleased notes
-   into a dated release section.
-3. Review the diff, run `make ci release-check`, and commit the release change.
-4. After the commit is on `main`, run `make tag-release` and push the annotated
-   tag printed by that command.
+1. Add the user-visible changes to `CHANGELOG.md` under `[Unreleased]`.
+2. Run `make release-prepare` for the next UTC CalVer, or set an explicit version with `make release-prepare RELEASE_VERSION=2026.9.3`. Review the generated changes to `VERSION`, the desktop manifest and lockfile, native iOS/Android metadata, and the dated changelog section.
+3. Run `make ci release-check` on macOS and complete the relevant app-level acceptance. Commit the reviewed release change and land it on `main` through the normal review process.
+4. From that clean release checkout, run `make tag-release`. It validates the version and release notes, creates an annotated tag, and prints the exact push command. Push that tag when publication is authorized.
 
-The workflow refuses to release if the tag commit is not on `main`, if any
-generated version differs from the tag, or if the matching changelog section is
-missing or empty.
+`make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching changelog section. A successful local build does not bypass these checks.
 
-## Version policy
+## Product versions and compatibility
 
-wuu uses Calendar Versioning (CalVer) for product releases:
+Product releases use `YYYY.M.N`: the UTC year and month, followed by the release sequence within that month. Start at `1` each month and increment for later releases. A prerelease can use a suffix such as `2026.9.3-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
 
-- `YYYY.M.N` uses the UTC release year, month, and the release sequence within
-  that month. For example, `2026.9.1` is the first September 2026 release and
-  `2026.9.2` is a later release in the same month.
-- `N` resets to `1` when the month changes. Prereleases such as `2026.9.2-rc.1`
-  are used when packaged builds need broader
-  validation before becoming the current release. Tags with a prerelease suffix
-  are automatically marked as prereleases on GitHub.
+Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. Preparing a final release from its matching prerelease carries forward the candidate's notes together with new unreleased notes.
 
-The product version communicates release recency. It does not define
-compatibility for the Extension API, remote protocol, stored data, or migrations;
-those contracts must document their own compatibility and migration rules.
+CalVer describes release recency, not Extension API, service, remote protocol, or storage compatibility. Review those contracts and migration requirements separately. Calendar tags are also not Go module major versions: the supported source installation command for the CLI is `make install` from a checkout, not a release-tagged `go install ...@latest` promise.
 
-The private protocol, remote-core, and mobile packages remain at `0.0.0` until
-they have an independent public release contract.
+## Build and verification
 
-The local `make release-check` gate includes the Go core, desktop and macOS native
-helper tests. The release workflow runs Go, desktop and signing tests against the
-tagged commit, with the Go test cache disabled; it excludes CUA from the release
-build. After `npm ci`, the workflow explicitly installs and verifies the Electron
-binary so runner-level install settings cannot leave the test or build steps
-with an incomplete Electron package. Release tooling consumes committed module
-manifests and does not update `go.mod` or `go.sum`.
+The macOS job checks Go modules, formatting, vet, cross-builds, and uncached Go tests. It installs locked desktop and shared Web dependencies, explicitly installs and verifies the Electron binary, and runs desktop and release-signing tests. Build scripts consume the committed module manifests rather than repairing them during release.
 
-Calendar tags have a numeric major component that is not a Go module major
-version. Install the standalone CLI from a checked-out source tree with
-`make install`; the desktop release remains the primary packaged product.
+The local `make release-check` also runs the macOS native Computer Use helper tests. The tagged release build itself excludes that feature: `WUU_SKIP_CUA_MAC=1` and `WUU_ENABLE_CUA_MAC=0` prevent its inclusion, and the packaged-app verifier rejects either CUA executable if present.
 
-## GitHub Secrets
+The build sets `VITE_ENABLE_ACCOUNT=false` and `VITE_ENABLE_REMOTE_CONTROL=false`. The resulting preview is the local desktop experience, with account and remote-control settings hidden. Source-development capabilities should not be presented as features shipped by this build.
 
-The current release workflow publishes only the macOS Electron desktop preview
-package. It requires:
+Before publication, the workflow verifies the app's signature and bundle identity, required executables, absence of CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
 
-- `GITHUB_TOKEN` (provided by GitHub Actions)
-- `WUU_RELEASE_CERTIFICATE_P12`, `WUU_RELEASE_CERTIFICATE_PASSWORD`, and
-  `WUU_RELEASE_SIGN_ID` for the persistent self-signed identity. See
-  [maintainer signing setup](../../../desktop/scripts/RELEASE-SIGNING.md).
+## Signing configuration
 
-The release build sets `VITE_ENABLE_ACCOUNT=false` and
-`VITE_ENABLE_REMOTE_CONTROL=false`, so this version is the local,
-unauthenticated desktop experience. The sidebar identifies the mode as
-“Local mode”, and account, device-linking, phone pairing, and remote-control
-settings are hidden. Those surfaces remain available in development builds
-while the flow is being completed.
+The macOS preview uses a persistent self-signed identity. Configure these GitHub Actions secrets using the [maintainer signing guide](../../../desktop/scripts/RELEASE-SIGNING.md):
 
-The release also sets `WUU_SKIP_CUA_MAC=1`. Computer Use is not included: the
-native CUA helper is neither compiled nor packaged, and the release verifier
-rejects either helper if one is present.
+| Secret | Purpose |
+| --- | --- |
+| `WUU_RELEASE_CERTIFICATE_P12` | Exported signing identity |
+| `WUU_RELEASE_CERTIFICATE_PASSWORD` | Password for that export |
+| `WUU_RELEASE_SIGN_ID` | Expected signing identity |
 
-The current macOS job requires that self-signed identity, but not Apple Developer
-ID or notarization credentials. Missing release signing credentials fail the
-build; the workflow does not silently fall back to ad-hoc signing.
+GitHub supplies `GITHUB_TOKEN` for the release job. The custom signer uses the configured identity with `CSC_IDENTITY_AUTO_DISCOVERY=false`; missing signing configuration fails the build rather than selecting an arbitrary local certificate or silently using ad-hoc signing. The workflow removes its temporary signing material in an always-run cleanup step.
 
-The workflow sets `CSC_IDENTITY_AUTO_DISCOVERY=false` so `electron-builder`
-does not select an arbitrary runner-local identity. The custom signer uses the
-configured certificate. Self-signing is not Apple Developer ID signing or
-notarization.
+This is not Apple Developer ID signing or notarization. Users may still need **System Settings → Privacy & Security → Open Anyway** after verifying the official download and trying to launch it. Users do not need to import the maintainer's certificate or disable system security globally.
 
-## macOS Gatekeeper
+## Published artifacts
 
-Desktop artifacts attached to the GitHub Release are self-signed preview builds.
-After downloading the DMG or ZIP and moving `wuu.app` to `/Applications`,
-macOS may block the app because Apple cannot verify the developer.
+The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and any matching `.blockmap` files produced by electron-builder. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or CUA helpers.
 
-Use the [installation guide](../getting-started/installation.md): verify the
-official download, try opening it, then use **System Settings → Privacy & Security
-→ Open Anyway** if blocked. Users should not import a signing certificate or
-disable system security globally.
-
-## Output
-
-The macOS desktop job verifies that the tag commit belongs to `main`, checks and
-tests the Go core and desktop app, then builds and verifies the self-signed arm64
-desktop preview. The workflow verifies that the packaged core version is clean
-and that the DMG and ZIP are structurally valid before creating the GitHub
-Release.
-
-The app contains its required private `wuu-core` subprocess. No standalone CLI
-archive or CUA helper is published; a separately source-installed `wuu` CLI can
-coexist with the app and may have a different version.
-
-The final GitHub Release contains only:
-
-- `wuu-<version>-mac-arm64.dmg`
-- `wuu-<version>-mac-arm64.zip`
-- any matching `.blockmap` files generated by electron-builder
+A separately source-installed CLI can coexist with the app and may have a different version. When checking a desktop release, inspect the bundled core and installed app rather than assuming `wuu --version` on `PATH` identifies the desktop build.

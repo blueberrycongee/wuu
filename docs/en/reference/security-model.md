@@ -1,135 +1,49 @@
-# Security Model
+# Security model
 
-Wuu is a local coding agent. It reads project context, sends selected context to
-a model provider, and can run tools on the user's machine. That is useful
-authority, so a repository opened in Wuu must be treated more like executable
-code than a passive document.
+Wuu sends task context to a model provider and can run tools on your machine. The important boundaries are what data leaves the machine, which local actions a session can take, and which installed code you trust.
 
-This document describes the current boundary. Review model output and use a
-container, virtual machine, or separate system account for further isolation of untrusted code.
+## Data sent to providers
 
-## Permission modes
+A request can include messages, conversation history, instructions, selected memory, attachments, file contents, diffs, search results, command output, and tool errors. Hooks and MCP servers can also contribute content that reaches the model.
 
-Wuu has three permission modes (`standard`, `read_only`, and `unconfined`) that
-control which local paths the agent can access and modify; how to switch and
-the CLI override are covered in [permission modes](permissions.md).
-**Approve for me** is a Standard-mode option, not a fourth mode: it reviews
-high-risk native tool calls before they run, still inside the same workspace
-boundary. A review timeout or failure is not a denial, and it cannot raise the
-session to Unconfined or open Wuu credential files.
+Choose a provider whose privacy and retention terms suit that data. A custom API endpoint receives the prompt data sent through that provider configuration. Using a local desktop app does not make a remotely hosted model local.
 
-In `standard` and `read_only`, Wuu's command tools apply a filesystem sandbox to
-restrict writes; see [permission modes](permissions.md#system-permissions-and-isolation)
-for its scope and backend requirements. Processes retain their system identity,
-inherited environment, and network access, so this protection does not guarantee
-credential secrecy. `unconfined` removes this sandbox and the path boundary,
-handing the agent full local authority at the current user's
-privilege level and should be enabled only for trusted tasks; the sensitive-path
-guards kept by the dedicated file and Git tools (`.env`, SSH private keys,
-`~/.wuu` credential files, and so on) are defense in depth, and arbitrary shell
-commands, scripts, and child processes can bypass them. In `standard` and
-`read_only` modes, commands that expose the whole environment, read common
-credential paths, use unsafe Git operations, or perform package/network
-mutations receive extra classification or hard checks, and tool output is
-redacted for common secret patterns.
+Wuu avoids putting provider credentials in prompts and redacts common secret patterns from tool output. Neither measure can identify every secret. A file, command, extension, or user message can still expose credentials in a form the redactor does not recognize.
 
-For untrusted repositories, use a disposable VM, container, or a separate OS
-account. Do not substitute permission modes for full execution-environment isolation.
+## Local execution
 
-## Data sent to model providers
+The built-in Wuu engine has Standard, Read only, and Unconfined modes. Dedicated tools enforce path and sensitive-file checks. In confined modes, command tools also require an enforcing filesystem sandbox; they fail if one is unavailable.
 
-Depending on the task and enabled features, Wuu may send the configured model
-provider:
+That sandbox restricts filesystem writes. It does not isolate network access, all file reads, process visibility, or inherited environment variables. Read only is useful for investigation, but is not a data-loss-prevention boundary. Unconfined removes the command sandbox and gives commands the authority of the user running Wuu.
 
-- user messages and conversation history;
-- system prompts and applicable instruction files;
-- file contents, search results, diffs, command output, and tool errors;
-- memory selected by an enabled Memory plugin;
-- images or other attachments the user adds;
-- MCP or hook output returned to the agent.
+**Approve for me** adds model review in Standard mode. It does not expand permissions or replace isolation. External Codex and Claude Code sessions use their own execution controls. See [permission modes](permissions.md) for the exact scope and adapter settings.
 
-Wuu does not intentionally place provider API keys in prompts. Keys may still
-be exposed if a command, hook, MCP server, file, or user message prints them in
-an unrecognized form. Review the privacy and retention terms of the selected
-provider. A custom OpenAI-compatible base URL receives the same prompt data as
-the provider it replaces.
+For hostile repositories or dependencies, use a disposable environment or a separate OS account. Commands typed manually in the desktop terminal are not agent tool calls and do not inherit the agent's permission checks.
 
-## Trusted configuration and project input
+## Configuration and repository content
 
-The user config at `~/.wuu/config.json` (or `WUU_HOME/config.json`) is the
-trusted base. Normal startup filters project attempts to replace provider
-destinations, credential environment names, outside-workspace instruction paths,
-model roles, or the permission mode. `wuu exec --config` and
-`--ignore-user-config` explicitly trust the selected project configuration and
-are intended for controlled automation.
+Normal startup treats the user configuration as the base. Project layers cannot replace provider connections, model selection through protected fields, instruction discovery, or the permission mode. This restriction also applies to `.wuu/settings.local.json` during normal startup. Explicit `wuu exec --config` and `--ignore-user-config` paths deliberately trust project configuration; use them only with reviewed inputs. See [configuration](configuration.md).
 
-The following project content can affect agent behavior and must be reviewed:
+Repository instructions, skills, tool output, and retrieved content can influence a model without being trustworthy instructions. Review a new project's `AGENTS.md`, Wuu settings, hooks, skills, and MCP configuration before relying on them.
 
-- `AGENTS.md` and other discovered instruction files;
-- `.wuu.json`, `wuu.json`, `.wuu/settings.json`, and local settings;
-- project skills and prompt additions;
-- hooks and plugins;
-- `.mcp.json` and native MCP server configuration.
+Project `.mcp.json` entries require a local trust decision before loading. Trusting an MCP server means trusting its executable or remote service with the data and credentials you give it; its responses remain external input.
 
-Project MCP entries are not loaded until approved in local settings. Approval
-means trusting that server or subprocess with the files, environment, network,
-and credentials available to it; MCP output is also untrusted model input.
-Hooks and local skills can carry prompt injection even when they do not execute
-native code.
+## Extensions and hooks
 
-## Credentials and local state
+Enabled extensions are trusted code, not sandboxed code. The current local-package workflow separates staging files from approving and activating them; see [plugin installation and updates](../customize/plugins.md). Wuu's loader, diagnostics, and safe mode do not certify an extension's safety.
 
-- Provider keys are normally read from the environment named by
-  `providers.<name>.api_key_env`.
-- The macOS desktop stores managed OAuth credentials in Keychain and does not
-  silently fall back to a plaintext file if Keychain fails.
-- Headless flows can explicitly use `~/.wuu/auth.json` and
-  `~/.wuu/credentials.json` (or the matching `WUU_HOME` paths). Wuu writes
-  credential files with owner-only permissions, but their contents are not a
-  replacement for an OS keychain.
-- Remote identity and enrolled-device data live in `~/.wuu/remote.json`; phone
-  credentials use `~/.wuu/phone.json`. These files are also owner-only and
-  should be backed up and shared as secrets.
-- Sessions, logs, tool results, plugin-owned memory, and workspace state live under
-  `~/.wuu`. They can contain source code and conversation content even when
-  common credential patterns have been redacted.
+Hooks and MCP subprocesses likewise run code outside the narrow agent-command sandbox contract. Check the source, arguments, environment, and remote destinations of code you enable. Disabling an extension is a lifecycle control, not a way to undo actions it already performed.
 
-Do not include `~/.wuu`, environment files, logs, session exports, or diagnostic
-bundles in bug reports without reviewing them first.
+## Credentials and local records
 
-## App server and desktop boundary
+Provider configuration can refer to environment variables. Managed desktop OAuth credentials use macOS Keychain; a Keychain failure is surfaced rather than silently falling back to a plaintext credential file. Headless authentication has file-based storage options, so secure the account and state directory that run it.
 
-`wuu app-server` uses a newline-delimited JSON request/response protocol over the
-subprocess's standard input and output.
-It does not open a network listener by itself. The Electron shell starts and
-owns this process and exposes selected operations to the renderer through its
-preload/IPC bridge. A renderer-to-main IPC bypass or an unsafe navigation is a
-security issue.
+Conversation history, tool results, logs, artifacts, and plugin data can contain source code and private text. Treat Wuu's state directory, session exports, and diagnostic bundles as sensitive even when obvious tokens have been redacted. Review them before sharing or backing them up to another service.
 
-## Remote and mobile control
+## Desktop and remote control
 
-`wuu relay` listens on `127.0.0.1:8787` by default. Binding it to another
-address exposes it to that network and requires the operator to provide TLS and
-deployment controls appropriate for the environment.
+`wuu app-server` communicates over the subprocess's standard input and output. It does not itself open a network listener. The desktop shell exposes selected operations through its preload and IPC bridge.
 
-The remote host dials the relay; it does not open an inbound workspace server.
-Phones enroll through a time-limited pairing link. Enrolled devices authenticate
-with signed keys, and application frames are end-to-end encrypted between host
-and phone. The relay routes opaque frames and content-free push hints, but it
-still sees connection timing, device presence, pairing identifiers, and network
-addresses. Anyone who gets a live pairing link or a phone credential file may
-be able to enroll or act as that device.
+Remote control is a separate capability, and the current release build disables its desktop UI. If you build or run the remote components, treat an enrolled device as a controller of the host's workspaces. Use secure relay transport and revoke devices you no longer trust; see [remote and mobile control](../automation/remote.md).
 
-Treat a paired phone as a remote controller with the same workspace authority
-as the host session. Revoke devices that are lost or no longer trusted.
-
-## Safe use checklist
-
-1. Review a new repository's instructions, settings, hooks, skills, and MCP
-   configuration before enabling tools.
-2. Use `read_only` for inspection and a separate isolated environment for hostile code.
-3. Keep provider endpoints and credential environment names in the user config.
-4. Pair remote devices in private and use `wss://` for relays across untrusted
-   networks.
-5. Review diffs and command output before publishing them.
-6. Report boundary bypasses privately using [SECURITY.md](../../../SECURITY.md).
+Report suspected boundary bypasses privately through [SECURITY.md](../../../SECURITY.md).

@@ -1,78 +1,49 @@
 # Completing your first task
 
-Choose a small project without sensitive files that you can restore. Read it first,
-make a change, then check the result.
+Use a small project you can restore, such as a disposable copy of a Git repository. This walkthrough first asks the agent to explain the project, then makes one change and checks it.
 
-## Read the project first
+## Choose the folder
 
-In the **Workspaces** area of the sidebar, choose **Add workspace → Use existing
-folder**. For the first attempt, use:
+In the sidebar, choose **Add workspace → Use existing folder** and select the project. To start without existing files, choose **Create blank project** instead. Open a conversation in that workspace and check the directory before sending.
 
-- a code repository you can re-clone;
-- a test folder prepared for this purpose;
-- or a directory created with **New blank project**.
+Adding the folder does not copy it. The agent works on the real files, so save or commit any existing work you need to preserve.
 
-The workspace is the primary boundary for files and commands. Sessions are also
-organized by workspace; if you see the wrong files or stale sessions, check the
-currently selected workspace first.
+## Ask for a read-only explanation
 
-## Let wuu read first
-
-Before sending, you can use the permission button next to the input box to select
-**Read only**. The permission mode only controls Wuu's tool boundary; it does not put
-the project inside an operating-system sandbox. Keep **Standard** for ordinary
-modification tasks. **Approve for me** is a Standard-mode option that reviews
-high-risk tool calls before they run; it does not raise the workspace boundary.
-
-Start a new conversation in the target workspace and send a read-only task first:
-In the sidebar, choose **Add workspace → Use existing folder**, or use **Create blank
-project** to prepare a test folder. Check the active workspace and start a conversation
-there. Before sending, select **Read only** in the permission menu next to the input:
+For the built-in Wuu engine, choose **Read only** in the permission menu beside the composer. Then send:
 
 ```text
 Read this workspace without changing files. Explain what it is for, its main
 directories, and how it can be verified.
 ```
 
-Check the directories and test commands in the answer. If it read the wrong project,
-stop the task and select the correct workspace.
+Compare the answer with the files you expected it to read. If the directory is wrong, stop the task and select the correct workspace before continuing.
 
-Read-only mode refuses file changes; command tools also apply a filesystem sandbox.
-Network access and inherited environment variables still matter. Use a separate
-isolated environment for untrusted code; see [permission modes](../reference/permissions.md).
+Read-only mode blocks file edits and confines command writes with a filesystem sandbox. It does not isolate network access or inherited environment variables. If a required sandbox is unavailable, the command fails rather than running without confinement. See [permission modes](../reference/permissions.md), including the differences for external engines.
 
 ## Make a small change
 
-Switch to **Standard** mode and describe the result, scope, and verification you want:
+Choose **Standard** when you are ready to permit edits. Give the agent a bounded task with an observable result, for example:
 
 ```text
-Fix the currently failing tests. Only change code related to the failure; do not do
-unrelated refactoring. When done, run the relevant tests and tell me which files you
-changed and what the test results were.
+Fix the failing test for empty search results. Keep the change limited to that bug.
+Run the relevant tests and report the command and result. Do not commit yet.
 ```
 
-For larger features, ask for an investigation and plan before implementation.
-The conversation shows reads, edits, and command execution. If the task goes off
-track, stop it and add constraints before continuing.
+Name a real problem in your project rather than using the example unchanged. For a larger feature, request an investigation and plan first. You can stop a running task and clarify the scope, but stopping does not undo changes already made.
 
-## Check and continue
+## Review the result
 
-Use these commands in the input box to open inspection tools:
+Use the composer shortcuts to inspect the work:
 
 | Command | Purpose |
 |---|---|
 | `/files` | Browse and open project files |
-| `/diff` | View Git changes and check scope, unrelated edits, and sensitive information |
-| `/terminal` | Open a workspace shell to run checks yourself |
+| `/diff` | Review the current Git changes |
+| `/terminal` | Run your own checks in a workspace shell |
 
-Compare the final answer with the actual output. Confirm tests or builds ran and
-passed before committing or publishing. Reply to request corrections, or reopen
-the same conversation from the sidebar later.
+Check that the diff contains only the intended change and that the reported test command actually succeeded. If a check could not run, decide whether to fix the environment or verify another way before committing or publishing.
 
-The input accepts images, PDFs, and MP4, WebM, and MOV videos. Processing support
-depends on your chosen provider and model. Attachments do not automatically become
-project files; specify a target path if you want them saved in the workspace.
+Commands you enter in the terminal use your own OS permissions; the agent's read-only setting does not restrict that terminal. Do not paste a command there simply to bypass an agent permission error.
 
-For more, see [files, changes, and terminals](../desktop/workspace-tools.md) and
-[conversations](../desktop/conversations.md). To run and resume tasks from the CLI,
-see the [`wuu exec` guide](../automation/exec.md).
+Reply in the same conversation to request a correction. You can reopen it from the sidebar later, or [fork the conversation](../desktop/conversations.md) to try a different approach. See [workspace tools](../desktop/workspace-tools.md) for file previews and delivered artifacts.

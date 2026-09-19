@@ -1,78 +1,68 @@
 # 开发
 
-本页说明仓库的构建和检查入口。Agent 执行约束位于 `AGENTS.md`；贡献者不需要
-依靠该文件来发现日常开发命令。
+从源码检出运行 Wuu，可以修改 Go 核心、Electron 桌面、插件或客户端。以下命令均在仓库根目录执行，贡献与评审规则见[贡献指南（英文）](../../../CONTRIBUTING.md)。
 
-## 环境要求
+## 准备开发环境
 
-- Go 版本以 `go.mod` 为准。
-- Node.js 22 或更新版本，CI 基准由 `.node-version` 指定；使用 npm 安装依赖。
-- Electron 的 macOS 安装包及原生 CUA 辅助程序需要 macOS、Xcode 和 Swift。
-
-Go CLI 和核心支持 macOS、Linux。当前桌面发布是 Apple silicon macOS 预览版；
-手机与远程控制仍在开发中，没有稳定的手机公开发行版。
-
-## 安装与日常命令
-
-在仓库根目录运行：
-
-| 命令 | 用途 |
-| --- | --- |
-| `make setup` | 安装桌面、客户端、协议与文档站的锁定 npm 依赖 |
-| `make dev` | 启动真实 Electron 开发入口 |
-| `make check` | 检查仓库元数据、测试政策、Go 模块/格式/vet 和 TypeScript 类型 |
-| `make test` | 运行 Go、桌面、扩展 SDK、远程核心及旧 Web/Expo 客户端测试 |
-| `make build` | 构建 Go CLI、Electron renderer/main 及旧 Web/Expo 客户端产物 |
-| `make ci` | 运行跨平台检查、测试和构建 |
-| `make release-check` | 核对发行版本并运行 Go 核心与桌面测试门禁 |
-
-可以按组件运行：
+Go 版本以 [`go.mod`](../../../go.mod) 为准，Node 使用 [`.node-version`](../../../.node-version) 指定版本，并安装 npm。桌面包要求 Node 22 或更新版本；macOS 打包和原生 Computer Use 辅助程序还需要 macOS 与 Xcode/Swift 工具链。
 
 ```bash
-make check-go test-go build-go
-make check-desktop test-desktop build-desktop
-make check-clients test-clients build-clients
-make test-native
-make build-macos
+make setup
+make dev
 ```
 
-`make test-native` 和 `make build-macos` 需要 macOS。桌面开发启动器从当前 Go 源码
-构建并启动 `wuu app-server`。修改 Go 或 Electron 主进程后需完整重启 `make dev`；
-它们不支持热重载。
+`make setup` 安装桌面、共享客户端核心、保留的 Web/Expo 客户端、插件 SDK、协议包和文档站的锁定依赖，不会安装原生手机工具链或配置远程服务。
 
-`make test-native` 测试的是桌面 CUA 辅助程序，不是手机 App。当前手机开发位于
-[clients/native](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android
-使用 Jetpack Compose。运行 `bash clients/native/verify.sh all` 进行隔离集成检查；
-PostgreSQL、Xcode、Android 环境要求及未完成的发布验收见该 README。旧 Expo、
-WebView、Capacitor 手机路线已于 2026-09-12 停止开发。现有客户端门禁和桌面共享
-Web 产物仍消费其中部分代码，但不能据此判断原生 App 已通过验证。
+`make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及当前 Go 核心和插件辅助程序。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
 
-文档修改运行 `make docs-policy-check build-docs`，维护规则见
-[文档说明（英文）](../../../docs/README.md)。可复用界面预览和滚动处理见
-[桌面 UI 维护](desktop-ui.md)。
+只开发 CLI 时可以运行：
 
-## CI 检查
+```bash
+make build-go
+./bin/wuu --help
+```
 
-除仅修改文档的情况外，拉取请求及推送到 `main` 会运行：
+`make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
-- **仓库检查：** 版本、评估记录、文档政策、主题契约与测试政策。
-- **Go 检查：** 模块一致性、格式、vet、Windows/macOS 交叉构建和测试；`main` 另运行独立 CLI 构建。
-- **桌面检查：** 依赖安装、类型检查、单元测试和 Electron 构建。
-- **客户端检查：** 协议、扩展 SDK、核心和旧客户端的类型检查、客户端测试及 Web/Expo 构建。
-- **macOS 原生检查：** 拉取请求运行 Swift/原生辅助程序测试，`main` 另运行 Electron 目录打包。
-- **Windows 原生检查：** 拉取请求检查进程/沙箱边界及桌面类型，`main` 另运行未封装打包；完整桌面单元测试已在 Ubuntu 运行。
+## 选择相关检查
 
-发行标签增加持久自签身份的 macOS DMG/ZIP 检查，不使用 Apple Developer ID。GitHub Releases
-不发布独立 CLI 压缩包，见 [发行指南（英文）](../../en/project/release.md)。独立文档
-工作流在 docs、站点或 landing 变动时检查政策并构建站点，在 `main` 部署。
+| 命令 | 检查或构建内容 |
+| --- | --- |
+| `make check-go` | 模块一致性、格式、vet，以及 Windows/macOS 交叉构建 |
+| `make test-go` | CLI、核心、Go 插件 SDK、内置插件和提示词的 Go 测试 |
+| `make check-desktop test-desktop` | 桌面 TypeScript、启动器和单元测试 |
+| `make build-desktop` | 共享 Web 资源和 Electron main/preload/renderer 产物，不生成安装包 |
+| `make check-clients test-clients build-clients` | 协议/SDK/客户端类型、SDK/客户端测试，以及保留的 Web/Expo 产物 |
+| `make test-native` | 桌面 macOS Computer Use 辅助程序测试，不是手机测试 |
+| `make build-macos` | 核心/辅助程序、桌面构建和 macOS 目录包 |
+| `make docs-policy-check check-docs build-docs` | 文档政策、站点诊断，以及生成站点和链接检查 |
 
-## 产品边界
+`make check`、`make test`、`make build` 分别汇总对应的仓库目标。`make ci` 运行三者，但不包含原生手机验证、macOS 打包或文档站构建。`make release-check` 包含版本验证、无缓存 Go 测试、桌面测试和 macOS 原生辅助程序检查。发布要求见[发行指南（英文）](../../en/project/release.md)。
 
-- `internal/` 和 `cmd/wuu/` 是可复用 Go 核心与 app-server。
-- `desktop/` 是 Electron 外壳，负责原生 UI、IPC 与打包。
-- `packages/protocol/` 是共享客户端协议类型来源。
-- `clients/core/` 是无 UI 的远程客户端。
-- `clients/native/` 是当前原生 iOS 和 Android App。
-- `clients/mobile/`、`clients/mobile-web/`、`clients/mobile-app/` 保留旧手机实现，不代表当前手机功能路线。
+类型检查、单元测试和构建成功，与应用实际可用是不同的证据。UI 修改需按[桌面 UI 指南](desktop-ui.md)检查受影响的渲染与交互；插件修改还需验证实际工具调用或界面贡献，包验证不会完成这些检查。
 
-不要把 Electron API 引入 Go 核心。新外壳应启动 `wuu app-server`，而不是分叉或导入核心。
+## 原生手机与远程服务
+
+当前手机实现位于 [`clients/native`](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android 使用 Jetpack Compose。专用验证命令为：
+
+```bash
+bash clients/native/verify.sh all
+```
+
+可用 `ios` 或 `android` 选择单个平台。脚本启动隔离的 PostgreSQL 测试环境，构建测试宿主，并运行平台测试和构建。PostgreSQL、Xcode、Java 和 Android SDK 要求见原生 README。通过这些检查不代表完成真机或发布验收。
+
+旧的 `clients/mobile`、`clients/mobile-web`、`clients/mobile-app` 手机实现已停止开发。部分代码仍参与共享 Web 构建和仓库检查，通过这些检查不能证明原生 App 已通过验证。账号和 relay 部署与本地桌面设置分开，见[远程访问](../automation/remote.md)。
+
+## CI 覆盖范围
+
+[主 CI 工作流](../../../.github/workflows/ci.yml)运行仓库元数据、Go 检查与测试、桌面检查/测试/构建，以及 SDK/客户端检查/测试/构建。只修改 `docs/` 和 `docs-site/` 时跳过该工作流。Go CI 提供 PostgreSQL，以覆盖依赖数据库的测试。
+
+macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面目录包。Windows 运行选定的原生进程/沙箱测试和桌面类型检查，在 `main` 上增加未封装打包。完整桌面单元测试在 Ubuntu 运行。这些任务覆盖不同边界，不是在每个系统上重复同一套完整测试。
+
+[文档工作流](../../../.github/workflows/docs.yml)在文档、站点、landing 或相关构建文件变化时检查政策并构建站点。拉取请求只构建，不部署；`main` 构建会部署到 GitHub Pages。产品发行标签使用独立工作流，不发布独立 CLI 压缩包。
+
+## 代码边界
+
+`cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。插件 SDK 和内置实现位于 `packages/plugin-sdk`、`packages/plugin-go` 和 `plugins`。
+
+Electron API 应留在桌面外壳。新外壳应通过[协议（英文）](../../en/integrations/app-server-protocol.md)与 `wuu app-server` 通信，不应依赖桌面内部实现或另建一套核心。行为变化时同步更新公开文档的中英文版本，放置和检查规则见[文档维护（英文）](../../../docs/README.md)。
