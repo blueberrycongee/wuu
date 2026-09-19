@@ -9,6 +9,7 @@ app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
 const measure = () => {
   const selectors = {
+    collapse: ".sidebar-collapse-toggle > svg",
     bell: ".sidebar-notifications-button > svg",
     heading: ".sidebar-functional-heading-chevron",
     add: ".sidebar-functional-action > svg",
@@ -82,7 +83,7 @@ app.whenReady().then(async () => {
   for (const [name, states] of Object.entries(report)) {
     const idle = states.idle;
     const axis = idle.bell[0].x;
-    const aligned = [idle.heading[0], ...idle.add, ...idle.newThread, idle.fork[0], ...idle.spinner, ...idle.archive, ...idle.account];
+    const aligned = [idle.collapse[0], idle.heading[0], ...idle.add, ...idle.newThread, idle.fork[0], ...idle.spinner, ...idle.archive, ...idle.account];
     if (aligned.some(icon => Math.abs(icon.x - axis) > 0.1)) throw new Error(`${name}: trailing column drift`);
     if (Math.abs(idle.heading[1].x - idle.pin[0].x) > 0.1) throw new Error(`${name}: second column drift`);
     for (const [state, measurement] of Object.entries(states)) {
