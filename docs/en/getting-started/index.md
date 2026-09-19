@@ -1,29 +1,37 @@
 # Quick start
 
-For your first task, use a small project without sensitive files. The desktop preview requires an Apple silicon Mac and access to a model provider.
+You need an Apple silicon Mac for the desktop preview and a model connection. Choose a small local project without sensitive files for your first task.
 
-[Install wuu](installation.md) from GitHub Releases. The desktop preview is self-signed and not notarized; the installation guide explains what to do if macOS blocks it.
+## Set up the app
 
-[Connect a provider and choose a model](model-services.md) during first-run setup or in **Settings → Model providers**, using an API Key or supported subscription login. Then add your local project folder as a workspace and start a conversation.
+1. [Install Wuu](installation.md) and open the copy in `/Applications`. The preview is self-signed and not notarized; the installation guide explains how to open an official download that macOS blocks.
+2. Choose your optional plugins in the first-run setup. The recommended selection is TODO and Automation; you can change it later in the plugin settings.
+3. Select an agent engine. Wuu is built in; Codex and Claude Code depend on a working local CLI installation.
+4. For the Wuu engine, [configure a model service](model-services.md) or reuse a supported local subscription login.
+5. Add your project folder as a workspace and start a conversation there.
 
-wuu can change files and run commands. Check the selected workspace and [permission mode](../reference/permissions.md) before sending a task. Prompts and relevant file contents may be sent to your model provider; see the [security model](../reference/security-model.md).
+You can also change model connections later in **Settings → Model providers**. Check the model shown in the composer before sending: the conversation's selection can differ from the saved defaults.
 
-Start by asking the agent to read the project:
+## Read, change, and check
+
+Select **Read only** in the permission menu and ask:
 
 ```text
 Read this project without changing any files. Explain what it does and how to run its tests.
 ```
 
-Then choose a small change with a clear way to check it. Tell the agent what should happen and ask it to run the relevant tests. The [first-task guide](first-task.md) has more examples.
+Once you recognize the project and its test commands, switch to **Standard** for a small edit. Describe the result you want and ask the agent to run the relevant checks. The [first-task guide](first-task.md) walks through this step.
 
-Review the changed files and command output before accepting the result. You can continue in the same conversation to ask for corrections or pick up the work later.
+Open `/diff` to review Git changes and read the command results before accepting the work. A reply saying “done” does not establish that a test passed. Continue in the same conversation for corrections or follow-up work.
+
+Prompts, relevant file contents, and tool results can be sent to the selected model service. Read [permissions](../reference/permissions.md) and the [security model](../reference/security-model.md) before using private projects.
 
 ## Use the CLI
 
-The desktop app does not need a separate CLI. To work from a terminal or script, [install the CLI](installation.md#install-the-cli) and [configure a model provider](model-services.md#configure-the-cli), then run this from your project folder:
+The desktop does not require a separate CLI. To work from a terminal, [install it](installation.md#install-the-cli), [configure a provider](model-services.md#configure-the-cli), and run this from your project folder:
 
 ```bash
 wuu exec --permission-mode read_only "read this project and explain how to run its tests"
 ```
 
-See the [`wuu exec` guide](../automation/exec.md) for more options. If something goes wrong, start with [troubleshooting](../help/troubleshooting.md).
+See [`wuu exec`](../automation/exec.md) for script input, saved sessions, and machine-readable output. If setup fails, use [troubleshooting](../help/troubleshooting.md).

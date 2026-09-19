@@ -1,47 +1,32 @@
-# Installing wuu
+# Installation
 
-The wuu desktop preview supports Apple silicon Macs and includes its own core.
-You do not need to install Go or the CLI separately.
+The desktop app includes the Wuu core. You only need a separate CLI installation if you want to run Wuu from a terminal or script.
 
-## Install the macOS desktop app
+## Install on macOS
 
-1. Open [GitHub Releases](https://github.com/blueberrycongee/wuu/releases).
-2. Download `wuu-<version>-mac-arm64.dmg` or `wuu-<version>-mac-arm64.zip`.
-3. Move `wuu.app` into `/Applications`.
-4. Open wuu.
+The current release workflow builds an Apple silicon app. Check the assets and notes on [GitHub Releases](https://github.com/blueberrycongee/wuu/releases) for the version you are installing.
 
-The preview uses a persistent self-signed identity, without Apple Developer ID or
-notarization. After verifying the download is from the official GitHub Release,
-try opening `/Applications/wuu.app`. If macOS blocks it, use **System Settings →
-Privacy & Security → Open Anyway**. Do not install a certificate or disable system
-security globally.
+1. Download `wuu-<version>-mac-arm64.dmg` or `wuu-<version>-mac-arm64.zip`.
+2. Move `wuu.app` to `/Applications` and open it there.
+3. Complete the [first-run setup](index.md) to choose an engine and connect a model service.
 
-## Update from GitHub Releases
+The release workflow uses a persistent self-signed identity rather than Apple Developer ID signing and notarization. If macOS blocks the app, verify that it came from the official release, then use **System Settings → Privacy & Security → Open Anyway**. Do not disable system security globally or install a certificate to bypass this warning.
 
-1. Download the new DMG or ZIP from the official release page.
-2. Quit Wuu with **Cmd+Q** and wait for it to exit. Closing its window is not quitting.
-3. Replace `/Applications/wuu.app` with the downloaded app. Keep the same name and
-   location; do not run a second copy from the DMG or Downloads.
-4. Open `/Applications/wuu.app`. Conversations and settings remain in Wuu's user
-   data; do not delete that data to upgrade.
+## Update the app
 
-## Computer Use permissions
+Download the new release, quit Wuu with **Cmd+Q**, and replace `/Applications/wuu.app`. Closing a window alone does not quit the application. Open the replacement from Applications rather than running a second copy from the download or mounted disk image.
 
-The current GitHub Release does not include Computer Use or the native CUA
-helper. The following permissions apply only to a CUA-enabled source build.
+Settings and conversations are stored outside the app bundle. Keep that data when replacing the app, and read the release notes for any version-specific migration requirements.
 
-When using Computer Use, grant **Accessibility** or **Screen Recording** access
-in System Settings as requested. Wuu links to the settings, but you must grant
-access yourself. No developer tools or user-side signing are required.
+## Features that depend on the build
 
-An update may require authorization again, especially when upgrading from an older
-unsigned build. Authorize the current `/Applications/wuu.app`; do not reset all
-privacy permissions or delete user data.
+The current public release workflow disables account, remote-control, and Computer Use features. Instructions for those features elsewhere in the documentation apply to builds that enable them; their presence in the source does not mean they are available in a downloaded app.
+
+For a Computer Use-enabled macOS build, screen capture and desktop control may require **Screen Recording** and **Accessibility** permissions. Grant access to the app you actually run. After an update, macOS may ask again; do not delete Wuu data or reset unrelated privacy permissions.
 
 ## Install the CLI
 
-For terminal or script use, install the Go version required by
-[go.mod](../../../go.mod), then build from source:
+Install the Go version required by [go.mod](../../../go.mod), then run:
 
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
@@ -50,17 +35,12 @@ make install
 wuu --version
 ```
 
-If `wuu` cannot be found, add Go's binary directory to `PATH`. If you set `GOBIN`,
-use that directory instead:
+`make install` uses Go's installation directory. If `wuu` is not found and you have not set `GOBIN`, add the default directory to your shell's `PATH`:
 
 ```bash
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-Once it works, add the setting to your shell startup file. The CLI and desktop core
-are independent and may be at different versions. GitHub Releases do not contain
-standalone CLI archives. Product CalVer tags are not suitable for
-`go install ...@latest`; use the source installation above.
+If you use `GOBIN`, add that directory instead. The CLI and the core bundled with the desktop are separate installations and can have different versions. The release workflow does not publish standalone CLI archives. Product release tags use calendar versions, so install from a checkout rather than using `go install ...@latest`.
 
-After installing, continue to [connect a model service](model-services.md).
-For desktop source builds, see the [development guide](../project/development.md).
+Continue with [model services](model-services.md). To build the desktop itself, use the [development guide](../project/development.md).
