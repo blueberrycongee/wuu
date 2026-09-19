@@ -110,6 +110,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align expanded tool details and TODO text in one column, center their icons on
+  the first text line at any UI font size, and wrap long TODO content safely.
+
 - Highlight the current running session in the sidebar bell view using the same
   selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
