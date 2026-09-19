@@ -180,7 +180,7 @@ func (e *Env) toolResultProjectionMode() projectionMode {
 // estimateResultTokens returns the deterministic estimated-token cost of a
 // result's model-visible text using the shared context budget estimator.
 func estimateResultTokens(text string) int {
-	return contextbudget.EstimateJSONTokens(text)
+	return contextbudget.EstimateTokens(text)
 }
 
 // projectionHash returns a stable content hash of projected text so telemetry

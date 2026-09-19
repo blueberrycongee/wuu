@@ -119,3 +119,53 @@ func TestFreshContextOverflowRecoveryResetsOnlyAfterSuccess(t *testing.T) {
 		})
 	}
 }
+
+func TestFreshContextOverflowForceTrimsWhenWindowUnchanged(t *testing.T) {
+	cfg := recoveryWindowConfig()
+	cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, _, _, _ int) ([]providers.ChatMessage, error) {
+		return providers.CloneChatMessages(messages), nil
+	}
+	overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+	step := &fakeStep{results: []StepResult{{}, {}, {Content: "ok", StopReason: "stop"}}, errs: []error{overflow, overflow, nil}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "old task"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "latest task"},
+	}
+
+	result, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatalf("expected force-trim recovery after unchanged fresh context, got %v", err)
+	}
+	if len(step.calls) != 3 {
+		t.Fatalf("expected overflow, unchanged window retry, then trimmed retry, got %d calls", len(step.calls))
+	}
+	if !result.HistoryRewritten {
+		t.Fatal("expected force-trim to rewrite history")
+	}
+	if len(step.calls[2].Messages) >= len(history) {
+		t.Fatalf("trimmed retry still had %d messages", len(step.calls[2].Messages))
+	}
+}
+
+func TestFreshContextOverflowDoesNotRetryUnchangedPayload(t *testing.T) {
+	cfg := recoveryWindowConfig()
+	cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, _, _, _ int) ([]providers.ChatMessage, error) {
+		return providers.CloneChatMessages(messages), nil
+	}
+	overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+	step := &fakeStep{results: []StepResult{{}, {}}, errs: []error{overflow, overflow}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "oversized fresh prompt"},
+	}
+
+	_, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err == nil || !providers.IsContextOverflow(err) {
+		t.Fatalf("expected original context overflow, got %v", err)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("unchanged overflow recovery should stop after the no-op window retry, got %d calls", len(step.calls))
+	}
+}
