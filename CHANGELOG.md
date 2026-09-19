@@ -133,6 +133,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
   Preserve following after a plain scroll-surface click without scrolling.
 
+- Reject `apply_patch` file sections that reuse a normalized path, including move
+  sources and destinations, before writing any files. This prevents later sections
+  from silently overwriting earlier edits; dry runs reject the same conflicts (#258).
+
 - Preserve peer request correlation after uncertain sends, recover queued replies
   after host restart without reviving user-cancelled inputs, and retain completed
   results instead of replacing them with timeout messages. Peer discovery and

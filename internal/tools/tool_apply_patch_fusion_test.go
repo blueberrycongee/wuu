@@ -132,26 +132,37 @@ func TestValue(t *testing.T) {
 }
 
 func TestActionFusionFailedPatchDoesNotRunCommandOrPartiallyWrite(t *testing.T) {
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "existing.txt"), "original\n")
-	kit := newShellTestToolkit(t, root)
-	runtime, _ := fusionRuntime(t, kit)
-	message := runFusion(t, runtime, fusionCall(t, "*** Begin Patch\n*** Add File: new.txt\n+new\n*** Update File: existing.txt\n@@\n-stale\n+changed\n*** End Patch", map[string]any{"command": "printf ran > ran.txt"}))
-	if !message.ToolResult.IsError {
-		t.Fatal("stale patch reported success")
-	}
-	for _, path := range []string{"new.txt", "ran.txt"} {
-		if _, err := os.Stat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("failed patch produced %s: %v", path, err)
-		}
-	}
-	if got := mustReadFile(t, filepath.Join(root, "existing.txt")); got != "original\n" {
-		t.Fatalf("stale patch changed existing file: %q", got)
-	}
-	for _, record := range kit.ToolTelemetry() {
-		if record.Name == "bash" {
-			t.Fatal("command was attempted after a failed patch")
-		}
+	for _, tt := range []struct {
+		name     string
+		sections string
+	}{
+		{"stale anchor", "*** Update File: existing.txt\n@@\n-stale\n+changed\n"},
+		{"duplicate target", "*** Update File: existing.txt\n@@\n-original\n+changed\n*** Update File: ./existing.txt\n@@\n-original\n+changed again\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustWriteFile(t, filepath.Join(root, "existing.txt"), "original\n")
+			kit := newShellTestToolkit(t, root)
+			runtime, _ := fusionRuntime(t, kit)
+			patch := "*** Begin Patch\n*** Add File: new.txt\n+new\n" + tt.sections + "*** End Patch"
+			message := runFusion(t, runtime, fusionCall(t, patch, map[string]any{"command": "printf ran > ran.txt"}))
+			if !message.ToolResult.IsError {
+				t.Fatal("invalid patch reported success")
+			}
+			for _, path := range []string{"new.txt", "ran.txt"} {
+				if _, err := os.Stat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("failed patch produced %s: %v", path, err)
+				}
+			}
+			if got := mustReadFile(t, filepath.Join(root, "existing.txt")); got != "original\n" {
+				t.Fatalf("invalid patch changed existing file: %q", got)
+			}
+			for _, record := range kit.ToolTelemetry() {
+				if record.Name == "bash" {
+					t.Fatal("command was attempted after a failed patch")
+				}
+			}
+		})
 	}
 }
 
