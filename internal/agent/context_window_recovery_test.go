@@ -119,3 +119,99 @@ func TestFreshContextOverflowRecoveryResetsOnlyAfterSuccess(t *testing.T) {
 		})
 	}
 }
+
+func TestFreshContextOverflowForceTrimsWhenWindowUnchanged(t *testing.T) {
+	cfg := recoveryWindowConfig()
+	commits := 0
+	cfg.AcceptFreshContext = func(_ context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
+		commits++
+		return messages, head, nil
+	}
+	cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, _, _, _ int) ([]providers.ChatMessage, error) {
+		return providers.CloneChatMessages(messages), nil
+	}
+	overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+	step := &fakeStep{results: []StepResult{{}, {}, {Content: "ok", StopReason: "stop"}}, errs: []error{overflow, overflow, nil}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: strings.Repeat("old task ", 2000)},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "latest task"},
+	}
+
+	result, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatalf("expected force-trim recovery after unchanged fresh context, got %v", err)
+	}
+	if len(step.calls) != 3 {
+		t.Fatalf("expected overflow, unchanged window retry, then trimmed retry, got %d calls", len(step.calls))
+	}
+	if !result.HistoryRewritten {
+		t.Fatal("expected force-trim to rewrite history")
+	}
+	if commits != 1 {
+		t.Fatalf("force-trim must commit the replacement before retrying, got %d commits", commits)
+	}
+	if len(step.calls[2].Messages) >= len(history) {
+		t.Fatalf("trimmed retry still had %d messages", len(step.calls[2].Messages))
+	}
+}
+
+func TestFreshContextOverflowTrimStopsOnPersistenceFailure(t *testing.T) {
+	for _, stage := range []string{"archive", "commit"} {
+		t.Run(stage, func(t *testing.T) {
+			cfg := recoveryWindowConfig()
+			cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, _, _, _ int) ([]providers.ChatMessage, error) {
+				return providers.CloneChatMessages(messages), nil
+			}
+			storageErr := errors.New("storage unavailable")
+			archives := 0
+			cfg.ArchiveHistory = func(context.Context, []providers.ChatMessage) (HistoryArchive, error) {
+				archives++
+				if stage == "archive" && archives == 2 {
+					return HistoryArchive{}, storageErr
+				}
+				return HistoryArchive{HeadSeq: 100}, nil
+			}
+			cfg.AcceptFreshContext = func(_ context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
+				if stage == "commit" {
+					return nil, head, storageErr
+				}
+				return messages, head, nil
+			}
+			overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+			step := &fakeStep{results: []StepResult{{}, {}, {Content: "must not run", StopReason: "stop"}}, errs: []error{overflow, overflow, nil}}
+			history := []providers.ChatMessage{
+				{Role: "system", Content: "instructions"},
+				{Role: "user", Content: strings.Repeat("old task ", 2000)},
+				{Role: "assistant", Content: "old answer"},
+				{Role: "user", Content: "latest task"},
+			}
+			result, err := RunToolLoop(context.Background(), history, cfg, step)
+			if !errors.Is(err, storageErr) || len(step.calls) != 2 || result.HistoryRewritten || len(result.NewMessages) != 0 {
+				t.Fatalf("uncommitted trim escaped: err=%v calls=%d rewritten=%v new=%d", err, len(step.calls), result.HistoryRewritten, len(result.NewMessages))
+			}
+		})
+	}
+}
+
+func TestFreshContextOverflowDoesNotRetryUnchangedPayload(t *testing.T) {
+	cfg := recoveryWindowConfig()
+	cfg.FreshContext = func(_ context.Context, messages []providers.ChatMessage, _, _, _ int) ([]providers.ChatMessage, error) {
+		return providers.CloneChatMessages(messages), nil
+	}
+	overflow := providers.NewProviderStreamError("context_length_exceeded", "")
+	step := &fakeStep{results: []StepResult{{}, {}}, errs: []error{overflow, overflow}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "oversized fresh prompt"},
+	}
+
+	_, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err == nil || !providers.IsContextOverflow(err) {
+		t.Fatalf("expected original context overflow, got %v", err)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("unchanged overflow recovery should stop after the no-op window retry, got %d calls", len(step.calls))
+	}
+}

@@ -61,8 +61,13 @@ type ToolSurfaceFreezer interface {
 // Behavior:
 //   - Loops up to cfg.MaxSteps rounds (0 = unlimited).
 //   - On context-overflow errors from the step, calls cfg.Compact
-//     once and re-issues the step. Consecutive overflows propagate;
-//     fresh context windows allow recovery again after a successful step.
+//     once and re-issues the step. If that compact does not shrink
+//     history, the loop force-trims older turns onto a valid tool-call
+//     boundary and retries once more only when the replacement is
+//     smaller. Consecutive overflows after that recovery propagate;
+//     fresh context windows allow recovery again after a successful
+//     step. A failed or no-op recovery never retries the same overflowing
+//     payload.
 //   - Output truncation is treated as a completed model response with
 //     FinishReason=length. The caller/UI can surface that reason without
 //     classifying the turn as a user interruption or transport failure.
@@ -156,15 +161,18 @@ func RunToolLoop(
 		totalIn, totalOut, totalCacheCreation, totalCacheRead int
 		// Reactive auto-compact (overflow recovery) runs at most once
 		// between successful steps for fresh windows (once per Run for
-		// legacy compaction); if a single compaction isn't enough, surfacing the
-		// error is more honest than silently looping. Proactive compact
+		// legacy compaction). If that compact does not shrink history, a
+		// local force-trim retries once more only when it actually shrinks
+		// the request. Proactive compact
 		// runs before provider requests, including mid-turn continuation
 		// requests after completed tool results. A failed or no-op
 		// proactive attempt suppresses further proactive attempts for
 		// this Run so the loop cannot spin on an unhelpful compactor.
-		overflowCompacted   bool
-		proactiveSuppressed bool
-		historyRewritten    bool
+		overflowCompacted     bool
+		overflowTrimmed       bool
+		overflowTrimRequested bool
+		proactiveSuppressed   bool
+		historyRewritten      bool
 		// Tracks current context fill so we can decide whether to
 		// proactively compact before the next round. Uses
 		// response.usage as ground truth + delta estimation for
@@ -422,6 +430,8 @@ func RunToolLoop(
 		var freshRollbackProviderMessages []providers.ChatMessage
 		freshRollbackHistoryRewritten := historyRewritten
 		if attemptFreshContext {
+			forceOverflowTrim := overflowTrimRequested
+			overflowTrimRequested = false
 			targetTokens := cfg.FreshContextTokens
 			if targetTokens <= 0 {
 				targetTokens = FreshContextTargetTokens
@@ -447,7 +457,15 @@ func RunToolLoop(
 			var replacement []providers.ChatMessage
 			freshErr := archiveErr
 			if freshErr == nil {
-				replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+				if forceOverflowTrim {
+					var smaller bool
+					replacement, smaller = forceTrimOverflowHistory(messages)
+					if !smaller {
+						freshErr = ErrFreshContextNotSmaller
+					}
+				} else {
+					replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+				}
 			}
 			if freshErr == nil && compactChanged(messages, replacement) {
 				freshRollbackMessages = providers.CloneChatMessages(messages)
@@ -495,7 +513,7 @@ func RunToolLoop(
 					Reason: CompactReasonNewContext, Status: CompactAttemptFailed,
 					TokensBefore: beforeTokens, MessagesBefore: beforeMessages, Error: freshContextFailure,
 				})
-				if cfg.CompactOnly {
+				if cfg.CompactOnly || forceOverflowTrim {
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), freshErr
 				}
 			}
@@ -740,7 +758,20 @@ func RunToolLoop(
 				newContextRequested = true
 				continue
 			}
-			if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
+				if _, ok := forceTrimOverflowHistory(messages); ok {
+					// Use the normal window transaction so archival, request
+					// validation, checkpoint commit, and rollback still apply.
+					overflowTrimmed = true
+					overflowTrimRequested = true
+					newContextRequested = true
+					postToolContextSegments = consumedPostToolSegments
+					continue
+				}
+				// Fresh-context already consumed the one overflow retry.
+				// If trim cannot shrink the request, surface the overflow
+				// instead of sending the same overflowing payload again.
+			} else if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
 				before := usageBefore.Total()
@@ -826,6 +857,11 @@ func RunToolLoop(
 						OutputLimit:    compact.IsSummaryOutputLimit(cerr),
 					}, usageBefore))
 				}
+				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
+					resetTranscript(trimmed)
+					postToolContextSegments = consumedPostToolSegments
+					continue
+				}
 			}
 			// A streaming step can fail after content deltas were already shown to
 			// the user. Keep that visible text in durable history, but deliberately
@@ -851,6 +887,7 @@ func RunToolLoop(
 		if freshContextEnabled {
 			// Successful progress ends the previous overflow recovery attempt.
 			overflowCompacted = false
+			overflowTrimmed = false
 		}
 
 		if result.Usage != nil {
@@ -1293,6 +1330,22 @@ func compactChanged(before, after []providers.ChatMessage) bool {
 		return true
 	}
 	return !reflect.DeepEqual(before, after)
+}
+
+// forceTrimOverflowHistory is the last local recovery after a classified
+// overflow whose compact/fresh-context pass did not shrink the request. It
+// keeps leading system scaffolding and the newest user turn, dropping older
+// conversation on a valid tool-call boundary so the retry is smaller without
+// waiting for another provider round.
+func forceTrimOverflowHistory(messages []providers.ChatMessage) ([]providers.ChatMessage, bool) {
+	trimmed, err := compact.ForceTrimOverflowHistory(messages)
+	if err != nil || !compactChanged(messages, trimmed) {
+		return nil, false
+	}
+	if estimateFreshContextMessages(trimmed) >= estimateFreshContextMessages(messages) {
+		return nil, false
+	}
+	return trimmed, true
 }
 
 // compactNoticeMessageCount reports the model-visible conversation units a

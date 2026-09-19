@@ -110,6 +110,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Count tool results with a denser JSON token estimator so JSON-heavy history
+  triggers compact before the provider window, and force-trim older history
+  after a context overflow if compact does not shrink the request.
 - Highlight the current running session in the sidebar bell view using the same
   selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,

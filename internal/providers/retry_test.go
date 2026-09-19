@@ -208,6 +208,7 @@ func TestDetectContextOverflow_ProviderPhrasings(t *testing.T) {
 		"The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
 		// xAI
 		"This model's maximum prompt length is 131072 but the request contains 537812 tokens",
+		"Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (505759 tokens > 500000 tokens)",
 		// Groq
 		"Please reduce the length of the messages or completion",
 		// OpenRouter
