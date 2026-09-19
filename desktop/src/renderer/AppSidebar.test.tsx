@@ -67,6 +67,8 @@ interface RenderOptions {
   expandedSidebarSectionIDs?: Set<string>;
   projectThreadsByProjectID?: Record<string, ThreadSummary[]>;
   activeThreadID?: string;
+  pendingThreadID?: string;
+  onSelectThread?: (threadID: string) => void;
   onSelectProjectThread?: (projectID: string, threadID: string) => void;
   sectionOrder?: string[];
   state?: AppState;
@@ -89,6 +91,8 @@ function renderSidebar({
   expandedSidebarSectionIDs = new Set(),
   projectThreadsByProjectID = {},
   activeThreadID,
+  pendingThreadID,
+  onSelectThread = () => {},
   onSelectProjectThread = () => {},
   sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
   state = {
@@ -115,14 +119,14 @@ function renderSidebar({
   onOpenChannelTasks,
 }: RenderOptions = {}): void {
   act(() => {
-    root = createRoot(container);
+    root ??= createRoot(container);
     root.render(
       <AppSidebar
         state={state}
         sidebarProjects={sidebarProjects}
         pinnedThreads={[]}
         activeThreadID={activeThreadID}
-        pendingThreadID={undefined}
+        pendingThreadID={pendingThreadID}
         pendingProjectID={undefined}
         collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
         expandedSidebarSectionIDs={expandedSidebarSectionIDs}
@@ -148,7 +152,7 @@ function renderSidebar({
         onOpenChannels={() => {}}
         onMarkThreadsViewed={() => {}}
         onToggleConversationSearch={() => {}}
-        onSelectThread={() => {}}
+        onSelectThread={onSelectThread}
         onTogglePinned={() => {}}
         onArchiveThread={() => {}}
         onDeleteThread={() => {}}
@@ -168,6 +172,42 @@ function renderSidebar({
 }
 
 describe("AppSidebar layout", () => {
+  it("keeps the current session in sync between the workspace and bell views", () => {
+    const threads: ThreadSummary[] = ["First session", "Second session"].map((title, index) => ({
+      id: `running-${index}`, title, cwd: "/repo/wuu", workspace_id: "project-1",
+      status: "in_progress", pinned: false, archived: false,
+      created_at: "2026-09-17T00:00:00Z", updated_at: "2026-09-17T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    }));
+    const onSelectThread = vi.fn();
+    const options: RenderOptions = {
+      activeThreadID: threads[0].id,
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      projectThreadsByProjectID: { "project-1": threads },
+      onSelectThread,
+    };
+    const currentTitles = () => [...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
+      .map((element) => element.textContent);
+    renderSidebar(options);
+    expect(currentTitles()).toEqual([threads[0].title]);
+
+    const bell = container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!;
+    act(() => bell.click());
+    expect(currentTitles()).toEqual([threads[0].title]);
+
+    const target = container.querySelector<HTMLButtonElement>(`button[aria-label="${threads[1].title}"]`)!;
+    act(() => target.click());
+    expect(onSelectThread).toHaveBeenCalledWith(threads[1].id);
+    renderSidebar({ ...options, pendingThreadID: threads[1].id });
+    expect(currentTitles()).toEqual([threads[0].title]);
+
+    renderSidebar({ ...options, activeThreadID: threads[1].id });
+    expect(currentTitles()).toEqual([threads[1].title]);
+    expect(target.getAttribute("aria-busy")).toBe("true");
+    act(() => bell.click());
+    expect(currentTitles()).toEqual([threads[1].title]);
+  });
+
   it("lets a navigation presenter replace the complete production sidebar root", async () => {
     let snapshot: NavigationSnapshotV1 | undefined;
     await desktopPluginHost.activateGeneration({

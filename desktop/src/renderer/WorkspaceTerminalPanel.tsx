@@ -845,9 +845,6 @@ function UserTerminalPane({
 
   return (
     <div className="workspace-terminal-panel" hidden={!active} data-wuu-component="workspace-terminal">
-      <header className="workspace-terminal-pathbar">
-        <TruncatedText as="div" className="workspace-terminal-path" text={workspaceRoot} />
-      </header>
       <div
         className="workspace-terminal-screen"
         data-wuu-component="workspace-terminal-screen"
