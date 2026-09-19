@@ -229,6 +229,8 @@ export function useConversationScrollState({
   }, []);
   const dockComposerHeightRef = useRef(0);
   const setAutoFollow = useCallback((next: boolean): void => {
+    // A later ownership change supersedes a pending click's restoration.
+    if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
     scrollModeRef.current = next ? "following" : "paused";
   }, []);
   const lastConversationScrollTopRef = useRef(0);
@@ -240,7 +242,7 @@ export function useConversationScrollState({
   const positionSubmittedMessageRef = useRef<((animate: boolean) => boolean) | undefined>(undefined);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
-    { node: HTMLElement; scrollTop: number; scrollHeight: number } | undefined
+    { node: HTMLElement; scrollTop: number; scrollHeight: number; resumeScrollTop?: number } | undefined
   >(undefined);
   const userScrollAwayIntentRef = useRef(false);
   const userScrollAwayIntentTimerRef = useRef<number | undefined>(undefined);
@@ -377,6 +379,7 @@ export function useConversationScrollState({
     autoFollow: boolean,
     options: { revealScrollbar?: boolean } = {}
   ): void {
+    pointerScrollGestureRef.current = undefined;
     cancelSubmittedQueryScroll();
     clearUserScrollAwayIntent();
     cancelBottomOverscroll(node);
@@ -597,6 +600,7 @@ export function useConversationScrollState({
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
     if (splitConversation && !isFollowing()) return;
+    pointerScrollGestureRef.current = undefined;
     cancelSubmittedQueryScroll();
     submissionRef.current = { messageID, threadID: activeThreadID, animate: true };
     clearUserScrollAwayIntent();
@@ -1033,6 +1037,7 @@ export function useConversationScrollState({
   useLayoutEffect(() => {
     const node = conversationViewport();
     const threadChanged = previousThreadRef.current !== activeThreadID;
+    pointerScrollGestureRef.current = undefined;
     previousThreadRef.current = activeThreadID;
     if (threadChanged && !adoptingSubmission) {
       submissionRef.current = undefined;
@@ -1171,6 +1176,7 @@ export function useConversationScrollState({
         return;
       }
       if (event.target === node) {
+        const resumeScrollTop = isFollowing() ? clampScrollTop(node, node.scrollTop) : undefined;
         pointerScrollGestureRef.current = {
           node,
           scrollTop: clampScrollTop(node, node.scrollTop),
@@ -1179,10 +1185,20 @@ export function useConversationScrollState({
         markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
         // A scrollbar gesture owns the viewport before native scroll delivery.
         disableConversationAutoFollow();
+        pointerScrollGestureRef.current.resumeScrollTop = resumeScrollTop;
       }
     };
-    const handlePointerEnd = (): void => {
+    const handlePointerEnd = (event: PointerEvent): void => {
+      const gesture = pointerScrollGestureRef.current;
       pointerScrollGestureRef.current = undefined;
+      // A press on empty surface is not necessarily a scroll. Do not leave
+      // following disabled when it ends without movement or another owner.
+      if (event.type === "pointerup" && gesture?.node === node &&
+        gesture.resumeScrollTop !== undefined &&
+        Math.abs(clampScrollTop(node, node.scrollTop) - gesture.resumeScrollTop) <= 1) {
+        enableConversationAutoFollow();
+        scrollConversationToBottom();
+      }
     };
     const handleSelectionChange = (): void => {
       if (selectionIntersectsNode(document.getSelection(), node)) {

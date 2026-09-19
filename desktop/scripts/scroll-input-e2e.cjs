@@ -70,9 +70,10 @@ app.whenReady().then(async () => {
       document.documentElement.style.setProperty("--appearance-scale", String(font / 14));
     }, theme, font);
     await frames(win);
-    for (const input of ["keyboard", "touch", "scrollbar", "wheel"]) {
+    for (const input of ["keyboard", "touch", "scrollbar", "wheel", "blank-click"]) {
       const id = `${width}-${input}`;
-      const text = Array.from({ length: 45 }, (_, i) => `Paragraph ${i + 1}: Read this message while output continues below.`).join("\n\n");
+      const plainClick = input === "blank-click";
+      const text = Array.from({ length: plainClick ? 3 : 45 }, (_, i) => `Paragraph ${i + 1}: Read this message while output continues below.`).join("\n\n");
       const agent = { id: `agent-${id}`, type: "agent_message", status: "in_progress", text };
       const turn = { id, status: "in_progress", items_view: "full", started_at: now, items: [
         { id: `user-${id}`, type: "user_message", status: "completed", text: "Keep the reading position stable." }, agent,
@@ -88,9 +89,24 @@ app.whenReady().then(async () => {
       });
       await frames(win);
       const before = await geometry(win);
-      assert.ok(before.height - before.viewport > 200, "Fixture must scroll");
+      if (plainClick) assert.equal(before.height, before.viewport, "Click fixture must have empty surface below its content");
+      else assert.ok(before.height - before.viewport > 200, "Fixture must scroll");
       assert.ok(Math.abs(before.height - before.viewport - before.top) <= 1, "Start following at latest");
-      if (input === "wheel") {
+      if (plainClick) {
+        const point = await evaluate(win, () => {
+          const node = document.querySelector(".scroll-region:not(.workspace-scroll-region)");
+          const rect = node.getBoundingClientRect();
+          for (let y = Math.ceil(rect.top + 40); y < rect.bottom - 10; y += 20) {
+            for (let x = Math.ceil(rect.left + 5); x < rect.right - 20; x += 5) {
+              if (document.elementFromPoint(x, y) === node) return { x, y };
+            }
+          }
+          throw new Error("No empty scroll surface found");
+        });
+        win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
+        win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
+        await frames(win);
+      } else if (input === "wheel") {
         // Native Chromium input also checks the established wheel path.
         win.webContents.sendInputEvent({ type: "mouseWheel", x: Math.round(width * 0.7), y: 300, deltaY: 240, deltaX: 0 });
         await until(win, () => {
@@ -115,7 +131,7 @@ app.whenReady().then(async () => {
       const reading = await geometry(win);
       // Seed the live buffer from the persisted snapshot, then append output.
       emit(win, "item/agentMessage/delta", { thread_id: threadID, turn_id: id, item_id: agent.id,
-        delta: text + "\n\nNew streamed output must not take over the viewport.\n\nSCROLL_INPUT_END",
+        delta: text.repeat(plainClick ? 20 : 1) + "\n\nNew streamed output must not take over the viewport.\n\nSCROLL_INPUT_END",
       });
       await until(win, () => document.querySelector(".agent-text")?.textContent.includes("SCROLL_INPUT_END"));
       await frames(win);
@@ -124,7 +140,11 @@ app.whenReady().then(async () => {
       fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(results, null, 2));
       fs.writeFileSync(path.join(output, `${id}.png`), (await win.webContents.capturePage()).toPNG());
       assert.ok(after.height > reading.height, "Stream must grow the real layout");
-      assert.ok(Math.abs(after.top - reading.top) <= 1, `Stream stole scroll: ${JSON.stringify(results.at(-1))}`);
+      if (plainClick) {
+        assert.ok(Math.abs(after.height - after.viewport - after.top) <= 1, `Plain click stopped follow: ${JSON.stringify(results.at(-1))}`);
+      } else {
+        assert.ok(Math.abs(after.top - reading.top) <= 1, `Stream stole scroll: ${JSON.stringify(results.at(-1))}`);
+      }
       await evaluate(win, () => {
         window.dispatchEvent(new PointerEvent("pointerup"));
         const node = document.querySelector(".scroll-region:not(.workspace-scroll-region)");
@@ -143,7 +163,7 @@ app.whenReady().then(async () => {
       fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(results, null, 2));
       assert.ok(resumed.height > after.height, `Resumed stream must grow the layout: ${JSON.stringify(results.at(-1))}`);
       assert.ok(Math.abs(resumed.height - resumed.viewport - resumed.top) <= 1, "Returning to latest must resume follow");
-      console.log(`PASS ${id} ${theme}/${font}: reading drift ${after.top - reading.top}px; follow resumed`);
+      console.log(`PASS ${id} ${theme}/${font}: ${plainClick ? "plain click preserved follow" : `reading drift ${after.top - reading.top}px`}; follow resumed`);
     }
   }
   win.close();

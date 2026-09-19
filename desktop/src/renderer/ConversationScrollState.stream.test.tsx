@@ -823,6 +823,50 @@ describe("useConversationScrollState — high-frequency stream", () => {
     },
   );
 
+  it.each([600, 2000])("resumes after a scroll-surface click without movement (height %i)", (height) => {
+    mount({ scrollHeight: height, clientHeight: 600 });
+    act(() => handle!.scheduleStreamScroll());
+    flushScheduledScroll();
+    act(() => {
+      node!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      layout!.scrollHeight += 800;
+      flushResizeObservers();
+    });
+    rerenderTurns(makeLongTurnsSnapshot(1));
+    flushScheduledScroll();
+    expect(layout!.scrollTop).toBe(height - 600);
+    act(() => window.dispatchEvent(new Event("pointerup")));
+    flushScheduledScroll();
+    expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+    act(() => {
+      layout!.scrollHeight += 40;
+      handle!.scheduleStreamScroll();
+    });
+    flushScheduledScroll();
+    expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+  });
+
+  it.each(["paused", "drag", "wheel", "cancel", "submission"])("does not resume a scroll-surface gesture after %s", (reason) => {
+    mount({ scrollHeight: 2000, clientHeight: 600 });
+    act(() => handle!.scheduleStreamScroll());
+    flushScheduledScroll();
+    act(() => {
+      if (reason === "paused") handle!.disableConversationAutoFollow();
+      node!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      if (reason === "drag") layout!.scrollTop -= 8;
+      if (reason === "wheel") node!.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+      if (reason === "submission") handle!.requestSubmittedQueryScroll("next-message");
+      // A drag's native scroll event may still be pending on pointer release.
+      window.dispatchEvent(new Event(reason === "cancel" ? "pointercancel" : "pointerup"));
+      layout!.scrollHeight += 40;
+      flushResizeObservers();
+      handle!.scheduleStreamScroll();
+    });
+    flushScheduledScroll();
+    expect(layout!.scrollTop).toBe(reason === "drag" ? 1392 : 1400);
+    if (reason === "submission") expect(handle!.captureConversationScrollPosition()?.submissionPhase).toBe("pending");
+  });
+
   it("keeps auto-follow disabled during smooth jump startup near the bottom", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !handle || !node) throw new Error("not mounted");

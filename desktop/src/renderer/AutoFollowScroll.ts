@@ -145,7 +145,7 @@ export function useAutoFollowScrollContainer({
   const autoFollowRef = useRef(true);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
-    { node: HTMLElement; scrollTop: number; scrollHeight: number } | undefined
+    { node: HTMLElement; scrollTop: number; scrollHeight: number; resumeScrollTop?: number } | undefined
   >(undefined);
   const lastScrollTopRef = useRef(0);
   const programmaticScrollTopRef = useRef<number | undefined>(undefined);
@@ -161,6 +161,8 @@ export function useAutoFollowScrollContainer({
   }, []);
 
   const setAutoFollow = useCallback((next: boolean): void => {
+    // A later ownership change supersedes a pending click's restoration.
+    if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
     if (!next) cancelMotion();
     autoFollowRef.current = next;
     const node = scrollRef.current;
@@ -370,6 +372,7 @@ export function useAutoFollowScrollContainer({
       event.stopPropagation();
       interruptMotion();
       if (event.target === node) {
+        const resumeScrollTop = autoFollowRef.current ? clampScrollTop(node, node.scrollTop) : undefined;
         pointerScrollGestureRef.current = {
           node,
           scrollTop: clampScrollTop(node, node.scrollTop),
@@ -378,10 +381,20 @@ export function useAutoFollowScrollContainer({
         markUserScrollAwayIntent();
         // Yield before a queued follow or resize can overwrite native scrolling.
         setAutoFollow(false);
+        pointerScrollGestureRef.current.resumeScrollTop = resumeScrollTop;
       }
     };
-    const handlePointerEnd = (): void => {
+    const handlePointerEnd = (event: PointerEvent): void => {
+      const gesture = pointerScrollGestureRef.current;
       pointerScrollGestureRef.current = undefined;
+      // The surface also receives plain clicks. Restore only the following
+      // state this press suspended, never history reading or a cancelled drag.
+      if (event.type === "pointerup" && gesture?.node === node &&
+        gesture.resumeScrollTop !== undefined &&
+        Math.abs(clampScrollTop(node, node.scrollTop) - gesture.resumeScrollTop) <= 1) {
+        setAutoFollow(true);
+        scrollToBottom();
+      }
     };
     const handleSelectionChange = (): void => {
       if (selectionIntersectsNode(document.getSelection(), node)) {
@@ -453,7 +466,7 @@ export function useAutoFollowScrollContainer({
       node.removeEventListener("touchcancel", handleTouchEnd);
       node.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleScrollFrame, markUserScrollAwayIntent, observeKey, open, setAutoFollow]);
+  }, [handleScrollFrame, markUserScrollAwayIntent, observeKey, open, scrollToBottom, setAutoFollow]);
 
   useLayoutEffect(() => {
     const node = scrollRef.current;
