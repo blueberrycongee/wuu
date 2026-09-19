@@ -136,6 +136,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep collaboration-managed sessions out of ordinary sidebar groups after
+  switching projects by preserving their management state in persisted session
+  lists and metadata updates.
+
 - Keep Automation and other primary plugin views in sidebar navigation instead
   of reviving the removed conversation tab strip. Preserve view switching,
   closing, return navigation, and durable view recovery across desktop restarts.
