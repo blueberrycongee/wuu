@@ -276,6 +276,14 @@ Steering does not create a second lifecycle event, and cannot carry
 `context_blocks`; completion remains correlated with the active Turn's original
 request.
 
+A completed Turn may have an empty `final_output`: normal provider completion
+does not require an outward reply or an acknowledgement tool. It records the end
+of execution, not proof that the user's objective was fulfilled. Consumers must
+inspect results and evidence; transport failures and abnormal stops still fail.
+The Peers plugin steers terminal replies into active work when possible. Replies
+arriving too late for that Turn are retained for a follow-up; idle Sessions still
+wake automatically.
+
 A child Session inherits its parent's provider, model and reasoning settings
 unless the create request explicitly overrides them. `fresh` still starts with
 an independent context. Tools that support Named Agent conversations opt in

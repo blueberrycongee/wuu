@@ -147,7 +147,7 @@ func (t *ChatSendTool) Definition() providers.ToolDefinition {
 		Description: "Publish one conversational bubble as this named agent immediately, without ending the turn. " +
 			"For several complete thoughts, send short bubbles sequentially in the same turn; each committed message.seq is the next basis_seq. " +
 			"basis_seq is required and records the room version used to compose the message. A stale basis is held as a draft, not delivered; read the delta before continuing. " +
-			"Your final answer can be the last bubble, or call yield_turn alone when the complete answer has already been sent.",
+			"Your final answer can be the last bubble; end without another reply when the complete answer has already been sent.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

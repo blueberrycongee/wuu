@@ -113,6 +113,9 @@ func TestMessagingRoundTripPreservesBodyAndSourceWithoutReplyLoop(t *testing.T) 
 		t.Fatalf("reply must be delivered once: %d sends", len(h.sends))
 	}
 	response := h.sends[1]
+	if response.IfRunning != pluginapi.SessionIfRunningSteer {
+		t.Fatalf("receipt must join active work without requiring another response: %+v", response)
+	}
 	if response.SessionID != "source" || response.Presentation.Text != reply || response.Presentation.RelatedSessionID != "target" || response.Presentation.Kind != "session_message" {
 		t.Fatalf("reply = %+v", response)
 	}

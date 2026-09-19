@@ -218,6 +218,11 @@ Session。宿主记录来源标题快照，历史恢复保留来源 ID，并在�
 `steered: true` 和当前 `turn_id`。steer 不会创建第二组生命周期事件，也不能携带
 `context_blocks`；完成事件仍关联当前 Turn 的原始请求。
 
+已完成的 Turn 可以没有 `final_output`：提供商正常结束不要求对外回复或调用确认工具。
+这只表示本轮执行结束，不证明用户目标已经达成；接收方仍须检查结果和证据，连接失败和
+异常终止仍会报错。Peers 插件会尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到
+后续轮次，空闲 Session 仍会被自动唤醒。
+
 子 Session 默认继承父 Session 的提供商、模型和推理设置，创建时可以显式覆盖。
 `fresh` 仍使用独立上下文。支持 Named Agent 会话的工具通过
 `execution_scopes: ["collaboration"]` 显式开放；`root` 和 `child` 保持各自的执行范围。

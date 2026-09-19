@@ -195,11 +195,10 @@ func RunToolLoop(
 		prevCacheFingerprint string
 		// Compaction is a nested inference flow. Its final operation becomes the
 		// parent of the first agent round that consumes the rewritten history.
-		lastAgentOperationID         string
-		nextOperationParentID        string
-		newContextRequested          bool
-		lowBudgetReminderSent        bool
-		emptyAnswerRecoveryAttempted bool
+		lastAgentOperationID  string
+		nextOperationParentID string
+		newContextRequested   bool
+		lowBudgetReminderSent bool
 	)
 	if usage == nil {
 		usage = NewUsageTracker()
@@ -954,13 +953,10 @@ func RunToolLoop(
 		if len(result.ToolCalls) == 0 {
 			finalContent := result.Content
 			if strings.TrimSpace(finalContent) == "" {
-				canYield := requestHasTool(req.Tools, yieldTurnToolName)
-				if canYield && finishReason == providers.FinishReasonStop && !emptyAnswerRecoveryAttempted && (cfg.MaxSteps == 0 || stepIdx+1 < cfg.MaxSteps) {
-					emptyAnswerRecoveryAttempted = true
-					postToolContextSegments = append(postToolContextSegments, emptyAnswerRecoveryContext())
-					continue
-				}
-				if isLegitimateEmptyCompletion(finishReason, result.StopReason) && (!canYield || finishReason == providers.FinishReasonLength) {
+				// A normal provider stop ends this turn even without outward text.
+				// It does not prove that the user's task is complete. Preserve length
+				// metadata separately so callers can still surface truncation.
+				if finishReason == providers.FinishReasonStop || finishReason == providers.FinishReasonLength {
 					return LoopResult{
 						Content:             "",
 						NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
@@ -1042,15 +1038,6 @@ func RunToolLoop(
 			appendMessage(toolMsg)
 		}
 		usage.RecordPendingMessages(orderedToolMessages)
-		if requestHasTool(req.Tools, yieldTurnToolName) && acceptedTurnYield(orderedToolMessages) {
-			return LoopResult{
-				NewMessages:      newMessagesForReturn(messages, startLen, historyRewritten),
-				HistoryRewritten: historyRewritten,
-				InputTokens:      totalIn, OutputTokens: totalOut,
-				CacheCreationTokens: totalCacheCreation, CacheReadTokens: totalCacheRead,
-				FinishReason: providers.FinishReasonStop, StopReason: "stop",
-			}, nil
-		}
 		if acceptedContextRequest {
 			if deferRepeatedContextTransition(messages, usage.EstimateCurrent(), cfg.FreshContextTokens) {
 				postToolContextSegments = append(postToolContextSegments, RequestOnlyContextMessages([]providers.ChatMessage{
@@ -1471,19 +1458,6 @@ func shouldPersistAssistantMessage(msg providers.ChatMessage) bool {
 		return true
 	}
 	return len(msg.ToolCalls) > 0
-}
-
-func isLegitimateEmptyCompletion(finishReason providers.FinishReason, stopReason string) bool {
-	switch finishReason {
-	case providers.FinishReasonLength:
-		return true
-	}
-	switch strings.TrimSpace(strings.ToLower(stopReason)) {
-	case "end_turn":
-		return true
-	default:
-		return false
-	}
 }
 
 // errorJSON marshals an error into the JSON payload tool callers see

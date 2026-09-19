@@ -97,7 +97,7 @@ func TestCoordinatorRetirementPreservesOriginalRequestAcrossRestart(t *testing.T
 	if _, err := coordinator.BindCollaborationSession(ctx, CollaborationSessionBindParams{SessionRef: "legacy-room", RoomID: room.ID, Purpose: CollaborationSessionCoordination}); err != nil {
 		t.Fatal(err)
 	}
-	source, err := s.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "Explain yield_turn"})
+	source, err := s.SendHuman(ctx, HumanSendParams{RoomID: room.ID, HumanID: "human-1", Body: "Explain turn completion"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestCoordinatorRetirementPreservesOriginalRequestAcrossRestart(t *testing.T
 		t.Fatalf("restart repeated the request: %+v %v", pending, err)
 	}
 	history, err := s.ListMessages(ctx, room.ID, 0, 10)
-	if err != nil || len(history) != 2 || history[0].Body != "Explain yield_turn" {
+	if err != nil || len(history) != 2 || history[0].Body != "Explain turn completion" {
 		t.Fatalf("history lost: %+v %v", history, err)
 	}
 }

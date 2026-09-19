@@ -59,9 +59,6 @@ const (
 	CapabilityContextHistory   Capability = "context.history"
 	CapabilityContextWindow    Capability = "context.window"
 
-	// Explicitly finish a conversation turn without an outward reply.
-	CapabilitySessionYield Capability = "session.yield"
-
 	// TODO / skills.
 	CapabilityTodo  Capability = "todo"
 	CapabilitySkill Capability = "skill"
@@ -107,7 +104,6 @@ func All() []Capability {
 		CapabilityWebSearch,
 		CapabilitySessionLookup,
 		CapabilitySessionWorkspace,
-		CapabilitySessionYield,
 		CapabilityContextHistory,
 		CapabilityContextWindow,
 		CapabilityTodo,
