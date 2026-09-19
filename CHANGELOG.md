@@ -100,8 +100,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Count JSON tool results with the denser JSON token estimator, and force-trim
-  older history after a context overflow if compact does not shrink the request.
+- Count tool results with a denser JSON token estimator so JSON-heavy history
+  triggers compact before the provider window, and force-trim older history
+  after a context overflow if compact does not shrink the request.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
   without pulling readers away from an explicitly paused reading position.
 - Position locally queued and steered messages when they enter the conversation,

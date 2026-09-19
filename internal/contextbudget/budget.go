@@ -2,13 +2,11 @@ package contextbudget
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/imageproc"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -18,6 +16,11 @@ import (
 const (
 	attachmentFallbackTokenEstimate = 2000
 	toolDefinitionOverhead          = 500
+	// JSONNonCJKTokenNumerator/JSONNonCJKTokenDenominator estimate ASCII JSON
+	// at 10/28 chars per token (~2.8). Keep callers on these constants so a
+	// later calibration does not leave byte-length estimates on /3.
+	JSONNonCJKTokenNumerator   = 10
+	JSONNonCJKTokenDenominator = 28
 )
 
 // EstimateTokens provides a rough token count estimate.
@@ -46,17 +49,29 @@ func EstimateTokens(text string) int {
 	return (nonCJK / 4) + (cjkCount*7)/10 + 1
 }
 
-// EstimateJSONTokens estimates tokens for JSON content, which tokenizes
-// denser than prose because structural characters ({, }, :, ", ,) often
-// stand alone. Measured at ~3.0 chars/token on real tool-argument payloads
-// (2026-07-06 MiniMax probe: est/real 1.51 with the former /2, 1.00 with
-// /3), so /3 keeps estimates honest without the old 1.5-2x inflation that
-// pushed tool-heavy sessions into premature compaction.
+// EstimateJSONTokens estimates tokens for JSON and other punctuation-heavy
+// tool payloads. Structural characters often stand alone, so ASCII is denser
+// than prose. The 2026-07-06 MiniMax probe measured tool-argument JSON at
+// ~3.0 chars/token; a later grok-4.6 named-agent overflow counted JSON tool
+// results about 30% higher than the prose estimator (~2.8 chars/token).
+// Using 10/28 for non-CJK keeps that observed density with a small buffer,
+// while CJK keeps the prose 0.7 tokens/char coefficient so mixed payloads
+// are not undercounted.
 func EstimateJSONTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return utf8.RuneCountInString(text)/3 + 1
+
+	var cjkCount, totalChars int
+	for _, r := range text {
+		totalChars++
+		if isCJK(r) {
+			cjkCount++
+		}
+	}
+
+	nonCJK := totalChars - cjkCount
+	return (nonCJK*JSONNonCJKTokenNumerator)/JSONNonCJKTokenDenominator + (cjkCount*7)/10 + 1
 }
 
 // EstimateMessagesTokens estimates total tokens for a message list.
@@ -150,30 +165,19 @@ func ceilDivUint32(n, d uint32) int {
 
 func estimateMessageBodyTokens(msg providers.ChatMessage) int {
 	body := msg.Content
-	if strings.EqualFold(strings.TrimSpace(msg.Role), "tool") {
-		if msg.ToolResult != nil {
-			if projected := strings.TrimSpace(msg.ToolResult.TextProjection()); projected != "" {
-				body = projected
-			}
-		}
-		if looksLikeJSON(body) {
-			return EstimateJSONTokens(body)
+	if !strings.EqualFold(strings.TrimSpace(msg.Role), "tool") {
+		return EstimateTokens(body)
+	}
+	if msg.ToolResult != nil {
+		if projected := strings.TrimSpace(msg.ToolResult.TextProjection()); projected != "" {
+			body = projected
 		}
 	}
-	return EstimateTokens(body)
-}
-
-func looksLikeJSON(text string) bool {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return false
-	}
-	switch trimmed[0] {
-	case '{', '[':
-		return json.Valid([]byte(trimmed))
-	default:
-		return false
-	}
+	// Tool results are punctuation-heavy even when they are not valid JSON
+	// (logs, envelopes, truncated payloads). Validating megabyte bodies just
+	// to choose an estimator is too expensive and undercounts the JSON-like
+	// cases that delay compaction.
+	return EstimateJSONTokens(body)
 }
 
 func isCJK(r rune) bool {
