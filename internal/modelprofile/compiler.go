@@ -86,10 +86,6 @@ type DefaultCompiler struct{}
 func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
-	// Conversation turns can finish privately without requiring a chat backend.
-	if kind != SurfaceWorker {
-		b.addVisible("yield_turn", capability.CapabilitySessionYield)
-	}
 	if kind == SurfaceRoomAgent {
 		addFileReadTools(b)
 		addSearchTools(b)

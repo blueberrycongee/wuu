@@ -131,6 +131,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Removed
 
+- Removed the `yield_turn` tool. Sessions use normal provider completion to end
+  without an outward reply, including room discussions and peer follow-ups.
+
 - Removed stale message-flow screenshots and the disposable output-card demo from
   tracked artifacts.
 
@@ -150,9 +153,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Preserve fresh-context recovery instructions through checkpoints, turn completion
   and session reloads, preventing unintended system-prefix changes (#265).
 
-- Let ordinary sessions explicitly finish peer follow-ups without a final reply.
-  Recover an empty response once, while keeping repeated empty responses visible
-  as failures instead of silently treating them as acknowledgements.
+- Accept normal provider completion without final text instead of retrying or
+  failing it. Preserve transport failures, abnormal stops, and truncation metadata.
+  Peer results join active work when possible, with late receipts retained for
+  a follow-up rather than one queued turn per result.
 
 - Stop streaming auto-follow from pulling messages back to the bottom when a
   keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
