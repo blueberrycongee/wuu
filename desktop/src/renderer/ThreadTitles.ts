@@ -18,7 +18,7 @@ export function threadShowsForkMarker(
 
 /**
  * Base title for a thread (no fork marker). The sidebar uses this and pairs
- * the result with a separate `GitFork` icon to indicate forks, instead of
+ * the result with a separate fork icon to indicate forks, instead of
  * relying on a text suffix that gets truncated on long titles.
  */
 export function baseThreadTitle(

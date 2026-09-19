@@ -6,8 +6,8 @@ import {
   ChevronUp,
   Copy,
   FileText,
-  GitFork,
   PencilLine,
+  Split,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -80,7 +80,7 @@ export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Elem
       disabled={!onFork}
       onClick={onFork}
     >
-      <GitFork size={15} />
+      <Split size={15} />
     </button>
   );
 }
