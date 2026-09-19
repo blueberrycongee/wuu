@@ -111,8 +111,8 @@ func TestNotesToolkitCloneKeepsStoreAndIsolatesSessions(t *testing.T) {
 	kit.SetWorkingNotesHome(home)
 	kit.SetSessionID("one")
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5", true)
-	if !kit.SupportsTool("notes") || !kit.SupportsTool("request_handoff") {
-		t.Fatal("native continuation tools unavailable")
+	if !kit.SupportsTool("notes") {
+		t.Fatal("working notes unavailable")
 	}
 	result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{Name: "notes", Arguments: `{"action":"write","path":"work.md","content":"kept across worktrees","revision":""}`})
 	if err != nil || result.IsError {

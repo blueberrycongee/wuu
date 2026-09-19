@@ -316,7 +316,6 @@ func addSessionWorkspaceTool(b *surfaceBuilder) {
 
 func addContextWindowTools(b *surfaceBuilder) {
 	b.addVisible("notes", capability.CapabilityContextWindow)
-	b.addVisible("request_handoff", capability.CapabilityContextWindow)
 	b.addVisible("new_context", capability.CapabilityContextWindow)
 	b.addVisible("history_read", capability.CapabilityContextHistory)
 	b.addVisible("history_search", capability.CapabilityContextHistory)

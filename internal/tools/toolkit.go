@@ -364,7 +364,6 @@ func (t *Toolkit) rebuildRegistry() {
 		NewNewContextTool(),
 		NewYieldTurnTool(),
 		NewNotesTool(e),
-		NewRequestHandoffTool(e),
 		NewHistoryReadTool(e),
 		NewHistorySearchTool(e),
 		// Recurring agent profiles
