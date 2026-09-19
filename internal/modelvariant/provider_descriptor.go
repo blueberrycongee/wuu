@@ -91,6 +91,20 @@ func normalizedProviderType(value string) string {
 	return strings.ReplaceAll(value, "_", "-")
 }
 
+func isDeepSeekV4Family(desc compatModelDescriptor) bool {
+	for _, value := range []string{desc.ModelID, desc.APIID} {
+		id := strings.ToLower(strings.TrimSpace(value))
+		if idx := strings.LastIndex(id, "/"); idx >= 0 {
+			id = id[idx+1:]
+		}
+		id = strings.TrimPrefix(id, "~")
+		if strings.Contains(id, "deepseek-v4") || id == "deepseek-flash" || strings.HasPrefix(id, "deepseek-flash-") {
+			return true
+		}
+	}
+	return false
+}
+
 func compatReasoningEnabled(desc compatModelDescriptor, configured *bool) bool {
 	if configured != nil {
 		return *configured
@@ -116,7 +130,7 @@ func compatReasoningEnabled(desc compatModelDescriptor, configured *bool) bool {
 		strings.Contains(id, "glm-5.3") || strings.Contains(apiID, "glm-5.3") {
 		return true
 	}
-	if strings.Contains(apiID, "deepseek-v4") || strings.Contains(id, "deepseek-v4") {
+	if isDeepSeekV4Family(desc) {
 		return true
 	}
 	if compatGPT5FamilyRE.MatchString(apiID) || compatGPT5FamilyRE.MatchString(id) ||

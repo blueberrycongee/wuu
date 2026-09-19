@@ -66,8 +66,8 @@ func TestMatchProviderTreatsTerminalV1AsOptional(t *testing.T) {
 	// 1M live-verified 2026-07-06 (648k-token request accepted, ~2M rejected);
 	// the launch-era 512k snapshot value systematically halved the compact
 	// threshold.
-	if model.Limit == nil || model.Limit.Context != 1000000 {
-		t.Fatalf("model limit context = %+v, want 1000000", model.Limit)
+	if model.Limit == nil || model.Limit.Context != 1_048_576 {
+		t.Fatalf("model limit context = %+v, want 1048576", model.Limit)
 	}
 	if enriched.ContextWindow != 0 {
 		t.Fatalf("provider ContextWindow = %d, want 0 without explicit provider override", enriched.ContextWindow)
@@ -234,8 +234,8 @@ func TestCatalogSnapshotMatchesOpenCodeDefaultVisibleCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Providers: %v", err)
 	}
-	if len(providers) != 178 {
-		t.Fatalf("provider count = %d, want 178", len(providers))
+	if len(providers) != 222 {
+		t.Fatalf("provider count = %d, want 222", len(providers))
 	}
 
 	modelCount := 0
@@ -254,8 +254,8 @@ func TestCatalogSnapshotMatchesOpenCodeDefaultVisibleCounts(t *testing.T) {
 			}
 		}
 	}
-	if modelCount != 5828 {
-		t.Fatalf("model count = %d, want 5828", modelCount)
+	if modelCount != 7713 {
+		t.Fatalf("model count = %d, want 7713", modelCount)
 	}
 }
 
@@ -271,20 +271,30 @@ func TestDeepSeekOfficialCatalogCorrectionsExposeVisionModels(t *testing.T) {
 		release  string
 		efforts  []string
 		defaultV string
+		apiID    string
 	}{
-		"deepseek-v4-flash-vision-exp": {
-			name:     "DeepSeek V4 Flash Vision Exp",
+		"deepseek-flash": {
+			name:     "DeepSeek V4.1 Flash",
 			image:    true,
-			release:  "2026-08-21",
+			release:  "2026-09-10",
 			efforts:  []string{"low", "high", "max"},
 			defaultV: "high",
 		},
-		"deepseek-v4.1-flash-expires-on-0910": {
-			name:     "DeepSeek V4.1 Flash (expires 2026-09-10)",
+		"deepseek-v4-flash": {
+			name:     "DeepSeek V4 Flash",
 			image:    true,
-			release:  "2026-09-08",
+			release:  "2026-09-10",
 			efforts:  []string{"low", "high", "max"},
 			defaultV: "high",
+			apiID:    "deepseek-flash",
+		},
+		"deepseek-v4-flash-vision-exp": {
+			name:     "DeepSeek V4 Flash Vision Exp",
+			image:    true,
+			release:  "2026-09-10",
+			efforts:  []string{"low", "high", "max"},
+			defaultV: "high",
+			apiID:    "deepseek-flash",
 		},
 	}
 	for _, model := range provider.Models {
@@ -307,6 +317,9 @@ func TestDeepSeekOfficialCatalogCorrectionsExposeVisionModels(t *testing.T) {
 		if model.DefaultVariant != spec.defaultV {
 			t.Fatalf("%s default variant = %q, want %q", model.ID, model.DefaultVariant, spec.defaultV)
 		}
+		if model.APIID != spec.apiID {
+			t.Fatalf("%s api id = %q, want %q", model.ID, model.APIID, spec.apiID)
+		}
 		delete(want, model.ID)
 	}
 	if len(want) != 0 {
@@ -314,12 +327,92 @@ func TestDeepSeekOfficialCatalogCorrectionsExposeVisionModels(t *testing.T) {
 	}
 }
 
+func TestKimiCodingCatalogExposesK28Alias(t *testing.T) {
+	provider, ok := ProviderByID("kimi-code-plan-cn")
+	if !ok {
+		t.Fatal("expected Kimi coding-plan provider")
+	}
+	want := map[string]struct {
+		name   string
+		apiID  string
+		ctx    int
+		output int
+	}{
+		"kimi-for-coding": {
+			name:   "Kimi K2.8",
+			ctx:    1_048_576,
+			output: 32_768,
+		},
+		"kimi-k2.8-preview": {
+			name:   "Kimi K2.8 Preview",
+			apiID:  "kimi-for-coding",
+			ctx:    1_048_576,
+			output: 32_768,
+		},
+	}
+	for _, model := range provider.Models {
+		spec, exists := want[model.ID]
+		if !exists {
+			continue
+		}
+		if model.Name != spec.name || model.APIID != spec.apiID {
+			t.Fatalf("%s identity = name=%q api=%q, want name=%q api=%q", model.ID, model.Name, model.APIID, spec.name, spec.apiID)
+		}
+		if model.Limit == nil || model.Limit.Context != spec.ctx || model.Limit.Output != spec.output {
+			t.Fatalf("%s limits = %+v, want context=%d output=%d", model.ID, model.Limit, spec.ctx, spec.output)
+		}
+		if got := reasoningEfforts(model); !equalStrings(got, []string{"low", "high", "max"}) {
+			t.Fatalf("%s efforts = %v, want low,high,max", model.ID, got)
+		}
+		delete(want, model.ID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing Kimi coding catalog models: %v", want)
+	}
+
+	_, enriched := EnrichProvider("kimi-for-coding", config.ProviderConfig{
+		Type:  "anthropic",
+		Model: "kimi-k2.8-preview",
+	}, "kimi-k2.8-preview")
+	model := enriched.Models["kimi-k2.8-preview"]
+	if model.Options["force_adaptive_thinking"] != true {
+		t.Fatalf("unexpected K2.8 compatibility options: %+v", model.Options)
+	}
+}
+
+func TestAlibabaCatalogIncludesQwen38(t *testing.T) {
+	for _, providerID := range []string{"alibaba", "alibaba-cn"} {
+		provider, ok := ProviderByID(providerID)
+		if !ok {
+			t.Fatalf("expected %s provider", providerID)
+		}
+		want := map[string]bool{"qwen3.8-max": false, "qwen3.8-flash": false}
+		for _, model := range provider.Models {
+			if _, exists := want[model.ID]; !exists {
+				continue
+			}
+			if model.Limit == nil || model.Limit.Context != 1_000_000 || model.Limit.Output != 131_072 {
+				t.Fatalf("%s/%s limits = %+v, want 1M/131072", providerID, model.ID, model.Limit)
+			}
+			if model.Modalities == nil || !stringSliceContains(model.Modalities.Input, "video") {
+				t.Fatalf("%s/%s modalities = %+v, want video input", providerID, model.ID, model.Modalities)
+			}
+			want[model.ID] = true
+		}
+		for id, found := range want {
+			if !found {
+				t.Fatalf("%s missing %s", providerID, id)
+			}
+		}
+	}
+}
+
 func TestKimiK3UsesUpstreamCatalogAndProviderCompatibility(t *testing.T) {
-	provider, ok := ProviderByID("kimi-for-coding")
+	provider, ok := ProviderByID("kimi-code-plan-cn")
 	if !ok {
 		t.Fatal("expected Kimi For Coding provider")
 	}
-	if provider.API != "https://api.kimi.com/coding/v1" || provider.NPM != "@ai-sdk/anthropic" {
+	if provider.API != "https://api.kimi.com/coding/v1" || provider.NPM != "@ai-sdk/openai-compatible" {
 		t.Fatalf("unexpected Kimi provider transport: %+v", provider)
 	}
 	if len(provider.Headers) != 0 || len(provider.ModelOptions) != 0 {
@@ -349,7 +442,7 @@ func TestKimiK3UsesUpstreamCatalogAndProviderCompatibility(t *testing.T) {
 		Type:  "anthropic",
 		Model: "k3",
 	}, "k3")
-	if ruleName != "kimi-for-coding" || enriched.BaseURL != "https://api.kimi.com/coding/v1" {
+	if ruleName != "kimi-code-plan-cn" || enriched.BaseURL != "https://api.kimi.com/coding/v1" || enriched.NPM != "@ai-sdk/anthropic" {
 		t.Fatalf("unexpected enriched K3 provider: rule=%q provider=%+v", ruleName, enriched)
 	}
 	model := enriched.Models["k3"]
@@ -596,9 +689,9 @@ func TestMergeProviderCarriesModelOptionsAndHeaders(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Anthropic provider match")
 	}
-	enriched := MergeProvider(config.ProviderConfig{Type: "anthropic"}, provider, "claude-opus-4-7-fast")
-	model := enriched.Models["claude-opus-4-7-fast"]
-	if model.ID != "claude-opus-4-7" || model.Options["speed"] != "fast" {
+	enriched := MergeProvider(config.ProviderConfig{Type: "anthropic"}, provider, "claude-opus-4-8-fast")
+	model := enriched.Models["claude-opus-4-8-fast"]
+	if model.ID != "claude-opus-4-8" || model.Options["speed"] != "fast" {
 		t.Fatalf("unexpected fast model metadata: %+v", model)
 	}
 	if enriched.Headers["anthropic-beta"] != "fast-mode-2026-02-01" {

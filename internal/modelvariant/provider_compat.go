@@ -108,7 +108,7 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 		setOptionDefault(result, "include", []any{"reasoning.encrypted_content"})
 		setOptionDefault(result, "maxOutputTokens", 128_000)
 	}
-	if isDirectDeepSeek(desc) && strings.Contains(desc.APIID, "deepseek-v4") && isResponsesWire(provider) {
+	if isDirectDeepSeek(desc) && isDeepSeekV4Family(desc) && isResponsesWire(provider) {
 		setOptionDefault(result, "omitStore", true)
 		setOptionDefault(result, "omitPromptCacheKey", true)
 	}
@@ -213,15 +213,20 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 	id := desc.ModelID
 	apiID := desc.APIID
 	adaptiveEfforts := compatAnthropicAdaptiveEfforts(apiID)
-	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) && forceAdaptiveThinking(provider.Models[model].Options) {
+	if forceAdaptiveThinking(provider.Models[model].Options) &&
+		(desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic || desc.APINPM == compatNPMOpenAICompatible) {
 		efforts := modelReasoningEfforts(provider.Models[model])
 		if len(efforts) == 0 {
 			efforts = compatWidelySupportedEfforts()
 		}
+		effortKey := "effort"
+		if desc.APINPM == compatNPMOpenAICompatible {
+			effortKey = "reasoningEffort"
+		}
 		return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
 			return map[string]any{
 				"thinking": map[string]any{"type": "adaptive", "display": "summarized"},
-				"effort":   effort,
+				effortKey:  effort,
 			}
 		})
 	}
@@ -259,8 +264,8 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		}
 		return compatReasoningEffortVariants(efforts)
 	}
-	if strings.Contains(apiID, "deepseek-v4") && desc.APINPM == compatNPMAnthropic {
-		return compatDeepSeekV4AnthropicVariants()
+	if isDeepSeekV4Family(desc) && desc.APINPM == compatNPMAnthropic {
+		return compatDeepSeekV4AnthropicVariants(modelReasoningEfforts(provider.Models[model]))
 	}
 
 	switch desc.APINPM {
@@ -300,8 +305,8 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		}
 		return compatVariantsFromEfforts(efforts, compatOpenAIProviderVariantOptions)
 	case compatNPMCerebras, compatNPMTogetherAI, compatNPMXAI, compatNPMDeepInfra, compatNPMVenice, compatNPMOpenAICompatible:
-		if strings.Contains(apiID, "deepseek-v4") {
-			return compatDeepSeekV4Variants(provider.WireAPI)
+		if isDeepSeekV4Family(desc) {
+			return compatDeepSeekV4Variants(provider.WireAPI, modelReasoningEfforts(provider.Models[model]))
 		}
 		efforts := modelReasoningEfforts(provider.Models[model])
 		if len(efforts) == 0 {

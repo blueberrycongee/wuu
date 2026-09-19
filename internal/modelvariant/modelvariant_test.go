@@ -9,6 +9,26 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 )
 
+func TestKimiK28PreviewUsesAdaptiveThinkingOnOpenAICompatible(t *testing.T) {
+	providerName, provider := modelcatalog.EnrichProvider("kimi-code-plan-cn", config.ProviderConfig{
+		Type:  "openai-compatible",
+		Model: "kimi-k2.8-preview",
+	}, "kimi-k2.8-preview")
+
+	variants := SummariesForProvider(providerName, provider, "kimi-k2.8-preview")
+	if got := strings.Join(variantIDs(variants), ","); got != "low,high,max" {
+		t.Fatalf("K2.8 variants = %s, want low,high,max", got)
+	}
+	selection := ResolveForProvider(providerName, provider, "kimi-k2.8-preview", "max", "")
+	if selection.ProviderOptions["reasoningEffort"] != "max" || selection.ProviderOptions["force_adaptive_thinking"] != true {
+		t.Fatalf("unexpected K2.8 provider options: %+v", selection.ProviderOptions)
+	}
+	thinking, ok := selection.ProviderOptions["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "adaptive" || thinking["display"] != "summarized" {
+		t.Fatalf("unexpected K2.8 thinking options: %+v", selection.ProviderOptions)
+	}
+}
+
 func TestKimiK3UsesUpstreamEffortVariants(t *testing.T) {
 	providerName, provider := modelcatalog.EnrichProvider("kimi-for-coding", config.ProviderConfig{
 		Type:  "anthropic",
@@ -477,16 +497,17 @@ func TestResolveDeepSeekV4EffortEnablesThinking(t *testing.T) {
 }
 
 func TestDeepSeekV4UsesVendorEffortTiers(t *testing.T) {
-	for _, model := range []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash-expires-on-0910"} {
+	for _, model := range []string{"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"} {
 		t.Run(model, func(t *testing.T) {
 			providerName, provider := modelcatalog.EnrichProvider("deepseek", config.ProviderConfig{
 				Type:  "openai-compatible",
 				Model: model,
 			}, model)
 
+			want := "none,low,high,max"
 			variants := SummariesForProvider(providerName, provider, model)
-			if got := strings.Join(variantIDs(variants), ","); got != "none,low,high,max" {
-				t.Fatalf("variants = %q, want none,low,high,max", got)
+			if got := strings.Join(variantIDs(variants), ","); got != want {
+				t.Fatalf("variants = %q, want %s", got, want)
 			}
 
 			selection := ResolveForProvider(providerName, provider, model, "max", "")
@@ -496,6 +517,11 @@ func TestDeepSeekV4UsesVendorEffortTiers(t *testing.T) {
 			}
 			if got := selection.ProviderOptions["reasoningEffort"]; got != "max" {
 				t.Fatalf("max reasoningEffort = %#v", got)
+			}
+
+			low := ResolveForProvider(providerName, provider, model, "low", "")
+			if low.Variant != "low" || low.ProviderOptions["reasoningEffort"] != "low" {
+				t.Fatalf("saved low effort must remain low, got %#v", low)
 			}
 
 			off := ResolveForProvider(providerName, provider, model, "none", "")
