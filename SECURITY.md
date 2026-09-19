@@ -7,8 +7,9 @@ credential, and remote-control trust boundaries, read the
 
 ## Supported versions
 
-wuu is pre-1.0 and does not currently promise a fixed support window for older
-versions. Security fixes are released on the current release line. Upgrade to
+wuu is a preview product using [CalVer](docs/en/project/release.md#version-policy)
+and does not promise a fixed support window for older versions. Security fixes
+are released on the current release line. Upgrade to
 the newest release before reporting an issue that may already be fixed.
 
 ## Reporting a vulnerability

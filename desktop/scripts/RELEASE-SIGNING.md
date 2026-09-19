@@ -1,7 +1,8 @@
 # macOS preview release signing
 
 GitHub Releases distribute a DMG and ZIP for manual replacement of
-`/Applications/wuu.app`. The app contains the core and both CUA executable roles.
+`/Applications/wuu.app`. The current public preview contains the private core and
+excludes CUA (`WUU_SKIP_CUA_MAC=1`). See the [release contract](../../docs/en/project/release.md).
 No launch daemon, privileged installer, user certificate import, or per-version
 helper directory is installed.
 
@@ -37,8 +38,9 @@ identity is available for local ad-hoc packaging checks only.
 
 The electron-builder custom signer signs nested code and the outer app with the
 same identity. `verify-mac-release.cjs` checks the outer signature, expected leaf
-certificate, stable bundle ID, executable permissions, and both physical CUA
-helper copies. Self-signing is not Developer ID signing or notarization; Gatekeeper
+certificate, stable bundle ID, executable permissions, and the absence of CUA
+helpers when `WUU_SKIP_CUA_MAC=1`. For a CUA-enabled local build it instead checks
+both physical helper copies. Self-signing is not Developer ID signing or notarization; Gatekeeper
 may still require Open Anyway.
 
 ## Signing regression test
@@ -49,10 +51,10 @@ set `WUU_RELEASE_SIGN_ID` to an existing code-signing identity to exercise chang
 builds without modifying trust settings; otherwise that integration case is skipped.
 The test verifies the second build satisfies the first build's designated requirement.
 
-## Upgrade acceptance
+## CUA-enabled local build acceptance
 
-Before distributing the first CUA-enabled preview, test on a clean supported Mac
-with no development certificate installed:
+This checklist applies only to separately built CUA-enabled apps, not the current
+GitHub Release. Test on a clean supported Mac with no development certificate installed:
 
 1. Download the DMG, install to `/Applications`, open through Gatekeeper, and
    authorize Accessibility and Screen Recording as requested by actual tasks.

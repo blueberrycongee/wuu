@@ -27,6 +27,9 @@ security globally.
 
 ## Computer Use permissions
 
+The current GitHub Release does not include Computer Use or the native CUA
+helper. The following permissions apply only to a CUA-enabled source build.
+
 When using Computer Use, grant **Accessibility** or **Screen Recording** access
 in System Settings as requested. Wuu links to the settings, but you must grant
 access yourself. No developer tools or user-side signing are required.
