@@ -19,7 +19,7 @@
 | Gemini 官方直连兼容接口 | 当前不开放；Gemini 原生视频接口尚未接入 | [Gemini 原生视频理解](https://ai.google.dev/gemini-api/docs/video-understanding)与[兼容接口](https://ai.google.dev/gemini-api/docs/openai)是不同契约 |
 | Anthropic Messages | 当前适配器不支持视频 | [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision) |
 
-支持集合随模型目录和用户配置变化，不硬编码模型名称。例如当前目录包含 OpenRouter 的 `google/gemini-2.5-flash`、`google/gemini-2.5-pro`，以及阿里云的 `qwen3.5-plus`、`qwen3.6-plus` 等 video 输入条目；这些是满足本地准入条件的示例，不代表每个账号和下游路由都完成了真实推理验证。
+支持集合随模型目录和用户配置变化，不硬编码模型名称。例如当前目录包含 OpenRouter 的 `google/gemini-2.5-flash`、`google/gemini-2.5-pro`，以及阿里云的 `qwen3.8-max`、`qwen3.8-flash` 等 video 输入条目；这些是满足本地准入条件的示例，不代表每个账号和下游路由都完成了真实推理验证。
 
 不支持的新视频会显示切换模型和连接的提示。后续改用不支持视频的模型时，旧记录保留原始附件，仅在该次模型上下文中替换为无法读取的标记；不伪装为已经分析过的视频。
 

@@ -6,19 +6,35 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 )
 
-const kimiForCodingProviderID = "kimi-for-coding"
+const (
+	kimiForCodingProviderID      = "kimi-for-coding"
+	kimiCodePlanCNProviderID     = "kimi-code-plan-cn"
+	kimiCodePlanGlobalProviderID = "kimi-code-plan-global"
+)
+
+func isKimiCodingProviderID(providerID string) bool {
+	switch normalizeID(providerID) {
+	case kimiForCodingProviderID, kimiCodePlanCNProviderID, kimiCodePlanGlobalProviderID:
+		return true
+	default:
+		return false
+	}
+}
 
 // applyProviderCompatibilityDefaults adds request-transport defaults that
 // models.dev does not describe. These are deliberately kept separate from
 // catalog facts such as modalities, limits, and reasoning efforts. Explicit
 // user headers and model options always win over these defaults.
 func applyProviderCompatibilityDefaults(providerID string, provider config.ProviderConfig, modelIDs ...string) config.ProviderConfig {
-	switch providerID {
-	case kimiForCodingProviderID:
+	switch {
+	case isKimiCodingProviderID(providerID):
 		provider.Headers = mergeHeaders(
 			map[string]string{"User-Agent": "KimiCLI/1.5"},
 			provider.Headers,
 		)
+		if isAnthropicCompatibleProvider(provider) {
+			provider.NPM = "@ai-sdk/anthropic"
+		}
 		provider = applyModelCompatibilityDefaults(provider, map[string]any{
 			"force_adaptive_thinking": true,
 			"anthropic_default_betas": false,
@@ -30,21 +46,21 @@ func applyProviderCompatibilityDefaults(providerID string, provider config.Provi
 			}, model.Options)
 			provider.Models["k3"] = model
 		}
-	case "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan":
+	case providerID == "minimax" || providerID == "minimax-cn" || providerID == "minimax-coding-plan" || providerID == "minimax-cn-coding-plan":
 		provider = applyModelCompatibilityDefaults(provider, map[string]any{
 			"anthropic_default_betas": false,
 		})
-	case "deepseek":
+	case providerID == "deepseek":
 		if isAnthropicCompatibleProvider(provider) {
 			provider.NPM = "@ai-sdk/anthropic"
 			if replaceKnownEndpoint(provider.BaseURL, "https://api.deepseek.com", "https://api.deepseek.com/anthropic") {
 				provider.API = "https://api.deepseek.com/anthropic"
 				provider.BaseURL = provider.API
 			}
-		} else if providerUsesModel(provider, "deepseek-v4-pro", modelIDs...) && strings.TrimSpace(provider.WireAPI) == "" {
+		} else if usesDeepSeekResponsesModel(provider, modelIDs...) && strings.TrimSpace(provider.WireAPI) == "" {
 			provider.WireAPI = "responses"
 		}
-	case "zai-coding-plan":
+	case providerID == "zai-coding-plan":
 		if isAnthropicCompatibleProvider(provider) {
 			provider.NPM = "@ai-sdk/anthropic"
 			if replaceKnownEndpoint(provider.BaseURL, "https://api.z.ai/api/coding/paas/v4", "https://api.z.ai/api/anthropic") {
@@ -56,7 +72,7 @@ func applyProviderCompatibilityDefaults(providerID string, provider config.Provi
 			provider.API = "https://api.z.ai/api/v1"
 			provider.BaseURL = provider.API
 		}
-	case "xai":
+	case providerID == "xai":
 		if strings.TrimSpace(provider.BaseURL) == "" {
 			provider.BaseURL = "https://api.x.ai/v1"
 		}
@@ -102,6 +118,28 @@ func providerUsesModel(provider config.ProviderConfig, target string, modelIDs .
 	return false
 }
 
+func usesDeepSeekResponsesModel(provider config.ProviderConfig, modelIDs ...string) bool {
+	ids := modelIDs
+	if len(ids) == 0 {
+		ids = []string{provider.Model}
+	}
+	for _, modelID := range ids {
+		if isDeepSeekV4Family(modelID) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDeepSeekV4Family(modelID string) bool {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	if idx := strings.LastIndex(id, "/"); idx >= 0 {
+		id = id[idx+1:]
+	}
+	id = strings.TrimPrefix(id, "~")
+	return strings.Contains(id, "deepseek-v4") || id == "deepseek-flash" || strings.HasPrefix(id, "deepseek-flash-")
+}
+
 func applyModelCompatibilityDefaults(provider config.ProviderConfig, defaults map[string]any) config.ProviderConfig {
 	for id, model := range provider.Models {
 		model.Options = mergeModelOptions(defaults, model.Options)
@@ -124,56 +162,9 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 		case "openai":
 			applyOpenAIGPT6AstraCatalog(provider)
 		case "deepseek":
-			upsertOfficialModel(provider, Model{
-				ID:               "deepseek-v4-pro",
-				Name:             "DeepSeek V4 Pro",
-				Family:           "deepseek-thinking",
-				Reasoning:        true,
-				ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
-				Attachment:       officialBool(false),
-				ToolCall:         officialBool(true),
-				StructuredOutput: officialBool(true),
-				Temperature:      officialBool(true),
-				Interleaved:      map[string]any{"field": "reasoning_content"},
-				Modalities:       &Modalities{Input: []string{"text"}, Output: []string{"text"}},
-				Limit:            &Limit{Context: 1_000_000, Output: 384_000},
-				SupportedEfforts: []string{"none", "low", "high", "max"},
-				DefaultVariant:   "high",
-			})
-			upsertOfficialModel(provider, Model{
-				ID:               "deepseek-v4-flash-vision-exp",
-				Name:             "DeepSeek V4 Flash Vision Exp",
-				Family:           "deepseek-flash",
-				ReleaseDate:      "2026-08-21",
-				Reasoning:        true,
-				ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
-				Attachment:       officialBool(true),
-				ToolCall:         officialBool(true),
-				StructuredOutput: officialBool(true),
-				Temperature:      officialBool(true),
-				Interleaved:      map[string]any{"field": "reasoning_content"},
-				Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
-				Limit:            &Limit{Context: 1_000_000, Output: 384_000},
-				SupportedEfforts: []string{"none", "low", "high", "max"},
-				DefaultVariant:   "high",
-			})
-			upsertOfficialModel(provider, Model{
-				ID:               "deepseek-v4.1-flash-expires-on-0910",
-				Name:             "DeepSeek V4.1 Flash (expires 2026-09-10)",
-				Family:           "deepseek-flash",
-				ReleaseDate:      "2026-09-08",
-				Reasoning:        true,
-				ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
-				Attachment:       officialBool(true),
-				ToolCall:         officialBool(true),
-				StructuredOutput: officialBool(true),
-				Temperature:      officialBool(true),
-				Interleaved:      map[string]any{"field": "reasoning_content"},
-				Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
-				Limit:            &Limit{Context: 1_000_000, Output: 384_000},
-				SupportedEfforts: []string{"none", "low", "high", "max"},
-				DefaultVariant:   "high",
-			})
+			applyDeepSeekOfficialCatalog(provider)
+		case kimiForCodingProviderID, kimiCodePlanCNProviderID, kimiCodePlanGlobalProviderID:
+			applyKimiCodingOfficialCatalog(provider)
 		case "zai", "zai-coding-plan":
 			upsertOfficialModel(provider, Model{
 				ID:               "glm-5.3",
@@ -225,6 +216,102 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 			})
 		}
 	}
+}
+
+func applyDeepSeekOfficialCatalog(provider *Provider) {
+	if provider == nil {
+		return
+	}
+	flash := Model{
+		ID:               "deepseek-flash",
+		Name:             "DeepSeek V4.1 Flash",
+		Family:           "deepseek-flash",
+		ReleaseDate:      "2026-09-10",
+		Reasoning:        true,
+		ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
+		Attachment:       officialBool(true),
+		ToolCall:         officialBool(true),
+		StructuredOutput: officialBool(true),
+		Temperature:      officialBool(true),
+		Interleaved:      map[string]any{"field": "reasoning_content"},
+		Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+		Limit:            &Limit{Context: 1_000_000, Output: 384_000},
+		SupportedEfforts: []string{"none", "low", "high", "max"},
+		DefaultVariant:   "high",
+	}
+	upsertOfficialModel(provider, flash)
+	legacyFlash := flash
+	legacyFlash.ID = "deepseek-v4-flash"
+	legacyFlash.Name = "DeepSeek V4 Flash"
+	legacyFlash.APIID = "deepseek-flash"
+	upsertOfficialModel(provider, legacyFlash)
+	legacyVision := flash
+	legacyVision.ID = "deepseek-v4-flash-vision-exp"
+	legacyVision.Name = "DeepSeek V4 Flash Vision Exp"
+	legacyVision.APIID = "deepseek-flash"
+	upsertOfficialModel(provider, legacyVision)
+	pro := Model{
+		ID:               "deepseek-v4-pro",
+		Name:             "DeepSeek V4 Pro",
+		Family:           "deepseek-thinking",
+		ReleaseDate:      "2026-08-12",
+		Reasoning:        true,
+		ReasoningOptions: officialEffortOptions(true, "high", "max"),
+		Attachment:       officialBool(false),
+		ToolCall:         officialBool(true),
+		StructuredOutput: officialBool(true),
+		Temperature:      officialBool(true),
+		Interleaved:      map[string]any{"field": "reasoning_content"},
+		Modalities:       &Modalities{Input: []string{"text"}, Output: []string{"text"}},
+		Limit:            &Limit{Context: 1_000_000, Output: 384_000},
+		SupportedEfforts: []string{"none", "high", "max"},
+		DefaultVariant:   "high",
+	}
+	if existing, ok := modelByID(*provider, "deepseek-v4-pro"); ok && len(existing.ReasoningOptions) > 0 {
+		pro.ReasoningOptions = existing.ReasoningOptions
+		pro.SupportedEfforts = nil
+	}
+	upsertOfficialModel(provider, pro)
+}
+
+func applyKimiCodingOfficialCatalog(provider *Provider) {
+	if provider == nil {
+		return
+	}
+	kimiForCoding, ok := modelByID(*provider, "kimi-for-coding")
+	if !ok {
+		return
+	}
+	kimiForCoding.Name = "Kimi K2.8"
+	kimiForCoding.Family = "kimi-k2"
+	if kimiForCoding.Limit == nil || kimiForCoding.Limit.Context == 0 {
+		kimiForCoding.Limit = &Limit{Context: 1_048_576, Output: 32_768}
+	}
+	if kimiForCoding.Modalities == nil {
+		kimiForCoding.Modalities = &Modalities{Input: []string{"text", "image", "video"}, Output: []string{"text"}}
+	}
+	if kimiForCoding.Attachment == nil {
+		kimiForCoding.Attachment = officialBool(true)
+	}
+	if len(kimiForCoding.ReasoningOptions) == 0 {
+		kimiForCoding.ReasoningOptions = officialEffortOptions(true, "low", "high", "max")
+	}
+	kimiForCoding.Reasoning = true
+	upsertOfficialModel(provider, kimiForCoding)
+	preview := kimiForCoding
+	preview.ID = "kimi-k2.8-preview"
+	preview.APIID = "kimi-for-coding"
+	preview.Name = "Kimi K2.8 Preview"
+	upsertOfficialModel(provider, preview)
+}
+
+func modelByID(provider Provider, id string) (Model, bool) {
+	for _, model := range provider.Models {
+		if strings.EqualFold(strings.TrimSpace(model.ID), id) {
+			return model, true
+		}
+	}
+	return Model{}, false
 }
 
 func applyOpenAIGPT6AstraCatalog(provider *Provider) {
