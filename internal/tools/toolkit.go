@@ -362,8 +362,8 @@ func (t *Toolkit) rebuildRegistry() {
 		NewThreadGetTool(e),
 		NewSetSessionWorkspaceTool(e),
 		NewNewContextTool(),
+		NewYieldTurnTool(),
 		NewNotesTool(e),
-		NewRequestHandoffTool(e),
 		NewHistoryReadTool(e),
 		NewHistorySearchTool(e),
 		// Recurring agent profiles
@@ -379,7 +379,6 @@ func (t *Toolkit) rebuildRegistry() {
 		registered = append(registered, NewPresentArtifactTool(e))
 	}
 	if e.ChatAgent != nil {
-		registered = append(registered, NewYieldTurnTool())
 		registered = append(registered, NewChatCheckTool(e), NewChatReadTool(e), NewChatSessionTool(e), NewHarnessSessionTool(e), NewCollaborationSendTool(e), NewChatDraftTool(e), NewChatTaskTool(e), NewChatWorkTool(e), NewChatRemindTool(e), NewChatWakeTool(e), NewChatMemoryTool(e))
 		registered = append(registered, NewChatSendTool(e), NewChatVerifyTool(e), NewChatRosterTool(e))
 	}

@@ -113,10 +113,16 @@ commands; use the dedicated session compaction interface instead.
 
 Both turn and run requests accept `images` and `files` arrays. Each image has
 `media_type`, base64 `data`, and optional `original`. Each file has `media_type`,
-base64 `data`, and optional `filename`; the current file path supports PDFs.
+base64 `data`, and optional `filename`; the file path supports PDFs and supported
+[video inputs](../customize/video-input.md).
 These are attachment bytes, not local path strings. Image normalization and model
 capability checks occur in the core. `turn/start` additionally supports
 `active_document` and ordered `content_parts` for interactive clients.
+
+Named agents can separately select stored room attachments through their `session`
+tool. That [media handoff contract](../automation/app-server.md#named-agent-media-handoff)
+defines source access, durable delivery, and required-evidence behavior; it is not
+an additional JSON-RPC method.
 
 ### Interruption
 

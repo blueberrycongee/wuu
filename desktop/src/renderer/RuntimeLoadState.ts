@@ -27,6 +27,29 @@ export type LoadedRuntimeState = Partial<AppState> & {
   heldComposerMessages?: QueuedComposerMessage[];
 };
 
+export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> {
+  const listed = await window.wuu.listThreads(state.activeContext?.cwd);
+  const runningHistoryIDs = new Set(
+    [state.thread, state.secondaryThread, ...state.threads]
+      .filter((thread): thread is Thread => Boolean(thread?.turns.some(turn => turn.status === "in_progress")))
+      .map(thread => thread.id),
+  );
+  return Promise.all(listed.threads.map(async thread => {
+    if (thread.turns.length > 0 || isThreadRunning(thread) || !runningHistoryIDs.has(thread.id)) {
+      return thread;
+    }
+    // An idle summary cannot settle cached turns or recover terminal items and
+    // errors. Fetch only histories that need repair, not the whole catalog.
+    try {
+      return (await window.wuu.resumeThread(thread.id)).thread ?? thread;
+    } catch {
+      // Keep the cached history; the next refresh retries this thread without
+      // blocking discovery or successful repairs for other conversations.
+      return thread;
+    }
+  }));
+}
+
 export async function loadRuntime(
   projectState: ProjectListResult,
   options: {

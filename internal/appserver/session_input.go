@@ -3,12 +3,13 @@ package appserver
 import (
 	"context"
 	"errors"
-	"github.com/blueberrycongee/wuu/internal/channels"
-	"github.com/blueberrycongee/wuu/internal/runtime"
+	"fmt"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -141,7 +142,7 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 	var threadRuntime *runtime.ThreadRuntime
 	started, ok, err := s.startThreadUserTurnWithAdmission(
 		ctx, th, msg, snapshot, false, turnReadOnlyFail,
-		turnAdmissionHooks{afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+		turnAdmissionHooks{afterLease: func(admitted *threadState, input *providers.ChatMessage) error {
 			if snapshot.Control != nil && s.channelService != nil {
 				link, err := s.channelService.HarnessLink(ctx, admitted.ID)
 				if err == nil && link.Active && link.AgentID == snapshot.Control.ManagerID {
@@ -154,6 +155,12 @@ func (s *Server) startSubmittedSessionTurn(ctx context.Context, th *threadState,
 			}
 			var runtimeErr error
 			threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
+			if runtimeErr == nil {
+				runtimeErr = validateSessionInputMedia(*input, threadRuntime)
+				if runtimeErr != nil {
+					runtimeErr = fmt.Errorf("%w: %w", errHarnessMedia, runtimeErr)
+				}
+			}
 			if runtimeErr == nil {
 				s.foldFrozenWorkerTree(admitted, threadRuntime)
 			}

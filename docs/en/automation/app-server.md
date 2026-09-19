@@ -57,6 +57,34 @@ not change workspace defaults. A request without `thread_id` updates defaults
 for future conversations. Do not try to override a turn's permission mode through
 `turn/start`.
 
+## Named Agent media handoff
+
+The named-agent `session` tool can attach selected room media when creating or sending to a work session, including queue and steer modes. This is a tool contract, not a new JSON-RPC method:
+
+```json
+{
+  "action": "create",
+  "workspace_root": "/path/to/project",
+  "prompt": "Check the screenshot against the implementation",
+  "media": [
+    {"message_id": "message-id-from-chat_read", "kind": "image", "index": 1,
+     "description": "Inspect the clipped bottom row"}
+  ]
+}
+```
+
+Use the message ID and attachment order from `chat_read`. `kind` selects `image` or `file`, and `index` is one-based within the message's corresponding array. Up to 32 distinct selections carry their room, message, author, source text, and optional description. Omitting `media` sends text only; a path mentioned in the prompt does not attach a file. Stored images are copied without another resize.
+
+Sources must belong to the originating turn's room, and the named identity must still have access. Membership in another room does not allow cross-room references. The host supplies identity and turn scope; paths, URLs, and remote cache references cannot replace stored-message references. The receiving session gains the selected evidence, not room access or additional filesystem permissions, and uses its own bound project's runtime.
+
+Before delivery, durable operations retain references and recheck access and payloads during dispatch or recovery. Missing messages, invalid positions, empty payloads, and unsupported types reject the handoff. Once admitted, bytes and provenance become durable session input; later source deletion does not recall a delivered copy. Recovery recognizes an existing receipt before resolving the source again.
+
+PNG, JPEG, GIF, WebP, PDF, and supported video attachments use the existing media path. Video requires a compatible model and connection. Audio, arbitrary documents, and media handoff to external engines are not supported.
+
+Selected media is required evidence. Known-incompatible model capabilities fail before input admission, and the provider request boundary rejects unsupported required media instead of dropping it, including retained evidence after a model switch. Unknown catalog capabilities defer to provider validation and do not guarantee support. Normal context compaction still applies to older history.
+
+Provider failures appear in normal session results; queue-time failures are recorded in the operation and reported while the source conversation remains authorized. Do not silently retry with text alone: choose compatible input or replace the missing evidence first.
+
 ## Probe the protocol
 
 ```bash

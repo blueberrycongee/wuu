@@ -29,6 +29,7 @@ vi.mock("./ConversationTurnList", () => ({
       data-turn-count={turns.length}
       data-latest-turn-status={turns.at(-1)?.status}
       data-latest-user-text={turns.at(-1)?.items?.find(item => item.type === "user_message")?.text}
+      data-latest-agent-text={turns.at(-1)?.items?.find(item => item.type === "agent_message")?.text}
     />
   ),
 }));
@@ -245,7 +246,7 @@ function installWuuApi(): {
     }),
     initialize: vi.fn().mockResolvedValue(initialized()),
     listThreads: vi.fn().mockImplementation(async () => ({
-      threads: Array.from(threadsByID.values()),
+      threads: Array.from(threadsByID.values(), thread => ({ ...thread, turns: [] })),
     })),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     resumeThread,
@@ -287,12 +288,6 @@ function threadRowButton(previewText: string): HTMLButtonElement | undefined {
   return Array.from(
     container.querySelectorAll<HTMLButtonElement>(".thread-row-main"),
   ).find((button) => button.textContent?.includes(previewText));
-}
-
-function sessionTabButton(label: string): HTMLButtonElement | undefined {
-  return Array.from(
-    container.querySelectorAll<HTMLButtonElement>(".session-tab-main"),
-  ).find((button) => button.textContent?.includes(label));
 }
 
 function activeSessionTabLabel(): string {
@@ -487,6 +482,11 @@ describe("session tab switch latency", () => {
     });
     await flushAsync();
 
+    // Summary lists do not load B's history. Open it once before exercising
+    // the cached-switch path with a delayed resume.
+    await act(async () => { threadRowButton("session switch B")!.click(); });
+    await act(async () => { threadRowButton("session switch A")!.click(); });
+
     const delayedResumeB = deferred<{ thread: Thread }>();
     resumeThread.mockImplementation((threadID: string) =>
       threadID === threadBID
@@ -566,9 +566,15 @@ describe("session tab switch latency", () => {
     expect(visibleRuntimeModel()).toContain("model-a");
   });
 
-  it("repairs a missed completion from the durable thread refresh", async () => {
-    const { threadsByID } = installWuuApi();
+  it.each(["focus", "running snapshot", "active reconciliation"])("repairs a missed completion via %s with summary-only lists", async trigger => {
+    vi.useFakeTimers();
+    const { threadsByID, resumeThread } = installWuuApi();
     threadsByID.set(threadAID, runningThreadA());
+    let onRunning!: Parameters<WuuDesktopApi["onRunningThreadsChanged"]>[0];
+    window.wuu.onRunningThreadsChanged = handler => {
+      onRunning = handler;
+      return () => {};
+    };
 
     await act(async () => {
       root = createRoot(container);
@@ -579,17 +585,24 @@ describe("session tab switch latency", () => {
     expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("in_progress");
     expect(container.querySelector(".composer-stop-button")).not.toBeNull();
 
+    resumeThread.mockClear();
     // The app-server completed durably, but this renderer missed the terminal
     // event during a tab/workspace transition.
-    threadsByID.set(threadAID, threadA());
+    const completed = threadA();
+    completed.turns[0].items[1].text = "Recovered final answer";
+    threadsByID.set(threadAID, completed);
     await act(async () => {
-      window.dispatchEvent(new Event("focus"));
+      if (trigger === "focus") window.dispatchEvent(new Event("focus"));
+      else if (trigger === "running snapshot") onRunning([]);
+      else await vi.advanceTimersByTimeAsync(200);
     });
     await flushAsync();
 
     expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("completed");
     expect(container.querySelector(".composer-stop-button")).toBeNull();
     expect(container.querySelector(".composer-send-button")).not.toBeNull();
+    expect(activeThreadProbe()?.dataset.latestAgentText).toBe("Recovered final answer");
+    expect(resumeThread).toHaveBeenCalledExactlyOnceWith(threadAID);
   });
 
   it("shows a managed follow-up emitted by another workspace's executor", async () => {
@@ -638,7 +651,9 @@ describe("session tab switch latency", () => {
     resumeThread.mockClear();
     // The project client still has the old snapshot; only the execution
     // owner's resume can supply the missed turn.
-    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [threadA(), threadB()] });
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({
+      threads: [threadA(), threadB()].map(thread => ({ ...thread, turns: [] })),
+    });
     const running = threadA();
     running.status = "in_progress";
     running.turns.push({

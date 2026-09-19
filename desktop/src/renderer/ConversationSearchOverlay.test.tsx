@@ -80,18 +80,18 @@ function rows(container: HTMLDivElement): HTMLElement[] {
 }
 
 describe("ConversationSearchOverlay", () => {
-  it("highlights literal query matches in titles and snippets without interpreting markup", () => {
+  it.each(["[UI]", "details"])("keeps results title-only and shows matching details in the preview for %s", (query) => {
     const container = document.createElement("div");
     const root = createRoot(container);
     mountedRoots.push(root);
     const thread: Thread = {
-      id: "match", title: "Fix [UI] layout", preview: "", turns: [],
+      id: "match", title: "<img src=x> Fix [UI] layout", preview: "", turns: [],
       model_provider: "test", model: "test", cwd: "/workspace", status: "idle",
       created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
     };
-    const result = { thread, snippet: "<img src=x> [ui] and [UI]" };
+    const result = { thread, snippet: "Only details [ui] and [UI]" };
     const state: ConversationSearchState = {
-      open: true, closing: false, query: "[UI]", loading: false, error: "",
+      open: true, closing: false, query, loading: false, error: "",
       results: [result], selectedIndex: 0, previewedThreadID: "",
       previewedTurns: [], previewLoading: false, previewError: "",
     };
@@ -104,9 +104,11 @@ describe("ConversationSearchOverlay", () => {
       onSelectResult: (item) => { opened = item.thread.id; },
     })));
     const button = container.querySelector<HTMLButtonElement>(".conversation-search-result")!;
-    expect(Array.from(button.querySelectorAll("mark"), (mark) => mark.textContent)).toEqual(["[UI]", "[ui]", "[UI]"]);
+    expect(Array.from(button.querySelectorAll("mark"), (mark) => mark.textContent)).toEqual(query === "[UI]" ? ["[UI]"] : []);
     expect(button.querySelector("img")).toBeNull();
-    expect(button.textContent).toContain("<img src=x>");
+    expect(button.querySelector(".conversation-search-result-title")?.textContent).toBe(thread.title);
+    expect(button.textContent).not.toContain(result.snippet);
+    expect(container.querySelector("aside")?.textContent).toContain(result.snippet);
     act(() => button.click());
     expect(opened).toBe(thread.id);
   });

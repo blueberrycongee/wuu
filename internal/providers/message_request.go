@@ -33,6 +33,9 @@ func PrepareMessagesForProviderRequestWithPolicy(provider, model string, msgs []
 		return nil, err
 	}
 	projected := ApplyToolResultProjections(repaired)
+	if err := ValidateRequiredMedia(projected, policy); err != nil {
+		return nil, err
+	}
 	// Rich history reads create observation media too. Apply the same policy
 	// after projection so switching to a text-only model cannot reintroduce it.
 	projected = ProjectMediaForPolicy(projected, policy)

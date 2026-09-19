@@ -227,6 +227,22 @@ describe("WorkspaceRightPanel", () => {
     await act(async () => presentationHost?.invoke("header.close-tab", { tabId: tab.id }));
     expect(onSelectTab).toHaveBeenCalledWith(tab.id);
     expect(onCloseTab).toHaveBeenCalledWith(tab.id);
+    const onOpenTool = vi.fn();
+    onCloseTab.mockClear();
+    act(() => root?.render(
+      <WorkspaceRightPanel {...baseProps()} compactNavigation tabs={[tab]} activeTabID={tab.id}
+        onOpenTool={onOpenTool} onCloseTab={onCloseTab}
+        pluginHost={pluginHost} workbenchController={workbenchController} />,
+    ));
+    expect(snapshots.at(-1)?.tabs).toBeUndefined();
+    expect(presentationHost?.actions).not.toContain("header.select-tab");
+    expect(presentationHost?.actions).not.toContain("header.close-tab");
+    await expect(presentationHost!.invoke("header.select-tab", { tabId: tab.id })).rejects.toThrow();
+    expect(snapshots.at(-1)?.canNavigateBack).toBe(true);
+    await act(async () => presentationHost?.invoke("header.navigate-back"));
+    expect(onOpenTool).toHaveBeenCalledWith("files");
+    act(() => container?.querySelector<HTMLButtonElement>(".workspace-panel-close-tab")?.click());
+    expect(onCloseTab).toHaveBeenCalledWith(tab.id);
   });
 
   it("prewarms the hidden lightweight body during idle time", () => {

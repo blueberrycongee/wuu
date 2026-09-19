@@ -74,6 +74,8 @@ When the follow-up command is already known, `apply_patch` can run it after appl
 
 `then_run` accepts `command`, `cwd`, `timeout_seconds`, `purpose`, and `scope`, with normal command permission checks and records. It cannot be combined with `dry_run`. A failed patch skips the command; a failed command leaves the successful patch in place. If validation moves to the background, wait for its actual terminal result before treating it as passed. Do not reapply the patch just to rerun validation.
 
+Each resolved path may belong to only one file section, including move sources and destinations. Aliases such as `a.txt` and `./a.txt` count as the same path. Combine multiple edits to one file in a single `Update File` section with several `@@` chunks. Conflicting paths fail validation before any writes or `then_run`, including in `dry_run` mode.
+
 ## Logs and lifetime
 
 Normal command output and its saved full log are redacted before being returned or persisted as a tool log. Background process records and merged stdout/stderr logs can contain raw text on disk; redaction happens when the tool returns them. Keep secrets out of arguments and output, and review logs before sharing them.

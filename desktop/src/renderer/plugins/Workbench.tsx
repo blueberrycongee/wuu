@@ -73,6 +73,7 @@ export class WorkbenchController {
   private state: WorkbenchLayoutState;
   private snapshot: WorkbenchSnapshot;
   private availablePluginIds: ReadonlySet<string> | undefined;
+  private readonly pendingRestoredViewIds: Set<string>;
   private nextInstance = 1;
   private appliedThemeTokens = new Set<string>();
   services: WorkbenchServices;
@@ -85,6 +86,7 @@ export class WorkbenchController {
     this.services = services;
     this.storage = storage;
     this.state = readLayoutState(storage);
+    this.pendingRestoredViewIds = new Set(this.state.views.map((view) => view.id));
     this.nextInstance = nextViewInstanceSequence(this.state.views);
     this.snapshot = this.createSnapshot();
     this.unsubscribeHost = host.subscribe(() => this.reconcileHost());
@@ -137,9 +139,6 @@ export class WorkbenchController {
       throw new Error(`Plugin view type is not available: ${viewTypeId}`);
     }
     const region = options.region ?? definition.defaultRegion ?? "primary";
-    // Reveal the placement region so the newly opened view is actually
-    // visible (the auxiliary panel can be collapsed independently).
-    this.services.requestRegionVisible?.(region);
     if (options.reveal !== false) {
       const existing = this.state.views.find((view) =>
         view.pluginId === definition.pluginId && view.viewTypeId === definition.id && view.region === region);
@@ -157,6 +156,7 @@ export class WorkbenchController {
       persistence: options.persistence ?? definition.persistence ?? "session",
       context: freezeContext(options.context),
     });
+    this.services.requestRegionVisible?.(region);
     this.replaceState({
       ...this.state,
       views: [...this.state.views, instance],
@@ -186,6 +186,7 @@ export class WorkbenchController {
   activateView(instanceId: string): void {
     const view = this.state.views.find((candidate) => candidate.id === instanceId);
     if (!view) return;
+    this.services.requestRegionVisible?.(view.region);
     this.replaceState({
       ...this.state,
       activeViewByRegion: { ...this.state.activeViewByRegion, [view.region]: view.id },
@@ -282,8 +283,17 @@ export class WorkbenchController {
       this.host.getViewTypes().map((view) => [viewTypeKey(view.pluginId, view.id), view]),
     );
     let views = this.state.views.flatMap((view): WorkbenchViewState[] => {
-      if (this.availablePluginIds && !this.availablePluginIds.has(view.pluginId)) return [];
+      if (this.availablePluginIds && !this.availablePluginIds.has(view.pluginId)) {
+        this.pendingRestoredViewIds.delete(view.id);
+        return [];
+      }
       const definition = definitions.get(viewTypeKey(view.pluginId, view.viewTypeId));
+      // Startup loads modules asynchronously. Keep saved instances hidden until
+      // their owner registers, but never retain a removed live view on unload.
+      if (!definition && this.pendingRestoredViewIds.has(view.id) && !this.host.hasActivePlugin(view.pluginId)) {
+        return [view];
+      }
+      this.pendingRestoredViewIds.delete(view.id);
       if (!definition) return [];
       return [{
         ...view,
@@ -366,10 +376,20 @@ export class WorkbenchController {
     const registeredViews = new Set(
       this.host.getViewTypes().map((view) => viewGenerationKey(view.pluginId, view.id, view.generation)),
     );
+    const views = this.state.views.filter((view) =>
+      registeredViews.has(viewGenerationKey(view.pluginId, view.viewTypeId, view.generation)));
+    const activeViewByRegion = { ...this.state.activeViewByRegion };
+    for (const region of viewRegions) {
+      const active = activeViewByRegion[region];
+      if (active === HIDDEN_REGION_VIEW_ID) continue;
+      if (!views.some((view) => view.region === region && view.id === active)) {
+        activeViewByRegion[region] = views.filter((view) => view.region === region).at(-1)?.id;
+      }
+    }
     return Object.freeze({
       ...this.state,
-      views: Object.freeze(this.state.views.filter((view) =>
-        registeredViews.has(viewGenerationKey(view.pluginId, view.viewTypeId, view.generation)))),
+      views: Object.freeze(views),
+      activeViewByRegion: Object.freeze(activeViewByRegion),
       viewTypes: this.host.getViewTypes(),
       renderers: this.host.getRenderers(),
     });
@@ -379,7 +399,7 @@ export class WorkbenchController {
     const durableViews = this.state.views.filter((view) => view.persistence === "durable");
     const durableIds = new Set(durableViews.map((view) => view.id));
     const activeViewByRegion = Object.fromEntries(
-      Object.entries(this.state.activeViewByRegion).filter(([, id]) => id && durableIds.has(id)),
+      Object.entries(this.state.activeViewByRegion).filter(([, id]) => id && (id === HIDDEN_REGION_VIEW_ID || durableIds.has(id))),
     );
     try {
       this.storage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
@@ -457,8 +477,9 @@ export function DesktopWorkbench({
     if (!suppliedController) controller.dispose();
   }, [controller, suppliedController]);
   React.useEffect(() => {
+    if (inventory === undefined) return;
     controller.setAvailablePluginIds(new Set(
-      (inventory ?? []).filter(isAvailablePlugin).map((plugin) => plugin.id),
+      inventory.filter(isAvailablePlugin).map((plugin) => plugin.id),
     ));
   }, [controller, inventory]);
 

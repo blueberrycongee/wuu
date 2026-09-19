@@ -23,6 +23,8 @@ Looking at the conversation does not take control. Sending a message does: Wuu p
 
 In tool activity, `chat_session` handles communication between named identities, while `session` manages ordinary execution sessions. You can work through natural-language requests rather than calling these tools yourself.
 
+When delegating a task, a named agent can select images or supported attachments from the current channel or direct message. The work session receives the stored media and its source context; unselected attachments are not forwarded. Missing, inaccessible, or unsupported evidence produces an error. Choose a compatible model or reattach the evidence before continuing. Developers can consult the [media handoff contract](../automation/app-server.md#named-agent-media-handoff).
+
 ## Track and cancel a task
 
 The task view shows ownership, progress, and results. Cancelling a task stops the execution and follow-up linked to that task; unrelated sessions keep running. If a session has no task link, open it and stop it separately.

@@ -10,11 +10,12 @@ import {
   emptyRuntimeState,
   loadRuntime,
   loadRuntimeRestore,
+  loadThreadListRefresh,
   applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
 
-import { initialState, createThreadSessionTab } from "./AppState";
+import { initialState, createThreadSessionTab, reconcileListedThreadState } from "./AppState";
 import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { streamTextStore, streamTextKey } from "./StreamText";
 
@@ -368,6 +369,74 @@ describe("runtime load helpers", () => {
   });
 });
 
+
+describe("summary list refresh", () => {
+  function running(id: string): Thread {
+    return thread(id, { status: "in_progress", turns: [{
+      id: `${id}-turn`, status: "in_progress", items_view: "full", items: [],
+    }] });
+  }
+
+  it("repairs both panes and cached running histories without hydrating the catalog", async () => {
+    const primary = running("primary");
+    const secondary = running("secondary");
+    const cached = running("cached");
+    const live = running("live");
+    const completed = thread(primary.id, { turns: [{
+      ...primary.turns[0], status: "completed",
+      items: [{ id: "answer", type: "agent_message", text: "Final answer", terminal: true }],
+    }] });
+    const failed = thread(secondary.id, { turns: [{
+      ...secondary.turns[0], status: "failed", error: { message: "Provider unavailable" },
+    }] });
+    const interrupted = thread(cached.id, { turns: [{ ...cached.turns[0], status: "interrupted" }] });
+    const summaries = [completed, failed, interrupted, live, thread("unopened")]
+      .map(item => ({ ...item, turns: [] }));
+    const resumeThread = vi.fn(async (id?: string) => ({
+      thread: [completed, failed, interrupted].find(item => item.id === id)!,
+    }));
+    installWuuStub({ listThreads: vi.fn().mockResolvedValue({ threads: summaries }), resumeThread });
+    const state = { ...initialState, thread: primary, secondaryThread: secondary,
+      threads: [primary, secondary, cached, live], activePane: "secondary" as const, running: true };
+
+    const refreshed = reconcileListedThreadState(state, await loadThreadListRefresh(state));
+
+    expect(resumeThread.mock.calls.map(([id]) => id).sort()).toEqual(["cached", "primary", "secondary"]);
+    expect(refreshed.thread?.turns).toEqual(completed.turns);
+    expect(refreshed.secondaryThread?.turns).toEqual(failed.turns);
+    expect(refreshed.threads.find(item => item.id === cached.id)?.turns).toEqual(interrupted.turns);
+    expect(refreshed.threads.find(item => item.id === live.id)?.turns).toEqual(live.turns);
+    expect(refreshed.threads.find(item => item.id === "unopened")?.turns).toEqual([]);
+    expect(refreshed.running).toBe(false);
+    expect(refreshed.activePane).toBe("secondary");
+  });
+
+  it("keeps failed repairs retryable without blocking other repairs or discovery", async () => {
+    const one = running("one");
+    const two = running("two");
+    const finished = [one, two].map(item => thread(item.id, {
+      turns: [{ ...item.turns[0], status: "completed" }],
+    }));
+    const resumeThread = vi.fn(async (id?: string) => ({ thread: finished.find(item => item.id === id)! }))
+      .mockRejectedValueOnce(new Error("Temporary disconnect"));
+    installWuuStub({
+      listThreads: vi.fn().mockResolvedValue({ threads: [thread("one"), thread("two"), thread("new")] }),
+      resumeThread,
+    });
+    const state = { ...initialState, thread: one, threads: [one, two], running: true };
+    const first = reconcileListedThreadState(state, await loadThreadListRefresh(state));
+    expect(first.thread?.turns).toEqual(one.turns);
+    expect(first.threads.find(item => item.id === "two")?.turns).toEqual(finished[1].turns);
+    expect(first.threads.some(item => item.id === "new")).toBe(true);
+    expect(first.running).toBe(true);
+
+    resumeThread.mockClear();
+    const retried = reconcileListedThreadState(first, await loadThreadListRefresh(first));
+    expect(resumeThread).toHaveBeenCalledExactlyOnceWith("one");
+    expect(retried.thread?.turns).toEqual(finished[0].turns);
+    expect(retried.running).toBe(false);
+  });
+});
 
 describe("runtime restoration", () => {
   const context: RuntimeContext = { kind: "no_project", cwd: "/tmp/wuu" };

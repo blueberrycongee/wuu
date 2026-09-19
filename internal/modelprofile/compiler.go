@@ -86,11 +86,15 @@ type DefaultCompiler struct{}
 func (DefaultCompiler) Compile(p Profile, kind SurfaceKind) capability.Surface {
 	key := ResolveProfileKey(p)
 	b := newBuilder(p, key)
+	// Conversation turns can finish privately without requiring a chat backend.
+	if kind != SurfaceWorker {
+		b.addVisible("yield_turn", capability.CapabilitySessionYield)
+	}
 	if kind == SurfaceRoomAgent {
 		addFileReadTools(b)
 		addSearchTools(b)
 		addContextWindowTools(b)
-		for _, name := range []string{"yield_turn", "chat_check", "chat_read", "session", "chat_session", "collaboration_send", "chat_task", "chat_work", "chat_verify", "chat_roster", "chat_wake", "chat_memory"} {
+		for _, name := range []string{"chat_check", "chat_read", "session", "chat_session", "collaboration_send", "chat_task", "chat_work", "chat_verify", "chat_roster", "chat_wake", "chat_memory"} {
 			b.addVisible(name, capability.CapabilityChat)
 		}
 		b.surface.SystemFragment = "You coordinate one room. Delegate execution to named member sessions. Project writes, shell execution and public messages are unavailable."
@@ -312,14 +316,12 @@ func addSessionWorkspaceTool(b *surfaceBuilder) {
 
 func addContextWindowTools(b *surfaceBuilder) {
 	b.addVisible("notes", capability.CapabilityContextWindow)
-	b.addVisible("request_handoff", capability.CapabilityContextWindow)
 	b.addVisible("new_context", capability.CapabilityContextWindow)
 	b.addVisible("history_read", capability.CapabilityContextHistory)
 	b.addVisible("history_search", capability.CapabilityContextHistory)
 }
 
 func addChatTools(b *surfaceBuilder) {
-	b.addVisible("yield_turn", capability.CapabilityChat)
 	b.addVisible("chat_check", capability.CapabilityChat)
 	b.addVisible("chat_read", capability.CapabilityChat)
 	b.addVisible("chat_session", capability.CapabilityChat)
