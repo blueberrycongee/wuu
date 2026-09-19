@@ -248,6 +248,13 @@ cancel 可以用 send 返回的 `turn_id` 精确取消当前 Turn，或用 `queu
 原样的 `request_id`；终态还包含最终模型输出。Cron、重试、错过触发恢复、并发合并和业务状态都必须由插件持有；核心不
 提供 timer tick，也不解释 `request_id` 或 cause。
 
+进入队列不等于可靠送达。需要恢复能力的插件应保留请求标识，并通过 `host.session.inspect`
+核对状态；生命周期通知确认后，终态输出仍然保留。主机关闭而丢弃尚未执行的队列输入时，
+生命周期事件和查询结果会带上 `retryable: true`，允许用相同 `request_id` 再次调用
+`host.session.send`。用户取消不可重试：再次发送会返回保留的终态记录，不会重新执行输入。
+已经开始的 Turn 不会标为可重试。这些是现有 v1 契约的新增可选字段，缺少 `retryable` 时按
+false 处理。传输错误或调用方取消并不证明宿主拒绝了发送。
+
 每次插件 Tool 调用都包含拥有它的当前 `turn_id`，以及该次分发的唯一 `execution_id`（进度上报
 与精确取消见"执行作用域"）。插件若声明 `agent.turn.interrupted` observe
 能力，还会收到产品中立的 Turn 中断信号。宿主不会根据 `parent_session_id` 建立取消树；插件可以

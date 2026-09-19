@@ -36,13 +36,18 @@ func clonePluginTurnReference(reference *pluginTurnReference) *pluginTurnReferen
 }
 
 func (s *Server) notifyPluginTurnDiscarded(threadID string, entry queuedTurn, reason string) {
+	s.notifyPluginTurnDiscardedWithRetry(threadID, entry, reason, false)
+}
+
+func (s *Server) notifyPluginTurnDiscardedWithRetry(threadID string, entry queuedTurn, reason string, retryable bool) {
 	reference := entry.snapshot.PluginTurn
 	if reference == nil {
 		return
 	}
 	s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
 		RequestID: reference.RequestID, State: pluginhost.TurnLifecycleDiscarded,
-		ThreadID: strings.TrimSpace(threadID), QueueID: reference.QueueID,
+		Retryable: retryable,
+		ThreadID:  strings.TrimSpace(threadID), QueueID: reference.QueueID,
 		Error: strings.TrimSpace(reason),
 	})
 }
@@ -333,9 +338,21 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 		if err := json.Unmarshal(entry.Payload, &lifecycle); err != nil {
 			return pluginhost.SessionInspectResult{}, fmt.Errorf("decode plugin lifecycle state: %w", err)
 		}
+		// A retry can be queued/running while its older shutdown discard is
+		// still retained. Do not report that stale discard over the live retry.
+		if lifecycle.Retryable && lifecycle.State == pluginhost.TurnLifecycleDiscarded {
+			if live, ok := s.findSessionInput(th, pluginSessionRequestClientID(pluginID, requestID)); ok {
+				if params.TurnID == "" || live.TurnID == params.TurnID {
+					result.Turn = &pluginhost.SessionTurnInspection{RequestID: requestID, State: live.State, TurnID: live.TurnID, QueueID: live.QueueID}
+					result.Session.State = live.State
+					return result, nil
+				}
+			}
+		}
 		result.Turn = &pluginhost.SessionTurnInspection{
 			RequestID: lifecycle.RequestID, State: lifecycle.State, TurnID: lifecycle.TurnID, QueueID: lifecycle.QueueID,
-			Error: lifecycle.Error, StartedAt: lifecycle.StartedAt, CompletedAt: lifecycle.CompletedAt,
+			Retryable: lifecycle.Retryable,
+			Error:     lifecycle.Error, StartedAt: lifecycle.StartedAt, CompletedAt: lifecycle.CompletedAt,
 			InputTokens: lifecycle.InputTokens, OutputTokens: lifecycle.OutputTokens, FinalOutput: lifecycle.FinalOutput,
 		}
 		result.Session.State = lifecycle.State
@@ -619,6 +636,22 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
 	if existing, ok := s.findSessionInput(th, clientID); ok {
 		return existing, nil
+	}
+	// A removed queued input has no history item. Retained terminal receipts
+	// still fence retries, especially after an acknowledgement was lost. Only
+	// host-shutdown discards authorize admission again with the same identity.
+	terminalEntry, found, err := session.FindPluginTurnLifecycle(s.rt.SessionDir, pluginID, params.RequestID, params.SessionID, "")
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	if found {
+		var lifecycle pluginhost.AgentTurnLifecycleInput
+		if err := json.Unmarshal(terminalEntry.Payload, &lifecycle); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if pluginTurnLifecycleTerminal(lifecycle.State) && !(lifecycle.State == pluginhost.TurnLifecycleDiscarded && lifecycle.Retryable) {
+			return pluginhost.SessionSendResult{State: lifecycle.State, SessionID: params.SessionID, TurnID: lifecycle.TurnID, QueueID: lifecycle.QueueID}, nil
+		}
 	}
 	control, err := s.pluginSessionControl(pluginID, params.SessionID, params.ControlRevision)
 	if err != nil {

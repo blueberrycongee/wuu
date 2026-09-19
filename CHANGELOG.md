@@ -118,6 +118,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve peer request correlation after uncertain sends, recover queued replies
+  after host restart without reviving user-cancelled inputs, and retain completed
+  results instead of replacing them with timeout messages. Peer discovery and
+  sends now consistently stay within the current workspace.
+
 - Align expanded tool details and TODO text in one column, center their icons on
   the first text line at any UI font size, and wrap long TODO content safely.
 

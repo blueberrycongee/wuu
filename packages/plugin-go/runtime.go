@@ -635,8 +635,10 @@ type SessionControlResult struct {
 }
 
 type SessionTurnInspection struct {
-	RequestID    string `json:"request_id,omitempty"`
-	State        string `json:"state"`
+	RequestID string `json:"request_id,omitempty"`
+	State     string `json:"state"`
+	// Retryable permits retrying a queued input discarded by host shutdown.
+	Retryable    bool   `json:"retryable,omitempty"`
 	TurnID       string `json:"turn_id,omitempty"`
 	QueueID      string `json:"queue_id,omitempty"`
 	Error        string `json:"error,omitempty"`
@@ -702,8 +704,11 @@ type AgentTurnInterruptedInput struct {
 }
 
 type TurnLifecycleInput struct {
-	RequestID    string `json:"request_id"`
-	State        string `json:"state"`
+	RequestID string `json:"request_id"`
+	State     string `json:"state"`
+	// Retryable permits resubmitting the same request ID after a shutdown discard.
+	// User cancellation and inputs that have started are never retryable.
+	Retryable    bool   `json:"retryable,omitempty"`
 	ThreadID     string `json:"thread_id"`
 	TurnID       string `json:"turn_id,omitempty"`
 	QueueID      string `json:"queue_id,omitempty"`
