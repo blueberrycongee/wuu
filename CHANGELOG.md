@@ -18,6 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Let desktop environment-panel content use the full width below the close
+  button instead of reserving an empty column beside TODO and Git rows.
+
 - Tighten the base communication contract so process text and answers share one
   speaking style, prefer short paragraphs over status one-liners, and avoid stock
   AI phrasing.
