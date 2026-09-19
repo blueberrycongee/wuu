@@ -369,8 +369,8 @@ func lineCount(s string) int {
 // combined "output" field (recoverable via full_log_ref, and duplicated by the
 // tails), always keeps exit code / timeout / duration / revision / verification,
 // and trims stdout then stderr tails by whole lines — most recent first — to fit
-// the budget. Verification evidence is never dropped, so a result dominated by a
-// large verification failure may still exceed the budget by design.
+// the budget. Verification evidence is never dropped. If the remainder still
+// exceeds the budget, the projector declines so generic settlement can bound it.
 func projectBashResult(rawText string, pc projectorContext) (string, projectionOmission, bool) {
 	m, ok := parseToolEnvelope(rawText)
 	if !ok {
@@ -427,9 +427,10 @@ func projectBashResult(rawText string, pc projectorContext) (string, projectionO
 		return tok
 	})
 	se := lastLines(stderr, keepSe)
-	s, _ := build(so, se)
-	// Return best-effort even if still over budget: verification/metadata is the
-	// evidence we refuse to drop.
+	s, tok := build(so, se)
+	if tok > pc.BudgetTokens {
+		return "", projectionOmission{}, false
+	}
 	return s, projectionOmission{Bytes: droppedOutput}, true
 }
 

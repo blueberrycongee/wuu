@@ -135,6 +135,46 @@ func TestChokePoint_ModeActive_AppliesBoundedProjection(t *testing.T) {
 	}
 }
 
+type fakeBashTool struct{ text string }
+
+func (f fakeBashTool) Name() string { return "bash" }
+func (f fakeBashTool) Definition() providers.ToolDefinition {
+	return providers.ToolDefinition{Name: "bash"}
+}
+func (f fakeBashTool) Execute(context.Context, string) (string, error) { return f.text, nil }
+func (f fakeBashTool) IsReadOnly() bool                                { return false }
+func (f fakeBashTool) IsConcurrencySafe() bool                         { return false }
+
+func TestChokePoint_OverBudgetBashUsesGenericSettlement(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "")
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	kit.env.SessionDir = t.TempDir()
+	kit.env.ToolResultProjectionMode = "active"
+	raw := bashEnvelope(map[string]any{
+		"output":      "ok\n",
+		"stdout_tail": "ok\n",
+		"stderr_tail": "",
+		"verification": map[string]any{
+			"passed":  false,
+			"summary": strings.Repeat("failing assertion detail ", 4000),
+		},
+	})
+	call := providers.ToolCall{ID: "call-over", Name: "bash", Arguments: `{"command":"go test"}`}
+	returned, err := kit.executeKnownToolResultWithRepeatPolicy(
+		context.Background(), call, fakeBashTool{text: raw}, true)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	assertGenericContinuation(t, returned.TextProjection())
+	rec := recordFor(kit.ToolTelemetry(), call.ID)
+	if rec == nil || rec.Projection == nil || rec.Projection.Applied {
+		t.Fatalf("over-budget bash must fail open into generic settlement: %+v", rec)
+	}
+}
+
 func TestChokePoint_EnvOverrideBeatsConfiguredMode(t *testing.T) {
 	t.Setenv(projectionModeEnvVar, "active")
 	kit, err := New(t.TempDir())
