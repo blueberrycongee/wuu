@@ -1,77 +1,36 @@
 # Background memory consolidation (Dream)
 
-Dream is Wuu's background memory consolidation mechanism: after conversation turns, it
-checks the workspace's finished sessions and consolidates stable facts worth keeping
-long term into the workspace's [project_memory](memory.md#workspace-memory). It is off
-by default and must be enabled explicitly.
+Dream turns useful knowledge from a completed conversation into workspace memory. It runs in a private background session, uses a model, and is off by default.
 
-## What problem it solves
+## Enable Dream
 
-Conversations are short-lived: when a session ends, the architecture decisions,
-discovered conventions, and lessons learned in it stay in history, and the next
-session does not know about them automatically. Dream periodically reads finished
-sessions in the background and writes such stable facts into workspace memory, so
-later sessions can read them directly.
+Enable the Dream plugin, then open **Settings → Plugins → Dream** and turn on consolidation. A provider of the `memory.session` service must also be available; the bundled Memory plugin provides it. Dream skips a run if it cannot read current workspace memory through that service.
 
-## Enable and configure
+| Setting | Meaning | Default |
+|---|---|---|
+| `enabled` | Allow background consolidation | `false` |
+| `interval_days` | Minimum days between successful runs, from 1 to 365 | `7` |
+| `min_sessions` | Number of distinct candidate sessions needed, from 1 to 100 | `5` |
+| `model_alias` | Optional model selection for the private session | Empty, inherit from the parent |
 
-After installing and enabling the first-party Dream plugin, open **Settings → Plugins
-→ Dream**, where you can:
+Settings and run state belong to the plugin's workspace storage. Changes take effect without editing the core configuration.
 
-- enable or disable Dream;
-- set the run interval (days);
-- choose an optional model alias (empty inherits the current session's model).
+## How a run starts
 
-Settings are stored in the plugin's own workspace storage and are no longer written to
-the core `memory.dream` configuration. Field reference:
+A successful conversation turn makes its session a candidate. Further successful turns update that session's timestamp rather than increasing the candidate count. The plugin checks candidates after completion and from its timer.
 
-| Field | Meaning |
-| --- | --- |
-| `enabled` | Whether background consolidation is enabled, default `false` |
-| `interval_days` | Minimum days since the last run, default `7` |
-| `min_sessions` | Minimum accumulated completed sessions before a trigger, default `5` |
-| `model_alias` | Optional model alias; empty inherits the parent session |
+An automatic run needs Dream enabled, enough candidates, and the configured interval since the last successful run. Only one run starts at a time; a failed run also has a one-hour retry backoff.
 
-Changes made through the plugin settings take effect immediately. Disabling, upgrading,
-or uninstalling the plugin stops the Timer and produces no more background wake-ups;
-re-enabling resumes from the plugin's persisted state, including candidates, last
-result, and failure backoff.
+Dream reads current `project_memory`, selects the most recent candidate, and forks that conversation into a private session. It does **not** combine the full histories of all candidates into one prompt. After a successful run, it clears the candidate set and records the completion time.
 
-## When it runs
+## What it saves
 
-The plugin observes ordinary turn-completion events, and its own Timer checks whether
-all of the following conditions hold:
+The consolidation prompt asks for durable architecture decisions, conventions, tool quirks, and recurring workflow lessons. It directs the model to update `project_memory` through `session_memory`, avoid source changes, and omit secrets, raw transcripts, temporary progress, PR numbers, and commit hashes.
 
-- Dream is enabled;
-- at least `interval_days` days have passed since the last run (or it has never run
-  successfully);
-- the number of completed sessions since the last consolidation reaches `min_sessions`
-  (default `5`).
+These are instructions to the model, not proof that every proposed memory is correct. Inspect [workspace memory](memory.md#workspace-memory) and correct unwanted entries. Deleting an entry does not guarantee that a later conversation will never cause similar information to be saved again.
 
-When the conditions hold, the plugin creates a private fork session from the most
-recently completed parent session, then delivers the consolidation query through
-`host.session.send` without blocking the current conversation. Only one consolidation
-task runs at a time; if the previous run failed, it retries after about an hour. When
-the plugin generation restarts, unfinished state is folded into a failure so it does
-not get stuck forever.
+## Cost and lifecycle
 
-## What it does and does not do
+Each run sends the forked context and current workspace memory to the selected model. It can add cost and write information that later conversations read. Use Dream only when that background processing is appropriate for the workspace.
 
-Dream's private session inherits the fork context and reads/updates `project_memory`
-through the Memory plugin's `session_memory` tool. The consolidation prompt explicitly
-forbids saving keys, raw conversations, temporary progress, PR numbers, commit SHAs, or
-short-term facts, and forbids modifying workspace source files; when there is nothing
-worth saving it returns `Nothing to dream`. The core no longer owns Dream's prompt,
-tool allowlist, timeout, step count, or AfterTurn hooks.
-
-## Privacy and cost
-
-- Dream sends the text of finished sessions to the model service and may incur
-  additional model requests and cost;
-- a dedicated model can avoid contending with the current conversation's provider,
-  but it also produces independent calls;
-- the workspace memory written by consolidation enters later agent contexts like any
-  other memory; before handling sensitive content, check the [security
-  model](../reference/security-model.md) and the memory sources;
-- if you do not want a certain kind of content in memory, delete the corresponding
-  entries in the memory panel; Dream does not restore deleted content.
+Disabling or unloading the plugin stops its timer. Persisted settings and run state are restored when it loads again; interrupted runs are recorded as failures rather than left permanently running. See the [security model](../reference/security-model.md) before enabling it for sensitive work.
