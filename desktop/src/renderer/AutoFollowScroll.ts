@@ -34,13 +34,39 @@ export function distanceFromBottom(node: HTMLElement): number {
   return Math.max(0, node.scrollHeight - node.scrollTop - node.clientHeight);
 }
 
+/** Submission reservation stored on the conversation pane, not chrome padding. */
+export function sessionTailSpacePx(from?: HTMLElement | null): number {
+  let node: HTMLElement | null | undefined = from;
+  while (node) {
+    const declared = node.style.getPropertyValue("--session-tail-space");
+    if (declared) {
+      const parsed = Number.parseFloat(declared);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    }
+    node = node.parentElement;
+  }
+  return 0;
+}
+
+/**
+ * Bottom of the latest *content*, excluding unconsumed submission tail.
+ * Following `scrollHeight` would park the viewport in that empty reservation.
+ */
+export function latestFollowScrollTop(
+  node: HTMLElement,
+  tailSpace = sessionTailSpacePx(node),
+): number {
+  return clampScrollTop(node, maxScrollTop(node) - Math.max(0, tailSpace));
+}
+
 export function atLatestScrollView(
   node: HTMLElement,
   threshold = AUTO_FOLLOW_BOTTOM_THRESHOLD_PX,
+  tailSpace = sessionTailSpacePx(node),
 ): boolean {
   return (
     node.scrollHeight <= node.clientHeight ||
-    distanceFromBottom(node) <= threshold
+    node.scrollTop >= latestFollowScrollTop(node, tailSpace) - threshold
   );
 }
 

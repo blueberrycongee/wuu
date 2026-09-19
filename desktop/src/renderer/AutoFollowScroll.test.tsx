@@ -1,7 +1,12 @@
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import {
+  atLatestScrollView,
+  latestFollowScrollTop,
+  sessionTailSpacePx,
+  useAutoFollowScrollContainer,
+} from "./AutoFollowScroll";
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 
 interface StubbedLayout {
@@ -293,5 +298,36 @@ describe("useAutoFollowScrollContainer", () => {
 
     expect(handle.autoFollowRef.current).toBe(false);
     expect(layout.scrollTop).toBe(800);
+  });
+});
+
+describe("latest follow position", () => {
+  it("excludes unconsumed submission tail from the follow target", () => {
+    const pane = document.createElement("main");
+    pane.className = "conversation-pane";
+    pane.style.setProperty("--session-tail-space", "480px");
+    const node = document.createElement("div");
+    pane.append(node);
+    Object.defineProperties(node, {
+      scrollHeight: { configurable: true, get: () => 2000 },
+      clientHeight: { configurable: true, get: () => 600 },
+      scrollTop: { configurable: true, get: () => 920, set: () => undefined },
+    });
+
+    expect(sessionTailSpacePx(node)).toBe(480);
+    expect(latestFollowScrollTop(node)).toBe(920);
+    expect(atLatestScrollView(node, 16)).toBe(true);
+
+    Object.defineProperty(node, "scrollTop", {
+      configurable: true,
+      get: () => 1400,
+    });
+    expect(atLatestScrollView(node, 16)).toBe(true);
+
+    Object.defineProperty(node, "scrollTop", {
+      configurable: true,
+      get: () => 400,
+    });
+    expect(atLatestScrollView(node, 16)).toBe(false);
   });
 });

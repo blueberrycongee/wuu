@@ -110,6 +110,8 @@
 }
 
 .conversation-width .turn[data-latest-turn="true"] {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
   margin-bottom: 0;
 }
 

@@ -490,6 +490,21 @@ it("restores a thread's remaining space before restoring its reading position", 
   expect(scrollTop()).toBe(anchored);
 });
 
+it("follows leftover submission space to the content bottom, not the empty reservation", () => {
+  render({ messageID: "old" });
+  submit();
+  const remaining = tailSpace();
+  expect(remaining).toBeGreaterThan(80);
+  act(() => api.enableConversationAutoFollow());
+  render({ messageID: "submitted", running: true });
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+  expect(scrollTop()).toBeLessThan(naturalHeight + remaining - viewportHeight);
+  render({ id: "b", messageID: "other" });
+  render({ id: "a", messageID: "submitted" });
+  expect(tailSpace()).toBe(remaining);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
 it("keeps a short draft bubble in place when it is adopted by the new thread", () => {
   naturalHeight = 220;
   messageBottom = 100;
