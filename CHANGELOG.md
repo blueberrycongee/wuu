@@ -28,6 +28,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Fetch lightweight conversation summaries for desktop lists without copying
   loaded histories, reducing IPC payloads and app-server allocation overhead.
+  Recover missed completion events with targeted snapshots for stale loaded
+  conversations, including both visible panes.
 
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
