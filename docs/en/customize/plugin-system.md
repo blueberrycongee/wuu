@@ -659,8 +659,8 @@ the independent composition of Theme/Token/snippet and Presenter.
 
 ## Agent capabilities and the closed loop
 
-Working notes (`notes`), summary-free context windows (`new_context`), and handoff
-requests (`request_handoff`) are built into Wuu's own agent runtime. They need no
+Working notes (`notes`) and summary-free context windows (`new_context`)
+are built into Wuu's own agent runtime. They need no
 Context Notes extension or onboarding selection. Existing notes remain readable;
 their first edit saves them in native session-scoped storage under
 `WUU_HOME/working-notes`. Context switches preserve these notes and archived
