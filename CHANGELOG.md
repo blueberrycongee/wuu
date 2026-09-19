@@ -93,6 +93,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Matched native iOS connection feedback to the desktop bouncing Wuu letters and
   blinking caret, with green branding, typed status text, and reduced-motion support.
 
+### Removed
+
+- Removed stale message-flow screenshots and the disposable output-card demo from
+  tracked artifacts.
+
 ### Fixed
 
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
