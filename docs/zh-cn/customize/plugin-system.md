@@ -488,8 +488,8 @@ Tool Card Skin 则只消费版本化 `ToolActivitySnapshot` 和原生 fallback�
 
 ## Agent 能力与闭环
 
-工作笔记（`notes`）、无摘要上下文切换（`new_context`）和会话交接请求
-（`request_handoff`）是 Wuu 自有 Agent 运行时的内置能力，无需启用 Context Notes
+工作笔记（`notes`）和无摘要上下文切换（`new_context`）
+是 Wuu 自有 Agent 运行时的内置能力，无需启用 Context Notes
 插件或在引导页勾选。已有笔记仍可读取，首次编辑时会保存到
 `WUU_HOME/working-notes` 下按会话隔离的原生存储。上下文切换保留这些笔记和归档历史。
 扩展仍可通过 `agent.compaction` 替换压缩策略，禁用该扩展后恢复内置默认策略。
