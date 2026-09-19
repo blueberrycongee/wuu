@@ -8,8 +8,12 @@
  */
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSurface } from "./ProcessSurface";
+import {
+  PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
+  PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
+} from "./ProcessSummary";
 import type { NamedAgent, ThreadItem } from "../shared/protocol";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { modelMascotAccessory } from "./WuuMascot";
@@ -48,6 +52,29 @@ function makeReadFile(
     name: "read_file",
     arguments: JSON.stringify({ path }),
   };
+}
+
+function makeSearch(
+  id: string,
+  pattern: string,
+  status: ThreadItem["status"] = "in_progress",
+): ThreadItem {
+  return {
+    id,
+    type: "tool_call",
+    status,
+    name: "grep",
+    arguments: JSON.stringify({ pattern }),
+  };
+}
+
+function makeSearches(
+  count: number,
+  status: ThreadItem["status"] = "in_progress",
+): ThreadItem[] {
+  return Array.from({ length: count }, (_, index) =>
+    makeSearch(`search-${index + 1}`, `query-${index + 1}`, status),
+  );
 }
 
 function makeReasoning(
@@ -797,6 +824,105 @@ describe("ProcessSurface", () => {
     });
     const countAfter = container.querySelector(".process-surface-count");
     expect(countAfter?.classList.contains("is-changing")).toBe(false);
+  });
+
+  it("debounces live same-kind count ticks and flushes on settle", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      rerender({ processItems: makeSearches(3), streaming: true });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      act(() => {
+        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      rerender({ processItems: makeSearches(4), streaming: true });
+      act(() => {
+        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+
+      rerender({ processItems: makeSearches(5), streaming: true });
+      rerender({ processItems: makeSearches(5, "completed"), streaming: false });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("5");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps how long a live count can stay stale during a continuous burst", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+
+      rerender({ processItems: makeSearches(3), streaming: true });
+      act(() => {
+        vi.advanceTimersByTime(PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1);
+      });
+      rerender({ processItems: makeSearches(4), streaming: true });
+      act(() => {
+        vi.advanceTimersByTime(
+          PROCESS_SUMMARY_COUNT_MAX_WAIT_MS - (PROCESS_SUMMARY_COUNT_DEBOUNCE_MS - 1),
+        );
+      });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the expanded tool trail live while the summary count is held", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+      setProcessFoldOpen(container.querySelector("details.process-surface-fold"), true);
+
+      rerender({ processItems: makeSearches(3), streaming: true });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+      expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes a new process kind immediately even while a count is held", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render({
+        processItems: makeSearches(2),
+        streaming: true,
+      });
+      rerender({ processItems: makeSearches(3), streaming: true });
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
+
+      rerender({
+        processItems: [...makeSearches(3), makeReadFile("read-1", "session.ts", "in_progress")],
+        streaming: true,
+      });
+      const summary = container.querySelector(".process-surface-summary-line")?.textContent;
+      expect(summary).toContain("3");
+      expect(summary).toContain("session.ts");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses the renderReasoningItem callback for reasoning items in the body", () => {
