@@ -1,5 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
-import { Archive, Folder, FolderOpen, GitFork, MessageSquare, MessageSquarePlus, MessagesSquare, Pin } from "lucide-react";
+import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split } from "lucide-react";
 import {
   type DragEvent as ReactDragEvent,
   useEffect,
@@ -896,7 +896,7 @@ function ThreadRows({
                 <ThreadRowTitle title={title} />
               </button>
               {forkMarker ? (
-                <GitFork
+                <Split
                   className="icon-sm thread-row-fork-icon"
                   aria-hidden="true"
                 />

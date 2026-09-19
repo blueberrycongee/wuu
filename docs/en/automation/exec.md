@@ -92,6 +92,12 @@ Omitting it keeps ordinary patch behavior. Combining it with `dry_run` is reject
 before any edit. Leave the actions separate when the next command depends on
 inspecting the edit result.
 
+Each normalized path may belong to only one file section in a patch, including
+move sources and destinations. For example, `a.txt` and `./a.txt` count as the same
+path. Put multiple edits to one file in separate `@@` chunks within a single
+`Update File` section. Conflicting sections fail verification before any files
+are written or `then_run` starts; `dry_run` rejects the same conflicts.
+
 The complete patch must succeed before the command starts. Both actions pass
 through normal tool permissions and are recorded separately; disabling or denying
 `bash` also blocks the follow-up. Command failure does not roll back the patch:

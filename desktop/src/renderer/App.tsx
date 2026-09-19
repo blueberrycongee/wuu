@@ -279,6 +279,7 @@ import {
   loadPopOutRuntime,
   loadRuntime,
   loadRuntimeRestore,
+  loadThreadListRefresh,
   applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
@@ -889,9 +890,11 @@ export function App(): JSX.Element {
       // snapshot says a loaded thread is idle while the renderer still has an
       // in-progress turn, repair immediately instead of waiting for the
       // throttled cross-process discovery refresh.
-      void window.wuu.listThreads().then((listed) => {
+      void loadThreadListRefresh(current).then((listed) => {
         if (disposed) return;
-        setState((state) => reconcileListedThreadState(state, listed.threads));
+        setState((state) => state.activeContext === current.activeContext
+          ? reconcileListedThreadState(state, listed)
+          : state);
       }).catch(() => {
         // A later running snapshot or ordinary refresh retries.
       });
@@ -1244,11 +1247,8 @@ export function App(): JSX.Element {
         return;
       }
       runningThreadReconcileInFlightRef.current = key;
-      const refresh = executorRunning
-        ? window.wuu.resumeThread(activeThreadID).then(result => result.thread ? [result.thread] : [])
-        : window.wuu.listThreads().then(result => result.threads);
-      void refresh
-        .then((listed) => {
+      void window.wuu.resumeThread(activeThreadID)
+        .then(({ thread }) => {
           if (disposed) {
             return;
           }
@@ -1259,10 +1259,8 @@ export function App(): JSX.Element {
             ) {
               return current;
             }
-            if (executorRunning && !listed[0]) return current;
-            return reconcileListedThreadState(current, executorRunning
-              ? upsertThread(current.threads, listed[0])
-              : listed);
+            if (!thread) return current;
+            return reconcileListedThreadState(current, upsertThread(current.threads, thread));
           });
         })
         .catch(() => {
@@ -2005,19 +2003,20 @@ export function App(): JSX.Element {
       }
       lastRefreshAt = now;
       try {
-        const listed = await window.wuu.listThreads();
+        const snapshot = appStateRef.current;
+        const listed = await loadThreadListRefresh(snapshot);
         if (disposed) {
           return;
         }
         setState((current) => {
-          if (!current.initialized) {
+          if (!current.initialized || current.activeContext !== snapshot.activeContext) {
             return current;
           }
           // Besides sidebar pickup, this is the durable repair path when a
           // renderer misses turn/completed during a tab/workspace transition.
           // Reconcile the visible panes and composer running flag as one state
           // update instead of refreshing only the sidebar copy.
-          return reconcileListedThreadState(current, listed.threads);
+          return reconcileListedThreadState(current, listed);
         });
       } catch {
         // Transient listing failure; do not surface into app status.

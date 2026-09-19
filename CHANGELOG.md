@@ -30,11 +30,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Fetch lightweight conversation summaries for desktop lists without copying
+  loaded histories, reducing IPC payloads and app-server allocation overhead.
+  Recover missed completion events with targeted snapshots for stale loaded
+  conversations, including both visible panes.
+
 - Keep conversation search results title-only on the left, with matching snippets
   and conversation details in the right preview pane.
 
 - Nudge the desktop process mascot's reading shape right for optical alignment
   with conversation text, without moving the summary text column.
+
+- Use a simpler split-arrow icon for desktop conversation forks, consistently
+  across sidebar markers, message actions, and worktree notices.
 
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
@@ -135,6 +143,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Stop streaming auto-follow from pulling messages back to the bottom when a
   keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
   Preserve following after a plain scroll-surface click without scrolling.
+
+- Reject `apply_patch` file sections that reuse a normalized path, including move
+  sources and destinations, before writing any files. This prevents later sections
+  from silently overwriting earlier edits; dry runs reject the same conflicts (#258).
 
 - Preserve peer request correlation after uncertain sends, recover queued replies
   after host restart without reviving user-cancelled inputs, and retain completed
