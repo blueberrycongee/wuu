@@ -1,188 +1,75 @@
-# Writing and installing Skills
+# Writing and installing skills
 
-A Skill is usually a directory containing `SKILL.md` plus optional scripts,
-references, or resource files. Wuu discovers them at session start and loads the full
-body into context only when the Skill is actually used.
+A skill normally consists of a directory with `SKILL.md` and any supporting scripts, templates, or references. Its description helps the model decide when to load the full body.
 
-## Create a minimal Skill
+## Write a minimal skill
 
-Create `.wuu/skills/release-check/SKILL.md` in a project:
+Create `.wuu/skills/release-check/SKILL.md`:
 
 ```markdown
 ---
 name: release-check
-description: check version, build, and release notes before release
-allowed-tools:
-  - read_file
-  - grep
-  - bash
+description: Check the version, build, and release notes before a release.
 argument-hint: "[version]"
 ---
 
-# Pre-release check
+# Release check
 
-1. Read the project's release documentation and version files.
-2. Confirm the version is ${ARGUMENTS}.
-3. Run the release checks the documentation requires.
-4. Only report evidence; do not create tags or release artifacts.
+Read the project's release instructions and version files.
+Check that the intended version is ${ARGUMENTS}.
+Run the required release checks and report their results.
+Do not create tags or publish artifacts.
 ```
 
-The directory name is the Skill's actual name. For compatibility with other agent
-tools, use 1–64 lowercase letters, digits, and single hyphens; do not start or end
-with a hyphen, and do not write consecutive hyphens.
+The directory name is the discovered name. For portable skills, use 1–64 lowercase letters, digits, and single hyphens, with no leading or trailing hyphen. Write a description that says when the skill applies, and a body that makes its inputs, actions, and expected evidence clear.
 
-`description` should state when to use the Skill and what it delivers. It decides
-whether the agent can select the Skill correctly from the directory.
+## Discovery and overrides
 
-## Install locations
+Project discovery follows the directory chain from the repository root to the current working directory. A closer directory overrides an ancestor. At each level, roots are checked in this order, with later entries winning for the same name:
 
-Wuu scans the following locations.
+1. `.claude/skills/`
+2. `.agents/skills/`
+3. `.opencode/skill/`
+4. `.opencode/skills/`
+5. `.wuu/skills/`
 
-### Project level
+User roots also use later-wins order: `~/.codex/skills/`, `~/.claude/skills/`, `~/.agents/skills/`, `~/.config/opencode/skills/`, then `skills/` under Wuu's home directory. The last path is normally `~/.wuu/skills/` and follows `WUU_HOME` when set.
 
-- `.wuu/skills/<name>/SKILL.md`
-- `.agents/skills/<name>/SKILL.md`
-- `.claude/skills/<name>/SKILL.md`
-- `.opencode/skills/<name>/SKILL.md`
-- `.opencode/skill/<name>/SKILL.md`
+Project skills override user skills. Disk definitions override same-named bundled skills. Enabled plugin packages can contribute skills as well; ordinary discovered skills at the corresponding scope take precedence over those package entries.
 
-Scanning walks from the current working directory up to the repository root. Within
-the same level, `.wuu/skills` has the highest priority; a definition closer to the
-current working directory overrides a same-named Skill in an ancestor directory.
+Each root accepts `<name>/SKILL.md` and flat `<name>.md` files. Directory form is easier to share with supporting resources. Wuu also adapts `.claude/commands/*.md` and `.wuu/commands/*.md` along the project chain, plus commands under Wuu's user home. Native skills win over same-named command templates.
 
-### User level
+## Metadata
 
-The following are listed from lowest to highest same-name override priority:
-
-- `~/.codex/skills/<name>/SKILL.md`
-- `~/.claude/skills/<name>/SKILL.md`
-- `~/.agents/skills/<name>/SKILL.md`
-- `~/.config/opencode/skills/<name>/SKILL.md`
-- `~/.wuu/skills/<name>/SKILL.md`
-
-A same-named project Skill overrides the user level, and a Skill on disk overrides a
-Wuu built-in Skill. Native Skills also override same-named compatibility commands in
-`.claude/commands/*.md` or `.wuu/commands/*.md`.
-
-Wuu also accepts flat `<name>.md` files under a skills root, but the directory plus
-`SKILL.md` form makes it easier to carry scripts and material and to reuse across
-tools.
-
-### Install from a repository after inspection
-
-Wuu does not currently have a central Skill marketplace or automatic install command.
-Clone a repository into a temporary location before copying anything into a discovered
-skills directory:
-
-```bash
-git clone --depth 1 https://github.com/example/skills.git /tmp/example-skills
-wuu skills lint /tmp/example-skills/path/to/skill
-```
-
-Read `SKILL.md` and inspect sibling scripts, templates, and resources. Look for requests
-to run commands, access the network, read outside the workspace, or handle credentials.
-`wuu skills lint` checks structure and metadata; it does not prove that a workflow is
-safe.
-
-After review, copy the entire Skill directory to one install location, for example the
-current project:
-
-```bash
-mkdir -p .wuu/skills
-cp -R /tmp/example-skills/path/to/skill .wuu/skills/example-skill
-wuu skills lint .wuu/skills/example-skill
-```
-
-Refresh the Desktop Skills catalog, preview the installed content, and try it first on
-a low-risk task. Project Skills shared with a team should go through normal code review
-rather than letting unknown repository content bypass review.
-
-## Available frontmatter
-
-Prefer these fields, which the current runtime can recognize and display:
-
-| Field | Purpose |
-| --- | --- |
-| `name` | Declared name; for the directory form, the directory name ultimately wins |
-| `description` | Summary in the model directory; when empty, only invocable by name |
-| `when-to-use` / `trigger` | Extra usage-timing metadata |
-| `allowed-tools` | Declares the tools needed, used for compatibility filtering against the current tool surface |
-| `user-invocable` | Whether to show as a user-invocable entry, default `true` |
-| `disable-model-invocation` | When `true`, stops the model from choosing it on its own |
-| `argument-hint` | Hints at the invocation argument format |
-| `required-context`, `examples`, `verification-checklist` | Extra directory and workflow metadata |
+| Field | Current behavior |
+|---|---|
+| `name` | Declared name; the directory name wins in directory form |
+| `description` | Summary for model selection; an empty value hides the skill from that catalog |
+| `argument-hint` | Hint displayed with the invocation |
+| `user-invocable` | Offer direct user invocation; defaults to `true` |
+| `disable-model-invocation` | Hide from automatic model selection when `true` |
+| `allowed-tools` | Declare required tools for compatibility filtering; not a permission grant |
+| `when-to-use`, `trigger` | Additional timing metadata |
+| `required-context`, `examples`, `verification-checklist` | Additional workflow metadata |
 | `progressive-disclosure`, `version` | Compatibility metadata |
 
-Wuu also parses some ecosystem-compatible fields but currently does not honor their
-promises:
+The parser accepts `model`, `context`, `agent`, `effort`, `paths`, and `hooks` for compatibility, but loading a skill does not switch models, fork context, spawn an agent, change effort, activate by path, or register hooks. Lint warns when these fields promise unsupported behavior. `shell` is parsed too, but does not enable inline execution.
 
-- `model` does not switch the session model;
-- `context` does not change the inline loading behavior;
-- `agent` does not automatically create a subagent;
-- `effort` does not change reasoning effort;
-- `paths` does not auto-activate by path;
-- `hooks` does not register hooks.
+## Arguments and resources
 
-`shell` is also parsed, but the current `load_skill` path does not execute inline
-shell, so it does not change loading behavior.
+The body supports `${ARGUMENTS}`, `${CLAUDE_SKILL_DIR}`, and `${CLAUDE_SESSION_ID}`. Wuu substitutes the invocation arguments, skill directory, and current session ID. The load result includes the base directory and a sample of resource filenames; resolve relative resource paths from that directory.
 
-`wuu skills lint` warns about the `model` through `hooks` fields above. Do not rely on
-them to control current runtime behavior. `shell` currently does not trigger a
-warning, but normal loading does not execute inline commands either.
+Inline shell expressions and code fences remain text during normal loading. If a workflow needs dynamic information, ask the agent to obtain it through an available tool, so the usual permission checks apply.
 
-## Arguments and resource paths
+## Install and validate
 
-The body supports these variables:
-
-- `${ARGUMENTS}`: the arguments passed at invocation;
-- `${CLAUDE_SKILL_DIR}`: the Skill directory;
-- `${CLAUDE_SESSION_ID}`: the current session ID.
-
-The load result also tells the agent the Skill's base directory and samples the files
-in it. Relative paths in the body such as `scripts/` and `references/` should be
-resolved against the Skill directory.
-
-The low-level compatibility parser recognizes inline code starting with `!` and fenced
-code blocks, but the current product's `load_skill` path explicitly disables inline
-shell execution and keeps the source as-is. Do not rely on such syntax to collect
-dynamic content; when you need command results, ask the agent explicitly in the
-workflow body to use the currently available tools, and let the normal permission
-rules apply.
-
-## Checking
-
-You can check a Skill, a skills root, or a flat Markdown file:
+Inspect downloaded `SKILL.md` files and their supporting resources before copying the whole directory into a discovered root. Check especially for command execution, network access, credential handling, and paths outside the project. Wuu does not require a build or package manifest for a local skill.
 
 ```bash
 wuu skills lint .wuu/skills/release-check
-wuu skills lint .wuu/skills
 wuu skills lint --json .wuu/skills
 ```
 
-- `error` means discovery would drop the Skill, or its metadata cannot be read; the
-  command exits non-zero;
-- `warning` means it still loads, but actual behavior may differ from what the author
-  expects.
+Lint accepts a skill directory, a root containing skills, or a flat Markdown file. Errors mean discovery cannot use the file or its metadata and cause a nonzero exit. Warnings describe a skill that loads but may not behave as intended.
 
-After fixing the check results, refresh and preview the body in the desktop Skills
-directory, then try it with a low-risk task. Structural checks cannot verify that the
-body is trustworthy or that subsequent behavior is safe.
-
-## Troubleshooting
-
-### The Skill does not appear
-
-Confirm the file is named `SKILL.md`, the YAML frontmatter starts with `---`, the
-directory name is valid, and refresh the Skills directory. If you filled in
-`allowed-tools`, also confirm the current session has every declared tool.
-
-### The agent will not select it automatically
-
-Fill in a concrete `description` and confirm `disable-model-invocation: true` is not
-set. You can also invoke it directly with `/name arguments`.
-
-### The wrong version loaded
-
-Check whether a same-named definition exists. Project overrides user, a deeper project
-directory overrides an ancestor, and `.wuu/skills` at the same level overrides
-compatibility directories.
+Refresh the desktop catalog, preview the loaded source, and try a low-risk task. If the skill is missing, check its frontmatter and required tools. If the model never chooses it, check its description and invocation flags. If the wrong version loads, inspect same-name overrides. Structural validation does not establish that the workflow is safe or effective.

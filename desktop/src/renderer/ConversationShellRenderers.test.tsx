@@ -122,16 +122,8 @@ describe("ConversationTitleContent presentation boundary", () => {
           ...initialState,
           activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
         }}
-        crossWorkspaceThreads={[]}
-        sessionTabsVisible={false}
-        pendingComposerMessagesByThread={{}}
         activeTitle="A very long conversation title that should not push the new-conversation control away"
-        onSelectSessionTab={() => {}}
-        onCloseSessionTab={() => {}}
-        onCloseSessionTabs={() => {}}
-        onPopOutSessionTab={() => {}}
         onStartNewThread={() => {}}
-        onReorderSessionTabs={() => {}}
       />,
     ));
 
@@ -161,16 +153,8 @@ describe("ConversationTitleContent presentation boundary", () => {
     act(() => root?.render(
       <ConversationTitleContent
         state={initialState}
-        crossWorkspaceThreads={[]}
-        sessionTabsVisible={false}
-        pendingComposerMessagesByThread={{}}
         activeTitle="Conversation"
-        onSelectSessionTab={() => {}}
-        onCloseSessionTab={() => {}}
-        onCloseSessionTabs={() => {}}
-        onPopOutSessionTab={() => {}}
         onStartNewThread={() => {}}
-        onReorderSessionTabs={() => {}}
         pluginHost={pluginHost}
         workbenchController={workbenchController}
       />,
@@ -181,7 +165,7 @@ describe("ConversationTitleContent presentation boundary", () => {
     expect(snapshot).toEqual({ contractVersion: 1, scope: "conversation", title: "Conversation" });
   });
 
-  it("stops presenting a tab as busy when its terminal answer is ready", async () => {
+  it("stops presenting the conversation as busy when its terminal answer is ready", async () => {
     const pluginHost = new PluginHost({ react: React });
     const workbenchController = new WorkbenchController(pluginHost);
     let snapshot: HeaderSnapshotV1 | undefined;
@@ -227,23 +211,14 @@ describe("ConversationTitleContent presentation boundary", () => {
           sessionTabs: [createThreadSessionTab(answerReadyThread, context)],
           activeSessionTabID: threadSessionTabID(answerReadyThread.id),
         }}
-        crossWorkspaceThreads={[answerReadyThread]}
         runningThreadIDs={new Set([answerReadyThread.id])}
-        sessionTabsVisible
-        pendingComposerMessagesByThread={{}}
         activeTitle="Answer ready"
-        onSelectSessionTab={() => {}}
-        onCloseSessionTab={() => {}}
-        onCloseSessionTabs={() => {}}
-        onPopOutSessionTab={() => {}}
         onStartNewThread={() => {}}
-        onReorderSessionTabs={() => {}}
         pluginHost={pluginHost}
         workbenchController={workbenchController}
       />,
     ));
 
-    expect(snapshot?.tabs?.[0]?.busy).toBe(false);
     expect(snapshot?.busy).toBeUndefined();
   });
 });

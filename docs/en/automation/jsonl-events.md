@@ -1,443 +1,22 @@
-# JSONL Events
+# JSONL events
 
-`wuu exec --json` writes machine-readable JSONL to stdout.
+`wuu exec --json` writes one JSON object per stdout line. Every object has a `type`;
+diagnostics go to stderr. This stream describes an execution run, rather than
+exposing the app-server's wire messages unchanged.
 
-Wuu has no TUI. JSONL is the stable text surface for agents, scripts, CI, and
-automation.
+## Consume a stream
 
-## Rules
+Dispatch on `type`, tolerate additional fields and unknown event types, and keep
+reading until `result`. Track a session by `thread_id`, a turn by `turn_id`, a tool
+call by `item_id`, and a subagent by `agent_id`. `run_id` is included on `result`
+and the structured-output `error` event, not on every progress event.
 
-- stdout contains JSONL only.
-- each line is one valid JSON object.
-- every event has a `type` field.
-- diagnostics, warnings, and debug logs go to stderr.
-- the final line for a run is a `result` event.
-- hidden reasoning, secrets, credentials, raw provider payloads, and unredacted
-  sensitive tool data must not be emitted.
+One run can contain several turns. Neither a final message replacement nor
+`turn_completed` is the run's terminal signal. Check the process exit code too:
+invalid CLI input can fail before emitting JSONL, and a killed process or broken
+output pipe may leave no complete result. See [`wuu exec`](exec.md) for exit codes.
 
-## Common Fields
-
-Events should include these fields when available:
-
-```json
-{
-  "type": "event_name",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "run_id": "run-id"
-}
-```
-
-`run_id` is currently present on `error` and `result`, the events whose payload is
-assembled from execution Run state. Turn and item events continue to use their
-thread-, turn-, and item-level identifiers.
-
-## Required Event Families
-
-The target event family list is:
-
-- `session_configured`
-- `thread_started`
-- `thread_resumed`
-- `thread_forked`
-- `turn_started`
-- `agent_message_delta`
-- `agent_message_final`
-- `todo_updated`
-- `provider_state`
-- `request_context`
-- `tool_started`
-- `tool_output_delta`
-- `tool_completed`
-- `command_started`
-- `command_output_delta`
-- `command_completed`
-- `file_changed`
-- `subagent_started`
-- `subagent_updated`
-- `subagent_completed`
-- `usage_updated`
-- `turn_completed`
-- `turn_failed`
-- `turn_interrupted`
-- `error`
-- `result`
-
-The current `wuu exec` implementation emits these families from app-server
-notifications, app-server client requests, and structured tool results.
-Provider reasoning notifications are intentionally omitted at this automation
-boundary because their payload may contain hidden reasoning. They remain
-available to interactive app-server clients that render the reasoning UI.
-
-## Event Shapes
-
-### `session_configured`
-
-Emitted after `initialize` succeeds.
-
-```json
-{
-  "type": "session_configured",
-  "protocol_version": "wuu-app-server/v0.1",
-  "provider": "openai",
-  "model": "gpt-5",
-  "max_parallel": 5,
-  "workspace_root": "/repo",
-  "permissions": {}
-}
-```
-
-### `thread_started`
-
-Emitted when a new thread is created, including an ephemeral thread. This event
-does not indicate whether the thread is persisted.
-
-```json
-{
-  "type": "thread_started",
-  "thread_id": "20260618-120000-abcdef",
-  "provider": "openai",
-  "model": "gpt-5",
-  "cwd": "/repo"
-}
-```
-
-### `thread_resumed`
-
-Emitted when an existing thread is resumed.
-
-```json
-{
-  "type": "thread_resumed",
-  "thread_id": "20260618-120000-abcdef",
-  "provider": "openai",
-  "model": "gpt-5",
-  "cwd": "/repo"
-}
-```
-
-### `turn_started`
-
-```json
-{
-  "type": "turn_started",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id"
-}
-```
-
-### `agent_message_delta`
-
-```json
-{
-  "type": "agent_message_delta",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "delta": "text"
-}
-```
-
-### `usage_updated`
-
-Token counts are cumulative snapshots for the current in-flight turn, not
-per-event deltas. Use the latest snapshot for a turn when computing totals.
-
-```json
-{
-  "type": "usage_updated",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "input_tokens": 100,
-  "output_tokens": 20
-}
-```
-
-### `provider_state`
-
-Per-step diagnostic snapshot of the live provider transport. Surfaces the
-current provider, protocol, transport, replay mode, response-id reuse,
-connection reuse, and any transport-fallback state.
-
-```json
-{
-  "type": "provider_state",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "step_index": 1,
-  "provider": "anthropic",
-  "protocol": "messages",
-  "transport": "https",
-  "replay_mode": "off",
-  "previous_response_id_used": false,
-  "connection_reused": true,
-  "diagnostic": "",
-  "transport_failure_phase": "",
-  "fallback_transport": "",
-  "events_emitted": ["lifecycle", "content_delta"],
-  "fallback_active": false,
-  "fallback_reason": "",
-  "input_items": 12,
-  "full_input_items": 0,
-  "delta_input_items": 12
-}
-```
-
-### `request_context`
-
-Per-step snapshot of the composed request the runner sent to the provider:
-message counts and bytes by segment, tool surface hash, stable-prefix
-hashing, and the prompt-cache key. Lets offline tooling reproduce or audit
-what the model saw on this step.
-
-```json
-{
-  "type": "request_context",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "step_index": 1,
-  "transient_messages": 0,
-  "content_bytes": 4128,
-  "block_kinds": ["text", "tool_use"],
-  "block_kind_counts": {"text": 4, "tool_use": 1},
-  "block_kind_bytes": {"text": 2048, "tool_use": 2080},
-  "segment_lifecycle_counts": {"turn": 1, "stable": 2},
-  "segment_placement_counts": {"system": 1, "history": 4},
-  "segment_cache_policy_counts": {"cached": 3, "fresh": 2},
-  "message_count": 5,
-  "system_messages": 1,
-  "hidden_messages": 0,
-  "tool_count": 12,
-  "stable_prefix": "…",
-  "turn_prefix": "…",
-  "dynamic_context_bytes": 4128,
-  "system_bytes": 512,
-  "stable_prefix_bytes": 2048,
-  "turn_prefix_bytes": 1024,
-  "message_bytes": 4128,
-  "tool_schema_bytes": 8192,
-  "loadable_tool_count": 24,
-  "loadable_tool_schema_bytes": 24576,
-  "loadable_tool_surface_hash": "sha256:…",
-  "system_hash": "sha256:…",
-  "stable_prefix_hash": "sha256:…",
-  "turn_prefix_hash": "sha256:…",
-  "tool_surface_hash": "sha256:…",
-  "prompt_cache_key": "provider-specific"
-}
-```
-
-### `tool_started`
-
-```json
-{
-  "type": "tool_started",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "name": "read_file",
-  "arguments": "{\"path\":\"README.md\"}"
-}
-```
-
-Tool arguments must be safe to expose. Sensitive values should be redacted or
-omitted.
-
-### `tool_output_delta`
-
-```json
-{
-  "type": "tool_output_delta",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "delta": "output text"
-}
-```
-
-### `tool_completed`
-
-```json
-{
-  "type": "tool_completed",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "name": "read_file",
-  "status": "completed",
-  "error": ""
-}
-```
-
-### `command_started`
-
-Emitted in addition to `tool_started` for the `bash` tool. This includes direct
-commands and managed background-process actions.
-
-```json
-{
-  "type": "command_started",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "name": "bash",
-  "command": "go test ./...",
-  "arguments": "{\"action\":\"run\",\"command\":\"go test ./...\",\"purpose\":\"Run Go tests\"}"
-}
-```
-
-### `command_output_delta`
-
-```json
-{
-  "type": "command_output_delta",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "name": "bash",
-  "command": "go test ./...",
-  "delta": "ok\n"
-}
-```
-
-### `command_completed`
-
-```json
-{
-  "type": "command_completed",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "name": "bash",
-  "command": "go test ./...",
-  "status": "completed",
-  "error": ""
-}
-```
-
-### `file_changed`
-
-Emitted from structured results produced by file-changing tools such as
-`write_file`, `edit_file`, `apply_patch`, and checkpoint restore. The event
-does not duplicate full diffs or file contents.
-
-```json
-{
-  "type": "file_changed",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "item_id": "item-id",
-  "tool_name": "edit_file",
-  "path": "internal/exec/runner.go",
-  "action": "edit",
-  "old_file_sha": "sha256:old",
-  "new_file_sha": "sha256:new",
-  "workspace_revision": "fs:worktree:..."
-}
-```
-
-### `subagent_started`
-
-```json
-{
-  "type": "subagent_started",
-  "thread_id": "thread-id",
-  "agent_id": "agent-id",
-  "agent_type": "subagent",
-  "status": "running",
-  "task_name": "worker"
-}
-```
-
-### `subagent_updated`
-
-```json
-{
-  "type": "subagent_updated",
-  "thread_id": "thread-id",
-  "agent_id": "agent-id",
-  "status": "running",
-  "input_tokens": 100,
-  "output_tokens": 20
-}
-```
-
-### `subagent_completed`
-
-```json
-{
-  "type": "subagent_completed",
-  "thread_id": "thread-id",
-  "agent_id": "agent-id",
-  "status": "completed",
-  "result": "summary",
-  "result_path": "/path/to/report.md",
-  "error": ""
-}
-```
-
-### `turn_completed`
-
-```json
-{
-  "type": "turn_completed",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "input_tokens": 100,
-  "output_tokens": 20,
-  "trace_path": "/path/to/session-trace.jsonl",
-  "awaiting_auto_continuation": false
-}
-```
-
-`awaiting_auto_continuation` is `true` when the execution Run is awaiting another
-automatic turn, including a structured-output correction turn. In that case this
-event does not end the Run; wait for the final `result`.
-
-### `turn_interrupted`
-
-Emitted when `wuu exec` interrupts the active turn because of timeout or
-process cancellation.
-
-```json
-{
-  "type": "turn_interrupted",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "reason": "timeout"
-}
-```
-
-### `turn_failed`
-
-```json
-{
-  "type": "turn_failed",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "error": "provider returned an error"
-}
-```
-
-### `error`
-
-This is not a general error channel. It is emitted only if the CLI's final
-`--output-schema` parse disagrees with the app-server's completed Run settlement.
-Normal structured-output correction turns do not emit this event.
-
-```json
-{
-  "type": "error",
-  "thread_id": "thread-id",
-  "turn_id": "turn-id",
-  "run_id": "run-id",
-  "error": "final answer does not match output schema",
-  "retrying": false
-}
-```
-
-### `result`
-
-The final event in a run.
+## Final result
 
 ```json
 {
@@ -446,24 +25,96 @@ The final event in a run.
   "thread_id": "thread-id",
   "turn_id": "turn-id",
   "run_id": "run-id",
-  "final_message": "final answer",
-  "structured_result": {"summary": "valid JSON when --output-schema is used"},
-  "trace_path": "/path/to/session-trace.jsonl"
+  "final_message": "The report is ready.",
+  "trace_path": "/path/to/trace.jsonl"
 }
 ```
 
-`structured_result` is present only when `wuu exec --output-schema` is used and
-the final answer validates against the requested JSON Schema.
+`status` is `completed`, `failed`, `permission_denied`, `timeout`, or `interrupted`.
+Failures can include an `error` string. Identifiers can be empty when setup failed
+before a session or run existed. `final_message` on failure can be partial; it is
+not proof that the requested work finished. With `--output-schema`, successful
+validation also supplies `structured_result`, the parsed JSON value.
 
-Allowed `status` values include:
+The separate `error` event currently reports a disagreement between the CLI's
+final schema validation and the server's completed run. It includes `error` and
+`retrying: false`. It is not a general error channel: inspect `result` even when
+no `error` event appeared.
 
-- `completed`
-- `failed`
-- `permission_denied`
-- `timeout`
-- `interrupted`
+## Session and turn events
 
-## Compatibility
+| Type | Payload and meaning |
+| --- | --- |
+| `session_configured` | `protocol_version`, `provider`, `model`, `max_parallel`, `workspace_root`, `permissions` after initialization |
+| `thread_started`, `thread_resumed`, `thread_forked` | `thread_id`, `provider`, `model`, `cwd` for the acquired session |
+| `turn_started` | `thread_id`, `turn_id`; begins a new turn's message state |
+| `agent_message_delta` | Append `delta` to the current message |
+| `agent_message_final` | Replace the accumulated message with `message`; this is a replacement event, not a guaranteed end marker |
+| `usage_updated` | Cumulative `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` for the turn |
+| `turn_completed` | Token counts, `trace_path`, and `awaiting_auto_continuation` |
+| `turn_failed` | `error` for the failed turn |
+| `turn_interrupted` | `reason`, such as `timeout` or `interrupted` |
 
-JSONL event names and core field names are automation API. Prefer additive
-changes. Do not repurpose a field with a different meaning.
+`thread_started` also occurs for ephemeral sessions, so it does not imply durable
+storage. Usage snapshots are not deltas: use the latest snapshot per turn rather
+than summing every event. When `awaiting_auto_continuation` is true another turn
+is expected; even when it is false, wait for `result` to determine run settlement.
+
+## Tool and command events
+
+```json
+{"type":"tool_started","thread_id":"thread-id","turn_id":"turn-id","item_id":"item-id","name":"read_file","arguments":"{\"path\":\"README.md\"}"}
+{"type":"tool_output_delta","thread_id":"thread-id","turn_id":"turn-id","item_id":"item-id","delta":"output fragment"}
+{"type":"tool_completed","thread_id":"thread-id","turn_id":"turn-id","item_id":"item-id","name":"read_file","status":"completed","error":""}
+```
+
+`arguments` is a JSON-encoded string, not an object. `tool_completed` supplies the
+call status and error; it does not repeat the full result. Accumulate output deltas
+if your client needs that content. `tool_removed` withdraws an item by `item_id`.
+
+For `bash`, the stream additionally emits `command_started`,
+`command_output_delta`, `command_completed`, and `command_removed`. These refer
+to the same item, so do not count them as separate tool calls. Command events add
+`name`, `command`, and `arguments` when available; completion adds `status` and
+`error`. Background-process control calls also use this family. Completion of the
+tool call does not necessarily mean the underlying background process has exited.
+
+`file_changed` is derived from structured file-tool results, not a filesystem
+watcher. It carries `tool_name`, `path`, and `action`, with available hashes and
+`workspace_revision`; it does not include full file contents or diffs. Do not use
+it as a complete list of every write made by shell commands or external processes.
+
+## Subagent and task events
+
+`subagent_started`, `subagent_updated`, and `subagent_completed` carry `agent_id`,
+`thread_id`, `agent_type`, `status`, and task metadata. Available fields include
+`task_name`, `agent_profile`, `agent_path`, `parent_id`, `description`, `result`,
+`result_path`, `result_bytes`, `result_truncated`, `error`, and token counts.
+A first observed update may already be terminal, so a client must not require a
+preceding `subagent_started`. Use `result_path` when the inline result is truncated.
+
+`todo_updated` carries the task-list payload in `todo`. These progress events
+depend on the active tools and plugins; a run need not emit every event family.
+
+## Request diagnostics
+
+`provider_state` describes one provider step: `step_index`, `provider`, `protocol`,
+`transport`, replay and connection reuse, fallback state, failure phase, and input
+item counts. Fallback fields include `fallback_active`, `fallback_reason`,
+`fallback_transport`, `fallback_pin_status`, `fallback_retry_after_ms`, and
+`fallback_ttl_ms`. They describe transport behavior, not task completion.
+
+`request_context` describes the composed request through counts, byte sizes,
+segment categories, hashes, and cache metadata. It includes message and tool
+counts; system, stable-prefix, turn-prefix, and tool-surface hashes;
+`prompt_cache_key`; and, when available, `system_sections`. It is diagnostic
+metadata, not a full request body from which the model input can be reconstructed.
+
+The CLI omits provider reasoning notifications. Tool argument redaction is best
+effort; the stream can still contain private source, prompts, paths, and tool
+output. Treat it as sensitive task data and review it before publishing logs.
+
+The field mapping is implemented in
+[`internal/exec/runner.go`](../../../internal/exec/runner.go). For clients that
+need direct session control, use the
+[app-server protocol](../integrations/app-server-protocol.md).

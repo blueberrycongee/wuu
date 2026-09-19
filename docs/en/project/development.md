@@ -1,48 +1,45 @@
 # Development
 
-This is the human-facing guide to building and checking the repository. Agent
-runtime instructions live in `AGENTS.md`; contributors should not need that file
-to discover the normal development commands.
+Run Wuu from a source checkout to change the Go core, Electron desktop, plugins, or clients. Commands below run from the repository root. Contribution and review rules are in [Contributing](../../../CONTRIBUTING.md).
 
-## Requirements
+## Set up the checkout
 
-- Go version from `go.mod`
-- Node.js 22 or newer (`.node-version` selects the CI baseline)
-- npm
-- macOS with Xcode/Swift for the Electron package and native CUA helper
-
-The Go CLI and core build on macOS and Linux. The current desktop release is an
-arm64 macOS preview. Mobile and remote-control clients are under active
-development and are not published as a stable mobile release.
-
-## Setup and daily commands
-
-Run from the repository root:
-
-| Command | Purpose |
-|---|---|
-| `make setup` | Install locked npm dependencies for desktop, clients, protocol, and docs site |
-| `make dev` | Start the real Electron development path |
-| `make check` | Check repository metadata, test policy, Go modules/format/vet, and TypeScript types |
-| `make test` | Run Go, desktop, plugin SDK, remote-core, and legacy Web/Expo client tests |
-| `make build` | Build the Go CLI, Electron renderer/main, and legacy Web/Expo client bundles |
-| `make ci` | Run the cross-platform check, test, and build gate |
-| `make release-check` | Check release versions and run the Go core and desktop test gates |
-
-Component commands are available when a full run is unnecessary:
+Use the Go version in [`go.mod`](../../../go.mod), Node from [`.node-version`](../../../.node-version), and npm. Desktop packages require Node 22 or newer. macOS packaging and the native Computer Use helper also require macOS with Xcode/Swift tooling.
 
 ```bash
-make check-go test-go build-go
-make check-desktop test-desktop build-desktop
-make check-clients test-clients build-clients
-make test-native
-make build-macos
+make setup
+make dev
 ```
 
-`make test-native` and `make build-macos` require macOS. The desktop development
-launcher builds and starts `wuu app-server` from the current Go source. After
-changing Go or Electron main-process code, fully restart `make dev`; the running
-subprocess and Electron main process are not hot-reloaded.
+`make setup` installs locked dependencies for the desktop, shared client core, retained Web/Expo clients, plugin SDK, protocol package, and docs site. It does not install the native phone toolchains or provision remote services.
+
+`make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
+
+For CLI-only development:
+
+```bash
+make build-go
+./bin/wuu --help
+```
+
+`make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+
+## Choose the relevant checks
+
+| Command | What it checks or builds |
+| --- | --- |
+| `make check-go` | Module consistency, formatting, vet, Windows/macOS cross-builds |
+| `make test-go` | Go tests for the CLI, core, Go plugin SDK, bundled plugins, and prompts |
+| `make check-desktop test-desktop` | Desktop TypeScript and launcher/unit tests |
+| `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
+| `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |
+| `make test-native` | Desktop macOS Computer Use helper tests, not phone app tests |
+| `make build-macos` | Core/helpers, desktop build, and directory-packaged macOS app |
+| `make docs-policy-check check-docs build-docs` | Documentation policy, site diagnostics, and generated site/link checks |
+
+`make check`, `make test`, and `make build` aggregate the corresponding repository targets. `make ci` runs all three; it does not include native phone verification, macOS packaging, or the docs-site build. `make release-check` adds version validation, uncached Go tests, desktop tests, and the macOS native helper gate. Use the [release guide](release.md) for publication requirements.
+
+Type checks, unit tests, and successful bundles are different evidence from a working app. For UI changes, inspect the affected rendering and interactions using the [desktop UI guide](desktop-ui.md). For plugin changes, also exercise actual tool calls or rendered contributions; package validation alone does not do that.
 
 `npm --prefix desktop run test:renderer-recovery` intentionally crashes hidden
 Chromium renderers to check recovery, retry limits, window isolation, and IPC.
@@ -50,44 +47,28 @@ It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
 
-`make test-native` tests the desktop CUA helper, not the phone apps. Active phone
-development lives in [clients/native](../../../clients/native/README.md) (Chinese),
-with SwiftUI on iOS and Jetpack Compose on Android. Use
-`bash clients/native/verify.sh all` for its isolated integration checks; see that
-README for PostgreSQL, Xcode and Android prerequisites and the remaining release
-acceptance work. The older Expo, WebView and Capacitor phone implementations
-stopped development on 2026-09-12. Existing client gates and the desktop's shared
-Web bundle still consume some of that code; they do not validate the native apps.
+## Native phones and remote services
 
-For documentation changes, run `make docs-policy-check build-docs`; see
-[documentation maintenance](../../../docs/README.md). For reusable renderer
-previews and scroll treatment, see [Desktop UI maintenance](desktop-ui.md).
+The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:
 
-## CI checks
+```bash
+bash clients/native/verify.sh all
+```
 
-Except for docs-only changes, pull requests and pushes to `main` run:
+Use `ios` or `android` to select one platform. The script starts an isolated PostgreSQL-backed test environment, builds test hosts, and runs platform tests and builds. Follow the native README for PostgreSQL, Xcode, Java, and Android SDK prerequisites. Passing these checks is not real-device or release acceptance.
 
-- **Repository check:** versions, eval records, documentation policy, theme contracts, and merge-gate test policy;
-- **Go check:** module consistency, format, vet, Windows/macOS cross-builds and tests; the standalone CLI build also runs on `main`;
-- **Desktop check:** install, typecheck, unit tests, and Electron build;
-- **Clients check:** protocol/plugin SDK/core/legacy client typecheck, client tests, and Web/Expo bundles;
-- **macOS native check:** Swift/native tests on pull requests and a directory-packaged Electron app on `main`;
-- **Windows native check:** Windows process/sandbox boundaries and Desktop typecheck on pull requests, with unpacked packaging on `main`. The full Desktop unit suite already runs on Ubuntu.
+The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone implementations are retired. Some remain in shared Web builds and repository checks; passing those gates does not validate the native apps. Account and relay deployment is separate from local desktop setup; see [remote access](../automation/remote.md).
 
-Tagged releases add self-signed macOS DMG/ZIP verification. GitHub Releases do not
-publish standalone CLI archives. See the [release guide](release.md).
-The separate documentation workflow checks policy and builds the site for changes
-to docs, the site or landing pages; it deploys the site on `main`.
+## CI coverage
 
-## Product boundaries
+[The main CI workflow](../../../.github/workflows/ci.yml) runs repository metadata checks, Go checks/tests, desktop checks/tests/builds, and SDK/client checks/tests/builds. It skips changes confined to `docs/` and `docs-site/`. Go CI supplies PostgreSQL for database-backed coverage.
 
-- `internal/` and `cmd/wuu/` are the reusable Go core and app-server.
-- `desktop/` is the Electron shell and owns native UI, IPC, and packaging.
-- `packages/protocol/` is the shared client protocol type source.
-- `clients/core/` is the UI-free remote client.
-- `clients/native/` contains the active native iOS and Android apps.
-- `clients/mobile/`, `clients/mobile-web/`, and `clients/mobile-app/` retain retired
-  phone implementations, not the current phone feature roadmap.
+macOS pull requests test the native helper; pushes to `main` also package a desktop directory. Windows runs selected native process/sandbox tests and desktop type checking, with unpacked packaging on `main`. The full desktop unit suite runs on Ubuntu. These jobs cover different boundaries rather than repeating the same full suite on every OS.
 
-Keep Electron APIs out of the Go core. New shells should spawn `wuu app-server`
-instead of forking or importing the core.
+[The documentation workflow](../../../.github/workflows/docs.yml) checks policy and builds the site when documentation, site, landing, or relevant build files change. Pull requests build without deployment; `main` builds deploy to GitHub Pages. Tagged product releases use a separate workflow and do not publish standalone CLI archives.
+
+## Code boundaries
+
+`cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The plugin SDKs and bundled implementations live in `packages/plugin-sdk`, `packages/plugin-go`, and `plugins`.
+
+Keep Electron APIs in the desktop shell. A new shell should communicate with `wuu app-server` through its [protocol](../integrations/app-server-protocol.md), rather than importing desktop internals or creating a separate core. Update both language versions of affected public docs with behavior changes; [documentation maintenance](../../../docs/README.md) describes placement and checks.

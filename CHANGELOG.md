@@ -38,6 +38,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep conversation search results title-only on the left, with matching snippets
   and conversation details in the right preview pane.
 
+- Nudge the desktop process mascot's reading shape right for optical alignment
+  with conversation text, without moving the summary text column.
+
 - Use a simpler split-arrow icon for desktop conversation forks, consistently
   across sidebar markers, message actions, and worktree notices.
 
@@ -136,6 +139,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Recover crashed desktop renderers with bounded automatic retries and a native
   reload/close fallback. Stop orphaned window terminals and avoid sending events
   to unavailable frames while the window recovers.
+
+- Keep collaboration-managed sessions out of ordinary sidebar groups after
+  switching projects by preserving their management state in persisted session
+  lists and metadata updates.
+
+- Remove the remaining `request_handoff` model tool after retiring `/handoff`,
+  preventing agents from invoking the removed command through the tool runtime.
+
+- Keep Automation and other primary plugin views in sidebar navigation instead
+  of reviving the removed conversation tab strip. Preserve view switching,
+  closing, return navigation, and durable view recovery across desktop restarts.
+
+- Preserve fresh-context recovery instructions through checkpoints, turn completion
+  and session reloads, preventing unintended system-prefix changes (#265).
 
 - Let ordinary sessions explicitly finish peer follow-ups without a final reply.
   Recover an empty response once, while keeping repeated empty responses visible

@@ -541,12 +541,18 @@ export function WorkspaceRightPanel({
       dirty: (tab.kind === "file" && dirtyFileTabIDs.has(tab.id)) || undefined,
     };
   });
+  const navigateBack = compactNavigation && open ? () => {
+    if (!activeTab) onClose();
+    else if (activeTab.kind === "file") onOpenTool("files");
+    else onShowTools();
+  } : undefined;
   const headerSnapshot = immutableHeaderSnapshot({
     scope: "workspace",
     title: activeTab ? workspaceViewTabLabel(activeTab) : t("workspace.artifactsAndTools"),
     subtitle: activeTab?.kind === "file" || activeTab?.kind === "diff" ? activeTab.path : undefined,
     tabs: compactNavigation ? undefined : headerTabs,
     activeTabId: compactNavigation ? undefined : activeTabID,
+    canNavigateBack: navigateBack ? true : undefined,
     busy: headerTabs.some((tab) => tab.busy) || undefined,
     dirty: headerTabs.some((tab) => tab.dirty) || undefined,
   });
@@ -581,8 +587,9 @@ export function WorkspaceRightPanel({
           snapshot={headerSnapshot}
           host={pluginHost}
           controller={workbenchController}
-          onSelectTab={onSelectTab}
-          onCloseTab={(tabId) => {
+          onNavigateBack={navigateBack}
+          onSelectTab={compactNavigation ? undefined : onSelectTab}
+          onCloseTab={compactNavigation ? undefined : (tabId) => {
             const tab = tabs.find((candidate) => candidate.id === tabId);
             if (tab) requestCloseTab(tab);
           }}
@@ -594,17 +601,7 @@ export function WorkspaceRightPanel({
                 type="button"
                 aria-label={t("common.back")}
                 disabled={!open}
-                onClick={() => {
-                  if (!activeTab) {
-                    onClose();
-                    return;
-                  }
-                  if (activeTab.kind === "file") {
-                    onOpenTool("files");
-                    return;
-                  }
-                  onShowTools();
-                }}
+                onClick={navigateBack}
               >
                 <ArrowLeft className="icon" />
               </button>
@@ -616,21 +613,6 @@ export function WorkspaceRightPanel({
                   <span>{activeTab.path}</span>
                 ) : null}
               </div>
-              {activeTab ? (
-                <button
-                  className="icon-button workspace-panel-close-tab"
-                  type="button"
-                  aria-label={t("workspace.closeTab", {
-                    label: workspaceViewTabLabel(activeTab),
-                  })}
-                  disabled={!open}
-                  onClick={() => requestCloseTab(activeTab)}
-                >
-                  <X className="icon" />
-                </button>
-              ) : (
-                <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
-              )}
             </>
           ) : (
             <>
@@ -760,6 +742,19 @@ export function WorkspaceRightPanel({
             </>
           )}
         />
+        {compactNavigation ? activeTab ? (
+          <button
+            className="icon-button workspace-panel-close-tab"
+            type="button"
+            aria-label={t("workspace.closeTab", { label: workspaceViewTabLabel(activeTab) })}
+            disabled={!open}
+            onClick={() => requestCloseTab(activeTab)}
+          >
+            <X className="icon" />
+          </button>
+        ) : (
+          <span className="workspace-panel-compact-action-slot" aria-hidden="true" />
+        ) : null}
       </div>
       {present || bodyPrewarmed || fileTabs.length > 0 ? (
         <>

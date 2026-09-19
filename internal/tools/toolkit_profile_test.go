@@ -44,6 +44,71 @@ func sortedProfileDefNames(defs []providers.ToolDefinition) []string {
 	return out
 }
 
+// Retiring the handoff command also retires its model entry point. Hiding the
+// schema alone is insufficient: a call retained in history must not execute.
+func TestRetiredHandoffIsUnavailable(t *testing.T) {
+	check := func(t *testing.T, kit *Toolkit) {
+		t.Helper()
+		const name = "request_handoff"
+		if containsProfileDef(kit.Definitions(), name) || kit.SupportsTool(name) {
+			t.Error("retired handoff is still advertised to the model")
+		}
+		if _, ok := kit.ToolInfo(name); ok {
+			t.Error("retired handoff is still registered")
+		}
+		surface := kit.ActiveSurface()
+		if surface.Tools[name] != "" || surface.DeferredTools[name] != "" || surface.HiddenTools[name] != "" {
+			t.Error("compiled surface still includes retired handoff")
+		}
+		result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+			ID: "stale-handoff", Name: name, Arguments: `{"intent":"continue the task"}`,
+		})
+		if err == nil || result.TextProjection() != "" {
+			t.Errorf("retired call must fail without a handoff request: result=%+v err=%v", result, err)
+		}
+	}
+	t.Run("unconfigured", func(t *testing.T) {
+		kit, err := New(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		kit.SetSessionID("source")
+		check(t, kit)
+	})
+	for _, profile := range []struct{ provider, model string }{
+		{"openai", "gpt-5-codex"},
+		{"openai", "gpt-5.5"},
+		{"anthropic", "claude-sonnet-4-5"},
+		{"google", "gemini-2.5-pro"},
+		{"ollama", "llama-coder"},
+	} {
+		for _, role := range []struct {
+			name string
+			kind modelprofile.SurfaceKind
+		}{
+			{"main", modelprofile.SurfaceMain},
+			{"named", modelprofile.SurfaceNamedAgent},
+			{"room", modelprofile.SurfaceRoomAgent},
+			{"worker", modelprofile.SurfaceWorker},
+		} {
+			t.Run(profile.model+"/"+role.name, func(t *testing.T) {
+				kit, err := New(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				kit.SetSessionID("source")
+				kit.setActiveProfileForSurface(modelprofile.Resolve(profile.provider, profile.model), role.kind)
+				check(t, kit)
+				clone, err := kit.CloneForRoot(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				check(t, clone)
+			})
+		}
+	}
+}
+
 func TestSetActiveProfileCompilesAndExposesBashForAllStandardProfiles(t *testing.T) {
 	root := t.TempDir()
 	for _, tt := range []struct {

@@ -1,31 +1,27 @@
 # Video input
 
-The desktop Harness and Collaboration composers accept pasted, dropped and selected MP4, MOV and WebM files. Attachments and messages can play videos and show their name, duration and size. Playback depends on locally supported codecs.
+Attach an MP4, MOV, or WebM file by pasting, dropping, or selecting it in a desktop work conversation or Collaboration composer. The attachment can show its name, duration, and size and play locally when the installed codecs support it.
 
-Video attachments total at most 20 MiB per send. Short videos use bounded inline data; chunked large-file upload, provider Files APIs, automatic transcoding and frame extraction are not implemented. Understanding the audio depends on the selected model.
+The combined video size is limited to **20 MiB per send**. Wuu sends bounded inline data; it does not transcode the clip, extract frames, upload chunks, or use a provider Files API for large videos. Whether the model understands the audio depends on that model.
 
-## Supported connections
+## Choose a compatible model and connection
 
-Admission checks both model capability and connection protocol. Successful login, a vision-related model name or video generation support does not establish video input support.
+Video input needs both model support and a compatible request format. A successful login, an image-capable model, or a video-generation feature is not enough.
 
-| Connection | Current behavior | Reference |
-| --- | --- | --- |
-| OpenRouter Chat | Sends a `video_url` data URL when the model catalog declares video input; downstream format and duration limits still apply | [OpenRouter video input](https://openrouter.ai/docs/guides/overview/multimodal/videos) |
-| Alibaba DashScope / Model Studio Chat | Sends `video_url` when the model catalog declares video input; regional account permissions apply | [Qwen image and video understanding (Chinese)](https://docs.modelstudio.console.alibabacloud.com/zh/model-studio/vision) |
-| Custom Chat-compatible endpoint | Supports an explicit `options.video_input` declaration; unknown capabilities are not inferred from names | The endpoint must implement the same video content format |
-| OpenAI API / Codex login reuse | The current Responses adapter rejects new video attachments | [Responses request format](https://developers.openai.com/api/reference/cli/resources/responses/methods/create) and the current adapter |
-| Grok CLI / Grok Build login reuse | Local video support on the subscription endpoint is unconfirmed and remains disabled | The adapter's Chat transport alone does not imply video support |
-| SuperGrok OAuth | The current Responses adapter disables video input | [X Search video understanding](https://docs.x.ai/developers/tools/x-search) is a tool capability, not a local upload protocol |
-| Direct Gemini compatibility endpoint | Not enabled; the native Gemini video API is not integrated | [Native video understanding](https://ai.google.dev/gemini-api/docs/video-understanding) and the [compatibility endpoint](https://ai.google.dev/gemini-api/docs/openai) have different contracts |
-| Anthropic Messages | The current adapter does not support video | [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision) |
+| Connection | Wuu's current admission rule |
+|---|---|
+| OpenRouter Chat | Accepts a model catalog entry declaring video input and sends `video_url` |
+| DashScope / Model Studio Chat | Uses the same video format when the model declares support |
+| Custom Chat-compatible service | Can explicitly declare `options.video_input: "video_url"` |
+| OpenAI Responses, including Codex login reuse | Rejects new video input |
+| SuperGrok OAuth, Grok Build, Anthropic Messages | Video input is disabled in the adapters |
+| Direct Gemini compatibility endpoint | Not enabled automatically; Wuu does not integrate the native Gemini video API |
 
-The supported set follows the model catalog and user configuration, not hardcoded model names. Local admission does not mean every account and downstream route has passed real inference verification.
+An unsupported new attachment produces an error asking for a compatible model and connection. Switching to an unsupported model later keeps old attachments in history but represents them as unreadable video in that request's context.
 
-Unsupported new videos prompt you to switch models and connections. Switching to an unsupported model later preserves old attachments in history but substitutes an unreadable-video marker in that request's model context; Wuu does not pretend the video was analyzed.
+## Declare support for a custom model
 
-## Custom models
-
-Merge these fields into an existing provider's `models` configuration, replacing the example ID:
+Add these fields to the model entry in an existing provider configuration, using the actual model ID:
 
 ```json
 {
@@ -38,8 +34,8 @@ Merge these fields into an existing provider's `models` configuration, replacing
 }
 ```
 
-The provider must use Chat. `video_input` is internal Wuu configuration, not an extra parameter sent to the provider. If the catalog explicitly denies video support, verify and update `modalities` first. This option does not override a negative capability or enable Codex, SuperGrok, Grok Build or Anthropic video input.
+The endpoint must actually accept inline `video_url` content through Chat. `video_input` is a Wuu admission option and is removed from provider request options. It cannot override a model that explicitly denies video capability or enable video in an adapter that disables it.
 
-## Verification limits
+## If a clip fails
 
-Local validation, simulated HTTP tests and UI playback do not establish provider-side inference support. Verify model access, downstream format and duration limits with your own account; local integration is not a guarantee of recognition accuracy or account availability. See the [video admission implementation](../../../internal/providers/video_input.go).
+Check the total size, file format, selected model, and connection protocol first. Local playback and admission checks do not prove that a provider can analyze the clip. Your account and downstream route can impose additional duration, format, and access limits. Test with a short, non-sensitive clip before relying on the result.

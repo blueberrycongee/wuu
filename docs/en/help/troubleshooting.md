@@ -1,17 +1,12 @@
 # Troubleshooting
 
-Start with the symptom below. Before reporting
-a problem, do not upload an entire `~/.wuu`; it may contain source code, sessions,
-tool output, and credential information.
+Start with the failing action and its exact error. Note the Wuu version, selected engine, provider, and workspace before changing settings. Avoid deleting the state directory or repeatedly launching the same task: both can make diagnosis harder, and a task may already be running in the background.
 
-## The desktop app will not start
+## Desktop startup
 
-1. Quit wuu completely, then reopen it.
-2. Confirm the app comes from the official [GitHub
-   Releases](https://github.com/blueberrycongee/wuu/releases).
-3. If macOS blocks the app, follow **Open Anyway** in the
-   [installation guide](../getting-started/installation.md). Do not disable Gatekeeper.
-4. If initialization remains stuck, record the error message and app version for a report.
+Quit the app completely and reopen it. Confirm that the installed build matches your platform and comes from the expected release source. If macOS blocks it, follow the [installation guide](../getting-started/installation.md) rather than disabling Gatekeeper globally.
+
+For a persistent initialization failure, keep the version and visible error. If it began after enabling a plugin, use [plugin recovery](../customize/plugins.md#recovery-and-troubleshooting) and try the default interface.
 
 ## A desktop window crashes or goes blank
 
@@ -28,67 +23,45 @@ a usable terminal panel; reopening the panel starts a new terminal. Other window
 terminals are unaffected. If crashes recur, record the app version and redacted
 `[renderer] process gone` / `recovery load failed` messages for a report.
 
-## The model service is unavailable
+## Model or engine unavailable
 
-- **Missing API key:** in the desktop, check **Settings → Model providers**; in the
-  CLI, check that the environment variable named by `api_key_env` actually exists in
-  the process that started wuu.
-- **Model does not exist:** use the model ID the server accepts, not a product display
-  name.
-- **Can chat but cannot change files:** confirm that the model and compatible gateway
-  fully support tool calling, not just text conversation.
-- **Custom endpoint fails:** check the protocol type, the API prefix, and whether the
-  gateway forwards streaming responses and tool results unchanged.
+Check whether the session uses the Wuu engine or an external Codex or Claude Code executable. Configuring a model provider does not install or authenticate an external engine.
 
-## The wrong files or sessions appear
+For a Wuu provider, verify the accepted model ID, connection protocol, API prefix, and authentication. An environment-backed API key must exist in the process that launched Wuu; an export in another terminal may not affect an already-running desktop app. A gateway that returns text may still fail streaming or tool calls. See [model services](../getting-started/model-services.md).
 
-In the desktop, check the current project; in the CLI, check the current directory or
-`--workdir`. Sessions are filtered by workspace by default. After a directory has been
-moved, use **Relocate…** on the project in the sidebar instead of adding it again as a
-new project with the same name.
+`wuu models` is specifically a live lookup for `openai-codex`, not a general connection test for every provider.
 
-## The agent cannot modify files
+## Wrong project or missing history
 
-Check the [permission mode](../reference/permissions.md) and the target directory.
-Read-only mode blocks writes; standard mode requires the target to be in a registered
-workspace. Read the tool error for the blocked path or an unavailable sandbox backend.
-Do not switch straight to `unconfined` to work around an error.
+Check the selected desktop workspace or CLI `--workdir`. A forked worktree has its own execution root, while a conversation without a project uses Wuu's scratch location. Default session lists are workspace-scoped.
 
-## Commands take a long time
+If the project folder moved, use **Relocate…** on its existing sidebar entry. Adding another project with a similar name does not repair the old workspace identity. Do not redirect a missing worktree to the main checkout without first understanding which files the task changed.
 
-The command may be continuing as a background process. Watch the process state and
-incremental output in the message stream; do not start the same command repeatedly just
-because the UI shows no new text. When full output is too long, the result provides a
-log reference.
+## File or command refused
 
-## CLI self-checks
+Read the error for the blocked path, permission mode, or sandbox backend. Read only blocks mutation; confined command execution also requires a working filesystem sandbox. An unavailable backend is a different problem from an out-of-scope path.
+
+Register the intended workspace or correct the command before considering broader access. Unconfined is a deliberate authority change, not a general error-recovery switch. Sensitive-file guards and external-engine controls have separate rules; see [permissions](../reference/permissions.md).
+
+## No new output
+
+A command may have moved into a managed background process after the synchronous timeout. Inspect its state and incremental output rather than starting a duplicate. Large output can have a full-log reference even when only a tail is displayed.
+
+A queued prompt waits for the receiving conversation. A provider failure, held turn, running tool, and completed turn are different states; use the visible error and saved trace to distinguish them. If the app is disconnected from its backend, reconnecting the UI does not prove that the underlying command stopped.
+
+## Read saved diagnostics
 
 ```bash
-wuu --version
+wuu version --long
 wuu session list --json
 wuu session show --json --last
 wuu session trace --json --last
 ```
 
-`session trace` replays already-saved events without calling the model or tools again.
-To inspect automation run records, use `wuu runs` and `wuu runs read RUN_ID`.
+Run these in the relevant workspace, or supply `--workdir` before positional arguments. Trace reads saved events without invoking the model or replaying tool side effects. For execution-run manifests, use `wuu runs`; for scheduled tasks, inspect the Automation page's run history.
 
-## Where local data lives
+## Share a useful report
 
-Default user state is under `~/.wuu`, including configuration, authentication,
-sessions, memory, and logs. When `WUU_HOME` is set, these paths move as a whole to the
-specified directory. Before including them in a problem report, copy only the minimal
-fragments needed to solve the problem, and remove API keys, OAuth information, source
-code, and private conversations.
+Include the version and operating system, desktop or CLI entry point, selected engine, minimal reproduction steps, expected result, actual result, and the relevant redacted error. Use [GitHub Issues](https://github.com/blueberrycongee/wuu/issues) for ordinary bugs.
 
-If you still cannot resolve it, provide the following in [GitHub
-Issues](https://github.com/blueberrycongee/wuu/issues):
-
-- the wuu version and operating system;
-- whether you use the desktop or the CLI;
-- minimal reproduction steps;
-- redacted errors and relevant log fragments;
-- expected versus actual behavior.
-
-Do not file security vulnerabilities publicly; report them privately according to the
-repository's [SECURITY.md](../../../SECURITY.md).
+Do not upload the entire `~/.wuu` or `WUU_HOME` directory. Configuration, credentials, conversations, source excerpts, tool output, artifacts, and logs may be private. Share only the necessary fragments after review. Report suspected security vulnerabilities privately through [SECURITY.md](../../../SECURITY.md).
