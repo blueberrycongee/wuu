@@ -1,38 +1,10 @@
-# Hooks
+# Hook
 
-Hook 让 Wuu 在工具调用等生命周期事件发生时运行一项检查或自动操作。它适合执行团队
-规则、阻止危险命令、记录工具活动，或者把检查结果补充给 Agent。
+Hook 在 Wuu 支持的生命周期事件上运行命令或模型检查，可以拒绝工具调用、调整参数、补充检查结果或记录事件。它会执行受信任代码或把数据发送给模型，不是操作系统沙箱。
 
-Hook 会在 Wuu 本机执行命令或调用模型，不是操作系统沙箱。只配置你理解并信任的 Hook，
-不要直接启用仓库或第三方提供的未知命令。
+## 配置 Hook
 
-## 当前可用范围
-
-当前运行时会触发以下事件：
-
-| 事件 | 触发时机 | 主要输入 | 结果怎样处理 |
-| --- | --- | --- | --- |
-| `PreToolUse` | 工具执行前 | 工具名和参数 | 可以放行、阻止或替换工具参数 |
-| `PermissionRequest` | 工具权限判定前 | 工具名和参数 | 可以阻止工具执行 |
-| `PostToolUse` | 工具成功后 | 工具名、参数和结果文本 | 可以向 Agent 补充上下文；不能撤销已经完成的操作 |
-| `PostToolUseFailure` | 工具执行失败后 | 工具名、参数和错误 | 用于记录或通知；Hook 错误不会覆盖原工具错误 |
-| `PreCompact` | 对话压缩前 | 压缩原因 | 可以阻止本次压缩 |
-| `PostCompact` | 对话压缩实现返回后 | 压缩原因和可选错误 | 可以拒绝采用压缩结果 |
-| `UserPromptSubmit` | 用户提示进入模型轮次前 | 提示文本 | 可以阻止本轮执行 |
-| `SubagentStart` | 子代理轮次开始前 | 子代理 ID | 可以阻止子代理轮次 |
-| `SubagentStop` | 子代理轮次结束后 | 子代理 ID | 失败会使该子代理轮次失败 |
-| `SessionStart` | 会话绑定完成后 | 会话 ID | 失败会使会话绑定失败 |
-| `SessionEnd` | 会话资源关闭前 | 会话 ID | 失败会随清理错误返回 |
-| `Stop` | 模型轮次收尾时 | 会话 ID | 可以把本轮标记为失败 |
-| `FileChanged` | Wuu 的文件工具成功写入或编辑文件后 | 文件绝对路径 | 用于记录或触发后续动作；输出目前不会改变 Agent 行为 |
-
-`FileChanged` 只跟踪经过 Wuu 文件工具完成的写入。命令、外部程序或用户直接修改文件时，
-不保证触发这个事件。
-
-## 配置位置
-
-最直接的方式是在用户配置 `~/.wuu/config.json` 的顶层加入 `hooks`。设置了
-`WUU_HOME` 时，用户配置位于 `$WUU_HOME/config.json`。
+把 `hooks` 合并到用户配置中，默认位置为 `~/.wuu/config.json` 或 `$WUU_HOME/config.json`，然后重启需要使用它的运行时。已启用插件包也可以贡献 Hook。技能 frontmatter 中的 `hooks` 只作兼容解析，不会注册 Hook。
 
 ```json
 {
@@ -41,7 +13,7 @@ Hook 会在 Wuu 本机执行命令或调用模型，不是操作系统沙箱。�
       {
         "matcher": "bash",
         "type": "command",
-        "command": "python3 ~/.wuu/hooks/check-shell.py",
+        "command": "python3 /absolute/path/check-shell.py",
         "timeout": 10
       }
     ]
@@ -49,178 +21,99 @@ Hook 会在 Wuu 本机执行命令或调用模型，不是操作系统沙箱。�
 }
 ```
 
-这里的配置应合并进现有文件，不要删除原来的模型服务和 Agent 配置。修改后需要重新启动
-当前 Wuu runtime；已经运行的会话不会自动重新读取文件。
-
-在自动化场景中，`wuu exec --config <path>` 会把指定文件作为完整配置加载；
-`wuu exec --ignore-user-config` 会显式信任项目配置。两者都可能启用配置中的 Hook，
-只应对自己控制的文件使用。普通启动下的配置加载和信任边界见[配置模型](../reference/configuration.md)。
-
-启用的插件也可以声明 Hook。第三方插件的 Hook 与直接运行第三方本地命令具有相同风险，
-应先检查来源、命令和授权状态。
-
-> Skill frontmatter 中的 `hooks` 当前不会注册 Hook。可用字段见
-> [编写与安装 Skill](skill-authoring.md)。
-
-## 配置字段
-
-每个事件对应一个 Hook 数组，按照配置顺序依次执行。遇到第一个阻止或执行失败的
-`PreToolUse` Hook 后，后续 Hook 和目标工具都不会继续执行。
+这是配置片段，不应覆盖已有的模型服务和 agent 设置。项目配置遵循[正常加载与信任规则](../reference/configuration.md)；自动化显式指定的配置中，只应包含你确实打算执行的 Hook。
 
 | 字段 | 含义 |
-| --- | --- |
-| `matcher` | 匹配工具名。不填或填 `*` 表示全部；其他值按工具名做不区分大小写的精确匹配，不支持通配表达式 |
-| `type` | `command` 或 `prompt`；不填时使用 `command` |
-| `command` | `command` Hook 要执行的 shell 命令 |
-| `prompt` | `prompt` Hook 的判断要求；可以用 `$ARGUMENTS` 插入事件输入 JSON |
-| `model` | `prompt` Hook 使用的模型；不填时使用当前配置的默认工具模型 |
-| `timeout` | 单个 Hook 的超时秒数；不填或小于等于 0 时为 30 秒 |
+|---|---|
+| `matcher` | 不区分大小写的工具名精确匹配；空值或 `*` 匹配全部 |
+| `type` | 默认 `command`，也可以是 `prompt` |
+| `command` | 命令 Hook 的 shell 命令 |
+| `prompt` | 模型检查模板，`$ARGUMENTS` 替换为事件 JSON |
+| `model` | 提示 Hook 的可选模型名；否则使用已配置 Hook 客户端的默认值 |
+| `timeout` | 单个 Hook 超时秒数；省略或非正数时为 30 |
 
-`matcher` 主要用于三类工具事件。没有工具名的事件只能使用空 matcher 或 `*`。
-输入中的真实工具名可以从 Hook 日志查看，不要假设界面名称与内部名称完全相同。
+Matcher 不支持 glob 表达式。没有工具名的事件需要空 matcher 或 `*`。匹配的 Hook 按配置顺序运行，遇到第一个错误就停止；多个成功 Hook 设置同一输出字段时，后者覆盖前者。
 
-## 编写 command Hook
+## 事件
 
-command Hook 通过 shell 启动。Wuu 把一个 JSON 对象写入命令的标准输入，并从标准输出
-读取一个可选 JSON 对象。命令继承 Wuu 进程的环境，但不应依赖进程恰好从工作区启动；
-需要工作区路径时，从输入的 `cwd` 读取并显式切换目录。
+这些事件对应 Wuu 运行时路径，不代表能以同样方式拦截外部引擎内部操作。
 
-下面的脚本会阻止包含 `rm -rf` 的 `bash` 调用：
+| 事件 | 用途与效果 |
+|---|---|
+| `PreToolUse` | 执行前触发，可以阻止或替换工具参数 |
+| `PermissionRequest` | 工具授权时触发，可以阻止，但不能授予更大权限 |
+| `PostToolUse` | 成功后触发，可以补充模型上下文，不能撤销操作 |
+| `PostToolUseFailure` | 失败后触发，Hook 错误不替换工具原错误 |
+| `UserPromptSubmit` | 提示开始轮次前触发，可以阻止 |
+| `PreCompact` | 压缩前触发，可以阻止压缩 |
+| `PostCompact` | 压缩返回后触发，可以拒绝采用结果 |
+| `SubagentStart`、`SubagentStop` | 子代理轮次前后触发，错误使对应操作失败 |
+| `SessionStart`、`SessionEnd` | 会话绑定与清理时触发，错误传回对应操作 |
+| `Stop` | 轮次结束时触发，可以将轮次标记为失败 |
+| `FileChanged` | Wuu 文件工具成功写入或编辑后触发，输出不改变结果 |
 
-```python
-#!/usr/bin/env python3
-import json
-import sys
+`FileChanged` 不是文件系统监听器。手动编辑、shell 命令和其他程序不一定触发它。工具执行后的 Hook 无法让已经发生的副作用变成从未发生。
 
-event = json.load(sys.stdin)
-tool_input = event.get("tool_input") or {}
-command = tool_input.get("command", "")
+## 命令输入与输出
 
-if "rm -rf" in command:
-    json.dump({
-        "decision": "block",
-        "reason": "项目规则不允许通过 Agent 运行 rm -rf"
-    }, sys.stdout)
-else:
-    json.dump({}, sys.stdout)
-```
-
-例如把它保存到 `~/.wuu/hooks/check-shell.py`，再使用前面的 `PreToolUse` 配置。脚本不需要
-可执行位，因为示例通过 `python3` 启动它。
-
-这只是便于理解协议的最小示例，不是完整的命令安全策略。真实规则应解析工具参数，
-避免只靠简单字符串匹配判断 shell 语义。
-
-## 输入协议
-
-command Hook 会在标准输入收到以下结构。除了前三个公共字段，Wuu 只填写与当前事件
-有关的字段：
+Wuu 通过 shell 启动命令，继承进程环境，并通过 stdin 传入一个 JSON 对象。请读取其中的 `cwd`，不要假设 Hook 进程正好在工作区启动。
 
 ```json
 {
   "hook_event_name": "PreToolUse",
-  "session_id": "...",
-  "cwd": "/path/to/workspace",
+  "session_id": "example-session",
+  "cwd": "/path/to/project",
   "tool_name": "bash",
-  "tool_input": {
-    "command": "go test ./..."
-  },
-  "tool_response": "...",
-  "error": "...",
-  "prompt": "...",
-  "file_path": "/path/to/workspace/file.go",
-  "compact_reason": "proactive",
-  "agent_id": "worker-id"
+  "tool_input": { "command": "go test ./..." }
 }
 ```
 
-- `tool_input` 是目标工具的原始 JSON 参数。
-- `tool_response` 是成功结果的稳定文本投影，不保证包含富媒体结果的全部内部数据。
-- `error` 只用于工具失败事件。
-- `file_path` 只用于 `FileChanged`。
-- `prompt` 只用于 `UserPromptSubmit`。
-- `compact_reason` 用于 `PreCompact` 和 `PostCompact`。
-- `agent_id` 用于 `SubagentStart` 和 `SubagentStop`。
-- 某些运行路径目前可能不填写 `session_id`；不要把非空会话 ID 当作 Hook 正常运行的前提。
+事件专用字段包括成功结果文本 `tool_response`、失败详情 `error`，以及 `prompt`、`file_path`、`compact_reason` 和 `agent_id`。并非所有路径都会提供非空 `session_id`。富媒体工具结果会转为文本投影，不会把完整内部对象交给 Hook。
 
-## 输出与退出码
+在 stdout 输出一个 JSON 对象，诊断信息写入 stderr。所有输出字段都可选：
 
-Hook 可以向标准输出写一个 JSON 对象：
+| 字段 | 效果 |
+|---|---|
+| `decision: "block"` 或 `continue: false` | 在支持阻止的事件中拒绝操作 |
+| `reason` | 解释决定 |
+| `updated_input` | 在 `PreToolUse` 中替换完整参数对象 |
+| `additional_context` | 在成功的 `PostToolUse` 后补充上下文 |
+
+下面的脚本演示如何明确阻止一种命令文本：
+
+```python
+import json
+import sys
+
+event = json.load(sys.stdin)
+command = (event.get("tool_input") or {}).get("command", "")
+if "git push" in command:
+    json.dump({"decision": "block", "reason": "Publish changes manually."}, sys.stdout)
+else:
+    json.dump({}, sys.stdout)
+```
+
+这个子串示例用于说明协议，不是完整 shell 安全策略。相同效果的 shell 命令可以有不同文本。
+
+成功解码的 JSON 对象决定是否阻止；没有可解码对象时，退出码 0 表示继续，2 表示阻止，其他非零退出码表示执行失败。需要可靠阻止时，应输出明确的阻止决定，或保持 stdout 为空并退出 2。不要输出 `{}` 后期待退出码 2 覆盖它。无效或混杂的 stdout 不会被当作结构化输出。
+
+## 提示 Hook
+
+提示 Hook 请求模型返回 `ok` 布尔值和原因：
 
 ```json
 {
-  "continue": true,
-  "decision": "block",
-  "reason": "说明为什么阻止",
-  "updated_input": {
-    "command": "go test ./internal/..."
-  },
-  "additional_context": "提供给 Agent 的补充信息"
+  "type": "prompt",
+  "matcher": "bash",
+  "prompt": "Check whether this action fits the requested review-only task: $ARGUMENTS",
+  "timeout": 20
 }
 ```
 
-所有字段都可以省略：
+把该条目放在所需事件下。`ok: false` 会阻止操作。当前实现中，没有模型客户端、模型请求失败或回复无法解析时都会放行，所以提示 Hook 不能作为唯一安全边界。它还会增加模型请求、延迟和费用，并把事件数据发送给所选服务。
 
-- `decision: "block"` 或 `continue: false` 表示阻止；
-- `reason` 解释阻止或判断原因；
-- `updated_input` 仅在 `PreToolUse` 中会替换本次工具参数，必须符合目标工具的参数结构；
-- `additional_context` 会在成功的 `PostToolUse` 后交给 Agent；
-- 只需执行副作用时，可以不输出内容并以状态码 0 退出。
+## 排查 Hook
 
-退出码 0 表示继续，退出码 2 表示阻止。使用退出码 2 且未在 JSON 中提供 `reason` 时，
-Wuu 会优先使用标准错误作为原因。其他非零退出码视为 Hook 自身执行失败。
+先使用无害事件，分别验证输入、matcher 和输出。stdout 不要混入日志。检查命令路径、依赖、超时，以及脚本是否在等待交互输入。修改文件配置后重启运行时。
 
-只有标准输出整体是有效 JSON 时才会被解析。日志和调试信息应写到标准错误，避免把它们
-与 JSON 混在标准输出中。
-
-## 使用 prompt Hook
-
-prompt Hook 把事件交给模型判断，适合难以用确定性脚本表达的软规则：
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "bash",
-        "type": "prompt",
-        "prompt": "判断下面的工具调用是否可能删除用户数据。只有确认安全时才允许：$ARGUMENTS",
-        "timeout": 20
-      }
-    ]
-  }
-}
-```
-
-模型会返回 `ok` 和原因；`ok: false` 会阻止操作，原因也会作为补充上下文。模型请求失败
-或返回无法解析的结果时，当前实现会放行操作，因此 prompt Hook **不能作为唯一的安全
-边界**。需要强制执行的规则应使用确定性的 command Hook 和 Wuu 权限系统。
-
-prompt Hook 会产生额外模型请求、延迟和费用，事件内容也会发送给所选模型服务。
-
-## 检查和排障
-
-第一次编写 Hook 时，先使用一个无副作用的 command Hook，把标准输入追加到用户控制的
-临时日志中，再触发一次范围明确的工具调用。确认字段和工具名后删除日志 Hook，避免长期
-记录源代码、命令参数或工具结果。
-
-常见问题：
-
-- **Hook 没有运行：**确认事件名大小写、`matcher` 使用内部工具名，并重启 runtime。
-- **配置后所有工具都失败：**检查命令是否存在、Wuu 进程能否读取脚本，以及脚本是否在
-  等待标准输入结束之外的交互输入。
-- **输出没有生效：**确保标准输出只包含一个有效 JSON 对象，日志写到标准错误。
-- **工作区内手动修改没有触发：**`FileChanged` 不是通用文件系统监听器。
-- **prompt Hook 总是放行：**检查当前模型服务、模型名称和返回格式；模型或解析失败按
-  当前策略不会阻止操作。
-
-## 安全边界
-
-- command Hook 以 Wuu 进程的本地权限运行，可能读取文件、访问网络或修改系统状态；
-- Hook 输入可能包含提示词、源代码、命令、路径和工具结果，不要无意上传或长期记录；
-- Hook 输出会影响 Agent 或工具参数，应视为不可信输入并防范提示词注入；
-- 不要在 Hook 命令、项目文件或日志中写入 API Key；
-- Hook 是权限系统之外的扩展执行路径，不会因为 Agent 使用只读模式就自动变成只读。
-
-处理不可信仓库或第三方扩展前，继续阅读[权限模式](../reference/permissions.md)和
-[安全模型](../reference/security-model.md)。
+Hook 输入可能包含源码、提示、路径和工具结果。调试结束后移除临时日志，不要把秘密放进命令字符串或共享配置。agent 使用 Read only 模式，不会自动让 Hook 也变成只读；详见[安全模型](../reference/security-model.md)。
