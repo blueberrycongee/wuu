@@ -144,6 +144,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Bound command-hook output and pipe draining, terminate running hook descendants
   on cancellation, and preserve cancellation and deadline error identities.
 
+- Prevent matching pre-tool hooks from retaining early or concurrent execution
+  privileges derived from tool arguments they can rewrite.
+
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
   lists and metadata updates.

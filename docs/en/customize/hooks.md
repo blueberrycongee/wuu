@@ -34,6 +34,8 @@ This is a fragment, not a replacement for your provider and agent configuration.
 
 Matchers do not support glob expressions. Events without a tool name need an empty matcher or `*`. Matching hooks run in configuration order and stop at the first error. In `PreToolUse`, each argument replacement becomes the `tool_input` seen by later hooks. Other single-value fields use the last supplied value. Additional context accumulates in order, separated by blank lines; a later hook failure does not erase earlier context.
 
+Calls with matching `PreToolUse` hooks run serially after model output completes: their original arguments cannot establish that the rewritten operation is safe for early or concurrent execution. Unmatched calls retain normal scheduling. Tool authorization still checks the rewritten arguments.
+
 ## Events
 
 These events describe Wuu runtime paths; they do not promise equivalent interception inside an external engine.

@@ -79,12 +79,16 @@ func (h *HookedExecutor) SupportsTool(name string) bool {
 	return false
 }
 
-// ToolMetadata forwards to the inner executor if it implements
-// agent.ToolMetadataProvider, so the loop's concurrency partitioning
-// works through the hook layer.
+// ToolMetadata forwards inner metadata, but disables speculative and concurrent
+// execution when pre-tool hooks can change the arguments after classification.
 func (h *HookedExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
 	if mp, ok := h.inner.(agent.ToolMetadataProvider); ok {
-		return mp.ToolMetadata(call)
+		meta, found := mp.ToolMetadata(call)
+		if found && h.dispatcher != nil && h.dispatcher.hasMatchingHooks(PreToolUse, call.Name) {
+			meta.ReadOnly = false
+			meta.ConcurrencySafe = false
+		}
+		return meta, found
 	}
 	return agent.ToolMetadata{}, false
 }

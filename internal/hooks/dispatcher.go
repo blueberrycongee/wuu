@@ -93,6 +93,13 @@ func (d *Dispatcher) HasHooks(ev Event) bool {
 	return registry.HasHooks(ev)
 }
 
+func (d *Dispatcher) hasMatchingHooks(ev Event, toolName string) bool {
+	d.mu.RLock()
+	registry := d.registry
+	d.mu.RUnlock()
+	return len(registry.Match(ev, toolName)) > 0
+}
+
 // Replace swaps the backing registry while keeping the dispatcher identity
 // stable for executors that captured it during session construction.
 func (d *Dispatcher) Replace(next *Dispatcher) {
