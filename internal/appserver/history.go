@@ -662,7 +662,7 @@ func shouldPersistMessage(msg providers.ChatMessage) bool {
 		return true
 	case "system":
 		content := strings.TrimSpace(msg.Content)
-		return strings.HasPrefix(content, compact.ConversationSummaryPrefix)
+		return msg.Cause == "fresh_context" || strings.HasPrefix(content, compact.ConversationSummaryPrefix)
 	default:
 		return false
 	}
@@ -702,10 +702,10 @@ func replaceBaseSystemPrompt(history []providers.ChatMessage, prompt string) []p
 		return []providers.ChatMessage{{Role: "system", Content: prompt}}
 	}
 	if strings.EqualFold(out[0].Role, "system") {
-		// A compact summary is durable conversation state, not the ephemeral
-		// runtime prompt. Sessions whose persisted history starts at a compact
-		// boundary need the current base prompt inserted before that summary.
-		if compact.IsConversationSummaryContent(out[0].Content) {
+		// Durable context boundaries (recovery instructions or legacy summaries)
+		// belong to conversation state. Insert the ephemeral runtime prompt
+		// before them rather than replacing their content after persistence.
+		if shouldPersistMessage(out[0]) {
 			return append([]providers.ChatMessage{{Role: "system", Content: prompt}}, out...)
 		}
 		if out[0].Content == prompt {
