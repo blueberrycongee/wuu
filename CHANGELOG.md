@@ -136,12 +136,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Preserve fresh-context recovery instructions through checkpoints, turn completion
-  and session reloads, preventing unintended system-prefix changes (#265).
-
 - Keep Automation and other primary plugin views in sidebar navigation instead
   of reviving the removed conversation tab strip. Preserve view switching,
   closing, return navigation, and durable view recovery across desktop restarts.
+
+- Preserve fresh-context recovery instructions through checkpoints, turn completion
+  and session reloads, preventing unintended system-prefix changes (#265).
 
 - Let ordinary sessions explicitly finish peer follow-ups without a final reply.
   Recover an empty response once, while keeping repeated empty responses visible
