@@ -1201,6 +1201,42 @@ func TestRunToolLoop_ContextOverflowStopsWhenCompactUnchanged(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_ContextOverflowForceTrimsWhenCompactUnchanged(t *testing.T) {
+	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
+	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "sys"},
+		userMsg("old"),
+		{Role: "assistant", Content: "old answer"},
+		userMsg("latest"),
+	}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model: "m",
+		Compact: func(_ context.Context, msgs []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return msgs, nil
+		},
+	}
+
+	result, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatalf("expected force-trim recovery to succeed, got %v", err)
+	}
+	if compactCalled != 1 {
+		t.Fatalf("expected one reactive compact attempt, got %d", compactCalled)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("expected compact-unchanged overflow to retry a trimmed request, got %d calls", len(step.calls))
+	}
+	if !result.HistoryRewritten {
+		t.Fatal("expected force-trim to rewrite history")
+	}
+	if len(step.calls[1].Messages) >= len(history) {
+		t.Fatalf("trimmed retry still had %d messages", len(step.calls[1].Messages))
+	}
+}
+
 func TestRunToolLoop_ContextOverflowOnlyRetriesOnce(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}, {}}, errs: []error{overflow, overflow}}

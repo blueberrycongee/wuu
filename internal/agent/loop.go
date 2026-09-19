@@ -61,8 +61,11 @@ type ToolSurfaceFreezer interface {
 // Behavior:
 //   - Loops up to cfg.MaxSteps rounds (0 = unlimited).
 //   - On context-overflow errors from the step, calls cfg.Compact
-//     once and re-issues the step. Consecutive overflows propagate;
-//     fresh context windows allow recovery again after a successful step.
+//     once and re-issues the step. If that compact does not shrink
+//     history, the loop force-trims older turns onto a valid tool-call
+//     boundary and retries once more. Consecutive overflows after that
+//     recovery propagate; fresh context windows allow recovery again
+//     after a successful step.
 //   - Output truncation is treated as a completed model response with
 //     FinishReason=length. The caller/UI can surface that reason without
 //     classifying the turn as a user interruption or transport failure.
@@ -156,8 +159,9 @@ func RunToolLoop(
 		totalIn, totalOut, totalCacheCreation, totalCacheRead int
 		// Reactive auto-compact (overflow recovery) runs at most once
 		// between successful steps for fresh windows (once per Run for
-		// legacy compaction); if a single compaction isn't enough, surfacing the
-		// error is more honest than silently looping. Proactive compact
+		// legacy compaction). If that compact does not shrink history, a
+		// local force-trim retries once more before the overflow is
+		// surfaced. Proactive compact
 		// runs before provider requests, including mid-turn continuation
 		// requests after completed tool results. A failed or no-op
 		// proactive attempt suppresses further proactive attempts for
@@ -740,6 +744,13 @@ func RunToolLoop(
 				newContextRequested = true
 				continue
 			}
+			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && stepResultHasNoPartialOutput(result) {
+				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
+					resetTranscript(trimmed)
+					postToolContextSegments = consumedPostToolSegments
+					continue
+				}
+			}
 			if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
@@ -825,6 +836,11 @@ func RunToolLoop(
 						Error:          cerr.Error(),
 						OutputLimit:    compact.IsSummaryOutputLimit(cerr),
 					}, usageBefore))
+				}
+				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
+					resetTranscript(trimmed)
+					postToolContextSegments = consumedPostToolSegments
+					continue
 				}
 			}
 			// A streaming step can fail after content deltas were already shown to
@@ -1293,6 +1309,22 @@ func compactChanged(before, after []providers.ChatMessage) bool {
 		return true
 	}
 	return !reflect.DeepEqual(before, after)
+}
+
+// forceTrimOverflowHistory is the last local recovery after a classified
+// overflow whose compact/fresh-context pass did not shrink the request. It
+// keeps leading system scaffolding and the newest user turn, dropping older
+// conversation on a valid tool-call boundary so the retry is smaller without
+// waiting for another provider round.
+func forceTrimOverflowHistory(messages []providers.ChatMessage) ([]providers.ChatMessage, bool) {
+	trimmed, err := compact.ForceTrimOverflowHistory(messages)
+	if err != nil || !compactChanged(messages, trimmed) {
+		return nil, false
+	}
+	if estimateFreshContextMessages(trimmed) >= estimateFreshContextMessages(messages) {
+		return nil, false
+	}
+	return trimmed, true
 }
 
 // compactNoticeMessageCount reports the model-visible conversation units a

@@ -1471,3 +1471,23 @@ func TestBuildSummaryPromptIndexesMixedStructuredResultValues(t *testing.T) {
 		t.Fatalf("mixed structured values missing from summary index: %s", prompt)
 	}
 }
+
+func TestForceTrimOverflowHistoryKeepsLatestUserTurn(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "old task"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "latest task"},
+	}
+	got, err := ForceTrimOverflowHistory(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "latest task"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
