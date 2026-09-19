@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Named Agents can explicitly attach selected room images, PDFs and supported
+  videos to execution-session create/send handoffs, preserving source evidence
+  and rejecting inaccessible, missing or unsupported media instead of losing it.
+
 - Added optional Action Fusion to `apply_patch`: `then_run` runs a known
   validation command after the complete patch succeeds, using the normal bash
   permissions, logs and managed-process lifecycle. Command failures keep the patch.
