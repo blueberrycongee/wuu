@@ -140,6 +140,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   not fail at the former 1 MiB limit. Keep bounded reads and report oversized
   events as a local reader limit instead of a network failure.
 
+- Keep collaboration-managed sessions out of ordinary sidebar groups after
+  switching projects by preserving their management state in persisted session
+  lists and metadata updates.
+
 - Remove the remaining `request_handoff` model tool after retiring `/handoff`,
   preventing agents from invoking the removed command through the tool runtime.
 
