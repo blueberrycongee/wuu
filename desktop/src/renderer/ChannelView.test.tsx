@@ -1667,7 +1667,10 @@ describe("ChannelView", () => {
       const jump = document.body.querySelector<HTMLButtonElement>(".jump-to-latest-pill");
       expect(jump).not.toBeNull();
       act(() => jump?.click());
-      expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+      // jump-to-latest pins to the latest content bottom (maxScrollTop), not
+      // to scrollHeight: with scrollHeight 1000 and clientHeight 400 the real
+      // bottom is 600, and browsers clamp an oversized top anyway.
+      expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: "smooth" });
     } finally {
       vi.useRealTimers();
     }
