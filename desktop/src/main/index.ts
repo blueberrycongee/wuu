@@ -7,6 +7,7 @@ import {
   app,
   BrowserWindow,
   type BrowserWindowConstructorOptions,
+  type WebContents,
   clipboard,
   dialog,
   ipcMain,
@@ -236,6 +237,11 @@ import {
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
 import {
+  allowRendererReload,
+  isDisposedWebFrameError,
+  shouldReloadAfterRendererGone,
+} from "./rendererProcessGone";
+import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
   configureBrowserProxy,
@@ -271,6 +277,7 @@ registerRenderableFileScheme();
 registerPluginModuleScheme();
 
 let mainWindow: BrowserWindow | null = null;
+const lastRendererReloadAt = new WeakMap<WebContents, number>();
 // Live system notifications are kept referenced so the OS cannot collect
 // them before the user acts on them (Electron retains only while referenced).
 const activeSystemNotifications = new Set<Notification>();
@@ -593,10 +600,20 @@ function emitServerEvent(event: ServerEvent): void {
 
 function broadcastToAll(channel: string, payload: unknown): void {
   for (const window of windowRegistry.allWindows()) {
-    if (window.isDestroyed() || window.webContents.isDestroyed()) {
-      continue;
-    }
+    sendToWindow(window, channel, payload);
+  }
+}
+
+function sendToWindow(window: BrowserWindow, channel: string, payload: unknown): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+  try {
     window.webContents.send(channel, payload);
+  } catch (error) {
+    if (!isDisposedWebFrameError(error)) {
+      throw error;
+    }
   }
 }
 
@@ -605,14 +622,10 @@ function emitTerminalEvent(
   event: Parameters<TerminalSessionManager["emit"]>[1],
 ): void {
   const window = windowRegistry.windowForID(windowID);
-  if (
-    !window ||
-    window.isDestroyed() ||
-    window.webContents.isDestroyed()
-  ) {
+  if (!window) {
     return;
   }
-  window.webContents.send("wuu:terminal-event", event);
+  sendToWindow(window, "wuu:terminal-event", event);
 }
 
 function unregisterWindow(windowID: number): void {
@@ -723,6 +736,27 @@ function loadRenderer(window: BrowserWindow): void {
       console.error(`[preload] ${preloadPath}: ${error.message}`);
     });
   }
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) {
+      return;
+    }
+    if (!shouldReloadAfterRendererGone(details.reason)) {
+      return;
+    }
+    const now = Date.now();
+    const last = lastRendererReloadAt.get(window.webContents);
+    if (!allowRendererReload(now, last)) {
+      console.error(
+        `[renderer] process gone (${details.reason}, exit ${details.exitCode}); skipping reload within cooldown`,
+      );
+      return;
+    }
+    lastRendererReloadAt.set(window.webContents, now);
+    console.error(
+      `[renderer] process gone (${details.reason}, exit ${details.exitCode}); reloading`,
+    );
+    window.webContents.reload();
+  });
 
   const devRendererURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
   const rendererPath = join(__dirname, "../renderer/index.html");
