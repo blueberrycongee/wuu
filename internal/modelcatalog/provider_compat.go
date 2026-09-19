@@ -256,7 +256,7 @@ func applyDeepSeekOfficialCatalog(provider *Provider) {
 		Family:           "deepseek-thinking",
 		ReleaseDate:      "2026-08-12",
 		Reasoning:        true,
-		ReasoningOptions: officialEffortOptions(true, "high", "max"),
+		ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
 		Attachment:       officialBool(false),
 		ToolCall:         officialBool(true),
 		StructuredOutput: officialBool(true),
@@ -264,12 +264,8 @@ func applyDeepSeekOfficialCatalog(provider *Provider) {
 		Interleaved:      map[string]any{"field": "reasoning_content"},
 		Modalities:       &Modalities{Input: []string{"text"}, Output: []string{"text"}},
 		Limit:            &Limit{Context: 1_000_000, Output: 384_000},
-		SupportedEfforts: []string{"none", "high", "max"},
+		SupportedEfforts: []string{"none", "low", "high", "max"},
 		DefaultVariant:   "high",
-	}
-	if existing, ok := modelByID(*provider, "deepseek-v4-pro"); ok && len(existing.ReasoningOptions) > 0 {
-		pro.ReasoningOptions = existing.ReasoningOptions
-		pro.SupportedEfforts = nil
 	}
 	upsertOfficialModel(provider, pro)
 }

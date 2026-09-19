@@ -505,9 +505,6 @@ func TestDeepSeekV4UsesVendorEffortTiers(t *testing.T) {
 			}, model)
 
 			want := "none,low,high,max"
-			if model == "deepseek-v4-pro" {
-				want = "none,high,max"
-			}
 			variants := SummariesForProvider(providerName, provider, model)
 			if got := strings.Join(variantIDs(variants), ","); got != want {
 				t.Fatalf("variants = %q, want %s", got, want)
@@ -520,6 +517,11 @@ func TestDeepSeekV4UsesVendorEffortTiers(t *testing.T) {
 			}
 			if got := selection.ProviderOptions["reasoningEffort"]; got != "max" {
 				t.Fatalf("max reasoningEffort = %#v", got)
+			}
+
+			low := ResolveForProvider(providerName, provider, model, "low", "")
+			if low.Variant != "low" || low.ProviderOptions["reasoningEffort"] != "low" {
+				t.Fatalf("saved low effort must remain low, got %#v", low)
 			}
 
 			off := ResolveForProvider(providerName, provider, model, "none", "")
