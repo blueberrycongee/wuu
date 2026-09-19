@@ -47,6 +47,15 @@ func (th *threadState) snapshotLocked() Thread {
 	return th.snapshotTurnsLocked(th.Turns)
 }
 
+func (th *threadState) listSnapshotLocked(summaryOnly bool) Thread {
+	if summaryOnly {
+		// Project before cloning: list callers need metadata, not a temporary
+		// copy of every loaded conversation's history under the server lock.
+		return th.snapshotTurnsLocked(nil)
+	}
+	return th.snapshotLocked()
+}
+
 func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 	status := ThreadStatusIdle
 	if th.running {
