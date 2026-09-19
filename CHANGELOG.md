@@ -18,6 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Remember each provider's and engine's last composer model and effort, including
+  Settings workspace defaults, so switching back does not reset to the catalog default.
+
 - Drop the sidebar `harness` descriptor so the brand lockup shows only `wuu`.
 
 - Unify named-agent and group-chat navigation with the desktop session sidebar,

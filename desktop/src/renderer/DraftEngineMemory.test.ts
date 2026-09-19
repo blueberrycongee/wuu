@@ -4,6 +4,7 @@ import {
   clearDraftEngineMemory,
   lastEffortForEngineModel,
   readDraftEngineMemory,
+  rememberedEngineRuntime,
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
@@ -155,6 +156,51 @@ describe("draft engine memory", () => {
     );
 
     expect(resolveDraftEngineMemory(inventory())).toBeUndefined();
+  });
+
+  it("keeps each engine's model and effort while the other one is in use", () => {
+    writeDraftEngineMemory({ engine: "codex", model: "gpt-5-codex", effort: "high" });
+    writeDraftEngineMemory({ engine: "claude", model: "claude-opus-5", effort: "medium" });
+
+    expect(rememberedEngineRuntime("codex", inventory())).toEqual({
+      model: "gpt-5-codex",
+      effort: "high",
+    });
+    expect(rememberedEngineRuntime("claude", inventory())).toEqual({
+      model: "claude-opus-5",
+      effort: "medium",
+    });
+    expect(lastEffortForEngineModel("codex", "gpt-5-codex")).toBe("high");
+    // The built-in engine has its own provider/model memory.
+    expect(rememberedEngineRuntime("wuu", inventory())).toBeUndefined();
+    expect(readDraftEngineMemory()).toEqual({
+      engine: "claude",
+      model: "claude-opus-5",
+      effort: "medium",
+    });
+  });
+
+  it("leaves the engine default in charge when its remembered model is gone", () => {
+    writeDraftEngineMemory({ engine: "codex", model: "retired-model", effort: "high" });
+
+    expect(rememberedEngineRuntime("codex", inventory())).toBeUndefined();
+  });
+
+  it("reads the single-selection payload written by an older build", () => {
+    window.localStorage.setItem(
+      MEMORY_KEY,
+      JSON.stringify({ engine: "codex", model: "gpt-5-codex", effort: "high" }),
+    );
+
+    expect(readDraftEngineMemory()).toEqual({
+      engine: "codex",
+      model: "gpt-5-codex",
+      effort: "high",
+    });
+    expect(rememberedEngineRuntime("codex", inventory())).toEqual({
+      model: "gpt-5-codex",
+      effort: "high",
+    });
   });
 
   it("treats corrupted storage as no remembered engine", () => {

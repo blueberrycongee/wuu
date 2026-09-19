@@ -1,11 +1,16 @@
 import type { EngineInfo, EngineListResult } from "../shared/protocol";
+import { clearRecentSelections, readRecentSelections, rememberRecentSelection } from "./RecentSelectionMemory";
 
-// Last engine the user picked in the composer for a brand-new conversation.
-// Engine binding is a thread-creation decision, so the draft selection is
-// per-thread state that resets constantly. Without a persisted memory a user
-// who works in Codex/Claude Code has to re-pick the agent on every new tab and
-// every relaunch, while the built-in wuu provider/model choice survives
-// because it lives in the server config.
+// Engine/model/effort picks from the composer, most recent first. Engine binding
+// is a thread-creation decision, so the draft selection is per-thread state that
+// resets constantly. Without a persisted memory a user who works in Codex/Claude
+// Code has to re-pick the agent on every new tab and every relaunch, while the
+// built-in wuu provider/model choice survives because it lives in the server
+// config. One entry per engine/model pair keeps each external engine's model and
+// effort apart, so switching agents does not overwrite the other one's choice.
+//
+// Older builds stored a single object under the same key; that payload still
+// parses as one entry.
 const DRAFT_ENGINE_MEMORY_KEY = "wuu.desktop.lastDraftEngine";
 
 // External engines that can be bound at thread creation. Mirrors the composer
@@ -23,25 +28,7 @@ export type DraftEngineMemory = {
 };
 
 export function readDraftEngineMemory(): DraftEngineMemory | undefined {
-  try {
-    const raw = window.localStorage.getItem(DRAFT_ENGINE_MEMORY_KEY);
-    if (!raw) return undefined;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return undefined;
-    }
-    const record = parsed as Partial<Record<keyof DraftEngineMemory, unknown>>;
-    const engine = typeof record.engine === "string" ? record.engine.trim() : "";
-    if (!engine) return undefined;
-    return {
-      engine,
-      model: typeof record.model === "string" ? record.model : "",
-      effort: typeof record.effort === "string" ? record.effort : "",
-    };
-  } catch {
-    // Corrupted or blocked storage just means "no remembered engine".
-    return undefined;
-  }
+  return recentDraftEngineSelections()[0];
 }
 
 export function writeDraftEngineMemory(memory: DraftEngineMemory): void {
@@ -50,23 +37,44 @@ export function writeDraftEngineMemory(memory: DraftEngineMemory): void {
     clearDraftEngineMemory();
     return;
   }
-  try {
-    window.localStorage.setItem(
-      DRAFT_ENGINE_MEMORY_KEY,
-      JSON.stringify({ engine, model: memory.model, effort: memory.effort }),
-    );
-  } catch {
-    // A denied/quota-limited write should not break engine selection; the
-    // in-memory draft still applies for the current window.
-  }
+  rememberRecentSelection(
+    DRAFT_ENGINE_MEMORY_KEY,
+    parseDraftEngineMemory,
+    draftEngineMemoryIdentity,
+    { engine, model: memory.model, effort: memory.effort },
+  );
 }
 
 export function clearDraftEngineMemory(): void {
-  try {
-    window.localStorage.removeItem(DRAFT_ENGINE_MEMORY_KEY);
-  } catch {
-    // Nothing to recover: the next read falls back to the settings default.
+  clearRecentSelections(DRAFT_ENGINE_MEMORY_KEY);
+}
+
+function recentDraftEngineSelections(): DraftEngineMemory[] {
+  return readRecentSelections(DRAFT_ENGINE_MEMORY_KEY, parseDraftEngineMemory);
+}
+
+function parseDraftEngineMemory(value: unknown): DraftEngineMemory | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
   }
+  const record = value as Partial<Record<keyof DraftEngineMemory, unknown>>;
+  const engine = typeof record.engine === "string" ? record.engine.trim() : "";
+  if (!engine) return undefined;
+  return {
+    engine,
+    model: typeof record.model === "string" ? record.model : "",
+    effort: typeof record.effort === "string" ? record.effort : "",
+  };
+}
+
+function draftEngineMemoryIdentity(memory: DraftEngineMemory): string {
+  return JSON.stringify([memory.engine, memory.model]);
+}
+
+export function lastEffortForEngineModel(engine: string, model: string): string | undefined {
+  return recentDraftEngineSelections().find(
+    (entry) => entry.engine === engine.trim() && entry.model === model.trim(),
+  )?.effort;
 }
 
 /**
@@ -79,14 +87,6 @@ export function clearDraftEngineMemory(): void {
  * missing right now (PATH not ready, reinstall in flight) should recover the
  * preference once it is detected again rather than lose it.
  */
-export function lastEffortForEngineModel(engine: string, model: string): string | undefined {
-  const memory = readDraftEngineMemory();
-  if (memory?.engine === engine && memory.model === model) {
-    return memory.effort;
-  }
-  return undefined;
-}
-
 export function resolveDraftEngineMemory(
   inventory: EngineListResult | undefined,
 ): DraftEngineMemory | undefined {
@@ -97,33 +97,61 @@ export function resolveDraftEngineMemory(
   if (memory.engine === "wuu") {
     return { engine: "wuu", model: "", effort: "" };
   }
-  if (!EXTERNAL_ENGINE_IDS.has(memory.engine)) return undefined;
-  if (!inventory) return undefined;
-  const engine = inventory.engines.find((item) => item.id === memory.engine);
+  const engine = engineForMemory(memory.engine, inventory);
+  if (!engine) return undefined;
+  const runtime = runtimeWithinCatalog(engine, memory.model, memory.effort)
+    ?? { model: "", effort: "" };
+  return { engine: memory.engine, ...runtime };
+}
+
+/**
+ * Model and effort the composer last used with this engine. Used when the user
+ * switches back to an engine inside the draft picker: the engine keeps its own
+ * child selection instead of falling back to the catalog default. Returns
+ * undefined when the engine has no memory or the remembered model is no longer
+ * offered, so the caller applies its default selection.
+ */
+export function rememberedEngineRuntime(
+  engineID: string,
+  inventory: EngineListResult | undefined,
+): { model: string; effort: string } | undefined {
+  const id = engineID.trim();
+  if (!EXTERNAL_ENGINE_IDS.has(id)) return undefined;
+  const memory = recentDraftEngineSelections().find((entry) => entry.engine === id);
+  if (!memory) return undefined;
+  const engine = engineForMemory(id, inventory);
+  if (!engine) return undefined;
+  return runtimeWithinCatalog(engine, memory.model, memory.effort);
+}
+
+function engineForMemory(
+  engineID: string,
+  inventory: EngineListResult | undefined,
+): EngineInfo | undefined {
+  if (!EXTERNAL_ENGINE_IDS.has(engineID) || !inventory) return undefined;
+  const engine = inventory.engines.find((item) => item.id === engineID);
   if (!engine?.enabled || !engine.binary_ok) return undefined;
-  return {
-    engine: memory.engine,
-    ...runtimeWithinCatalog(engine, memory),
-  };
+  return engine;
 }
 
 // Drop a model/effort the engine no longer reports so the caller's default
 // fallback takes over. Efforts are checked against the resolved model because
-// the supported set is per-model.
+// the supported set is per-model. An engine that reports no catalog
+// (models_error) keeps the remembered values: they were valid when picked and
+// the engine still accepts them.
 function runtimeWithinCatalog(
   engine: EngineInfo,
-  memory: DraftEngineMemory,
-): { model: string; effort: string } {
+  model: string,
+  effort: string,
+): { model: string; effort: string } | undefined {
   const models = engine.models ?? [];
-  // An engine that reports no catalog (models_error) keeps the remembered
-  // values: they were valid when picked and the engine still accepts them.
   if (models.length === 0) {
-    return { model: memory.model, effort: memory.effort };
+    return { model, effort };
   }
-  const model = models.find((item) => item.id === memory.model);
-  if (!model) return { model: "", effort: "" };
-  const effort = (model.supported_efforts ?? []).includes(memory.effort)
-    ? memory.effort
-    : "";
-  return { model: memory.model, effort };
+  const rememberedModel = models.find((item) => item.id === model);
+  if (!rememberedModel) return undefined;
+  return {
+    model,
+    effort: (rememberedModel.supported_efforts ?? []).includes(effort) ? effort : "",
+  };
 }

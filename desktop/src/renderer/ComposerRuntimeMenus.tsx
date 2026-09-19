@@ -60,7 +60,7 @@ import type {
   PermissionMode
 } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
-import { lastEffortForRuntimeModel } from "./DraftRuntimeMemory";
+import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
 import {
   codexEffortOptions,
   displayCodexModelName,
@@ -919,7 +919,12 @@ export function RuntimeModelMenu({
                       openView("models");
                       return;
                     }
-                    const model = group.models[0];
+                    // Reuse the model this provider was last used with so a
+                    // provider switch does not silently drop back to the catalog
+                    // default; a model that disappeared falls back to it.
+                    const remembered = lastModelForProvider(group.provider.name);
+                    const model =
+                      group.models.find((item) => item.id === remembered) ?? group.models[0];
                     if (model && !selected) {
                       selectModel(
                         group.provider.name,

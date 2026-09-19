@@ -238,6 +238,18 @@ export function createRuntimeSettingsActions(
         nextPermissionMode,
         targetThread?.id,
       );
+      if (scope === "workspace") {
+        // Settings writes the workspace default, which is the same "last pick"
+        // the composer memory tracks. Recording it keeps the next new
+        // conversation on the model just chosen in Settings instead of an older
+        // composer pick for that provider. The server's effective variant belongs
+        // to this provider/model pair because the workspace holds one selection.
+        rememberDraftRuntime(
+          updated.provider,
+          updated.model,
+          updated.variant ?? updated.effort ?? "",
+        );
+      }
       deps.setAppState((current) => {
         // The result is workspace-effective, so initialized takes it
         // wholesale.
