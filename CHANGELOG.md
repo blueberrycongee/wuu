@@ -18,6 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Remove the redundant workspace path row from the terminal panel so terminal
+  content starts directly below the workspace tabs.
+
 - Tighten the base communication contract so process text and answers share one
   speaking style, prefer short paragraphs over status one-liners, and avoid stock
   AI phrasing.
