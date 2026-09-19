@@ -1751,9 +1751,11 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 		return false, nil
 	}
 	s.pruneRevokedSteersLocked(th)
-	var humanSteers []providers.ChatMessage
+	var humanSteers, pluginSteers []providers.ChatMessage
 	for _, msg := range th.pendingSteers {
-		if msg.Origin != "plugin" {
+		if msg.Origin == "plugin" {
+			pluginSteers = append(pluginSteers, msg)
+		} else {
 			humanSteers = append(humanSteers, msg)
 		}
 	}
@@ -1814,6 +1816,11 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	}
 	for _, entry := range discardedPluginTurns {
 		s.notifyPluginTurnDiscarded(threadID, entry, "queued turn was interrupted")
+	}
+	// Pending steers have no durable history yet. Record explicit cancellation
+	// so an extension's recovery policy does not redeliver them after this stop.
+	for _, entry := range queuedTurnsFromSteers(pluginSteers) {
+		s.notifyPluginTurnDiscarded(threadID, entry, "steered input was interrupted")
 	}
 	discardedIDs := queuedTurnIDs(discardedPluginTurns)
 	s.notifyQueuedTurnsDequeued(threadID, discardedIDs)

@@ -96,6 +96,46 @@ func TestPeerReplyUsesNativeCompletion(t *testing.T) {
 	}
 }
 
+func TestPeerReceiptCancellationPreventsRedelivery(t *testing.T) {
+	for _, mode := range []string{pluginhost.SessionIfRunningQueue, pluginhost.SessionIfRunningSteer} {
+		t.Run(mode, func(t *testing.T) {
+			srv, provider, owner, _, threadID := newPeerCompletionFixture(t)
+			ctx := context.Background()
+			initial, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
+				RequestID: "work", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Review the files"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.next(t) // Hold the model before it can consume the receipt.
+			params := pluginhost.SessionSendParams{
+				RequestID: "receipt", SessionID: threadID, IfRunning: mode,
+				Input: pluginhost.SessionInput{Prompt: "Review result"},
+			}
+			if _, err := srv.sendPluginSession(ctx, owner.id, params); err != nil {
+				t.Fatal(err)
+			}
+			if interrupted, err := srv.interruptThreadExecution(threadID, "", initial.TurnID); err != nil || !interrupted {
+				t.Fatalf("interrupt: %v, %v", interrupted, err)
+			}
+			inspected, err := srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{SessionID: threadID, RequestID: params.RequestID})
+			if err != nil || inspected.Turn == nil || inspected.Turn.State != pluginhost.TurnLifecycleDiscarded || inspected.Turn.Retryable {
+				t.Fatalf("user cancellation lost its durable discard receipt: %+v, %v", inspected, err)
+			}
+			waitForThreadLeaseRelease(t, srv.rt.SessionDir, threadID)
+			retried, err := srv.sendPluginSession(ctx, owner.id, params)
+			if err != nil || retried.State != pluginhost.TurnLifecycleDiscarded {
+				t.Fatalf("cancelled receipt was admitted again: %+v, %v", retried, err)
+			}
+			select {
+			case <-provider.calls:
+				t.Fatal("cancelled receipt woke another model turn")
+			default:
+			}
+		})
+	}
+}
+
 func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 	for _, late := range []bool{false, true} {
 		name := "during_tool_step"
