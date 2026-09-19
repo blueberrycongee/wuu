@@ -322,6 +322,17 @@ missed-trigger recovery, concurrent merging, and business state must live in
 the plugin; the core provides no timer tick and does not interpret
 `request_id` or `cause`.
 
+Queue acceptance is not durable delivery. Plugins that need recovery must retain
+their request identity and use `host.session.inspect` to reconcile it; terminal
+output remains available after the lifecycle notification is acknowledged.
+A queued input discarded by host shutdown carries `retryable: true` in its
+lifecycle event and inspection result, permitting another `host.session.send`
+with the same `request_id`. User cancellation is not retryable: a repeated send
+returns its retained terminal receipt without reviving the input. A started
+turn is never marked retryable. These are additive fields on the existing v1
+contract; absent `retryable` means false. Transport errors and caller cancellation
+do not prove that the host rejected a send.
+
 Every plugin tool call carries the `turn_id` that owns it plus the unique
 `execution_id` of that dispatch (progress reporting and precise cancellation
 are covered under "Execution scope"). A plugin declaring the

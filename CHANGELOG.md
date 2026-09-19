@@ -110,6 +110,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve peer request correlation after uncertain sends, recover queued replies
+  after host restart without reviving user-cancelled inputs, and retain completed
+  results instead of replacing them with timeout messages. Peer discovery and
+  sends now consistently stay within the current workspace.
+
 - Highlight the current running session in the sidebar bell view using the same
   selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,

@@ -85,8 +85,9 @@ wuu plugin remove my-plugin
 The bundled **Peers** plugin lets an agent contact another existing conversation.
 It is enabled by default; an explicit disabled preference is preserved. Enable it
 in plugin settings if needed, then ask the agent to contact a session by its copied
-ID, or use `/peer` to discover available conversations. Private and archived
-sessions are excluded from discovery.
+ID, or use `/peer` to discover available conversations in the current workspace.
+Private, archived, and other-workspace sessions are excluded. Local forks in the
+same workspace remain available; cross-workspace delivery is not supported.
 
 Requests start a turn on an idle target or queue behind its current work. The
 target's final response is returned once; that return does not automatically send
@@ -99,6 +100,13 @@ Cross-session messages are not direct user instructions and do not change the
 target's permissions or goal. The agent can decline a request; `peer_policy` can
 refuse incoming requests for a session. Disabling Peers removes its tools and
 automatic coordination behavior.
+
+A queued reply is not considered delivered until its receiving turn starts.
+While Peers is enabled, it recovers replies lost from the host's pending queue
+after a restart, using the original request identity and retained result. It
+honors explicit queue cancellation. If a send is cancelled before its outcome
+is known, an already accepted target can still return its result. Retryable
+delivery failures do not turn a completed result into a request-timeout message.
 
 ## Trust boundary
 
