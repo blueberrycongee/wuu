@@ -58,16 +58,12 @@ package. It requires:
 
 - `GITHUB_TOKEN` (provided by GitHub Actions)
 
-The release build sets `VITE_ENABLE_ACCOUNT=false`,
-`VITE_ENABLE_REMOTE_CONTROL=false`, and
-`VITE_ENABLE_COLLABORATION_SETTINGS=false`, so this version is the local,
+The release build sets `VITE_ENABLE_ACCOUNT=false` and
+`VITE_ENABLE_REMOTE_CONTROL=false`, so this version is the local,
 unauthenticated desktop experience. The sidebar identifies the mode as
 “Local mode”, and account, device-linking, phone pairing, and remote-control
 settings are hidden. Those surfaces remain available in development builds
 while the flow is being completed.
-
-The verification-model settings page is also omitted from the release because
-that collaboration model is not currently a supported product feature.
 
 The release also sets `WUU_SKIP_CUA_MAC=1`. Computer Use is not included: the
 native CUA helper is neither compiled nor packaged, and the release verifier

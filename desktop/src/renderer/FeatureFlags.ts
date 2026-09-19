@@ -30,10 +30,6 @@ export const ENABLE_GROUP_CHAT =
 export const ENABLE_ACCOUNT =
   import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
-/** The verification-model settings page is not part of the local release. */
-export const ENABLE_COLLABORATION_SETTINGS =
-  import.meta.env.VITE_ENABLE_COLLABORATION_SETTINGS !== "false";
-
 /**
  * The embedded browser remains an internal development capability. Production
  * builds do not expose its workspace surface even if the build environment
