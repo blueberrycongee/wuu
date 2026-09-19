@@ -103,6 +103,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Highlight the current running session in the sidebar bell view using the same
+  selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
   without pulling readers away from an explicitly paused reading position.
 - Position locally queued and steered messages when they enter the conversation,
