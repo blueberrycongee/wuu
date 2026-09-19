@@ -126,7 +126,6 @@ describe("appServerHelperEnvironment", () => {
       join(packagedBin, "wuu-dream-plugin"),
       join(packagedBin, "wuu-todo-plugin"),
       join(packagedBin, "wuu-goal-plugin"),
-      join(packagedBin, "wuu-note-compaction-plugin"),
       join(packagedBin, "wuu-cua-mac"),
     ]);
     const result = appServerHelperEnvironment(
@@ -142,9 +141,6 @@ describe("appServerHelperEnvironment", () => {
     expect(result.WUU_DREAM_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-dream-plugin"));
     expect(result.WUU_GOAL_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-goal-plugin"));
     expect(result.WUU_TODO_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-todo-plugin"));
-    expect(result.WUU_NOTE_COMPACTION_PLUGIN_HELPER).toBe(
-      join(packagedBin, "wuu-note-compaction-plugin"),
-    );
     expect(result.WUU_CUA_MAC_HELPER).toBe(join(packagedBin, "wuu-cua-mac"));
   });
 
@@ -157,7 +153,6 @@ describe("appServerHelperEnvironment", () => {
       join(sourceBin, "wuu-dream-plugin"),
       join(sourceBin, "wuu-todo-plugin"),
       join(sourceBin, "wuu-goal-plugin"),
-      join(sourceBin, "wuu-note-compaction-plugin"),
       join(sourceBin, "wuu-cua-mac"),
     ]);
     const discovered = appServerHelperEnvironment(
@@ -169,9 +164,6 @@ describe("appServerHelperEnvironment", () => {
     );
     expect(discovered.WUU_GOAL_PLUGIN_HELPER).toBe(join(sourceBin, "wuu-goal-plugin"));
     expect(discovered.WUU_TODO_PLUGIN_HELPER).toBe(join(sourceBin, "wuu-todo-plugin"));
-    expect(discovered.WUU_NOTE_COMPACTION_PLUGIN_HELPER).toBe(
-      join(sourceBin, "wuu-note-compaction-plugin"),
-    );
     expect(discovered.WUU_CUA_MAC_HELPER).toBe(join(sourceBin, "wuu-cua-mac"));
     const overridden = appServerHelperEnvironment(
       {

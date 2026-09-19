@@ -282,6 +282,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		BrowserBridge:             t.env.BrowserBridge,
 		BrowserTabs:               t.env.BrowserTabs,
 		ArtifactPublisher:         t.env.ArtifactPublisher,
+		WorkingNotesHome:          t.env.WorkingNotesHome,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
 		Skills:                    t.env.Skills,
 		OnFileChanged:             t.env.OnFileChanged,
@@ -361,6 +362,8 @@ func (t *Toolkit) rebuildRegistry() {
 		NewThreadGetTool(e),
 		NewSetSessionWorkspaceTool(e),
 		NewNewContextTool(),
+		NewNotesTool(e),
+		NewRequestHandoffTool(e),
 		NewHistoryReadTool(e),
 		NewHistorySearchTool(e),
 		// Recurring agent profiles
@@ -555,6 +558,11 @@ func (t *Toolkit) SetSessionsDir(dir string) {
 		return
 	}
 	t.env.SessionsDir = strings.TrimSpace(dir)
+}
+
+// SetWorkingNotesHome binds native notes and legacy imports to this runtime.
+func (t *Toolkit) SetWorkingNotesHome(home string) {
+	t.env.WorkingNotesHome = strings.TrimSpace(home)
 }
 
 // SessionDir returns the session artifact directory currently bound to this toolkit.

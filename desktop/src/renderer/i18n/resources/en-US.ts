@@ -2255,7 +2255,7 @@ export const enUS = {
   "onboarding.plugin.subagent": "Delegate bounded work to child agents.",
   "onboarding.plugin.memory": "Keep durable preferences and lessons you can manage.",
   "onboarding.plugin.dream": "Consolidate durable workspace knowledge in the background.",
-  "onboarding.plugin.noteCompaction": "Experimentally continue long sessions with Markdown checkpoints.",
+  "onboarding.plugin.peers": "Coordinate work between independent sessions.",
   "onboarding.pluginsFailed": "Could not apply plugin choices",
   "onboarding.applying": "Applying…",
   "onboarding.back": "Back",

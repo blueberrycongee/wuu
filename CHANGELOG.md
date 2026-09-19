@@ -25,6 +25,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
 
+- Make working notes and summary-free context windows built-in defaults, preserving
+  existing session notes without the Context Notes extension. Include Peers in
+  first-run extension choices.
+
 - Remove the redundant workspace path row from the terminal panel so terminal
   content starts directly below the workspace tabs.
 

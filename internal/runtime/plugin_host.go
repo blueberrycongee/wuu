@@ -329,6 +329,7 @@ func applyRequestTransformPatch(request *providers.ChatRequest, patch pluginhost
 func buildPluginAgentCapabilities(ctx context.Context, host *pluginhost.Host, provider, model, cwd string) (*agent.SystemPromptAssembler, *agent.CompactionRegistry, error) {
 	prompts := agent.NewSystemPromptAssembler()
 	compactions := agent.NewCompactionRegistry()
+	compactions.Default = agent.DefaultContextWindowProvider{}
 	if host == nil {
 		return prompts, compactions, nil
 	}

@@ -30,6 +30,9 @@ func (t *Toolkit) ToolDisplay(call providers.ToolCall) (providers.ToolCallDispla
 
 func (t *Toolkit) displayCapabilityForTool(call providers.ToolCall) string {
 	name := strings.TrimSpace(call.Name)
+	if name == "request_handoff" {
+		return "handoff"
+	}
 	if name == "bash" {
 		var args bashArgs
 		if err := decodeArgs(call.Arguments, &args); err == nil {
@@ -86,6 +89,10 @@ func builtInToolDisplay(call providers.ToolCall) providers.ToolCallDisplay {
 	name := strings.TrimSpace(call.Name)
 
 	switch name {
+	case "notes":
+		return providers.ToolCallDisplay{Kind: "read", Label: "Working notes", LabelTranslations: map[string]string{"zh-CN": "工作笔记"}, Text: "Working notes"}
+	case "request_handoff":
+		return providers.ToolCallDisplay{Kind: "handoff", Label: "Start a new session", LabelTranslations: map[string]string{"zh-CN": "开启新会话"}, Text: "Requesting handoff", Capability: "handoff"}
 	case "read_file":
 		return toolDisplay("read", "读取 "+displayPathTarget(displayString(args, "path", "file"), "文件"))
 	case "present_artifact":

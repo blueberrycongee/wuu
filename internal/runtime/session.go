@@ -455,6 +455,7 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, newErr
 		}
 		kit.SetStateDir(workspaceStateDir)
+		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetWorkspaceID(workspaceID)
 		kit.SetProcessManager(processMgr)
@@ -1359,6 +1360,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetSessionID(id)
 		kit.SetSessionDir(artifactDir)
 		kit.SetSessionsDir(s.SessionDir)
+		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetBrowserTabs(browserTabs)
 		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
 		kit.SetAgentIdentity(id, agentthread.RootPath)

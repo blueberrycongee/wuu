@@ -161,7 +161,7 @@ func TestPluginCompactionInvokesHighestPriorityAndGenerationCleanupReachesClones
 	if err := generation.close(); err != nil {
 		t.Fatal(err)
 	}
-	if clone.CompactionRegistry.Count() != 0 || clone.CompactionRegistry.Resolve(nil) != nil {
+	if clone.CompactionRegistry.Count() != 0 || !clone.ContextWindowsAvailable() {
 		t.Fatal("cloned runner retained compaction from closed generation")
 	}
 }

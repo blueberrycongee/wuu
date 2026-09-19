@@ -65,28 +65,30 @@ describe("FirstRunOnboarding", () => {
       plugin("ask-user", false),
       plugin("user-theme", true, "user"),
       plugin("peers", false),
+      plugin("note-compaction", false),
     ];
 
     expect(bundledOnboardingPlugins(inventory).map((item) => item.id)).toEqual([
       "plugin:bundled:ask-user",
       "plugin:bundled:todo",
+      "plugin:bundled:peers",
     ]);
   });
 
-  it("allows enabling Goal from the bundled onboarding choices", async () => {
+  it.each(["goal", "peers"])("allows enabling %s from the bundled onboarding choices", async (id) => {
     const update = vi.fn(async () => undefined);
     await act(async () => root.render(
       <I18nProvider><FirstRunOnboarding
-        inventory={[plugin("goal", false)]} providers={[]}
+        inventory={[plugin(id, false)]} providers={[]}
         onUpdateExtensionPackage={update}
         onSaveProvider={vi.fn(async () => undefined)}
         onComplete={vi.fn(async () => undefined)}
       /></I18nProvider>,
     ));
     await clickButton("开始设置");
-    await clickPlugin("goal");
+    await clickPlugin(id);
     await clickButton("继续");
-    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:goal", action: "enable" });
+    expect(update).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
   });
 
   it("recognizes configured and locked model providers", () => {
