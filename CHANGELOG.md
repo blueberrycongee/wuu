@@ -33,6 +33,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep conversation search results title-only on the left, with matching snippets
   and conversation details in the right preview pane.
 
+- Nudge the desktop process mascot's reading shape right for optical alignment
+  with conversation text, without moving the summary text column.
+
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
 

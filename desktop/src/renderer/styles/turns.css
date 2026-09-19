@@ -2616,7 +2616,13 @@
   --process-mascot-inset: 5px;
 }
 
-.process-surface-blobatar:is([data-wuu-mascot-morph="scan"], [data-wuu-mascot-morph="standby"]) {
+.process-surface-blobatar[data-wuu-mascot-morph="scan"] {
+  /* Text ink sits inside its line box; align the scan bars with that ink
+   * rather than pulling their rounded ends onto the box edge. */
+  --process-mascot-inset: 5px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="standby"] {
   --process-mascot-inset: 6px;
 }
 
