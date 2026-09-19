@@ -36,7 +36,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "3"
+	projectorVersion = "4"
 )
 
 // projectionMode selects how the stable projection participates in a run.

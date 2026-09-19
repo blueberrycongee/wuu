@@ -161,7 +161,13 @@
 .environment-panel-actions .icon-button {
   width: 26px;
   height: 26px;
+  padding: 0;
+  line-height: 0;
   border-radius: var(--radius-sm);
+}
+
+.environment-panel-actions .icon-button > svg {
+  display: block;
 }
 
 .environment-panel-body {

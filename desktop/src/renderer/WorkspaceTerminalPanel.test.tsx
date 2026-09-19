@@ -244,7 +244,6 @@ describe("WorkspaceTerminalPanel", () => {
       expect.objectContaining({ cwd: "/worktrees/fork-1/project" }),
     );
     expect(startTerminalSession).toHaveBeenCalledTimes(1);
-    expect(container.querySelector(".workspace-terminal-path")?.textContent).toBe("/worktrees/fork-1/project");
     expect(container.querySelector(".workspace-terminal-navigation")).toBeNull();
     expect(container.querySelector('button[aria-label="新建终端"]')).toBeNull();
     expect(container.querySelectorAll(".workspace-terminal-panel")).toHaveLength(1);
@@ -310,7 +309,6 @@ describe("WorkspaceTerminalPanel", () => {
       <WorkspaceTerminalPanel activeContext={worktreeContext} thread={threadWithRuns} />,
     );
 
-    expect(container.querySelector(".workspace-terminal-path")?.textContent).toBe("/worktrees/fork-1/project");
     expect(container.textContent).not.toContain("npm test");
     expect(container.textContent).not.toContain("npm run lint");
     expect(startTerminalSession).toHaveBeenCalledTimes(1);

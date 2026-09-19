@@ -21,6 +21,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
 
+- Remove the redundant workspace path row from the terminal panel so terminal
+  content starts directly below the workspace tabs.
+
 - Tighten the base communication contract so process text and answers share one
   speaking style, prefer short paragraphs over status one-liners, and avoid stock
   AI phrasing.
@@ -103,6 +106,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Highlight the current running session in the sidebar bell view using the same
+  selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,
   without pulling readers away from an explicitly paused reading position.
 - Position locally queued and steered messages when they enter the conversation,
