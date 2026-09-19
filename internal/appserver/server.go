@@ -877,7 +877,7 @@ func (s *Server) Close() {
 		s.queuedTurnMu.Unlock()
 		for threadID, entries := range queuedOnClose {
 			for _, entry := range entries {
-				s.notifyPluginTurnDiscarded(threadID, entry, "app-server closed before queued turn started")
+				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
 			}
 		}
 		s.agentCompletionMu.Lock()
