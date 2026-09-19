@@ -134,11 +134,6 @@ export function ConversationSearchOverlay({
               const active = thread.id === activeThreadID;
               const pending = pendingThreadID === thread.id;
               const selected = state.selectedIndex === resultIndex;
-              const snippet = conversationSearchVisibleSnippet({
-                query: state.query,
-                snippet: result.snippet,
-                title,
-              });
               return (
                 <button
                   key={thread.id}
@@ -149,15 +144,8 @@ export function ConversationSearchOverlay({
                   onMouseEnter={() => onSelectIndex(resultIndex)}
                   onClick={() => onSelectResult(result)}
                 >
-                  <span className="conversation-search-result-main">
-                    <span className="conversation-search-result-title">
-                      <SearchMatchText text={title} query={state.query} />
-                    </span>
-                    {snippet ? (
-                      <span className="conversation-search-result-snippet">
-                        <SearchMatchText text={snippet} query={state.query} />
-                      </span>
-                    ) : null}
+                  <span className="conversation-search-result-title">
+                    <SearchMatchText text={title} query={state.query} />
                   </span>
                   <span
                     className={`conversation-search-result-shortcut${resultIndex < 9 ? "" : " empty"}`}

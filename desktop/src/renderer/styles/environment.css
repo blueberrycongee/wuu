@@ -744,12 +744,6 @@
   transform: scale(0.992);
 }
 
-.conversation-search-result-main {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
 .conversation-search-result-title {
   min-width: 0;
   overflow: hidden;
@@ -761,21 +755,7 @@
   white-space: nowrap;
 }
 
-.conversation-search-result-snippet {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--env-search-result-snippet-text);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-regular);
-  line-height: 16px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.conversation-search-result-main mark {
+.conversation-search-result-title mark {
   background: var(--env-search-result-hover-bg);
   color: var(--ink);
   font-weight: var(--weight-semibold);

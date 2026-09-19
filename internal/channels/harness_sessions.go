@@ -27,22 +27,23 @@ type HarnessSessionActor struct {
 }
 
 type HarnessSessionParams struct {
-	Action        string `json:"action"`
-	WorkID        string `json:"work_id,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
-	WorkspaceRoot string `json:"workspace_root,omitempty"`
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	Workspace     string `json:"workspace,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Prompt        string `json:"prompt,omitempty"`
-	Query         string `json:"query,omitempty"`
-	Mode          string `json:"mode,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	Model         string `json:"model,omitempty"`
-	Effort        string `json:"effort,omitempty"`
-	Limit         int    `json:"limit,omitempty"`
-	Before        int    `json:"before,omitempty"`
-	OperationID   string `json:"-"`
+	Action        string            `json:"action"`
+	WorkID        string            `json:"work_id,omitempty"`
+	SessionID     string            `json:"session_id,omitempty"`
+	WorkspaceRoot string            `json:"workspace_root,omitempty"`
+	WorkspaceID   string            `json:"workspace_id,omitempty"`
+	Workspace     string            `json:"workspace,omitempty"`
+	Title         string            `json:"title,omitempty"`
+	Prompt        string            `json:"prompt,omitempty"`
+	Media         []HarnessMediaRef `json:"media,omitempty"`
+	Query         string            `json:"query,omitempty"`
+	Mode          string            `json:"mode,omitempty"`
+	Provider      string            `json:"provider,omitempty"`
+	Model         string            `json:"model,omitempty"`
+	Effort        string            `json:"effort,omitempty"`
+	Limit         int               `json:"limit,omitempty"`
+	Before        int               `json:"before,omitempty"`
+	OperationID   string            `json:"-"`
 }
 
 type HarnessSessionLink struct {

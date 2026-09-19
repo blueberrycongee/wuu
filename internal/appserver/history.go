@@ -26,6 +26,7 @@ type persistedToolCall struct {
 }
 
 type persistedImage struct {
+	Required  bool   `json:"required,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
 	Width     uint32 `json:"width,omitempty"`
@@ -33,6 +34,7 @@ type persistedImage struct {
 }
 
 type persistedFile struct {
+	Required  bool   `json:"required,omitempty"`
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
 	Filename  string `json:"filename,omitempty"`
@@ -163,6 +165,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Images = append(msg.Images, providers.InputImage{
+				Required:  image.Required,
 				MediaType: image.MediaType,
 				Data:      image.Data,
 				Width:     image.Width,
@@ -174,6 +177,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Files = append(msg.Files, providers.InputFile{
+				Required:  file.Required,
 				MediaType: file.MediaType,
 				Data:      file.Data,
 				Filename:  file.Filename,
@@ -371,6 +375,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Images = append(out.Images, persistedImage{
+			Required:  image.Required,
 			MediaType: image.MediaType,
 			Data:      data,
 			Width:     image.Width,
@@ -383,6 +388,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Files = append(out.Files, persistedFile{
+			Required:  file.Required,
 			MediaType: file.MediaType,
 			Data:      data,
 			Filename:  file.Filename,

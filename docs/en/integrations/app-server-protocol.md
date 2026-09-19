@@ -9,6 +9,10 @@ than building separate agent loops.
 
 ## Transport
 
+For the named-agent `session` tool's explicit attachment selection, source access
+checks, queue recovery and model-input contract, see
+[media handoff](../automation/app-server.md#named-agent-media-handoff).
+
 The current app-server transport is newline-delimited JSON over stdio.
 
 A cloud control plane starts the same core binary with an explicit process

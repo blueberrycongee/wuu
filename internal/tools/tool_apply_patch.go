@@ -67,7 +67,7 @@ func (t *ApplyPatchTool) Classify(argsJSON string) ToolClassification {
 func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "apply_patch",
-		Description: "Apply a structured workspace patch using *** Begin Patch / *** End Patch. Supports Add, Update, optional Move, and Delete sections. Update and delete hunks are validated against the current file content; stale or ambiguous anchors fail. dry_run validates without writing. When the follow-up validation command is already known, supply then_run to apply the complete patch and run that command in one call. Omit it when the next action depends on inspecting the patch result. A failed command keeps the patch; never reapply a successful patch just to retry validation.",
+		Description: "Apply a structured workspace patch using *** Begin Patch / *** End Patch. Supports Add, Update, optional Move, and Delete sections. Each resolved path, including move sources and destinations, may appear in only one file section; combine multiple updates into that section's @@ chunks. Update and delete hunks are validated against the current file content; stale or ambiguous anchors fail. dry_run validates without writing. When the follow-up validation command is already known, supply then_run to apply the complete patch and run that command in one call. Omit it when the next action depends on inspecting the patch result. A failed command keeps the patch; never reapply a successful patch just to retry validation.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -142,10 +142,27 @@ func (t *ApplyPatchTool) ExecuteResult(ctx context.Context, argsJSON string) (to
 
 	files := make([]applyPatchFileResult, 0, len(patch.Hunks))
 	plans := make([]applyPatchHunkPlan, 0, len(patch.Hunks))
-	for _, hunk := range patch.Hunks {
+	pathOwners := make(map[string]int, len(patch.Hunks)*2)
+	for i, hunk := range patch.Hunks {
 		plan, err := t.planHunk(ctx, hunk)
 		if err != nil {
 			return toolresult.Result{}, fmt.Errorf("apply_patch verification failed: %w", err)
+		}
+		// Plans read the same pre-patch state, so sharing a path across plans
+		// could overwrite an earlier edit. These paths are already resolved and
+		// worktree-rebased; an in-place update may own its source and target.
+		for _, path := range []string{plan.SourceAbs, plan.TargetAbs} {
+			if path == "" {
+				continue
+			}
+			key, err := patchPathKey(path)
+			if err != nil {
+				return toolresult.Result{}, fmt.Errorf("apply_patch verification failed: resolve %s: %w", path, err)
+			}
+			if owner, exists := pathOwners[key]; exists && owner != i {
+				return toolresult.Result{}, fmt.Errorf("apply_patch verification failed: multiple operations target %q; use one file section per path", t.env.NormalizeDisplayPathExec(ctx, key))
+			}
+			pathOwners[key] = i
 		}
 		plans = append(plans, plan)
 		files = append(files, plan.Result)
@@ -560,6 +577,25 @@ type patchPathSnapshot struct {
 	Exists  bool
 	Content []byte
 	Mode    os.FileMode
+}
+
+// Resolve aliases through existing ancestors even when an add or move target's
+// parent directories do not exist yet. This key is only for conflict detection;
+// the plan retains its permission-checked paths for execution.
+func patchPathKey(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	parent := filepath.Dir(path)
+	if !os.IsNotExist(err) || parent == path {
+		return "", err
+	}
+	resolved, err = patchPathKey(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(path)), nil
 }
 
 func snapshotPatchPlans(plans []applyPatchHunkPlan) ([]patchPathSnapshot, error) {

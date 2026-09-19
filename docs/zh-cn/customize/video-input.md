@@ -19,7 +19,7 @@
 | Gemini 官方直连兼容接口 | 当前不开放；Gemini 原生视频接口尚未接入 | [Gemini 原生视频理解](https://ai.google.dev/gemini-api/docs/video-understanding)与[兼容接口](https://ai.google.dev/gemini-api/docs/openai)是不同契约 |
 | Anthropic Messages | 当前适配器不支持视频 | [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision) |
 
-支持集合随模型目录和用户配置变化，不硬编码模型名称。例如当前目录包含 OpenRouter 的 `google/gemini-2.5-flash`、`google/gemini-2.5-pro`，以及阿里云的 `qwen3.8-max`、`qwen3.8-flash` 等 video 输入条目；这些是满足本地准入条件的示例，不代表每个账号和下游路由都完成了真实推理验证。
+支持集合随模型目录和用户配置变化，不硬编码模型名称。满足本地准入条件不代表每个账号和下游路由都完成了真实推理验证。
 
 不支持的新视频会显示切换模型和连接的提示。后续改用不支持视频的模型时，旧记录保留原始附件，仅在该次模型上下文中替换为无法读取的标记；不伪装为已经分析过的视频。
 
@@ -42,4 +42,4 @@ Provider 必须使用 Chat 协议。`video_input` 是 Wuu 内部配置，不会�
 
 ## 验证边界
 
-2026-09-13：完成视频编码与附件构建、服务端格式和总量校验、模型与协议准入、旧历史保留、模拟 HTTP 视频格式、Responses 拒绝，以及 Electron 中粘贴、播放、删除、消息预览和浅深色窄窗口检查。未使用真实供应商账号发起视频推理，不能将上述验证描述为供应商端识别准确率或账号权限验证。
+本地格式校验、模拟 HTTP 测试和界面播放不等于供应商端视频推理验收。使用自己的账号确认模型权限、下游格式与时长限制；不能把本地接入支持描述为识别准确率或账号可用性保证。实现入口见 [视频准入](../../../internal/providers/video_input.go)。

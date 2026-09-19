@@ -147,6 +147,9 @@ type ToolCall struct {
 
 // InputImage carries one user-provided image in base64 form.
 type InputImage struct {
+	// Required evidence must cause an error instead of an unsupported-media omission.
+	// This is local admission metadata, never a provider wire field.
+	Required  bool
 	MediaType string
 	Data      string
 	Width     uint32
@@ -157,6 +160,8 @@ type InputImage struct {
 // Images are still represented by InputImage for backward compatibility;
 // non-image media such as PDFs use InputFile.
 type InputFile struct {
+	// Required has the same admission semantics as InputImage.Required.
+	Required  bool
 	MediaType string
 	Data      string
 	Filename  string

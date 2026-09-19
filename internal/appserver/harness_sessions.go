@@ -66,6 +66,9 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 	if s == nil || s.rt == nil || s.channelService == nil {
 		return nil, errors.New("session management unavailable")
 	}
+	if len(p.Media) > 0 && p.Action != "create" && p.Action != "send" {
+		return nil, errors.New("media is supported only for session create/send")
+	}
 	if p.Action == "list" {
 		return s.listHarnessSessions(ctx, actor, p)
 	}
@@ -163,6 +166,9 @@ func (s *Server) HarnessSession(ctx context.Context, actor channels.HarnessSessi
 		if err := s.dispatchHarnessOperation(ctx, &op); err != nil {
 			return nil, err
 		}
+	}
+	if op.State == "failed" {
+		return nil, fmt.Errorf("session operation %s failed: %s", op.ID, op.Error)
 	}
 	metadata, err := s.sharedHarnessSession(op.Params.SessionID)
 	if err != nil {
@@ -337,6 +343,15 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 	if err := s.validateHarnessScope(ctx, op.Actor, false); err != nil {
 		return err
 	}
+	if len(p.Media) > 0 {
+		if recovered, err := s.recoverHarnessMediaReceipt(ctx, op); recovered || err != nil {
+			return err
+		}
+	}
+	msg, err := s.harnessInput(ctx, op.Actor, p)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errHarnessMedia, err)
+	}
 	if p.Action == "create" {
 		if _, ok, err := session.Find(s.rt.SessionDir, p.SessionID); err != nil {
 			return err
@@ -344,6 +359,20 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 			if _, err := s.createHostSessionThread("user", "collaboration", p.SessionID, pluginhost.SessionCreateParams{RequestID: op.ID, Name: p.Title, Visibility: "user", ContextSource: "fresh", ParentSessionID: op.Actor.SessionRef, Workspace: p.Workspace, WorkspaceID: p.WorkspaceID, WorkspaceRoot: p.WorkspaceRoot, Provider: p.Provider, Model: p.Model, Effort: p.Effort}); err != nil {
 				return err
 			}
+		}
+	}
+	if len(p.Media) > 0 {
+		th, err := s.ensureThreadLoaded(p.SessionID)
+		if err != nil {
+			return err
+		}
+		targetRuntime, err := s.ensureThreadRuntime(th)
+		if err != nil {
+			return err
+		}
+		// Reject before a steer advances the control fence of valid work.
+		if err := validateSessionInputMedia(msg, targetRuntime); err != nil {
+			return fmt.Errorf("%w: %w", errHarnessMedia, err)
 		}
 	}
 	c, hasControl, err := session.ReadControl(s.rt.SessionDir, p.SessionID)
@@ -457,13 +486,9 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 	if err != nil {
 		return err
 	}
-	msg, err := literalUserMessageFromPrompt(p.Prompt, nil, nil)
-	if err != nil {
-		return err
-	}
 	msg.ClientID, msg.Origin, msg.OriginID = op.ID, "plugin", op.Actor.AgentID
 	msg.Cause = "session_management"
-	msg.PresentationKind, msg.DisplayContent, msg.RelatedSessionID = "session_message", p.Prompt, op.Actor.SessionRef
+	msg.PresentationKind, msg.DisplayContent, msg.RelatedSessionID = "session_message", msg.Content, op.Actor.SessionRef
 	if identity, err := s.channelService.GetAgentRuntime(ctx, op.Actor.AgentID); err == nil {
 		msg.Name = identity.Name
 	}

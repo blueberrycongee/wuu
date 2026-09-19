@@ -41,6 +41,13 @@ back to another project. This routing guarantee is not a filesystem sandbox.
 
 ## Track or cancel work
 
+When handing off a task, a Named Agent can explicitly include selected images or
+supported attachments from the current channel or DM. The work session receives
+the stored media with its source message and explanation, rather than only a text
+description. Missing, inaccessible or unsupported evidence produces an error;
+choose a compatible model or reattach the evidence before continuing. Unselected
+attachments are not forwarded automatically. See the [handoff contract](../automation/app-server.md#named-agent-media-handoff).
+
 Use the task view to check the owner, progress, and results. When execution is linked
 to a task, cancelling that task stops its linked execution and automatic follow-up;
 unrelated tasks and sessions keep running. Work without a task link is not covered
