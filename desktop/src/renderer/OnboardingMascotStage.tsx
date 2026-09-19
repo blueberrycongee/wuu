@@ -61,7 +61,7 @@ function CompanionEquipment({
   engineMark?: string;
   engineID?: string;
 }): JSX.Element {
-  const hasBelt = ["todo", "automation", "memory", "dream", "note-compaction"].some((id) => worn.has(id));
+  const hasBelt = ["todo", "automation", "memory", "dream", "peers"].some((id) => worn.has(id));
   const hasPocket = worn.has("memory") || worn.has("dream");
   function capability(id: OnboardingPluginID, content: ReactNode): ReactNode {
     if (!worn.has(id)) return null;
@@ -136,20 +136,13 @@ function CompanionEquipment({
           <g className="equipment-sort-sheet"><rect className="equipment-shell" x="77" y="59" width="7" height="10" rx="1.5" /></g>
           <path className="equipment-detail" d="M80 62 V68 Q80 71 82 70 L83 69" />
         </>)}
-        {capability("note-compaction", <g className="equipment-note-press">
-          {/* A belt-mounted paper press: stacked sheets held by one clasp. */}
-          <path className="equipment-binding" d="M46 77 L51 77 L51 83 L46 83 Z M56 77 L61 76 L61 82 L56 83 Z" />
-          <rect className="equipment-edge" x="41" y="80" width="23" height="13" rx="3" />
-          <rect className="equipment-binding" x="42.5" y="81.5" width="20" height="10" rx="2" />
-          <g className="equipment-folded-note">
-            <rect className="equipment-shell" x="44" y="79.5" width="16" height="9" rx="1.5" />
-            <rect className="equipment-paper" x="45" y="78" width="14" height="8" rx="1.5" />
-            <path className="equipment-seam" d="M46 86.5 H59 M46 89 H59" />
-            <path className="equipment-detail" d="M47 81 H51 M47 83 H50" />
-          </g>
-          <rect className="equipment-edge" x="53" y="79" width="6" height="13" rx="1.5" />
-          <rect className="equipment-bookmark" x="53.5" y="82.5" width="5" height="6" rx="1" />
-          <path className="equipment-detail" d="M55 85.5 H57" />
+        {capability("peers", <g>
+          {/* A radio on the belt represents contact with independent sessions. */}
+          <path className="equipment-detail" d="M57 80 V74" />
+          <rect className="equipment-edge" x="45" y="79" width="17" height="14" rx="3" />
+          <rect className="equipment-shell" x="47" y="81" width="13" height="10" rx="2" />
+          <circle className="equipment-bookmark" cx="51" cy="84" r="1.5" />
+          <path className="equipment-seam" d="M55 84 H57 M50 88 H57" />
         </g>)}
     </g>
   );

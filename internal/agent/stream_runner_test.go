@@ -1391,8 +1391,12 @@ func TestStreamRunner_ExpandedDurableHistoryKeepsLastProviderBaseline(t *testing
 	}
 	expanded = append(expanded, lastResponse, userMsg("short follow-up"))
 
-	if raw := estimateMessages(expanded); raw < runner.CompactThresholdTokens {
-		t.Fatalf("raw durable estimate = %d, want above threshold %d", raw, runner.CompactThresholdTokens)
+	rawDurable := 0
+	for _, msg := range expanded {
+		rawDurable += compact.EstimateTokens(msg.Content)
+	}
+	if rawDurable < runner.CompactThresholdTokens {
+		t.Fatalf("raw durable estimate = %d, want above threshold %d", rawDurable, runner.CompactThresholdTokens)
 	}
 	projected, err := providers.PrepareMessagesForProviderRequest(runner.ProviderName, runner.Model, expanded)
 	if err != nil {

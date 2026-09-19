@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Added optional Action Fusion to `apply_patch`: `then_run` runs a known
+  validation command after the complete patch succeeds, using the normal bash
+  permissions, logs and managed-process lifecycle. Command failures keep the patch.
+
 - Added catalog and transport support for DeepSeek V4.1 Flash (`deepseek-flash`),
   Qwen3.8 Max/Flash, and Kimi For Coding's current 1M-context coding model,
   including the `kimi-k2.8-preview` alias used by the latest models.dev snapshot.
@@ -24,6 +28,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
+
+- Make working notes and summary-free context windows built-in defaults, preserving
+  existing session notes without the Context Notes extension. Include Peers in
+  first-run extension choices. Recommend only TODO and Automation by default.
 
 - Remove the redundant workspace path row from the terminal panel so terminal
   content starts directly below the workspace tabs.
@@ -115,6 +123,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   results instead of replacing them with timeout messages. Peer discovery and
   sends now consistently stay within the current workspace.
 
+- Count tool results with a denser JSON token estimator so JSON-heavy history
+  triggers compact before the provider window, and force-trim older history
+  after a context overflow if compact does not shrink the request.
 - Highlight the current running session in the sidebar bell view using the same
   selection and pending-switch states as the workspace session list.
 - Preserve bottom-follow when expanding or collapsing conversation tool groups,

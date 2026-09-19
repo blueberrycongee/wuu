@@ -951,7 +951,6 @@ const APP_SERVER_HELPERS: readonly AppServerHelper[] = [
   { environment: "WUU_DREAM_PLUGIN_HELPER", executable: "wuu-dream-plugin" },
   { environment: "WUU_TODO_PLUGIN_HELPER", executable: "wuu-todo-plugin" },
   { environment: "WUU_ASK_USER_PLUGIN_HELPER", executable: "wuu-ask-user-plugin" },
-  { environment: "WUU_NOTE_COMPACTION_PLUGIN_HELPER", executable: "wuu-note-compaction-plugin" },
   { environment: "WUU_CUA_MAC_HELPER", executable: "wuu-cua-mac", platform: "darwin" },
 ];
 

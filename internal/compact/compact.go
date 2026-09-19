@@ -1076,6 +1076,37 @@ func lastUserMessageIndex(messages []providers.ChatMessage) int {
 	return -1
 }
 
+// ForceTrimOverflowHistory drops older conversation after a provider overflow
+// when compact/fresh-context could not shrink the request. It keeps leading
+// non-summary system messages and the newest user turn, then repairs the
+// tool-call boundary so the replacement remains a valid provider transcript.
+func ForceTrimOverflowHistory(messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	if len(messages) == 0 {
+		return nil, errors.New("overflow trim requires conversation history")
+	}
+	systemPrefix, _, _, conversation := splitLeadingSystemMessages(messages)
+	if len(conversation) == 0 {
+		return nil, errors.New("overflow trim found no conversation messages")
+	}
+	keepStart := lastUserMessageIndex(conversation)
+	if keepStart < 0 {
+		keepStart = compactFallbackTailStart(conversation, compactDefaultKeepRecentTokens)
+	}
+	keepStart = adjustToolBoundary(conversation, keepStart)
+	if keepStart <= 0 || keepStart >= len(conversation) {
+		return nil, errors.New("overflow trim could not drop older conversation")
+	}
+	trimmed := append(providers.CloneChatMessages(systemPrefix), providers.CloneChatMessages(conversation[keepStart:])...)
+	repaired, err := providers.RepairAndValidateToolCallHistory(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if len(repaired) >= len(messages) {
+		return nil, errors.New("overflow trim did not shrink conversation history")
+	}
+	return repaired, nil
+}
+
 func adjustToolBoundary(messages []providers.ChatMessage, start int) int {
 	if start <= 0 || start >= len(messages) || !strings.EqualFold(messages[start].Role, "tool") {
 		return start

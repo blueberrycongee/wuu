@@ -65,28 +65,30 @@ describe("FirstRunOnboarding", () => {
       plugin("ask-user", false),
       plugin("user-theme", true, "user"),
       plugin("peers", false),
+      plugin("note-compaction", false),
     ];
 
     expect(bundledOnboardingPlugins(inventory).map((item) => item.id)).toEqual([
       "plugin:bundled:ask-user",
       "plugin:bundled:todo",
+      "plugin:bundled:peers",
     ]);
   });
 
-  it("allows enabling Goal from the bundled onboarding choices", async () => {
+  it.each(["goal", "peers"])("allows enabling %s from the bundled onboarding choices", async (id) => {
     const update = vi.fn(async () => undefined);
     await act(async () => root.render(
       <I18nProvider><FirstRunOnboarding
-        inventory={[plugin("goal", false)]} providers={[]}
+        inventory={[plugin(id, false)]} providers={[]}
         onUpdateExtensionPackage={update}
         onSaveProvider={vi.fn(async () => undefined)}
         onComplete={vi.fn(async () => undefined)}
       /></I18nProvider>,
     ));
     await clickButton("开始设置");
-    await clickPlugin("goal");
+    await clickPlugin(id);
     await clickButton("继续");
-    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:goal", action: "enable" });
+    expect(update).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
   });
 
   it("recognizes configured and locked model providers", () => {
@@ -226,7 +228,10 @@ describe("FirstRunOnboarding", () => {
             inventory={[
               plugin("ask-user", true),
               plugin("todo", false),
-              plugin("memory", false),
+              plugin("automation", false),
+              plugin("subagent", true),
+              plugin("peers", true),
+              plugin("memory", true),
             ]}
           />
         </I18nProvider>,
@@ -234,11 +239,23 @@ describe("FirstRunOnboarding", () => {
     });
 
     expect(container.textContent).not.toContain("正在准备随包插件");
-    expect(container.querySelectorAll(".onboarding-plugin.is-selected")).toHaveLength(1);
-    expect(
-      container.querySelector(".onboarding-plugin.is-selected .onboarding-plugin-copy strong")?.textContent,
-    ).toBe("todo");
+    const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin[aria-pressed=true] strong")]
+      .map((node) => node.textContent);
+    expect(selectedPlugins()).toEqual(["todo", "automation"]);
     expect(container.querySelector(".onboarding-presets .is-selected")?.textContent).toBe("推荐");
+    await clickButton("全部");
+    expect(selectedPlugins()).toHaveLength(6);
+    await clickButton("推荐");
+    expect(selectedPlugins()).toEqual(["todo", "automation"]);
+    expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
+    await clickButton("继续");
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(6);
+    for (const id of ["todo", "automation"]) {
+      expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
+    }
+    for (const id of ["ask-user", "subagent", "peers", "memory"]) {
+      expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "disable" });
+    }
   });
 
   it("splits the mascot into three colored clones that keep stacked decorations", async () => {
@@ -256,11 +273,6 @@ describe("FirstRunOnboarding", () => {
       );
     });
     await clickButton("开始设置");
-    // The recommended selection includes subagent, so the mascot starts split.
-    expect(visibleClones()).toHaveLength(3);
-    await clickButton("极简");
-    await clickPlugin("automation");
-
     expect(mascotStage()?.hasAttribute("data-onboarding-split")).toBe(false);
     expect(visibleClones()).toHaveLength(1);
     expect(wornCapabilities()).toEqual(["automation"]);
