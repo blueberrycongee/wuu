@@ -3017,7 +3017,7 @@
 
 .process-surface-tool-list .activity-row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
   line-height: 1.5;
   color: var(--wuu-ink-soft);
@@ -3025,7 +3025,8 @@
 
 .process-surface-tool-list .tool-activity-marker {
   align-self: flex-start;
-  margin-top: 0.3em;
+  /* Center on the first text line, including at larger user font sizes. */
+  margin-top: calc((1lh - 14px) / 2);
 }
 
 .process-surface-tool-list .activity-copy {
