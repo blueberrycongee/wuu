@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func TestEstimateImageTokensUsesVisualPatchBudget(t *testing.T) {
@@ -98,5 +99,34 @@ func TestEstimateTokensCalibratedCoefficients(t *testing.T) {
 	jsonPayload := strings.Repeat(`{"k":1}`, 30) // 210 runes
 	if got := EstimateJSONTokens(jsonPayload); got != 210/3+1 {
 		t.Fatalf("JSON estimate = %d, want %d", got, 210/3+1)
+	}
+}
+
+func TestEstimateMessagesTokensCountsToolResultsAsJSON(t *testing.T) {
+	payload := "[" + strings.TrimSuffix(strings.Repeat(`{"id":"msg-1","body":"ok"},`, 40), ",") + "]"
+	prose := EstimateTokens(payload)
+	jsonTokens := EstimateJSONTokens(payload)
+	if jsonTokens <= prose {
+		t.Fatalf("JSON estimator should be denser than prose, json=%d prose=%d", jsonTokens, prose)
+	}
+
+	got := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "tool",
+		Name:    "chat_read",
+		Content: payload,
+		ToolResult: &toolresult.Result{
+			Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: payload}},
+		},
+	}})
+	if got != jsonTokens+4 {
+		t.Fatalf("tool result estimate = %d, want JSON estimator %d plus message overhead", got, jsonTokens)
+	}
+
+	userJSON := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "user",
+		Content: payload,
+	}})
+	if userJSON != prose+4 {
+		t.Fatalf("user message estimate = %d, want prose estimator %d", userJSON, prose+4)
 	}
 }

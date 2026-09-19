@@ -2,6 +2,7 @@ package contextbudget
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -63,7 +64,7 @@ func EstimateMessagesTokens(messages []providers.ChatMessage) int {
 	total := 0
 	hasTools := false
 	for _, msg := range messages {
-		total += EstimateTokens(msg.Content)
+		total += estimateMessageBodyTokens(msg)
 		total += EstimateTokens(msg.ReasoningContent)
 		total += 4
 		for _, tc := range msg.ToolCalls {
@@ -145,6 +146,34 @@ func ceilDivUint32(n, d uint32) int {
 		return 0
 	}
 	return int((uint64(n) + uint64(d) - 1) / uint64(d))
+}
+
+func estimateMessageBodyTokens(msg providers.ChatMessage) int {
+	body := msg.Content
+	if strings.EqualFold(strings.TrimSpace(msg.Role), "tool") {
+		if msg.ToolResult != nil {
+			if projected := strings.TrimSpace(msg.ToolResult.TextProjection()); projected != "" {
+				body = projected
+			}
+		}
+		if looksLikeJSON(body) {
+			return EstimateJSONTokens(body)
+		}
+	}
+	return EstimateTokens(body)
+}
+
+func looksLikeJSON(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	switch trimmed[0] {
+	case '{', '[':
+		return json.Valid([]byte(trimmed))
+	default:
+		return false
+	}
 }
 
 func isCJK(r rune) bool {
