@@ -140,6 +140,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   switching projects by preserving their management state in persisted session
   lists and metadata updates.
 
+- Remove the remaining `request_handoff` model tool after retiring `/handoff`,
+  preventing agents from invoking the removed command through the tool runtime.
+
 - Keep Automation and other primary plugin views in sidebar navigation instead
   of reviving the removed conversation tab strip. Preserve view switching,
   closing, return navigation, and durable view recovery across desktop restarts.
