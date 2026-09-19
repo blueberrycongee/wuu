@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Added catalog and transport support for DeepSeek V4.1 Flash (`deepseek-flash`),
+  Qwen3.8 Max/Flash, and Kimi For Coding's current 1M-context coding model,
+  including the `kimi-k2.8-preview` alias used by the latest models.dev snapshot.
+
 - Added **Approve for me** as a Standard-mode permission option. High-risk native
   tool calls are reviewed before they run; the workspace boundary is unchanged,
   and a review timeout or failure is not treated as a denial.

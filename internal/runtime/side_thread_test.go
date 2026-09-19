@@ -128,24 +128,24 @@ func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
 }
 
 // A side chat pinned to a different model must not inherit the workspace
-// model's media admission policy: a text-only model keeps the base policy and
-// unsupported images reach the wire (observed as a provider 400 on
-// deepseek-v4-flash after a mid-turn image steer).
+// model's media admission policy, or unsupported images can reach the wire.
+// Explicit test modalities keep this invariant independent of catalog updates.
 func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	cfg := config.Config{
-		DefaultProvider: "deepseek",
+		DefaultProvider: "test",
 		Providers: map[string]config.ProviderConfig{
-			"deepseek": {
+			"test": {
 				Type:    "openai-compatible",
-				BaseURL: "https://api.deepseek.com",
+				BaseURL: "https://example.invalid/v1",
 				APIKey:  "test-key",
-				Model:   "deepseek-v4-flash",
+				Model:   "text-only-model",
 				Models: map[string]config.ProviderModelConfig{
-					"deepseek-v4-flash": {
-						Name:   "DeepSeek V4 Flash",
-						Family: "deepseek",
+					"text-only-model": {
+						Modalities: &config.ProviderModelModalitiesConfig{
+							Input: []string{"text"}, Output: []string{"text"},
+						},
 					},
 				},
 			},
@@ -160,7 +160,7 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	}
 
 	// The workspace runner's policy admits images (base model supports them
-	// or is unknown). The pinned deepseek model is catalog-known text-only,
+	// or is unknown). The pinned model is explicitly configured as text-only,
 	// so the side runner must re-derive a rejecting policy.
 	base := &agent.StreamRunner{
 		Client: providers.AdaptStreamClient(&staticClient{}),
@@ -177,14 +177,14 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	}
 
 	runner, err := s.NewSideThreadRunner("side-media", "", ThreadModelSelection{
-		Provider: "deepseek",
-		Model:    "deepseek-v4-flash",
+		Provider: "test",
+		Model:    "text-only-model",
 	})
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner: %v", err)
 	}
-	if runner.Model != "deepseek-v4-flash" {
-		t.Fatalf("pinned runner model = %q, want deepseek-v4-flash", runner.Model)
+	if runner.Model != "text-only-model" {
+		t.Fatalf("pinned runner model = %q, want text-only-model", runner.Model)
 	}
 	want := providers.MediaInputPolicy{ImageKnown: true, FileKnown: true, VideoKnown: true}
 	if runner.MediaInput != want {

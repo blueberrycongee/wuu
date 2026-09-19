@@ -20,6 +20,8 @@ func TestRecommendedTitleTemperature_AlignsWithOpenCode(t *testing.T) {
 	}{
 		// Kimi K2.x thinking + numbered variants all use fixed 1.0 (matches
 		// platform.kimi.ai docs for kimi-k2.6 and opencode's transform.ts).
+		{"kimi-k2.8", 1.0, true},
+		{"kimi-k2.8-preview", 1.0, true},
 		{"kimi-k2.6", 1.0, true},
 		{"kimi-k2.5", 1.0, true},
 		{"kimi-k2-thinking", 1.0, true},

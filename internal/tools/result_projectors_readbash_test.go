@@ -202,6 +202,29 @@ func TestProjectBash_EndToEndReusesFullLogRef(t *testing.T) {
 	}
 }
 
+func TestProjectBash_OverBudgetDeclines(t *testing.T) {
+	raw := bashEnvelope(map[string]any{
+		"output":      "ok\n",
+		"stdout_tail": "ok\n",
+		"stderr_tail": "",
+		"verification": map[string]any{
+			"passed":  false,
+			"summary": strings.Repeat("failing assertion detail ", 4000),
+		},
+	})
+	_, _, ok := projectBashResult(raw, projectorContext{BudgetTokens: defaultProjectionTokenBudget, ArtifactRef: "/s/tool-results/shell-logs/x.log"})
+	if ok {
+		t.Fatal("bash projection must decline when verification evidence still exceeds the budget")
+	}
+	got, d := finalizeBuiltInToolResult(t.TempDir(), "bash", "over", toolresult.FromText(raw), 0)
+	if d.Applied {
+		t.Fatalf("over-budget bash must fail open: %+v", d)
+	}
+	if got.TextProjection() != raw {
+		t.Fatal("declined over-budget bash must keep the original envelope")
+	}
+}
+
 func TestProjectReadFileOversizedLineDoesNotOfferNonAdvancingContinuation(t *testing.T) {
 	raw := mustMarshalMap(map[string]any{"path": "long.txt", "content": strings.Repeat("x", 20000) + "\n", "start_line": 1, "total_lines": 1})
 	_, _, ok := projectReadFileResult(raw, projectorContext{BudgetTokens: defaultProjectionTokenBudget, ArtifactRef: "/s/long.txt"})
