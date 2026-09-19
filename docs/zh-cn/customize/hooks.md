@@ -58,6 +58,8 @@ Matcher 不支持 glob 表达式。没有工具名的事件需要空 matcher 或
 
 Wuu 通过 shell 启动命令，继承进程环境，并通过 stdin 传入一个 JSON 对象。请读取其中的 `cwd`，不要假设 Hook 进程正好在工作区启动。
 
+超时或取消时，Unix 会终止运行中 shell 的进程组，Windows 会尝试终止进程树。命令应等待其子进程完成，而不是让它们脱离运行。子进程仍持有输出句柄时，读取输出的等待时间也有上限。Stdout 和 stderr 各自最多允许 1 MiB；任一超限都会使 Hook 失败，不会把截断内容当作完整决策。
+
 ```json
 {
   "hook_event_name": "PreToolUse",

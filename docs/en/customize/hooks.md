@@ -58,6 +58,8 @@ These events describe Wuu runtime paths; they do not promise equivalent intercep
 
 Wuu starts the command through a shell, inherits its process environment, and sends one JSON input object on stdin. Read `cwd` from that object rather than assuming the hook process starts in the workspace.
 
+Timeouts and cancellation terminate the running shell's process group on Unix and attempt process-tree termination on Windows. Commands should wait for their children rather than detach them. Pipe draining is bounded if descendants keep output handles open. Stdout and stderr are each limited to 1 MiB; exceeding either limit fails the hook without interpreting a partial decision.
+
 ```json
 {
   "hook_event_name": "PreToolUse",

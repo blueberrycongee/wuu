@@ -141,6 +141,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   failures, and route rich error results to failure hooks without changing the
   original tool outcome.
 
+- Bound command-hook output and pipe draining, terminate running hook descendants
+  on cancellation, and preserve cancellation and deadline error identities.
+
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
   lists and metadata updates.
