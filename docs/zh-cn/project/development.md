@@ -40,6 +40,10 @@ make build-macos
 构建并启动 `wuu app-server`。修改 Go 或 Electron 主进程后需完整重启 `make dev`；
 它们不支持热重载。
 
+`npm --prefix desktop run test:renderer-recovery` 会主动让隐藏的 Chromium 渲染进程
+崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
+你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
+
 `make test-native` 测试的是桌面 CUA 辅助程序，不是手机 App。当前手机开发位于
 [clients/native](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android
 使用 Jetpack Compose。运行 `bash clients/native/verify.sh all` 进行隔离集成检查；

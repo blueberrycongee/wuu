@@ -44,6 +44,12 @@ launcher builds and starts `wuu app-server` from the current Go source. After
 changing Go or Electron main-process code, fully restart `make dev`; the running
 subprocess and Electron main process are not hot-reloaded.
 
+`npm --prefix desktop run test:renderer-recovery` intentionally crashes hidden
+Chromium renderers to check recovery, retry limits, window isolation, and IPC.
+It uses a temporary profile and synthetic content, not your Wuu data. Run it in
+a graphical desktop session; it does not validate native dialog appearance or
+packaged-app behavior.
+
 `make test-native` tests the desktop CUA helper, not the phone apps. Active phone
 development lives in [clients/native](../../../clients/native/README.md) (Chinese),
 with SwiftUI on iOS and Jetpack Compose on Android. Use

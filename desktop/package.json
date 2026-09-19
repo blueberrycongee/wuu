@@ -30,6 +30,7 @@
     "test:unit": "vitest run --exclude=src/main/gitService.test.ts --exclude=src/main/remoteGit.test.ts && vitest run src/main/gitService.test.ts src/main/remoteGit.test.ts --maxWorkers=1 --minWorkers=1 --testTimeout=15000",
     "test:cua-mac": "node scripts/test-cua-mac.cjs",
     "test:watch": "vitest",
+    "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",

@@ -7,7 +7,6 @@ import {
   app,
   BrowserWindow,
   type BrowserWindowConstructorOptions,
-  type WebContents,
   clipboard,
   dialog,
   ipcMain,
@@ -236,11 +235,7 @@ import {
   productionApplicationMenuTemplate,
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
-import {
-  allowRendererReload,
-  isDisposedWebFrameError,
-  shouldReloadAfterRendererGone,
-} from "./rendererProcessGone";
+import { installRendererRecovery, sendToWindow } from "./rendererProcessGone";
 import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
@@ -277,7 +272,6 @@ registerRenderableFileScheme();
 registerPluginModuleScheme();
 
 let mainWindow: BrowserWindow | null = null;
-const lastRendererReloadAt = new WeakMap<WebContents, number>();
 // Live system notifications are kept referenced so the OS cannot collect
 // them before the user acts on them (Electron retains only while referenced).
 const activeSystemNotifications = new Set<Notification>();
@@ -604,19 +598,6 @@ function broadcastToAll(channel: string, payload: unknown): void {
   }
 }
 
-function sendToWindow(window: BrowserWindow, channel: string, payload: unknown): void {
-  if (window.isDestroyed() || window.webContents.isDestroyed()) {
-    return;
-  }
-  try {
-    window.webContents.send(channel, payload);
-  } catch (error) {
-    if (!isDisposedWebFrameError(error)) {
-      throw error;
-    }
-  }
-}
-
 function emitTerminalEvent(
   windowID: number,
   event: Parameters<TerminalSessionManager["emit"]>[1],
@@ -736,31 +717,27 @@ function loadRenderer(window: BrowserWindow): void {
       console.error(`[preload] ${preloadPath}: ${error.message}`);
     });
   }
-  window.webContents.on("render-process-gone", (_event, details) => {
-    if (window.isDestroyed() || window.webContents.isDestroyed()) {
-      return;
-    }
-    if (!shouldReloadAfterRendererGone(details.reason)) {
-      return;
-    }
-    const now = Date.now();
-    const last = lastRendererReloadAt.get(window.webContents);
-    if (!allowRendererReload(now, last)) {
-      console.error(
-        `[renderer] process gone (${details.reason}, exit ${details.exitCode}); skipping reload within cooldown`,
-      );
-      return;
-    }
-    lastRendererReloadAt.set(window.webContents, now);
-    console.error(
-      `[renderer] process gone (${details.reason}, exit ${details.exitCode}); reloading`,
-    );
-    window.webContents.reload();
-  });
-
   const devRendererURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
   const rendererPath = join(__dirname, "../renderer/index.html");
   const rendererURL = devRendererURL ?? pathToFileURL(rendererPath).toString();
+  installRendererRecovery(window, {
+    app,
+    load: () => devRendererURL ? window.loadURL(devRendererURL) : window.loadFile(rendererPath),
+    stopTerminals: (ownerID) => terminalSessionManager.stopForOwner(ownerID),
+    prompt: async () => {
+      const { response } = await dialog.showMessageBox(window, {
+        type: "error",
+        title: "Wuu",
+        message: mainTranslate("rendererRecoveryFailed"),
+        detail: mainTranslate("rendererRecoveryDetail"),
+        buttons: [mainTranslate("reloadWindow"), mainTranslate("closeWindow")],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      return response === 0 ? "reload" : "close";
+    },
+  });
   wireExternalNavigationGuards(window, {
     rendererURL,
     openExternal: openExternalNavigation,
@@ -897,7 +874,7 @@ function registerThemedChromeWindow(win: BrowserWindow): void {
   themedChromeWindows.add(win);
   const sendMaximized = (): void => {
     if (win.isDestroyed()) return;
-    win.webContents.send("wuu:window-maximized-changed", win.isMaximized());
+    sendToWindow(win, "wuu:window-maximized-changed", win.isMaximized());
   };
   win.on("maximize", sendMaximized);
   win.on("unmaximize", sendMaximized);
@@ -1820,7 +1797,9 @@ app.whenReady().then(async () => {
         // Put the snapshot on the same ordered channel as subsequent deltas.
         // The invoke promise can resolve after later stdout notifications.
         if (params.requestId && !response.error && !event.sender.isDestroyed()) {
-          event.sender.send("wuu:server-event", {
+          const window = windowRegistry.windowForID(event.sender.id);
+          if (!window) return;
+          sendToWindow(window, "wuu:server-event", {
             kind: "notification", workdir,
             message: { method: "channel/session/snapshot", params: { request_id: params.requestId, result: response.result } },
           } satisfies ServerEvent);
@@ -2065,9 +2044,7 @@ app.whenReady().then(async () => {
       if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
       if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
       if (['login', 'register', 'logout', 'password', 'revoke'].includes(action) || (action === 'github-poll' && result.username)) {
-        for (const win of windowRegistry.allWindows()) {
-          if (!win.isDestroyed()) win.webContents.send("wuu:account-changed");
-        }
+        broadcastToAll("wuu:account-changed", undefined);
       }
       return result;
     });

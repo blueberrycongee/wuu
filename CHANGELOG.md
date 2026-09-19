@@ -133,6 +133,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Recover crashed desktop renderers with bounded automatic retries and a native
+  reload/close fallback. Stop orphaned window terminals and avoid sending events
+  to unavailable frames while the window recovers.
+
 - Let ordinary sessions explicitly finish peer follow-ups without a final reply.
   Recover an empty response once, while keeping repeated empty responses visible
   as failures instead of silently treating them as acknowledgements.
