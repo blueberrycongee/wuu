@@ -147,6 +147,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Prevent matching pre-tool hooks from retaining early or concurrent execution
   privileges derived from tool arguments they can rewrite.
 
+- Avoid a data race between streamed tool execution and final-call metadata
+  updates by keeping each started call's scheduling decision stable.
+
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
   lists and metadata updates.
