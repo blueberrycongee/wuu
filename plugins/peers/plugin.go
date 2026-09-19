@@ -509,8 +509,8 @@ func replyStillPending(ctx context.Context, host pluginapi.Host, id string) (boo
 	return ok && !record.Replied, nil
 }
 
-// Queue acceptance is not delivery: a shutdown can discard the pending input.
-// A started turn has a durable history item and is safe to settle.
+// Queue or steering acceptance is not delivery: a shutdown can discard the
+// pending input. Only a started turn or a durable receipt is safe to settle.
 func acknowledgeReply(ctx context.Context, host pluginapi.Host, id, stateName string, retryable bool) error {
 	if (stateName != "running" && !terminalState(stateName)) || (stateName == "discarded" && retryable) {
 		return nil
@@ -610,10 +610,12 @@ func replyToTerminal(ctx context.Context, host pluginapi.Host, id, stateName, ou
 	}
 	if err == nil && inspected.Turn != nil {
 		turn := inspected.Turn
-		if turn.State == "queued" {
+		// Inspection also reports running for an unconsumed in-memory steer.
+		// Wait for durable completion or the started-turn lifecycle callback.
+		if turn.State == "queued" || turn.State == "running" {
 			return nil
 		}
-		if turn.State == "running" || (terminalState(turn.State) && !(turn.State == "discarded" && turn.Retryable)) {
+		if terminalState(turn.State) && !(turn.State == "discarded" && turn.Retryable) {
 			return acknowledgeReply(ctx, host, id, turn.State, turn.Retryable)
 		}
 	}
@@ -621,6 +623,9 @@ func replyToTerminal(ctx context.Context, host pluginapi.Host, id, stateName, ou
 		var sent pluginapi.SessionSendResult
 		sent, err = deliverReply(ctx, host, record, stateName, truncateUTF8(output, maxReplyBytes))
 		if err == nil {
+			if sent.Steered && sent.State == "running" {
+				return nil
+			}
 			return acknowledgeReply(ctx, host, id, sent.State, false)
 		}
 	}
