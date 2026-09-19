@@ -99,15 +99,17 @@
   /* Reading rhythm follows the user's text size. Keep related blocks
    * closer than sections, with headings attached to the text below.
    * Prose, previews and composer share the same column measure. */
-  --conversation-reading-line-height: 1.75;
+  /* A relaxed body line makes mixed CJK, Latin and inline code read as one
+     continuous answer instead of a stack of dense rows. */
+  --conversation-reading-line-height: 1.85;
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
-  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.15);
-  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 2);
-  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.5);
-  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.5);
-  --conversation-prose-indent: 1.4em;
+  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.1);
+  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 1.7);
+  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.55);
+  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.4);
+  --conversation-prose-indent: 1.45em;
   --conversation-prose-max-width: 100%;
   --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
   /* Process rows share the message size and weight; color and spacing,

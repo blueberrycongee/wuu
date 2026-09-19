@@ -232,8 +232,8 @@ function EnvironmentBranchMenu({
   return (
     <div className="environment-side-menu branch" role="menu">
       <label className="menu-search environment-search">
-        <Search className="icon" />
-        <input value={query} placeholder={t("environment.searchBranches")} onChange={(event) => setQuery(event.target.value)} />
+        <Search className="icon-sm" aria-hidden="true" />
+        <input value={query} aria-label={t("environment.searchBranches")} placeholder={t("environment.searchBranches")} onChange={(event) => setQuery(event.target.value)} />
       </label>
       {gitStatus.dirty_count > 0 ? (
         <div className="environment-side-note">{t("environment.dirtyBranchNote")}</div>

@@ -58,25 +58,84 @@
   line-height: inherit;
   overflow-wrap: anywhere;
   word-break: normal;
+  text-wrap: pretty;
+}
+
+/* A message uses weight to mark a phrase, not to create a second title
+ * system. Keep emphasis one step above body text so it remains scannable
+ * without competing with the heading scale below. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  .rich-content :is(strong, b) {
+  font-weight: var(--conversation-prose-emphasis-weight, var(--weight-medium));
+}
+
+/* Inline code is part of a sentence, not a row of pill controls. Clone the
+ * small inset at wraps so long identifiers keep a readable edge on each line.
+ * Linked code retains the shared link treatment from turns.css. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  .rich-content :not(pre) > code {
+  border-radius: 3px;
+  padding: 0.08em 0.25em;
+  font-family: var(--font-mono);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  overflow-wrap: anywhere;
+}
+
+/* Code belongs to the answer's reading flow; elevation is reserved for
+ * floating controls. Keep the language and copy action in their own row. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-code-block {
+  margin-block: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-code-header {
+  background: transparent;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  .rich-code-block:not(.rich-code-block--no-header) > .rich-code {
+  padding-block-start: 2px;
+}
+
+/* The message column already owns the gap between sibling blocks. Remove
+ * component-level outer margins so tables, rules and media do not receive a
+ * second, unrelated spacing system. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-table-wrap, .rich-rule, .rich-image-block.inline, .rich-mermaid) {
+  margin-block: 0;
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading {
   font-size: 1em;
-  line-height: 1.5;
-  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  font-weight: var(--conversation-prose-heading-weight, var(--weight-semibold));
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
   word-break: normal;
+  text-wrap: balance;
 }
 
-:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h1 { font-size: 1.5em; }
-:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h2 { font-size: 1.25em; }
-:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h3 { font-size: 1.125em; }
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h1 { font-size: 1.3em; }
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h2 { font-size: 1.12em; }
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h3 { font-size: 1.04em; }
+
+/* Assistant code identifiers should sit in the sentence instead of making
+ * every technical term look like a control. User-authored messages keep the
+ * chip treatment because it helps distinguish their entered commands. */
+:is(.agent-block, .reasoning-block) .rich-content :not(pre) > code {
+  background: transparent;
+  border-radius: 0;
+  padding-inline: 0.12em;
+}
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content :is(ul, ol) {
   display: block;
   margin-block: 0;
   padding-inline-start: var(--conversation-prose-indent, 1.4em);
   padding-inline-end: 0;
+  text-wrap: pretty;
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li {
@@ -98,7 +157,7 @@
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li > * + .rich-paragraph {
-  margin-block-start: var(--conversation-prose-block-gap, 1em);
+  margin-block-start: calc(var(--conversation-prose-block-gap, 1em) * 0.7);
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-content li > :is(ul, ol) {

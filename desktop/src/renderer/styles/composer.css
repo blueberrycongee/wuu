@@ -605,7 +605,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -2406,7 +2406,7 @@
   white-space: nowrap;
 }
 
-.composer-project-menu svg {
+.composer-project-menu button svg {
   width: 16px;
   height: 16px;
   color: var(--composer-project-menu-icon);
@@ -2414,9 +2414,13 @@
 }
 
 .composer-project-menu .menu-search {
-  gap: 8px;
   font-weight: 400;
   line-height: var(--line-ui);
+}
+
+.composer-project-menu .menu-search svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 .project-picker-empty {

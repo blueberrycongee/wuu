@@ -25,6 +25,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Remember each provider's and engine's last composer model and effort, including
   Settings workspace defaults, so switching back does not reset to the catalog default.
 
+- Relax conversation reading rhythm, fold code and tables into the same spacing
+  system, and lengthen scroll fades so list and message edges read as a gradient.
+
+- Separate in-menu search from the options below with a hairline and smaller
+  search icons.
+
 - Drop the sidebar `harness` descriptor so the brand lockup shows only `wuu`.
 
 - Unify named-agent and group-chat navigation with the desktop session sidebar,
