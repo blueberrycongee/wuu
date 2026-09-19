@@ -32,7 +32,7 @@ This is a fragment, not a replacement for your provider and agent configuration.
 | `model` | Optional model name for a prompt hook; otherwise the configured hook client default |
 | `timeout` | Per-hook seconds; omitted or nonpositive means 30 |
 
-Matchers do not support glob expressions. Events without a tool name need an empty matcher or `*`. Matching hooks run in configuration order and stop at the first error. When multiple successful hooks set an output field, the later value wins.
+Matchers do not support glob expressions. Events without a tool name need an empty matcher or `*`. Matching hooks run in configuration order and stop at the first error. In `PreToolUse`, each argument replacement becomes the `tool_input` seen by later hooks. Other single-value fields use the last supplied value. Additional context accumulates in order, separated by blank lines; a later hook failure does not erase earlier context.
 
 ## Events
 
@@ -43,7 +43,7 @@ These events describe Wuu runtime paths; they do not promise equivalent intercep
 | `PreToolUse` | Before execution; can block or replace tool arguments |
 | `PermissionRequest` | During tool authorization; can block, but does not grant broader permissions |
 | `PostToolUse` | After success; can add model context, not undo the operation |
-| `PostToolUseFailure` | After failure; hook errors do not replace the tool's original error |
+| `PostToolUseFailure` | After a Go execution error or a rich result marked `is_error`; hook errors do not replace the original outcome |
 | `UserPromptSubmit` | Before a prompt starts a turn; can block it |
 | `PreCompact` | Before compaction; can prevent it |
 | `PostCompact` | After compaction returns; can reject adoption of the result |
@@ -95,7 +95,7 @@ else:
 
 This substring example illustrates the protocol, not a complete shell security policy. Equivalent shell commands can have different text.
 
-A successfully decoded JSON object supplies the decision. Without one, exit 0 continues and exit 2 blocks; other nonzero codes are execution failures. To block reliably, emit an explicit blocking JSON decision or use exit 2 with empty stdout. Do not emit `{}` and assume exit 2 will override it. Invalid or mixed stdout is not interpreted as structured output.
+Exit 2 always blocks, including when stdout contains `{}` or a decision to continue. A JSON `reason` explains the block; otherwise Wuu uses stderr. Exit 0 uses the JSON decision, or continues without one. Other nonzero codes are execution failures. Invalid or mixed stdout is not interpreted as structured output.
 
 ## Prompt hooks
 

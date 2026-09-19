@@ -182,14 +182,19 @@ func (h *HookedExecutor) ExecuteResult(ctx context.Context, call providers.ToolC
 		result.IsError = true
 	}
 
-	// PostToolUse / PostToolUseFailure
-	if execErr != nil {
+	// Rich tools can report a domain failure without a Go execution error.
+	// Preserve that distinction while routing both forms to the failure event.
+	if execErr != nil || result.IsError {
+		errorText := result.HookProjection()
+		if execErr != nil {
+			errorText = execErr.Error()
+		}
 		failInput := &Input{
 			SessionID: h.sessionID,
 			CWD:       h.cwd,
 			ToolName:  call.Name,
 			ToolInput: json.RawMessage(call.Arguments),
-			Error:     execErr.Error(),
+			Error:     errorText,
 		}
 		_, _ = h.dispatcher.Dispatch(ctx, PostToolUseFailure, failInput)
 		return result, execErr
