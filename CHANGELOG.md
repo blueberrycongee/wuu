@@ -18,6 +18,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Tighten the base communication contract so process text and answers share one
+  speaking style, prefer short paragraphs over status one-liners, and avoid stock
+  AI phrasing.
+
 - Remember each provider's and engine's last composer model and effort, including
   Settings workspace defaults, so switching back does not reset to the catalog default.
 
