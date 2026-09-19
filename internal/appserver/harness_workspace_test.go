@@ -30,6 +30,9 @@ func (w *harnessRouteWriter) Write(data []byte) (int, error) {
 
 func TestHarnessWorkspaceDispatchUsesTargetRuntimeAndRecoversOnTargetOnly(t *testing.T) {
 	f, managerProvider := newCollaborationFlowFixture(t)
+	f.server.channelService.SetWakeSink(nil)
+	handoffTestRoom(t, f)
+	source := handoffTestSource(t, f)
 	ctx := context.Background()
 	var parent ChannelSessionResult
 	f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Update target docs", RequestID: "request"}, &parent)
@@ -52,7 +55,7 @@ func TestHarnessWorkspaceDispatchUsesTargetRuntimeAndRecoversOnTargetOnly(t *tes
 	t.Cleanup(target.Close)
 	target.channelService.SetWakeSink(nil)
 
-	p := channels.HarnessSessionParams{Action: "create", WorkspaceID: "target", WorkspaceRoot: targetRT.RootDir, Prompt: "Inspect documentation", OperationID: "cross-project"}
+	p := channels.HarnessSessionParams{Action: "create", WorkspaceID: "target", WorkspaceRoot: targetRT.RootDir, Prompt: "Inspect documentation", OperationID: "cross-project", Media: []channels.HarnessMediaRef{{MessageID: source.ID, Kind: "image", Index: 2}}}
 	if _, err := f.server.HarnessSession(ctx, actor, p); err == nil {
 		t.Fatal("a host without workspace dispatch accepted foreign execution")
 	}
@@ -103,6 +106,13 @@ func TestHarnessWorkspaceDispatchUsesTargetRuntimeAndRecoversOnTargetOnly(t *tes
 		t.Fatal(err)
 	}
 	worker := targetProvider.next(t)
+	var handedOff []providers.InputImage
+	for _, msg := range worker.request.Messages {
+		handedOff = append(handedOff, msg.Images...)
+	}
+	if len(handedOff) != 1 || handedOff[0].Data != source.Images[1].Data {
+		t.Fatal("cross-workspace dispatch lost the selected source image")
+	}
 	if !strings.Contains(collaborationRequestText(worker.request), "Target project configuration") {
 		t.Fatal("worker did not use the target runtime's configuration")
 	}
@@ -142,7 +152,7 @@ func TestHarnessWorkspaceDispatchUsesTargetRuntimeAndRecoversOnTargetOnly(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued, _, err := f.server.channelService.ReserveHarnessOperation(ctx, actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Also check navigation", OperationID: "recover-followup"}, id, control.Revision)
+	queued, _, err := f.server.channelService.ReserveHarnessOperation(ctx, actor, channels.HarnessSessionParams{Action: "send", SessionID: id, Prompt: "Also check navigation", OperationID: "recover-followup", Media: []channels.HarnessMediaRef{{MessageID: source.ID, Kind: "image", Index: 1}}}, id, control.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +169,13 @@ func TestHarnessWorkspaceDispatchUsesTargetRuntimeAndRecoversOnTargetOnly(t *tes
 		t.Fatal(err)
 	}
 	followup := targetProvider.next(t)
+	handedOff = nil
+	for _, msg := range followup.request.Messages {
+		handedOff = append(handedOff, msg.Images...)
+	}
+	if len(handedOff) != 2 || handedOff[1].Data != source.Images[0].Data {
+		t.Fatal("target recovery lost queued image evidence")
+	}
 	if !strings.Contains(collaborationRequestText(followup.request), "Also check navigation") {
 		t.Fatal("target did not recover the same session's follow-up")
 	}

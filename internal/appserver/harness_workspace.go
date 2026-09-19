@@ -103,7 +103,14 @@ func (s *Server) applyHarnessDispatch(ctx context.Context, p harnessWorkspaceReq
 		return errors.New("operation belongs to another workspace")
 	}
 	if op.State == "pending" {
-		return s.applyHarnessOperationLocked(ctx, &op)
+		err := s.applyHarnessOperationLocked(ctx, &op)
+		if errors.Is(err, errHarnessMedia) {
+			// A rejected evidence handoff must not later start as a pending
+			// text-only task. The synchronous caller receives the exact failure.
+			op.State, op.Error = "failed", err.Error()
+			return errors.Join(err, s.channelService.PutHarnessOperation(ctx, op))
+		}
+		return err
 	}
 	return nil
 }
