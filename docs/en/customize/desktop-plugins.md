@@ -130,6 +130,17 @@ Current action vocabulary:
 
 This is the public vocabulary, not a promise that every action appears for every render.
 
+Conversation and primary plugin views use sidebar navigation, including views opened
+through the API without a declared navigation entry. Their headers omit `tabs` and
+`activeTabId` and do not advertise tab actions. A primary plugin header exposes
+`canNavigateBack` and `header.navigate-back` to return to the conversation; the host
+keeps a separate close control. Compact workspace headers follow the same pattern:
+back navigation and a host close control without tab actions.
+These are optional fields and actions in contract version 1, not a new contract
+version. Presenters must check the snapshot and `host.actions` rather than recreate
+a tab strip from saved views. Tabs within auxiliary panels or plugin content are
+independent of primary navigation.
+
 ## Surface: wrap a larger semantic boundary
 
 Current production Surfaces:
