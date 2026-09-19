@@ -168,9 +168,11 @@ func RunToolLoop(
 		// requests after completed tool results. A failed or no-op
 		// proactive attempt suppresses further proactive attempts for
 		// this Run so the loop cannot spin on an unhelpful compactor.
-		overflowCompacted   bool
-		proactiveSuppressed bool
-		historyRewritten    bool
+		overflowCompacted     bool
+		overflowTrimmed       bool
+		overflowTrimRequested bool
+		proactiveSuppressed   bool
+		historyRewritten      bool
 		// Tracks current context fill so we can decide whether to
 		// proactively compact before the next round. Uses
 		// response.usage as ground truth + delta estimation for
@@ -428,6 +430,8 @@ func RunToolLoop(
 		var freshRollbackProviderMessages []providers.ChatMessage
 		freshRollbackHistoryRewritten := historyRewritten
 		if attemptFreshContext {
+			forceOverflowTrim := overflowTrimRequested
+			overflowTrimRequested = false
 			targetTokens := cfg.FreshContextTokens
 			if targetTokens <= 0 {
 				targetTokens = FreshContextTargetTokens
@@ -453,7 +457,15 @@ func RunToolLoop(
 			var replacement []providers.ChatMessage
 			freshErr := archiveErr
 			if freshErr == nil {
-				replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+				if forceOverflowTrim {
+					var smaller bool
+					replacement, smaller = forceTrimOverflowHistory(messages)
+					if !smaller {
+						freshErr = ErrFreshContextNotSmaller
+					}
+				} else {
+					replacement, freshErr = cfg.FreshContext(ctx, providers.CloneChatMessages(messages), historyArchiveHeadSeq, fixedTokens, targetTokens)
+				}
 			}
 			if freshErr == nil && compactChanged(messages, replacement) {
 				freshRollbackMessages = providers.CloneChatMessages(messages)
@@ -501,7 +513,7 @@ func RunToolLoop(
 					Reason: CompactReasonNewContext, Status: CompactAttemptFailed,
 					TokensBefore: beforeTokens, MessagesBefore: beforeMessages, Error: freshContextFailure,
 				})
-				if cfg.CompactOnly {
+				if cfg.CompactOnly || forceOverflowTrim {
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), freshErr
 				}
 			}
@@ -746,9 +758,13 @@ func RunToolLoop(
 				newContextRequested = true
 				continue
 			}
-			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && stepResultHasNoPartialOutput(result) {
-				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
-					resetTranscript(trimmed)
+			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
+				if _, ok := forceTrimOverflowHistory(messages); ok {
+					// Use the normal window transaction so archival, request
+					// validation, checkpoint commit, and rollback still apply.
+					overflowTrimmed = true
+					overflowTrimRequested = true
+					newContextRequested = true
 					postToolContextSegments = consumedPostToolSegments
 					continue
 				}
@@ -871,6 +887,7 @@ func RunToolLoop(
 		if freshContextEnabled {
 			// Successful progress ends the previous overflow recovery attempt.
 			overflowCompacted = false
+			overflowTrimmed = false
 		}
 
 		if result.Usage != nil {
