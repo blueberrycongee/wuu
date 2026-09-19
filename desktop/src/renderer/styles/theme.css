@@ -390,7 +390,6 @@
   --diff-insert-text-color: var(--wuu-color-success, #4cc38a);
   --diff-delete-bg: rgba(239, 106, 94, 0.12);
   --diff-delete-text-color: var(--wuu-color-danger, #f0857a);
-  --turn-source-icon-color-fallback: rgba(255, 255, 255, 0.85);
   /* conversation-shell.css */
   --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);

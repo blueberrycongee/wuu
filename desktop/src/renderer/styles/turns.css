@@ -88,10 +88,6 @@
   --diff-insert-text-color: var(--wuu-color-success, #0a6b34);
   --diff-delete-bg: rgba(207, 46, 46, 0.08);
   --diff-delete-text-color: var(--wuu-color-danger, #a82525);
-  --turn-sources-pill-bg-fallback: rgba(127, 127, 127, 0.08);
-  --turn-sources-pill-border-fallback: rgba(127, 127, 127, 0.16);
-  --turn-sources-pill-color-fallback: rgba(127, 127, 127, 0.85);
-  --turn-source-icon-color-fallback: rgba(0, 0, 0, 0.85);
   --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
   --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
   --artifact-preview-frame-bg: #fff;
@@ -1926,11 +1922,11 @@
   width: 100%;
   min-width: 0;
   /* Keep the row height constant whether or not the sources pill is
-     present. The pill (28px incl. its border) is taller than the 20px
-     process text line, and it pops in while a web search is still
-     streaming; without a reserved height its appearance would grow the
-     row and shift the whole message flow below it by ~6-8px. */
-  min-height: 28px;
+     present. The pill is 26px (4px padding around the 18px icon stack)
+     and taller than the 20px process text line. It pops in while a web
+     search is still streaming; without a reserved height its appearance
+     would grow the row and shift the whole message flow below it. */
+  min-height: 26px;
   align-items: center;
   gap: 12px;
 }
@@ -5396,11 +5392,12 @@ button.turn-edit-summary-overview:focus-visible {
  * 5 separate circles eating the right margin. The label sits after
  * the icon stack so the user's eye lands on the count first.
  *
- * Token reuse: turns.css already has --font-xs / --font-sm /
- * --ink-strong / --ink-muted / --bg-soft and friends via the
- * shared design tokens; the pill should keep its palette aligned
- * with `.message-actions` (the like / dislike row) so the source control
- * still reads as quiet assistant chrome.
+ * Palette: a quiet ink veil, no outline. --bg-soft / --border-soft were
+ * never defined, so the previous fill and 16% gray ring were leftover
+ * fallbacks that made the pill read as a control instead of metadata.
+ * --ink-overlay-6 groups the favicon stack without that extra edge;
+ * hover steps to --ink-overlay-8. Icon rings use --paper so stacked
+ * favicons stay separated against the veil.
  */
 .turn-sources-pill {
   display: inline-flex;
@@ -5408,12 +5405,12 @@ button.turn-edit-summary-overview:focus-visible {
   gap: 8px;
   margin-top: 0;
   padding: 4px 10px 4px 6px;
+  border: 0;
   border-radius: var(--radius-pill);
-  background: var(--bg-soft, var(--turn-sources-pill-bg-fallback));
-  border: 1px solid var(--border-soft, var(--turn-sources-pill-border-fallback));
-  font-size: var(--font-sm, 13px);
+  background: var(--ink-overlay-6);
+  font-size: var(--font-sm);
   line-height: 1;
-  color: var(--ink-muted, var(--turn-sources-pill-color-fallback));
+  color: var(--ink-muted);
   flex: 0 0 auto;
 }
 
@@ -5427,14 +5424,13 @@ button.turn-sources-pill {
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 button.turn-sources-pill:hover,
 button.turn-sources-pill:focus-visible {
-  background: var(--bg, var(--turn-sources-pill-bg-fallback));
-  border-color: var(--border, var(--turn-sources-pill-border-fallback));
-  color: var(--ink, var(--turn-sources-pill-color-fallback));
+  background: var(--ink-overlay-8);
+  color: var(--ink);
 }
 
 .turn-sources-icons {
@@ -5454,7 +5450,7 @@ button.turn-sources-pill:focus-visible {
   height: 100%;
   overflow: hidden;
   border-radius: inherit;
-  background: var(--bg-soft, var(--turn-sources-pill-bg-fallback));
+  background: var(--ink-overlay-6);
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 
@@ -5516,8 +5512,8 @@ button.turn-sources-pill:focus-visible {
   width: 18px;
   height: 18px;
   border-radius: var(--radius-pill);
-  border: 1.5px solid var(--bg-soft, var(--paper));
-  background: var(--bg, var(--paper));
+  border: 1.5px solid var(--paper);
+  background: var(--paper);
   padding: 0;
   margin: 0;
   display: inline-flex;
@@ -5526,7 +5522,7 @@ button.turn-sources-pill:focus-visible {
   overflow: hidden;
   /* Dim the chrome so the favicon dominates; the icon is the
    * affordance, the button border is just legibility. */
-  color: var(--ink-strong, var(--turn-source-icon-color-fallback));
+  color: var(--ink-strong);
 }
 
 .turn-source-icon {
@@ -5565,7 +5561,7 @@ button.turn-sources-pill:focus-visible {
   font-size: 10px;
   font-weight: var(--weight-semibold, 600);
   line-height: 1;
-  color: var(--ink-strong, var(--turn-source-icon-color-fallback));
+  color: var(--ink-strong);
   user-select: none;
 }
 
@@ -5590,8 +5586,8 @@ button.turn-sources-pill:focus-visible {
    * favicons so users see it as a count, not a host. The "+N" label
    * is set on the button itself so screen readers and copy/paste
    * both get the number. */
-  background: var(--bg, var(--turn-sources-pill-bg-fallback));
-  color: var(--ink-muted, var(--turn-source-icon-color-fallback));
+  background: var(--paper);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: var(--weight-semibold, 600);
   line-height: 1;
@@ -5614,8 +5610,8 @@ button.turn-sources-pill:focus-visible {
   max-height: 280px;
   overflow-y: auto;
   border-radius: var(--radius-xs);
-  background: var(--bg-elevated, var(--paper));
-  border: 1px solid var(--border, var(--turn-sources-pill-border-fallback));
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-border);
   box-shadow: var(--shadow-pop);
 }
 
@@ -5628,13 +5624,13 @@ button.turn-sources-pill:focus-visible {
   background: transparent;
   border: 0;
   cursor: pointer;
-  color: var(--ink, var(--turn-source-icon-color-fallback));
+  color: var(--ink);
   font: inherit;
 }
 
 .turn-source-overflow-item:hover,
 .turn-source-overflow-item:focus-visible {
-  background: var(--bg-soft, var(--turn-sources-pill-bg-fallback));
+  background: var(--menu-hover);
 }
 
 .turn-source-overflow-item-title {
@@ -5651,7 +5647,7 @@ button.turn-sources-pill:focus-visible {
   display: block;
   font-size: 11px;
   line-height: 1.3;
-  color: var(--ink-muted, var(--turn-sources-pill-color-fallback));
+  color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
