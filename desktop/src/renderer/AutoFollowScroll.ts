@@ -376,6 +376,8 @@ export function useAutoFollowScrollContainer({
           scrollHeight: node.scrollHeight,
         };
         markUserScrollAwayIntent();
+        // Yield before a queued follow or resize can overwrite native scrolling.
+        setAutoFollow(false);
       }
     };
     const handlePointerEnd = (): void => {
@@ -392,6 +394,7 @@ export function useAutoFollowScrollContainer({
       if (SCROLL_AWAY_KEYS.has(event.key) || SCROLL_TOWARD_LATEST_KEYS.has(event.key) || event.key === " ") interruptMotion();
       if (SCROLL_AWAY_KEYS.has(event.key)) {
         markUserScrollAwayIntent();
+        setAutoFollow(false);
       } else if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) {
         selectionPausedAutoFollowRef.current = false;
       }
@@ -411,6 +414,7 @@ export function useAutoFollowScrollContainer({
         currentY > previousY
       ) {
         markUserScrollAwayIntent();
+        setAutoFollow(false);
       } else if (
         currentY !== undefined &&
         previousY !== undefined &&

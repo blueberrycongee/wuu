@@ -1177,6 +1177,8 @@ export function useConversationScrollState({
           scrollHeight: node.scrollHeight,
         };
         markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        // A scrollbar gesture owns the viewport before native scroll delivery.
+        disableConversationAutoFollow();
       }
     };
     const handlePointerEnd = (): void => {
@@ -1203,6 +1205,7 @@ export function useConversationScrollState({
           setNativeBottomOverscrollEnabled(node, true);
         }
         markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        disableConversationAutoFollow();
       } else if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) {
         selectionPausedAutoFollowRef.current = false;
       }
@@ -1242,6 +1245,7 @@ export function useConversationScrollState({
           setNativeBottomOverscrollEnabled(node, true);
         }
         markUserScrollAwayIntent(clampScrollTop(node, node.scrollTop));
+        disableConversationAutoFollow();
       } else if (
         currentY !== undefined &&
         previousY !== undefined &&

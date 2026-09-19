@@ -770,6 +770,59 @@ describe("useConversationScrollState — high-frequency stream", () => {
     expect(layout.scrollTop).toBe(2000 + 24 - 600 - 8);
   });
 
+  it.each(["keyboard", "touch", "scrollbar"])(
+    "yields streaming follow to %s before native scroll delivery",
+    (input) => {
+      mount({ scrollHeight: 2000, clientHeight: 600 });
+      if (!layout || !handle || !node) throw new Error("not mounted");
+      act(() => handle!.scheduleStreamScroll());
+      flushScheduledScroll();
+
+      act(() => {
+        handle!.scheduleStreamScroll();
+        if (input === "keyboard") {
+          node!.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true }));
+        } else if (input === "touch") {
+          node!.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 100 } as Touch] }));
+          node!.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 120 } as Touch] }));
+        } else {
+          node!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        }
+        // Output commits before the browser's first native scroll step.
+        layout!.scrollHeight += 24;
+        flushResizeObservers();
+        flushAnimationFrames();
+      });
+      expect(layout.scrollTop).toBe(1400);
+
+      act(() => {
+        // The compositor moves before the DOM scroll event. A turn commit
+        // and the queued settle frame must not overwrite that movement.
+        layout!.scrollTop = 1392;
+      });
+      rerenderTurns(makeLongTurnsSnapshot(1));
+      flushScheduledScroll();
+      act(() => {
+        layout!.scrollHeight += 80;
+        handle!.scheduleStreamScroll();
+        flushResizeObservers();
+      });
+      flushScheduledScroll();
+      expect(layout.scrollTop).toBe(1392);
+
+      act(() => {
+        node!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        layout!.scrollTop = layout!.scrollHeight - layout!.clientHeight;
+        node!.dispatchEvent(new Event("scroll"));
+        window.dispatchEvent(new Event("pointerup"));
+        layout!.scrollHeight += 40;
+        handle!.scheduleStreamScroll();
+      });
+      flushScheduledScroll();
+      expect(layout.scrollTop).toBe(layout.scrollHeight - layout.clientHeight);
+    },
+  );
+
   it("keeps auto-follow disabled during smooth jump startup near the bottom", () => {
     mount({ scrollHeight: 2000, clientHeight: 600 });
     if (!layout || !handle || !node) throw new Error("not mounted");
@@ -861,6 +914,24 @@ describe("useConversationScrollState — high-frequency stream", () => {
     });
     flushScheduledScroll();
 
+    expect(layout.scrollTop).toBe(layout.scrollHeight - layout.clientHeight);
+  });
+
+  it("keeps following while keyboard and touch input stay inside a nested scroller", () => {
+    mount({ scrollHeight: 2000, clientHeight: 600 });
+    if (!layout || !handle) throw new Error("not mounted");
+    act(() => handle!.scheduleStreamScroll());
+    flushScheduledScroll();
+    act(() => {
+      const nested = nestedScrollNode();
+      nested.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true }));
+      nested.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 100 } as Touch], bubbles: true }));
+      nested.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 120 } as Touch], bubbles: true }));
+      nested.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      layout!.scrollHeight += 40;
+      flushResizeObservers();
+    });
+    flushScheduledScroll();
     expect(layout.scrollTop).toBe(layout.scrollHeight - layout.clientHeight);
   });
 
