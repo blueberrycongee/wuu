@@ -234,6 +234,86 @@ describe("useAutoFollowScrollContainer", () => {
     expect(layout.scrollTop).toBe(800);
   });
 
+  it.each(["keyboard", "touch", "scrollbar"])(
+    "yields streaming follow to %s before native scroll delivery",
+    (input) => {
+      act(() => {
+        handle!.scrollToBottom();
+        handle!.scheduleScrollToBottom();
+        if (input === "keyboard") {
+          scrollNode!.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp" }));
+        } else if (input === "touch") {
+          scrollNode!.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 100 } as Touch] }));
+          scrollNode!.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 120 } as Touch] }));
+        } else {
+          scrollNode!.dispatchEvent(new Event("pointerdown"));
+        }
+        layout!.scrollHeight += 24;
+        notifyResize();
+      });
+      paint();
+      expect(layout!.scrollTop).toBe(800);
+
+      act(() => {
+        layout!.scrollTop = 792;
+        handle!.scrollToBottom();
+        scrollNode!.dispatchEvent(new Event("scroll"));
+        layout!.scrollHeight += 80;
+        notifyResize();
+      });
+      paint();
+      expect(layout!.scrollTop).toBe(792);
+
+      act(() => {
+        scrollNode!.dispatchEvent(new KeyboardEvent("keydown", { key: "End" }));
+        layout!.scrollTop = layout!.scrollHeight - layout!.clientHeight;
+        scrollNode!.dispatchEvent(new Event("scroll"));
+        window.dispatchEvent(new Event("pointerup"));
+        layout!.scrollHeight += 40;
+        notifyResize();
+      });
+      paint();
+      expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+    },
+  );
+
+  it.each([400, 1200])("resumes after a scroll-surface click without movement (height %i)", (height) => {
+    layout!.scrollHeight = height;
+    act(() => {
+      handle!.scrollToBottom();
+      scrollNode!.dispatchEvent(new Event("pointerdown"));
+      layout!.scrollHeight += 600;
+      notifyResize();
+    });
+    paint();
+    expect(layout!.scrollTop).toBe(height - 400);
+    act(() => window.dispatchEvent(new Event("pointerup")));
+    paint();
+    expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+    act(() => {
+      layout!.scrollHeight += 40;
+      notifyResize();
+    });
+    paint();
+    expect(layout!.scrollTop).toBe(layout!.scrollHeight - layout!.clientHeight);
+  });
+
+  it.each(["paused", "drag", "wheel", "cancel"])("does not resume a scroll-surface gesture after %s", (reason) => {
+    act(() => {
+      handle!.scrollToBottom();
+      if (reason === "paused") handle!.pauseAutoFollow();
+      scrollNode!.dispatchEvent(new Event("pointerdown"));
+      if (reason === "drag") layout!.scrollTop -= 8;
+      if (reason === "wheel") scrollNode!.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+      // A drag's native scroll event may still be pending on pointer release.
+      window.dispatchEvent(new Event(reason === "cancel" ? "pointercancel" : "pointerup"));
+      layout!.scrollHeight += 40;
+      notifyResize();
+    });
+    paint();
+    expect(layout!.scrollTop).toBe(reason === "drag" ? 792 : 800);
+  });
+
   it("keeps automatic viewport following quiet and still reveals user scrolling", () => {
     if (!layout || !handle || !scrollNode) throw new Error("probe not mounted");
     scrollNode.classList.remove("scrollbar-visible");

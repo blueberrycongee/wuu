@@ -104,10 +104,30 @@ snapshot generated theme matrices, or quote prompt phrasing.
 ## Documentation
 
 - Published pages live under `docs/zh-cn/` and `docs/en/`; only pages listed in
-  `docs/site.json` are rendered by the docs site.
+  `docs/site.json` are rendered by the docs site. Every tracked file is public,
+  including files outside the site navigation and binary metadata.
 - Private architecture research and future plans live outside this public
   repository. Tracked documentation is limited to maintained product,
   development, protocol, security, and release contracts.
+- The author changing a behavior updates its documentation, both languages,
+  navigation, and links in the same change. Module READMEs explain local setup
+  and link to the public contract rather than duplicating it. See
+  [documentation maintenance](docs/README.md) for placement and checks.
+- Keep one-off reports, raw model output, presentations and their generated
+  PDF/PPT/image bundles outside the source repository. Public distribution uses
+  an explicitly maintained release channel or a separate materials repository.
+  Reusable evaluations follow [the evaluation policy](evals/README.md); keep
+  disposable test output in ignored artifact directories, using synthetic data.
+- Retain generated assets required by builds only with their source or generator
+  and regeneration instructions. Keep licenses, third-party attribution,
+  runtime prompts/skills, and useful test fixtures with the code they support.
+  Historical documentation must identify its applicable version or retirement
+  date and link to its replacement; otherwise remove it.
+- Review text, screenshots, attachments and metadata for credentials, personal
+  data and nonpublic sources before submission. Report suspected exposure via
+  [SECURITY.md](SECURITY.md), without copying sensitive evidence into an issue.
+  Deleting a file does not remove Git history or distributed copies; credential
+  revocation and historical cleanup require a separate assessment.
 
 ## Project structure
 
@@ -116,7 +136,10 @@ snapshot generated theme matrices, or quote prompt phrasing.
 - `desktop/` — Electron shell (renderer + main process)
 - `packages/protocol/` — shared app-server protocol types
 - `clients/core/` — remote-control client core
-- `clients/mobile/` — Expo mobile shell
+- `clients/native/` — active SwiftUI iOS and Jetpack Compose Android clients;
+  see [build and validation status](clients/native/README.md) (Chinese)
+- `clients/mobile/`, `clients/mobile-web/`, `clients/mobile-app/` — retired phone
+  implementations; some shared Web code still participates in desktop builds
 - `docs/` — Maintained user, protocol, and development documentation; see
   [`docs/README.md`](docs/README.md) for the index
-- `prototypes/` — Throwaway design exploration; not shipped
+- `desktop/dev/` — reusable, synthetic UI previews; not packaged product entries

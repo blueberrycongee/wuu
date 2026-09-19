@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Named Agents can explicitly attach selected room images, PDFs and supported
+  videos to execution-session create/send handoffs, preserving source evidence
+  and rejecting inaccessible, missing or unsupported media instead of losing it.
+
 - Added optional Action Fusion to `apply_patch`: `then_run` runs a known
   validation command after the complete patch succeeds, using the normal bash
   permissions, logs and managed-process lifecycle. Command failures keep the patch.
@@ -30,6 +34,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   loaded histories, reducing IPC payloads and app-server allocation overhead.
   Recover missed completion events with targeted snapshots for stale loaded
   conversations, including both visible panes.
+
+- Keep conversation search results title-only on the left, with matching snippets
+  and conversation details in the right preview pane.
 
 - Let desktop environment-panel content use the full width below the close
   button instead of reserving an empty column beside TODO and Git rows.
@@ -122,6 +129,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   tracked artifacts.
 
 ### Fixed
+
+- Stop streaming auto-follow from pulling messages back to the bottom when a
+  keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
+  Preserve following after a plain scroll-surface click without scrolling.
 
 - Preserve peer request correlation after uncertain sends, recover queued replies
   after host restart without reviving user-cancelled inputs, and retain completed

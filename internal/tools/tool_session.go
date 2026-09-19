@@ -31,12 +31,20 @@ func (t *HarnessSessionTool) Definition() providers.ToolDefinition {
 		"workspace_id":   map[string]any{"type": "string", "description": "Registered project ID; may replace workspace_root. When both are supplied they must agree. The host executes with this project's runtime and configuration; listing a project does not authorize unrelated work in it."},
 		"workspace":      map[string]any{"type": "string", "enum": []string{"shared", "worktree"}, "description": "Create in the project directly or an isolated Git worktree. Default shared; keep concurrent write scopes separate."},
 		"title":          map[string]any{"type": "string"},
-		"prompt":         map[string]any{"type": "string", "description": "A concise goal and relevant constraints for create; the next instruction or correction for send; the responsibility to track for manage. Carry authorization and expected evidence, then refine through follow-ups as facts arrive."},
-		"mode":           map[string]any{"type": "string", "enum": []string{"queue", "steer", "attach", "release", "resume"}, "description": "send: queue or steer. manage: attach (default), release, or resume only after an explicit user request to return control/continue."},
-		"query":          map[string]any{"type": "string", "description": "Optional title/workspace search for list, transcript search for inspect."},
-		"limit":          map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
-		"before":         map[string]any{"type": "integer", "description": "Inspect earlier transcript records before this sequence."},
-		"provider":       map[string]any{"type": "string"}, "model": map[string]any{"type": "string"}, "effort": map[string]any{"type": "string"},
+		"media": map[string]any{"type": "array", "maxItems": 32, "description": "For create/send, explicitly select original stored attachments from messages in this turn's room (IDs and ordered images/files from chat_read). Include relevant evidence rather than only describing it in prompt. No paths or URLs. Selected bytes and source text travel together; missing, inaccessible or unsupported media fails the handoff, never falls back to text only.", "items": map[string]any{
+			"type": "object", "properties": map[string]any{
+				"message_id":  map[string]any{"type": "string"},
+				"kind":        map[string]any{"type": "string", "enum": []string{"image", "file"}},
+				"index":       map[string]any{"type": "integer", "minimum": 1, "description": "One-based position in the source message's images or files array."},
+				"description": map[string]any{"type": "string", "description": "What this attachment demonstrates or what the receiver should inspect; retained alongside the original message text."},
+			}, "required": []string{"message_id", "kind", "index"}, "additionalProperties": false,
+		}},
+		"prompt":   map[string]any{"type": "string", "description": "A concise goal and relevant constraints for create; the next instruction or correction for send; the responsibility to track for manage. Carry authorization and expected evidence, then refine through follow-ups as facts arrive."},
+		"mode":     map[string]any{"type": "string", "enum": []string{"queue", "steer", "attach", "release", "resume"}, "description": "send: queue or steer. manage: attach (default), release, or resume only after an explicit user request to return control/continue."},
+		"query":    map[string]any{"type": "string", "description": "Optional title/workspace search for list, transcript search for inspect."},
+		"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
+		"before":   map[string]any{"type": "integer", "description": "Inspect earlier transcript records before this sequence."},
+		"provider": map[string]any{"type": "string"}, "model": map[string]any{"type": "string"}, "effort": map[string]any{"type": "string"},
 	}, "required": []string{"action"}}}
 }
 func (t *HarnessSessionTool) Execute(ctx context.Context, raw string) (string, error) {

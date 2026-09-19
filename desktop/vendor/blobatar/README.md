@@ -37,11 +37,15 @@ projection both use `face`, so turns stay inside sloping triangle/diamond sides.
 
 - `src/` — the library. `test/` — its bun test suite (`bun test`).
 - `demo/` — the mascot workbench. From `desktop/`, run `npm run lab:mascot`,
-  then open http://localhost:3001/. It opens on the real product `WuuMascot`
+  then open the Vite URL (default http://127.0.0.1:5177/). It opens on the real product `WuuMascot`
   activity, accessory, and size states; the preserved low-level tuning view
   covers traits, expressions, and sphere perspective against a grid of seeds.
-- `docs/` — design notes and ADRs. `CONTEXT.md` — the glossary; worth reading
-  before changing anything.
+- `docs/` and `CONTEXT.md` — design history and glossary for the upstream
+  `v0.2.0` baseline and Wuu adaptations, retained with the vendored source for
+  provenance and low-level maintenance.
+  Old workspace layouts, trait rosters and validation notes are historical,
+  not current Wuu contracts. Use the shape contract above and the
+  [current mascot guide](../../dev/mascot/README.md) for Wuu integration.
 - `scripts/probe-compose.ts` — manual browser gate (`bun run probe`, needs
   Chrome or Firefox) that checks a statically baked pose agrees with the CSS
   composition. Run it after touching `expression.ts` or `motion.css`.

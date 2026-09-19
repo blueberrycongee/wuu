@@ -39,10 +39,10 @@ those contracts must document their own compatibility and migration rules.
 The private protocol, remote-core, and mobile packages remain at `0.0.0` until
 they have an independent public release contract.
 
-Before tagging, the Go core, desktop, and macOS native helper test suites must
-pass. The release workflow reruns those gates against the tagged commit before
-it builds the desktop app, with the Go test cache disabled for a fresh release
-run. After `npm ci`, the workflow explicitly installs and verifies the Electron
+The local `make release-check` gate includes the Go core, desktop and macOS native
+helper tests. The release workflow runs Go, desktop and signing tests against the
+tagged commit, with the Go test cache disabled; it excludes CUA from the release
+build. After `npm ci`, the workflow explicitly installs and verifies the Electron
 binary so runner-level install settings cannot leave the test or build steps
 with an incomplete Electron package. Release tooling consumes committed module
 manifests and does not update `go.mod` or `go.sum`.
@@ -57,6 +57,9 @@ The current release workflow publishes only the macOS Electron desktop preview
 package. It requires:
 
 - `GITHUB_TOKEN` (provided by GitHub Actions)
+- `WUU_RELEASE_CERTIFICATE_P12`, `WUU_RELEASE_CERTIFICATE_PASSWORD`, and
+  `WUU_RELEASE_SIGN_ID` for the persistent self-signed identity. See
+  [maintainer signing setup](../../../desktop/scripts/RELEASE-SIGNING.md).
 
 The release build sets `VITE_ENABLE_ACCOUNT=false` and
 `VITE_ENABLE_REMOTE_CONTROL=false`, so this version is the local,
@@ -69,46 +72,30 @@ The release also sets `WUU_SKIP_CUA_MAC=1`. Computer Use is not included: the
 native CUA helper is neither compiled nor packaged, and the release verifier
 rejects either helper if one is present.
 
-The current desktop macOS job does not require Apple signing or notarization
-secrets. It builds unsigned arm64 preview artifacts because the project does
-not yet have a Developer ID certificate.
+The current macOS job requires that self-signed identity, but not Apple Developer
+ID or notarization credentials. Missing release signing credentials fail the
+build; the workflow does not silently fall back to ad-hoc signing.
 
 The workflow sets `CSC_IDENTITY_AUTO_DISCOVERY=false` so `electron-builder`
-does not try to use a runner-local signing identity.
-
-When the project has Developer ID credentials, restore signing and
-notarization gates before describing desktop assets as signed public releases.
-The expected future secrets are:
-
-- `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12`
-- `MAC_CSC_KEY_PASSWORD`: password for the `.p12`
-
-plus one notarization credential set:
-
-- App Store Connect API key: `APPLE_API_KEY`, `APPLE_API_KEY_ID`,
-  `APPLE_API_ISSUER`
-- Apple ID fallback: `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
-  `APPLE_TEAM_ID`
+does not select an arbitrary runner-local identity. The custom signer uses the
+configured certificate. Self-signing is not Apple Developer ID signing or
+notarization.
 
 ## macOS Gatekeeper
 
-Desktop artifacts attached to the GitHub Release are unsigned preview builds.
+Desktop artifacts attached to the GitHub Release are self-signed preview builds.
 After downloading the DMG or ZIP and moving `wuu.app` to `/Applications`,
 macOS may block the app because Apple cannot verify the developer.
 
-For a build from a GitHub Release you trust, remove the quarantine attribute:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/wuu.app
-open /Applications/wuu.app
-```
-
-Do not ask users to run this for builds from untrusted sources.
+Use the [installation guide](../getting-started/installation.md): verify the
+official download, try opening it, then use **System Settings → Privacy & Security
+→ Open Anyway** if blocked. Users should not import a signing certificate or
+disable system security globally.
 
 ## Output
 
 The macOS desktop job verifies that the tag commit belongs to `main`, checks and
-tests the Go core and desktop app, then builds and verifies the unsigned arm64
+tests the Go core and desktop app, then builds and verifies the self-signed arm64
 desktop preview. The workflow verifies that the packaged core version is clean
 and that the DMG and ZIP are structurally valid before creating the GitHub
 Release.
