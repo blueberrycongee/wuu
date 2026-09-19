@@ -1545,7 +1545,10 @@
 }
 
 /* Give sidebar labels the primary text contrast while keeping icons and
- * secondary headings quieter. Semantic ink also follows the dark theme. */
+ * secondary headings quieter. Group labels (Pinned / Folders / Workspaces)
+ * and list-footer actions sit one step below icon chrome so they read as
+ * structure, not as peers of the conversation names. Semantic ink also
+ * follows the dark theme. */
 .sidebar-content :is(
   .nav-item > span,
   .project-row-name,
@@ -1560,7 +1563,7 @@
   .thread-list-more,
   .thread-list-collapse-btn
 ) {
-  color: var(--ink-soft);
+  color: var(--ink-muted);
 }
 
 /* 协作 section rows reuse the full session-row anatomy
