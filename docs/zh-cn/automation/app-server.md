@@ -1,71 +1,64 @@
-# App-server 集成入门
+# 将客户端接入 app-server
 
-App-server 是 Wuu 核心与桌面端、脚本或编辑器外壳之间的协议边界。需要构建新的
-客户端时，应复用这套协议，而不是在外壳中重新实现 Agent 循环。
+需要管理会话、接收回合流或控制执行时，使用 app-server。脚本如果只需提交任务并取得
+结果，[`wuu exec`](exec.md) 已经封装了这套生命周期。
 
-## 传输格式
+## 启动进程
 
-当前协议通过标准输入输出传输**逐行 JSON（JSONL）**。每个请求带有 `id`、`method` 和
-可选的 `params`：
-
-```json
-{"id":"1","method":"initialize","params":{}}
+```bash
+wuu app-server --workdir /path/to/project
 ```
 
-成功响应使用同一个 `id`：
+让客户端持续连接进程的 stdin 和 stdout。每条协议消息是一行 JSON 对象；stdout 是
+协议流，进程诊断应单独处理。未提供显式 `--config` 文件时，服务使用本地配置。
+排查插件故障时，`--safe-mode` 可在不激活插件的情况下启动。
+
+先发送 `initialize`：
 
 ```json
-{"id":"1","result":{}}
+{"id":"1","method":"initialize","params":{"protocol_version":"wuu-app-server/v0.1","client":{"name":"example-client"}}}
 ```
 
-错误响应包含 `error`；通知消息没有 `id`，例如：
+响应使用相同的 `id`，并包含 `result` 或 `error`。通知只有 `method` 和 `params`，没有
+`id`。检查初始化结果的 `status` 和 `issues`：协议响应成功，仍可能返回 `needs_setup`。
+
+## 运行任务
+
+创建会话，再使用返回的 `result.thread.id`：
 
 ```json
-{"method":"turn/completed","params":{}}
+{"id":"2","method":"thread/start","params":{}}
+{"id":"3","method":"run/start","params":{"thread_id":"THREAD_ID","prompt":"总结这个仓库","request":{"mode":"start"}}}
 ```
 
-`initialize` 返回当前协议版本 `wuu-app-server/v0.1`。这是受控集成协议，字段仍可能
-演进；客户端应根据方法和事件类型处理消息，不要依赖自然语言错误文本。
+这是有先后关系的两个请求，不能原样作为批次提交。收到第一个响应后，将 `THREAD_ID`
+替换为实际 ID。持续读取通知，直到 `run/updated` 为返回的运行 ID 报告终态。
+`run/start` 响应表示执行已被接纳，不表示任务完成。
 
-## 一次任务的生命周期
+交互式客户端也可以使用 `turn/start`，接收回合和条目更新。自动化执行可能包含多个续接或
+Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束。用 `run/interrupt`
+停止运行；关闭由客户端启动的服务前，先请求 `shutdown`。
 
-客户端应按以下顺序驱动核心：
+## 复用会话
 
-1. `initialize`：建立连接并取得能力、配置和协议版本；
-2. `thread/start` 或 `thread/resume`：创建或恢复会话；
-3. `turn/start`：桌面等交互式客户端启动单轮任务，或使用 `run/start` 启动
-   `wuu exec` 使用的自动化任务；
-4. 消费 `turn/*` 通知，并等待 `run/updated` 进入终态（自动化 Run）；
-5. `shutdown`：客户端退出时请求干净关闭。
+`thread/resume` 接受 `session_id`，省略时选择工作区最近的可见会话。`thread/fork` 接受
+`thread_id`，创建独立对话。`thread/start` 的 `ephemeral: true` 创建内存会话，服务退出后
+无法恢复。
 
-`thread/start` 默认创建持久会话；传入 `{"ephemeral": true}` 的会话只存在于内存，
-服务退出后不能恢复。`thread/fork` 可从已有会话、回合或条目创建新分支。
+每个对话保留自己的模型和权限选择。应在对话空闲时，用带 `thread_id` 的
+`config/model/update` 修改；这不会改变工作区默认值。不带 `thread_id` 的请求修改未来
+对话的默认设置。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
-## 常用方法
-
-| 方法 | 用途 |
-| --- | --- |
-| `thread/start` | 创建会话 |
-| `thread/resume` | 恢复会话；空会话 ID 表示最近可见会话 |
-| `thread/fork` | 从已有会话创建分支 |
-| `turn/start` | 启动交互式单轮，可包含附件 |
-| `run/start` | 启动自动化 Run，供 `wuu exec` 使用 |
-| `turn/interrupt` | 中断单轮任务 |
-| `run/interrupt` | 中断自动化 Run |
-| `shutdown` | 请求服务端关闭 |
-
-模型和权限模式属于会话选择。要修改它们，应先调用 `config/model/update`，而不是在
-单轮请求中临时覆盖；正在运行的会话不能修改本轮已经采纳的模型或权限模式。
-
-## 本地调试
-
-仓库提供 CLI 调试入口，可启动本地服务并发送单个协议请求：
+## 探查协议
 
 ```bash
 wuu debug app-server initialize --workdir /path/to/project
-wuu debug app-server send thread/start '{}'
+wuu debug app-server send --workdir /path/to/project config/read '{}'
 ```
 
-生产环境的认证、沙箱、组织成员关系、密钥注入和配额由外部控制平面负责，不是
-app-server 自身提供的能力。完整方法和参数参考见[英文协议文档](../../en/integrations/app-server-protocol.md)。
+每条调试命令都会启动服务、完成请求并关闭服务。流式执行需要持续连接的客户端，不应靠
+串联独立探查命令实现。
 
+stdio 协议是受信任的本地控制接口，不是带认证的网络服务。远程或托管部署必须在外围提供
+传输安全和隔离。[协议参考](../../en/integrations/app-server-protocol.md)（英文）说明消息
+格式、能力协商、选择规则和云端进程身份。
