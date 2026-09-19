@@ -1578,27 +1578,7 @@ html.resizing-workspace-file-split * {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.workspace-terminal-pathbar {
-  display: flex;
-  min-width: 0;
-  min-height: 36px;
-  align-items: center;
-  border-bottom: 1px solid var(--hairline-soft);
-  background: var(--surface-1);
-  padding: 7px 12px;
-}
-
-.workspace-terminal-path {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: var(--font-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .workspace-agent-terminal {

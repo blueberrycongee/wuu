@@ -1692,10 +1692,13 @@ export function AppSidebar({
                 <div className="sidebar-unread-list">
                   {runningThreads.map((thread) => {
                     const label = sidebarThreadLabel(thread);
+                    const active = thread.id === activeThreadID;
+                    const pendingSwitch = thread.id === pendingThreadID;
                     return (
                       <div
                         key={thread.id}
-                        className="thread-row sidebar-session-row sidebar-unread-row running"
+                        className={`thread-row sidebar-session-row sidebar-unread-row running${active ? " active" : ""}${pendingSwitch ? " pending-switch" : ""}`}
+                        aria-current={active ? "page" : undefined}
                       >
                         <span className="thread-row-spinner" aria-hidden="true" />
                         <button
