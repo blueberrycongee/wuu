@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Added optional Action Fusion to `apply_patch`: `then_run` runs a known
+  validation command after the complete patch succeeds, using the normal bash
+  permissions, logs and managed-process lifecycle. Command failures keep the patch.
+
 - Added catalog and transport support for DeepSeek V4.1 Flash (`deepseek-flash`),
   Qwen3.8 Max/Flash, and Kimi For Coding's current 1M-context coding model,
   including the `kimi-k2.8-preview` alias used by the latest models.dev snapshot.

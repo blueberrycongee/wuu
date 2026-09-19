@@ -58,7 +58,9 @@ type CallAwareRichTool interface {
 // executor and does not hold a leaf execution slot while they run, so a
 // yielded orchestrator (a live code-mode cell) never starves leaf scheduling.
 type OrchestratorTool interface {
-	IsOrchestrator() bool
+	// A fused action coordinates leaf calls, while the same tool without
+	// fusion still needs a leaf slot.
+	IsOrchestrator(argsJSON string) bool
 }
 
 // ToolClassification describes the expected behavior of one concrete tool

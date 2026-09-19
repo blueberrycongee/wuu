@@ -37,6 +37,35 @@ wuu exec --image screenshot.png "定位界面问题"
 `--file` 和 `--image` 可以重复使用。`--file` 当前只接受 PDF；相对路径以 `--workdir`
 为准，没有设置时以当前目录为准。
 
+## 一次调用完成补丁和验证
+
+使用 Wuu 内置工具时，如果后续验证命令已经确定，Agent 可以在 `apply_patch`
+调用中提供 `then_run`：
+
+```json
+{
+  "patchText": "*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch",
+  "then_run": {
+    "command": "test \"$(cat example.txt)\" = hello",
+    "timeout_seconds": 60,
+    "purpose": "验证新文件的内容"
+  }
+}
+```
+
+这是 Agent 工具参数，不是 `wuu exec` 命令行选项。`then_run` 接受必填的 `command`，
+以及可选的 `cwd`、`timeout_seconds`（1–3600）、`purpose` 和 `scope`
+（`targeted`、`affected` 或 `full`），默认值与 `bash` run 相同。
+省略它时仍是普通补丁操作；与 `dry_run` 同时使用会在修改前被拒绝。
+如果必须先检查编辑结果才能决定下一条命令，应分开调用。
+
+整个补丁成功后才会启动命令。两步分别经过正常工具权限检查并记录；禁用或拒绝
+`bash` 也会阻止后续命令。命令失败不会回滚补丁，重试时只运行命令，不要再次应用
+已经成功的编辑。合并结果保留文件详情和 bash 结果，包括验证证据与日志恢复地址。
+命令超时转入后台后，`then_run` 状态为 `running`，并保留 `promoted_process_id`；
+这不代表验证通过。使用正常的 bash 后台控制来观察或停止它。融合保证两步的顺序，
+但不会隔离其他会话或进程对工作区的修改。
+
 ## 继续或分叉会话
 
 ```bash

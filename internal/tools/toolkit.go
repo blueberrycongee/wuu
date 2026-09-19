@@ -1366,7 +1366,7 @@ func (t *Toolkit) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, boo
 	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
 	orchestrator := false
 	if marker, ok := tool.(OrchestratorTool); ok {
-		orchestrator = marker.IsOrchestrator()
+		orchestrator = marker.IsOrchestrator(call.Arguments)
 	}
 	return agent.ToolMetadata{
 		Orchestrator:    orchestrator,

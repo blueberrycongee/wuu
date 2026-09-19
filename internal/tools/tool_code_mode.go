@@ -31,10 +31,10 @@ func NewCodeModeExecTool(toolkit *Toolkit) *CodeModeExecTool {
 	return &CodeModeExecTool{toolkit: toolkit}
 }
 
-func (*CodeModeExecTool) Name() string            { return codeModeExecToolName }
-func (*CodeModeExecTool) IsReadOnly() bool        { return true }
-func (*CodeModeExecTool) IsConcurrencySafe() bool { return true }
-func (*CodeModeExecTool) IsOrchestrator() bool    { return true }
+func (*CodeModeExecTool) Name() string               { return codeModeExecToolName }
+func (*CodeModeExecTool) IsReadOnly() bool           { return true }
+func (*CodeModeExecTool) IsConcurrencySafe() bool    { return true }
+func (*CodeModeExecTool) IsOrchestrator(string) bool { return true }
 
 func (*CodeModeExecTool) Execute(context.Context, string) (string, error) {
 	return "", errors.New("code-mode exec requires the rich tool execution path")
@@ -121,10 +121,10 @@ func NewCodeModeWaitTool(toolkit *Toolkit) *CodeModeWaitTool {
 	return &CodeModeWaitTool{toolkit: toolkit}
 }
 
-func (*CodeModeWaitTool) Name() string            { return codeModeWaitToolName }
-func (*CodeModeWaitTool) IsReadOnly() bool        { return true }
-func (*CodeModeWaitTool) IsConcurrencySafe() bool { return true }
-func (*CodeModeWaitTool) IsOrchestrator() bool    { return true }
+func (*CodeModeWaitTool) Name() string               { return codeModeWaitToolName }
+func (*CodeModeWaitTool) IsReadOnly() bool           { return true }
+func (*CodeModeWaitTool) IsConcurrencySafe() bool    { return true }
+func (*CodeModeWaitTool) IsOrchestrator(string) bool { return true }
 
 func (*CodeModeWaitTool) Execute(context.Context, string) (string, error) {
 	return "", errors.New("code-mode wait requires the rich tool execution path")
