@@ -61,8 +61,8 @@ thirdparty/
 # ============================================================
 # Documentation and local plans
 # ============================================================
-# Published documentation under /docs is tracked. Only temporary implementation
-# plans remain local.
+# Maintained public documentation is tracked. Private research and unpublished
+# plans belong outside this checkout; ignores are not a confidentiality boundary.
 
 /docs/plans/*
 
@@ -72,6 +72,10 @@ thirdparty/
 /prototypes/
 # local benchmark runs and judgments
 /bench/
+# One-off presentations, experiments, and unpublished marketing drafts.
+/presentations/
+/experiments/
+/landing/drafts/
 
 # ============================================================
 # Local agent / shell / editor config
@@ -142,13 +146,13 @@ coverage.out
 # Personal paste-inbox for images.
 .paste/
 
-# local redesign reference (matvoyce analysis assets — do NOT commit/ship)
+# Local third-party design references; never commit or ship.
 landing/.redesign-ref/
 
 # local CLI build artifact (use ~/go/bin/wuu via `make install`)
 /wuu
 
-# reset-first-run.sh has a live MiniMax API key baked in — never commit it.
+# Machine-specific first-run helper; never commit local credentials.
 scripts/reset-first-run.sh
 
 # wuu app runtime state in repo root (sessions, logs, plans, scratch) — local only.

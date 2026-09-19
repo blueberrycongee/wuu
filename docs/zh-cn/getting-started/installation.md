@@ -23,6 +23,9 @@ Release 后，尝试打开 `/Applications/wuu.app`。如果被 macOS 拦截，�
 
 ## 电脑操作权限
 
+当前 GitHub Release 不包含 Computer Use 或原生 CUA 辅助程序。以下权限说明仅适用于
+启用了 CUA 的源码构建。
+
 使用 Computer Use 时，按提示在系统设置中授予**辅助功能**或**屏幕录制**权限。
 Wuu 会提供设置入口，授权需由你完成；无需安装开发工具或自行签名。
 

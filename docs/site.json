@@ -38,6 +38,7 @@
             "zh-cn/customize/mcp.md",
             "zh-cn/customize/hooks.md",
             "zh-cn/customize/plugins.md",
+            "zh-cn/customize/video-input.md",
             "zh-cn/customize/themes-settings.md"
           ]
         },
@@ -87,7 +88,8 @@
             "zh-cn/automation/app-server.md",
             "en/automation/jsonl-events.md",
             "en/integrations/app-server-protocol.md",
-            "en/project/development.md",
+            "zh-cn/project/development.md",
+            "zh-cn/project/desktop-ui.md",
             "en/project/release.md"
           ]
         }
@@ -125,6 +127,7 @@
             "en/customize/mcp.md",
             "en/customize/hooks.md",
             "en/customize/plugins.md",
+            "en/customize/video-input.md",
             "en/customize/themes-settings.md"
           ]
         },
@@ -175,6 +178,7 @@
             "en/automation/jsonl-events.md",
             "en/integrations/app-server-protocol.md",
             "en/project/development.md",
+            "en/project/desktop-ui.md",
             "en/project/release.md"
           ]
         }

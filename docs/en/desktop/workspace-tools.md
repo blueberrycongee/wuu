@@ -9,6 +9,28 @@ Open the **Files** panel or enter `/files` to browse the project tree. After sel
 a file you can view text, code, images, and supported documents in a tab. The file
 panel shows the current state on disk, not a historical snapshot of a message.
 
+## Delivered artifacts
+
+When an agent creates a requested image, chart or document, Wuu's built-in
+`present_artifact` tool can present the existing file separately from code diffs:
+
+```json
+{"path":"output/chart.svg"}
+```
+
+Images, including SVG, appear inline and open a larger preview when clicked;
+other files appear as output cards. Wuu saves a snapshot, so later edits or
+deletion of the workspace file do not change that delivered version. Identical
+outputs with the same name and type are deduplicated within a turn; different
+versions remain separate. Ordinary file links, reads and diffs do not implicitly
+publish an artifact.
+
+The tool accepts local regular files up to 256 MiB, within the current read
+permissions and sensitive-path restrictions; it does not fetch remote URLs.
+SVG is rendered as an image, not inserted as page markup. Presentation does not
+send image bytes to the model or replace visual inspection. The agent should not
+repeat an already presented image in Markdown.
+
 ## Review
 
 Open the **Review** panel or enter `/diff` to see the current Git working-tree
