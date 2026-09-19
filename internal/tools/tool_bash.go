@@ -311,10 +311,11 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (string, error
 		return "", err
 	}
 	result.Purpose = t.env.RedactToolOutput(args.Purpose)
-	fullLogRef, fullLogBytes, fullLogSections, fullLogErr := persistShellLog(t.env.SessionDir, result)
+	fullLogRef, fullLogBytes, fullLogSections, fullLogSHA256, fullLogErr := persistShellLog(t.env.SessionDir, result)
 	if fullLogRef != "" {
 		result.FullLogRef = fullLogRef
 		result.FullLogBytes = fullLogBytes
+		result.FullLogSHA256 = fullLogSHA256
 		result.FullLogSections = fullLogSections
 	} else if fullLogErr != "" {
 		result.FullLogError = fullLogErr

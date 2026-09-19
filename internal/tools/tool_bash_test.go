@@ -62,6 +62,33 @@ func TestBashBackgroundSuggestionsExplainTurnHandoff(t *testing.T) {
 	}
 }
 
+func TestBashRunRecordsFullLogSHA256(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+	kit.SetSessionDir(t.TempDir())
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"printf 'hello-log'"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.FullLogRef == "" || parsed.FullLogSHA256 == "" {
+		t.Fatalf("bash run must record a snapshot-bound full log: ref=%q sha=%q", parsed.FullLogRef, parsed.FullLogSHA256)
+	}
+	data, err := os.ReadFile(parsed.FullLogRef)
+	if err != nil {
+		t.Fatalf("read full log: %v", err)
+	}
+	if got := sha256Hex(data); got != parsed.FullLogSHA256 {
+		t.Fatalf("full_log_sha256 = %q, file hash %q", parsed.FullLogSHA256, got)
+	}
+}
+
 func TestBashRunAddsVerificationSummaryAndRepeatGuard(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/bashverify\n\ngo 1.22\n")
