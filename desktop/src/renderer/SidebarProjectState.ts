@@ -161,14 +161,7 @@ export function threadListsEquivalent(
   }
   return left.every((thread, index) => {
     const candidate = right[index];
-    return (
-      candidate?.id === thread.id &&
-      candidate.updated_at === thread.updated_at &&
-      candidate.latest_completed_turn_id === thread.latest_completed_turn_id &&
-      candidate.status === thread.status &&
-      candidate.pinned === thread.pinned &&
-      candidate.archived === thread.archived
-    );
+    return candidate !== undefined && threadSnapshotsShallowEqual(thread, candidate);
   });
 }
 
@@ -214,6 +207,26 @@ export function mergeSidebarThreadSnapshots(
     return previous;
   }
   return sortThreads([...byID.values()]);
+}
+
+function reconcileSidebarThreadList(
+  requested: Thread[] | undefined,
+  current: Thread[] | undefined,
+  listed: Thread[],
+): Thread[] {
+  // Titles and organization updates do not advance updated_at. Preserve
+  // snapshots changed while this request was in flight rather than using
+  // activity timestamps (or response arrival order) as metadata versions.
+  const before = new Map((requested ?? []).map((thread) => [thread.id, thread]));
+  const now = new Map((current ?? []).map((thread) => [thread.id, thread]));
+  const result = new Map(listed.map((thread) => [thread.id, thread]));
+  for (const id of before.keys()) {
+    if (!now.has(id)) result.delete(id);
+  }
+  for (const [id, thread] of now) {
+    if (before.get(id) !== thread) result.set(id, thread);
+  }
+  return sortThreads([...result.values()]);
 }
 
 export function threadsForDesktopProject(
@@ -449,8 +462,10 @@ export function useSidebarProjectState({
   useEffect(() => {
     if (!backgroundLoadingEnabled || !window.wuu?.listAllThreads) return;
     let cancelled = false;
+    const requestedProjects = projectThreadsByProjectID;
+    const requestedScratch = cachedScratchThreads;
     void window.wuu.listAllThreads().then((listed) => {
-      if (!cancelled) cacheSidebarThreads(listed.threads);
+      if (!cancelled) cacheSidebarThreads(listed.threads, { projects: requestedProjects, scratch: requestedScratch });
     }).catch((error) => {
       if (!cancelled) {
         setStatus(desktopApiErrorMessage(error, translateCurrent("project.threadsLoadFailed")));
@@ -486,11 +501,15 @@ export function useSidebarProjectState({
       return;
     }
     loadingProjectThreadIDsRef.current.add(project.id);
+    const requested = projectThreadsByProjectID[project.id];
     try {
       const listed = await window.wuu.listThreads(project.path);
       setProjectThreadsByProjectID((current) => ({
         ...current,
-        [project.id]: threadsForDesktopProject(listed.threads, project),
+        [project.id]: threadsForDesktopProject(
+          reconcileSidebarThreadList(requested, current[project.id], listed.threads),
+          project,
+        ),
       }));
     } catch (error) {
       setStatus(desktopApiErrorMessage(error, translateCurrent("project.threadsLoadFailed")));
@@ -499,11 +518,16 @@ export function useSidebarProjectState({
     }
   }
 
-  function cacheSidebarThreads(incoming: Thread[]): void {
+  function cacheSidebarThreads(
+    incoming: Thread[],
+    requested?: { projects: Record<string, Thread[]>; scratch: Thread[] },
+  ): void {
     const scratchThreads = incoming.filter((thread) => isScratchThread(thread, projects));
     if (scratchThreads.length > 0) {
       setCachedScratchThreads((current) =>
-        mergeSidebarThreadSnapshots(current, scratchThreads),
+        mergeSidebarThreadSnapshots(current, requested
+          ? reconcileSidebarThreadList(requested.scratch, current, scratchThreads)
+          : scratchThreads),
       );
     }
     setProjectThreadsByProjectID((current) => {
@@ -518,7 +542,9 @@ export function useSidebarProjectState({
         }
         next[project.id] = mergeSidebarThreadSnapshots(
           current[project.id],
-          projectThreads,
+          requested
+            ? reconcileSidebarThreadList(requested.projects[project.id], current[project.id], projectThreads)
+            : projectThreads,
         );
       }
       return next;
