@@ -9,6 +9,26 @@ Open the **Files** panel or enter `/files` to browse the project tree. After sel
 a file you can view text, code, images, and supported documents in a tab. The file
 panel shows the current state on disk, not a historical snapshot of a message.
 
+Select text in a Markdown, code, or plain-text preview to use **Add to conversation**,
+**Comment**, or **Edit**. Adding to the conversation attaches a selected-text tag without
+sending it or expanding the excerpt into the input. Hover, focus, or click the tag to
+read the original text; its remove button removes the selection. Sending the message
+includes the original text and source location. Comments appear below the document preview and as a
+comment tag in the composer; hover, focus, or click the tag to inspect the location,
+quoted text, and comment. You can edit or remove comments before sending several
+comments together with your message.
+
+**Edit** opens a small instruction box at the selection. Submitting it sends an
+independent request to the current conversation without consuming your existing
+draft or attachments. A running task queues the request. The request instructs the agent
+to read the latest file before editing, and the preview refreshes when the turn finishes. A failed
+submission keeps your instruction available to retry.
+
+Source locations refer to the file version captured when you selected the text.
+Comments retain their original excerpt if the file changes. Complex rendered blocks
+may be referenced as a whole when a precise source selection is unavailable. These
+selection actions do not yet apply to PDF or image previews.
+
 ## Review
 
 Open the **Review** panel or enter `/diff` to see the current Git working-tree

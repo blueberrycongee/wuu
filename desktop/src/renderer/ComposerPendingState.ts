@@ -89,7 +89,47 @@ function heldComposerMessage(
     (candidate): MessageContentPart[] => {
       if (!isRecord(candidate)) return [];
       const type = stringValue(candidate, "type");
-      const text = stringValue(candidate, "text");
+      // Content is canonical model input: trimming breaks the folded prefix
+      // and can join a selection block directly to the following instruction.
+      const text = typeof candidate.text === "string" ? candidate.text : "";
+      if (type === "file_selection") {
+        const source = candidate.source;
+        const intent = candidate.intent;
+        if (
+          !text || typeof candidate.id !== "string" || !candidate.id.trim() ||
+          (intent !== "quote" && intent !== "comment" && intent !== "edit") ||
+          (candidate.comment !== undefined && typeof candidate.comment !== "string") ||
+          !isRecord(source) ||
+          typeof source.workspace !== "string" || !source.workspace.trim() ||
+          typeof source.path !== "string" || !source.path.trim() ||
+          typeof source.revision !== "string" || !source.revision.trim() ||
+          typeof source.quote !== "string" || !source.quote ||
+          ![source.start_line, source.start_column, source.end_line, source.end_column]
+            .every((value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+        ) return [];
+        const startLine = source.start_line as number;
+        const startColumn = source.start_column as number;
+        const endLine = source.end_line as number;
+        const endColumn = source.end_column as number;
+        if (endLine < startLine || (endLine === startLine && endColumn < startColumn)) return [];
+        return [{
+          type,
+          id: candidate.id,
+          text,
+          intent,
+          ...(candidate.comment !== undefined ? { comment: candidate.comment } : {}),
+          source: {
+            workspace: source.workspace,
+            path: source.path,
+            revision: source.revision,
+            quote: source.quote,
+            start_line: startLine,
+            start_column: startColumn,
+            end_line: endLine,
+            end_column: endColumn,
+          },
+        }];
+      }
       if ((type !== "text" && type !== "pasted_text") || !text) return [];
       const title = stringValue(candidate, "title");
       return type === "pasted_text"
@@ -102,7 +142,7 @@ function heldComposerMessage(
     : "";
   return {
     id,
-    text: stringValue(value, "prompt") ?? "",
+    text: typeof value.prompt === "string" ? value.prompt : "",
     images,
     files,
     contentParts,

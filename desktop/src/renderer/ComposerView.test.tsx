@@ -18,6 +18,8 @@ import { ComposerTokenGauge } from "./ComposerTokenGauge";
 import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./ComposerMessages";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
+import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
+import { buildFileSelectionPart } from "./FileSelectionContext";
 import type {
   DesktopProject,
   InitializeResult,
@@ -373,6 +375,7 @@ function renderSplitPaneComposer(props: {
 
 function renderStatefulSplitPaneComposer(props: {
   initialPrompt?: string;
+  queryHistorySessionID?: string;
   readOnly?: boolean;
   requestedHandoffIntent?: string;
   onPasteAttachmentFiles?: (files: File[]) => void;
@@ -391,6 +394,7 @@ function renderStatefulSplitPaneComposer(props: {
           readOnly={props.readOnly ?? false}
           status="ready"
           requestedHandoffIntent={props.requestedHandoffIntent}
+          queryHistorySessionID={props.queryHistorySessionID}
           onPasteAttachmentFiles={props.onPasteAttachmentFiles ?? (() => {})}
           onRemoveFile={() => {}}
           onRemoveImage={() => {}}
@@ -605,6 +609,141 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
   setter?.call(textarea, value);
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
+
+describe.each(["main", "split"] as const)("%s composer file selections", (variant) => {
+  function fileSelection(id: string) {
+    return buildFileSelectionPart({
+      workspace: "/workspace",
+      path: "src/main.ts",
+      start_line: 2,
+      start_column: 1,
+      end_line: 2,
+      end_column: 18,
+      quote: "return result;",
+      revision: "captured-revision",
+    }, "comment", "Review this return value", id);
+  }
+
+  function openComments(): void {
+    act(() => container.querySelector<HTMLButtonElement>(".file-selection-tag")!.click());
+  }
+
+  const render = variant === "main" ? renderStatefulComposer : renderStatefulSplitPaneComposer;
+
+  it("reveals a quote-only draft on hover and sends the hidden original with its source", () => {
+    const owner = `quote-only-${variant}`;
+    const quoted = buildFileSelectionPart(fileSelection("source").source, "quote");
+    rememberCollapsedPromptParts(owner, quoted.text, [quoted]);
+    const onSend = vi.fn();
+    render({ initialPrompt: quoted.text, queryHistorySessionID: owner, onSend });
+    const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(input.value).toBe("");
+    expect(document.querySelector(".file-selection-quote-text")).toBeNull();
+    act(() => container.querySelector(".file-selection-tag")!.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
+    expect(document.querySelector(".file-selection-quote-text")?.textContent).toBe(quoted.source.quote);
+    expect(document.querySelector(".file-selection-original")).toBeNull();
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    expect(onSend).toHaveBeenCalledWith(quoted.text, [quoted]);
+  });
+
+  it("removes grouped quote attachments atomically without removing a comment or the typed draft", () => {
+    const owner = `mixed-quotes-${variant}`;
+    const first = buildFileSelectionPart(fileSelection("source").source, "quote");
+    const second = buildFileSelectionPart({ ...first.source, quote: "Another passage" }, "quote");
+    const comment = fileSelection("kept-comment");
+    const prompt = first.text + second.text + comment.text + "Keep this question";
+    rememberCollapsedPromptParts(owner, prompt, [first, second, comment]);
+    const onSend = vi.fn();
+    render({ initialPrompt: prompt, queryHistorySessionID: owner, onSend });
+    expect(container.querySelectorAll(".file-selection-tag")).toHaveLength(2);
+    act(() => container.querySelector<HTMLButtonElement>(".file-selection-quote-remove")!.click());
+    expect(container.querySelector(".file-selection-quote-chip")).toBeNull();
+    expect(container.querySelectorAll(".file-selection-tag")).toHaveLength(1);
+    const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(input.value).toBe("Keep this question");
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    expect(onSend).toHaveBeenCalledWith(comment.text + "Keep this question", [comment, { type: "text", text: "Keep this question" }]);
+  });
+
+  it.each(["", "  Follow-up question\n  Preserve this indentation."])("restores a trimmed comment-only queue entry and sends original parts with follow-up %j", (followUp) => {
+    const owner = `file-selection-trimmed-${variant}-${followUp.length}`;
+    const file = fileSelection("trimmed-queue");
+    rememberCollapsedPromptParts(owner, file.text.trim(), [file]);
+    const onSend = vi.fn();
+    render({ initialPrompt: file.text.trim(), queryHistorySessionID: owner, onSend });
+    const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(container.querySelector(".file-selection-tag")).not.toBeNull();
+    expect(input.value).toBe("");
+    if (followUp) act(() => setTextareaValue(input, followUp));
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    expect(onSend).toHaveBeenCalledWith(file.text + followUp, [
+      file, ...(followUp ? [{ type: "text", text: followUp }] : []),
+    ]);
+    // A failed submission restores its canonical prompt without adding the
+    // formerly trimmed block separator to the visible follow-up.
+    expect(readCollapsedPromptParts(owner, file.text + followUp)).toEqual([
+      file, ...(followUp ? [{ type: "text", text: followUp }] : []),
+    ]);
+  });
+
+  it("groups file selections separately from paste chips and sends their structured metadata", () => {
+    const owner = `file-selection-send-${variant}`;
+    const first = fileSelection("first");
+    const second = fileSelection("second");
+    const pasted = { type: "pasted_text" as const, text: longPastedPrompt() };
+    const prompt = first.text + pasted.text + second.text + "Follow up";
+    const parts = [first, pasted, second, { type: "text" as const, text: "Follow up" }];
+    rememberCollapsedPromptParts(owner, prompt, parts);
+    const onSend = vi.fn();
+    render({ initialPrompt: prompt, queryHistorySessionID: owner, onSend });
+    expect(container.querySelectorAll(".file-selection-tag")).toHaveLength(1);
+    expect(container.querySelectorAll(".composer-collapsed-prompt-card")).toHaveLength(1);
+    const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(input.value).toBe("Follow up");
+    openComments();
+    expect(document.querySelectorAll(".file-selection-card")).toHaveLength(2);
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(onSend).toHaveBeenCalledWith(prompt, parts);
+  });
+
+  it("edits comments inline, then removes the last chip without losing visible text", () => {
+    const owner = `file-selection-edit-${variant}`;
+    const file = fileSelection("editable");
+    const prompt = file.text + "Keep this follow-up";
+    rememberCollapsedPromptParts(owner, prompt, [file]);
+    render({ initialPrompt: prompt, queryHistorySessionID: owner });
+    const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    openComments();
+    act(() => document.querySelector<HTMLButtonElement>(".file-selection-card-heading button")!.click());
+    const editor = document.querySelector<HTMLTextAreaElement>(".file-selection-comment-editor textarea")!;
+    expect(editor.value).toBe(file.comment);
+    act(() => setTextareaValue(editor, "Check the fallback too"));
+    act(() => document.querySelector<HTMLButtonElement>(".file-selection-comment-actions button:last-child")!.click());
+    const edited = buildFileSelectionPart(file.source, file.intent, "Check the fallback too", file.id);
+    expect(readCollapsedPromptParts(owner, edited.text + "Keep this follow-up")).toEqual([
+      edited, { type: "text", text: "Keep this follow-up" },
+    ]);
+    expect(input.value).toBe("Keep this follow-up");
+    openComments();
+    act(() => document.querySelector<HTMLButtonElement>(".file-selection-card-heading button:last-child")!.click());
+    expect(container.querySelector(".file-selection-tag")).toBeNull();
+    expect(readCollapsedPromptParts(owner, edited.text)).toBeUndefined();
+    expect(input.value).toBe("Keep this follow-up");
+  });
+
+  it("keeps file metadata visible but immutable in a read-only composer", () => {
+    const owner = `file-selection-readonly-${variant}`;
+    const file = fileSelection("readonly");
+    rememberCollapsedPromptParts(owner, file.text, [file]);
+    render({ initialPrompt: file.text, queryHistorySessionID: owner, readOnly: true });
+    openComments();
+    expect(document.querySelector(".file-selection-comment")?.textContent).toBe(file.comment);
+    expect(document.querySelectorAll(".file-selection-card-heading button")).toHaveLength(0);
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
+  });
+});
 
 describe("Composer send control", () => {
   it("keeps the draft editable but disables send when the workbench is disconnected", () => {

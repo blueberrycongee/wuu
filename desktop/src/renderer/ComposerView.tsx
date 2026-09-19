@@ -64,8 +64,11 @@ import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import {
   CollapsedComposerPromptCard,
+  rememberCollapsedPromptParts,
   useCollapsedComposerPrompt
 } from "./ComposerCollapsedPrompt";
+import { FileSelectionCards } from "./FileSelectionCards";
+import { useFileSelectionActions } from "./FileSelectionContext";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -519,6 +522,8 @@ export function Composer({
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
+    updateFileComment,
+    removeFileSelection,
     contentPartsForPrompt: collapsedContentPartsForPrompt,
   } = useCollapsedComposerPrompt({
     prompt,
@@ -526,6 +531,9 @@ export function Composer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
+  const fileSelectionActions = useFileSelectionActions();
+  const fileSelectionParts = activeCollapsedPromptBlocks.flatMap((block) =>
+    block.part?.type === "file_selection" ? [block.part] : []);
   const composerPlaceholder = placeholder ?? (readOnly
     ? t("composer.readOnly")
     : hasCollapsedPromptBlocks
@@ -744,7 +752,11 @@ export function Composer({
     setLocalPrompt("");
     const contentParts = collapsedContentPartsForPrompt(promptOverride);
     if (contentParts) {
-      onSubmit(promptOverride, contentParts);
+      const canonicalPrompt = contentParts.map((part) => part.text).join("");
+      // Failed sends restore this canonical prompt, including any whitespace
+      // that a previously queued draft lost at the server boundary.
+      if (queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
+      onSubmit(canonicalPrompt, contentParts);
     } else {
       onSubmit(promptOverride);
     }
@@ -1239,7 +1251,14 @@ export function Composer({
             )}
             {hasCollapsedPromptBlocks ? (
               <div className="composer-collapsed-prompt-list" ref={collapsedPromptListRef} aria-label={t("composer.collapsedLongText")}>
-                {activeCollapsedPromptBlocks.map((block, index) => (
+                <FileSelectionCards
+                  key={queryHistorySessionID}
+                  parts={fileSelectionParts}
+                  onRemove={readOnly ? undefined : removeFileSelection}
+                  onEdit={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
+                  onOpenFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
+                />
+                {activeCollapsedPromptBlocks.map((block, index) => block.part?.type === "file_selection" ? null : (
                   <CollapsedComposerPromptCard
                     text={block.text}
                     key={block.id}

@@ -458,7 +458,12 @@ export function queuedMessagePreview(message: QueuedComposerMessage): string {
  * tooltip instead of pretending the preview says everything.
  */
 export function queuedMessageFullPreview(message: QueuedComposerMessage): string {
-  const text = message.text.trim().replace(/\s+/g, " ");
+  const displayText = message.contentParts?.some((part) => part.type === "file_selection")
+    ? message.contentParts.map((part) => part.type === "file_selection"
+      ? `${part.source.path}:${part.source.start_line}–${part.source.end_line} · ${part.comment || part.source.quote}`
+      : part.text).join("\n")
+    : message.text;
+  const text = displayText.trim().replace(/\s+/g, " ");
   const imageText = message.images.length > 0
     ? translateCurrent(message.images.length === 1 ? "composer.preview.imageOne" : "composer.preview.images", { count: formatCurrentNumber(message.images.length) })
     : "";

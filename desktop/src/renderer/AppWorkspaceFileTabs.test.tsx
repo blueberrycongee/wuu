@@ -37,6 +37,19 @@ vi.mock("./JumpToLatestPill", () => ({
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
 import { RIGHT_PANEL_MOTION_MS } from "./AppLayoutState";
+import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import * as composerMessages from "./ComposerMessages";
+import { useFileSelectionActions, type FileSelectionSource } from "./FileSelectionContext";
+import type { FileSelectionControls } from "./FileSelectionSurface";
+import type { ReactNode } from "react";
+
+let selectionActions: ReturnType<typeof useFileSelectionActions>;
+vi.mock("./FileSelectionSurface", () => ({
+  FileSelectionSurface: ({ children }: { children: (controls: FileSelectionControls) => ReactNode }) => {
+    selectionActions = useFileSelectionActions();
+    return <div>{children({})}</div>;
+  },
+}));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -154,7 +167,9 @@ function installWuuApi(): void {
     listThreads: vi.fn().mockResolvedValue({ threads: [thread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     resumeThread: vi.fn().mockResolvedValue({ thread }),
+    startThread: vi.fn().mockResolvedValue({ thread: { ...thread, id: "thread-selection-new", turns: [] } }),
     startTurn: startTurnMock,
+    queueTurn: vi.fn().mockResolvedValue({ queued: { id: "queued-selection" } }),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
     gitStatus: vi.fn().mockResolvedValue({
       is_repo: false,
@@ -232,6 +247,245 @@ describe("workspace file tabs", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.useRealTimers();
+  });
+
+  async function openSelectionDocument(): Promise<void> {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")?.click());
+    await flushAsync();
+    expect(selectionActions).toBeTruthy();
+  }
+
+  const selectionSource: FileSelectionSource = {
+    workspace, path: "README.md", start_line: 1, start_column: 1,
+    end_line: 1, end_column: 11, quote: "# Artifact", revision: "selection-version",
+  };
+
+  async function typePrompt(textarea: HTMLTextAreaElement, value: string): Promise<void> {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function typeMainPrompt(value: string): Promise<HTMLTextAreaElement> {
+    const textarea = container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!;
+    await typePrompt(textarea, value);
+    return textarea;
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((accept, fail) => { resolve = accept; reject = fail; });
+    return { promise, resolve, reject };
+  }
+
+  async function submitMainPrompt(key = "Enter"): Promise<void> {
+    await act(async () => container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
+    await flushAsync();
+  }
+
+  it.each(["thread", "turn"] as const)("restores canonical comments and interleaved draft after first %s failure", async (failure) => {
+    await openSelectionDocument();
+    const newConversation = container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]');
+    expect(newConversation).not.toBeNull();
+    await act(async () => newConversation!.click());
+    await flushAsync();
+    const threadStart = deferred<Awaited<ReturnType<WuuDesktopApi["startThread"]>>>();
+    const turnStart = deferred<Awaited<ReturnType<WuuDesktopApi["startTurn"]>>>();
+    vi.mocked(window.wuu.startThread).mockReturnValueOnce(threadStart.promise);
+    startTurnMock.mockReturnValueOnce(turnStart.promise);
+    await typeMainPrompt("Original question");
+    act(() => selectionActions!.addComment(selectionSource, "Original comment"));
+    const original = selectionActions!.comments[0];
+    await submitMainPrompt();
+    expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
+    await typeMainPrompt("Next question");
+    act(() => selectionActions!.addComment(selectionSource, "Next comment"));
+    const next = selectionActions!.comments[0];
+    if (failure === "thread") {
+      await act(async () => threadStart.reject(new Error("offline")));
+      // The turn request was never reached, so do not reuse its deferred stub.
+      startTurnMock.mockReset().mockResolvedValue({ turn: completedThread().turns[0] });
+    } else {
+      await act(async () => threadStart.resolve({ thread: { ...completedThread(), id: "thread-selection-new", turns: [] } }));
+      expect(startTurnMock).toHaveBeenCalledTimes(1);
+      expect(selectionActions!.comments).toEqual([next]);
+      await act(async () => turnStart.reject(new Error("offline")));
+    }
+    await flushAsync();
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
+      .toBe("Original question\nNext question");
+    expect(selectionActions!.comments).toEqual([original, next]);
+    await submitMainPrompt();
+    const retry = startTurnMock.mock.calls.at(-1)!;
+    expect(retry[6]).toEqual([original, next, { type: "text", text: "Original question\nNext question" }]);
+    expect(retry[1]).toBe(retry[6].map((part: { text: string }) => part.text).join("").trim());
+  });
+
+  it.each([
+    { engine: "codex", providers: false, phase: "idle", accepted: true, queued: false },
+    { engine: "wuu", providers: true, phase: "answer-ready", accepted: true, queued: false },
+    { engine: "wuu", providers: false, phase: "idle", accepted: false, queued: false },
+    { engine: "wuu", providers: true, phase: "running", accepted: true, queued: true },
+  ])("routes $engine selection edits in a $phase split pane (providers=$providers)", async ({ engine, providers, phase, accepted, queued }) => {
+    if (!providers) vi.mocked(window.wuu.initialize).mockResolvedValue({ ...initialized(), providers: [] });
+    await openSelectionDocument();
+    const secondary: Thread = { ...completedThread(), id: "thread-selection-secondary", engine_id: engine };
+    if (phase !== "idle") {
+      secondary.status = "in_progress";
+      secondary.turns = [{
+        ...secondary.turns[0], status: "in_progress", items: [],
+        ...(phase === "answer-ready" ? { answer_ready_at: "2026-09-19T00:00:00Z" } : {}),
+      }];
+    }
+    vi.mocked(window.wuu.resumeThread).mockResolvedValueOnce({ thread: secondary });
+    await act(async () => requestOpenThreadInSplit(secondary.id));
+    await flushAsync();
+    const panes = container.querySelectorAll<HTMLElement>(".conversation-split-pane");
+    expect(panes).toHaveLength(2);
+    await typePrompt(panes[0].querySelector("textarea")!, "Primary draft");
+    act(() => selectionActions!.addComment(selectionSource, "Primary comment"));
+    await act(async () => panes[1].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    await typePrompt(panes[1].querySelector("textarea")!, "Secondary draft");
+    act(() => selectionActions!.addComment(selectionSource, "Secondary comment"));
+    const comment = selectionActions!.comments[0];
+    let result: boolean | undefined;
+    await act(async () => { result = await selectionActions!.edit(selectionSource, "Revise the heading"); });
+    expect(result).toBe(accepted);
+    expect(startTurnMock).toHaveBeenCalledTimes(accepted && !queued ? 1 : 0);
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(queued ? 1 : 0);
+    if (accepted) {
+      const call = queued ? vi.mocked(window.wuu.queueTurn).mock.calls[0] : startTurnMock.mock.calls[0];
+      expect(call[0]).toBe(secondary.id);
+      expect(call.at(-1)).toEqual([expect.objectContaining({ type: "file_selection", intent: "edit", source: selectionSource })]);
+    }
+    expect(panes[0].querySelector("textarea")!.value).toBe("Primary draft");
+    expect(panes[1].querySelector("textarea")!.value).toBe("Secondary draft");
+    expect(selectionActions!.comments).toEqual([comment]);
+    await act(async () => panes[0].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(selectionActions!.comments[0].comment).toBe("Primary comment");
+  });
+
+  it("sends comments with their source and restores the comment draft after a rejected send", async () => {
+    await openSelectionDocument();
+    const textarea = await typeMainPrompt("Discuss this section");
+    act(() => selectionActions!.addComment(selectionSource, "Explain the heading"));
+    startTurnMock.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await flushAsync();
+    const call = startTurnMock.mock.calls[0];
+    expect(call[1]).toContain(selectionSource.quote);
+    expect(call[1]).toContain("Explain the heading");
+    expect(call[6]).toEqual([
+      expect.objectContaining({ type: "file_selection", source: selectionSource, comment: "Explain the heading" }),
+      { type: "text", text: "Discuss this section" },
+    ]);
+    expect(textarea.value).toBe("Discuss this section");
+    expect(selectionActions!.comments).toHaveLength(1);
+    expect(container.querySelector(".file-selection-tag")).not.toBeNull();
+  });
+
+  it("submits a selection edit without consuming the main draft or pending comments", async () => {
+    await openSelectionDocument();
+    const textarea = await typeMainPrompt("Keep this unsent question");
+    act(() => selectionActions!.addComment(selectionSource, "Keep this comment"));
+    let accepted = false;
+    await act(async () => { accepted = await selectionActions!.edit(selectionSource, "Replace the heading"); });
+    expect(accepted).toBe(true);
+    const call = startTurnMock.mock.calls[0];
+    expect(call[1]).toContain("Replace the heading");
+    expect(call[1]).not.toContain("Keep this unsent question");
+    expect(call[1]).not.toContain("Keep this comment");
+    expect(call[2]).toEqual([]);
+    expect(call[3]).toEqual([]);
+    expect(call[6]).toEqual([expect.objectContaining({ type: "file_selection", intent: "edit", source: selectionSource })]);
+    expect(textarea.value).toBe("Keep this unsent question");
+    expect(selectionActions!.comments[0].comment).toBe("Keep this comment");
+  });
+
+  it("keeps unrelated comments under their new owner when a first inline edit fails", async () => {
+    await openSelectionDocument();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]')!.click());
+    await flushAsync();
+    await typeMainPrompt("Keep this draft");
+    act(() => selectionActions!.addComment(selectionSource, "Keep this comment"));
+    const comment = selectionActions!.comments[0];
+    const owner = selectionActions!.ownerKey;
+    startTurnMock.mockRejectedValueOnce(new Error("offline"));
+    let accepted = true;
+    await act(async () => { accepted = await selectionActions!.edit(selectionSource, "Retry this edit later"); });
+    expect(accepted).toBe(false);
+    expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
+    expect(selectionActions!.ownerKey).toBe(owner);
+    expect(selectionActions!.comments).toEqual([comment]);
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Keep this draft");
+    await submitMainPrompt();
+    expect(startTurnMock.mock.calls.at(-1)![6]).toEqual([comment, { type: "text", text: "Keep this draft" }]);
+  });
+
+  it("restores an attachment once when thread creation throws before draft state clears", async () => {
+    await openSelectionDocument();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建会话"]')!.click());
+    await flushAsync();
+    const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
+    const encode = vi.spyOn(composerMessages, "composerFileFromFile").mockResolvedValue(attachment);
+    try {
+      const input = container.querySelector<HTMLInputElement>("[data-main-conversation-composer] input[type=file]")!;
+      Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });
+      await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+      await flushAsync();
+    } finally {
+      encode.mockRestore();
+    }
+    await typeMainPrompt("Keep the attachment");
+    act(() => selectionActions!.addComment(selectionSource, "Explain the heading"));
+    const comment = selectionActions!.comments[0];
+    vi.mocked(window.wuu.startThread).mockImplementationOnce(() => { throw new Error("offline"); });
+    await submitMainPrompt();
+    expect(selectionActions!.comments).toEqual([comment]);
+    await submitMainPrompt();
+    expect(startTurnMock).toHaveBeenCalledTimes(1);
+    expect(startTurnMock.mock.calls[0][3]).toEqual([{
+      filename: attachment.filename, media_type: attachment.media_type, data: attachment.data,
+    }]);
+  });
+
+  it("restores failed queue metadata without overwriting a comment entered during submission", async () => {
+    await openSelectionDocument();
+    const running: Thread = { ...completedThread(), status: "in_progress", turns: [
+      ...completedThread().turns,
+      { id: "turn-selection-running", status: "in_progress", items_view: "full", items: [] },
+    ] };
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({
+        kind: "notification", workdir: workspace,
+        message: { method: "thread/updated", params: { thread: running } },
+      } as ServerEvent);
+    });
+    const queued = deferred<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>();
+    vi.mocked(window.wuu.queueTurn).mockReturnValueOnce(queued.promise);
+    await typeMainPrompt("Queued question");
+    act(() => selectionActions!.addComment(selectionSource, "Queued comment"));
+    const original = selectionActions!.comments[0];
+    await submitMainPrompt("Tab");
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+    await typeMainPrompt("New question");
+    act(() => selectionActions!.addComment(selectionSource, "New comment"));
+    const next = selectionActions!.comments[0];
+    await act(async () => queued.reject(new Error("offline")));
+    expect(selectionActions!.comments).toEqual([original, next]);
+    expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
+      .toBe("Queued question\nNew question");
+    await submitMainPrompt("Tab");
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls.at(-1)![7])
+      .toEqual([original, next, { type: "text", text: "Queued question\nNew question" }]);
   });
 
   it("opens a document beside the active conversation instead of replacing it", async () => {

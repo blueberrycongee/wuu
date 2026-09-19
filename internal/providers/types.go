@@ -206,12 +206,30 @@ func NormalizeMessagePhase(phase string) MessagePhase {
 	}
 }
 
+// FileSelectionSource identifies the captured file revision and selection range.
+// Lines and UTF-16 columns are one-based; the end position is exclusive.
+type FileSelectionSource struct {
+	Workspace   string `json:"workspace"`
+	Path        string `json:"path"`
+	StartLine   int    `json:"start_line"`
+	StartColumn int    `json:"start_column"`
+	EndLine     int    `json:"end_line"`
+	EndColumn   int    `json:"end_column"`
+	Quote       string `json:"quote"`
+	Revision    string `json:"revision"`
+}
+
 // MessageContentPart preserves the authored structure of one user message.
 // Providers still consume ChatMessage.Content as flattened text.
 type MessageContentPart struct {
-	Type  string `json:"type"`
-	Text  string `json:"text,omitempty"`
-	Title string `json:"title,omitempty"`
+	Type string `json:"type"`
+	// Text is the full model-visible block, including all file-selection context.
+	Text    string               `json:"text,omitempty"`
+	Title   string               `json:"title,omitempty"`
+	Source  *FileSelectionSource `json:"source,omitempty"`
+	Intent  string               `json:"intent,omitempty"`
+	Comment string               `json:"comment,omitempty"`
+	ID      string               `json:"id,omitempty"`
 }
 
 // ChatMessage is a generic multi-provider chat message.

@@ -8,6 +8,8 @@ import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { useEffect, useMemo, useRef } from "react";
 import type { WorkspaceFileSelection } from "./LinkTargets";
+import { fileSelectionModelRange, type FileSelectionSource } from "./FileSelectionMapping";
+import type { FileEditorSelection, FileSelectionControls } from "./FileSelectionSurface";
 import { useI18n } from "./i18n";
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
 
@@ -51,6 +53,9 @@ export function WorkspaceMonacoEditor({
   onChange,
   onSave,
   onViewStateChange,
+  onSelectionChange,
+  persistentSelection,
+  revealSelection,
 }: {
   path: string;
   resourceID: string;
@@ -61,21 +66,29 @@ export function WorkspaceMonacoEditor({
   onChange?: (value: string) => void;
   onSave?: () => void;
   onViewStateChange?: (state: WorkspaceMonacoViewState | null) => void;
+  onSelectionChange?: (selection: FileEditorSelection | null) => void;
+  persistentSelection?: FileSelectionSource;
+  revealSelection?: FileSelectionControls["revealSelection"];
 }): JSX.Element {
   const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onViewStateChangeRef = useRef(onViewStateChange);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const decorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const language = useMemo(() => monacoLanguageForPath(path), [path]);
 
   useEffect(() => {
     onChangeRef.current = onChange;
     onSaveRef.current = onSave;
     onViewStateChangeRef.current = onViewStateChange;
-  }, [onChange, onSave, onViewStateChange]);
+    onSelectionChangeRef.current = onSelectionChange;
+  }, [onChange, onSave, onViewStateChange, onSelectionChange]);
 
   useEffect(() => {
     installMonacoWorkers();
@@ -129,6 +142,27 @@ export function WorkspaceMonacoEditor({
     const changeDisposable = editor.onDidChangeModelContent(() => {
       onChangeRef.current?.(model.getValue());
     });
+    const reportSelection = () => {
+      const range = editor.getSelection();
+      if (!range || range.isEmpty()) { onSelectionChangeRef.current?.(null); return; }
+      const mapped = fileSelectionModelRange(textRef.current, range);
+      if (!mapped) { onSelectionChangeRef.current?.(null); return; }
+      onSelectionChangeRef.current?.({
+        ...mapped,
+        getRect: () => {
+          const start = editor.getScrolledVisiblePosition(range.getStartPosition());
+          const end = editor.getScrolledVisiblePosition(range.getEndPosition());
+          const bounds = host.getBoundingClientRect();
+          // Return an offscreen anchor when both endpoints have left the view.
+          if (!start && !end) return new DOMRect(bounds.left, bounds.top - 100, 0, 0);
+          const point = end ?? start!;
+          return new DOMRect(bounds.left + point.left, bounds.top + point.top, 1, point.height);
+        },
+      });
+    };
+    const selectionDisposable = editor.onDidChangeCursorSelection(reportSelection);
+    const scrollDisposable = editor.onDidScrollChange(() => document.dispatchEvent(new Event("file-selection-layout")));
+    decorationRef.current = editor.createDecorationsCollection();
     editor.addCommand(
       monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
       () => onSaveRef.current?.(),
@@ -146,6 +180,10 @@ export function WorkspaceMonacoEditor({
       stopObservingTheme();
       stopObservingAppearance();
       changeDisposable.dispose();
+      selectionDisposable.dispose();
+      scrollDisposable.dispose();
+      decorationRef.current?.clear();
+      decorationRef.current = null;
       editor.dispose();
       model.dispose();
       if (editorRef.current === editor) {
@@ -159,7 +197,7 @@ export function WorkspaceMonacoEditor({
 
   useEffect(() => {
     const model = modelRef.current;
-    if (!model || model.getValue() === text) {
+    if (!model || model.getValue(undefined, true) === text) {
       return;
     }
     model.pushEditOperations(
@@ -177,6 +215,19 @@ export function WorkspaceMonacoEditor({
   useEffect(() => {
     editorRef.current?.updateOptions({ readOnly });
   }, [readOnly]);
+
+  useEffect(() => {
+    decorationRef.current?.set(persistentSelection ? [{
+      range: sourceMonacoRange(persistentSelection, text),
+      options: { className: "file-selection-persistent", stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+    }] : []);
+  }, [persistentSelection, resourceID, language, text]);
+
+  useEffect(() => {
+    if (!revealSelection) return;
+    const source = revealSelection.source;
+    editorRef.current?.revealRangeInCenter(sourceMonacoRange(source, textRef.current), monaco.editor.ScrollType.Immediate);
+  }, [revealSelection]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -218,6 +269,11 @@ export function WorkspaceMonacoEditor({
       ref={hostRef}
     />
   );
+}
+
+function sourceMonacoRange(source: FileSelectionSource, text: string): monaco.Range {
+  const column = (line: number, value: number) => Math.max(1, value - (line === 1 && text.startsWith("\uFEFF") ? 1 : 0));
+  return new monaco.Range(source.start_line, column(source.start_line, source.start_column), source.end_line, column(source.end_line, source.end_column));
 }
 
 export function workspaceScrollbarSize(host: HTMLElement): number {

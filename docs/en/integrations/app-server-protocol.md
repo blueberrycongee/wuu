@@ -208,6 +208,39 @@ Interrupts an active Run. `wuu exec` uses this for Ctrl+C and timeout cleanup.
 
 Requests a clean app-server shutdown.
 
+## Input Content Parts
+
+`turn/start`, `turn/queue`, `turn/update-queued`, and `turn/steer` accept optional
+`content_parts`, an ordered array of presentation metadata alongside `prompt`.
+Binary attachments remain in `images` / `files`.
+
+| `type` | Fields |
+| --- | --- |
+| `text` | `text: string` |
+| `pasted_text` | `text: string`, optional `title: string` |
+| `file_selection` | `text: string`, `source: FileSelectionSource`, `intent: "comment" \| "edit" \| "quote"`, `id: string`, optional `comment: string` |
+
+`FileSelectionSource` contains `workspace`, `path`, `quote`, and `revision`
+(strings), plus `start_line`, `start_column`, `end_line`, and `end_column`
+(integers). Lines and UTF-16 columns are one-based; the end position is
+exclusive. `revision` identifies the captured file content, not necessarily a
+Git revision. The server checks required metadata, supported intent, positive
+coordinates, and range ordering; it does not read the file or verify its revision.
+
+Each file-selection `text` must contain the complete model-visible serialized
+block, including source context, intent, and any comment. Clients concatenate
+part texts in order to form `prompt`. The server keeps valid metadata only when
+that concatenation matches the submitted prompt after outer-whitespace trimming;
+it does not reconstruct or parse the client's serialization. Unknown or invalid
+parts are discarded, and a mismatch discards the presentation metadata without
+changing the prompt. Providers and engines consume the canonical message text;
+Codex receives ordinary text input without special `text_elements`.
+
+Accepted metadata survives history and held-queue replay. Clients must tolerate
+unknown fields and part types, falling back to the full message `text` or queued
+`prompt` when they cannot render the metadata. Metadata must never be the only
+copy of context needed by the model.
+
 ## Anonymous Worker Capacity
 
 `agent.max_parallel` is the host-owned execution capacity for anonymous workers.

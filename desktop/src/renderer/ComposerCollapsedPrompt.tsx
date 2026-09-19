@@ -6,16 +6,19 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  useSyncExternalStore
 } from "react";
 import { clipboardAttachmentFiles } from "./ComposerMessages";
 import type { MessageContentPart } from "../shared/protocol";
 import { translateCurrent as translate } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
+import { buildFileSelectionPart } from "./FileSelectionContext";
 
 export type CollapsedComposerPromptBlock = {
   id: string;
   text: string;
+  part?: MessageContentPart;
 };
 
 const COLLAPSIBLE_COMPOSER_PROMPT_LINE_THRESHOLD = 14;
@@ -25,26 +28,80 @@ const COLLAPSIBLE_COMPOSER_PROMPT_SOFT_LINE_CHARS = 84;
 // Fold layout survives composer unmounts and draft swaps (e.g. switching
 // session tabs) so a folded long paste does not silently turn back into raw
 // text when the composer returns. Entries are keyed by the draft owner and
-// hold only the folded prefix plus its text chunks; the visible follow-up
+// hold the folded prefix and structured parts; the visible follow-up
 // text always lives in the canonical prompt.
 const FOLDED_PROMPT_REGISTRY_MAX_ENTRIES = 64;
-const foldedPromptRegistry = new Map<string, { prefix: string; texts: string[] }>();
+const foldedPromptRegistry = new Map<string, { prefix: string; parts: MessageContentPart[] }>();
+const foldedPromptListeners = new Set<() => void>();
+let foldedPromptRevision = 0;
+
+export function subscribeCollapsedPromptParts(listener: () => void): () => void {
+  foldedPromptListeners.add(listener);
+  return () => { foldedPromptListeners.delete(listener); };
+}
+
+export function getCollapsedPromptRevision(): number {
+  return foldedPromptRevision;
+}
+
+function notifyCollapsedPromptParts(): void {
+  foldedPromptRevision += 1;
+  foldedPromptListeners.forEach((listener) => listener());
+}
+
+function consumedCollapsedPromptPrefix(
+  entry: { prefix: string; parts: MessageContentPart[] },
+  prompt: string,
+): string | undefined {
+  const canonicalPrefix = entry.parts.map((part) => part.text).join("");
+  // Edits rebuild the canonical prefix. Prefer its full length so restored
+  // separators never become part of the user's visible follow-up.
+  if (prompt.startsWith(canonicalPrefix)) return canonicalPrefix;
+  return prompt.startsWith(entry.prefix) ? entry.prefix : undefined;
+}
+
+export function readCollapsedPromptParts(
+  storageKey: string,
+  prompt: string,
+): MessageContentPart[] | undefined {
+  const entry = foldedPromptRegistry.get(storageKey);
+  if (!entry) return undefined;
+  const consumedPrefix = consumedCollapsedPromptPrefix(entry, prompt);
+  if (consumedPrefix === undefined) return undefined;
+  const visibleText = prompt.slice(consumedPrefix.length);
+  return [...entry.parts, ...(visibleText ? [{ type: "text" as const, text: visibleText }] : [])];
+}
 
 export function rememberCollapsedPromptParts(
   storageKey: string,
   prompt: string,
   contentParts: MessageContentPart[] | undefined,
 ): void {
-  const texts = (contentParts ?? [])
-    .filter((part) => part.type === "pasted_text")
-    .map((part) => part.text);
-  const prefix = texts.join("");
-  if (!storageKey || texts.length === 0 || !prompt.startsWith(prefix)) return;
-  foldedPromptRegistry.set(storageKey, { prefix, texts });
+  if (!storageKey) return;
+  const parts = (contentParts ?? [])
+    .filter((part) => part.type === "pasted_text" || part.type === "file_selection");
+  if (parts.length === 0) {
+    if (foldedPromptRegistry.delete(storageKey)) notifyCollapsedPromptParts();
+    return;
+  }
+  const originalPrefix = parts.map((part) => part.text).join("");
+  // The server trims the outer prompt while retaining exact part text. Only
+  // remove trailing prefix whitespace when it consumes the entire prompt;
+  // before a visible question or another block that whitespace is internal.
+  const prefix = [originalPrefix, originalPrefix.trimStart()]
+    .find((candidate) => candidate.length > 0 && prompt.startsWith(candidate))
+    ?? ([originalPrefix.trimEnd(), originalPrefix.trim()].includes(prompt) && prompt.length > 0
+      ? prompt
+      : undefined);
+  if (prefix === undefined) return;
+  const previous = foldedPromptRegistry.get(storageKey);
+  if (previous?.prefix === prefix && JSON.stringify(previous.parts) === JSON.stringify(parts)) return;
+  foldedPromptRegistry.set(storageKey, { prefix, parts });
   if (foldedPromptRegistry.size > FOLDED_PROMPT_REGISTRY_MAX_ENTRIES) {
     const oldestKey = foldedPromptRegistry.keys().next().value;
     if (oldestKey !== undefined) foldedPromptRegistry.delete(oldestKey);
   }
+  notifyCollapsedPromptParts();
 }
 
 export function isCollapsibleComposerPrompt(text: string): boolean {
@@ -147,6 +204,7 @@ export function useCollapsedComposerPrompt({
 }): {
   blocks: CollapsedComposerPromptBlock[];
   hasBlocks: boolean;
+  /** Exact part-text prefix to prepend when changing the visible draft. */
   prefix: string;
   visiblePrompt: string;
   listRef: RefObject<HTMLDivElement | null>;
@@ -156,82 +214,70 @@ export function useCollapsedComposerPrompt({
   ) => void;
   revealBlock: (index: number) => void;
   removeBlock: (index: number) => void;
+  updateFileComment: (id: string, comment: string) => void;
+  removeFileSelection: (id: string | string[]) => void;
   contentPartsForPrompt: (prompt: string) => MessageContentPart[] | undefined;
 } {
-  const [blocks, setBlocks] = useState<CollapsedComposerPromptBlock[]>([]);
-  const blocksRef = useRef<CollapsedComposerPromptBlock[]>([]);
+  const [localBlocks, setLocalBlocks] = useState<CollapsedComposerPromptBlock[]>([]);
+  const localBlocksRef = useRef(localBlocks);
   const blockIDRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
+  useSyncExternalStore(subscribeCollapsedPromptParts, getCollapsedPromptRevision);
+  const entry = storageKey ? foldedPromptRegistry.get(storageKey) : undefined;
+  const blocks = useMemo(() => storageKey
+    ? (entry?.parts ?? []).map((part, index) => ({
+      id: part.type === "file_selection" ? `file-selection-${part.id}` : `composer-prompt-block-${index}`,
+      text: part.text,
+      part,
+    }))
+    : localBlocks, [entry, localBlocks, storageKey]);
 
   const prefix = useMemo(() => blocks.map((block) => block.text).join(""), [blocks]);
-  const hasBlocks = blocks.length > 0 && prompt.startsWith(prefix);
+  const consumedPrefix = entry ? consumedCollapsedPromptPrefix(entry, prompt) : prefix;
+  const hasBlocks = blocks.length > 0 && consumedPrefix !== undefined && prompt.startsWith(consumedPrefix);
   const activeBlocks = hasBlocks ? blocks : [];
-  const visiblePrompt = hasBlocks ? prompt.slice(prefix.length) : prompt;
+  const visiblePrompt = hasBlocks ? prompt.slice(consumedPrefix.length) : prompt;
 
   function nextBlockID(): string {
     return `composer-prompt-block-${Date.now().toString(36)}-${blockIDRef.current++}`;
   }
 
-  function replaceBlocks(nextBlocks: CollapsedComposerPromptBlock[]): void {
-    blocksRef.current = nextBlocks;
-    setBlocks(nextBlocks);
-  }
-
   function contentPartsForPrompt(nextPrompt: string): MessageContentPart[] | undefined {
-    const nextBlocks = blocksRef.current;
+    if (storageKey) return readCollapsedPromptParts(storageKey, nextPrompt);
+    const nextBlocks = localBlocksRef.current;
     const nextPrefix = nextBlocks.map((block) => block.text).join("");
     if (nextBlocks.length === 0 || !nextPrompt.startsWith(nextPrefix)) return undefined;
     const visibleText = nextPrompt.slice(nextPrefix.length);
     return [
-      ...nextBlocks.map((block) => ({ type: "pasted_text" as const, text: block.text })),
+      ...nextBlocks.map((block) => block.part ?? { type: "pasted_text" as const, text: block.text }),
       ...(visibleText ? [{ type: "text" as const, text: visibleText }] : []),
     ];
   }
 
-  function persistFold(nextBlocks: CollapsedComposerPromptBlock[], nextPrefix: string): void {
-    if (!storageKey) {
-      return;
+  function applyBlocks(nextBlocks: CollapsedComposerPromptBlock[], nextVisiblePrompt: string): void {
+    const nextPrompt = nextBlocks.map((block) => block.text).join("") + nextVisiblePrompt;
+    if (storageKey) {
+      rememberCollapsedPromptParts(storageKey, nextPrompt, nextBlocks.map((block) =>
+        block.part ?? { type: "pasted_text" as const, text: block.text }));
+    } else {
+      localBlocksRef.current = nextBlocks;
+      setLocalBlocks(nextBlocks);
     }
-    if (nextBlocks.length === 0) {
-      foldedPromptRegistry.delete(storageKey);
-      return;
-    }
-    foldedPromptRegistry.set(storageKey, {
-      prefix: nextPrefix,
-      texts: nextBlocks.map((block) => block.text)
-    });
-    if (foldedPromptRegistry.size > FOLDED_PROMPT_REGISTRY_MAX_ENTRIES) {
-      const oldestKey = foldedPromptRegistry.keys().next().value;
-      if (oldestKey !== undefined) {
-        foldedPromptRegistry.delete(oldestKey);
-      }
-    }
+    setPrompt(nextPrompt);
+    focusComposerSoon();
   }
 
-  // Bring the fold layout back when this draft owner's prompt returns after
-  // a draft swap (tab switch) or a composer remount. The reset effect below
-  // clears blocks during the swap; the registry entry is only written on
-  // explicit fold/reveal/remove actions, so a temporary prompt replacement
-  // does not destroy the persisted layout.
-  useEffect(() => {
-    const entry = storageKey ? foldedPromptRegistry.get(storageKey) : undefined;
-    if (!entry || entry.texts.length === 0) {
-      return;
-    }
-    if (blocks.length > 0) {
-      return;
-    }
-    if (entry.prefix.length === 0 || !prompt.startsWith(entry.prefix)) {
-      return;
-    }
-    replaceBlocks(entry.texts.map((text) => ({ id: nextBlockID(), text })));
-  }, [blocks.length, prompt, storageKey]);
+  // Registry entries are changed only by explicit metadata operations. A
+  // transient send-clear hides blocks without destroying queued restore data.
+  // Deriving keyed blocks directly also prevents local effects from overwriting
+  // an external same-owner update or leaking metadata across draft owners.
 
   useEffect(() => {
-    if (blocks.length > 0 && !prompt.startsWith(prefix)) {
-      replaceBlocks([]);
+    if (!storageKey && localBlocks.length > 0 && !prompt.startsWith(prefix)) {
+      localBlocksRef.current = [];
+      setLocalBlocks([]);
     }
-  }, [blocks.length, prefix, prompt]);
+  }, [localBlocks.length, prefix, prompt, storageKey]);
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -277,11 +323,7 @@ export function useCollapsedComposerPrompt({
       text: pastedText
     };
     const nextBlocks = hasBlocks ? [...blocks, nextBlock] : [nextBlock];
-    const nextPrefix = `${hasBlocks ? prefix : ""}${pastedText}`;
-    replaceBlocks(nextBlocks);
-    setPrompt(nextPrefix);
-    persistFold(nextBlocks, nextPrefix);
-    focusComposerSoon();
+    applyBlocks(nextBlocks, "");
   }
 
   function revealBlock(index: number): void {
@@ -289,16 +331,12 @@ export function useCollapsedComposerPrompt({
       return;
     }
     const revealedBlock = activeBlocks[index];
-    if (!revealedBlock) {
+    if (!revealedBlock || revealedBlock.part?.type === "file_selection") {
       return;
     }
     const nextBlocks = activeBlocks.filter((_, blockIndex) => blockIndex !== index);
-    const nextPrefix = nextBlocks.map((block) => block.text).join("");
     const nextVisiblePrompt = `${visiblePrompt}${revealedBlock.text}`;
-    replaceBlocks(nextBlocks);
-    setPrompt(`${nextPrefix}${nextVisiblePrompt}`);
-    persistFold(nextBlocks, nextPrefix);
-    focusComposerSoon();
+    applyBlocks(nextBlocks, nextVisiblePrompt);
   }
 
   function removeBlock(index: number): void {
@@ -306,11 +344,23 @@ export function useCollapsedComposerPrompt({
       return;
     }
     const nextBlocks = activeBlocks.filter((_, blockIndex) => blockIndex !== index);
-    const nextPrefix = nextBlocks.map((block) => block.text).join("");
-    replaceBlocks(nextBlocks);
-    setPrompt(`${nextPrefix}${visiblePrompt}`);
-    persistFold(nextBlocks, nextPrefix);
-    focusComposerSoon();
+    applyBlocks(nextBlocks, visiblePrompt);
+  }
+
+  function updateFileComment(id: string, comment: string): void {
+    const index = activeBlocks.findIndex((block) => block.part?.type === "file_selection" && block.part.id === id);
+    const block = activeBlocks[index];
+    if (block?.part?.type !== "file_selection") return;
+    const part = buildFileSelectionPart(block.part.source, block.part.intent, comment, id);
+    applyBlocks(activeBlocks.map((current, blockIndex) => blockIndex === index
+      ? { ...block, text: part.text, part }
+      : current), visiblePrompt);
+  }
+
+  function removeFileSelection(id: string | string[]): void {
+    const ids = new Set(Array.isArray(id) ? id : [id]);
+    const nextBlocks = activeBlocks.filter((block) => block.part?.type !== "file_selection" || !ids.has(block.part.id));
+    if (nextBlocks.length !== activeBlocks.length) applyBlocks(nextBlocks, visiblePrompt);
   }
 
   return {
@@ -322,6 +372,8 @@ export function useCollapsedComposerPrompt({
     handlePaste,
     revealBlock,
     removeBlock,
+    updateFileComment,
+    removeFileSelection,
     contentPartsForPrompt,
   };
 }

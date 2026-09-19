@@ -1771,12 +1771,33 @@ export type ThreadItemType =
   | "error";
 export type ThreadItemStatus = "in_progress" | "completed" | "failed";
 
+export type FileSelectionSource = {
+  workspace: string;
+  path: string;
+  // One-based lines and UTF-16 columns; the end position is exclusive.
+  start_line: number;
+  start_column: number;
+  end_line: number;
+  end_column: number;
+  quote: string;
+  revision: string;
+};
+
 // Ordered user-authored content carried by one message bubble. Binary
 // attachments remain in `images` / `files`; these parts preserve the
-// distinction between instructions and pasted reference text.
+// distinction between instructions, pasted text, and file selections.
 export type MessageContentPart =
   | { type: "text"; text: string }
-  | { type: "pasted_text"; text: string; title?: string };
+  | { type: "pasted_text"; text: string; title?: string }
+  | {
+      type: "file_selection";
+      // Full model-visible serialized block, including source, intent, and comment.
+      text: string;
+      source: FileSelectionSource;
+      intent: "comment" | "edit" | "quote";
+      comment?: string;
+      id: string;
+    };
 
 export type ToolCallDisplay = {
   kind?: string;

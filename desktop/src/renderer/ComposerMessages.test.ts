@@ -3,9 +3,11 @@ import {
   OPTIMISTIC_TURN_ID_PREFIX,
   dropOptimisticTurn,
   interruptLatestOptimisticTurn,
+  queuedMessageFullPreview,
   threadHasAcceptedComposerMessage,
 } from "./ComposerMessages";
 import type { Turn } from "../shared/protocol";
+import { buildFileSelectionPart } from "./FileSelectionContext";
 
 function turnWithUserText(id: string, text: string): Turn {
   return {
@@ -64,4 +66,18 @@ describe("settling optimistic turns", () => {
       expect(settled.turns.find((turn) => turn.id === accepted.id)?.status).toBe("in_progress");
     }
   });
+});
+
+it("previews queued selection instructions without exposing the serialized reference envelope", () => {
+  const part = buildFileSelectionPart({ workspace: "/repo", path: "notes.md", start_line: 2,
+    start_column: 1, end_line: 4, end_column: 3, quote: "Captured reference", revision: "snapshot" },
+  "edit", "Shorten this section");
+  const message = { id: "pending", text: `${part.text}Keep the examples`, images: [], files: [],
+    contentParts: [part, { type: "text" as const, text: "Keep the examples" }] };
+  const preview = queuedMessageFullPreview(message);
+  expect(preview).toContain("notes.md:2–4");
+  expect(preview).toContain("Shorten this section");
+  expect(preview).toContain("Keep the examples");
+  expect(preview).not.toContain("snapshot");
+  expect(message.contentParts[0].text).toBe(part.text);
 });

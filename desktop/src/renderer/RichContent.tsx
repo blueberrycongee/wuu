@@ -21,6 +21,7 @@ import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./T
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { highlightCode } from "./WorkspaceCodeHighlight";
+import { rehypeFileSelectionMapping, type SelectionASTNode } from "./FileSelectionMapping";
 
 type RichContentProps = {
   text?: string;
@@ -33,6 +34,7 @@ type RichContentProps = {
    * default so LLM output cannot inject arbitrary HTML.
    */
   allowRawHtml?: boolean;
+  sourceMapping?: boolean;
 };
 
 export type RichTextRenderContext = {
@@ -116,7 +118,8 @@ export const RichContent = memo(function RichContent({
   text = "",
   cwd,
   onOpenFile,
-  allowRawHtml = false
+  allowRawHtml = false,
+  sourceMapping = false,
 }: RichContentProps): JSX.Element {
   useSyncExternalStore(
     desktopWorkbenchController.subscribe,
@@ -129,6 +132,7 @@ export const RichContent = memo(function RichContent({
         cwd={cwd}
         onOpenFile={onOpenFile}
         allowRawHtml={allowRawHtml}
+        sourceMapping={sourceMapping}
       />
     </div>
   );
@@ -151,7 +155,8 @@ function MarkdownContentView({
   onOpenFile,
   renderMermaid = true,
   mermaidStreaming = false,
-  allowRawHtml = false
+  allowRawHtml = false,
+  sourceMapping = false,
 }: {
   text: string;
   cwd?: string;
@@ -162,10 +167,11 @@ function MarkdownContentView({
    * successful results (see MermaidDiagram). */
   mermaidStreaming?: boolean;
   allowRawHtml?: boolean;
+  sourceMapping?: boolean;
 }): JSX.Element {
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile),
-    [cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile]
+    () => markdownComponents(cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, sourceMapping),
+    [cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, sourceMapping]
   );
   return (
     <ReactMarkdown
@@ -173,7 +179,7 @@ function MarkdownContentView({
       // CommonMark links and GFM autolinks are the only text-to-link rules.
       // File mentions stay literal; file navigation uses explicit link targets.
       remarkPlugins={[remarkGfm, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary]}
-      rehypePlugins={allowRawHtml ? [rehypeRaw, rehypeHeadingIDs] : [rehypeHeadingIDs]}
+      rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), rehypeHeadingIDs, ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
       urlTransform={richMarkdownUrlTransform}
     >
       {text}
@@ -193,12 +199,13 @@ function markdownComponents(
   renderText: RichTextRenderer | undefined,
   renderMermaid: boolean,
   mermaidStreaming: boolean,
-  onOpenFile: ((path: string) => void) | undefined
+  onOpenFile: ((path: string) => void) | undefined,
+  sourceMapping: boolean,
 ): Components {
   const richTextOptions: RichTextRenderOptions = {
     renderText,
   };
-  return {
+  const components: Components = {
     p({ children }) {
       return (
         <p className="rich-paragraph">{renderMarkdownText(children, richTextOptions, "p")}</p>
@@ -340,6 +347,24 @@ function markdownComponents(
       return <hr className="rich-rule" />;
     }
   };
+  if (!sourceMapping) return components;
+  // Custom renderers replace the AST element, so carry its source boundaries
+  // onto their actual root (including highlighted code and rendered diagrams).
+  return Object.fromEntries(Object.entries(components).map(([tag, component]) => [tag,
+    (props: { node?: SelectionASTNode }) => {
+      const rendered = (component as (props: { node?: SelectionASTNode }) => JSX.Element | null)(props);
+      if (!rendered) return rendered;
+      const attributes = props.node?.properties;
+      const sourceProps = {
+        "data-file-source-start": attributes?.["data-file-source-start"],
+        "data-file-source-end": attributes?.["data-file-source-end"],
+      };
+      // Composite renderers need a DOM boundary because they do not forward
+      // arbitrary attributes. Inline links keep their mapped text children.
+      if (tag === "pre") return <div {...sourceProps}>{rendered}</div>;
+      return typeof rendered.type === "string" ? cloneElement(rendered, sourceProps) : rendered;
+    },
+  ])) as Components;
 }
 
 function RichCodeBlock({

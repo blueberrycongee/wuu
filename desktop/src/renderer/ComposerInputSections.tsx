@@ -19,8 +19,11 @@ import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
 import {
   CollapsedComposerPromptCard,
+  rememberCollapsedPromptParts,
   useCollapsedComposerPrompt
 } from "./ComposerCollapsedPrompt";
+import { FileSelectionCards } from "./FileSelectionCards";
+import { useFileSelectionActions } from "./FileSelectionContext";
 import {
   WORKSPACE_FILE_DRAG_MIME,
   appendWorkspacePathToPrompt,
@@ -198,6 +201,8 @@ export function SplitPaneComposer({
     handlePaste: handleCollapsedComposerPaste,
     revealBlock: revealCollapsedPromptBlock,
     removeBlock: removeCollapsedPromptBlock,
+    updateFileComment,
+    removeFileSelection,
     contentPartsForPrompt: collapsedContentPartsForPrompt,
   } = useCollapsedComposerPrompt({
     prompt,
@@ -205,6 +210,9 @@ export function SplitPaneComposer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
+  const fileSelectionActions = useFileSelectionActions();
+  const fileSelectionParts = collapsedPromptBlocks.flatMap((block) =>
+    block.part?.type === "file_selection" ? [block.part] : []);
 
   const { resetQueryHistoryNavigation, handleQueryHistoryKeyDown } = useComposerQueryHistory({
     disabled: readOnly || hasAttachments || hasCollapsedPromptBlocks,
@@ -272,7 +280,9 @@ export function SplitPaneComposer({
     resetQueryHistoryNavigation();
     const contentParts = collapsedContentPartsForPrompt(prompt);
     if (contentParts) {
-      onSend(prompt, contentParts);
+      const canonicalPrompt = contentParts.map((part) => part.text).join("");
+      if (queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
+      onSend(canonicalPrompt, contentParts);
     } else {
       onSend();
     }
@@ -357,7 +367,14 @@ export function SplitPaneComposer({
                     ref={collapsedPromptListRef}
                     aria-label={t("composer.collapsedLongText")}
                   >
-                    {collapsedPromptBlocks.map((block, index) => (
+                    <FileSelectionCards
+                      key={queryHistorySessionID}
+                      parts={fileSelectionParts}
+                      onRemove={readOnly ? undefined : removeFileSelection}
+                      onEdit={readOnly ? undefined : (part, comment) => updateFileComment(part.id, comment)}
+                      onOpenFile={fileSelectionActions ? (path) => fileSelectionActions.openFile(path) : undefined}
+                    />
+                    {collapsedPromptBlocks.map((block, index) => block.part?.type === "file_selection" ? null : (
                       <CollapsedComposerPromptCard
                         text={block.text}
                         key={block.id}

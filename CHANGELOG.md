@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Added selection actions to Markdown, code, and text previews: attach selected
+  text as hover-preview tags, add editable comments with source locations, or submit an
+  inline edit request while preserving the conversation draft.
 - Added **Approve for me** as a Standard-mode permission option. High-risk native
   tool calls are reviewed before they run; the workspace boundary is unchanged,
   and a review timeout or failure is not treated as a denial.

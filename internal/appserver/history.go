@@ -353,6 +353,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		Steered:           msg.Steered,
 		ReasoningContent:  msg.ReasoningContent,
 		ReasoningBlocks:   append([]providers.ReasoningBlock(nil), msg.ReasoningBlocks...),
+		ContentParts:      append([]providers.MessageContentPart(nil), msg.ContentParts...),
 		ProviderItems:     append([]providers.ProviderItem(nil), msg.ProviderItems...),
 		DiscoveredTools:   providers.CloneLoadableToolDefinitions(msg.DiscoveredTools),
 		ToolCallID:        msg.ToolCallID,

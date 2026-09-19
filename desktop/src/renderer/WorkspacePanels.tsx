@@ -8,6 +8,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -261,6 +262,8 @@ export function WorkspaceRightPanel({
   const fileTreeDockDragRef = useRef(false);
   const [resizingFileSplit, setResizingFileSplit] = useState(false);
   const fileSplitRef = useRef<HTMLDivElement>(null);
+  const fileContentRef = useRef<HTMLElement>(null);
+  const documentComposerRef = useRef<HTMLDivElement>(null);
   const fileTreeRef = useRef<HTMLElement>(null);
   const fileTreeDragPreviewRef = useRef<HTMLDivElement>(null);
   const fileSplitResizeRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
@@ -272,6 +275,24 @@ export function WorkspaceRightPanel({
     visibleTabs.map((tab) => tab.id),
     addButtonRef,
   );
+
+  useLayoutEffect(() => {
+    const content = fileContentRef.current;
+    const composer = documentComposerRef.current;
+    if (!content || !composer) return;
+    // Document annotations must remain above the floating composer's actual
+    // footprint, including attachments and expanded input at larger font sizes.
+    const measure = () => content.style.setProperty(
+      "--workspace-document-composer-inset", `${composer.getBoundingClientRect().height + 16}px`,
+    );
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(composer);
+    return () => {
+      observer?.disconnect();
+      content.style.removeProperty("--workspace-document-composer-inset");
+    };
+  }, [Boolean(focusedComposer), activeTab?.kind, open, present]);
 
   useEffect(() => {
     if (!prewarm || bodyPrewarmed || open) {
@@ -777,6 +798,7 @@ export function WorkspaceRightPanel({
             >
               <section
                 className="workspace-files-content"
+                ref={fileContentRef}
                 data-wuu-component="workspace-file-content"
                 aria-label={t("workspace.fileContent")}
               >
@@ -804,7 +826,7 @@ export function WorkspaceRightPanel({
                   ) : null}
                 </div>
                 {focusedComposer && activeTab?.kind === "file" ? (
-                  <div className="workspace-document-composer" data-testid="workspace-document-composer">
+                  <div ref={documentComposerRef} className="workspace-document-composer" data-testid="workspace-document-composer">
                     {focusedComposer}
                   </div>
                 ) : null}

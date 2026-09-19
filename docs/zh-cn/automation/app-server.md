@@ -57,6 +57,35 @@ App-server 是 Wuu 核心与桌面端、脚本或编辑器外壳之间的协议�
 模型和权限模式属于会话选择。要修改它们，应先调用 `config/model/update`，而不是在
 单轮请求中临时覆盖；正在运行的会话不能修改本轮已经采纳的模型或权限模式。
 
+## 输入内容分段
+
+`turn/start`、`turn/queue`、`turn/update-queued` 和 `turn/steer` 接受可选的
+`content_parts`，用于在 `prompt` 之外保存有序的展示元数据。二进制附件仍使用
+`images` / `files`。
+
+| `type` | 字段 |
+| --- | --- |
+| `text` | `text: string` |
+| `pasted_text` | `text: string`，可选 `title: string` |
+| `file_selection` | `text: string`、`source: FileSelectionSource`、`intent: "comment" \| "edit" \| "quote"`、`id: string`，可选 `comment: string` |
+
+`FileSelectionSource` 包含字符串字段 `workspace`、`path`、`quote`、`revision`，
+以及整数字段 `start_line`、`start_column`、`end_line`、`end_column`。行号和
+UTF-16 列号均从 1 开始，结束位置不包含在选区内。`revision` 标识捕获时的文件
+内容，不一定是 Git 版本号。服务端检查必需元数据、意图值、正数坐标及范围顺序，
+不读取文件或核实其版本。
+
+文件选区的 `text` 必须包含模型可见的完整序列化文本块，包括来源上下文、意图和
+可选评论。客户端按顺序拼接各段文本形成 `prompt`。只有拼接结果与提交的提示词
+在去除首尾空白后相同，服务端才保留有效元数据；服务端不重建或解析客户端的
+序列化格式。未知或无效分段会被丢弃，文本不匹配时丢弃展示元数据，但不修改
+提示词。Provider 和引擎使用规范消息文本；Codex 接收普通文本输入，无需特殊的
+`text_elements`。
+
+已接受的元数据会随历史和暂存队列回放保留。客户端必须容忍未知字段和分段类型；
+无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
+不能只保存在元数据中。
+
 ## 本地调试
 
 仓库提供 CLI 调试入口，可启动本地服务并发送单个协议请求：
@@ -68,4 +97,3 @@ wuu debug app-server send thread/start '{}'
 
 生产环境的认证、沙箱、组织成员关系、密钥注入和配额由外部控制平面负责，不是
 app-server 自身提供的能力。完整方法和参数参考见[英文协议文档](../../en/integrations/app-server-protocol.md)。
-

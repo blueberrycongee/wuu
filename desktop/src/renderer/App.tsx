@@ -6,6 +6,8 @@ import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import { useSidebarTouchGesture } from "./SidebarTouchGesture";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
+import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
+import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 /// <reference path="../shared/jsx-compat.d.ts" />
 
 import {
@@ -450,6 +452,7 @@ export function App(): JSX.Element {
   });
   const [historyMessageEdit, setHistoryMessageEdit] =
     useState<HistoryMessageEditState | undefined>(undefined);
+  const fileSelectionDraftOwners = useRef(new Map<string, string>());
   const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const closeProjectMenu = useCallback(() => setProjectMenuOpen(false), []);
@@ -3903,6 +3906,55 @@ export function App(): JSX.Element {
     worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
   });
 
+  const restoreFailedComposerDraft = useStableCallback((
+    ownerKey: string | undefined,
+    message: QueuedComposerMessage,
+    pane?: ConversationPaneID,
+  ) => {
+    if (!ownerKey) return;
+    const current = appStateRef.current;
+    const tab = current.sessionTabs.find((candidate) =>
+      candidate.kind === "thread" ? candidate.threadID === ownerKey : candidate.id === ownerKey);
+    const ownsPane = pane !== undefined && threadForPane(current, pane)?.id === ownerKey;
+    const ownsMain = pane === undefined &&
+      (activeThreadForState(current)?.id ?? current.activeSessionTabID) === ownerKey;
+    if (!ownsPane && !ownsMain && !tab) return;
+    const draft = ownsPane ? splitComposerDrafts[pane!]
+      : ownsMain ? currentPrimaryComposerDraft() : cloneSessionTabDraft(tab!);
+    const failedParts = message.contentParts ?? [{ type: "text" as const, text: message.text }];
+    const liveParts = readCollapsedPromptParts(ownerKey, draft.prompt)
+      ?? [{ type: "text" as const, text: draft.prompt }];
+    const failedText = failedParts.filter((part) => part.type === "text");
+    const liveText = liveParts.filter((part) => part.type === "text");
+    // Keep attached parts before visible text, including comments added while
+    // the failed request was pending. Restore metadata and text together.
+    const parts: MessageContentPart[] = [
+      ...failedParts.filter((part) => part.type !== "text"),
+      ...liveParts.filter((part) => part.type !== "text"),
+      ...failedText,
+      ...(failedText.some((part) => part.text) && liveText.some((part) => part.text)
+        ? [{ type: "text" as const, text: "\n" }] : []),
+      ...liveText,
+    ];
+    const restored = {
+      prompt: parts.map((part) => part.text).join(""),
+      images: [...message.images, ...draft.images.filter((image) => !message.images.some((sent) => sent.id === image.id))],
+      files: [...message.files, ...draft.files.filter((file) => !message.files.some((sent) => sent.id === file.id))],
+    };
+    rememberCollapsedPromptParts(ownerKey, restored.prompt, parts);
+    if (ownsPane) {
+      setSplitComposerDrafts((drafts) => ({ ...drafts, [pane!]: restored }));
+    } else if (ownsMain) {
+      restorePrimaryComposerDraft(restored);
+    } else {
+      setState((next) => ({
+        ...next,
+        sessionTabs: next.sessionTabs.map((candidate) => candidate.id === tab!.id
+          ? { ...candidate, ...restored } : candidate),
+      }));
+    }
+  });
+
   async function sendPrompt(
     runningAction: "queue" | "steer" = "queue",
     promptOverride?: string,
@@ -3960,9 +4012,7 @@ export function App(): JSX.Element {
         ? await steerComposerMessage(message, targetThread)
         : await queueComposerMessage(message, targetThread);
       if (!sent) {
-        setPrompt(message.text);
-        setComposerImages(message.images);
-        setComposerFiles(message.files);
+        restoreFailedComposerDraft(targetThread?.id ?? currentState.activeSessionTabID, message);
       }
       return;
     }
@@ -3975,6 +4025,22 @@ export function App(): JSX.Element {
         focusRequest.interactionVersion,
       );
     }
+  }
+
+  async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
+    const current = appStateRef.current;
+    const splitPane = splitConversation && !rightPanelGlobalized ? current.activePane : undefined;
+    const thread = splitPane ? threadForPane(current, splitPane) : activeThreadForState(current);
+    if (viewSwitchPending || !current.activeContext || !current.initialized || thread?.read_only) return false;
+    const draft = createComposerMessage(part.text, [], [], [part]);
+    if (!draft) return false;
+    const message = { ...draft, activeDocument: { path: part.source.path } };
+    // Inline edits are independent submissions: never consume the main draft
+    // or its attachments. The inline form retains the request on failure.
+    if (isThreadRunning(thread) && !activeTurnIsAnswerReady(thread)) {
+      return queueComposerMessage(message, thread);
+    }
+    return splitPane ? sendComposerMessageToPane(message, splitPane) : sendComposerMessage(message);
   }
 
   async function compactActiveThread(): Promise<void> {
@@ -4360,6 +4426,15 @@ export function App(): JSX.Element {
           }),
           "thread/start did not return a thread",
         );
+      if (!targetThread) {
+        const draftPrompt = currentPrimaryComposerDraft().prompt;
+        const oldOwner = currentState.activeSessionTabID;
+        if (oldOwner) fileSelectionDraftOwners.current.set(thread.id, oldOwner);
+        const draftParts = oldOwner ? readCollapsedPromptParts(oldOwner, draftPrompt) : undefined;
+        // A first inline edit binds the draft tab to a thread while keeping
+        // any unrelated comment draft intact under its new owner identity.
+        rememberCollapsedPromptParts(thread.id, draftPrompt, draftParts);
+      }
       appStateRef.current = {
         ...setThreadForPane(appStateRef.current, targetPane, thread),
         activePane: targetPane,
@@ -4516,9 +4591,10 @@ export function App(): JSX.Element {
         showNoModelConfiguredToast();
       }
       if (restoreDraftOnError && !interrupted && !keepAcceptedTurn) {
-        setPrompt(message.text);
-        setComposerImages(message.images);
-        setComposerFiles(message.files);
+        restoreFailedComposerDraft(
+          optimisticThreadID ?? targetThread?.id ?? currentState.activeSessionTabID,
+          message,
+        );
       }
       return interrupted || keepAcceptedTurn;
     }
@@ -4557,7 +4633,7 @@ export function App(): JSX.Element {
     ) {
       return;
     }
-    if (isThreadRunning(targetThread)) {
+    if (isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread)) {
       const queued = await queueComposerMessage(message, targetThread);
       if (queued) {
         setSplitComposerDrafts((current) => ({
@@ -4577,14 +4653,7 @@ export function App(): JSX.Element {
     }));
     const sent = await sendComposerMessageToPane(message, pane);
     if (!sent) {
-      setSplitComposerDrafts((current) => ({
-        ...current,
-        [pane]: {
-          prompt: message.text,
-          images: message.images.map((image) => ({ ...image })),
-          files: message.files.map((file) => ({ ...file })),
-        },
-      }));
+      restoreFailedComposerDraft(targetThread.id, message, pane);
     }
   }
 
@@ -4604,11 +4673,11 @@ export function App(): JSX.Element {
       !currentState.activeContext ||
       !currentState.initialized ||
       viewSwitchPending ||
-      isThreadRunning(targetThread)
+      (isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread))
     ) {
       return false;
     }
-    if (!hasReadyProvider(currentState.initialized?.providers)) {
+    if ((targetThread.engine_id || "wuu") === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
       showNoModelConfiguredToast();
       return false;
     }
@@ -5069,12 +5138,25 @@ export function App(): JSX.Element {
     </button>
   ) : null;
 
+  const selectionUsesSplitDraft = splitConversation && !rightPanelGlobalized;
+  const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
+
   return (
     <WuuMascotRuntimeProvider
       provider={mascotRuntimePreview?.provider ?? sessionRuntime?.provider}
       providers={mascotProviderNames}
       model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
     >
+      <FileSelectionProvider
+        ownerKey={selectionThread?.id ?? currentSessionTab?.id}
+        interactionOwnerKey={selectionThread ? fileSelectionDraftOwners.current.get(selectionThread.id) : undefined}
+        prompt={selectionUsesSplitDraft ? splitComposerDrafts[state.activePane].prompt : prompt}
+        getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
+        setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
+        onEdit={submitFileSelectionEdit}
+        onOpenFile={openWorkspaceFile}
+        disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
+      >
       {archiveTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
@@ -5966,6 +6048,7 @@ export function App(): JSX.Element {
       />
       </div>
     </ImagePreviewProvider>
+    </FileSelectionProvider>
     </WuuMascotRuntimeProvider>
   );
 }

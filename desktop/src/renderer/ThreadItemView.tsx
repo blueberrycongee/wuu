@@ -13,6 +13,8 @@ import {
 import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "lucide-react";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
+import { FileSelectionCards } from "./FileSelectionCards";
+import { buildFileSelectionPart } from "./FileSelectionContext";
 import {
   clipboardAttachmentFiles,
   composerFileFromFile,
@@ -304,6 +306,7 @@ function BuiltInThreadItemView({
               item={item}
               initialText={text}
               submitting={Boolean(editSubmitting)}
+              onOpenFile={onOpenFile}
               onCancel={onCancelEditMessage}
               onSubmit={(nextText, nextImages, nextFiles, contentParts) =>
                 onSubmitEditMessage?.(turnID, item, nextText, nextImages, nextFiles, contentParts)
@@ -492,7 +495,8 @@ function UserMessageContent({
   const textParts = (contentParts ?? []).filter(
     (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
   );
-  const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0;
+  const fileParts = (contentParts ?? []).filter((part) => part.type === "file_selection");
+  const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0 || fileParts.length > 0;
   const hasTextBubble = structured
     ? textParts.some((part) => part.text.length > 0)
     : text.length > 0;
@@ -515,6 +519,7 @@ function UserMessageContent({
           {pastedParts.map((part, index) => (
             <MessagePastedTextPart key={`${part.type}-${index}`} part={part} />
           ))}
+          <FileSelectionCards parts={fileParts} onOpenFile={onOpenFile} />
         </div>
       ) : null}
       {hasTextBubble ? (
@@ -601,11 +606,13 @@ function UserMessageInlineEditor({
   submitting,
   onCancel,
   onSubmit,
+  onOpenFile,
 }: {
   item: ThreadItem;
   initialText: string;
   submitting: boolean;
   onCancel?: () => void;
+  onOpenFile?: (path: string) => void;
   onSubmit?: (
     text: string,
     images: InputImage[],
@@ -614,9 +621,8 @@ function UserMessageInlineEditor({
   ) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const initialPastedParts = (item.content_parts ?? []).filter(
-    (part): part is Extract<MessageContentPart, { type: "pasted_text" }> =>
-      part.type === "pasted_text",
+  const initialAttachedParts = (item.content_parts ?? []).filter(
+    (part) => part.type !== "text",
   );
   const initialTextParts = (item.content_parts ?? []).filter(
     (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
@@ -624,14 +630,14 @@ function UserMessageInlineEditor({
   const [text, setText] = useState(
     item.content_parts?.length ? initialTextParts.map((part) => part.text).join("") : initialText,
   );
-  const [pastedParts, setPastedParts] = useState(initialPastedParts);
+  const [attachedParts, setAttachedParts] = useState(initialAttachedParts);
   const [images, setImages] = useState<InputImage[]>(item.images ?? []);
   const [files, setFiles] = useState<InputFile[]>(item.files ?? []);
   const [dragOver, setDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0;
+  const hasAttachments = images.length > 0 || files.length > 0 || attachedParts.length > 0;
   const canSubmit = text.trim().length > 0 || hasAttachments;
 
   // Re-seed local state when the editor is reopened on a different user
@@ -640,15 +646,12 @@ function UserMessageInlineEditor({
   // cancelling back to message A would show B's draft in A.
   useEffect(() => {
     const nextParts = item.content_parts ?? [];
-    const nextPastedParts = nextParts.filter(
-      (part): part is Extract<MessageContentPart, { type: "pasted_text" }> =>
-        part.type === "pasted_text",
-    );
+    const nextAttachedParts = nextParts.filter((part) => part.type !== "text");
     const nextTextParts = nextParts.filter(
       (part): part is Extract<MessageContentPart, { type: "text" }> => part.type === "text",
     );
     setText(nextParts.length ? nextTextParts.map((part) => part.text).join("") : initialText);
-    setPastedParts(nextPastedParts);
+    setAttachedParts(nextAttachedParts);
     setImages(item.images ?? []);
     setFiles(item.files ?? []);
   }, [initialText, item.id, item.images, item.files, item.content_parts]);
@@ -676,7 +679,7 @@ function UserMessageInlineEditor({
       return;
     }
     const contentParts: MessageContentPart[] = [
-      ...pastedParts,
+      ...attachedParts,
       ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
     ];
     const fullText = contentParts.length
@@ -686,14 +689,14 @@ function UserMessageInlineEditor({
   }
 
   function revealPastedPart(index: number): void {
-    const part = pastedParts[index];
-    if (!part) return;
-    setPastedParts((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    const part = attachedParts[index];
+    if (!part || part.type !== "pasted_text") return;
+    setAttachedParts((current) => current.filter((_, currentIndex) => currentIndex !== index));
     setText((current) => `${current}${part.text}`);
   }
 
   function removePastedPart(index: number): void {
-    setPastedParts((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    setAttachedParts((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
   async function addAttachmentFiles(filesToAdd: File[]): Promise<void> {
@@ -828,18 +831,28 @@ function UserMessageInlineEditor({
       {files.length > 0 ? (
         <MessageFileList files={files} onRemove={removeFile} />
       ) : null}
-      {pastedParts.length > 0 ? (
+      {attachedParts.some((part) => part.type === "pasted_text") ? (
         <div className="user-message-edit-pasted-texts">
-          {pastedParts.map((part, index) => (
+          {attachedParts.map((part, index) => part.type === "pasted_text" ? (
             <CollapsedComposerPromptCard
               key={`${part.type}-${index}`}
               text={part.text}
               onReveal={() => revealPastedPart(index)}
               onRemove={() => removePastedPart(index)}
             />
-          ))}
+          ) : null)}
         </div>
       ) : null}
+      <FileSelectionCards
+        parts={attachedParts.filter((part) => part.type === "file_selection")}
+        onOpenFile={onOpenFile}
+        onRemove={submitting ? undefined : (id) => setAttachedParts((current) =>
+          current.filter((part) => part.type !== "file_selection" || !(Array.isArray(id) ? id : [id]).includes(part.id)))}
+        onEdit={submitting ? undefined : (part, comment) => setAttachedParts((current) =>
+          current.map((candidate) => candidate.type === "file_selection" && candidate.id === part.id
+            ? buildFileSelectionPart(part.source, part.intent, comment, part.id)
+            : candidate))}
+      />
       <textarea
         ref={textareaRef}
         className="user-message-edit-input"

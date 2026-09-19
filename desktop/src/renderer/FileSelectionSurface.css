@@ -1,0 +1,106 @@
+.file-selection-surface {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.file-selection-content {
+  min-width: 0;
+  min-height: 0;
+}
+
+.file-selection-surface:has(> .file-selection-comments) {
+  height: max(0px, calc(100% - var(--workspace-document-composer-inset, 0px)));
+}
+
+.file-selection-content > .workspace-file-editor-scroll { height: 100%; }
+
+.file-selection-popup {
+  position: fixed;
+  z-index: 220;
+  box-sizing: border-box;
+  overflow: auto;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-soft);
+  padding: 6px;
+  font-family: var(--appearance-ui-font, system-ui, sans-serif);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.file-selection-popup [role="toolbar"],
+.file-selection-form-actions,
+.file-selection-comment-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.file-selection-popup button,
+.file-selection-comments button {
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 6px 8px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.file-selection-popup button:hover,
+.file-selection-comments button:hover { background: var(--surface-3); }
+.file-selection-popup button:disabled { color: var(--ink-muted); cursor: default; }
+.file-selection-popup button:focus-visible,
+.file-selection-comments button:focus-visible,
+.file-selection-popup textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.file-selection-popup form { display: grid; gap: 10px; padding: 6px; }
+.file-selection-popup textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 80px;
+  resize: vertical;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-xs);
+  padding: 8px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+}
+.file-selection-form-actions { justify-content: flex-end; }
+.file-selection-popup blockquote,
+.file-selection-comments blockquote {
+  margin: 0;
+  border-left: 2px solid var(--hairline-strong);
+  padding-left: 10px;
+  max-height: 6em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+}
+.file-selection-popup p { margin: 6px; overflow-wrap: anywhere; }
+.file-selection-comments {
+  max-height: 32vh;
+  overflow: auto;
+  border-top: 1px solid var(--hairline-soft);
+  padding: 8px 12px;
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+.file-selection-comment + .file-selection-comment { margin-top: 12px; }
+.file-selection-comment-heading > span { margin-right: auto; overflow-wrap: anywhere; min-width: 0; }
+.file-selection-comment p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.file-selection-persistent { background: var(--selection-bg, Highlight); }
+
+@media (pointer: coarse) {
+  .file-selection-popup button, .file-selection-comments button { min-height: 44px; }
+}
