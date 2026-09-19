@@ -20,6 +20,15 @@ import (
 
 type ApplyPatchTool struct{ env *Env }
 
+type applyPatchArgs struct {
+	PatchText  string          `json:"patchText"`
+	Patch      string          `json:"patch"`
+	PatchText2 string          `json:"patch_text"`
+	DryRun     bool            `json:"dry_run"`
+	DryRun2    bool            `json:"dryRun"`
+	ThenRun    json.RawMessage `json:"then_run,omitempty"`
+}
+
 func NewApplyPatchTool(env *Env) *ApplyPatchTool { return &ApplyPatchTool{env: env} }
 
 func (t *ApplyPatchTool) Name() string            { return "apply_patch" }
@@ -58,7 +67,7 @@ func (t *ApplyPatchTool) Classify(argsJSON string) ToolClassification {
 func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "apply_patch",
-		Description: "Apply a structured workspace patch using *** Begin Patch / *** End Patch. Supports Add, Update, optional Move, and Delete sections. Update and delete hunks are validated against the current file content; stale or ambiguous anchors fail. dry_run validates without writing.",
+		Description: "Apply a structured workspace patch using *** Begin Patch / *** End Patch. Supports Add, Update, optional Move, and Delete sections. Update and delete hunks are validated against the current file content; stale or ambiguous anchors fail. dry_run validates without writing. When the follow-up validation command is already known, supply then_run to apply the complete patch and run that command in one call. Omit it when the next action depends on inspecting the patch result. A failed command keeps the patch; never reapply a successful patch just to retry validation.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -66,6 +75,7 @@ func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 					"type":        "string",
 					"description": "Full patch text including *** Begin Patch and *** End Patch markers.",
 				},
+				"then_run": applyPatchThenRunSchema(t.env),
 				"dry_run": map[string]any{
 					"type":        "boolean",
 					"description": "Validate and preview the patch without writing files or firing file-change hooks.",
@@ -77,11 +87,7 @@ func (t *ApplyPatchTool) Definition() providers.ToolDefinition {
 }
 
 func (t *ApplyPatchTool) ValidateInput(argsJSON string) error {
-	var args struct {
-		PatchText  string `json:"patchText"`
-		Patch      string `json:"patch"`
-		PatchText2 string `json:"patch_text"`
-	}
+	var args applyPatchArgs
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return err
 	}
@@ -89,6 +95,9 @@ func (t *ApplyPatchTool) ValidateInput(argsJSON string) error {
 		strings.TrimSpace(args.PatchText2) == "" &&
 		strings.TrimSpace(args.Patch) == "" {
 		return errors.New("apply_patch requires patchText")
+	}
+	if _, err := args.followUp(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -99,15 +108,16 @@ func (t *ApplyPatchTool) Execute(ctx context.Context, argsJSON string) (string, 
 }
 
 func (t *ApplyPatchTool) ExecuteResult(ctx context.Context, argsJSON string) (toolresult.Result, error) {
-	var args struct {
-		PatchText  string `json:"patchText"`
-		Patch      string `json:"patch"`
-		PatchText2 string `json:"patch_text"`
-		DryRun     bool   `json:"dry_run"`
-		DryRun2    bool   `json:"dryRun"`
-	}
+	var args applyPatchArgs
 	if err := decodeArgs(argsJSON, &args); err != nil {
 		return toolresult.Result{}, err
+	}
+	thenRun, err := args.followUp()
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	if thenRun != nil {
+		return t.executeFusedPatch(ctx, args, *thenRun)
 	}
 	patchText := args.PatchText
 	if strings.TrimSpace(patchText) == "" {
