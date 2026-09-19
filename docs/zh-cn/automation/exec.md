@@ -1,143 +1,130 @@
-# 用 `wuu exec` 做自动化
+# 用 `wuu exec` 运行任务
 
-`wuu exec` 用于从脚本、CI 或其他 Agent 运行任务。它与桌面端共用会话、工具和权限，
-返回文本或 JSONL，不打开界面。使用前先[配置模型](../getting-started/model-services.md)。
+`wuu exec` 无需打开桌面即可运行 Agent 任务，适合 shell、CI、系统定时任务或其他 Agent
+调用。它使用 Wuu 的会话和执行服务；使用前先[配置模型服务](../getting-started/model-services.md)。
 
-## 运行一个任务
-
-```bash
-wuu exec "修复失败的测试并验证结果"
-```
-
-默认情况下，stdout 只包含最终回答，运行信息和诊断写入 stderr，因此可以安全地捕获
-结果：
+## 提供任务
 
 ```bash
-result=$(wuu exec "总结这个仓库当前未提交的改动")
-printf '%s\n' "$result"
-```
-
-也可以从 stdin 提供任务，或把 stdin 作为补充上下文：
-
-```bash
+wuu exec --workdir /path/to/repo "修复失败的测试并验证结果"
 wuu exec - < task.md
-wuu exec "根据这段日志修复问题" < error.log
+wuu exec "调查这次失败" < error.log
 ```
 
-空输入会在创建回合前失败。
+选项必须放在提示词或会话 ID 前，参数解析会在第一个位置参数处停止。没有位置提示词时，
+管道 stdin 就是任务；两者都有时，stdin 会放在 `<stdin>` 块中追加。任务至少需要文本或
+附件；单独使用 `-` 则明确要求 stdin 非空。
 
-## 指定工作区和附件
+用可重复的 `--image` 附加本地图片，用可重复的 `--file` 附加 PDF。`--file` 不接受其他
+文档格式。附件相对路径以 `--workdir` 为准，未指定时以当前目录为准。
 
 ```bash
-wuu exec --workdir /path/to/repo "运行测试并修复失败项"
-wuu exec --file report.pdf "阅读报告并更新实现"
-wuu exec --image screenshot.png "定位界面问题"
+wuu exec --image screenshot.png "找出布局问题"
+wuu exec --file report.pdf "总结报告中的发现"
 ```
 
-`--file` 和 `--image` 可以重复使用。`--file` 当前只接受 PDF；相对路径以 `--workdir`
-为准，没有设置时以当前目录为准。
+`--image-original` 禁止缩放所提供的图片。模型能否使用附件，仍取决于服务商和模型的输入能力。
 
-## 一次调用完成补丁和验证
+## 继续、分叉和评审
 
-使用 Wuu 内置工具时，如果后续验证命令已经确定，Agent 可以在 `apply_patch`
-调用中提供 `then_run`：
+```bash
+wuu exec resume --last "继续处理刚才的失败"
+wuu exec resume --json THREAD_ID "继续这项任务"
+wuu exec fork THREAD_ID "换一种方案尝试"
+wuu exec review --uncommitted
+wuu exec review --base main
+wuu exec review --commit COMMIT_SHA
+```
 
-```json
+`resume --last` 选择工作区最近的可见会话。紧跟 `exec` 的 `--continue` 或 `-c` 是它的
+快捷方式；该位置的 `--resume` 或 `-r` 是 `resume` 的快捷方式，不带其他参数时列出
+可用会话。`fork` 从来源历史创建独立对话。
+
+`review` 为指定范围生成评审任务，再用普通工具检查代码，并不是另一个静态分析器。
+不应修改文件时，选择 `--permission-mode read_only`。
+
+## 控制运行
+
+| 选项 | 作用 |
+| --- | --- |
+| `--provider`、`--model`、`--effort`、`--variant` | 选择模型路由和受支持的推理设置 |
+| `--profile` | 选择 Agent 配置档 |
+| `--permission-mode` | 使用 `standard`、`read_only` 或 `unconfined` |
+| `--workdir` | 设置工作区目录 |
+| `--config` | 显式信任一个配置文件 |
+| `--ignore-user-config` | 显式信任项目配置，跳过用户配置 |
+| `--env KEY=VALUE` | 设置本次运行的环境变量，可重复 |
+| `--no-tools` | 禁用本地工具 |
+| `--max-turns N` | 设置模型与工具循环上限；零使用配置默认值 |
+| `--timeout 20m` | 限制运行时长；零不设置 CLI 截止时间 |
+| `--ephemeral` | 创建内存会话，不保存为可恢复会话 |
+| `--json` | 输出 JSONL 事件流 |
+| `--output-last-message FILE` | 执行成功后把最终回答写入文件 |
+| `--output-schema FILE` | 按 JSON Schema 验证最终回答 |
+| `--input-json` | 从 stdin 读取包含任务和选项的一个 JSON 对象 |
+
+普通启动使用用户配置和允许的项目覆盖项。两个显式信任选项会改变这一边界，自动化使用前
+应先检查配置内容。分层规则见[配置参考](../reference/configuration.md)，命令限制见
+[权限模式](../reference/permissions.md)。操作被拒绝时不会弹出交互式审批提示。
+
+## 接收输出
+
+文本模式下，执行成功后 stdout 输出最终回答，进度、会话标识和诊断写入 stderr。
+JSONL 模式下，stdout 每行是一个事件对象。应结合最终 `result` 和进程退出码判断结果，
+不要在第一个 `turn_completed` 后停止读取：一次运行可能包含自动续接或结构化输出修正回合。
+
+```bash
+wuu exec --json --timeout 20m "评审当前改动" > events.jsonl
+wuu exec --output-last-message report.md "总结这个仓库"
+wuu exec --json --output-schema schema.json "返回指定格式的报告"
+```
+
+Schema 路径以工作区为准，而最终回答的输出路径以启动进程的当前目录为准；已有输出文件会
+被覆盖。Schema 验证成功时，JSONL 结果包含 `structured_result`。字段和失败处理见
+[JSONL 事件参考](../../en/automation/jsonl-events.md)（英文）。
+
+## 机器输入
+
+```bash
+wuu exec --input-json <<'JSON'
 {
-  "patchText": "*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch",
-  "then_run": {
-    "command": "test \"$(cat example.txt)\" = hello",
-    "timeout_seconds": 60,
-    "purpose": "验证新文件的内容"
-  }
+  "prompt": "调查这次失败",
+  "stdin": "panic: example failure",
+  "workdir": "/path/to/repo",
+  "permission_mode": "read_only",
+  "json": true,
+  "timeout": "10m"
 }
+JSON
 ```
 
-这是 Agent 工具参数，不是 `wuu exec` 命令行选项。`then_run` 接受必填的 `command`，
-以及可选的 `cwd`、`timeout_seconds`（1–3600）、`purpose` 和 `scope`
-（`targeted`、`affected` 或 `full`），默认值与 `bash` run 相同。
-省略它时仍是普通补丁操作；与 `dry_run` 同时使用会在修改前被拒绝。
-如果必须先检查编辑结果才能决定下一条命令，应分开调用。
+对象接受 `prompt`、`stdin`、`files`、`images`、`file_attachments`、`image_attachments`、
+`workdir`、`provider`、`model`、`effort`、`variant`、`permission_mode`、`config`、
+`profile`、`ignore_user_config`、`env`、`max_turns`、`no_tools`、`json`、`ephemeral`、
+`timeout`、`output_last_message` 和 `output_schema`。路径数组遵循附件选项的规则；
+结构化附件数组使用 [app-server 格式](../../en/integrations/app-server-protocol.md)（英文）。
+`env` 是 `KEY=VALUE` 字符串数组。未知字段和多个 JSON 值会被拒绝，`--input-json` 不能
+同时带位置提示词。
 
-整个补丁成功后才会启动命令。两步分别经过正常工具权限检查并记录；禁用或拒绝
-`bash` 也会阻止后续命令。命令失败不会回滚补丁，重试时只运行命令，不要再次应用
-已经成功的编辑。合并结果保留文件详情和 bash 结果，包括验证证据与日志恢复地址。
-命令超时转入后台后，`then_run` 状态为 `running`，并保留 `promoted_process_id`；
-这不代表验证通过。使用正常的 bash 后台控制来观察或停止它。融合保证两步的顺序，
-但不会隔离其他会话或进程对工作区的修改。
-
-## 继续或分叉会话
-
-```bash
-wuu exec --continue "继续处理刚才的失败"
-wuu exec resume --last "继续最近的会话"
-wuu exec resume <thread-id> "继续这个会话"
-wuu exec fork <thread-id> "换一种方案尝试"
-```
-
-`--continue` 是顶层快捷方式；指定会话既可以使用 `resume <thread-id>`，也可以使用
-`-r <thread-id>` 或 `--resume <thread-id>`。`fork` 会保留原会话并创建一个新的分支会话。
-
-## 输出 JSONL
-
-需要实时进度或机器解析时使用 `--json`：
-
-```bash
-wuu exec --json "评审当前改动" > events.jsonl
-```
-
-JSONL 模式保证：
-
-- stdout 每行都是一个 JSON 对象；
-- 每个事件都有 `type`；
-- 诊断和调试日志仍写入 stderr；
-- 最后一行是 `result` 事件。
-
-完整事件字段见 [JSONL events](../../en/automation/jsonl-events.md)（英文）。脚本应优先
-使用事件类型和退出码，不要解析自然语言错误文本。
-
-## 常用控制
-
-```bash
-wuu exec --timeout 20m "完成任务并验证"
-wuu exec --max-turns 8 "只调查并给出结论"
-wuu exec --permission-mode read_only "评审改动，不要写文件"
-wuu exec --output-last-message result.md "生成最终报告"
-wuu exec --ephemeral "临时分析，不保存会话"
-```
-
-模型、provider、effort、variant、profile 和配置文件也可以按次覆盖。查看当前版本的完整
-参数：
-
-```bash
-wuu --help
-```
-
-标准和只读模式下，Agent 命令还受到文件系统写入沙箱约束；沙箱后端不可用时会拒绝运行，
-不会悄悄放开限制。这不隔离命令继承的环境变量或网络访问。无人值守检查优先使用只读
-模式，允许修改前先检查任务配置。完整边界见[权限模式](../reference/permissions.md)和
-[安全说明](../reference/security-model.md)。
+建议每个选项只在一处提供。非空 CLI 选择优先，附件和环境变量数组则会合并。CLI 中的
+`true` 和非零值优先于对应输入值，因此显式传入 `false` 或零不能可靠地覆盖 JSON 输入。
+`review` 子命令不接受 `--input-json`。
 
 ## 退出码
 
 | 退出码 | 含义 |
 | --- | --- |
 | `0` | 成功完成 |
-| `1` | Agent 回合失败 |
+| `1` | 运行失败，没有更具体的分类 |
 | `2` | 参数、配置或输入无效 |
-| `3` | 工作区边界或工具策略拒绝 |
+| `3` | 权限拒绝 |
 | `4` | 超时 |
-| `5` | 被中断 |
-| `6` | app-server 协议错误 |
-| `7` | provider 或模型错误 |
-| `8` | 工具执行失败且 Agent 未恢复 |
-| `9` | 目标会话已有回合在运行 |
+| `5` | 中断或取消 |
+| `6` | 协议或输出流错误 |
+| `7` | 服务商、模型、认证或网络失败 |
+| `8` | 未恢复的本地或工具失败 |
+| `9` | 目标会话已有执行正在运行 |
 
-## 选择哪种自动化方式
-
-- 本机按时间运行：使用桌面 [Automations](scheduled-tasks.md)；
-- CI、系统 cron 或其他 Agent 调用：使用 `wuu exec`；
-- 构建新的桌面壳或编辑器插件：使用
-  [app-server protocol](../../en/integrations/app-server-protocol.md)（英文）。
-
-更完整的参数和输入对象参考见 [英文 `wuu exec` 文档](../../en/automation/exec.md)。
+参数解析可能在写入任何 JSONL 事件前失败。缺少 `result`、结果失败或退出码非零都应视为
+失败，不要根据部分回答推断成功。已保存的会话和执行记录可用
+[`wuu session` 与 `wuu runs`](../reference/cli-commands.md) 查看。
