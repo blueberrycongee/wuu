@@ -28,7 +28,7 @@
 
 ## 使用命令行
 
-桌面应用不需要另装 CLI。如果想从终端调用，先[安装 CLI](installation.md#安装-cli)并[配置模型服务](model-services.md#配置-cli)，再进入项目目录运行：
+桌面应用不需要另装 CLI。如果想从终端调用，先[安装 CLI](installation.md#从源码安装-cli)并[配置模型服务](model-services.md#配置-cli)，再进入项目目录运行：
 
 ```bash
 wuu exec --permission-mode read_only "阅读这个项目，告诉我怎样运行测试"
