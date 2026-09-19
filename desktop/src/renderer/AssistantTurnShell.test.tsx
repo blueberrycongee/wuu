@@ -1047,6 +1047,26 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(container.textContent).toContain("found the file");
   });
 
+  it("does not reserve an answer action slot under live process commentary", () => {
+    const commentary: ThreadItem = {
+      ...makeCommentary("提示词改动是中途新出现的"),
+      status: "in_progress",
+    };
+    const tool: ThreadItem = {
+      ...makeReadFileTool("src/App.tsx"),
+      status: "in_progress",
+    };
+    const { container } = renderShell(makeTurn("in_progress", [commentary, tool]));
+
+    expect(container.textContent).toContain("提示词改动是中途新出现的");
+    expect(
+      container.querySelector(".turn-process-entry-commentary .agent-message-actions"),
+    ).toBeNull();
+    expect(
+      container.querySelector(".turn-process-entry-commentary .agent-block-with-action-slot"),
+    ).toBeNull();
+  });
+
   it("keeps one process surface when a post-commentary tool row grows into a group", () => {
     const commentary = makeCommentary("finished commentary");
     const tool: ThreadItem = {
