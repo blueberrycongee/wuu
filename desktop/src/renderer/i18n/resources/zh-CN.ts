@@ -2252,7 +2252,7 @@ export const zhCN = {
   "onboarding.plugin.subagent": "把边界清楚的工作委派给子 Agent。",
   "onboarding.plugin.memory": "保存可管理的长期偏好与经验。",
   "onboarding.plugin.dream": "在后台整理工作区的长期知识。",
-  "onboarding.plugin.noteCompaction": "实验性地用 Markdown 检查点延续长会话。",
+  "onboarding.plugin.peers": "让独立会话互相沟通、协作完成工作。",
   "onboarding.pluginsFailed": "无法应用插件选择",
   "onboarding.applying": "正在应用…",
   "onboarding.back": "返回",

@@ -30,6 +30,9 @@ type CompactionProvider interface {
 // CompactionRegistry manages registered compaction strategies with
 // plugin ownership tracking for generation-scoped cleanup.
 type CompactionRegistry struct {
+	// Default is the host strategy used when no extension contributes one.
+	// Set it before sharing the registry; extension teardown does not remove it.
+	Default   CompactionProvider
 	mu        sync.RWMutex
 	providers map[string]CompactionProvider
 	owners    map[string]string // key → pluginID
@@ -136,6 +139,9 @@ func (r *CompactionRegistry) Resolve(fallback CompactionProvider) CompactionProv
 
 	if best != nil {
 		return best
+	}
+	if fallback == nil {
+		return r.Default
 	}
 	return fallback
 }

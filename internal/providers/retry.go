@@ -272,6 +272,8 @@ var contextOverflowPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)exceeded model token limit`),                                    // Kimi For Coding (legacy phrasing)
 	regexp.MustCompile(`(?i)message size [\d,]+ exceeds limit`),                             // Kimi For Coding k3: "total message size 2306631 exceeds limit 2097152"
 	regexp.MustCompile(`(?i)prompt too long; exceeded (?:max )?context length`),             // Ollama
+	regexp.MustCompile(`(?i)too long for this model'?s context window`),                     // Grok Build / xAI sampling
+	regexp.MustCompile(`(?i)\[input_too_large\]`),                                           // Grok Build sampling code
 }
 
 // contextNonOverflowPatterns veto overflow classification for transient quota
@@ -305,7 +307,12 @@ func DetectContextOverflow(body string) bool {
 }
 
 func isContextOverflowCode(code string) bool {
-	return strings.EqualFold(strings.TrimSpace(code), "context_length_exceeded")
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "context_length_exceeded", "input_too_large":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsContextOverflow returns true if err is an HTTPError flagged as

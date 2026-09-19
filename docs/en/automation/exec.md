@@ -69,6 +69,39 @@ The object can also set `provider`, `model`, `effort`, `variant`,
 `env`, `max_turns`, `output_schema`, `no_tools`, `timeout`, and
 `output_last_message`.
 
+## Apply a patch and validate in one call
+
+On Wuu's built-in tool surface, the agent can include `then_run` in an
+`apply_patch` call when the follow-up validation command is already known:
+
+```json
+{
+  "patchText": "*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch",
+  "then_run": {
+    "command": "test \"$(cat example.txt)\" = hello",
+    "timeout_seconds": 60,
+    "purpose": "Verify the new file's content"
+  }
+}
+```
+
+This is an agent tool argument, not a `wuu exec` CLI flag. `then_run` accepts
+`command` and optional `cwd`, `timeout_seconds` (1–3600), `purpose`, and `scope`
+(`targeted`, `affected`, or `full`), with the same defaults as `bash` run.
+Omitting it keeps ordinary patch behavior. Combining it with `dry_run` is rejected
+before any edit. Leave the actions separate when the next command depends on
+inspecting the edit result.
+
+The complete patch must succeed before the command starts. Both actions pass
+through normal tool permissions and are recorded separately; disabling or denying
+`bash` also blocks the follow-up. Command failure does not roll back the patch:
+retry only the command, not the successful edit. The combined result retains file
+details and the settled bash result, including verification evidence and log
+recovery references. A command promoted to the background reports `then_run`
+status `running` and retains its `promoted_process_id`; this is not a passed check.
+Use normal bash background controls to observe or stop it. Fusion orders the two
+actions but does not isolate the workspace from other sessions or processes.
+
 ## Resume
 
 ```bash

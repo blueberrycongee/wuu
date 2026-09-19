@@ -839,8 +839,8 @@ func (r *StreamRunner) storeRetainedRequestContext(state *RetainedRequestContext
 	r.retainedRequestContext = state
 }
 
-// ContextWindowsAvailable reports whether the active extension supplies
-// persistent working memory and opts into summary-free context windows.
+// ContextWindowsAvailable reports whether the active compaction policy opts
+// into summary-free context windows.
 func (r *StreamRunner) ContextWindowsAvailable() bool {
 	return r != nil && r.contextWindowProvider() != nil
 }

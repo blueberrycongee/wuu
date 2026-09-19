@@ -1,4 +1,4 @@
-package notecompaction
+package tools
 
 import (
 	"context"
@@ -10,19 +10,31 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/workingnotes"
 )
 
 const toolNotes = "notes"
 const maxNotesBytes = 1_000_000
 
-func notesTool() pluginapi.Tool {
-	return pluginapi.Tool{
-		ID: toolNotes,
-		Display: &pluginapi.ToolDisplay{
-			Label:             "Working notes",
-			LabelTranslations: map[string]string{"zh-CN": "工作笔记"},
-		},
+type NotesTool struct{ env *Env }
+
+func NewNotesTool(env *Env) *NotesTool     { return &NotesTool{env: env} }
+func (*NotesTool) Name() string            { return toolNotes }
+func (*NotesTool) IsReadOnly() bool        { return false }
+func (*NotesTool) IsConcurrencySafe() bool { return true }
+
+func (*NotesTool) Classify(arguments string) ToolClassification {
+	var input notesArguments
+	_ = json.Unmarshal([]byte(arguments), &input)
+	readOnly := input.Action == "list" || input.Action == "read" || input.Action == "search"
+	return ToolClassification{ReadOnly: readOnly, ConcurrencySafe: true, Risk: ToolRiskLow, Reason: "session working notes"}
+}
+
+func (*NotesTool) Definition() providers.ToolDefinition {
+	return providers.ToolDefinition{
+		Name:        toolNotes,
 		Description: "Maintain persistent working notes for this session. Save objectives, constraints, decisions, progress, checks and next steps as work proceeds and before new_context. Read notes after a context switch; use history_read/history_search for exact facts. These virtual files survive resets, restarts and model changes; they do not write workspace files. Actions: list, read, search (literal substring), write (replace), append. Paths are relative. Reads/search use Unicode character offsets and bounded pages. Writes require the revision returned by list/read/search (use the empty revision for a new collection); conflicts require rereading. Total stored JSON is limited to 1 MB per session. No background model maintains these notes.",
 		InputSchema: map[string]any{
 			"type": "object", "additionalProperties": false,
@@ -69,40 +81,51 @@ func validNotePath(path string) bool {
 	return true
 }
 
-func executeNotes(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCall) (pluginapi.ToolResult, error) {
-	if strings.TrimSpace(call.SessionID) == "" {
-		return pluginapi.ToolResult{}, errors.New("notes require a session")
+func (t *NotesTool) Execute(ctx context.Context, arguments string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if t.env == nil || strings.TrimSpace(t.env.SessionID) == "" {
+		return "", errors.New("notes require a session")
 	}
 	var input notesArguments
-	if err := json.Unmarshal(call.Arguments, &input); err != nil {
-		return pluginapi.ToolResult{}, err
+	if err := decodeArgs(arguments, &input); err != nil {
+		return "", err
 	}
 	if input.Offset < 0 || input.Limit < 0 || input.Limit > 16000 {
-		return pluginapi.ToolResult{}, errors.New("invalid notes page bounds")
+		return "", errors.New("invalid notes page bounds")
 	}
-	key := fmt.Sprintf("notes.v1.%x", sha256.Sum256([]byte(call.SessionID)))
-	var stored pluginapi.StorageGetResult
-	if err := pluginapi.CallHostService(ctx, host, pluginapi.HostServiceStorageGet, pluginapi.StorageGetParams{Scope: "user", Key: key}, &stored); err != nil {
-		return pluginapi.ToolResult{}, err
-	}
-	files := map[string]string{}
-	if stored.Value != nil {
-		if err := json.Unmarshal([]byte(*stored.Value), &files); err != nil || files == nil {
-			return pluginapi.ToolResult{}, errors.New("stored notes are invalid; refusing to overwrite")
+	home := t.env.WorkingNotesHome
+	if home == "" {
+		var err error
+		home, err = statepath.Home("")
+		if err != nil {
+			return "", err
 		}
 	}
-	revision := notesRevision(stored.Value)
+	store := workingnotes.Store{Home: home}
+	stored, err := store.Read(t.env.SessionID)
+	if err != nil {
+		return "", err
+	}
+	files := map[string]string{}
+	if stored != nil {
+		if err := json.Unmarshal([]byte(*stored), &files); err != nil || files == nil {
+			return "", errors.New("stored notes are invalid; refusing to overwrite")
+		}
+	}
+	revision := notesRevision(stored)
 	if input.Revision != nil && *input.Revision != revision {
-		return pluginapi.ToolResult{}, errors.New("notes revision changed; reread before retrying")
+		return "", errors.New("notes revision changed; reread before retrying")
 	}
 	output := map[string]any{"revision": revision}
 	switch input.Action {
 	case "write", "append":
 		if input.Revision == nil {
-			return pluginapi.ToolResult{}, errors.New("write and append require a revision from a prior read or list")
+			return "", errors.New("write and append require a revision from a prior read or list")
 		}
 		if !validNotePath(input.Path) || !utf8.ValidString(input.Content) {
-			return pluginapi.ToolResult{}, errors.New("invalid note path or UTF-8 content")
+			return "", errors.New("invalid note path or UTF-8 content")
 		}
 		content := input.Content
 		if input.Action == "append" {
@@ -111,24 +134,20 @@ func executeNotes(ctx context.Context, host pluginapi.Host, call pluginapi.ToolC
 		files[input.Path] = content
 		encoded, err := json.Marshal(files)
 		if err != nil {
-			return pluginapi.ToolResult{}, err
+			return "", err
 		}
 		if len(encoded) > maxNotesBytes {
-			return pluginapi.ToolResult{}, errors.New("notes exceed the 1 MB session limit; shorten existing notes")
+			return "", errors.New("notes exceed the 1 MB session limit; shorten existing notes")
 		}
 		value := string(encoded)
-		var result pluginapi.StorageCompareExchangeResult
-		if err := pluginapi.CallHostService(ctx, host, pluginapi.HostServiceStorageCompareExchange, pluginapi.StorageCompareExchangeParams{Scope: "user", Key: key, Expected: stored.Value, Value: &value}, &result); err != nil {
-			return pluginapi.ToolResult{}, err
-		}
-		if !result.Swapped {
-			return pluginapi.ToolResult{}, errors.New("notes changed during write; reread before retrying")
+		if err := store.CompareAndSwap(t.env.SessionID, stored, value); err != nil {
+			return "", err
 		}
 		output["revision"], output["path"], output["bytes"] = notesRevision(&value), input.Path, len(content)
 	case "read":
 		content, found := files[input.Path]
 		if !found {
-			return pluginapi.ToolResult{}, errors.New("note not found; use list to discover paths")
+			return "", errors.New("note not found; use list to discover paths")
 		}
 		chars := []rune(content)
 		limit := input.Limit
@@ -152,7 +171,7 @@ func executeNotes(ctx context.Context, host pluginapi.Host, call pluginapi.ToolC
 		}
 	case "list", "search":
 		if input.Action == "search" && input.Query == "" {
-			return pluginapi.ToolResult{}, errors.New("search requires a nonempty query")
+			return "", errors.New("search requires a nonempty query")
 		}
 		paths := make([]string, 0, len(files))
 		for path := range files {
@@ -215,11 +234,11 @@ func executeNotes(ctx context.Context, host pluginapi.Host, call pluginapi.ToolC
 			output["next_offset"] = end
 		}
 	default:
-		return pluginapi.ToolResult{}, errors.New("unknown notes action")
+		return "", errors.New("unknown notes action")
 	}
 	encoded, err := json.Marshal(output)
 	if err != nil {
-		return pluginapi.ToolResult{}, err
+		return "", err
 	}
-	return pluginapi.TextResult(string(encoded)), nil
+	return string(encoded), nil
 }

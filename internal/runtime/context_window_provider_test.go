@@ -39,3 +39,37 @@ func TestWindowProviderKeepsHandoffWithoutNoteInference(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDefaultContextWindowsSurviveExtensionTeardown(t *testing.T) {
+	ctx := context.Background()
+	_, registry, err := buildPluginAgentCapabilities(ctx, nil, "byok", "model", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &agent.StreamRunner{CompactionRegistry: registry}
+	if !runner.ContextWindowsAvailable() {
+		t.Fatal("context windows require an extension")
+	}
+	provider, ok := registry.Resolve(nil).(agent.HandoffBriefProvider)
+	if !ok {
+		t.Fatal("default handoff provider unavailable")
+	}
+	plan, err := provider.PlanHandoffBrief(ctx, "model", nil, agent.CompactionNote{}, "continue", "source", 12)
+	if err != nil || plan.Prompt == "" || plan.MaxBytes <= 0 {
+		t.Fatalf("handoff plan=%+v %v", plan, err)
+	}
+	registry.RegisterWithOwner(&pluginCompactionProvider{key: "replacement", capability: pluginhost.RegisteredCapability{
+		Descriptor: pluginhost.CapabilityDescriptor{Version: 1},
+	}}, "extension")
+	if runner.ContextWindowsAvailable() {
+		t.Fatal("extension override ignored")
+	}
+	registry.RemoveByPlugin("extension")
+	if !runner.ContextWindowsAvailable() {
+		t.Fatal("default not restored after disabling extension")
+	}
+	registry.Clear()
+	if !runner.ContextWindowsAvailable() {
+		t.Fatal("teardown removed built-in context windows")
+	}
+}

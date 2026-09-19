@@ -229,6 +229,8 @@ type Env struct {
 	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
 	// lookup used by ordinary runtimes.
 	SessionsDir string
+	// WorkingNotesHome binds working memory to the runtime's resolved Wuu home.
+	WorkingNotesHome string
 	// ToolResultProjectionMode selects stable tool-result projection behavior
 	// ("off"/"shadow"/"active"); empty resolves to active (on by default). The
 	// WUU_TOOL_RESULT_PROJECTION environment variable overrides it.

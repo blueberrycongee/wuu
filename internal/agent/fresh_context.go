@@ -24,9 +24,9 @@ var (
 	ErrFreshContextNotSmaller = errors.New("fresh context would not shrink active history")
 )
 
-// ContextWindowProvider opts into summary-free resets. The extension supplies
-// model-writable persistent working memory; the host owns archive and checkpoint
-// safety. This contract does not require a second inference provider.
+// ContextWindowProvider opts into summary-free resets. The host supplies working
+// notes, archive and checkpoint safety. Extensions may replace the window policy.
+// This contract does not require a second inference provider.
 type ContextWindowProvider interface {
 	CompactionProvider
 	ContextWindowsEnabled() bool
@@ -42,7 +42,7 @@ type HistoryArchive struct {
 type HistoryArchiveFunc func(context.Context, []providers.ChatMessage) (HistoryArchive, error)
 
 // FreshContextCommitFunc atomically installs the checkpoint. Empty note content
-// invalidates legacy host-generated notes; extension working memory is independent.
+// invalidates legacy host-generated notes; working memory is independent.
 // The result includes assigned addresses and any concurrently saved tail.
 type FreshContextCommitFunc func(context.Context, []providers.ChatMessage, int, string, CompactionNote) ([]providers.ChatMessage, int, error)
 
@@ -50,7 +50,7 @@ type FreshContextBuilder func(context.Context, []providers.ChatMessage, int, int
 
 // buildFreshContext releases the archived transcript without summarizing it.
 // BYOK models get an explicit recovery address and, when it fits, the latest user
-// instruction. Notes remain in extension storage and are read on demand.
+// instruction. Working notes remain in persistent storage and are read on demand.
 func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTokens, targetTokens int) ([]providers.ChatMessage, error) {
 	if targetTokens <= 0 {
 		targetTokens = FreshContextTargetTokens
@@ -63,7 +63,7 @@ func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTo
 			break
 		}
 	}
-	recovery := fmt.Sprintf("[Context window]\nThe previous active transcript is archived through History Seq %d. Files, processes and other environment state are unchanged. Read your persistent notes using the active extension's note tools. Recover missing decisions, progress and tool outcomes with history_search and history_read before repeating actions. Start at Seq %d if no useful note exists.", historyHeadSeq, max(1, historyHeadSeq-24))
+	recovery := fmt.Sprintf("[Context window]\nThe previous active transcript is archived through History Seq %d. Files, processes and other environment state are unchanged. Read your persistent working notes with notes. Recover missing decisions, progress and tool outcomes with history_search and history_read before repeating actions. Start at Seq %d if no useful note exists.", historyHeadSeq, max(1, historyHeadSeq-24))
 	if task != nil && task.Seq > 0 {
 		recovery += fmt.Sprintf(" The latest user instruction is at Seq %d.", task.Seq)
 	}
@@ -142,7 +142,7 @@ func withContextWindowGuidance(base func() []ContextSegment) func() []ContextSeg
 			segments = append(segments, base()...)
 		}
 		segments = append(segments, RequestOnlyContextMessages([]providers.ChatMessage{
-			contextWindowReminder(`Maintain persistent working notes with the note tools supplied by the active extension. Record objectives, constraints, decisions, completed work, verification and next steps as work progresses. Include useful History Seq addresses for exact recovery. Before calling new_context, save anything needed to continue. The host releases the old transcript after the full tool batch without generating a summary. Files and running processes are unchanged. After a switch, read your notes and recover missing facts with history_read or history_search before acting.`),
+			contextWindowReminder(`Maintain persistent working notes with notes. Record objectives, constraints, decisions, completed work, verification and next steps as work progresses. Include useful History Seq addresses for exact recovery. Before calling new_context, save anything needed to continue. The host releases the old transcript after the full tool batch without generating a summary. Files and running processes are unchanged. After a switch, read your notes and recover missing facts with history_read or history_search before acting.`),
 		})...)
 		return segments
 	}
