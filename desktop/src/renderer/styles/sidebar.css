@@ -1275,6 +1275,15 @@
   padding: 4px var(--sidebar-row-pad-x);
 }
 
+/* Shared rows keep a 24px slot so names stay put. Round mascots only
+ * paint 78 of their 100-unit canvas, so the silhouette sat right of the
+ * 16px nav glyphs. Hang that painted edge from the glyph's left edge. */
+.collaboration-sidebar-section .collaboration-contact-avatar,
+.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-avatar {
+  justify-self: start;
+  margin-inline-start: calc(var(--collaboration-contact-avatar-size) * ((78 / 100) - 1) / 2);
+}
+
 .collaboration-contact-row {
   display: grid;
   flex: 0 0 auto;
