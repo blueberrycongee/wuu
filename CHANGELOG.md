@@ -136,6 +136,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
+  Automation creation, updates, and recurring scheduling no longer reject or
+  skip selected Sundays (#272). Previously saved next-run times are preserved;
+  save an affected task again to recalculate its next run immediately.
+
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
   lists and metadata updates.
