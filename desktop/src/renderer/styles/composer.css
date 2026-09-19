@@ -1514,12 +1514,15 @@
   min-width: 0;
   height: 32px;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
-  font-size: var(--font-ui);
+  /* Compact composer chrome matches the model picker and workspace bar, not
+     the reading-size --font-ui used for menus and body copy. */
+  font-size: var(--font-sm);
   font-weight: 400;
+  line-height: 1;
   padding: 0 8px;
   white-space: nowrap;
 }
@@ -1529,6 +1532,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Beat .composer-bar svg so the warning glyph and chevron stay on the
+   compact chrome size instead of the 16px toolbar-icon default. */
+.composer-bar .permission-chip svg,
+.permission-chip svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 /* The tone belongs to the mode itself: unconfined keeps its danger-red label
