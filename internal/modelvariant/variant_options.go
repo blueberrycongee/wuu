@@ -66,33 +66,54 @@ func compatReasoningEffortVariants(efforts []string) map[string]map[string]any {
 }
 
 // compatDeepSeekV4Variants returns the vendor-documented reasoning tiers for
-// DeepSeek V4 (identical for flash, pro, vision-exp, and the V4.1 flash preview).
+// DeepSeek V4 and V4.1 Flash (including the canonical deepseek-flash ID).
 // medium and xhigh are accepted by the API for compatibility but are mapped to
 // high by DeepSeek, so wuu does not expose them as distinct tiers.
-func compatDeepSeekV4Variants(wireAPI string) map[string]map[string]any {
+func compatDeepSeekV4Variants(wireAPI string, efforts []string) map[string]map[string]any {
+	efforts = deepSeekV4Efforts(efforts)
 	if strings.EqualFold(strings.TrimSpace(wireAPI), "responses") {
-		return map[string]map[string]any{
-			"none": {"thinking": map[string]any{"type": "disabled"}, "reasoningEffort": "none"},
-			"low":  {"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": "low"},
-			"high": {"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": "high"},
-			"max":  {"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": "max"},
+		return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+			if effort == "none" {
+				return map[string]any{"thinking": map[string]any{"type": "disabled"}, "reasoningEffort": "none"}
+			}
+			return map[string]any{"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": effort}
+		})
+	}
+	return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+		if effort == "none" {
+			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
 		}
-	}
-	return map[string]map[string]any{
-		"none": {"thinking": map[string]any{"type": "disabled"}},
-		"low":  {"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": "low"},
-		"high": {"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": "high"},
-		"max":  {"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": "max"},
-	}
+		return map[string]any{"thinking": map[string]any{"type": "enabled"}, "reasoningEffort": effort}
+	})
 }
 
-func compatDeepSeekV4AnthropicVariants() map[string]map[string]any {
-	return map[string]map[string]any{
-		"none": {"thinking": map[string]any{"type": "disabled"}},
-		"low":  {"thinking": map[string]any{"type": "enabled"}, "effort": "low"},
-		"high": {"thinking": map[string]any{"type": "enabled"}, "effort": "high"},
-		"max":  {"thinking": map[string]any{"type": "enabled"}, "effort": "max"},
+func compatDeepSeekV4AnthropicVariants(efforts []string) map[string]map[string]any {
+	return compatVariantsFromEfforts(deepSeekV4Efforts(efforts), func(effort string) map[string]any {
+		if effort == "none" {
+			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
+		}
+		return map[string]any{"thinking": map[string]any{"type": "enabled"}, "effort": effort}
+	})
+}
+
+func deepSeekV4Efforts(efforts []string) []string {
+	if len(efforts) == 0 {
+		return []string{"none", "low", "high", "max"}
 	}
+	out := make([]string, 0, len(efforts)+1)
+	seen := map[string]bool{}
+	for _, effort := range efforts {
+		effort = strings.ToLower(strings.TrimSpace(effort))
+		if effort == "" || seen[effort] {
+			continue
+		}
+		seen[effort] = true
+		out = append(out, effort)
+	}
+	if !seen["none"] {
+		out = append([]string{"none"}, out...)
+	}
+	return out
 }
 
 // compatGLM52Variants returns the vendor-documented reasoning tiers for

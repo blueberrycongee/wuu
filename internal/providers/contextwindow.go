@@ -162,6 +162,7 @@ var contextWindowRegistry = []contextWindowEntry{
 
 	// --- DeepSeek ---------------------------------------------------
 	{"deepseek-v4", 1_000_000},
+	{"deepseek-flash", 1_000_000},
 	{"deepseek-v3", 64_000},
 	{"deepseek-r1", 64_000},
 	{"deepseek-coder", 64_000},
@@ -201,6 +202,10 @@ var contextWindowRegistry = []contextWindowEntry{
 	{"llama", 8_192},
 
 	// --- Qwen -------------------------------------------------------
+	{"qwen3.8", 1_000_000},
+	{"qwen3.7", 1_000_000},
+	{"qwen3.6", 1_000_000},
+	{"qwen3.5", 1_000_000},
 	{"qwen3", 128_000},
 	{"qwen2.5", 128_000},
 	{"qwen", 32_000},
@@ -258,6 +263,7 @@ var maxOutputTokensRegistry = []contextWindowEntry{
 	{"o1", 32_768},
 	// DeepSeek
 	{"deepseek-v4", 384_000},
+	{"deepseek-flash", 384_000},
 	{"deepseek", 8_192},
 	// GLM
 	{"glm-5.2", 128_000},
