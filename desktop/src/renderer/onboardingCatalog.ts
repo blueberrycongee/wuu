@@ -6,7 +6,7 @@ export const ONBOARDING_PLUGIN_ORDER = [
   "ask-user", "todo", "goal", "automation", "subagent", "peers", "memory", "dream",
 ] as const;
 
-export const RECOMMENDED_PLUGIN_IDS = new Set<string>(["todo", "automation", "subagent"]);
+export const RECOMMENDED_PLUGIN_IDS = new Set<string>(["todo", "automation"]);
 
 export const PLUGIN_DESCRIPTION_KEYS: Readonly<Record<string, TranslationKey>> = {
   "ask-user": "onboarding.plugin.askUser",

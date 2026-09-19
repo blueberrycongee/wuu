@@ -27,7 +27,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Make working notes and summary-free context windows built-in defaults, preserving
   existing session notes without the Context Notes extension. Include Peers in
-  first-run extension choices.
+  first-run extension choices. Recommend only TODO and Automation by default.
 
 - Remove the redundant workspace path row from the terminal panel so terminal
   content starts directly below the workspace tabs.
