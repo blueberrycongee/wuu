@@ -136,6 +136,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Treat Chat Completions stream error payloads and error finish reasons as failed
+  attempts, preserving provider details and recovery limits without executing
+  unfinished tool drafts (#263).
+
 - Keep Automation and other primary plugin views in sidebar navigation instead
   of reviving the removed conversation tab strip. Preserve view switching,
   closing, return navigation, and durable view recovery across desktop restarts.
