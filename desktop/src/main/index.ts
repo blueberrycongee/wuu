@@ -2164,14 +2164,14 @@ app.whenReady().then(async () => {
     appServerRequest<{ threads: Thread[] }>(
       event,
       "thread/list",
-      typeof cwd === "string" && cwd.length > 0 ? { cwd } : undefined,
+      { summary_only: true, ...(typeof cwd === "string" && cwd.length > 0 ? { cwd } : {}) },
     ),
   );
   ipcMain.handle("wuu:thread-list-archived", (event) =>
-    appServerRequest<{ threads: Thread[] }>(event, "thread/listArchived"),
+    appServerRequest<{ threads: Thread[] }>(event, "thread/listArchived", { summary_only: true }),
   );
   ipcMain.handle("wuu:thread-list-all", (event) =>
-    appServerRequest<{ threads: Thread[] }>(event, "thread/listAll"),
+    appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
   );
   ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
     appServerRequest(event, "thread/search", {

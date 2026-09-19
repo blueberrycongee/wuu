@@ -3,6 +3,8 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,5 +76,37 @@ func TestResumeResponseOnlyRetainsHistoryWithoutBroadcast(t *testing.T) {
 		if (broadcasts == 0) != responseOnly {
 			t.Fatalf("responseOnly=%v broadcasts=%d", responseOnly, broadcasts)
 		}
+	}
+}
+
+// Report both lock-held snapshot allocations and wire bytes for a loaded
+// conversation; a summary must not pay for history it never sends.
+func BenchmarkThreadListSnapshot(b *testing.B) {
+	th := newThreadState("large-thread", nil, "provider", "model", "/workspace", false, time.Now())
+	for turn := range 100 {
+		items := make([]ThreadItem, 20)
+		for index := range items {
+			items[index] = ThreadItem{
+				ID: fmt.Sprintf("item-%d-%d", turn, index), Type: ThreadItemAgentMessage,
+				Text: strings.Repeat("output ", 1024),
+			}
+		}
+		th.Turns = append(th.Turns, Turn{ID: fmt.Sprintf("turn-%d", turn), Items: items, Status: TurnStatusCompleted})
+	}
+	for _, summary := range []bool{false, true} {
+		b.Run(fmt.Sprintf("summary=%v", summary), func(b *testing.B) {
+			raw, err := json.Marshal(th.listSnapshotLocked(summary))
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				th.mu.Lock()
+				_ = th.listSnapshotLocked(summary)
+				th.mu.Unlock()
+			}
+			b.ReportMetric(float64(len(raw)), "wire-B")
+		})
 	}
 }

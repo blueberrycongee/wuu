@@ -30,6 +30,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Fetch lightweight conversation summaries for desktop lists without copying
+  loaded histories, reducing IPC payloads and app-server allocation overhead.
+  Recover missed completion events with targeted snapshots for stale loaded
+  conversations, including both visible panes.
+
 - Keep conversation search results title-only on the left, with matching snippets
   and conversation details in the right preview pane.
 

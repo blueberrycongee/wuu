@@ -968,7 +968,7 @@ func (s *Server) handleThreadList(req Request) error {
 	s.mu.Lock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		thread := th.snapshotLocked()
+		thread := th.listSnapshotLocked(params.SummaryOnly)
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
@@ -1067,7 +1067,7 @@ func (s *Server) handleThreadListAll(req Request) error {
 	s.mu.Lock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		thread := th.snapshotLocked()
+		thread := th.listSnapshotLocked(params.SummaryOnly)
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
@@ -1143,7 +1143,7 @@ func (s *Server) handleThreadListArchived(req Request) error {
 	s.mu.Lock()
 	for _, th := range s.threads {
 		th.mu.Lock()
-		thread := th.snapshotLocked()
+		thread := th.listSnapshotLocked(params.SummaryOnly)
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
