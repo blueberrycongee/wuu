@@ -207,13 +207,13 @@ it("keeps newly created managed work reachable after a delayed workspace list", 
     .filter(button => button.textContent?.includes(created.title!));
   // Creation precedes the control update; only the latter moves the session into its manager's work.
   await act(async () => {
-    for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: workspace, message: {
+    for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: target.path, message: {
       method: "thread/started", params: { thread: created },
     } });
   });
   expect(workspaceRows()).toHaveLength(1);
   await act(async () => {
-    for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: workspace, message: {
+    for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: target.path, message: {
       method: "thread/updated", params: { thread: managed },
     } });
   });
