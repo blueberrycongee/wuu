@@ -125,6 +125,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let ordinary sessions explicitly finish peer follow-ups without a final reply.
+  Recover an empty response once, while keeping repeated empty responses visible
+  as failures instead of silently treating them as acknowledgements.
+
 - Stop streaming auto-follow from pulling messages back to the bottom when a
   keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
   Preserve following after a plain scroll-surface click without scrolling.
