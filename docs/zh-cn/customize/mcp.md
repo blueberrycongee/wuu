@@ -1,221 +1,95 @@
-# MCP 服务器
+# MCP 服务
 
-MCP（Model Context Protocol）让 Wuu 连接本地或远程工具服务器。连接成功后，服务器提供
-的工具会加入 Agent 的工具集合；工具较多时，Wuu 会延后展示低频工具，Agent 仍可按需
-搜索和调用。
+MCP 让 Wuu 引擎使用本地进程或远程服务提供的工具。连接后，告诉 agent 服务名称和任务即可。Wuu 当前发现并调用工具，不提供资源或提示浏览器，也不支持 MCP 发起的额外用户输入交换。
 
-当前接入面只发现和调用 MCP tools，不提供面向用户的 MCP resources 或 prompts 浏览
-入口。
+## 添加服务
 
-MCP 工具会增加上下文和外部访问范围。只连接可信服务器，并只启用当前工作真正需要的
-工具。
+在用户配置的 `mcp_servers` 中添加定义，默认文件为 `~/.wuu/config.json`，然后重启 Wuu。桌面可以管理已有定义，但没有服务定义编辑器。
 
-## 配置服务器
-
-桌面设置可以管理已有服务器，但当前不能新建或编辑服务器定义。先在用户配置
-`~/.wuu/config.json` 的 `mcp_servers` 中添加定义，再重新启动 Wuu。
-
-### 本地 stdio 服务器
+以下片段配置一个本地服务和一个远程服务。请替换为实际可执行程序、脚本路径和 URL：
 
 ```json
 {
   "mcp_servers": {
     "project-tools": {
-      "command": "npx",
-      "args": ["-y", "@example/project-mcp"],
-      "env": {
-        "PROJECT_ID": "demo"
-      }
-    }
-  }
-}
-```
-
-Wuu 会把 `command` 作为子进程启动，并通过 stdin/stdout 使用 MCP。不要把不可信仓库
-提供的命令直接加入用户配置。`args` 会直接传给程序，不经过 shell；`env` 只用于 stdio
-子进程，并覆盖 Wuu 进程中的同名变量。
-
-### 远程服务器
-
-```json
-{
-  "mcp_servers": {
+      "command": "node",
+      "args": ["/absolute/path/mcp-server.js"],
+      "env": { "PROJECT_ID": "demo" }
+    },
     "docs": {
       "url": "https://mcp.example.com/mcp",
-      "transport": "http",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      }
+      "transport": "http"
     }
   }
 }
 ```
 
-`transport` 可设为 `http`、`streamable-http` 或兼容旧服务器的 `sse`。省略时会先尝试
-streamable HTTP；若协议探测和旧版初始化 POST 表明该端点不支持它，再回退到 SSE。
+对于 stdio，Wuu 直接使用 `args` 启动程序，不经过 shell。子进程继承进程环境，`env` 覆盖同名变量。服务必须把 stdout 留给协议消息，日志写到 stderr。
 
-Wuu 会自动协商支持的协议。当前不支持需要额外用户输入交互的工具结果，遇到时会报错。
+远程服务中，`http` 和 `streamable-http` 选择流式 HTTP，`sse` 选择旧式 SSE。省略 transport 时先探测 HTTP，端点不兼容才回退 SSE；网络不可达不会触发回退。明确指定传输方式时也不会回退。
 
-`headers` 只用于远程请求。原生 `mcp_servers` 不展开 `${VAR}`，示例中的 token 等值会
-按字面量使用；不要把密钥写进团队共享的项目配置。
+远程 `headers` 使用字面值。原生 `mcp_servers` 不展开 `${VAR}` 占位符。不要把秘密提交到配置中，也不要把占位符误当成凭据引用。`enabled: false` 保留定义，但启动时不连接。
 
-每个服务器还可以设置 `enabled`。`false` 会保留定义但不连接；桌面端的开关会把这项
-选择写回配置。
+## 管理连接
 
-## 在桌面端管理
+打开**设置 → 通用 → MCP 服务**，查看连接状态、工具数量和错误，并执行连接、断开或刷新。断开只结束当前连接，不删除定义；刷新使用已加载配置重新连接并发现工具。
 
-打开**设置 → 常规 → MCP 服务器**。每一行会显示连接状态和已发现的工具数，并提供：
+启用开关保存启动偏好。需要立即改变连接状态时使用连接控件；修改磁盘上的定义后重启 Wuu。刷新不会重新读取配置文件。
 
-- 开启或关闭服务器；
-- 连接或断开；
-- 刷新连接和工具列表；
-- 对需要 OAuth 的远程服务器登录或移除登录；
-- 查看连接错误。
+模型可见的工具名类似 `mcp_docs_search`，不支持的字符和过长名称会规范化。大型或低频工具定义可能延迟展示，再通过工具搜索发现。当前工具集和权限策略仍可能限制工具可用性或执行。
 
-启停开关会保存 `enabled` 配置，但当前连接不保证随开关立即建立或结束；需要马上改变
-连接时使用旁边的连接/断开按钮，或重启 Wuu。“断开”只结束当前连接，不会删除定义。
-修改磁盘配置后，重启 Wuu 最稳妥；刷新只会使用已载入的服务器配置重新连接和发现工具，
-不会重新读取配置文件。
+## 项目 `.mcp.json`
 
-## 使用工具
-
-连接后，直接告诉 Agent 使用该服务，例如：
-
-```text
-使用 docs MCP 查找这个 API 的最新说明，然后给出带来源的结论。
-```
-
-模型可见名称采用 `mcp_<服务器名>_<工具名>`，不兼容字符会被替换，过长名称会截断并
-附加哈希。普通任务通常不需要记住完整名称，说明服务器名和目标即可。
-
-MCP 工具仍受当前工具表面、权限模式和本地策略限制。服务器提供的描述和返回元数据都
-按不可信外部内容处理，不会变成 Wuu 的系统指令。
-
-## 使用项目 `.mcp.json`
-
-Wuu 兼容仓库根目录的 Claude Code 风格 `.mcp.json`：
+Wuu 读取项目配置目录中的 Claude 风格 `.mcp.json`：
 
 ```json
 {
   "mcpServers": {
     "local-docs": {
       "command": "node",
-      "args": ["scripts/mcp-server.js"],
-      "env": {
-        "API_TOKEN": "${API_TOKEN}"
-      }
+      "args": ["/absolute/path/docs-server.js"],
+      "env": { "API_TOKEN": "${API_TOKEN}" }
     }
   }
 }
 ```
 
-项目文件中的服务器**默认不会加载**，因为 stdio 定义可以执行仓库指定的程序。建议在
-不会提交的 `.wuu/settings.local.json` 中逐个批准：
+条目默认不加载。检查服务后，在不提交的 `.wuu/settings.local.json` 中批准其名称：
 
 ```json
 {
-  "mcp_json": {
-    "enabled": ["local-docs"]
-  }
+  "mcp_json": { "enabled": ["local-docs"] }
 }
 ```
 
-也可以使用 `enable_all: true` 批准全部，再用 `disabled` 拒绝个别名称。`disabled` 始终
-优先：
+`enable_all: true` 启用除 `disabled` 外的全部条目，明确禁用的名称始终优先。只需要部分服务时，优先逐个填写名称。
+
+与原生定义不同，`.mcp.json` 会在命令、参数、环境值、URL 和请求头中展开 `${VAR}` 与 `${VAR:-default}`。缺少变量且无默认值时保留原文，并发出警告。支持的类型为 `stdio`、`http` 和 `sse`。同名原生 `mcp_servers` 条目优先。
+
+## 远程 OAuth
+
+远程 URL 服务可以使用 OAuth 发现、PKCE、scope 和动态客户端注册。普通定义不必预先填写 `oauth`，遇到认证要求后可从设置中登录。
+
+当前桌面流程打开授权地址后，需要你把返回的授权码粘贴回设置，不会启动自动回调监听器。令牌进入 Wuu 凭据存储，而不是写回服务定义。
+
+服务要求固定客户端、回调或 scope 时，在该服务下加入 `oauth` 对象：
 
 ```json
 {
-  "mcp_json": {
-    "enable_all": true,
-    "disabled": ["unsafe-server"]
-  }
+  "redirect_uri": "http://127.0.0.1:8765/callback",
+  "client_id": "your-client-id",
+  "scopes": ["tools:read"]
 }
 ```
 
-`.mcp.json` 支持 `stdio`、`http` 和 `sse`，并在 command、args、env、URL 和 headers
-中展开 `${VAR}` 与 `${VAR:-default}`。缺失的环境变量会产生 stderr 警告。若它与原生
-`mcp_servers` 使用同名定义，原生配置优先。
+请使用服务实际提供的注册值；服务也可能要求 `client_secret`。配置的资源请求头不会转发给跨源授权服务器。
 
-## OAuth
+## 工具元数据
 
-OAuth 只适用于远程 URL 服务器。Wuu 会根据服务端的 `WWW-Authenticate` 响应和标准
-well-known 元数据发现受保护资源、授权服务器、PKCE、scope 及动态客户端注册信息。
-普通远程定义不必预先加入 `oauth`；服务器返回 401 后，可直接在设置页开始登录。
+服务定义可以通过 `tool_overrides` 修正工具的 `read_only`、`concurrency_safe` 或 `capability` 元数据。只有明确知道操作语义时才设置。把写操作误标为安全读取，可能绕过依赖这些声明的保护。
 
-当前桌面流程仍需用户手工回填授权码，没有对应的 CLI 登录命令或自动回调监听。默认
-回调地址为 `http://127.0.0.1/callback`。服务方要求固定客户端、特殊回调地址或指定
-scope 时，可以加入 `oauth` 覆盖发现结果：
+## 排查与信任
 
-```json
-{
-  "mcp_servers": {
-    "issues": {
-      "url": "https://mcp.example.com/mcp",
-      "transport": "http",
-      "oauth": {
-        "redirect_uri": "http://127.0.0.1:8765/callback",
-        "client_id": "YOUR_CLIENT_ID",
-        "client_secret": "YOUR_CLIENT_SECRET",
-        "scopes": ["tools:read", "tools:execute"]
-      }
-    }
-  }
-}
-```
+服务未出现时，检查配置拼写、重启 Wuu，并在使用 `.mcp.json` 时确认批准状态。本地连接错误应检查程序发现、依赖、环境和 stdout 内容；远程错误应检查 URL、传输方式、网络、请求头和 OAuth 要求。
 
-如果省略 `client_id`，Wuu 会尝试使用服务器公布的动态客户端注册端点。桌面端选择登录
-后会打开授权地址；授权完成后，把回调中的 code 粘贴回设置页完成登录。令牌由 Wuu 的
-凭据存储保存，不写回服务器配置。配置中的自定义 headers 只会发送给 MCP 资源端及同源
-发现端点，不会转发给跨域授权服务器。
-
-## 工具元数据覆盖
-
-只有在你信任并了解服务器工具语义时，才用 `tool_overrides` 修正服务器声明：
-
-```json
-{
-  "mcp_servers": {
-    "docs": {
-      "url": "https://mcp.example.com/mcp",
-      "tool_overrides": {
-        "search": {
-          "read_only": true,
-          "concurrency_safe": true,
-          "capability": "search.semantic"
-        }
-      }
-    }
-  }
-}
-```
-
-错误地把写操作标成只读或并发安全，可能绕过应有的串行和权限保护。不要仅依据工具名
-猜测这些值。
-
-## 排错
-
-### 设置中没有服务器
-
-确认定义位于 `mcp_servers`，JSON 字段没有拼错，并重新启动 Wuu。项目 `.mcp.json`
-还必须通过 `mcp_json` 审批；未审批项只会写入 stderr 提示，不会出现在已配置列表中。
-
-### 本地服务器连接失败
-
-在相同环境中确认 `command` 可执行，依赖已安装，并确保服务器把协议消息写到 stdout、
-把普通日志写到 stderr。
-
-### 远程服务器失败
-
-检查 URL、transport、headers 和网络代理。旧 SSE 端点应显式使用 `sse`；现代端点
-优先使用 `http`。
-
-### 需要认证或注册
-
-确认服务器在 401 响应或标准 well-known 地址公布了 OAuth discovery 元数据。动态注册
-失败时，在 `oauth` 中改用服务方提供的 `client_id` 和 `client_secret`；服务方要求特定
-回调地址时，同时配置 `redirect_uri`。
-
-### 工具没有出现在模型面前
-
-先确认状态为“已连接”且工具数大于零。大量或超大工具可能被 Wuu 延后展示，Agent 可用
-工具搜索按需发现；与当前会话工具表面不兼容的工具则不会开放。
+已连接且有工具的服务，仍可能使用延迟展示；可以让 agent 搜索所需工具。服务描述和结果是外部内容，不是系统指令。本地 MCP 进程使用继承的环境运行受信任代码，远程服务则会收到调用参数。连接陌生服务前，请阅读[安全模型](../reference/security-model.md)。

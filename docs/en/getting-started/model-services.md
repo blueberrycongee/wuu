@@ -1,76 +1,55 @@
-# Model setup
+# Connecting a model service
 
-Choose a provider, then a model it offers. The provider configuration holds the
-endpoint and credentials; the model name is an ID that provider accepts. One
-provider can have several configured models.
+A provider tells Wuu where to send model requests and which credentials to use. A model is an identifier accepted by that provider. You can keep several models under one provider without duplicating its connection settings.
 
-Prompts, relevant files, attachments, and tool results may be sent to your chosen
-provider. Its pricing and data policies apply. With a gateway, data goes to the
-configured gateway endpoint. Do not put real API Keys in project files or commit them to Git.
+These settings apply to the **Wuu** engine. Selecting Codex or Claude Code as an external engine runs that program with its own authentication and configuration. Reusing a subscription credential in a Wuu provider is a different choice from running the corresponding external engine.
 
-## Configure the desktop app
+## Add a provider in the desktop app
 
 1. Open **Settings → Model providers → Add provider**.
-2. Choose **OpenAI-compatible** or **Anthropic-compatible** to match the provider's API.
-3. Enter a provider identifier, model name, API endpoint, and API Key, then choose **Add provider**.
-4. Return to the conversation, check the selected provider and model, and send a small task to test replies and tool calls.
+2. Choose the service type. Use **OpenAI-compatible** or **Anthropic-compatible** for a service that implements that API.
+3. Enter an identifier, an available model ID, the API endpoint, and credentials. Include an API prefix such as `/v1` when your service requires it.
+4. Save the provider, return to the composer, and select the provider and model for the conversation.
+5. Send a small request that includes a tool call, such as reading a project file, to check more than text-only replies.
 
-OpenAI and OpenRouter can use the OpenAI-compatible type; Anthropic uses the
-Anthropic-compatible type. For a gateway or local service, match its protocol and
-include any required API prefix in the endpoint, such as `/v1`. You can add or
-switch models within an existing provider without entering its credentials again.
+The first-run form offers a simpler connection setup. Use Settings for a custom endpoint and additional model options. A model listed in a configuration is not a guarantee that your account can access it.
 
-## Use a subscription login
+The composer's selection belongs to the conversation, or to the draft before its first message. Settings also lets you set workspace defaults; changing a conversation's model does not silently replace those defaults.
 
-- **Codex subscription:** sign in with Codex CLI, then choose to reuse that login
-  during Wuu's first-run setup, or enable `reuse_codex_credentials` in the
-  `openai-codex` provider configuration. The desktop cannot start OpenAI OAuth login directly.
-- **xAI SuperGrok:** choose **xAI SuperGrok** when adding a provider and follow the
-  login prompts. In the CLI, run `wuu login xai`, then use `--provider xai-subscription`
-  for tasks. This connection uses xAI subscription login, separately from Grok CLI
-  login and `XAI_API_KEY`.
-- **Grok Build:** run `grok login`. The desktop shows the provider when it finds a
-  usable local login; select it directly. In the CLI, use `--provider grok-build`.
-  Run `grok login` again when it expires; Wuu does not modify or refresh Grok CLI credentials.
+## Use an existing subscription
 
-These connections use Wuu's agent to run tasks. File edits and command execution
-require both the model and the service to support tool calling.
+| Connection | Setup |
+|---|---|
+| Codex subscription | Sign in with Codex CLI, then choose to reuse the detected login during first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. |
+| xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
+| Grok Build | Run `grok login`, then select the detected provider in Wuu or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
+
+SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 
 ## Configure the CLI
 
-Generate a user configuration on first use:
+Create a user configuration once:
 
 ```bash
 wuu init
 ```
 
-The configuration is written to `~/.wuu/config.json` by default, or to
-`$WUU_HOME/config.json` when `WUU_HOME` is set. Edit an existing configuration
-directly; `wuu init --force` overwrites it.
+The file is `~/.wuu/config.json`, or `$WUU_HOME/config.json` when `WUU_HOME` is set. Edit an existing file instead of running `wuu init --force`, which overwrites it.
 
-Under `providers`, check your provider's `base_url`, `model`, and `api_key_env`.
-The initial default provider is `openai`. Check that your account can use the
-example model, then set the environment variable named by `api_key_env`:
+Under `providers`, check `base_url`, `model`, and `api_key_env`. The generated configuration initially selects `openai`; replace its example model if your account needs a different one. Set the named environment variable before running:
 
 ```bash
-export OPENAI_API_KEY="your API Key"
-cd /path/to/your/project
-wuu exec --provider openai --permission-mode read_only "read this project and explain how to run its tests"
+export OPENAI_API_KEY="your API key"
+cd /path/to/project
+wuu exec --provider openai --permission-mode read_only "Read this project and explain how to run its tests"
 ```
 
-`--provider` selects a configured provider identifier; `--model` overrides the model
-for this run. On normal startup, project configuration cannot replace user-owned
-endpoints, credentials, or permission modes. See [configuration](../reference/configuration.md)
-for the detailed rules.
+`--provider` selects a configured identifier, and `--model` overrides the model for this run. See [configuration](../reference/configuration.md) for precedence and the limits on project-level settings.
 
-## Troubleshoot connection problems
+## Check a failed connection
 
-"Credentials configured" means Wuu can read a credential, not that the provider
-accepts it. For a missing API Key, check the selected provider and that the variable
-named by `api_key_env` has a value. The desktop must be launched from a process that
-can read that variable; you can also save an API Key directly in Settings.
+“Credentials configured” means a credential is available locally, not that the provider has accepted it. Check the selected provider, endpoint, model ID, and account access. An environment variable must be visible to the process launching Wuu; a desktop app opened from the Dock may not inherit variables set in a terminal. You can also save an API key in Settings.
 
-If the model is not found, check its ID and your account's access. If chat works but
-tools do not, check that the model and gateway support tool calling and streaming.
+If text replies work but tools fail, check the service's support for tool calling and streaming. A compatible API format alone does not establish that every model supports the same capabilities.
 
-After connecting a model service, continue to [complete your first task](first-task.md).
+Prompts, selected context, attachments, and tool results can leave your machine through the configured endpoint. The provider's pricing and data policies apply; with a gateway, the gateway receives those requests. Keep real API keys out of project files and Git history.
