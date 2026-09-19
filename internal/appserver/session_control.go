@@ -57,8 +57,15 @@ func (s *Server) pluginSessionControl(pluginID, id string, revision int64) (*ses
 
 func (s *Server) readThreadSessionControl(id string) (*ThreadSessionControl, error) {
 	c, ok, err := session.ReadControl(s.rt.SessionDir, id)
-	if err != nil || !ok || c.State == session.ControlReleased {
+	if err != nil || !ok {
 		return nil, err
+	}
+	return s.threadSessionControl(c), nil
+}
+
+func (s *Server) threadSessionControl(c session.Control) *ThreadSessionControl {
+	if c.ManagerID == "" || c.State == session.ControlReleased {
+		return nil
 	}
 	name := c.ManagerID
 	if s.channelService != nil {
@@ -66,7 +73,7 @@ func (s *Server) readThreadSessionControl(id string) (*ThreadSessionControl, err
 			name = agent.Name
 		}
 	}
-	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}, nil
+	return &ThreadSessionControl{ManagerID: c.ManagerID, ManagerName: name, State: c.State, Revision: c.Revision}
 }
 
 func (s *Server) publishSessionControl(id string) {

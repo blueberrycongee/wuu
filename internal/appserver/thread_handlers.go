@@ -1004,23 +1004,8 @@ func (s *Server) handleThreadList(req Request) error {
 	}
 	s.mu.Unlock()
 
-	threads := make([]threadListEntry, 0, len(entries))
-	for _, entry := range entries {
-		threads = append(threads, entry)
-	}
-	sortThreadListEntries(threads)
-	result := make([]Thread, 0, len(threads))
-	for _, entry := range threads {
-		thread, err := s.threadWithChildAgents(entry.thread)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if params.SummaryOnly {
-			thread.Turns = []Turn{}
-		}
-		result = append(result, thread)
-	}
-	return s.writeResponse(req.ID, ThreadListResult{Threads: result}, nil)
+	result, err := s.threadListResult(entries, params.SummaryOnly)
+	return s.writeResponse(req.ID, result, err)
 }
 
 // handleThreadListAll returns active root conversations across every workspace.
@@ -1089,23 +1074,8 @@ func (s *Server) handleThreadListAll(req Request) error {
 		entries[thread.ID] = entry
 	}
 	s.mu.Unlock()
-	ordered := make([]threadListEntry, 0, len(entries))
-	for _, entry := range entries {
-		ordered = append(ordered, entry)
-	}
-	sortThreadListEntries(ordered)
-	result := make([]Thread, 0, len(ordered))
-	for _, entry := range ordered {
-		thread, err := s.threadWithChildAgents(entry.thread)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if params.SummaryOnly {
-			thread.Turns = []Turn{}
-		}
-		result = append(result, thread)
-	}
-	return s.writeResponse(req.ID, ThreadListResult{Threads: result}, nil)
+	result, err := s.threadListResult(entries, params.SummaryOnly)
+	return s.writeResponse(req.ID, result, err)
 }
 
 // handleThreadListArchived returns every archived session the running server
@@ -1168,6 +1138,18 @@ func (s *Server) handleThreadListArchived(req Request) error {
 	}
 	s.mu.Unlock()
 
+	result, err := s.threadListResult(entries, params.SummaryOnly)
+	return s.writeResponse(req.ID, result, err)
+}
+
+func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnly bool) (ThreadListResult, error) {
+	// Management is shared across app-servers, not owned by the active workspace.
+	// Read it after merging live snapshots so both unloaded sessions and stale
+	// in-memory relationships reflect persisted control (including releases).
+	controls, err := session.ListControls(s.rt.SessionDir)
+	if err != nil {
+		return ThreadListResult{}, err
+	}
 	threads := make([]threadListEntry, 0, len(entries))
 	for _, entry := range entries {
 		threads = append(threads, entry)
@@ -1175,16 +1157,17 @@ func (s *Server) handleThreadListArchived(req Request) error {
 	sortThreadListEntries(threads)
 	result := make([]Thread, 0, len(threads))
 	for _, entry := range threads {
+		entry.thread.SessionControl = s.threadSessionControl(controls[entry.thread.ID])
 		thread, err := s.threadWithChildAgents(entry.thread)
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return ThreadListResult{}, err
 		}
-		if params.SummaryOnly {
+		if summaryOnly {
 			thread.Turns = []Turn{}
 		}
 		result = append(result, thread)
 	}
-	return s.writeResponse(req.ID, ThreadListResult{Threads: result}, nil)
+	return ThreadListResult{Threads: result}, nil
 }
 
 func sameThreadListCWD(left, right string) bool {
@@ -2031,14 +2014,21 @@ func (s *Server) mostRecentVisibleThreadID() (string, error) {
 }
 
 func (s *Server) threadAfterMetadataUpdate(metadata session.Session) (Thread, error) {
+	control, err := s.readThreadSessionControl(metadata.ID)
+	if err != nil {
+		return Thread{}, err
+	}
 	if th := s.thread(metadata.ID); th != nil {
 		th.mu.Lock()
 		applySessionMetadata(th, metadata)
 		thread := th.snapshotLocked()
 		th.mu.Unlock()
+		thread.SessionControl = control
 		return s.threadWithChildAgents(thread)
 	}
-	return s.threadWithChildAgents(threadEntryFromSession(metadata, s.rt.ProviderName, s.rt.Model).thread)
+	thread := threadEntryFromSession(metadata, s.rt.ProviderName, s.rt.Model).thread
+	thread.SessionControl = control
+	return s.threadWithChildAgents(thread)
 }
 
 func (s *Server) hasRunningThread() bool {
