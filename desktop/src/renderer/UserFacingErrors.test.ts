@@ -7,6 +7,17 @@ import { setActiveLocale, translateCurrent as t } from "./i18n";
 afterEach(() => setActiveLocale("zh-CN"));
 
 describe("userFacingErrorForMessage", () => {
+  it.each([
+    "stream request failed: read stream: SSE event or line exceeds Wuu's 33554432-byte stream limit",
+    "stream request failed: read stream: bufio.Scanner: token too long",
+  ])("keeps local stream size failures out of the network category after restore: %s", (message) => {
+    const live = userFacingErrorForMessage({ message, category: "internal", code: "sse_size_limit" }, "turn");
+    const restored = userFacingErrorForMessage(message, "turn");
+    expect(restored).toEqual(live);
+    expect(restored.category).toBe("internal");
+    expect(restored.diagnostic).toBe(message);
+  });
+
   it.each(["zh-CN", "en-US"] as const)("distinguishes empty replies from generic provider errors in %s", (locale) => {
     setActiveLocale(locale);
     const message = "model returned empty answer (stop_reason=completed)";

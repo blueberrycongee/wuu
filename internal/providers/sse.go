@@ -3,12 +3,25 @@ package providers
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 )
 
-const maxSSEEventSize = 1024 * 1024
+// Completed responses can include full tool arguments and encrypted reasoning,
+// even when their earlier deltas were small. Grow on demand, but keep a hard cap.
+const maxSSEEventSize = 32 * 1024 * 1024
+
+// SSESizeLimitError reports a local stream-reader limit, not a transient network
+// failure. Replaying the same oversized event cannot make it fit.
+type SSESizeLimitError struct {
+	Limit int
+}
+
+func (e *SSESizeLimitError) Error() string {
+	return fmt.Sprintf("SSE event or line exceeds Wuu's %d-byte stream limit", e.Limit)
+}
 
 // SSEEvent contains the fields consumed by model streaming protocols.
 type SSEEvent struct {
@@ -30,7 +43,8 @@ type SSEReader struct {
 // onLine observes heartbeats as well as data, preserving idle timeout behavior.
 func NewSSEReader(r io.Reader, onLine func()) *SSEReader {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEEventSize)
+	// Leave room for the data field prefix and line ending at the payload limit.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEEventSize+len("data: ")+2)
 	skipLF := false
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
 		skipped := 0
@@ -62,7 +76,6 @@ func (r *SSEReader) Scan() bool {
 	var event SSEEvent
 	var data strings.Builder
 	hasData := false
-	size := 0
 	for r.scanner.Scan() {
 		if r.onLine != nil {
 			r.onLine()
@@ -70,12 +83,11 @@ func (r *SSEReader) Scan() bool {
 		line := r.scanner.Text()
 		if line == "" {
 			if hasData {
-				event.Data = strings.TrimSuffix(data.String(), "\n")
+				event.Data = data.String()
 				r.event = event
 				return true
 			}
 			event = SSEEvent{}
-			size = 0
 			continue
 		}
 		if strings.HasPrefix(line, ":") {
@@ -87,17 +99,25 @@ func (r *SSEReader) Scan() bool {
 		case "event":
 			event.Event = value
 		case "data":
-			size += len(value) + 1
-			if size > maxSSEEventSize {
-				r.err = fmt.Errorf("SSE event exceeds %d bytes", maxSSEEventSize)
+			additional := len(value)
+			if hasData {
+				additional++
+			}
+			if data.Len()+additional > maxSSEEventSize {
+				r.err = &SSESizeLimitError{Limit: maxSSEEventSize}
 				return false
+			}
+			if hasData {
+				data.WriteByte('\n')
 			}
 			hasData = true
 			data.WriteString(value)
-			data.WriteByte('\n')
 		}
 	}
 	r.err = r.scanner.Err()
+	if errors.Is(r.err, bufio.ErrTooLong) {
+		r.err = &SSESizeLimitError{Limit: maxSSEEventSize}
+	}
 	if r.err == nil && (hasData || event.Event != "") {
 		r.err = NewIncompleteStreamError("stream closed before SSE event delimiter")
 	}

@@ -3262,14 +3262,17 @@ func TestResponsesFinalAnswerTailTimeout(t *testing.T) {
 }
 
 func TestResponsesStreamChat_ParsesReasoningItem(t *testing.T) {
+	// Completed items repeat the full encrypted reasoning, not just a delta.
+	encrypted := strings.Repeat("enc_1234", 256*1024)
+	item := `{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"inspect first"}],"encrypted_content":"` + encrypted + `"}`
 	ssePayload := "event: response.output_item.added\n" +
 		"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"status\":\"in_progress\"},\"output_index\":0}\n\n" +
 		"event: response.reasoning_summary_text.delta\n" +
 		"data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"inspect first\",\"output_index\":0}\n\n" +
 		"event: response.output_item.done\n" +
-		"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"status\":\"completed\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"inspect first\"}],\"encrypted_content\":\"enc_123\"},\"output_index\":0}\n\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":" + item + ",\"output_index\":0}\n\n" +
 		"event: response.completed\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
+		"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[" + item + "],\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
@@ -3296,19 +3299,27 @@ func TestResponsesStreamChat_ParsesReasoningItem(t *testing.T) {
 
 	var thinking string
 	var block *providers.ReasoningBlock
+	var done *providers.StreamEvent
 	for ev := range ch {
 		switch ev.Type {
 		case providers.EventThinkingDelta:
 			thinking += ev.Content
 		case providers.EventThinkingDone:
 			block = ev.ReasoningBlock
+		case providers.EventDone:
+			done = &ev
+		case providers.EventError:
+			t.Fatalf("stream failed: %v", ev.Error)
 		}
 	}
 	if thinking != "inspect first" {
 		t.Fatalf("thinking delta = %q", thinking)
 	}
-	if block == nil || block.Type != "reasoning" || block.Thinking != "inspect first" || !strings.Contains(block.Data, `"encrypted_content":"enc_123"`) {
-		t.Fatalf("unexpected reasoning block: %+v", block)
+	if block == nil || block.Type != "reasoning" || block.Thinking != "inspect first" || block.Data != item {
+		t.Fatal("completed reasoning item was lost or changed")
+	}
+	if done == nil || done.Usage == nil || done.Usage.InputTokens != 5 || done.Usage.OutputTokens != 2 {
+		t.Fatalf("completion metadata lost: %+v", done)
 	}
 }
 

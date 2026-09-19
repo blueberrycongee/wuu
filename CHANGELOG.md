@@ -136,6 +136,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Accept model-stream events up to 32 MiB so full reasoning and tool payloads do
+  not fail at the former 1 MiB limit. Keep bounded reads and report oversized
+  events as a local reader limit instead of a network failure.
+
 - Remove the remaining `request_handoff` model tool after retiring `/handoff`,
   preventing agents from invoking the removed command through the tool runtime.
 

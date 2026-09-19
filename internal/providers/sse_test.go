@@ -2,6 +2,7 @@ package providers
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -54,10 +55,75 @@ func TestSSEReaderPreservesReadFailureAfterCompleteEvent(t *testing.T) {
 	}
 }
 
-func TestSSEReaderBoundsMultilineEvent(t *testing.T) {
-	reader := NewSSEReader(strings.NewReader(strings.Repeat("data: "+strings.Repeat("x", 1024)+"\n", 1024)+"\n"), nil)
-	if reader.Scan() || reader.Err() == nil || IsRetryable(reader.Err()) {
-		t.Fatalf("oversized event: %v", reader.Err())
+func TestSSEReaderLargeEvents(t *testing.T) {
+	chunk := strings.Repeat("x", 768*1024)
+	for _, tc := range []struct {
+		name string
+		wire string
+		want string
+	}{
+		{name: "single line", wire: "data: " + chunk + chunk + "\n\n", want: chunk + chunk},
+		{name: "multiple lines", wire: "data: " + chunk + "\ndata: " + chunk + "\n\n", want: chunk + "\n" + chunk},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := NewSSEReader(strings.NewReader(tc.wire+"data: [DONE]\n\n"), nil)
+			if !reader.Scan() || reader.Event().Data != tc.want {
+				t.Fatalf("large event: got %d bytes, err = %v", len(reader.Event().Data), reader.Err())
+			}
+			if !reader.Scan() || reader.Event().Data != "[DONE]" {
+				t.Fatalf("terminal event lost: %v", reader.Err())
+			}
+			if reader.Scan() || reader.Err() != nil {
+				t.Fatalf("unexpected event or error: %v", reader.Err())
+			}
+		})
+	}
+}
+
+func TestSSEReaderSizeBoundaries(t *testing.T) {
+	payload := strings.Repeat("x", maxSSEEventSize)
+	for _, tc := range []struct {
+		name  string
+		parts []string
+		valid bool
+	}{
+		{name: "single line at limit", parts: []string{"data: ", payload, "\n\n"}, valid: true},
+		{name: "multiple lines at limit", parts: []string{"data: ", payload[:len(payload)/2], "\ndata: ", payload[len(payload)/2+1:], "\n\n"}, valid: true},
+		{name: "single line over limit", parts: []string{"data: ", payload, "x\n\n"}},
+		{name: "line exceeds scanner buffer", parts: []string{"data: ", payload, strings.Repeat("x", 64), "\n\n"}},
+		{name: "multiple lines over limit", parts: []string{"data: ", payload[:len(payload)/2], "\ndata: ", payload[len(payload)/2:], "\n\n"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var parts []io.Reader
+			for _, part := range tc.parts {
+				parts = append(parts, strings.NewReader(part))
+			}
+			parts = append(parts, strings.NewReader("data: [DONE]\n\n"))
+			reader := NewSSEReader(io.MultiReader(parts...), nil)
+			if tc.valid {
+				if !reader.Scan() || len(reader.Event().Data) != maxSSEEventSize {
+					t.Fatalf("boundary event: got %d bytes, err = %v", len(reader.Event().Data), reader.Err())
+				}
+				if !reader.Scan() || reader.Event().Data != "[DONE]" {
+					t.Fatalf("terminal event lost: %v", reader.Err())
+				}
+				if reader.Scan() || reader.Err() != nil {
+					t.Fatalf("unexpected event or error: %v", reader.Err())
+				}
+				return
+			}
+			if reader.Scan() {
+				t.Fatal("emitted an oversized event")
+			}
+			err := fmt.Errorf("stream request failed: read stream: %w", reader.Err())
+			var limit *SSESizeLimitError
+			if !errors.As(err, &limit) || limit.Limit != maxSSEEventSize || IsRetryable(err) {
+				t.Fatalf("oversized event: %v", err)
+			}
+			if reader.Scan() {
+				t.Fatal("continued after an oversized event")
+			}
+		})
 	}
 }
 

@@ -50,6 +50,20 @@ func TestBuildTurnError_InvalidRequestCategory(t *testing.T) {
 	}
 }
 
+func TestBuildTurnError_SSESizeLimitIsNotNetwork(t *testing.T) {
+	err := fmt.Errorf("stream request failed: read stream: %w", &providers.SSESizeLimitError{Limit: 32 << 20})
+	for _, failure := range []error{
+		err,
+		errors.New(err.Error()),
+		errors.New("stream request failed: read stream: bufio.Scanner: token too long"),
+	} {
+		out := BuildTurnError(failure, "openai")
+		if out.Category != "internal" || out.Code != "sse_size_limit" || out.Message != failure.Error() {
+			t.Fatalf("lost local stream limit diagnostic: %#v", out)
+		}
+	}
+}
+
 func TestBuildTurnError_InternalMessageSequenceIsNotNetwork(t *testing.T) {
 	err := errors.New("stream request failed: invalid message sequence after tool-call history repair: message 2: system message must precede all non-system messages")
 	out := BuildTurnError(err, "openai-codex")

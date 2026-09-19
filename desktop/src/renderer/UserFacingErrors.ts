@@ -375,6 +375,11 @@ export function classifyUserFacingError(message: string, context: UserFacingErro
   if (isCancellationMessage(normalized)) {
     return "cancelled";
   }
+  // Match the Go core when restored history no longer has typed error facts.
+  if (normalized.includes("sse event or line exceeds wuu's ") ||
+      normalized.includes("bufio.scanner: token too long")) {
+    return "internal";
+  }
   if (isLocalOperationError(normalized)) {
     return "local";
   }

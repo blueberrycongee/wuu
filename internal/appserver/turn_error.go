@@ -53,6 +53,13 @@ func BuildTurnError(err error, provider string) TurnError {
 			out.Category = categoryFromStreamError(streamErr)
 		}
 	}
+	var sseLimit *providers.SSESizeLimitError
+	// Restored failures may retain only the message, including the old Scanner error.
+	if errors.As(err, &sseLimit) || strings.Contains(lowerMessage, "sse event or line exceeds wuu's ") ||
+		strings.Contains(lowerMessage, "bufio.scanner: token too long") {
+		out.Code = "sse_size_limit"
+		out.Category = "internal"
+	}
 
 	if isResponseCompletedMissingMessage(lowerMessage) {
 		if out.Code == "" {
