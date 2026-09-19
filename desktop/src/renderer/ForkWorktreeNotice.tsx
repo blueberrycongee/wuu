@@ -1,4 +1,4 @@
-import { ChevronDown, GitFork } from "lucide-react";
+import { ChevronDown, Split } from "lucide-react";
 import type { Thread } from "../shared/protocol";
 import { MessageCopyButton } from "./MessageActions";
 import { translateCurrent as translate, useI18n } from "./i18n";
@@ -22,7 +22,7 @@ export function ForkWorktreeNotice({
       <details className="fork-worktree-card">
         <summary className="fork-worktree-summary">
           <span className="fork-worktree-glyph">
-            <GitFork className="icon" aria-hidden="true" />
+            <Split className="icon" aria-hidden="true" />
           </span>
           <span className="fork-worktree-summary-text">
             <strong>{t("worktree.created")}</strong>
