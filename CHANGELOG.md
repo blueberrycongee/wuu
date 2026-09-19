@@ -118,6 +118,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Stop streaming auto-follow from pulling messages back to the bottom when a
+  keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
+  Preserve following after a plain scroll-surface click without scrolling.
+
 - Preserve peer request correlation after uncertain sends, recover queued replies
   after host restart without reviving user-cancelled inputs, and retain completed
   results instead of replacing them with timeout messages. Peer discovery and
