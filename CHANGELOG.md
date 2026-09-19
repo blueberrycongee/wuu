@@ -118,6 +118,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align expanded tool details and TODO text in one column, center their icons on
+  the first text line at any UI font size, and wrap long TODO content safely.
+
 - Count tool results with a denser JSON token estimator so JSON-heavy history
   triggers compact before the provider window, and force-trim older history
   after a context overflow if compact does not shrink the request.
