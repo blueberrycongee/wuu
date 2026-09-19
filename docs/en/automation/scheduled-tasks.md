@@ -1,72 +1,42 @@
 # Automations
 
-Automations run a task prompt on a schedule in a chosen workspace. Use them for
-periodic checks, summaries, or a one-time follow-up. Wuu must be running on an awake
-device, with the Automation plugin enabled.
+Automations send a task prompt on a schedule. Use them for a recurring project check, a summary, or a one-time follow-up. The Automation plugin must be enabled and Wuu must be running on an awake machine; this is not a hosted scheduler.
 
-## Create an automation
+## Create a task
 
-1. Open **Automations**. If the entry is missing, check that the bundled Automation
-   plugin is available and enabled.
-2. Choose **Workspace** at the top. This selects where tasks run without switching
-   your open conversation.
-3. Choose **New automation**, fill in the name and instructions, or start from
-   **Suggestions**.
-4. In **Runs in**, choose **New chat each run** or search for an existing chat.
-5. Choose Daily, Weekdays, Weekly, or **Custom**. **More settings** contains the
-   timezone, **Run once**, and **Isolated run** options.
-6. Choose **Create** to save.
+1. Open **Automations** and choose the workspace. This selects the task's project without changing your open conversation.
+2. Choose **New automation**, or start from a suggestion. Enter a name and clear instructions.
+3. Under **Runs in**, choose **New chat each run** or an existing chat.
+4. Set a daily, weekday, weekly, or custom schedule. **More settings** contains timezone, **Run once**, and **Isolated run**.
+5. Choose **Create**. Later edits require **Save changes**.
 
-State the scope, expected result, and restrictions in the prompt, for example:
+Include limits in the prompt, not just the desired action:
 
 ```text
-Check TODOs added in this workspace over the past day. Group unresolved items by
-file. Do not modify files. If there are no new TODOs, say so.
+Summarize changes in this project's main branch since yesterday. Identify failed
+checks if their results are available. Do not edit files or publish anything.
 ```
 
-## Time and execution
+## Choose where it runs
 
-Schedules use the task's timezone, initially your system timezone. Custom schedules
-accept five-field Cron expressions: `0 9 * * 1-5` means 9:00 on weekdays. Timezones
-use IANA names such as `Asia/Shanghai`. Due tasks are checked about every 15 seconds;
-execution is not guaranteed to start at an exact second.
+A new-chat task creates a visible conversation for each run. Runs can overlap. Enable **Isolated run** for a separate Git worktree based on the project's current `HEAD`; uncommitted changes are not copied into it.
 
-**New chat each run** creates a visible conversation in the selected workspace.
-Enable **Isolated run** to give each run a Git worktree based on the project's current
-`HEAD`. Uncommitted changes are not included. Review results in the created conversation.
+An existing-chat task continues that conversation's context and workspace. If it is busy, the message queues behind its current work. This mode cannot create a new worktree. The agent's `cron` tool calls these modes `new_thread` and `thread_heartbeat`.
 
-Choosing an existing chat continues its context. If it is busy, the scheduled message
-queues behind its current work. That chat keeps its own workspace, so worktree isolation
-is only available for new chats. The Agent's `cron` tool calls these modes `new_thread`
-and `thread_heartbeat`.
+## Schedule and missed triggers
 
-New-chat runs can overlap; they do not automatically wait for the previous run to
-finish. Use worktree isolation for concurrent edits or choose an existing chat to queue
-follow-ups in one place.
+Custom schedules use five-field cron expressions. `0 9 * * 1-5` means 09:00 on weekdays in the selected timezone. Use IANA timezone names such as `Asia/Shanghai`; the desktop initially selects the system timezone.
+
+The plugin checks due tasks about every 15 seconds, so a schedule is not a promise of an exact start second. After downtime, an overdue one-shot task is dispatched once. An overdue recurring task is dispatched once and then scheduled forward from the current time, rather than replaying every missed occurrence.
+
+A one-shot task leaves the schedule when dispatched, even if execution later fails. Check its run record for the outcome; it is not automatically retried as a new one-shot task.
 
 ## Manage tasks and results
 
-Choose the workspace, then search or filter by All, Active, Paused, or Completed.
-Select a task to edit it and choose **Save changes**. Closing the editor or switching
-tasks discards unsaved edits. Use **Pause** or **Resume** to control future triggers;
-**Delete** is in the more-actions menu. Deleting a task does not delete the conversations
-it created or stop work already running in them. Stop that work in its conversation.
+Pause and resume control future triggers. Delete removes the schedule, not conversations it already created, and does not stop work already running. Stop that work from its conversation. Closing the editor or selecting another task discards unsaved edits.
 
-The detail panel shows the five most recent runs, including failures. **Completed**
-contains read-only snapshots of successful one-shot tasks whose run records are still
-retained. A successful recurring run does not complete its task. Each workspace keeps
-up to 100 tasks and 500 recent run records. There is no **Run now** button.
+The detail panel shows recent runs and their errors. The Completed filter shows retained snapshots of successful one-shot tasks; a successful recurring run does not complete its schedule. A workspace retains up to 100 tasks and 500 run records.
 
-## When a run is missing or fails
+If a run is missing, check that Wuu was awake and running, the plugin was enabled, the task was active, and the selected workspace and target chat still exist. Then check its timezone, next run, and errors. Provider access, quotas, network failures, and permissions can all prevent execution.
 
-Check that the Automation plugin was enabled, Wuu was running, the device was awake,
-the task was not paused, and the workspace still exists. Check the timezone and next
-run time. Model availability, quotas, network access, and permissions can also cause
-a run to fail; inspect its error and conversation.
-
-After Wuu returns, a missed one-shot task runs once. Missed recurring triggers are
-combined rather than replayed one by one. One-shot tasks leave the schedule after
-running; look in recent runs for their outcome. For a missing target chat, select an
-existing one or switch to **New chat each run**.
-
-For CI or an external scheduler, use [`wuu exec`](exec.md).
+For CI or a scheduler outside Wuu, use [`wuu exec`](exec.md).

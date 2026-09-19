@@ -1,56 +1,29 @@
-# Use plugin themes and settings
+# Themes and settings
 
-Enabled plugins may contribute themes and settings. This page explains
-how users select, reset, and manage those contributions. Authors can find declaration
-fields in the [plugin authoring reference](plugin-authoring.md#declarative-contributions).
+Use **Settings → Appearance** to choose a theme and adjust reading preferences. Enabled plugins can add themes and their own settings without replacing the built-in settings interface.
 
-## Select or reset a theme
+## Choose a theme
 
-Open **Settings → Appearance**. Enabled plugin themes appear alongside
-**System**, **Light**, and **Dark**. A choice applies immediately without a restart.
+**System** follows the operating system; **Light** and **Dark** keep a fixed appearance. Plugin themes appear alongside these choices and apply immediately. Choose a built-in option to remove the plugin's theme overrides.
 
-To stop using a plugin theme, choose any built-in option:
+Disabling or removing a plugin also removes its contributed themes. If a theme makes the interface difficult to use, return to a built-in theme or disable the plugin through plugin management.
 
-- **System** follows the operating-system appearance;
-- **Light** or **Dark** pins the corresponding built-in theme.
+## Adjust text and motion
 
-Returning to a built-in theme removes plugin token overrides. Disabling or removing
-the plugin also removes its theme contribution. Appearance plugins cannot hide
-Settings, plugin management, or recovery entries.
+The UI font-size preference controls the interface and conversation prose together. Code size is separate, so you can make messages easier to read without enlarging code blocks and editors by the same amount. Valid saved preferences are preserved across upgrades.
 
-## Adjust reading size and interface scale
+Appearance settings also let you choose UI and code fonts and reduce motion. A font must be available on the machine to render as intended; otherwise the interface uses its fallback fonts.
 
-Desktop starts with a 14.5px UI font and one Zoom Out step. Existing saved font
-sizes are preserved. Adjust the UI font in settings independently of the code
-font. Use the View menu's Zoom In, Zoom Out, or Actual Size controls to change
-the whole interface scale; the desktop remembers this choice across reloads.
-These defaults are a starting point, not a required combination.
+## Change a plugin setting
 
-## Manage plugin settings
+Open the plugin's settings page or its details in **Skills & Plugins**. Wuu can render declared boolean, text, number, and enum fields; plugins can also provide custom settings content.
 
-Wuu renders declared boolean, text, number, and enum fields, so the plugin does not
-need to build its own form. After install, settings are available from:
+Boolean and enum fields save when changed. Text and number fields save when focus leaves the field. Check the save result before navigating away, and use the retry action if saving fails.
 
-- the plugin-contributed page in the **Settings** sidebar;
-- the plugin details in **Skills & Plugins**.
+Each declared field identifies its user or workspace scope and whether it applies live or after restart. A workspace value affects only that workspace. Settings and plugin storage are preserved by default across disable, update, and removal; removing a package is not a data-erasure operation.
 
-Boolean and enum changes save immediately. Text and number fields normally save when
-the field loses focus. Each field shows its default, scope, and whether it applies live
-or after restart. Use the inline retry action when saving fails.
+## Missing contributions
 
-Settings may be user-scoped or workspace-scoped. Workspace values affect only the
-current workspace. Wuu preserves settings and Storage by default across disable,
-upgrade, and removal so they can be restored later; data is not automatically erased.
+Check that the plugin is enabled, that it declares the theme or setting you expect, and that its detail page shows no trust, compatibility, or activation problem. Follow any restart requirement shown for the setting. Recovery commands are in [Wuu plugins](plugins.md#recovery-and-troubleshooting).
 
-## Theme or settings are missing
-
-Check the following in order:
-
-1. the plugin is installed and enabled;
-2. its source identity is unchanged;
-3. the manifest actually declares a theme or setting;
-4. the setting does not require a restart;
-5. plugin diagnostics in **Skills & Plugins** do not report a manifest or activation error.
-
-For disable, inspection, and removal steps, see
-[Wuu Plugin recovery](plugins.md#recovery-and-troubleshooting).
+For theme and settings declarations, see the [authoring reference](plugin-authoring.md#declarative-contributions). The generated [theme surface matrix](theme-surface-matrix.md) maps theme tokens to interface surfaces.
