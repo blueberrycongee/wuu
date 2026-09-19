@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   InitializeResult,
+  RuntimeContext,
   ServerEvent,
   Thread,
   WuuDesktopApi,
@@ -370,6 +371,56 @@ describe("session tab switch latency", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {
+    installWuuApi();
+    const projects = ["alpha", "beta"].map((id) => ({
+      id, name: id, path: `/tmp/${id}`, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    }));
+    let context: RuntimeContext = { kind: "project", project_id: "alpha", cwd: projects[0].path };
+    const alpha = { ...threadA(), cwd: projects[0].path, workspace_id: "alpha", title: "Alpha investigation" };
+    const oldBeta = { ...threadB(), cwd: projects[1].path, workspace_id: "beta", title: "Beta initial question" };
+    const beta = { ...oldBeta, title: "Beta release investigation", preview: "Beta release investigation" };
+    const backgroundList = deferred<{ threads: Thread[] }>();
+    const betaResume = deferred<{ thread: Thread }>();
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.selectProject = vi.fn(async (id) => {
+      context = { kind: "project", project_id: id, cwd: projects.find((project) => project.id === id)!.path };
+      return { projects, active_context: context };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
+    window.wuu.listThreads = vi.fn(async (cwd) => cwd === projects[1].path
+      ? backgroundList.promise
+      : { threads: [context.cwd === alpha.cwd ? alpha : oldBeta] });
+    window.wuu.resumeThread = vi.fn(async (id) => id === beta.id ? betaResume.promise : { thread: alpha });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => {
+      const betaSection = Array.from(container.querySelectorAll(".project-row-name"))
+        .find((label) => label.textContent === "beta");
+      (betaSection?.closest("button") as HTMLButtonElement).click();
+    });
+    expect(window.wuu.listThreads).toHaveBeenCalledWith(projects[1].path);
+    act(() => { emitNotification("thread/updated", { thread: oldBeta }, oldBeta.cwd); });
+    expect(threadRowButton(oldBeta.title)).toBeDefined();
+    await act(async () => { threadRowButton(oldBeta.title)!.click(); });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(beta.id);
+    await act(async () => { betaResume.resolve({ thread: beta }); });
+    expect(threadRowButton(beta.title)).toBeDefined();
+    await act(async () => {
+      const alphaSection = Array.from(container.querySelectorAll(".project-row-name"))
+        .find((label) => label.textContent === "alpha");
+      (alphaSection?.closest("button") as HTMLButtonElement).click();
+    });
+    await act(async () => { threadRowButton(alpha.title)!.click(); });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(alpha.id);
+    await act(async () => { backgroundList.resolve({ threads: [oldBeta] }); });
+    expect(threadRowButton(beta.title)).toBeDefined();
+    expect(threadRowButton(oldBeta.title)).toBeUndefined();
+    await act(async () => { threadRowButton(beta.title)!.click(); });
+    expect(activeThreadProbe()?.dataset.threadId).toBe(beta.id);
+    expect(activeSessionTabLabel()).toContain(beta.title);
   });
 
   it("switches to an already loaded same-runtime thread before resume resolves", async () => {

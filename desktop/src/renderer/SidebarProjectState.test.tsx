@@ -191,6 +191,73 @@ async function renderSidebarProjectState({
 }
 
 describe("useSidebarProjectState", () => {
+  it.each(["project", "all"])("keeps titles learned during a workspace switch when an older %s list resolves", async (catalog) => {
+    const alpha = project("alpha");
+    const beta = project("beta");
+    const alphaThread = thread("thread-alpha", alpha.path);
+    const oldBetaThread = thread("thread-beta", beta.path);
+    const unseen = thread("unseen-beta", beta.path);
+    const renamedBetaThread = { ...oldBetaThread, title: "Beta release investigation" };
+    const betaContext: RuntimeContext = { kind: "project", project_id: beta.id, cwd: beta.path };
+    const alphaContext: RuntimeContext = { kind: "project", project_id: alpha.id, cwd: alpha.path };
+    let resolveList!: (result: { threads: Thread[] }) => void;
+    const listThreads = vi.fn(() => new Promise<{ threads: Thread[] }>((resolve) => { resolveList = resolve; }));
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: catalog === "project" ? { listThreads } : { listAllThreads: listThreads },
+    });
+    if (catalog === "project") {
+      window.localStorage.setItem("wuu.desktop.expandedSidebarSectionIDs", JSON.stringify([beta.id]));
+    }
+    const hook = await renderSidebarProjectState({
+      projects: [alpha, beta], threads: [alphaThread], activeContext: alphaContext, activeProjectID: alpha.id,
+    });
+    expect(listThreads).toHaveBeenCalledOnce();
+
+    await hook.rerender({ threads: [renamedBetaThread], activeContext: betaContext, activeProjectID: beta.id });
+    await hook.rerender({ threads: [alphaThread], activeContext: alphaContext, activeProjectID: alpha.id });
+    await act(async () => { resolveList({ threads: [oldBetaThread, unseen] }); });
+
+    expect(hook.get().projectThreadsByProjectID.beta.find((item) => item.id === oldBetaThread.id)?.title).toBe(renamedBetaThread.title);
+    expect(hook.get().projectThreadsByProjectID.beta.map((item) => item.id)).toContain(unseen.id);
+    expect(hook.get().projectThreadsByProjectID.alpha[0]?.title).toBe(alphaThread.title);
+  });
+
+  it("refreshes unchanged rows without resurrecting a session removed during the request", async () => {
+    const beta = project("beta");
+    const removed = thread("removed", beta.path);
+    const existing = thread("existing", beta.path);
+    const hook = await renderSidebarProjectState({ projects: [beta] });
+    act(() => { hook.get().cacheSidebarThreads([removed, existing]); });
+    let resolveList!: (result: { threads: Thread[] }) => void;
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: { listThreads: () => new Promise<{ threads: Thread[] }>((resolve) => { resolveList = resolve; }) },
+    });
+    let loading!: Promise<void>;
+    act(() => { loading = hook.get().loadProjectThreads(beta); });
+    act(() => { hook.get().removeCachedSidebarThread(removed.id); });
+    const renamed = { ...existing, title: "Changed while disconnected" };
+    await act(async () => {
+      resolveList({ threads: [removed, renamed] });
+      await loading;
+    });
+    expect(hook.get().projectThreadsByProjectID.beta).toEqual([renamed]);
+  });
+
+  it("retains a title-only resume update after leaving a scratch workspace", async () => {
+    const alphaThread = thread("thread-alpha", "/tmp/scratch-alpha");
+    const betaThread = thread("thread-beta", "/tmp/scratch-beta");
+    const hook = await renderSidebarProjectState({
+      threads: [alphaThread], activeContext: { kind: "no_project", cwd: alphaThread.cwd },
+    });
+    const renamed = { ...alphaThread, title: "Investigate alpha deployment", preview: "Alpha deployment" };
+    await hook.rerender({ threads: [renamed] });
+    await hook.rerender({ threads: [betaThread], activeContext: { kind: "no_project", cwd: betaThread.cwd } });
+
+    expect(hook.get().cachedScratchThreads.find((item) => item.id === alphaThread.id)?.title).toBe(renamed.title);
+  });
+
   it("waits for bootstrap before fetching background catalogs, then populates the sidebar", async () => {
     const listed = thread("background-thread", "/tmp/other");
     const listAllThreads = vi.fn().mockResolvedValue({ threads: [listed] });
