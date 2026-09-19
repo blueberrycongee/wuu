@@ -26,6 +26,7 @@ import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { AgentIdentityContext } from "./AgentIdentityContext";
+import { ACTIVITY_MORPHS } from "./useMascotMorph";
 
 /**
  * How long to wait after the fold opens before snapping the reasoning
@@ -49,9 +50,16 @@ export function ProcessSurfaceMascot({
   model?: string;
 }): JSX.Element | null {
   const agent = useContext(AgentIdentityContext);
-  if (agent === "room") return active ? <span className="process-surface-blobatar"><RoomCoordinatorAvatar size={28} activity={activity} /></span> : null;
+  // Collaboration and room rows wrap the SVG. Publish the morph on that
+  // layout slot so process-row optical alignment can target one node.
+  const slotMorph = ACTIVITY_MORPHS[activity];
+  if (agent === "room") return active ? (
+    <span className="process-surface-blobatar" data-wuu-mascot-morph={slotMorph}>
+      <RoomCoordinatorAvatar size={28} activity={activity} />
+    </span>
+  ) : null;
   if (agent) return active ? (
-    <span className="process-surface-blobatar">
+    <span className="process-surface-blobatar" data-wuu-mascot-morph={slotMorph}>
       <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
         activity={activity} status={activity === "responding" ? "responding" : "thinking"} motion="expressive" />
     </span>

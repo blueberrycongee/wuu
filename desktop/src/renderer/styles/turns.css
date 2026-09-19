@@ -2601,7 +2601,8 @@
 
 /* Align the painted silhouette, not the SVG's transparent padding. Keep the
  * layout slot fixed so morphing never moves the summary text. Insets follow
- * each shape's motion envelope rather than chasing its edge on every frame. */
+ * each shape's motion envelope rather than chasing its edge on every frame.
+ * Collaboration wrappers publish the same morph attribute on the slot. */
 :is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
   translate: calc(-1 * var(--process-mascot-inset, 4px)) 0;
   transition: translate 280ms ease-out;
