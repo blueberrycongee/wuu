@@ -3,12 +3,12 @@ import {
   AlertCircle,
   Check,
   ChevronRight,
-  CornerDownRight,
+  FileDiff,
   FileText,
   FileX,
-  FolderPlus,
-  Github,
   GitBranch,
+  GitCommit,
+  GitPullRequest,
   Plus,
   Search,
   X
@@ -107,10 +107,10 @@ export function EnvironmentPanel({
       data-wuu-component="environment-panel"
       data-wuu-state={motionState}
     >
-      <div className="environment-panel-header floating">
+      <div className="environment-panel-header environment-panel-close-row">
         <div className="environment-panel-actions">
           <button className="icon-button" type="button" aria-label={t("environment.closeInfo")} onClick={onClose}>
-            <X className="icon" />
+            <X className="icon" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -118,69 +118,64 @@ export function EnvironmentPanel({
       {pluginSections}
 
       <div className="environment-panel-body">
-        <button
-          className="environment-row environment-change-row"
-          type="button"
-          disabled={!gitStatus?.is_repo}
-          onClick={onOpenReview}
-        >
-          <FolderPlus className="icon-lg" />
-          <strong>{t("environment.changes")}</strong>
-          <span className="environment-row-meta">
-            {gitStatus?.is_repo
-              ? hasChanges
-                ? (
-                  <>
-                    {t(diff.files === 1 ? "environment.fileCountOne" : "environment.fileCount", {
-                      count: formatNumber(diff.files),
-                    })}
-                    <span className="environment-diff">
-                      <span className="additions">+{formatNumber(diff.additions)}</span>
-                      <span className="deletions">-{formatNumber(diff.deletions)}</span>
-                    </span>
-                  </>
-                )
-                : null
-              : t("environment.notGit")}
-          </span>
-          {gitStatus?.is_repo ? <ChevronRight className="icon" /> : null}
-        </button>
-
-        <button
-          className={`environment-row${activeMenu === "branch" ? " active" : ""}`}
-          type="button"
-          disabled={!gitStatus?.is_repo || running}
-          onClick={() => toggleMenu("branch")}
-        >
-          <GitBranch className="icon-lg" />
-          <strong>{branchLabel}</strong>
-          {gitStatus?.is_repo ? <ChevronRight className="icon" /> : null}
-        </button>
-
-        <button
-          className="environment-row"
-          type="button"
-          disabled={!hasChanges || running || !hostSupports("commitGitChanges")}
-          onClick={onOpenCommit}
-        >
-          <CornerDownRight className="icon-lg" />
-          <strong>{t("environment.commit")}</strong>
-          <span>{hasChanges ? t("environment.commitChanges") : ""}</span>
-        </button>
-
-        <Tooltip content={prDisabled ? pullRequestDisabledReason : undefined}>
-          <button
-            className="environment-row"
-            type="button"
-            disabled={prDisabled || running || (!gitStatus?.pr_url && !hostSupports("createPullRequest"))}
-            onClick={onOpenPullRequest}
-          >
-            <Github className="icon-lg" />
-            <strong>{t(gitStatus?.pr_url ? "environment.viewPR" : "environment.createPR")}</strong>
-            <span>{gitStatus?.pr_url ? t("environment.existingPR") : prDisabled ? pullRequestDisabledReason : t("environment.pushAndCreatePR")}</span>
-          </button>
-        </Tooltip>
-
+        <div className="environment-row-group">
+          <EnvironmentActionRow
+            className="environment-change-row"
+            disabled={!gitStatus?.is_repo}
+            onClick={onOpenReview}
+            icon={<FileDiff className="icon-lg" aria-hidden="true" />}
+            label={t("environment.changes")}
+            meta={
+              gitStatus?.is_repo
+                ? hasChanges
+                  ? (
+                    <>
+                      {t(diff.files === 1 ? "environment.fileCountOne" : "environment.fileCount", {
+                        count: formatNumber(diff.files),
+                      })}
+                      <span className="environment-diff">
+                        <span className="additions">+{formatNumber(diff.additions)}</span>
+                        <span className="deletions">-{formatNumber(diff.deletions)}</span>
+                      </span>
+                    </>
+                  )
+                  : null
+                : t("environment.notGit")
+            }
+            trailing={gitStatus?.is_repo ? <ChevronRight className="icon-sm" aria-hidden="true" /> : null}
+          />
+          <EnvironmentActionRow
+            className={activeMenu === "branch" ? "active" : undefined}
+            disabled={!gitStatus?.is_repo || running}
+            onClick={() => toggleMenu("branch")}
+            icon={<GitBranch className="icon-lg" aria-hidden="true" />}
+            label={branchLabel}
+            trailing={gitStatus?.is_repo ? <ChevronRight className="icon-sm" aria-hidden="true" /> : null}
+          />
+        </div>
+        <div className="environment-row-group">
+          <EnvironmentActionRow
+            disabled={!hasChanges || running || !hostSupports("commitGitChanges")}
+            onClick={onOpenCommit}
+            icon={<GitCommit className="icon-lg" aria-hidden="true" />}
+            label={t("environment.commit")}
+          />
+          <Tooltip content={prDisabled ? pullRequestDisabledReason : undefined}>
+            <EnvironmentActionRow
+              disabled={prDisabled || running || (!gitStatus?.pr_url && !hostSupports("createPullRequest"))}
+              onClick={onOpenPullRequest}
+              icon={<GitPullRequest className="icon-lg" aria-hidden="true" />}
+              label={t(gitStatus?.pr_url ? "environment.viewPR" : "environment.createPR")}
+              meta={
+                gitStatus?.pr_url
+                  ? t("environment.existingPR")
+                  : prDisabled
+                    ? pullRequestDisabledReason
+                    : undefined
+              }
+            />
+          </Tooltip>
+        </div>
       </div>
 
       {activeMenu === "branch" && gitStatus?.is_repo ? (
@@ -191,6 +186,38 @@ export function EnvironmentPanel({
         />
       ) : null}
     </aside>
+  );
+}
+
+function EnvironmentActionRow({
+  className,
+  icon,
+  label,
+  meta,
+  trailing,
+  disabled,
+  onClick,
+}: {
+  className?: string;
+  icon: ReactNode;
+  label: ReactNode;
+  meta?: ReactNode;
+  trailing?: ReactNode;
+  disabled?: boolean;
+  onClick?: () => void;
+}): JSX.Element {
+  return (
+    <button
+      className={className ? `environment-row ${className}` : "environment-row"}
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {icon}
+      <strong>{label}</strong>
+      <span className="environment-row-meta">{meta}</span>
+      <span className="environment-row-trailing">{trailing}</span>
+    </button>
   );
 }
 
@@ -315,7 +342,7 @@ function EnvironmentFilePreview({
   if (loading) {
     body = (
       <div className="environment-panel-body">
-        <div className="environment-row environment-file-row">
+        <div className="environment-row environment-file-row static">
           <FileText aria-hidden="true" className="icon-lg" />
           <strong>{t("environment.opening")}</strong>
           <span>{filePath}</span>
@@ -336,7 +363,7 @@ function EnvironmentFilePreview({
   } else if (!file) {
     body = (
       <div className="environment-panel-body">
-        <div className="environment-row environment-file-row">
+        <div className="environment-row environment-file-row static">
           <FileText aria-hidden="true" className="icon-lg" />
           <strong>{t("environment.noContent")}</strong>
           <span>{filePath}</span>
@@ -346,7 +373,7 @@ function EnvironmentFilePreview({
   } else if (file.binary) {
     body = (
       <div className="environment-panel-body">
-        <div className="environment-row environment-file-row">
+        <div className="environment-row environment-file-row static">
           <FileX aria-hidden="true" className="icon-lg" />
           <strong>{t("environment.cannotPreview")}</strong>
           <span>{t("environment.binaryFile", { path: file.path })}</span>
