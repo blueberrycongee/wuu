@@ -289,12 +289,6 @@ function threadRowButton(previewText: string): HTMLButtonElement | undefined {
   ).find((button) => button.textContent?.includes(previewText));
 }
 
-function sessionTabButton(label: string): HTMLButtonElement | undefined {
-  return Array.from(
-    container.querySelectorAll<HTMLButtonElement>(".session-tab-main"),
-  ).find((button) => button.textContent?.includes(label));
-}
-
 function activeSessionTabLabel(): string {
   return (
     container.querySelector(".conversation-title-heading h1")?.textContent ?? ""

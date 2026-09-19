@@ -98,6 +98,7 @@ import {
 } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
 import type { WorkbenchController } from "./plugins/Workbench";
+import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 import { PluginSlot } from "./plugins/PluginSlot";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 
@@ -349,7 +350,7 @@ export function AppSidebar({
   sidebarProjects,
   activeProjectID,
   pinnedThreads,
-  activeThreadID,
+  activeThreadID: nativeActiveThreadID,
   pendingThreadID,
   pendingProjectID,
   collapsedSidebarSectionIDs,
@@ -377,7 +378,7 @@ export function AppSidebar({
   onEditCollaborationAgent,
   onEditCollaborationRoom,
   onToggleConversationSearch,
-  onSelectThread,
+  onSelectThread: selectNativeThread,
   onTogglePinned,
   onArchiveThread,
   onDeleteThread,
@@ -388,7 +389,7 @@ export function AppSidebar({
   onToggleSidebarSectionCollapsed,
   onSelectProjectWorkspace,
   onStartNewThreadForProject,
-  onSelectProjectThread,
+  onSelectProjectThread: selectNativeProjectThread,
   onRemoveProject,
   onRelocateProject,
   onReorderSections,
@@ -550,7 +551,7 @@ export function AppSidebar({
   // Active state is passed into ProjectList so the row highlights even though
   // it has no DesktopProject entry in state.projects.
   const sidebarScratchPseudoActive = state.activeContext?.kind === "no_project";
-  const pluginNavigationEntries = useSyncExternalStore(
+  const declaredPluginNavigationEntries = useSyncExternalStore(
     (listener) => pluginHost.subscribe(listener),
     () => pluginHost.getNavigationEntries(),
     () => pluginHost.getNavigationEntries(),
@@ -563,11 +564,26 @@ export function AppSidebar({
   const activePluginMainView = workbenchSnapshot.views.find(
     (view) => view.id === workbenchSnapshot.activeViewByRegion.primary,
   );
+  const activeThreadID = activePluginMainView ? undefined : nativeActiveThreadID;
+  const pluginNavigationEntries = useMemo(
+    () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
+    [declaredPluginNavigationEntries, workbenchSnapshot],
+  );
   const activateNative = useCallback((action: () => void): void => {
     workbenchController.deactivateRegion("primary");
     action();
   }, [workbenchController]);
-  const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string): void => {
+  const onSelectThread = useCallback((id: string) => {
+    activateNative(() => selectNativeThread(id));
+  }, [activateNative, selectNativeThread]);
+  const onSelectProjectThread = useCallback((projectID: string, threadID: string) => {
+    activateNative(() => selectNativeProjectThread(projectID, threadID));
+  }, [activateNative, selectNativeProjectThread]);
+  const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
+    if (instanceId) {
+      workbenchController.activateView(instanceId);
+      return;
+    }
     void workbenchController.openPluginView(pluginId, viewTypeId, {
       region: "primary",
       persistence: "durable",
@@ -1432,9 +1448,8 @@ export function AppSidebar({
         depth: 1,
         label: entry.title,
         icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
-        active: activePluginMainView?.pluginId === entry.pluginId
-          && activePluginMainView.viewTypeId === entry.view,
-        onActivate: () => openPluginNavigation(entry.pluginId, entry.view),
+        active: activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
+        onActivate: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId),
       });
     }
     return Object.freeze(nodes);
@@ -1797,8 +1812,7 @@ export function AppSidebar({
               <div className="sidebar-functional-group-collapse">
                 <div className="sidebar-functional-group-body">
                   {pluginNavigationEntries.map((entry) => {
-                    const active = activePluginMainView?.pluginId === entry.pluginId
-                      && activePluginMainView.viewTypeId === entry.view;
+                    const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
                     return (
                       <button
                         key={`${entry.pluginId}:${entry.id}`}
@@ -1808,7 +1822,7 @@ export function AppSidebar({
                         data-wuu-plugin={entry.pluginId}
                         aria-current={active ? "page" : undefined}
                         title={entry.description || entry.title}
-                        onClick={() => openPluginNavigation(entry.pluginId, entry.view)}
+                        onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
                       >
                         <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
                         <span>{entry.title}</span>

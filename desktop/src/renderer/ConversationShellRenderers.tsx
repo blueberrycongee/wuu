@@ -1,6 +1,8 @@
 import {
   lazy,
   Suspense,
+  useLayoutEffect,
+  useRef,
   useSyncExternalStore,
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -9,8 +11,10 @@ import {
   type RefObject,
 } from "react";
 import {
+  ArrowLeft,
   SquarePen,
   Info,
+  X,
 } from "lucide-react";
 import type {
   Agent,
@@ -27,8 +31,6 @@ import {
   isThreadPresentationRunning,
   queryTextsForThread,
   requestedHandoffIntentForThread,
-  sessionTabLabel,
-  threadForTab,
   turnStreamStatusForThread,
   type AppState,
   type ComposerDraftState,
@@ -45,10 +47,8 @@ import { CompactConversationActions } from "./CompactConversationActions"
 import {
   Composer,
 } from "./ComposerView";
-import type { PendingComposerMessagesByThread } from "./ComposerPendingMessages";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
-import { SessionTabStrip } from "./SessionTabs";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -258,38 +258,20 @@ export function ConversationSplitLayoutRenderer({
 
 export type ConversationTitleContentProps = {
   state: AppState;
-  crossWorkspaceThreads: Thread[];
   runningThreadIDs?: ReadonlySet<string>;
-  sessionTabsVisible: boolean;
   pendingSwitchThreadID?: string;
-  pendingComposerMessagesByThread: PendingComposerMessagesByThread;
-  channelUnreadByRoomID?: Record<string, number>;
   activeTitle: string;
-  onSelectSessionTab: (tabID: string) => void;
-  onCloseSessionTab: (tabID: string) => void;
-  onCloseSessionTabs: (tabIDs: string[]) => void;
-  onPopOutSessionTab: (tabID: string) => void;
   onStartNewThread: () => void;
-  onReorderSessionTabs: (activeID: string, overID: string) => void;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
 };
 
 export function ConversationTitleContent({
   state,
-  crossWorkspaceThreads,
   runningThreadIDs,
-  sessionTabsVisible,
   pendingSwitchThreadID,
-  pendingComposerMessagesByThread,
-  channelUnreadByRoomID,
   activeTitle,
-  onSelectSessionTab,
-  onCloseSessionTab,
-  onCloseSessionTabs,
-  onPopOutSessionTab,
   onStartNewThread,
-  onReorderSessionTabs,
   pluginHost,
   workbenchController,
 }: ConversationTitleContentProps): JSX.Element {
@@ -300,42 +282,37 @@ export function ConversationTitleContent({
     controller.getSnapshot,
     controller.getSnapshot,
   );
-  const primaryViews = workbenchSnapshot.views.filter((view) => view.region === "primary");
-  const activePrimaryView = primaryViews.find(
-    (view) => view.id === workbenchSnapshot.activeViewByRegion.primary,
+  const activePrimaryView = workbenchSnapshot.views.find(
+    (view) => view.region === "primary" && view.id === workbenchSnapshot.activeViewByRegion.primary,
   );
-  const primaryTabs = primaryViews.map((view) => ({
-    id: view.id,
-    title: workbenchSnapshot.viewTypes.find((definition) =>
-      definition.pluginId === view.pluginId
-      && definition.id === view.viewTypeId
-      && definition.generation === view.generation)?.title ?? view.viewTypeId,
-  }));
-  const fallback = sessionTabsVisible || primaryTabs.length > 0 ? (
-      <SessionTabStrip
-        state={state}
-        crossWorkspaceThreads={crossWorkspaceThreads}
-        runningThreadIDs={runningThreadIDs}
-        pendingSwitchThreadID={pendingSwitchThreadID}
-        pendingComposerMessagesByThread={pendingComposerMessagesByThread}
-        channelUnreadByRoomID={channelUnreadByRoomID}
-        canStartNewThread={Boolean(state.activeContext)}
-        onSelect={(tabId) => {
-          controller.deactivateRegion("primary");
-          onSelectSessionTab(tabId);
-        }}
-        onClose={onCloseSessionTab}
-        onCloseTabs={onCloseSessionTabs}
-        onPopOut={onPopOutSessionTab}
-        onNewThread={onStartNewThread}
-        onReorder={onReorderSessionTabs}
-        additionalTabs={primaryTabs}
-        activeAdditionalTabID={activePrimaryView?.id}
-        onSelectAdditionalTab={(tabId) => controller.activateView(tabId)}
-        onCloseAdditionalTab={(tabId) => void controller.closeView(tabId)}
-      />
-  ) : (
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const restoreFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    headingRef.current?.focus();
+  }, [activePrimaryView?.id]);
+  const title = activePrimaryView
+    ? workbenchSnapshot.viewTypes.find((definition) =>
+      definition.pluginId === activePrimaryView.pluginId
+      && definition.id === activePrimaryView.viewTypeId)?.title ?? activePrimaryView.viewTypeId
+    : activeTitle;
+  const navigateBack = activePrimaryView ? () => {
+    restoreFocus.current = true;
+    controller.deactivateRegion("primary");
+  } : undefined;
+  const fallback = (
     <div className="conversation-title-heading">
+      {navigateBack ? <button
+        className="icon-button"
+        data-wuu-component="primary-view-back"
+        type="button"
+        aria-label={t("common.back")}
+        title={t("common.back")}
+        onClick={navigateBack}
+      >
+        <ArrowLeft aria-hidden="true" />
+      </button> : (
       <button
         className="icon-button session-tab-new"
         type="button"
@@ -345,47 +322,21 @@ export function ConversationTitleContent({
         onClick={onStartNewThread}
       >
         <SquarePen aria-hidden="true" />
-      </button>
-      <h1>{activeTitle}</h1>
+      </button>)}
+      <h1 ref={headingRef} tabIndex={-1}>{title}</h1>
     </div>
   );
-  const tabState = { ...state, threads: crossWorkspaceThreads };
-  const tabs = sessionTabsVisible
-    ? state.sessionTabs.map((tab) => {
-        const tabThread = tab.kind === "thread" ? threadForTab(tabState, tab.threadID) : undefined;
-        const dirty = "prompt" in tab
-          ? tab.prompt.length > 0 || tab.images.length > 0 || tab.files.length > 0
-          : undefined;
-        return {
-          id: tab.id,
-          title: sessionTabLabel(tab, tabState),
-          kind: tab.kind,
-          busy: isThreadPresentationRunning(
-            tabThread,
-            tab.kind === "thread" && runningThreadIDs?.has(tab.threadID),
-          ) || (
-            pendingSwitchThreadID !== undefined &&
-            tab.kind === "thread" &&
-            pendingSwitchThreadID === tab.threadID
-          ),
-          dirty: dirty || undefined,
-        };
-      })
-    : undefined;
   const showingPrimaryWorkbench = activePrimaryView !== undefined;
-  const headerTabs = [...(tabs ?? []), ...primaryTabs];
+  // Session records still own drafts and recovery; they are not visible navigation.
   const snapshot = immutableHeaderSnapshot({
     scope: showingPrimaryWorkbench ? "workspace" : "conversation",
-    title: showingPrimaryWorkbench
-      ? primaryTabs.find((tab) => tab.id === activePrimaryView.id)?.title
-      : activeTitle,
-    tabs: headerTabs.length > 0 ? headerTabs : undefined,
-    activeTabId: activePrimaryView?.id
-      ?? (sessionTabsVisible ? state.activeSessionTabID || undefined : undefined),
-    busy: tabs?.some((tab) => tab.busy) || undefined,
-    dirty: tabs?.some((tab) => tab.dirty) || undefined,
+    title,
+    canNavigateBack: navigateBack ? true : undefined,
+    busy: !showingPrimaryWorkbench && (
+      isThreadPresentationRunning(state.thread, state.thread ? runningThreadIDs?.has(state.thread.id) : false)
+      || pendingSwitchThreadID !== undefined
+    ) || undefined,
   });
-  const primaryTabIDs = new Set(primaryTabs.map((tab) => tab.id));
   return (
     <>
       <PluginSlot
@@ -393,32 +344,31 @@ export function ConversationTitleContent({
         id={showingPrimaryWorkbench ? "workspace.header" : "conversation.header"}
         context={Object.freeze({
           scope: showingPrimaryWorkbench ? "workspace" : "conversation",
-          hasSessionTabs: showingPrimaryWorkbench || sessionTabsVisible,
-          tabCount: headerTabs.length,
+          hasSessionTabs: false,
+          tabCount: 0,
           busy: snapshot.busy ?? false,
         })}
       />
       <HeaderPresentation
         snapshot={snapshot}
         fallback={fallback}
-        onSelectTab={headerTabs.length > 0 ? (tabId) => {
-          if (primaryTabIDs.has(tabId)) {
-            controller.activateView(tabId);
-            return;
-          }
-          controller.deactivateRegion("primary");
-          onSelectSessionTab(tabId);
-        } : undefined}
-        onCloseTab={headerTabs.length > 0 ? (tabId) => {
-          if (primaryTabIDs.has(tabId)) {
-            void controller.closeView(tabId);
-            return;
-          }
-          onCloseSessionTab(tabId);
-        } : undefined}
+        onNavigateBack={navigateBack}
         host={pluginHost}
         controller={controller}
       />
+      {activePrimaryView ? <button
+        className="icon-button"
+        data-wuu-component="primary-view-close"
+        type="button"
+        aria-label={t("workspace.closeTab", { label: title })}
+        title={t("workspace.closeTab", { label: title })}
+        onClick={() => {
+          restoreFocus.current = true;
+          void controller.closeView(activePrimaryView.id);
+        }}
+      >
+        <X aria-hidden="true" />
+      </button> : null}
     </>
   );
 }

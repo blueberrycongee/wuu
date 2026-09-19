@@ -118,6 +118,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep Automation and other primary plugin views in sidebar navigation instead
+  of reviving the removed conversation tab strip. Preserve view switching,
+  closing, return navigation, and durable view recovery across desktop restarts.
+
 - Stop streaming auto-follow from pulling messages back to the bottom when a
   keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
   Preserve following after a plain scroll-surface click without scrolling.

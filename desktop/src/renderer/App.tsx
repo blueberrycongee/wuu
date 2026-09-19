@@ -1181,8 +1181,8 @@ export function App(): JSX.Element {
         return;
       }
       appShellRef.current
-        ?.querySelector<HTMLButtonElement>(
-          '.session-tab-main[aria-selected="true"]',
+        ?.querySelector<HTMLHeadingElement>(
+          ".conversation-title-heading h1",
         )
         ?.focus();
     }
@@ -2747,7 +2747,6 @@ export function App(): JSX.Element {
   // The sidebar is the single conversation switcher. Session state remains
   // available for recovery and drafts, but the titlebar no longer renders a
   // growing tab strip or keeps background conversation panes mounted.
-  const sessionTabsVisible = false;
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 
@@ -3404,12 +3403,7 @@ export function App(): JSX.Element {
   });
 
   const {
-    selectSessionTab,
-    closeSessionTab,
-    closeSessionTabs,
     startNewThread,
-    reorderSessionTabs,
-    popOutSessionTab,
   } = createSessionTabActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -5419,7 +5413,7 @@ export function App(): JSX.Element {
           appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
         }${
           sideThreadPanelVisible ? " side-thread-panel-visible" : ""
-        }${sessionTabsVisible && appMode === "harness" ? " session-tabs-visible" : ""}`}
+        }`}
         ref={conversationPaneRef}
       >
         {ENABLE_GROUP_CHAT && appMode === "collaboration" ? (
@@ -5510,19 +5504,10 @@ export function App(): JSX.Element {
             ) : null}
             <ConversationTitleContent
               state={state}
-              crossWorkspaceThreads={sidebarThreads}
               runningThreadIDs={visibleRunningThreadIDs}
-              sessionTabsVisible={sessionTabsVisible}
               pendingSwitchThreadID={visiblePendingThreadID}
-              pendingComposerMessagesByThread={pendingComposerMessagesByThread}
-              channelUnreadByRoomID={channelUnreadByRoomID}
               activeTitle={activeTitle}
-              onSelectSessionTab={(tabID) => void selectSessionTab(tabID)}
-              onCloseSessionTab={(tabID) => void closeSessionTab(tabID)}
-              onCloseSessionTabs={(tabIDs) => void closeSessionTabs(tabIDs)}
-              onPopOutSessionTab={(tabID) => void popOutSessionTab(tabID)}
               onStartNewThread={startNewThreadWithComposerFocus}
-              onReorderSessionTabs={reorderSessionTabs}
             />
           </div>
           <ConversationTitleActions
@@ -5959,9 +5944,11 @@ export function App(): JSX.Element {
           reportError: (pluginId, generation, error) => {
             console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
           },
-          // Auxiliary views portal into the right panel, which can be
-          // collapsed independently; reveal it so the opened view shows.
           requestRegionVisible: (region) => {
+            if (region === "primary") {
+              setAppMode("harness");
+              if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
+            }
             if (region === "auxiliary") setRightPanelOpenWithMotion(true);
           },
         }}

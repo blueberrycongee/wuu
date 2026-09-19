@@ -772,6 +772,10 @@ export class PluginHost {
     return this.activeGenerations.get(pluginId)?.generation === generation;
   }
 
+  hasActivePlugin(pluginId: string): boolean {
+    return this.activeGenerations.has(pluginId);
+  }
+
   getLocaleEntries(locale: string): Readonly<Record<string, string>> {
     return this.localeSnapshots.get(locale) ?? EMPTY_LOCALE_SNAPSHOT;
   }

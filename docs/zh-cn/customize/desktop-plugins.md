@@ -120,6 +120,13 @@ Action 不是全局权限。只有列在当前 presenter `host.actions` 中的�
 
 这只是公开词表，不代表每次 render 都会提供全部 Action。
 
+会话与插件主视图统一使用侧栏导航，包括通过 API 打开、没有声明导航入口的视图。
+它们的标题栏不提供 `tabs`、`activeTabId` 或 tab 操作。插件主视图通过
+`canNavigateBack` 和 `header.navigate-back` 返回会话；宿主另行保留关闭控件。
+紧凑工作区标题栏同样提供返回导航和宿主关闭控件，不提供 tab 操作。这些字段和动作在 contract version 1 中本来就是
+可选项，因此不提升契约版本。Presenter 应根据 snapshot 和 `host.actions` 渲染，
+不要从已保存视图重建顶部 tab 栏。辅助面板或插件内容内部的 tabs 不属于主导航。
+
 ## Surface：包装较大的语义边界
 
 当前生产 Surface：
