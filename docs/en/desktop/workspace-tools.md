@@ -1,85 +1,49 @@
-# Files, changes, terminal, and browser
+# Files, changes, terminals, and browser
 
-The desktop keeps the tools you need to review task results next to the current
-workspace, so you can verify the agent's actual changes and verification results.
+Use the workspace panels to inspect what actually happened during a task. A conversation records the agent's activity; the files and Git diff show what is on disk now.
 
 ## Files
 
-Open the **Files** panel or enter `/files` to browse the project tree. After selecting
-a file you can view text, code, images, and supported documents in a tab. The file
-panel shows the current state on disk, not a historical snapshot of a message.
+Open **Files** or enter `/files` to browse the project. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
 
 ## Delivered artifacts
 
-When an agent creates a requested image, chart or document, Wuu's built-in
-`present_artifact` tool can present the existing file separately from code diffs:
+An agent can present a requested image, chart, or document as an output in the conversation. Images, including SVG, appear inline with a larger preview on click; other files appear as output cards.
+
+These outputs are saved snapshots. Changing or deleting the original file later does not change the delivered version. A normal file link or diff is not an artifact snapshot.
+
+For agents and integrations, the built-in `present_artifact` tool accepts an existing local file:
 
 ```json
 {"path":"output/chart.svg"}
 ```
 
-Images, including SVG, appear inline and open a larger preview when clicked;
-other files appear as output cards. Wuu saves a snapshot, so later edits or
-deletion of the workspace file do not change that delivered version. Identical
-outputs with the same name and type are deduplicated within a turn; different
-versions remain separate. Ordinary file links, reads and diffs do not implicitly
-publish an artifact.
-
-The tool accepts local regular files up to 256 MiB, within the current read
-permissions and sensitive-path restrictions; it does not fetch remote URLs.
-SVG is rendered as an image, not inserted as page markup. Presentation does not
-send image bytes to the model or replace visual inspection. The agent should not
-repeat an already presented image in Markdown.
+The limit is 256 MiB. Normal read permissions and sensitive-path restrictions apply, and the tool does not fetch URLs. Presenting a file does not inspect its appearance or send its image bytes to the model; visual verification is a separate step.
 
 ## Review
 
-Open the **Review** panel or enter `/diff` to see the current Git working-tree
-changes. Before committing or releasing, at least confirm:
+Open **Review** or enter `/diff` to inspect the current Git changes. Check the changed paths, additions, deletions, and any sensitive data before committing. Compare the agent's reported checks with their actual command results.
 
-- only the expected files changed;
-- there is no debug content, generated junk, or sensitive information;
-- deletions and renames match expectations;
-- the verification the agent claims to have run actually has results.
-
-The per-turn file changes in a message and the workspace's current overall diff can
-differ: a later task may modify the same file again. The final check is based on the
-current state of disk and Git.
+The diff shown for one turn can differ from the current workspace diff because later work may have changed the same files. Base your final review on the current repository state.
 
 ## Terminal
 
-Open the **Terminal** panel or enter `/terminal` to use a shell in the current
-workspace. Commands started by the agent and background processes also leave activity
-and results in the message stream; long output may be saved as a log reference instead
-of being expanded in full.
+Open **Terminal** or enter `/terminal` to run a shell in the workspace. Commands you type there use your OS permissions, including when the agent is in read-only mode. Review a command before running it; do not use the terminal simply to bypass an agent permission denial.
 
-Commands you type in this terminal run with your operating-system permissions, even
-when the Agent is in read-only mode. Agent commands are subject to the selected
-[permission mode](../reference/permissions.md); do not use the terminal to run an
-unreviewed command just because the Agent could not run it.
+Agent commands also have activity entries and results in the conversation. Long output can be stored as a log reference. For long-running processes, use their process controls to inspect output, send input, or stop them. See [commands and background tasks](../reference/agent-command-system.md).
 
 ## Browser
 
-The browser panel lets you view web pages beside your work. While an Agent operates
-a page, choose **Take control of browser** to operate manually, then **Return browser
-control to Agent** to hand it back. **Stop browser activity** ends the current automation.
-Automatic browser operation requires a supported runtime and tools.
+The browser panel shows a page beside your work. When browser automation is available, **Take control of browser** switches to manual control, **Return browser control to Agent** gives it back, and **Stop browser activity** stops that activity. Available tools depend on the build and engine.
 
-The built-in browser can use a local proxy such as Clash on its own, without changing
-the app-server's or model service's network connections. Set `WUU_BROWSER_PROXY` before
-starting the desktop, for example to the mixed port Clash Verge commonly uses:
+To route only the embedded browser through a proxy, set `WUU_BROWSER_PROXY` before launching the desktop. For a source build:
 
 ```bash
 WUU_BROWSER_PROXY=http://127.0.0.1:7897 npm run dev --prefix desktop
 ```
 
-For a packaged build, launch the app from a terminal with the same environment
-variable. The proxy only applies to the session used by wuu's built-in browser; if the
-proxy port is unavailable, the desktop and API service still start normally, but
-browser requests fail — fix the port and restart the desktop.
+Use the address and port of your own proxy. This setting does not configure model API or app-server traffic. If browser requests fail after enabling it, check the proxy and restart Wuu with the corrected setting.
 
-## Find entries with `/`
+## Find an action
 
-Type `/` in the input box to search the operations, workflows, and skills the current
-version provides. The menu disables entries that do not apply given the current
-workspace, whether a task is running, and the runtime's capabilities, so it is more
-reliable than a static command list.
+Type `/` in the composer to search workspace actions, prompt shortcuts, and skills. Disabled entries explain missing prerequisites such as a workspace, an idle conversation, or engine support.

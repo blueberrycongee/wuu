@@ -1,64 +1,54 @@
-# Conversations and branches
+# Conversations and forks
 
-Conversations save messages and tool activity. Reopen the same conversation to
-continue work, or fork from an earlier message to try another approach.
+A conversation keeps messages, tool activity, and results together. Continue the same conversation for follow-up work; create a new one for an unrelated task or fork an earlier point to explore another approach.
 
-## Start and continue conversations
+## Start and organize conversations
 
-Select a workspace, then start a conversation. Later, reopen it from the sidebar
-and describe the next step. Use its menu to rename, pin, or archive it.
+Select a workspace, then start a conversation. Its menu provides rename, pin, and archive actions. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.
 
-Archiving only hides a conversation from the default list; you can filter and restore
-it in **Settings → Archive**. Deleting removes the saved history and the conversation
-artifacts wuu can locate, and should only be used when you are sure you no longer need
-them.
-
-Collaboration can delegate work to an ordinary Harness conversation. Open that same
-conversation from Collaboration to review progress or continue chatting. Viewing it
-does not take control; sending a message takes control and pauses Collaboration's
-automatic instructions and follow-up for that conversation. See [Collaboration](collaboration.md).
+Delete is permanent: it removes saved history and cleans up associated artifacts and any fork worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
 
 ## While a task is running
 
-While a task runs, you can add messages in the input box:
+The composer supports these keyboard actions:
 
-- **Enter:** add information or adjust the current task immediately.
-- **Tab:** queue the message for after the current turn ends.
-- **Shift + Enter: new line.**
+| Key | Action |
+|---|---|
+| Enter | Send the draft; when the engine supports steering a running task, add it to that task |
+| Tab | Queue a non-empty draft for after the current turn, when queuing is available |
+| Shift + Enter | Insert a new line |
+| Escape | Interrupt a running task when the composer can do so |
 
-When the input is empty or no task is running, Tab moves focus normally. With the
-`/` menu open, Enter and Tab select a command.
+The `/` menu handles Enter and Tab as command selection while it is open. With no running task or no draft, Tab moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
 
-Click Stop to interrupt. Neither sending more instructions nor stopping a task undoes
-commands or file changes. Check the [current diff](workspace-tools.md#review) before
-continuing, and check background commands separately.
+Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
 
 ## Fork from an earlier message
 
-Choose **Fork** on a historical message to create a new conversation from that point:
+Choose **Fork** on a historical message, then select where the new conversation should work:
 
-- **Fork locally:** the new conversation uses the same folder, so both conversations share file changes.
-- **Fork to a Git worktree:** create a separate directory from the current Git `HEAD`, without uncommitted changes from the original folder.
+| Choice | Files used by the new conversation |
+|---|---|
+| Fork locally | The same directory as the original conversation |
+| Fork to a Git worktree | A separate directory created from the source repository's current `HEAD` |
 
-A fork copies conversation history up to the selected message; it does not restore
-files to their state at that message. To include current changes in a worktree,
-review and commit them first. When worktrees are unavailable, the option shows why.
+A fork copies history through the selected message. It does **not** restore files to that moment. A worktree starts from committed content and does not copy uncommitted changes; review and commit any changes you want it to inherit before creating it. The dialog explains when worktree creation is unavailable.
 
-## Side chat
+## Ask a side question
 
-Enter `/side` to ask about the current task, explain output, or compare approaches
-without adding content to the main conversation. Start or fork a conversation for
-work you want to continue long term. If side chat is unsupported, the entry shows why.
+Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
 
-## Sessions in the CLI
+## Continue delegated work yourself
+
+[Collaboration](collaboration.md) can open ordinary work conversations. Viewing one does not change its control state. Sending your own message takes control and pauses Collaboration's automatic instructions and follow-up for that session.
+
+## Use saved sessions from the CLI
 
 ```bash
 wuu session list
 wuu session show --last
 wuu session search "keyword"
-wuu exec --continue "continue the most recent session"
-wuu exec resume THREAD_ID "continue this task"
+wuu exec resume THREAD_ID "Continue this task"
 ```
 
-Use `wuu exec --ephemeral` when an automated task should not save a session. See [the
-`wuu exec` guide](../automation/exec.md) for the full options.
+`wuu exec --continue` resumes the latest session; `--ephemeral` runs without saving one. See [`wuu exec`](../automation/exec.md) for session selection and script options.

@@ -1,64 +1,36 @@
 # Collaboration
 
-Use Collaboration to talk with Named Agents in channels or DMs and ask them to carry
-out work in your projects. Each identity has one continuing conversation, keeping
-context across requests instead of starting a separate identity session for each task.
-That identity can manage several work sessions: independent goals can have separate
-sessions, while corrections and follow-ups toward the same result keep their context.
+Collaboration provides channels and direct messages for working with named agents. An agent's identity has a continuing conversation and can manage separate work sessions, so discussions can continue across requests without putting every task into one execution session.
 
-## Start a conversation
+## Start with a named agent
 
-Open **Collaboration**, create a Named Agent, then create a channel or open a DM.
-Configure the Agent's name, avatar, role, and model in agent management. Specify the
-project, describe the desired result, and state constraints such as “review only” or
-“do not commit.” In a group, mention the Agent you want to address.
+Open **Collaboration**, create an agent, and configure its name, avatar, role, and model. Open a direct message or add it to a channel. In a group conversation, mention the agent you want to address.
 
-Agents can communicate and hand work to other identities. You do not need to create
-extra copies of an identity or manually arrange execution sessions to ask for help.
+State the target project, the result you need, and the limits on the work. For example:
 
-## Open the work session
+```text
+Review the search changes in the catalog project. Explain any regressions with
+file references. Do not edit files or create a commit.
+```
 
-Collaboration delegates practical project work to ordinary Harness sessions. These
-sessions can edit files, run commands, and retain the conversation and results. In an
-Agent's activity details, open the linked session to inspect progress or continue
-chatting in that same session.
+Named agents can discover registered projects and communicate with other identities. A clear project name matters: switching your foreground workspace does not redirect a work session already assigned elsewhere.
 
-Viewing a session does not take control. Typing and **sending a message** takes
-control and pauses Collaboration's automatic instructions and follow-up for that
-session. Other work is unaffected. To have Collaboration continue managing it, explicitly
-ask to hand it back or continue.
+## Follow the execution
 
-If you inspect tool activity, `chat_session` is for discovering and communicating with
-named identities and reading their results. `session` manages ordinary execution
-sessions. You do not need to call either tool yourself.
+Project work runs in ordinary work conversations, also called Harness sessions in tool activity. Open the linked session from an agent's activity details to see file changes, commands, and results. It remains bound to its project and execution configuration; an unavailable or conflicting project binding produces an error rather than falling back to another project.
 
-Named Agents can discover your registered projects. Specify which project a task
-belongs to; ask the Agent to clarify before starting if the project is ambiguous.
-A work session stays bound to that project, including follow-up instructions and
-its execution configuration. Switching the foreground project does not retarget it.
-An unavailable or conflicting project binding produces an error instead of falling
-back to another project. This routing guarantee is not a filesystem sandbox.
+Looking at the conversation does not take control. Sending a message does: Wuu pauses Collaboration's automatic instructions and follow-up for that session so you can continue the work yourself. If you want the named agent to manage it again, explicitly ask it to resume management.
 
-## Track or cancel work
+In tool activity, `chat_session` handles communication between named identities, while `session` manages ordinary execution sessions. You can work through natural-language requests rather than calling these tools yourself.
 
-Use the task view to check the owner, progress, and results. When execution is linked
-to a task, cancelling that task stops its linked execution and automatic follow-up;
-unrelated tasks and sessions keep running. Work without a task link is not covered
-by that cancellation. Open its session to stop it separately.
+## Track and cancel a task
 
-Stopping or cancelling does not undo commands or file changes. Check the
-[current diff and command results](workspace-tools.md) before continuing. A completion
-message alone is not proof that tests passed or that a visual result was inspected.
+The task view shows ownership, progress, and results. Cancelling a task stops the execution and follow-up linked to that task; unrelated sessions keep running. If a session has no task link, open it and stop it separately.
 
-## Plans and memory
+Cancellation does not roll back file changes or completed commands. Check the [current diff and command results](workspace-tools.md) before accepting or resuming the work. Project routing keeps the task attached to the right project, but does not itself provide a filesystem sandbox; execution uses the applicable [permissions](../reference/permissions.md).
 
-Saved plans and memory remain available to Agents, but there is no room-header panel
-for managing them. Room memory is shared within that room; identity memory belongs
-to the Named Agent. Existing plans, memories, and chat history are preserved.
+## Keep work available
 
-**The execution host must be running.** Plans cannot run on time while the device is
-off, asleep, or Wuu is closed. Check pending work and errors after returning rather
-than assuming that a scheduled action completed.
+Room memory is shared within its room; identity memory belongs to the named agent. Agents can use these stores and saved plans as part of continuing work. Scheduled execution needs the host to be running: a sleeping or powered-off machine cannot carry out the task on time.
 
-For conversation controls, see [conversations and branches](conversations.md).
-[Anonymous subagents](subagents.md) are available for temporary delegation within a task.
+For temporary delegation inside a normal conversation, use [subagents](subagents.md). For message, archive, and fork controls, see [conversations](conversations.md).
