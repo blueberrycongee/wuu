@@ -97,11 +97,9 @@
   animation: environment-panel-enter var(--environment-panel-motion-duration) var(--environment-panel-motion-easing) both;
 }
 
-/* Close sits in a dedicated right column on the first content row: the
- * changes row when the panel is git-only, or the todo title when a plugin
- * inspector section is present. Later rows stay in the left column, so the
- * button never overlays chevrons, stats, or todo copy, and never owns a
- * blank row of its own. */
+/* Reserve close-button space only beside the first heading or action.
+ * Content below that row spans both columns instead of inheriting an
+ * empty right-hand rail. */
 .environment-panel:has(> .environment-panel-header.environment-panel-close-row),
 .environment-side-stack > .environment-panel:has(> .environment-panel-header.environment-panel-close-row) {
   display: grid;
@@ -226,7 +224,7 @@
 }
 
 .environment-panel:has(> .environment-panel-header.environment-panel-close-row) .plugin-inspector-sections {
-  grid-column: 1;
+  grid-column: 1 / -1;
   grid-row: 1;
   min-width: 0;
   gap: 6px;
@@ -246,6 +244,10 @@
   white-space: nowrap;
 }
 
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row) > .plugin-inspector-sections > .plugin-inspector-section:first-child > h2 {
+  margin-right: calc(var(--environment-panel-close-size) + var(--environment-panel-close-gap));
+}
+
 .environment-panel:has(> .environment-panel-header.environment-panel-close-row) .plugin-inspector-section-content {
   padding: 0 8px 10px;
   border-bottom: 1px solid var(--hairline-soft);
@@ -253,12 +255,16 @@
 }
 
 .environment-panel:has(> .environment-panel-header.environment-panel-close-row) .environment-panel-body {
-  grid-column: 1;
+  grid-column: 1 / -1;
   min-width: 0;
 }
 
 .environment-panel:not(:has(.plugin-inspector-section)) > .environment-panel-body {
   grid-row: 1;
+}
+
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row):not(:has(.plugin-inspector-section)) .environment-change-row {
+  margin-right: calc(var(--environment-panel-close-size) + var(--environment-panel-close-gap));
 }
 
 .environment-panel .plugin-todo-list {

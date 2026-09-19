@@ -22,6 +22,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Let desktop environment-panel content use the full width below the close
+  button instead of reserving an empty column beside TODO and Git rows.
+
 - Remove the redundant workspace path row from the terminal panel so terminal
   content starts directly below the workspace tabs.
 
