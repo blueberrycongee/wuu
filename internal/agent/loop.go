@@ -63,9 +63,11 @@ type ToolSurfaceFreezer interface {
 //   - On context-overflow errors from the step, calls cfg.Compact
 //     once and re-issues the step. If that compact does not shrink
 //     history, the loop force-trims older turns onto a valid tool-call
-//     boundary and retries once more. Consecutive overflows after that
-//     recovery propagate; fresh context windows allow recovery again
-//     after a successful step.
+//     boundary and retries once more only when the replacement is
+//     smaller. Consecutive overflows after that recovery propagate;
+//     fresh context windows allow recovery again after a successful
+//     step. A failed or no-op recovery never retries the same overflowing
+//     payload.
 //   - Output truncation is treated as a completed model response with
 //     FinishReason=length. The caller/UI can surface that reason without
 //     classifying the turn as a user interruption or transport failure.
@@ -160,8 +162,8 @@ func RunToolLoop(
 		// Reactive auto-compact (overflow recovery) runs at most once
 		// between successful steps for fresh windows (once per Run for
 		// legacy compaction). If that compact does not shrink history, a
-		// local force-trim retries once more before the overflow is
-		// surfaced. Proactive compact
+		// local force-trim retries once more only when it actually shrinks
+		// the request. Proactive compact
 		// runs before provider requests, including mid-turn continuation
 		// requests after completed tool results. A failed or no-op
 		// proactive attempt suppresses further proactive attempts for
@@ -750,8 +752,10 @@ func RunToolLoop(
 					postToolContextSegments = consumedPostToolSegments
 					continue
 				}
-			}
-			if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+				// Fresh-context already consumed the one overflow retry.
+				// If trim cannot shrink the request, surface the overflow
+				// instead of sending the same overflowing payload again.
+			} else if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
 				before := usageBefore.Total()

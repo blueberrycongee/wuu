@@ -1491,3 +1491,13 @@ func TestForceTrimOverflowHistoryKeepsLatestUserTurn(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
+
+func TestForceTrimOverflowHistoryRejectsSingleUserTurn(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "oversized fresh prompt"},
+	}
+	if _, err := ForceTrimOverflowHistory(messages); err == nil {
+		t.Fatal("expected overflow trim to fail when the latest user turn is the whole conversation")
+	}
+}
