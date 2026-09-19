@@ -86,8 +86,8 @@ beforeEach(() => {
       agents = [agent];
       return { agent };
     }),
-    openChannelDirectMessage: vi.fn(async () => {
-      const room = { id: "new-dm", name: "Research", kind: "dm", members: [{ member_type: "agent", member_id: "new-agent" }], created_at: "2026-09-12T00:00:00Z" } as ChannelRoom;
+    openChannelDirectMessage: vi.fn(async (params: Parameters<WuuDesktopApi["openChannelDirectMessage"]>[0]) => {
+      const room = { id: "new-dm", name: "Research", kind: "dm", onboarding: params.onboarding, members: [{ member_type: "agent", member_id: "new-agent" }], created_at: "2026-09-12T00:00:00Z" } as ChannelRoom;
       rooms = [room];
       return { room };
     }),
@@ -183,9 +183,12 @@ it("pins a new Agent without navigation, persists hiding, and restores its DM fr
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledExactlyOnceWith({ agent_id: "new-agent" });
   expect(container.querySelector(".channel-room-settings-name")?.textContent).toBe("General");
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!).pinnedRoomIDs).toEqual(["new-dm"]);
+  expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Research");
+  expect(container.querySelector('[data-functional-group-id="pinned"]')?.textContent).toContain("Research");
   await manageSidebarRow("Research", t("channels.hideConversation"));
   expect(JSON.parse(localStorage.getItem("wuu.channels.roomPreferences")!)).toMatchObject({ pinnedRoomIDs: [], archivedRoomIDs: ["new-dm"] });
   expect(container.querySelector('[data-wuu-component="collaboration-sidebar"] nav')?.textContent).not.toContain("Research");
+  expect(container.querySelector('[data-functional-group-id="pinned"]')?.textContent).not.toContain("Research");
   await click(t("account.menu"));
   await click(t("sidebar.settings"));
   await act(async () => { await vi.dynamicImportSettled(); });
@@ -230,11 +233,16 @@ it("opens a newly created identity's conversation before the next directory refr
   expect(window.wuu.createNamedAgent).not.toHaveBeenCalled();
   await confirmModel();
   await enterName("Research");
+  // Setup controls must not become transcript content that disappears on handoff.
+  const modelMessage = container.querySelector('[data-message-id="model"]')!.textContent;
+  const nameMessage = container.querySelector('[data-message-id="name"]')!.textContent;
   await sendName();
   expect(window.wuu.createNamedAgent).toHaveBeenCalledTimes(1);
   expect(window.wuu.openChannelDirectMessage).toHaveBeenCalledWith(expect.objectContaining({ agent_id: "new-agent" }));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(container.querySelector(".channel-room-header")?.textContent).toContain("Research");
+  expect(container.querySelector('[data-message-id="model"]')?.textContent).toBe(modelMessage);
+  expect(container.querySelector('[data-message-id="name"]')?.textContent).toBe(nameMessage);
   expect(container.querySelector(".collaboration-contact-row.active")?.textContent).toContain("Research");
 });
 

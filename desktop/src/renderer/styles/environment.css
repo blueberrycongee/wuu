@@ -59,28 +59,27 @@
   transform-origin: top right;
 }
 
-                                                                    
-                                                                   
-                                                                        
-                                                                        
 .environment-side-stack > .environment-panel {
   position: relative;
   top: auto;
   right: auto;
-  width: 100%;
-  min-height: 0;
-  pointer-events: auto;
-}
-
-.environment-side-stack > .environment-panel {
   display: flex;
   flex: 0 1 auto;
   flex-direction: column;
+  width: 100%;
+  min-height: 0;
   max-height: 100%;
   overflow: visible;
+  pointer-events: auto;
 }
 
 .environment-panel {
+  --environment-panel-inset: 12px;
+  --environment-row-height: 32px;
+  --environment-row-gap: 2px;
+  --environment-panel-close-size: 26px;
+  --environment-panel-close-gap: 4px;
+  --environment-panel-chrome-gap: 6px;
   position: absolute;
   top: 66px;
   right: var(--environment-panel-edge-gap);
@@ -92,10 +91,24 @@
   border-radius: var(--radius-md);
   background: var(--menu-bg);
   box-shadow: var(--shadow-pop);
-  padding: 12px;
+  padding: var(--environment-panel-inset);
   transform-origin: top right;
   will-change: opacity, transform;
   animation: environment-panel-enter var(--environment-panel-motion-duration) var(--environment-panel-motion-easing) both;
+}
+
+/* Close sits in a dedicated right column on the first content row: the
+ * changes row when the panel is git-only, or the todo title when a plugin
+ * inspector section is present. Later rows stay in the left column, so the
+ * button never overlays chevrons, stats, or todo copy, and never owns a
+ * blank row of its own. */
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row),
+.environment-side-stack > .environment-panel:has(> .environment-panel-header.environment-panel-close-row) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--environment-panel-close-size);
+  column-gap: var(--environment-panel-close-gap);
+  row-gap: var(--environment-panel-chrome-gap);
+  align-items: start;
 }
 
 .environment-panel.closing {
@@ -115,12 +128,14 @@
   padding: 0 2px 8px;
 }
 
-.environment-panel-header.floating {
-  position: absolute;
-  top: 15px;
-  right: 14px;
-  z-index: 2;
-  justify-content: flex-end;
+.environment-panel-header.environment-panel-close-row {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  align-self: start;
+  width: var(--environment-panel-close-size);
+  height: var(--environment-row-height);
+  justify-content: center;
   gap: 0;
   padding: 0;
 }
@@ -153,11 +168,18 @@
 
 .environment-panel-body {
   display: grid;
-  gap: 3px;
+  gap: 0;
 }
 
-.environment-panel-header.floating + .environment-panel-body .environment-row:first-child {
-  padding-right: 40px;
+.environment-row-group {
+  display: grid;
+  gap: var(--environment-row-gap);
+}
+
+.environment-row-group + .environment-row-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline-soft);
 }
 
 .environment-side-stack > .environment-panel .environment-panel-body {
@@ -197,6 +219,73 @@
   overscroll-behavior: contain;
 }
 
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row) .plugin-inspector-sections {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  gap: 6px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.environment-panel:has(.plugin-inspector-section) .plugin-inspector-section:first-child > h2 {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--environment-row-height);
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row) .plugin-inspector-section-content {
+  padding: 0 8px 10px;
+  border-bottom: 1px solid var(--hairline-soft);
+  margin-bottom: 2px;
+}
+
+.environment-panel:has(> .environment-panel-header.environment-panel-close-row) .environment-panel-body {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.environment-panel:not(:has(.plugin-inspector-section)) > .environment-panel-body {
+  grid-row: 1;
+}
+
+.environment-panel .plugin-todo-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.environment-panel .plugin-todo-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+
+.environment-panel .plugin-todo-marker {
+  display: grid;
+  width: 22px;
+  place-items: center;
+  color: var(--ink-muted);
+}
+
+.environment-panel .plugin-todo-item[data-status="in_progress"] .plugin-todo-marker {
+  color: var(--wuu-accent);
+}
+
+.environment-panel .plugin-todo-item[data-status="completed"] {
+  color: var(--ink-muted);
+}
+
 .plugin-inspector-section-error {
   margin: 0;
   padding: 8px;
@@ -217,9 +306,9 @@
 }
 
 .environment-row {
-  grid-template-columns: 22px auto minmax(0, 1fr) 17px;
-  min-height: 30px;
-  column-gap: 7px;
+  grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr) 16px;
+  min-height: var(--environment-row-height, 32px);
+  column-gap: 8px;
   padding: 0 8px;
 }
 
@@ -235,12 +324,22 @@
 }
 
 .environment-row:disabled {
-  opacity: 0.54;
+  opacity: 1;
+}
+
+.environment-row:disabled > svg,
+.environment-row:disabled > strong,
+.environment-row:disabled > .environment-row-trailing {
+  opacity: 0.48;
 }
 
 .environment-row svg,
 .environment-footer-row svg {
   color: var(--ink-tertiary);
+}
+
+.environment-row > svg {
+  justify-self: center;
 }
 
 .environment-row strong {
@@ -251,16 +350,31 @@
   white-space: nowrap;
 }
 
-.environment-row > span,
-.environment-row-meta {
+.environment-row-meta,
+.environment-row > span:not(.environment-row-trailing) {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-muted);
-  font-size: var(--font-ui);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.environment-row:disabled > .environment-row-meta {
+  opacity: 1;
+  color: var(--ink-soft);
+}
+
+.environment-row-trailing {
+  display: grid;
+  place-items: center;
+  color: var(--ink-tertiary);
+}
+
+.environment-row-trailing svg {
+  display: block;
 }
 
 .environment-diff {
@@ -277,12 +391,6 @@
   color: var(--env-deletions-text);
 }
 
-
-
-                                                                      
-                                                                     
-                                                                        
-                                                      
 .query-history-popover {
   display: grid;
   width: 100%;
@@ -350,7 +458,7 @@
 }
 
 .environment-side-menu.branch {
-  top: 76px;
+  top: calc(var(--environment-row-height) + var(--environment-row-gap));
   width: 344px;
 }
 
@@ -1640,7 +1748,7 @@
 .fork-dialog-option-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid var(--info);
+  border: 2px solid color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-right-color: transparent;
   border-radius: var(--radius-circle);
   margin-left: auto;

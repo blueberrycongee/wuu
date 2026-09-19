@@ -4,6 +4,7 @@ import { AccountScreen } from "./AccountScreen";
 import { App } from "./App";
 import { startAppearanceSync } from "./AppearancePreferences";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
+import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxWindowControls";
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
@@ -79,7 +80,7 @@ ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
       <LinuxWindowControls />
-      {window.wuu?.isAccountWindow && window.wuu.remoteAccount
+      {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
         : <App />}
       <ToastViewport />

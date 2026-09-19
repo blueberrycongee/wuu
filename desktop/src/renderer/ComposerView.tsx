@@ -6,6 +6,7 @@ import {
   FolderOpen,
   FolderX,
   ArrowUp,
+  ShieldCheck,
   Square
 } from "lucide-react";
 import {
@@ -103,8 +104,6 @@ import { composerStatusIsLiveProgress, composerStatusText } from "./ComposerType
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
-import { ComposerVoiceInput, type ComposerVoiceInputHandle } from "./ComposerVoiceInput";
-import { ENABLE_VOICE_INPUT } from "./FeatureFlags";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
@@ -286,7 +285,7 @@ export function Composer({
   onSelectEngine?: (id: string) => void;
   onSelectEngineModel?: (model: string, effort: string) => void;
   onSelectEngineEffort?: (effort: string) => void;
-  onSelectPermissionMode: (mode: PermissionMode) => void;
+  onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void;
   onToggleBranchMenu: () => void;
   onOpenSettings: () => void;
   onOpenSkillsCatalog: () => void;
@@ -451,16 +450,8 @@ export function Composer({
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
-  const [voiceRecording, setVoiceRecording] = useState(false);
-  const [voiceSendPending, setVoiceSendPending] = useState(false);
-  const voiceInputRef = useRef<ComposerVoiceInputHandle>(null);
-  const voiceSendPendingRef = useRef(false);
-  const showComposerStopAction =
-    showComposerStop && !voiceRecording && !voiceSendPending;
-  const voiceActionLabel =
-    (voiceRecording || voiceSendPending) && running && onSteer
-      ? t("composer.steerSend")
-      : composerSendLabel;
+  const showComposerStopAction = showComposerStop;
+  const voiceActionLabel = composerSendLabel;
   const [expandedDrawer, setExpandedDrawer] = useState<ExpandedComposerDrawer>(null);
   const [dropActive, setDropActive] = useState(false);
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
@@ -611,7 +602,11 @@ export function Composer({
   const fastModelTarget = useMemo(() => runtimeFastModelTarget(initialized), [initialized]);
   const permissionMode = permissionModeFromSummary(initialized?.permissions);
   const permissionOption = permissionModeOption(permissionMode, activeEngine);
-  const permissionChipLabel = permissionOption.chipLabel;
+  const approveForMeOn = permissionMode === "standard" && Boolean(initialized?.permissions?.approve_for_me);
+  const permissionChipLabel = approveForMeOn
+    ? t("runtime.permission.approveForMe")
+    : permissionOption.chipLabel;
+  const PermissionChipIcon = approveForMeOn ? ShieldCheck : permissionOption.icon;
   const projectPillLabel = heroProjectPillLabel(activeContext, activeProject);
   const projectPillTitle =
     activeContext?.kind === "project" && activeProject?.path
@@ -780,10 +775,6 @@ export function Composer({
   }
 
   function submitComposer(): void {
-    if (voiceRecording) {
-      void stopVoiceAndSubmit();
-      return;
-    }
     submitDraft();
   }
 
@@ -797,21 +788,6 @@ export function Composer({
       running && submittingHasDraft && onSteer ? onSteer : onSend,
       promptOverride,
     );
-  }
-
-  async function stopVoiceAndSubmit(): Promise<void> {
-    if (voiceSendPendingRef.current) return;
-    voiceSendPendingRef.current = true;
-    setVoiceSendPending(true);
-    try {
-      const finalPrompt = await voiceInputRef.current?.stop();
-      if (!finalPrompt?.trim()) return;
-      const sendFinalPrompt = running && onSteer ? onSteer : onSend;
-      submitComposerWith(() => sendFinalPrompt(finalPrompt), finalPrompt);
-    } finally {
-      voiceSendPendingRef.current = false;
-      setVoiceSendPending(false);
-    }
   }
 
   function updateVisiblePrompt(value: string): void {
@@ -1042,11 +1018,7 @@ export function Composer({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (voiceRecording) {
-        submitComposer();
-      } else {
-        submitDraft(currentPrompt);
-      }
+      submitDraft(currentPrompt);
     }
   }
 
@@ -1317,7 +1289,7 @@ export function Composer({
               </button>
             ) : null}
             <div
-              className={`composer-bar${voiceRecording ? " is-voice-recording" : ""}`}
+              className="composer-bar"
               data-wuu-component="composer-toolbar"
             >
               <div className="composer-bar-left">
@@ -1353,7 +1325,7 @@ export function Composer({
                       onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                       onClick={onToggleAccessMenu}
                     >
-                      <permissionOption.icon aria-hidden="true" />
+                      <PermissionChipIcon aria-hidden="true" />
                       <span>{permissionChipLabel}</span>
                       <ChevronDown aria-hidden="true" />
                     </button>
@@ -1436,16 +1408,6 @@ export function Composer({
                     />
                   </span>
                 ) : null}
-                {ENABLE_VOICE_INPUT ? (
-                  <ComposerVoiceInput
-                    ref={voiceInputRef}
-                    prompt={prompt}
-                    setPrompt={setPrompt}
-                    disabled={readOnly}
-                    locale={locale}
-                    onRecordingChange={setVoiceRecording}
-                  />
-                ) : null}
                 <button
                   className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                   data-wuu-component="composer-send"
@@ -1463,7 +1425,7 @@ export function Composer({
                   title={showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                   disabled={
                     !showComposerStopAction &&
-                    (voiceSendPending || effectiveSendDisabled || readOnly || (!voiceRecording && !hasDraft) || (handoffMode && !canConfirmHandoff))
+                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff))
                   }
                 >
                   {showComposerStopAction ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}

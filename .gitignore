@@ -6,6 +6,7 @@
 # pnpm/npm (→ node_modules/).
 
 /bin/
+.gocache-approve-for-me/
 dist/
 node_modules/
 # Also ignore a `node_modules` symlink (worktrees sometimes link a shared
@@ -28,6 +29,8 @@ desktop/release/
 desktop/native/cua-mac/.build/
 # inspect-cua-pip.cjs writes diagnostic JSON and window screenshots here.
 /artifacts/cua-pip/
+# Local agent snapshots, screenshots, and commit-check copies.
+/artifacts/
 # electron-vite writes a timestamp marker when it re-syncs node_modules;
 # keep it out of git.
 desktop/.node_modules.synced

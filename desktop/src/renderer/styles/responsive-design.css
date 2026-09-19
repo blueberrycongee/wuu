@@ -485,18 +485,9 @@
 }
 
 @media (pointer: coarse) {
-  /* Keep the desktop lockup: wordmark, stacked mode labels, then the bell.
-   * Give the labels a little more vertical room without turning them into tabs. */
+  /* Keep the desktop lockup: wordmark, then the bell. */
   .sidebar-brand {
-    grid-template-columns: auto minmax(0, 1fr) 44px;
-  }
-
-  .sidebar-mode-switch {
-    gap: 2px;
-  }
-
-  .sidebar-mode-option {
-    padding-block: 3px;
+    grid-template-columns: minmax(0, 1fr) 44px;
   }
 
   .sidebar-notifications-button {
@@ -506,15 +497,14 @@
   }
 }
 
-/* Reuse the desktop controls, but reserve an in-drawer close target. Mode
- * choices get their own touch row only when there is a choice to make. */
+/* Reuse the desktop controls, but reserve an in-drawer close target. */
 :root[data-host-kind="web"] .app-shell.compact-navigation .traffic-spacer {
   height: 8px;
 }
 
 :root[data-host-kind="web"] .app-shell.compact-navigation .sidebar-brand {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 44px 44px;
+  grid-template-columns: minmax(0, 1fr) 44px 44px;
   grid-template-rows: 44px;
   align-items: center;
   column-gap: 4px;
@@ -526,30 +516,8 @@
   font-size: 28px;
 }
 
-:root[data-host-kind="web"] .app-shell.compact-navigation .sidebar-mode-switch {
-  grid-column: 2;
-  grid-row: 1;
-  margin: 0;
-  transform: none;
-}
-
-:root[data-host-kind="web"] .app-shell.compact-navigation .sidebar-mode-switch:has(> :nth-child(2)) {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  flex-direction: row;
-  gap: 12px;
-  justify-content: flex-start;
-}
-
-:root[data-host-kind="web"] .app-shell.compact-navigation .sidebar-mode-option {
-  display: grid;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 4px;
-}
-
 :root[data-host-kind="web"] .app-shell.compact-navigation .sidebar-notifications-button {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1;
   width: 44px;
   height: 44px;

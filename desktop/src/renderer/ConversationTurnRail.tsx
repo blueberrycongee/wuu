@@ -17,6 +17,7 @@ import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
+import { atLatestScrollView } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
 
 // Keep vertical capacity calculations aligned with the CSS bar height and gap.
@@ -646,11 +647,7 @@ function visibleTurnIDForScrollNode(
   if (turns.length === 0) {
     return undefined;
   }
-  const distanceFromBottom = Math.max(
-    0,
-    scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight,
-  );
-  if (distanceFromBottom <= 4) {
+  if (atLatestScrollView(scrollNode, 4)) {
     return turns[turns.length - 1]?.id;
   }
 

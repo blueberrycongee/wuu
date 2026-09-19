@@ -1355,6 +1355,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkills(s.Skills)
 		ConfigureToolkitPermissions(kit, s.Permissions)
+		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
 		kit.SetSessionDir(artifactDir)
 		kit.SetSessionsDir(s.SessionDir)
@@ -2619,7 +2620,7 @@ func workerWakeAuthority(parent *tools.Toolkit) func(agent.ToolExecutor) {
 		if !ok || workerKit == nil || parent == nil {
 			return
 		}
-		workerKit.SetBoundary(parent.Boundary())
+		workerKit.RefreshAuthorityFrom(parent)
 	}
 }
 

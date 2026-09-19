@@ -2,7 +2,7 @@
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
   --shell-process-control-color: var(--wuu-color-text-muted, #BCBCBD);
-  --shell-session-tab-active-bg: var(--selection-surface);
+  --shell-session-tab-active-bg: var(--surface-3);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
   --shell-session-tab-status-default: rgba(17, 19, 21, 0.22);
   --shell-session-tab-status-running-notch: rgba(17, 19, 21, 0.18);
@@ -99,15 +99,17 @@
   /* Reading rhythm follows the user's text size. Keep related blocks
    * closer than sections, with headings attached to the text below.
    * Prose, previews and composer share the same column measure. */
-  --conversation-reading-line-height: 1.75;
+  /* A relaxed body line makes mixed CJK, Latin and inline code read as one
+     continuous answer instead of a stack of dense rows. */
+  --conversation-reading-line-height: 1.85;
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
-  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.15);
-  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 2);
-  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.5);
-  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.5);
-  --conversation-prose-indent: 1.4em;
+  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.1);
+  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 1.7);
+  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.55);
+  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.4);
+  --conversation-prose-indent: 1.45em;
   --conversation-prose-max-width: 100%;
   --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
   /* Process rows share the message size and weight; color and spacing,
@@ -266,12 +268,28 @@
 }
 
 .title-block {
-  display: grid;
   min-width: 0;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  column-gap: 10px;
   overflow: hidden;
+}
+
+.conversation-title-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversation-title-heading h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-title-heading .session-tab-new {
+  flex: 0 0 auto;
 }
 
 .title-actions {
@@ -375,7 +393,6 @@
 
 .title-block h1 {
   min-width: 0;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -589,13 +606,12 @@
    * (10px) size. The notch stays on the top side so the rotation reads
    * the same direction as before.
    *
-   * Dark ring uses 65% of `--sidebar-accent` (which resolves to
-   * `--ink-strong` ≈ #111315). Full accent is too heavy at this size and
-   * against the tab strip surface; 65% reads as "dark but not inky" and
-   * keeps enough contrast against the 18% light notch to still feel
-   * like a spinner rather than a solid dot.
+   * Dark ring uses 65% of `--ink-strong`. Brand accent is too loud for
+   * an ambient running state; 65% reads as "dark but not inky" and keeps
+   * enough contrast against the 18% light notch to still feel like a
+   * spinner rather than a solid dot.
    */
-  border: 2px solid color-mix(in srgb, var(--sidebar-accent) 65%, transparent);
+  border: 2px solid color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--shell-session-tab-status-running-notch);
   box-sizing: border-box;
   opacity: 1;
@@ -734,6 +750,11 @@
   font-size: 14px;
   font-weight: 500;
   color: var(--ink-secondary);
+}
+
+/* Compact chrome already exposes new-conversation in title-actions. */
+.app-shell.compact-navigation .conversation-title-heading .session-tab-new {
+  display: none;
 }
 
 .app-shell.compact-navigation .titlebar .sidebar-toggle-button,
@@ -1298,6 +1319,18 @@ button.conversation-status-capsule,
 
 .conversation-status-cluster {
   display: flex;
+  /* Status items appear and change while this row is already mounted.
+   * Replaying the jump-to-latest entrance makes the whole capsule row blink. */
+  animation: none;
+}
+
+/* Navigation and status share one floating row, not two stacked anchors. */
+.conversation-status-cluster > .jump-to-latest-cluster-inline {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
 }
 
 .conversation-status-label {
@@ -1395,16 +1428,53 @@ button.conversation-status-capsule,
   font-size: var(--font-ui);
   pointer-events: auto;
 }
-.conversation-status-preview-card .conversation-status-todo-card-header { font-size: inherit; }
-.managed-session-preview-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+
+/* Preview rows keep one text column: the running spinner trails the title
+ * where the old "running" label sat, so rows never repeat that status as text. */
+.managed-session-preview-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
 .managed-session-preview-list li { min-width: 0; }
-.managed-session-preview-item { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
+.managed-session-preview-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--icon-size);
+  align-items: center;
+  gap: var(--menu-item-gap);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
 .managed-session-preview-item:hover { background: var(--ink-overlay-6); }
 .managed-session-preview-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.managed-session-preview-status { display: grid; place-items: center; color: var(--shell-todo-card-muted); }
+.managed-session-preview-status > svg { width: var(--icon-size); height: var(--icon-size); }
 .managed-session-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.managed-session-preview-state { flex-shrink: 0; margin-inline-start: auto; color: var(--shell-todo-card-muted); }
-.managed-session-preview-all { align-self: stretch; min-height: 32px; padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; text-align: start; }
-.managed-session-preview-all:hover { background: var(--ink-overlay-6); }
+.managed-session-preview-empty { margin: 0; padding: var(--menu-inset) var(--menu-item-padding-inline); color: var(--shell-todo-card-muted); }
+
+/* Quiet footer action: separated from the rows, secondary until hovered, and
+ * trailing a chevron so it reads as navigation rather than another session. */
+.managed-session-preview-separator { height: 1px; background: var(--shell-todo-card-border); }
+.managed-session-preview-all {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--menu-item-gap);
+  width: 100%;
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--shell-todo-card-muted);
+  font: inherit;
+  text-align: start;
+}
+.managed-session-preview-all:hover { background: var(--ink-overlay-6); color: var(--shell-todo-card-ink); }
 .managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
 .conversation-status-todo-card-header span,

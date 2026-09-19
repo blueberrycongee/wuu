@@ -296,8 +296,7 @@ function sessionTabButton(label: string): HTMLButtonElement | undefined {
 
 function activeSessionTabLabel(): string {
   return (
-    container.querySelector(".session-tab.active .session-tab-title")
-      ?.textContent ?? ""
+    container.querySelector(".conversation-title-heading h1")?.textContent ?? ""
   );
 }
 
@@ -407,7 +406,7 @@ describe("session tab switch latency", () => {
       return Promise.resolve({ thread: threadsByID.get(threadID) });
     });
 
-    const tabA = sessionTabButton("session switch A");
+    const tabA = threadRowButton("session switch A");
     expect(tabA).toBeDefined();
     await act(async () => {
       tabA?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

@@ -248,3 +248,34 @@ func TestCollaborationRecoveryUsesPinnedProviderAndRejectsMissingProvider(t *tes
 		t.Fatalf("missing pinned provider error = %v, want no default fallback", err)
 	}
 }
+
+// A provider profile may publish only the context window while the wire request
+// still asks for the model's default output allowance. A collaboration session
+// must keep that allowance and the compaction buffer free, otherwise a long
+// room sends one request too late and the provider rejects it before proactive
+// compaction ever runs.
+func TestCollaborationBudgetReservesUnpublishedOutputAllowance(t *testing.T) {
+	s, _ := collaborationTestSession(t)
+	provider := config.ProviderConfig{
+		Type: "openai-compatible", Model: "grok-4.6", BaseURL: "https://example.invalid/v1",
+		Models: map[string]config.ProviderModelConfig{
+			"grok-4.6": {Limit: &config.ProviderModelLimitConfig{Context: 500_000}},
+		},
+	}
+	roles, err := modelroles.Resolve(config.Config{}, modelroles.ResolveOptions{ProviderName: "primary", ProviderConfig: provider, Model: provider.Model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ProviderName, s.Model, s.ModelRoles = "primary", provider.Model, roles
+	s.StreamRunner.Model, s.StreamRunner.APIModel = provider.Model, provider.Model
+
+	thread := collaborationTestThread(t, s, "output-allowance", ThreadModelSelection{})
+	reserve := thread.StreamRunner.OutputReserveTokens
+	if want := providers.MaxOutputTokensFor(provider.Model); reserve != want {
+		t.Fatalf("output reserve = %d, want the wire request's default output allowance %d", reserve, want)
+	}
+	threshold := thread.StreamRunner.CompactThresholdTokens
+	if threshold <= 0 || threshold+reserve > provider.Models[provider.Model].Limit.Context {
+		t.Fatalf("compact threshold = %d with output reserve %d: compaction must trigger while the window still fits the output allowance", threshold, reserve)
+	}
+}

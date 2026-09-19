@@ -5,7 +5,11 @@ import {
   useEffect,
   useState,
 } from "react";
-import { observeAutoFollowResizeTargets } from "./AutoFollowScroll";
+import {
+  atLatestScrollView,
+  latestFollowScrollTop,
+  observeAutoFollowResizeTargets,
+} from "./AutoFollowScroll";
 import { dockComposerVisualHeight } from "./ConversationScrollState";
 import {
   createWindowResizeSettleScheduler,
@@ -99,9 +103,7 @@ export function JumpToLatestPill({
     }
 
     const update = (): void => {
-      const distanceFromBottom =
-        node.scrollHeight - node.scrollTop - node.clientHeight;
-      setScrolledAway(distanceFromBottom > threshold);
+      setScrolledAway(!atLatestScrollView(node, threshold));
     };
     const resizeSettleUpdate = createWindowResizeSettleScheduler(update);
     const scheduleUpdate = (): void => {
@@ -288,7 +290,7 @@ export function JumpToLatestPill({
     if (!node) {
       return;
     }
-    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+    node.scrollTo({ top: latestFollowScrollTop(node), behavior: "smooth" });
   };
 
   const pillBody = (

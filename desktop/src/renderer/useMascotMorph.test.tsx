@@ -22,8 +22,11 @@ function mount() {
     getPointAtLength: (d: number) => ({ x: 50 + 39 * Math.cos(d / 39), y: 50 + 39 * Math.sin(d / 39) }),
   });
   const root = createRoot(document.createElement("div"));
-  function Motion({ mode, paused }: { mode: MascotMorph; paused: boolean }) { useMascotMorph(svg, mode, paused, 0, "round"); return null; }
-  const render = (mode: MascotMorph, paused = false) => act(() => root.render(<Motion mode={mode} paused={paused} />));
+  function Motion({ mode, paused, replay = 0 }: { mode: MascotMorph; paused: boolean; replay?: number }) {
+    useMascotMorph(svg, mode, paused, replay, "round");
+    return null;
+  }
+  const render = (mode: MascotMorph, paused = false, replay = 0) => act(() => root.render(<Motion mode={mode} paused={paused} replay={replay} />));
   render("dots");
   cleanup = () => { act(() => root.unmount()); host.remove(); };
   const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
@@ -40,6 +43,15 @@ it("retargets rapid morphs without replacing the identity and restores its autho
   expect(svg.querySelector("[data-morph-core]")?.getAttribute("d")).toBe(body.getAttribute("d"));
   expect(Number(svg.querySelector<SVGGElement>(".mo-root")!.style.opacity)).toBeGreaterThan(.99);
   expect(svg.innerHTML).not.toMatch(/NaN|Infinity/);
+});
+
+it("keeps the current phase when retargeting a live morph", () => {
+  const { svg, render, advance } = mount();
+  render("wave");
+  advance(700);
+  const mid = svg.querySelector<SVGGElement>(".mo-root")!.style.transform;
+  render("dots");
+  expect(svg.querySelector<SVGGElement>(".mo-root")!.style.transform).toBe(mid);
 });
 
 it("parks paused and reduced-motion scenes and removes its artwork on unmount", () => {

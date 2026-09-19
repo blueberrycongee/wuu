@@ -106,10 +106,9 @@
 .channel-coordinator-member .agent-avatar-mark { width: 32px; height: 32px; }
 .channel-coordinator-activity { align-items: center; }
 
-/* Uploaded photos need the same activity cue as animated generated avatars. */
-.channel-animated-activity[data-activity-state="thinking"] .channel-response-status-avatar,
-.channel-animated-activity[data-activity-state="responding"] .channel-response-status-avatar,
-.channel-animated-activity[data-activity-state="thinking"] .channel-coordinator-mascot {
+/* Keep one live selector so thinking → responding does not restart the cue. */
+.channel-animated-activity[data-activity-live] .channel-response-status-avatar,
+.channel-animated-activity[data-activity-live] .channel-coordinator-mascot {
   animation: channel-activity-breathe 2400ms ease-in-out infinite;
 }
 .channel-animated-activity[data-activity-state="queued"] .channel-response-status-avatar,

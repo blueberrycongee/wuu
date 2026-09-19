@@ -10,6 +10,7 @@ import { ToolActivityMarker } from "./ToolActivityMarker";
 import { useI18n } from "./i18n";
 import { RemoteItemContent } from "./RemoteItemContent";
 import { collectTurnArtifacts, TurnInlineArtifactOutputs, TurnEndArtifactOutputs } from "./ArtifactOutputs";
+import { ENABLE_TURN_ARTIFACT_SUMMARY } from "./FeatureFlags";
 export type { JsonRecord } from "./ToolActivityHelpers";
 export {
   isRecord,
@@ -180,6 +181,6 @@ function RemoteToolResult({ item, complete }: { item: ThreadItem; complete: bool
   return <>
     <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 480, overflowY: "auto" }}>{text}</pre>
     <TurnInlineArtifactOutputs artifacts={artifacts} />
-    <TurnEndArtifactOutputs artifacts={artifacts} />
+    {ENABLE_TURN_ARTIFACT_SUMMARY ? <TurnEndArtifactOutputs artifacts={artifacts} /> : null}
   </>;
 }

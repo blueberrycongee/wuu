@@ -19,8 +19,20 @@ if (process.platform !== "darwin") {
 }
 
 const desktopRoot = resolve(__dirname, "..");
-const packageRoot = join(desktopRoot, "native", "cua-mac");
 const outDir = join(desktopRoot, "build", "bin");
+const cuaOutputs = [
+  join(outDir, "wuu-cua-mac"),
+  join(outDir, "wuu-cua-mac-pip"),
+  join(outDir, "wuu-cua-mac.build.json"),
+];
+
+if (process.env.WUU_SKIP_CUA_MAC === "1") {
+  for (const output of cuaOutputs) removeOutput(output);
+  console.log("skipping cua-mac helper build for this release");
+  process.exit(0);
+}
+
+const packageRoot = join(desktopRoot, "native", "cua-mac");
 const source = join(packageRoot, ".build", "release", "wuu-cua-mac");
 const destination = join(outDir, "wuu-cua-mac");
 const pipDestination = join(outDir, "wuu-cua-mac-pip");

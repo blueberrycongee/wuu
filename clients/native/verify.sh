@@ -15,8 +15,11 @@ go build -o clients/native/.build/testhost ./clients/native/testhost
 export WUU_NATIVE_TESTHOST="$PWD/clients/native/.build/testhost"
 go build -o clients/native/.build/testaccount ./clients/native/testaccount
 export WUU_NATIVE_TESTACCOUNT="$PWD/clients/native/.build/testaccount"
-go test ./internal/remote/account ./internal/remote/conversations -count=1
-go test ./internal/remote/host -run 'Test(FilterMobileChat|MobileChat|MobileActivity)' -count=1
+# CI runs these in Go check. Local and standalone verification remain complete.
+if [[ "${WUU_NATIVE_SKIP_GO_TESTS:-0}" != 1 ]]; then
+    go test ./internal/remote/account ./internal/remote/conversations -count=1
+    go test ./internal/remote/host -run 'Test(FilterMobileChat|MobileChat|MobileActivity)' -count=1
+fi
 
 if [[ "$platform" == ios || "$platform" == all ]]; then
     NSUnbufferedIO=YES swift test --package-path clients/native/ios

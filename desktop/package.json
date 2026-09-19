@@ -16,7 +16,6 @@
     "dev:direct": "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
     "lab:mascot": "vite dev/mascot --host 127.0.0.1 --port 5177",
     "build:cua-mac": "node scripts/build-cua-mac.cjs",
-    "build:speech-mac": "node scripts/build-speech-mac.cjs",
     "icon:generate": "bun scripts/generate-icon.ts",
     "build:core": "node scripts/build-core.cjs",
     "build:core:win": "node scripts/build-core.cjs --platform=win32",
@@ -25,7 +24,7 @@
     "dist:mac": "npm run build:core && npm run build:cua-mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish=never --config.electronDist=node_modules/electron/dist",
     "pack:win": "npm run build:core:win && npm run build && electron-builder --win dir --publish=never",
     "dist:win": "npm run build:core:win && npm run build && electron-builder --win nsis zip --publish=never",
-    "release:desktop": "node scripts/check-release-signing.cjs && npm run dist:mac",
+    "release:desktop": "node scripts/check-release-signing.cjs && WUU_SKIP_CUA_MAC=1 npm run dist:mac",
     "test": "npm run test:dev-launcher && npm run test:unit",
     "test:dev-launcher": "node scripts/test-dev-launcher.cjs",
     "test:unit": "vitest run --exclude=src/main/gitService.test.ts --exclude=src/main/remoteGit.test.ts && vitest run src/main/gitService.test.ts src/main/remoteGit.test.ts --maxWorkers=1 --minWorkers=1 --testTimeout=15000",
@@ -34,6 +33,7 @@
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",
+    "test:e2e:process-mascot-clip": "npm run build && electron scripts/process-mascot-clip-e2e.cjs",
     "test:e2e:window-resize": "npm run build && electron scripts/window-resize-perf-e2e.cjs",
     "test:e2e:document-composer-width": "npm run build && electron scripts/document-composer-width-e2e.cjs",
     "test:e2e:session-composer-width": "npm run build && electron scripts/session-composer-width-e2e.cjs",
@@ -75,7 +75,6 @@
     "directories": {
       "output": "release"
     },
-    "afterPack": "scripts/after-pack.cjs",
     "files": [
       "out/**/*",
       "vendor/zeron/LICENSE",

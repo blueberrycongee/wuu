@@ -3,19 +3,24 @@ import type { InitializeResult } from "../shared/protocol";
 import { initialState } from "./AppState";
 import {
   applyDraftRuntimeMemory,
+  clearDraftApproveForMeMemory,
   clearDraftPermissionMemory,
   clearDraftRuntimeMemory,
   lastEffortForRuntimeModel,
+  lastModelForProvider,
+  readDraftApproveForMeMemory,
   readDraftPermissionMemory,
   readDraftRuntimeMemory,
   resolveDraftRuntimeMemory,
   seedDraftRuntimeFromMemory,
+  writeDraftApproveForMeMemory,
   writeDraftPermissionMemory,
   writeDraftRuntimeMemory,
 } from "./DraftRuntimeMemory";
 
 const MEMORY_KEY = "wuu.desktop.lastDraftRuntime";
 const PERMISSION_KEY = "wuu.desktop.lastDraftPermissionMode";
+const APPROVE_FOR_ME_KEY = "wuu.desktop.lastDraftApproveForMe";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -203,6 +208,40 @@ describe("draft runtime memory", () => {
     expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-terra")).toBeUndefined();
   });
 
+  it("keeps each provider's model and effort while the other one is in use", () => {
+    writeDraftRuntimeMemory({ provider: "work", model: "claude-sonnet", effort: "low" });
+    writeDraftRuntimeMemory({ provider: "tokenhub", model: "gpt-5.6-sol", effort: "high" });
+    writeDraftRuntimeMemory({ provider: "work", model: "claude-opus", effort: "medium" });
+
+    expect(lastModelForProvider("tokenhub")).toBe("gpt-5.6-sol");
+    expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
+    expect(lastModelForProvider("work")).toBe("claude-opus");
+    // A provider's earlier model keeps its own effort instead of inheriting the
+    // one picked for its sibling.
+    expect(lastEffortForRuntimeModel("work", "claude-sonnet")).toBe("low");
+    expect(lastModelForProvider("unused-provider")).toBeUndefined();
+    expect(readDraftRuntimeMemory()).toEqual({
+      provider: "work",
+      model: "claude-opus",
+      effort: "medium",
+    });
+  });
+
+  it("reads the single-selection payload written by an older build", () => {
+    window.localStorage.setItem(
+      MEMORY_KEY,
+      JSON.stringify({ provider: "tokenhub", model: "gpt-5.6-sol", effort: "high" }),
+    );
+
+    expect(readDraftRuntimeMemory()).toEqual({
+      provider: "tokenhub",
+      model: "gpt-5.6-sol",
+      effort: "high",
+    });
+    expect(lastModelForProvider("tokenhub")).toBe("gpt-5.6-sol");
+    expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
+  });
+
   it("seeds a draft conversation without rewriting an open thread", () => {
     writeDraftRuntimeMemory({
       provider: "tokenhub",
@@ -324,5 +363,36 @@ describe("draft permission memory", () => {
     writeDraftPermissionMemory("unconfined");
     clearDraftPermissionMemory();
     expect(readDraftPermissionMemory()).toBeUndefined();
+  });
+});
+
+describe("draft Approve for me memory", () => {
+  it("inherits an explicit off choice across subsequent new conversations", () => {
+    writeDraftApproveForMeMemory(true);
+    writeDraftApproveForMeMemory(false);
+    expect(readDraftApproveForMeMemory()).toBe(false);
+    for (let index = 0; index < 2; index++) {
+      const next = seedDraftRuntimeFromMemory({
+        ...initialState,
+        initialized: initialized({ permissions: { mode: "standard", approve_for_me: true } }),
+      });
+      expect(next.initialized?.permissions).toEqual({ mode: "standard", approve_for_me: false });
+    }
+  });
+
+  it("seeds a new conversation with the last Approve for me pick", () => {
+    writeDraftApproveForMeMemory(true);
+
+    expect(readDraftApproveForMeMemory()).toBe(true);
+    expect(window.localStorage.getItem(APPROVE_FOR_ME_KEY)).toBe("1");
+    expect(
+      applyDraftRuntimeMemory(initialized({ permissions: { mode: "standard" } })).permissions,
+    ).toEqual({ mode: "standard", approve_for_me: true });
+  });
+
+  it("clears the Approve for me memory so the workspace default takes over again", () => {
+    writeDraftApproveForMeMemory(true);
+    clearDraftApproveForMeMemory();
+    expect(readDraftApproveForMeMemory()).toBeUndefined();
   });
 });

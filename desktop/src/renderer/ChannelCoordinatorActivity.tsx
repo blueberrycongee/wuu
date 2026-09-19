@@ -35,7 +35,9 @@ export function ChannelCoordinatorActivity({ status, agents, activeAgentIDs = []
   const needsAttention = status?.state === "failed" || status?.state === "needs_members";
   return <ChannelActivityPresence>
     {showCoordinator ? <div key="coordinator" className="channel-coordinator-activity channel-animated-activity"
-      data-activity-state={status?.state === "working" ? "thinking" : status?.state} role="status" aria-label={`Room · ${label}`} title={`Room · ${label}`}>
+      data-activity-state={status?.state === "working" ? "thinking" : status?.state}
+      data-activity-live={status?.state === "working" || undefined}
+      role="status" aria-label={`Room · ${label}`} title={`Room · ${label}`}>
       <button type="button" className="channel-activity-inspect" disabled={!onInspectCoordinator || !status?.session_ref}
         aria-label={`Room · ${label} · ${t("channels.executionTrace")}`} onClick={() => status?.session_ref && onInspectCoordinator?.(status.session_ref)}>
       <RoomCoordinatorAvatar activity={status?.state === "working" ? "thinking" : status?.state === "needs_members" ? "waiting" : status?.state ?? "idle"} />

@@ -75,7 +75,7 @@ export type ArchivedRoomView = {
   created_at: string;
 };
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
-import { ENABLE_REMOTE_CONTROL, ENABLE_VOICE_INPUT } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { SettingsRow } from "./SettingsRow";
 import { EngineSettingsSection } from "./EngineSettingsSection";
@@ -85,7 +85,6 @@ import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
-import { VoiceInputSettingsSection } from "./VoiceInputSettingsSection";
 import { SettingsPresentation } from "./plugins/SettingsPresentation";
 import {
   desktopPluginHost,
@@ -99,7 +98,6 @@ import type { SettingsPageHostAPI, SettingsPageSummaryV1, SettingsValueMapV1 } f
 
 export type SettingsPage =
   | "providers"
-  | "collaboration"
   | "general"
   | "advanced"
   | "usage"
@@ -890,7 +888,6 @@ export function SettingsView({
     ?? settingsPageTitle(activePage, t);
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
     Object.freeze({ id: "providers", label: settingsPageTitle("providers", t) }),
-    Object.freeze({ id: "collaboration", label: settingsPageTitle("collaboration", t) }),
     Object.freeze({ id: "advanced", label: settingsPageTitle("advanced", t) }),
     Object.freeze({ id: "general", label: settingsPageTitle("general", t) }),
     ...(ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot")
@@ -945,9 +942,6 @@ export function SettingsView({
               <div className="settings-nav-group-label">{t("settings.groupModel")}</div>
               <SettingsNavItem icon={<KeyRound className="icon-lg" />} active={activePage === "providers"} onClick={() => setActivePage("providers")}>
                 {t("settings.providers")}
-              </SettingsNavItem>
-              <SettingsNavItem icon={<Hash className="icon-lg" />} active={activePage === "collaboration"} onClick={() => setActivePage("collaboration")}>
-                {t("settings.collaboration")}
               </SettingsNavItem>
               <SettingsNavItem icon={<SlidersHorizontal className="icon-lg" />} active={activePage === "advanced"} onClick={() => setActivePage("advanced")}>
                 {t("settings.advanced")}
@@ -1122,12 +1116,6 @@ export function SettingsView({
                   onStartXAILogin={() => void startXAILogin()}
                 />
               </>
-            ) : activePage === "collaboration" ? (
-              <SettingsCollaborationPage
-                initialized={initialized}
-                running={running}
-                onSave={onAdvancedSave}
-              />
             ) : activePage === "advanced" ? (
               <>
                 <SettingsAdvancedPage
@@ -1672,61 +1660,6 @@ type AdvancedNumericField =
   | "maxSteps"
   | "temperature";
 
-function SettingsCollaborationPage({
-  initialized,
-  running,
-  onSave,
-}: {
-  initialized?: InitializeResult;
-  running: boolean;
-  onSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
-}): JSX.Element {
-  const { t } = useI18n();
-  const options = useMemo(() => {
-    const result = [{ value: "", label: t("settings.collaborationInheritDefault") }];
-    for (const provider of initialized?.providers ?? []) {
-      const models = provider.models?.length
-        ? provider.models
-        : [{ id: provider.model, display_name: provider.model }];
-      for (const model of models) {
-        if (!model.id) continue;
-        result.push({
-          value: `${provider.name}\u0000${model.id}`,
-          label: `${provider.name} · ${model.display_name || model.id}`,
-        });
-      }
-    }
-    return result;
-  }, [initialized?.providers, t]);
-  const roleValue = (name: string): string => {
-    const role = initialized?.model_roles?.find((candidate) => candidate.role === name);
-    return role && !role.inherited ? `${role.provider}\u0000${role.model}` : "";
-  };
-  const saveRole = (value: string): void => {
-    const [provider = "", model = ""] = value.split("\u0000");
-    void onSave({ verification_model: { provider, model } });
-  };
-  return (
-    <SettingsSection testID="settings-collaboration">
-      <SettingsCard>
-        <SettingsRow
-          title={t("settings.verificationModel")}
-          hint={t("settings.verificationModelDescription")}
-        >
-          <SelectMenu
-            triggerClassName="settings-select-trigger"
-            ariaLabel={t("settings.verificationModel")}
-            value={roleValue("verification")}
-            options={options}
-            disabled={running || !initialized}
-            onChange={saveRole}
-          />
-        </SettingsRow>
-      </SettingsCard>
-    </SettingsSection>
-  );
-}
-
 function SettingsAdvancedPage({
   initialized,
   running,
@@ -2136,14 +2069,6 @@ function SettingsGeneralPage({
           </> : null}
         </SettingsCard>
       </SettingsSection>
-
-      {ENABLE_VOICE_INPUT && hostSupports("startSpeechRecognition") ? (
-        <VoiceInputSettingsSection
-          polishAvailable={Boolean(
-            initialized && initialized.status !== "needs_setup",
-          )}
-        />
-      ) : null}
 
       <SettingsSection title={t("settings.behavior")} testID="settings-general">
         <SettingsCard>
@@ -2971,8 +2896,6 @@ function settingsPageTitle(page: SettingsPage, t: Translate): string {
   switch (page) {
     case "providers":
       return t("settings.providers");
-    case "collaboration":
-      return t("settings.collaboration");
     case "advanced":
       return t("settings.advanced");
     case "general":

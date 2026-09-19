@@ -18,9 +18,11 @@ import {
   atLatestScrollView,
   clampScrollTop,
   eventTargetsNestedAutoFollowScroll,
+  latestFollowScrollTop,
   maxScrollTop,
   observeAutoFollowResizeTargets,
   selectionIntersectsNode,
+  sessionTailSpacePx,
   setAutoFollowOverflowAnchor,
 } from "./AutoFollowScroll";
 import {
@@ -457,7 +459,11 @@ export function useConversationScrollState({
     if (smoothAutoFollowRef.current) return;
     // Content/layout following is not a user scroll. In particular, keyboard
     // animation must not repeatedly reveal the scrollbar as the viewport shrinks.
-    applyProgrammaticScroll(node, node.scrollHeight, true);
+    applyProgrammaticScroll(
+      node,
+      latestFollowScrollTop(node, sessionTailSpacePx(conversationPaneRef.current ?? node)),
+      true,
+    );
   }, [
     activePane,
     activeThreadID,
@@ -631,14 +637,18 @@ export function useConversationScrollState({
       const eased = 1 - (1 - progress) ** 3;
       // Share one deadline with the diff receipt's exit, even while its height
       // and the optimistic turn change. Layout signals must not restart easing.
-      node.scrollTop = startTop + (maxScrollTop(node) - startTop) * eased;
+      const targetTop = latestFollowScrollTop(
+        node,
+        sessionTailSpacePx(conversationPaneRef.current ?? node),
+      );
+      node.scrollTop = startTop + (targetTop - startTop) * eased;
       programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
       rememberActiveThreadScrollSnapshot(node, true);
       if (progress < 1) {
         submittedScrollFrameRef.current = window.requestAnimationFrame(step);
       } else {
-        applyProgrammaticScroll(node, node.scrollHeight, true, { revealScrollbar: true });
+        applyProgrammaticScroll(node, targetTop, true, { revealScrollbar: true });
       }
     };
     submittedScrollFrameRef.current = window.requestAnimationFrame(step);
@@ -1057,7 +1067,11 @@ export function useConversationScrollState({
       bottomOverscrollFromAwayRef.current = true;
       setNativeBottomOverscrollEnabled(node, true);
     } else {
-      applyProgrammaticScroll(node, node.scrollHeight, true);
+      applyProgrammaticScroll(
+        node,
+        latestFollowScrollTop(node, sessionTailSpacePx(conversationPaneRef.current ?? node)),
+        true,
+      );
       setNativeBottomOverscrollEnabled(node, false);
     }
     markSessionSwitch(activeThreadID, "scroll-restore-end");

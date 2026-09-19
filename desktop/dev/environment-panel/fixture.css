@@ -1,0 +1,39 @@
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper, #f6f6f3);
+}
+
+.environment-panel-preview {
+  display: grid;
+  gap: 40px;
+  padding: 32px;
+  justify-items: start;
+}
+
+.environment-panel-preview-card {
+  margin: 0;
+}
+
+.environment-panel-preview-card figcaption {
+  margin: 0 0 10px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.environment-panel-preview-host {
+  position: relative;
+  width: 328px;
+  height: 420px;
+}
+
+.environment-panel-preview-host > .environment-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 328px;
+  max-height: none;
+  animation: none;
+}

@@ -64,6 +64,23 @@ export function useAssistantTurnPresentation(
       return;
     }
 
+    // A completed narration followed by a live tool/reasoning item is a
+    // hand-off within the same process surface. Waiting for the structural
+    // debounce here leaves the old layout on screen for one paint; the
+    // ResizeObserver then re-anchors the outer conversation when the new row
+    // finally mounts, which is visible as a one-frame up/down scroll wobble.
+    // Publish this active process continuation in the current layout commit.
+    if (
+      !presented?.hasAnswer &&
+      !display.hasAnswer &&
+      !presentedStreamingRef.current &&
+      displayHasStreamingEntry(display)
+    ) {
+      clearPending();
+      publish(display);
+      return;
+    }
+
     pendingDisplayRef.current = display;
     pendingStructureRef.current = nextStructure;
     pendingContentRef.current = nextContent;

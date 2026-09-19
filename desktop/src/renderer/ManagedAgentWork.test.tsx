@@ -28,6 +28,10 @@ const pointer = (node: Element, type: "pointerover" | "pointerout", relatedTarge
 it("previews at most five sessions with running first, then recent history, without paths or native titles", () => {
   render(); pointer(trigger(), "pointerover");
   expect(titles()).toEqual(["Session 3", "Session 0", "Session 7", "Session 6", "Session 5"]);
+  // Running rows carry the panel's status glyph, so the card repeats neither
+  // the trigger label nor a per-row "running" string.
+  expect(document.querySelectorAll(".managed-session-preview-item .managed-session-spinner")).toHaveLength(2);
+  expect(card()?.textContent).toBe(`${titles().join("")}${t("channels.managedSessions.all")}`);
   expect(card()?.textContent).not.toContain("/private/");
   expect(trigger().hasAttribute("title")).toBe(false);
   expect(card()?.querySelector("[title]")).toBeNull();

@@ -60,7 +60,7 @@ import type {
   PermissionMode
 } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
-import { lastEffortForRuntimeModel } from "./DraftRuntimeMemory";
+import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
 import {
   codexEffortOptions,
   displayCodexModelName,
@@ -919,7 +919,12 @@ export function RuntimeModelMenu({
                       openView("models");
                       return;
                     }
-                    const model = group.models[0];
+                    // Reuse the model this provider was last used with so a
+                    // provider switch does not silently drop back to the catalog
+                    // default; a model that disappeared falls back to it.
+                    const remembered = lastModelForProvider(group.provider.name);
+                    const model =
+                      group.models.find((item) => item.id === remembered) ?? group.models[0];
                     if (model && !selected) {
                       selectModel(
                         group.provider.name,
@@ -1394,6 +1399,37 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
   }
 }
 
+type AccessOption = {
+  key: string;
+  mode: PermissionMode;
+  approveForMe: boolean;
+  label: string;
+  tone: ChipTone;
+};
+
+function accessOptions(engine: string | undefined, includeApproveForMe: boolean): AccessOption[] {
+  const options: AccessOption[] = [];
+  for (const option of permissionModeOptions(engine)) {
+    options.push({
+      key: option.mode,
+      mode: option.mode,
+      approveForMe: false,
+      label: option.label,
+      tone: option.tone,
+    });
+    if (includeApproveForMe && option.mode === "standard") {
+      options.push({
+        key: "approve_for_me",
+        mode: "standard",
+        approveForMe: true,
+        label: translate("runtime.permission.approveForMe"),
+        tone: "neutral",
+      });
+    }
+  }
+  return options;
+}
+
 export function AccessMenu({
   permissions,
   engine,
@@ -1403,27 +1439,32 @@ export function AccessMenu({
   permissions?: PermissionSummary;
   engine?: string;
   disabled: boolean;
-  onSelect: (mode: PermissionMode) => void;
+  onSelect: (mode: PermissionMode, approveForMe?: boolean) => void;
 }): JSX.Element {
   useI18n();
   const mode = permissionModeFromSummary(permissions);
-  const options = permissionModeOptions(engine);
+  const approveForMeOn = mode === "standard" && Boolean(permissions?.approve_for_me);
+  const showApproveForMe = (engine || "wuu") === "wuu";
   return (
     <div className="composer-context-menu access-menu" role="menu">
-      {options.map((option) => (
-        <button
-          key={option.mode}
-          className={`permission-mode-option ${option.tone}`}
-          role="menuitemradio"
-          aria-checked={mode === option.mode}
-          aria-label={option.label}
-          type="button"
-          disabled={disabled}
-          onClick={() => onSelect(option.mode)}
-        >
-          <strong>{option.label}</strong>
-        </button>
-      ))}
+      {accessOptions(engine, showApproveForMe).map((option) => {
+        const selected = mode === option.mode && option.approveForMe === approveForMeOn;
+        return (
+          <button
+            key={option.key}
+            className={`permission-mode-option ${option.tone}`}
+            role="menuitemradio"
+            aria-checked={selected}
+            aria-label={option.label}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelect(option.mode, showApproveForMe ? option.approveForMe : undefined)}
+          >
+            <strong>{option.label}</strong>
+            {selected ? <Check aria-hidden="true" /> : null}
+          </button>
+        );
+      })}
     </div>
   );
 }

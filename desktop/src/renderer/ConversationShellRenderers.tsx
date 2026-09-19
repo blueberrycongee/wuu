@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import {
+  SquarePen,
   Info,
 } from "lucide-react";
 import type {
@@ -292,6 +293,7 @@ export function ConversationTitleContent({
   pluginHost,
   workbenchController,
 }: ConversationTitleContentProps): JSX.Element {
+  const { t } = useI18n();
   const controller = workbenchController ?? desktopWorkbenchController;
   const workbenchSnapshot = useSyncExternalStore(
     controller.subscribe,
@@ -333,7 +335,19 @@ export function ConversationTitleContent({
         onCloseAdditionalTab={(tabId) => void controller.closeView(tabId)}
       />
   ) : (
-    <h1>{activeTitle}</h1>
+    <div className="conversation-title-heading">
+      <button
+        className="icon-button session-tab-new"
+        type="button"
+        aria-label={t("tabs.newConversation")}
+        title={t("tabs.newConversation")}
+        disabled={!state.activeContext}
+        onClick={onStartNewThread}
+      >
+        <SquarePen aria-hidden="true" />
+      </button>
+      <h1>{activeTitle}</h1>
+    </div>
   );
   const tabState = { ...state, threads: crossWorkspaceThreads };
   const tabs = sessionTabsVisible

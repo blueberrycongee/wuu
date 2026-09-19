@@ -846,6 +846,39 @@ describe("ChannelView", () => {
     expect(status?.textContent).not.toContain("Beta");
   });
 
+  it("keeps the activity capsule when a live response replaces optimistic activity", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = createApi();
+      let result: { messages: ChannelMessage[]; responses?: ChannelResponse[] } = { messages: [] };
+      api.listChannelMessages = vi.fn(async () => result);
+      Object.defineProperty(window, "wuu", { configurable: true, value: api });
+      root = createRoot(container);
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      const status = container.querySelector(".channel-response-status");
+      expect(status?.textContent).toContain("Alpha");
+      result = {
+        messages: [],
+        responses: [{
+          id: "reply-live",
+          room_id: "room-1",
+          agent_id: "agent-1",
+          session_ref: "room-session",
+          turn_id: "turn-live",
+          state: "thinking",
+          body: "",
+          created_at: "2026-07-23T00:02:00Z",
+        }],
+      };
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(container.querySelector(".channel-response-status")).toBe(status);
+      expect(status?.hasAttribute("data-activity-live")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps an active room member visible when cross-server activity has no room scope", async () => {
     const unscopedAgent: NamedAgent = {
       ...agents[1],
@@ -1020,11 +1053,11 @@ describe("ChannelView", () => {
     expect(detailsToggle).not.toBeNull();
     act(() => detailsToggle?.click());
     act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
-    const detailsDialog = document.querySelector(".sidebar-name-dialog");
-    expect(detailsDialog?.textContent).toContain("群聊详情");
-    expect(detailsDialog?.textContent).toContain("群成员");
-    expect(detailsDialog?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
-    const roomNameInput = detailsDialog?.querySelector<HTMLInputElement>(".channel-room-settings-section input");
+    const detailsPanel = container.querySelector(".channel-settings-panel");
+    expect(detailsPanel?.textContent).toContain("群聊详情");
+    expect(detailsPanel?.textContent).toContain("群成员");
+    expect(detailsPanel?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
+    const roomNameInput = detailsPanel?.querySelector<HTMLInputElement>(".channel-room-settings-section input");
     act(() => {
       setInputValue(roomNameInput!, "renamed group");
       roomNameInput?.focus();
@@ -1039,12 +1072,8 @@ describe("ChannelView", () => {
     expect(container.querySelector(".channel-conversation")?.classList.contains("details-open")).toBe(false);
     expect(container.querySelector(".channel-room-main")).not.toBeNull();
     expect(container.querySelector(".channel-conversation-heading")).toBeNull();
-    const detailsOverlay = document.querySelector<HTMLElement>(".sidebar-name-dialog-overlay-drawer");
-    act(() => detailsOverlay?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
-    expect(detailsDialog?.classList.contains("closing")).toBe(true);
-    expect(document.querySelector(".sidebar-name-dialog")).not.toBeNull();
-    act(() => detailsDialog?.dispatchEvent(new Event("animationend", { bubbles: true })));
-    expect(document.querySelector(".sidebar-name-dialog")).toBeNull();
+    act(() => container.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+    expect(container.querySelector(".channel-settings-panel")).toBeNull();
     act(() => root?.render(<ChannelView selectedRoomID="room-2" />));
     await settle();
     expect(api.listChannelMessages).toHaveBeenCalledWith({ room_id: "room-2", limit: 500 });
@@ -1234,6 +1263,11 @@ describe("ChannelView", () => {
         id: "message-5", room_id, seq: 5, author_type: "agent" as const,
         author_id: "agent-2", kind: "text" as const, body: "Another agent replies",
         created_at: "2026-07-23T00:10:10Z",
+      }, {
+        id: "message-6", room_id, seq: 6, author_type: "agent" as const,
+        author_id: "agent-2", kind: "text" as const, body: "Same speaker, later turn",
+        created_at: "2026-07-23T00:10:20Z",
+        source_session_ref: "work-session", source_turn_id: "turn-2",
       }],
     }));
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
@@ -1242,17 +1276,25 @@ describe("ChannelView", () => {
     await settle();
 
     const renderedMessages = container.querySelectorAll<HTMLElement>(".channel-message-stream > .channel-message");
-    expect(renderedMessages).toHaveLength(5);
+    expect(renderedMessages).toHaveLength(6);
     expect(renderedMessages[0].querySelector(".channel-agent-avatar")).not.toBeNull();
     expect(renderedMessages[0].querySelector(".channel-author-mention")?.textContent).toBe("@Alpha");
     expect(renderedMessages[1].textContent).toContain("Follow-up update");
+    expect(renderedMessages[1].classList.contains("channel-message-continuation")).toBe(true);
+    expect(renderedMessages[1].querySelector(".chat-avatar-slot")).not.toBeNull();
     expect(renderedMessages[1].querySelector(".channel-agent-avatar")).toBeNull();
     expect(renderedMessages[1].querySelector(".channel-author-mention")).toBeNull();
+    expect(renderedMessages[2].classList.contains("channel-message-continuation")).toBe(false);
     expect(renderedMessages[2].querySelector(".channel-agent-avatar")).not.toBeNull();
     expect(renderedMessages[2].querySelector(".channel-author-mention")?.textContent).toBe("@Alpha");
     expect(container.querySelectorAll(".channel-message-stream > time")).toHaveLength(2);
     expect(renderedMessages[3].querySelector(".channel-human-avatar")).toBeNull();
+    expect(renderedMessages[3].classList.contains("channel-message-continuation")).toBe(false);
     expect(renderedMessages[4].querySelector(".channel-author-mention")?.textContent).toBe("@Beta");
+    expect(renderedMessages[5].classList.contains("channel-message-continuation")).toBe(true);
+    expect(renderedMessages[5].querySelector(".chat-avatar-slot")).not.toBeNull();
+    expect(renderedMessages[5].querySelector(".channel-agent-avatar")).toBeNull();
+    expect(renderedMessages[5].querySelector(".channel-author-mention")).toBeNull();
   });
 
   it("resizes managed sessions without replacing the running activity or draft and restores the width after reopening", async () => {
@@ -1321,65 +1363,23 @@ describe("ChannelView", () => {
     expect(document.body.style.cursor).not.toBe("col-resize");
   });
 
-  it("resizes inline settings without replacing the chat, clamps width, and ends cancelled drags", async () => {
+  it("keeps conversation settings as a floating panel over the chat", async () => {
     Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
     const dm: ChannelRoom = { ...rooms[0], kind: "dm", members: [rooms[0].members[1]] };
     root = createRoot(container);
     act(() => root?.render(<ChannelView directoryAgents={agents} directoryRooms={[dm]} selectedRoomID={dm.id} />));
     await settle();
-    const view = container.querySelector<HTMLElement>(".channel-view")!;
-    Object.defineProperty(view, "clientWidth", { configurable: true, value: 1000 });
     const stream = container.querySelector('[role="log"]');
     const toggle = container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")!;
     act(() => toggle.click());
-    const separator = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
-    expect(separator.hidden).toBe(false);
-    const width = () => Number(separator.getAttribute("aria-valuenow"));
-    const pointer = (target: EventTarget, type: string, x: number) => act(() => {
-      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 });
-      Object.defineProperty(event, "pointerId", { value: 1 });
-      target.dispatchEvent(event);
-    });
-    const start = width();
-    pointer(separator, "pointerdown", 660);
-    pointer(window, "pointermove", 600);
-    expect(width()).toBe(start + 60);
-    pointer(window, "pointermove", -1000);
-    expect(width()).toBe(Number(separator.getAttribute("aria-valuemax")));
-    pointer(window, "pointermove", 2000);
-    expect(width()).toBe(Number(separator.getAttribute("aria-valuemin")));
-    pointer(window, "pointercancel", 2000);
-    const cancelledWidth = width();
-    pointer(window, "pointermove", 600);
-    expect(width()).toBe(cancelledWidth);
-    expect(document.body.style.cursor).not.toBe("col-resize");
-    act(() => separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
-    expect(width()).toBe(cancelledWidth + 16);
-    act(() => separator.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    expect(width()).toBe(start);
+    const panel = container.querySelector("aside.channel-settings-panel");
+    expect(panel).not.toBeNull();
+    expect(container.querySelector('[role="separator"][aria-controls="channel-conversation-settings"]')).toBeNull();
+    expect(container.querySelector(".channel-view")?.classList.contains("has-agent-settings")).toBe(false);
     expect(container.querySelector('[role="log"]')).toBe(stream);
-    pointer(separator, "pointerdown", 660);
+    expect(container.querySelector(".channel-room-main")?.hasAttribute("inert")).toBe(false);
     act(() => toggle.click());
-    expect(document.body.style.cursor).not.toBe("col-resize");
-    pointer(window, "pointermove", 500);
-    act(() => toggle.click());
-    expect(container.querySelector('[aria-controls="channel-conversation-settings"][role="separator"]')?.getAttribute("aria-valuenow")).toBe(String(start));
-    const reopened = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
-    pointer(reopened, "pointerdown", 660);
-    pointer(window, "pointermove", 580);
-    pointer(window, "pointerup", 580);
-    pointer(window, "pointermove", 500);
-    expect(reopened.getAttribute("aria-valuenow")).toBe(String(start + 80));
-    act(() => toggle.click());
-    Object.defineProperty(view, "clientWidth", { configurable: true, value: 830 });
-    act(() => toggle.click());
-    const constrained = container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!;
-    act(() => constrained.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
-    expect(Number(constrained.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(830 - 400);
-    act(() => toggle.click());
-    Object.defineProperty(view, "clientWidth", { configurable: true, value: 800 });
-    act(() => toggle.click());
-    expect(container.querySelector<HTMLElement>('[role="separator"][aria-controls="channel-conversation-settings"]')!.hidden).toBe(true);
+    expect(container.querySelector("aside.channel-settings-panel")).toBeNull();
   });
 
   it("opens the DM agent settings without replacing the chat and keeps a failed draft for retry", async () => {
@@ -2106,26 +2106,26 @@ describe("ChannelView", () => {
     expect(manageResearch).not.toBeNull();
     act(() => manageResearch?.click());
     act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
-    const detailsDialog = document.querySelector(".sidebar-name-dialog");
-    expect(detailsDialog?.textContent).toContain("群聊详情");
-    expect(document.querySelector(".sidebar-name-dialog-overlay-drawer")).not.toBeNull();
-    expect(detailsDialog?.classList.contains("sidebar-name-dialog-drawer")).toBe(true);
-    expect(detailsDialog?.textContent).toContain("群成员");
-    expect(detailsDialog?.textContent).not.toContain("群公告");
-    expect(detailsDialog?.querySelectorAll(".channel-room-member-row")).toHaveLength(0);
-    expect(detailsDialog?.textContent).toContain("危险操作");
-    expect(detailsDialog?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
-    const addMemberButton = detailsDialog?.querySelector<HTMLButtonElement>(".channel-room-member-add");
+    const detailsPanel = container.querySelector(".channel-settings-panel");
+    expect(detailsPanel?.textContent).toContain("群聊详情");
+    expect(document.querySelector(".sidebar-name-dialog-overlay-drawer")).toBeNull();
+    expect(detailsPanel?.classList.contains("sidebar-name-dialog-drawer")).toBe(false);
+    expect(detailsPanel?.textContent).toContain("群成员");
+    expect(detailsPanel?.textContent).not.toContain("群公告");
+    expect(detailsPanel?.querySelectorAll(".channel-room-member-row")).toHaveLength(0);
+    expect(detailsPanel?.textContent).toContain("危险操作");
+    expect(detailsPanel?.querySelector(".sidebar-name-dialog-actions")).toBeNull();
+    const addMemberButton = detailsPanel?.querySelector<HTMLButtonElement>(".channel-room-member-add");
     expect(addMemberButton?.textContent).toContain("新增成员");
     act(() => addMemberButton?.click());
     const memberDialog = document.querySelector<HTMLFormElement>(".channel-room-member-dialog");
     expect(memberDialog?.textContent).toContain("添加 Agent");
     expect(memberDialog?.classList.contains("sidebar-name-dialog-drawer")).toBe(false);
-    expect(document.querySelectorAll('.sidebar-name-dialog[role="dialog"]')).toHaveLength(2);
+    expect(document.querySelectorAll('.sidebar-name-dialog[role="dialog"]')).toHaveLength(1);
     expect(memberDialog?.querySelector(".sidebar-name-dialog-actions")).not.toBeNull();
     expect(memberDialog?.querySelector(".select-menu")).toBeNull();
-    expect(detailsDialog?.getAttribute("aria-hidden")).toBe("true");
-    expect(detailsDialog?.textContent).toContain("群聊详情");
+    expect(detailsPanel?.getAttribute("aria-hidden")).toBe("true");
+    expect(detailsPanel?.textContent).toContain("群聊详情");
     const addAgent = memberDialog?.querySelector<HTMLButtonElement>('.channel-member-picker-option[role="option"]');
     expect(addAgent).not.toBeNull();
     act(() => addAgent?.click());
@@ -2140,7 +2140,7 @@ describe("ChannelView", () => {
     });
 
     expect(document.querySelector(".channel-room-member-dialog")).toBeNull();
-    expect(document.querySelector(".sidebar-name-dialog-drawer")?.textContent).toContain("群聊详情");
+    expect(container.querySelector(".channel-settings-panel")?.textContent).toContain("群聊详情");
     const confirmDelete = vi.spyOn(window, "confirm").mockReturnValue(true);
     const deleteButton = document.querySelector<HTMLButtonElement>(".channel-room-danger-zone button");
     expect(deleteButton?.textContent).toBe("删除频道");
@@ -2163,9 +2163,9 @@ describe("ChannelView", () => {
     act(() => container.querySelector<HTMLButtonElement>(".channel-room-settings-trigger")?.click());
     act(() => container.querySelector<HTMLButtonElement>(".channel-settings-manage")?.click());
 
-    const detailsDialog = document.querySelector(".sidebar-name-dialog");
-    expect(detailsDialog?.querySelectorAll(".channel-room-member-row")).toHaveLength(2);
-    const alphaRow = Array.from(detailsDialog?.querySelectorAll<HTMLDivElement>(".channel-room-member-row") ?? [])
+    const detailsPanel = container.querySelector(".channel-settings-panel");
+    expect(detailsPanel?.querySelectorAll(".channel-room-member-row")).toHaveLength(2);
+    const alphaRow = Array.from(detailsPanel?.querySelectorAll<HTMLDivElement>(".channel-room-member-row") ?? [])
       .find((row) => row.textContent?.includes("Alpha"));
     expect(alphaRow).not.toBeNull();
     const removeButton = alphaRow?.querySelector<HTMLButtonElement>('button[aria-label="移除 Alpha"]');
@@ -2417,7 +2417,7 @@ describe("ChannelView", () => {
     expect(api.readChannelSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRef: "original-session" }));
     const panel = container.querySelector<HTMLElement>(".session-inspector-extension")!;
     expect(panel.textContent).toContain("Original evidence");
-    expect(panel.querySelector(".channel-session-meta")?.textContent).toBe("完成");
+    expect(panel.querySelector(".session-inspector-header .channel-session-meta")).toBeNull();
     vi.useFakeTimers();
     try {
       await act(async () => { panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
@@ -2442,9 +2442,14 @@ describe("ChannelView", () => {
       expect(container.querySelector(".channel-response")).toBeNull();
       expect(container.querySelector(".channel-response-status")?.textContent).toContain("Alpha");
       expect(container.querySelector(".channel-room-header [role=status]")).toBeNull();
+      const status = container.querySelector(".channel-response-status");
+      expect(status?.hasAttribute("data-activity-live")).toBe(true);
       responses = [{ ...responses[0], state: "responding", body: "Here is **the answer**" }];
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(container.querySelector(".channel-message-stream")?.textContent).not.toContain("the answer");
+      expect(container.querySelector(".channel-response-status")).toBe(status);
+      expect(status?.getAttribute("data-activity-state")).toBe("responding");
+      expect(status?.hasAttribute("data-activity-live")).toBe(true);
       expect(container.querySelector('.channel-activity-region [data-agent-avatar-id="agent-1"]')?.getAttribute("data-agent-avatar-state")).toBe("responding");
       messages = [{ id: "reply-live", room_id: "room-1", seq: 1, author_type: "agent", author_id: "agent-1", kind: "text", body: responses[0].body, created_at: responses[0].created_at }];
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
@@ -2476,12 +2481,15 @@ describe("ChannelView", () => {
       expect(container.querySelector(".channel-message-stream .channel-response-status")).toBeNull();
       const activityNames = (): string[] => Array.from(container.querySelectorAll(".channel-activity-slot:not([inert]) strong"), (node) => node.textContent ?? "");
       expect(activityNames()).toEqual(["Alpha", "Beta"]);
+      const activitySlots = (): HTMLElement[] => Array.from(container.querySelectorAll(".channel-activity-slot:not([inert])"));
+      const slotsBefore = activitySlots();
       const authors = (): string[] => Array.from(container.querySelectorAll(".channel-message-stream .channel-author-mention"), (node) => (node.textContent ?? "").replace(/^@/, ""));
       const refresh = async (): Promise<void> => { await act(async () => { await vi.advanceTimersByTimeAsync(2_000); }); };
       responses = [alpha, { ...beta, state: "responding", body: "Beta starts first" }];
       await refresh();
       expect(authors()).toEqual([]);
       expect(activityNames()).toEqual(["Alpha", "Beta"]);
+      expect(activitySlots()).toEqual(slotsBefore);
       responses = [{ ...alpha, state: "responding", body: "Alpha starts second" }, responses[1]];
       await refresh();
       expect(authors()).toEqual([]);

@@ -36,14 +36,14 @@
   /* Location uses the same neutral surface as tabs and settings navigation. */
   --sidebar-row-selected-bg: var(--selection-surface);
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.24);
-  --sidebar-project-loading-notch: rgba(95, 126, 104, 0.22);
+  --sidebar-project-loading-notch: rgba(17, 19, 21, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
   --sidebar-thread-row-dot-default: var(--ink-overlay-18);
   --sidebar-thread-row-dot-hover: var(--ink-overlay-18);
   --sidebar-thread-row-dot-active: var(--ink-overlay-18);
-  --sidebar-thread-spinner-notch: rgba(95, 126, 104, 0.22);
+  --sidebar-thread-spinner-notch: rgba(17, 19, 21, 0.18);
   --sidebar-thread-child-agent-separator: var(--ink-overlay-8);
   --sidebar-thread-child-agent-hover-bg: rgba(95, 126, 104, 0.08);
   --sidebar-thread-child-agent-focus-shadow: rgba(95, 126, 104, 0.18);
@@ -780,13 +780,30 @@
 }
 
 .traffic-spacer {
-  /* macOS: reserve room for traffic lights (trafficLightPosition ~18,15)
-   * so the brand row sits under them. Other desktops put window controls
-   * on the right (or draw them in the titlebar), so keep only a short
-   * drag strip here and let the brand sit higher. */
-  height: 46px;
+  /* Keep window controls and sidebar navigation in the first chrome row.
+   * 48px matches the conversation/settings titlebar so the collapse
+   * toggle shares the traffic-light center at 24px. */
+  position: relative;
+  display: flex;
+  height: 48px;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: var(--sidebar-row-pad-x);
   -webkit-app-region: drag;
+}
+
+.traffic-spacer .sidebar-collapse-toggle {
+  position: relative;
+  z-index: 1;
+  /* Hold the header toggle to the sidebar's trailing accessory column (bell,
+   * section actions, row actions, account chevron) instead of a local 30px
+   * box: the shared control size keeps the glyph, hit target, and hover pill
+   * centered on that one column at every appearance scale. */
+  width: var(--sidebar-row-action-size);
+  height: var(--sidebar-row-action-size);
+  padding: 0;
+  -webkit-app-region: no-drag;
 }
 
 :root[data-platform="linux"] .traffic-spacer,
@@ -804,12 +821,11 @@
 }
 
 .sidebar-brand {
-  /* Three tracks so the wordmark and stacked mode labels stay put when the
-   * bell mounts or unmounts (harness vs collaboration). Column 3 is reserved
-   * even when the button is absent. */
+  /* Two tracks so the wordmark stays put when the bell mounts or unmounts.
+   * Column 2 is reserved even when the button is absent. */
   display: grid;
   flex-shrink: 0;
-  grid-template-columns: auto minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   column-gap: 8px;
   min-height: 44px;
@@ -826,65 +842,12 @@
   line-height: 1;
 }
 
-.sidebar-mode-switch {
-  display: flex;
-  grid-column: 2;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 1px;
-  transform: none;
-  -webkit-app-region: no-drag;
-}
-
-.sidebar-mode-option {
-  min-width: 0;
-  max-width: 100%;
-  height: auto;
-  padding: 0;
-  overflow: hidden;
-  background: transparent;
-  color: var(--ink-strong);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.03em;
-  line-height: 1.05;
-  opacity: 0.32;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color 120ms ease, opacity 120ms ease;
-}
-
-.sidebar-mode-option:hover,
-.sidebar-mode-option:focus-visible {
-  color: var(--ink-strong);
-  opacity: 0.68;
-}
-
-.sidebar-mode-option[aria-pressed="true"] {
-  color: var(--ink-strong);
-  opacity: 1;
-}
-
-.sidebar-mode-option-static {
-  color: var(--ink-strong);
-  opacity: 1;
-}
-
-.sidebar-brand-descriptor {
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.03em;
-  line-height: 1;
-}
-
 .sidebar-notifications-button {
   display: grid;
   width: 32px;
   height: 32px;
   position: relative;
-  grid-column: 3;
+  grid-column: 2;
   justify-self: end;
   place-items: center;
   /* Keep the larger bell hit target centered on the row accessory column. */
@@ -1221,7 +1184,7 @@
   align-items: center;
   justify-content: flex-end;
   flex: 0 0 auto;
-  min-height: 46px;
+  min-height: 48px;
   padding: 0 4px 0 max(4px, var(--window-controls-inset-left));
   -webkit-app-region: drag;
 }
@@ -1299,14 +1262,26 @@
   display: none;
 }
 
-.collaboration-sidebar-section {
+.collaboration-sidebar-section,
+.sidebar-functional-group[data-functional-group-id="pinned"] {
   --collaboration-contact-avatar-size: 24px;
 }
 
-.collaboration-sidebar-section .collaboration-contact-row {
+.collaboration-sidebar-section .collaboration-contact-row,
+.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-row {
+  width: 100%;
   min-height: var(--sidebar-row-height);
   column-gap: var(--sidebar-nav-column-gap);
   padding: 4px var(--sidebar-row-pad-x);
+}
+
+/* Shared rows keep a 24px slot so names stay put. Round mascots only
+ * paint 78 of their 100-unit canvas, so the silhouette sat right of the
+ * 16px nav glyphs. Hang that painted edge from the glyph's left edge. */
+.collaboration-sidebar-section .collaboration-contact-avatar,
+.sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-avatar {
+  justify-self: start;
+  margin-inline-start: calc(var(--collaboration-contact-avatar-size) * ((78 / 100) - 1) / 2);
 }
 
 .collaboration-contact-row {
@@ -1382,12 +1357,20 @@
 
 .collaboration-contact-unread {
   flex-shrink: 0;
-  min-width: 18px;
+  /* Same compact box as the collapsed-rail counter: a 16px pill keeps the
+   * digit visually centered next to a 14px label, while a 18px pill plus
+   * inherited leading read as a blob twice the label's weight. Line-height
+   * is pinned so a row label's multiplier cannot resize the badge and so
+   * the digit sits on the pill's optical center. */
+  min-width: 16px;
+  height: 16px;
+  line-height: 16px;
   border-radius: var(--radius-pill);
-  padding: 2px 5px;
+  padding: 0 4px;
   background: var(--info);
   color: var(--sidebar-session-status-unread-fg);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   font-weight: var(--weight-semibold);
   text-align: center;
 }
@@ -1456,6 +1439,7 @@
   background: var(--info);
   color: var(--ink-on-info);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   line-height: 14px;
 }
 .collaboration-sidebar-rail .collaboration-sidebar-footer {
@@ -1561,7 +1545,10 @@
 }
 
 /* Give sidebar labels the primary text contrast while keeping icons and
- * secondary headings quieter. Semantic ink also follows the dark theme. */
+ * secondary headings quieter. Group labels (Pinned / Folders / Workspaces)
+ * and list-footer actions sit one step below icon chrome so they read as
+ * structure, not as peers of the conversation names. Semantic ink also
+ * follows the dark theme. */
 .sidebar-content :is(
   .nav-item > span,
   .project-row-name,
@@ -1576,7 +1563,7 @@
   .thread-list-more,
   .thread-list-collapse-btn
 ) {
-  color: var(--ink-soft);
+  color: var(--ink-muted);
 }
 
 /* 协作 section rows reuse the full session-row anatomy
@@ -1875,12 +1862,19 @@
   padding-left: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
 }
 
+.pinned-sortable-thread:has(.collaboration-contact-row) {
+  display: flex;
+  min-width: 0;
+}
+
 .pinned-sortable-thread .thread-row-main,
+.pinned-sortable-thread .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.can-reorder {
   cursor: grab;
 }
 
 .pinned-sortable-thread[data-dragging="true"] .thread-row-main,
+.pinned-sortable-thread[data-dragging="true"] .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.dragging {
   cursor: grabbing;
 }
@@ -2252,7 +2246,7 @@
    * peers in the sidebar do not imply different levels of activity.
    */
   border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--sidebar-accent) 65%, transparent);
+    color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--sidebar-project-loading-notch);
   border-radius: var(--radius-pill);
   animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
@@ -2582,11 +2576,11 @@
    * Session-row running-state spinner. Same inverted "light notch on a
    * dark ring" treatment as `.session-tab.running .session-tab-status`
    * and `.project-row .project-row-loading` — heavy dark mass anchors
-   * the rotation at this 9px size. 65% of `--sidebar-accent` for the
-   * ring keeps it from going inky against the sidebar surface.
+   * the rotation at this 9px size. 65% of `--ink-strong` for the ring
+   * keeps it from going inky against the sidebar surface.
    */
   border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--sidebar-accent) 65%, transparent);
+    color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--sidebar-thread-spinner-notch);
   border-radius: var(--radius-pill);
   animation: wuu-spin var(--session-loading-spin-duration) linear infinite;

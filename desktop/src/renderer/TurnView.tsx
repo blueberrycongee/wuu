@@ -12,8 +12,9 @@ import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
+import { TurnArtifactSummaryPresentation } from "./ArtifactOutputs";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
-import { ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
+import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { TurnEventNotice, StreamStatusNotice, StreamReconnectNotice } from "./TurnNotice";
 import { turnEventForTurn } from "./TurnEvents";
@@ -215,6 +216,21 @@ function TurnContent({
       onCollapseComplete={onCollapseComplete}
     />
   ) : undefined;
+  const artifactSummary = ENABLE_TURN_ARTIFACT_SUMMARY ? (
+    <TurnArtifactSummaryPresentation
+      turn={turn}
+      isLatestTurn={Boolean(isLatestTurn)}
+      cwd={cwd}
+      onOpenFile={onOpenFile}
+      onCollapseComplete={onCollapseComplete}
+    />
+  ) : undefined;
+  const outputSummary = editSummary || artifactSummary ? (
+    <>
+      {editSummary}
+      {artifactSummary}
+    </>
+  ) : undefined;
 
   return (
     <section
@@ -240,10 +256,10 @@ function TurnContent({
           onCollapseComplete={onCollapseComplete}
           onOpenAgent={onOpenAgent}
           editSummaryCard={
-            !incomplete && runActionAttachedToMessage ? editSummary : undefined
+            !incomplete && runActionAttachedToMessage ? outputSummary : undefined
           }
           trailingContent={
-            !incomplete && !runActionAttachedToMessage ? editSummary : undefined
+            !incomplete && !runActionAttachedToMessage ? outputSummary : undefined
           }
         />
       ) : null}
@@ -265,7 +281,7 @@ function TurnContent({
         </div>
       ) : null}
       {event ? <TurnEventNotice event={event} /> : null}
-      {incomplete ? editSummary : null}
+      {incomplete ? outputSummary : null}
     </section>
   );
 }

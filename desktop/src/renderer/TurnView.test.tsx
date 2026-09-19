@@ -14,6 +14,7 @@ import { STREAM_TEXT_NOTIFY_INTERVAL_MS, streamTextKey, streamTextStore } from "
 vi.mock("./FeatureFlags", async (importOriginal) => ({
   ...await importOriginal<typeof import("./FeatureFlags")>(),
   ENABLE_TURN_EDIT_SUMMARY: true,
+  ENABLE_TURN_ARTIFACT_SUMMARY: true,
 }));
 
 let root: Root | undefined;
@@ -446,6 +447,33 @@ describe("TurnView", () => {
     expect(preview.closest(".turn-process-fold")).toBeNull();
   });
 
+  it("attaches presented files to the answer using the file-change summary card", () => {
+    const view = render(makeTurn("completed", [
+      {
+        id: "present-video",
+        type: "tool_call",
+        name: "present_artifact",
+        status: "completed",
+        result_detail: {
+          content: [{
+            type: "file",
+            mime_type: "video/mp4",
+            name: "wuu-promo.mp4",
+            uri: "wuu-artifact://workspace/thread/artifact/wuu-promo.mp4",
+            artifact: { ref: "video", sha256: "vid", placement: "turn_end" },
+          }],
+        },
+      },
+      makeFinalAnswer("成品：wuu-promo.mp4"),
+    ]), true);
+    const card = view.querySelector('[data-wuu-component="turn-artifacts"]');
+    expect(card?.classList.contains("turn-edit-summary-card")).toBe(true);
+    expect(view.querySelector(".agent-block")?.contains(card)).toBe(true);
+    expect(card?.querySelector(".turn-edit-summary-overview")).toBeTruthy();
+    expect(card?.textContent).toContain("wuu-promo.mp4");
+    expect(card?.textContent).not.toContain("video/mp4");
+  });
+
   it("keeps text after published images in place through streaming, more output, and completion", () => {
     vi.useFakeTimers();
     const image = (id: string): ThreadItem => ({
@@ -529,6 +557,23 @@ describe("TurnView", () => {
       vi.advanceTimersByTime(1);
     });
     expect(view.textContent).toContain("查看思考过程");
+  });
+
+  it("publishes a live tool or reasoning continuation without a delayed layout jump", () => {
+    vi.useFakeTimers();
+    const view = render(
+      makeTurn("in_progress", [makeCommentary("checking the files")]),
+    );
+
+    rerender(
+      makeTurn("in_progress", [
+        makeCommentary("checking the files"),
+        { ...makeReasoning("checking the result"), status: "in_progress" },
+      ]),
+    );
+
+    expect(view.textContent).toContain("正在思考");
+    expect(view.textContent).toContain("checking the result");
   });
 
   it("publishes the completed final answer without the structural buffer delay", () => {

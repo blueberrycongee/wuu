@@ -206,7 +206,9 @@ describe("sidebar collapse-state independence", () => {
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
     expect(accountTrigger()).toBeNull();
 
-    await act(async () => toggle?.click());
+    const expandedToggle = container.querySelector<HTMLButtonElement>(".sidebar-toggle-button");
+    expect(expandedToggle).not.toBeNull();
+    await act(async () => expandedToggle?.click());
     expect(accountTrigger()?.getAttribute("aria-expanded")).toBe("false");
     expect(document.querySelector(".sidebar-account-menu")).toBeNull();
   });

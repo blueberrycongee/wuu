@@ -240,7 +240,14 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
       // A frame's timestamp can precede the clock sampled while resuming it.
       const dt = Math.max(0, Math.min(40, now - previous)); previous = now;
       const changed = nextMode !== lastMode || nextReplay !== lastReplay;
-      if (changed) { settledFor = 0; time = 0; lastMode = nextMode; lastReplay = nextReplay; }
+      if (changed) {
+        settledFor = 0;
+        lastMode = nextMode;
+        // Replay is a deliberate restart. Mode changes keep the current phase so
+        // a live status swap does not snap the silhouette back to its first frame.
+        if (nextReplay !== lastReplay) time = 0;
+        lastReplay = nextReplay;
+      }
       if (!stopped && !reduced.matches) time += dt / 1000;
       settledFor += dt;
       const target = targetScene(nextMode, reduced.matches ? 1.1 : time);

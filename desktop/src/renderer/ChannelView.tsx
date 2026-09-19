@@ -16,7 +16,7 @@ import { ManagedAgentSessionPanel } from "./ManagedAgentSessionView";
 import type { ThreadSummary } from "./AppState";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { ChannelAgentSettings } from "./ChannelAgentSettings";
-import { useChannelPanelResize, useChannelSettingsResize } from "./ChannelSettingsResize";
+import { useChannelPanelResize } from "./ChannelSettingsResize";
 import { ChannelActivityPresence } from "./ChannelActivityPresence";
 import { ChannelCoordinatorActivity } from "./ChannelCoordinatorActivity";
 import { ChannelComposer, type ChannelComposerHandle } from "./ChannelComposer";
@@ -249,7 +249,12 @@ function ChannelAgentActivity({ agent, agentID, state, error, selected = false, 
     }
   };
   return (
-    <div className={`channel-response-status channel-animated-activity${failed ? " failed" : ""}`} data-activity-state={state} role={failed ? "alert" : "status"}>
+    <div
+      className={`channel-response-status channel-animated-activity${failed ? " failed" : ""}`}
+      data-activity-state={state}
+      data-activity-live={state === "thinking" || state === "responding" || undefined}
+      role={failed ? "alert" : "status"}
+    >
       <button className={`channel-activity-inspect${selected ? " selected" : ""}`} type="button" disabled={!onInspect} onClick={onInspect}
         onPointerEnter={(event) => { if (onInspect && event.pointerType !== "touch") setAvatarTurn(value => value + 1); }}
         aria-expanded={onInspect ? selected : undefined}
@@ -460,7 +465,6 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const agentEditorGeneration = useRef(0);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const settingsOpen = section === "rooms" && settingsRoomID === selectedRoomID && Boolean(settingsRoomID);
-  const settingsResize = useChannelSettingsResize(settingsOpen);
   useEffect(() => {
     agentEditorGeneration.current += 1;
     setSettingsRoomID("");
@@ -475,8 +479,18 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       event.preventDefault();
       closeAgentPanel();
     };
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (target instanceof Element && target.closest(".channel-settings-panel, .channel-room-settings-trigger")) return;
+      closeAgentPanel();
+    };
     window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
+    window.addEventListener("pointerdown", dismiss);
+    return () => {
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("pointerdown", dismiss);
+    };
   }, [settingsOpen, showSettingsMembers]);
   const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingDraft | null>(null);
   const [splitWidth, setSplitWidth] = useState(initialChannelSplitWidth);
@@ -572,6 +586,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const markedMessageSeqByRoomRef = useRef<Map<string, number>>(new Map());
   const directoryRefreshInFlightRef = useRef(false);
   const trackedTasksRefreshInFlightRef = useRef(false);
+  const taskMessagesByRoomIDRef = useRef<Map<string, ChannelMessage[]>>(new Map());
   const visibleRoomIDRef = useRef("");
   visibleRoomIDRef.current = section === "rooms" ? selectedRoomID : "";
   const sendingTimersRef = useRef<Map<string, number>>(new Map());
@@ -706,7 +721,8 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const newRoomName = useMemo(() => new Intl.ListFormat(locale, { style: "short", type: "conjunction" })
     .format(newRoomSelectedAgents.map((agent) => agent.name)), [locale, newRoomSelectedAgents]);
   const composingNewRoom = setupPanel === "room" && !editingRoomID;
-  const roomIncludesCurrentUser = selectedRoom?.members.some(
+  const editingRoom = rooms.find((room) => room.id === editingRoomID);
+  const roomIncludesCurrentUser = (editingRoom ?? selectedRoom)?.members.some(
     (member) => member.member_type === "human" && member.member_id === "local-user",
   ) ?? false;
   const messageAgents = agents;
@@ -957,11 +973,33 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         setTrackedTasks((current) => current.length === 0 ? current : []);
         return;
       }
-      const results = await Promise.all(
-        rooms.map((room) => readChannelMessages(room.id)),
-      );
+      const results = await Promise.all(rooms.map(async (room) => {
+        // The first refresh needs the complete task history. Subsequent
+        // refreshes only inspect the recent window, which captures new and
+        // updated tasks without replaying every room message over IPC.
+        if (!taskMessagesByRoomIDRef.current.has(room.id)) {
+          const result = await readChannelMessages(room.id);
+          taskMessagesByRoomIDRef.current.set(room.id, result.messages ?? []);
+          return result.messages ?? [];
+        }
+        const result = await window.wuu!.listChannelMessages({
+          room_id: room.id,
+          latest: true,
+          limit: 100,
+        });
+        const previous = taskMessagesByRoomIDRef.current.get(room.id) ?? [];
+        const byID = new Map(previous.map((message) => [message.id, message]));
+        for (const message of result.messages ?? []) byID.set(message.id, message);
+        const merged = [...byID.values()];
+        taskMessagesByRoomIDRef.current.set(room.id, merged);
+        return merged;
+      }));
+      const activeRoomIDs = new Set(rooms.map((room) => room.id));
+      for (const roomID of taskMessagesByRoomIDRef.current.keys()) {
+        if (!activeRoomIDs.has(roomID)) taskMessagesByRoomIDRef.current.delete(roomID);
+      }
       const nextTasks = results
-        .flatMap((result) => result.messages ?? [])
+        .flatMap((messages) => messages)
         .filter((message) => message.kind === "task")
         .sort((left, right) => right.created_at.localeCompare(left.created_at));
       setTrackedTasks((current) =>
@@ -1018,7 +1056,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 1_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 1_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -1049,12 +1089,15 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     if (section !== "rooms" || !selectedRoomID) return;
     let active = true;
     const refresh = (): void => {
+      if (document.visibilityState !== "visible") return;
       void refreshMessages(selectedRoomID).catch((reason: unknown) => {
         if (active) setLoadError(toastErrorMessage(reason));
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 2_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 2_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -1066,6 +1109,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     let timer: number | undefined;
     let active = true;
     const off = window.wuu.onServerEvent((event) => {
+      if (document.visibilityState !== "visible") return;
       if (event.kind !== "notification") return;
       const { method, params } = event.message;
       if (!["item/agentMessage/delta", "item/agentMessage/replace", "item/started", "item/completed", "turn/completed"].includes(method)) return;
@@ -1699,14 +1743,184 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         onClose={() => setOnboardingDraft(null)}
       />;
 
+  const agentEditorContent = <div className="channel-agent-editor-body">
+    {agentResetStatus ? <div className="channel-agent-reset-status" role="status">{agentResetStatus}</div> : null}
+    <div className="channel-agent-editor-identity">
+      <button className="channel-identity-avatar-button" type="button"
+        aria-label={t("channels.editAppearance")} title={t("channels.editAppearance")}
+        aria-expanded={agentAppearanceOpen} aria-controls="channel-agent-appearance"
+        aria-invalid={Boolean(agentAvatarError)} aria-describedby={agentAvatarError ? "channel-agent-avatar-error" : undefined}
+        onClick={() => setAgentAppearanceOpen((open) => !open)}>
+        <AgentAvatarMark seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage} />
+        <span className="channel-identity-avatar-badge" aria-hidden="true"><Settings2 className="icon" /></span>
+      </button>
+      <label className="channel-agent-editor-field channel-agent-editor-name">
+        <span>{t("channels.name")}</span>
+        <input value={agentName} onChange={(event) => setAgentName(event.currentTarget.value)} autoFocus autoComplete="off" />
+      </label>
+    </div>
+    <FieldError id="channel-agent-avatar-error">{agentAvatarError}</FieldError>
+    {agentAppearanceOpen ? <div className="channel-agent-editor-appearance" id="channel-agent-appearance">
+      <AgentAvatarCreator seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage}
+        onChange={(nextAvatarKey) => {
+          setAgentAvatarKey(nextAvatarKey);
+          setAgentAvatarImage("");
+          setAgentAvatarError("");
+        }} />
+      <button className="channel-agent-editor-upload" type="button" aria-label={t("channels.customAvatar")}
+        onClick={() => agentAvatarInputRef.current?.click()}>
+        <ImagePlus className="icon" />{t("participant.avatar.upload")}
+      </button>
+    </div> : null}
+    <input ref={agentAvatarInputRef} className="channel-avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp"
+      onChange={(event) => {
+        const input = event.currentTarget;
+        const file = input.files?.[0];
+        if (!file) return;
+        setAgentAvatarError("");
+        const generation = agentEditorGeneration.current;
+        void squareAvatarImageFromFile(file)
+          .then((image) => { if (generation === agentEditorGeneration.current) setAgentAvatarImage(image); })
+          .catch(() => { if (generation === agentEditorGeneration.current) setAgentAvatarError(t("channels.invalidAvatarImage")); })
+          .finally(() => { input.value = ""; });
+      }} />
+    <label className="channel-agent-editor-field">
+      <span>{t("channels.agentRole")}</span>
+      <textarea value={agentRole} onChange={(event) => setAgentRole(event.currentTarget.value)} maxLength={280} rows={2} placeholder={t("channels.agentRolePlaceholder")} />
+    </label>
+    <div className="channel-agent-editor-runtime">
+      {agentEngine !== "wuu" ? <p className="channel-error">{t("channels.sessions.byokRequired")}</p> : null}
+      <div className="channel-agent-editor-setting">
+        <span>{t("channels.model")}</span>
+        <SelectMenu value={agentModel} onChange={selectAgentModel} groups={modelGroups} ariaLabel={t("channels.model")} flip />
+      </div>
+      {agentModel && agentEffortOptions.length > 1 ? <div className="channel-agent-editor-setting">
+        <span>{t("channels.effort")}</span>
+        <SelectMenu value={agentEffort} onChange={setAgentEffort}
+          options={agentEffortOptions.map((effort) => ({ value: effort, label: effortLabel(effort) }))}
+          ariaLabel={t("channels.effort")} flip />
+      </div> : null}
+    </div>
+    <details className="channel-agent-editor-more">
+      <summary>{t("channels.moreAgentActions")}<ChevronDown className="icon" aria-hidden="true" /></summary>
+      <div className="channel-agent-editor-maintenance">
+        <button type="button" disabled={Boolean(resettingAgentID)} onClick={() => void resetAgent(editingAgentID)}>
+          {t(resettingAgentID === editingAgentID ? "channels.resettingAgent" : "channels.resetAgent")}
+        </button>
+        <button className="danger" type="button" disabled={Boolean(resettingAgentID)} onClick={() => void deleteAgent(editingAgentID)}>
+          {t("channels.deleteAgent")}
+        </button>
+      </div>
+    </details>
+  </div>;
+  const roomDetailsContent = editingRoomID ? (
+    <div className="channel-room-details-form">
+      <section className="channel-room-identity" aria-label={t("channels.groupOverview")}>
+        <span className="channel-room-identity-avatar">
+          <ChannelGroupAvatar
+            room={{
+              id: editingRoomID,
+              kind: "channel",
+              name: roomName,
+              avatar_image: roomAvatarImage || undefined,
+              created_by: editingRoom?.created_by ?? selectedRoom?.created_by ?? "local-user",
+              created_at: editingRoom?.created_at ?? selectedRoom?.created_at ?? "",
+              members: [
+                { room_id: editingRoomID, member_type: "human", member_id: "local-user", joined_at: "" },
+                ...roomAgentIDs.map((agentID) => ({ room_id: editingRoomID, member_type: "agent" as const, member_id: agentID, joined_at: "" })),
+              ],
+            }}
+            agents={agents}
+          />
+        </span>
+        <span className="channel-room-identity-copy">
+          <strong>{roomName}</strong>
+          <span>{t("channels.agentCount", { count: roomAgentIDs.length })}</span>
+        </span>
+      </section>
+      <section className="channel-room-members-section" aria-labelledby="channel-room-members-title">
+        <header className="channel-room-members-header">
+          <div>
+            <h3 id="channel-room-members-title">{t("channels.groupMembers")}</h3>
+            <span>{t("channels.memberCount", { count: roomAgentIDs.length + (roomIncludesCurrentUser ? 1 : 0) })}</span>
+          </div>
+        </header>
+        <div className="channel-room-member-list">
+          {roomIncludesCurrentUser ? (
+            <div className="channel-room-member-row current" aria-label={t("channels.you")}>
+              <span className="channel-room-member-avatar">
+                <HumanAvatarMark />
+              </span>
+              <span className="channel-room-member-identity">
+                <strong>{t("channels.you")}</strong>
+              </span>
+            </div>
+          ) : null}
+          {agents.filter((agent) => roomAgentIDs.includes(agent.id)).map((agent) => (
+            <div className="channel-room-member-row" key={agent.id}>
+              <span className="channel-room-member-avatar">
+                <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={activityFor(agent)} />
+              </span>
+              <span className="channel-room-member-identity">
+                <strong>{agent.name}</strong>
+              </span>
+              <button
+                className="channel-room-member-remove"
+                type="button"
+                aria-label={t("channels.removeMember", { name: agent.name })}
+                disabled={updatingRoomMembers}
+                onClick={() => void removeRoomMember(agent.id)}
+              >
+                <X className="icon" aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          <button
+            className="channel-room-member-add"
+            type="button"
+            onClick={() => openRoomMemberMode("add")}
+            disabled={roomAgentIDs.length >= MAX_ROOM_AGENTS || agents.every((agent) => roomAgentIDs.includes(agent.id))}
+          >
+            <Plus className="icon" aria-hidden="true" />
+            <span>{t("channels.addMember")}</span>
+          </button>
+        </div>
+      </section>
+      <section className="channel-room-settings-section" aria-labelledby="channel-room-settings-title">
+        <h3 id="channel-room-settings-title">{t("channels.groupSettings")}</h3>
+        <label className="sidebar-name-dialog-field">
+          <span className="sidebar-name-dialog-label">{t("channels.name")}</span>
+          <input
+            className="sidebar-name-dialog-input"
+            value={roomName}
+            onChange={(event) => setRoomName(event.currentTarget.value)}
+            onBlur={() => {
+              if (!roomName.trim()) {
+                setRoomName(savedRoomNameRef.current);
+                return;
+              }
+              void persistRoomName();
+            }}
+          />
+        </label>
+      </section>
+      <section className="channel-room-danger-zone" aria-labelledby="channel-room-danger-title">
+        <div>
+          <h3 id="channel-room-danger-title">{t("channels.dangerZone")}</h3>
+          <p>{t("channels.deleteRoomHint")}</p>
+        </div>
+        <button type="button" onClick={() => void deleteRoom()}>{t("channels.deleteRoom")}</button>
+      </section>
+    </div>
+  ) : null;
+
   return (
     <section
-      ref={settingsResize.ref}
-      className={`channel-view channel-mode-${section}${settingsOpen ? " has-agent-settings" : ""}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
+      className={`channel-view channel-mode-${section}${listCollapsed && section === "agents" ? " channel-list-collapsed" : ""}${resizingSplit ? " resizing-channel-split" : ""}`}
       aria-label={t("channels.title")}
       data-wuu-component="channel-view"
       data-wuu-variant={section}
-      style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : settingsResize.style}
+      style={section === "agents" ? { gridTemplateColumns: `${listCollapsed ? CHANNEL_SPLIT_COLLAPSED_WIDTH : splitWidth}px minmax(0, 1fr)` } : undefined}
     >
       {section === "rooms" ? <div
         ref={inspectorResize.ref}
@@ -1735,7 +1949,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 />
                 <button className="icon-button channel-new-room-close" type="button" aria-label={t("channels.cancelNewRoom")} disabled={creatingRoom} onClick={closeRoomPanel}><X aria-hidden="true" /></button>
               </> : <>
-                <button ref={settingsTriggerRef} type="button" className="channel-room-header-title channel-room-settings-trigger" disabled={!selectedRoom || savingAgent} aria-expanded={settingsOpen} aria-controls={settingsOpen ? "channel-conversation-settings" : undefined} onClick={openConversationSettings}>
+                <button ref={settingsTriggerRef} type="button" className="channel-room-header-title channel-room-settings-trigger" disabled={!selectedRoom || savingAgent} aria-expanded={settingsOpen} aria-controls={settingsOpen ? (showSettingsMembers ? "channel-conversation-members" : "channel-conversation-settings") : undefined} onClick={openConversationSettings}>
                   {selectedRoom ? <span className="channel-room-header-avatar">
                     {selectedRoom.kind === "dm" && selectedRoomAgents[0] ? <AgentAvatar
                       id={selectedRoomAgents[0].id} name={selectedRoomAgents[0].name} focusable={false}
@@ -1854,8 +2068,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             const gap = previous ? date.getTime() - Date.parse(previous.created_at) : Infinity;
             const showTimestamp = !previous || gap < 0 || gap >= 5 * 60_000 || date.toDateString() !== new Date(previous.created_at).toDateString();
             const continued = !showTimestamp && previous?.kind === "text" && !previous.agent_creation_proposal
-              && previous.author_type === message.author_type && previous.author_id === message.author_id
-              && previous.source_session_ref === message.source_session_ref && previous.source_turn_id === message.source_turn_id;
+              && previous.author_type === message.author_type && previous.author_id === message.author_id;
             const direct = selectedRoom?.kind === "dm";
             const model = agent?.model_override || initialized?.model;
             const provider = agent?.model_override ? agent.provider_override || agent.engine_override : initialized?.provider;
@@ -1882,6 +2095,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 messageID={message.id}
                 className={`channel-message ${own ? "own" : "agent"}${direct && !traceCard ? " channel-direct-message" : ""}${continued ? " channel-message-continuation" : ""}${message.id === pendingMessage?.id ? " channel-message-pending" : ""}`}
                 contentClassName="channel-message-content"
+                reserveAvatar={!own && (!direct || Boolean(traceCard))}
                 avatar={!own && (!direct || traceCard) && !continued ? (traceCard ? <ChannelAgentHoverCard {...traceCard} /> :
                   <AgentAvatar disableMorph id={agent?.id ?? message.author_id} name={author} avatarKey={agent?.avatar_key ?? "abstract-1"} avatarImage={agent?.avatar_image} status={status} statusText={activityText(status)} model={agent?.model_override || initialized?.model} modelLabel={t("channels.model")} />
                 ) : undefined}
@@ -1935,7 +2149,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
                 onInspectCoordinator={ref => inspectSession(ref, undefined, t("channels.sessions.coordination"))}
                 onRetry={async (sessionRef) => { await window.wuu!.resumeChannelSession({ sessionRef }); await refreshMessages(selectedRoomID, true); }} />
               <ChannelActivityPresence key={`members:${selectedRoomID}`}>
-              {responseActivities.filter((response, index, items) => items.findIndex(item => item.agent_id === response.agent_id) === index).map((response) => <ChannelAgentActivity key={response.id}
+              {responseActivities.filter((response, index, items) => items.findIndex(item => item.agent_id === response.agent_id) === index).map((response) => <ChannelAgentActivity key={response.agent_id}
                 agent={agents.find((agent) => agent.id === response.agent_id)} agentID={response.agent_id}
                 state={response.state} error={response.error}
                 selected={!inspectorClosing && inspectedSession?.agentID === response.agent_id}
@@ -1970,6 +2184,69 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
           </div>
         ) : null}
         </div>
+        {settingsOpen && showSettingsMembers ? <aside id="channel-conversation-members" className="channel-settings-panel" aria-label={t("channels.memberCount", { count: selectedRoomAgents.length })}>
+          <header className="channel-settings-header"><h2>{t("channels.memberCount", { count: selectedRoomAgents.length })}</h2><button className="icon-button" type="button" aria-label={t("common.close")} onClick={closeAgentPanel}><X /></button></header>
+          <div className="channel-settings-members">
+            {selectedRoomAgents.map((agent) => <button className="channel-settings-member" type="button" key={agent.id} onClick={() => openConversationAgent(agent)}>
+              <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} />
+              <span><strong>{agent.name}</strong>{agent.role ? <span>{agent.role}</span> : null}</span><Settings2 className="icon" aria-hidden="true" />
+            </button>)}
+            {selectedRoom ? <button className="channel-settings-manage" type="button" onClick={() => { setShowSettingsMembers(false); editRoom(selectedRoom); }}>{t("channels.manageRoom", { name: selectedRoom.name })}</button> : null}
+          </div>
+        </aside> : null}
+        <ChannelAgentSettings
+          inline={settingsOpen}
+          busy={savingAgent}
+          error={agentSaveError}
+          onBack={settingsOpen && selectedRoom?.kind === "channel" ? () => { setSetupPanel(null); setShowSettingsMembers(true); } : undefined}
+          open={settingsOpen && setupPanel === "agent" && Boolean(editingAgentID)}
+          title={agentName}
+          onTitleChange={setAgentName}
+          onSubmit={() => void submitAgent()}
+          onClose={closeAgentPanel}
+          dialogTitle={t("channels.editAgent")}
+          dialogTitleId="channel-agent-dialog-title"
+          dialogClassName="channel-agent-editor-dialog"
+          fieldLabel={t("channels.name")}
+          fieldAriaLabel={t("channels.name")}
+          placeholder="Andy"
+          icon={Bot}
+          submitLabel={t("channels.save")}
+          cancelLabel={t("channels.cancel")}
+          submitDisabled={!agentName.trim() || Boolean(resettingAgentID) || agentEngine !== "wuu"}
+          content={agentEditorContent}
+        />
+        <ChannelAgentSettings
+          inline={settingsOpen}
+          hideActions
+          closeOnEscape={!roomMemberMode}
+          backgrounded={Boolean(roomMemberMode)}
+          onBack={settingsOpen ? () => {
+            void persistRoomName();
+            setSetupPanel(null);
+            setEditingRoomID("");
+            setShowSettingsMembers(true);
+            closeRoomMemberMode();
+          } : undefined}
+          open={settingsOpen && setupPanel === "room" && Boolean(editingRoomID)}
+          title={roomName}
+          onTitleChange={setRoomName}
+          onSubmit={() => { if (settingsOpen) void persistRoomName(); else void submitRoom(); }}
+          onClose={() => {
+            closeRoomPanel();
+            if (settingsOpen) closeAgentPanel();
+          }}
+          dialogTitle={t("channels.roomDetails")}
+          dialogTitleId="channel-room-dialog-title"
+          fieldLabel={t("channels.name")}
+          fieldAriaLabel={t("channels.name")}
+          placeholder={t("channels.newRoom")}
+          icon={MessageCircle}
+          submitLabel={t("channels.save")}
+          cancelLabel={t("channels.cancel")}
+          submitDisabled={!roomName.trim()}
+          content={roomDetailsContent}
+        />
         {inspectedSession ? <div className="channel-inspector-resizer" role="separator" tabIndex={0}
           aria-label={t("app.resizeRightSidebar")} aria-orientation="vertical"
           {...inspectorResize.separatorProps} /> : null}
@@ -2263,32 +2540,11 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         </div>
       )}
 
-
-      {settingsOpen && showSettingsMembers ? <aside id="channel-conversation-settings" className="channel-settings-panel" aria-label={t("channels.memberCount", { count: selectedRoomAgents.length })}>
-        <header className="channel-settings-header"><h2>{t("channels.memberCount", { count: selectedRoomAgents.length })}</h2><button className="icon-button" type="button" aria-label={t("common.close")} onClick={closeAgentPanel}><X /></button></header>
-        <div className="channel-settings-members">
-          {selectedRoomAgents.map((agent) => <button className="channel-settings-member" type="button" key={agent.id} onClick={() => openConversationAgent(agent)}>
-            <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} />
-            <span><strong>{agent.name}</strong>{agent.role ? <span>{agent.role}</span> : null}</span><Settings2 className="icon" aria-hidden="true" />
-          </button>)}
-          {selectedRoom ? <button className="channel-settings-manage" type="button" onClick={() => { closeAgentPanel(); editRoom(selectedRoom); }}>{t("channels.manageRoom", { name: selectedRoom.name })}</button> : null}
-        </div>
-      </aside> : null}
-      {settingsOpen ? <div
-        className="channel-settings-resizer"
-        role="separator"
-        aria-label={t("app.resizeRightSidebar")}
-        aria-controls="channel-conversation-settings"
-        aria-orientation="vertical"
-        tabIndex={0}
-        {...settingsResize.separatorProps}
-      /> : null}
       <ChannelAgentSettings
-        inline={settingsOpen}
+        inline={false}
         busy={savingAgent}
         error={agentSaveError}
-        onBack={settingsOpen && selectedRoom?.kind === "channel" ? () => { setSetupPanel(null); setShowSettingsMembers(true); } : undefined}
-        open={setupPanel === "agent" && Boolean(editingAgentID)}
+        open={!settingsOpen && setupPanel === "agent" && Boolean(editingAgentID)}
         title={agentName}
         onTitleChange={setAgentName}
         onSubmit={() => void submitAgent()}
@@ -2303,217 +2559,28 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
         submitLabel={t("channels.save")}
         cancelLabel={t("channels.cancel")}
         submitDisabled={!agentName.trim() || Boolean(resettingAgentID) || agentEngine !== "wuu"}
-        content={<div className="channel-agent-editor-body">
-          {agentResetStatus ? <div className="channel-agent-reset-status" role="status">{agentResetStatus}</div> : null}
-          <div className="channel-agent-editor-identity">
-            <button className="channel-identity-avatar-button" type="button"
-              aria-label={t("channels.editAppearance")} title={t("channels.editAppearance")}
-              aria-expanded={agentAppearanceOpen} aria-controls="channel-agent-appearance"
-              aria-invalid={Boolean(agentAvatarError)} aria-describedby={agentAvatarError ? "channel-agent-avatar-error" : undefined}
-              onClick={() => setAgentAppearanceOpen((open) => !open)}>
-              <AgentAvatarMark seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage} />
-              <span className="channel-identity-avatar-badge" aria-hidden="true"><Settings2 className="icon" /></span>
-            </button>
-            <label className="channel-agent-editor-field channel-agent-editor-name">
-              <span>{t("channels.name")}</span>
-              <input value={agentName} onChange={(event) => setAgentName(event.currentTarget.value)} autoFocus autoComplete="off" />
-            </label>
-          </div>
-          <FieldError id="channel-agent-avatar-error">{agentAvatarError}</FieldError>
-          {agentAppearanceOpen ? <div className="channel-agent-editor-appearance" id="channel-agent-appearance">
-            <AgentAvatarCreator seed={editingAgentID} avatarKey={agentAvatarKey} avatarImage={agentAvatarImage}
-              onChange={(nextAvatarKey) => {
-                setAgentAvatarKey(nextAvatarKey);
-                setAgentAvatarImage("");
-                setAgentAvatarError("");
-              }} />
-            <button className="channel-agent-editor-upload" type="button" aria-label={t("channels.customAvatar")}
-              onClick={() => agentAvatarInputRef.current?.click()}>
-              <ImagePlus className="icon" />{t("participant.avatar.upload")}
-            </button>
-          </div> : null}
-          <input ref={agentAvatarInputRef} className="channel-avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp"
-            onChange={(event) => {
-              const input = event.currentTarget;
-              const file = input.files?.[0];
-              if (!file) return;
-              setAgentAvatarError("");
-              const generation = agentEditorGeneration.current;
-              void squareAvatarImageFromFile(file)
-                .then((image) => { if (generation === agentEditorGeneration.current) setAgentAvatarImage(image); })
-                .catch(() => { if (generation === agentEditorGeneration.current) setAgentAvatarError(t("channels.invalidAvatarImage")); })
-                .finally(() => { input.value = ""; });
-            }} />
-          <label className="channel-agent-editor-field">
-            <span>{t("channels.agentRole")}</span>
-            <textarea value={agentRole} onChange={(event) => setAgentRole(event.currentTarget.value)} maxLength={280} rows={2} />
-          </label>
-          <div className="channel-agent-editor-runtime">
-            {agentEngine !== "wuu" ? <p className="channel-error">{t("channels.sessions.byokRequired")}</p> : null}
-            <div className="channel-agent-editor-setting">
-              <span>{t("channels.model")}</span>
-              <SelectMenu value={agentModel} onChange={selectAgentModel} groups={modelGroups} ariaLabel={t("channels.model")} flip />
-            </div>
-            {agentModel && agentEffortOptions.length > 1 ? <div className="channel-agent-editor-setting">
-              <span>{t("channels.effort")}</span>
-              <SelectMenu value={agentEffort} onChange={setAgentEffort}
-                options={agentEffortOptions.map((effort) => ({ value: effort, label: effortLabel(effort) }))}
-                ariaLabel={t("channels.effort")} flip />
-            </div> : null}
-          </div>
-          <details className="channel-agent-editor-more">
-            <summary>{t("channels.moreAgentActions")}<ChevronDown className="icon" aria-hidden="true" /></summary>
-            <div className="channel-agent-editor-maintenance">
-              <button type="button" disabled={Boolean(resettingAgentID)} onClick={() => void resetAgent(editingAgentID)}>
-                {t(resettingAgentID === editingAgentID ? "channels.resettingAgent" : "channels.resetAgent")}
-              </button>
-              <button className="danger" type="button" disabled={Boolean(resettingAgentID)} onClick={() => void deleteAgent(editingAgentID)}>
-                {t("channels.deleteAgent")}
-              </button>
-            </div>
-          </details>
-        </div>}
+        content={agentEditorContent}
       />
-      <SidebarNameDialog
-        open={setupPanel === "room" && Boolean(editingRoomID)}
+      <ChannelAgentSettings
+        inline={false}
+        hideActions
+        closeOnEscape={!roomMemberMode}
+        backgrounded={Boolean(roomMemberMode)}
+        open={!settingsOpen && setupPanel === "room" && Boolean(editingRoomID)}
         title={roomName}
         onTitleChange={setRoomName}
-        onSubmit={() => void submitRoom()}
+        onSubmit={() => void persistRoomName()}
         onClose={closeRoomPanel}
-        dialogTitle={t(editingRoomID ? "channels.roomDetails" : "channels.newRoom")}
+        dialogTitle={t("channels.roomDetails")}
         dialogTitleId="channel-room-dialog-title"
         fieldLabel={t("channels.name")}
         fieldAriaLabel={t("channels.name")}
         placeholder={t("channels.newRoom")}
         icon={MessageCircle}
-        submitLabel={t(editingRoomID ? "channels.save" : "channels.create")}
+        submitLabel={t("channels.save")}
         cancelLabel={t("channels.cancel")}
         submitDisabled={!roomName.trim()}
-        variant={editingRoomID ? "drawer" : "default"}
-        hideActions={Boolean(editingRoomID)}
-        closeOnEscape={!roomMemberMode}
-        backgrounded={Boolean(roomMemberMode)}
-        content={editingRoomID ? (
-          <div className="channel-room-details-form">
-            {selectedRoom ? (
-              <section className="channel-room-identity" aria-label={t("channels.groupOverview")}>
-                <span className="channel-room-identity-avatar">
-                  <ChannelGroupAvatar room={selectedRoom} agents={agents} />
-                </span>
-                <span className="channel-room-identity-copy">
-                  <strong>{roomName}</strong>
-                  <span>{t("channels.agentCount", { count: roomAgentIDs.length })}</span>
-                </span>
-              </section>
-            ) : null}
-            <section className="channel-room-members-section" aria-labelledby="channel-room-members-title">
-              <header className="channel-room-members-header">
-                <div>
-                  <h3 id="channel-room-members-title">{t("channels.groupMembers")}</h3>
-                  <span>{t("channels.memberCount", { count: roomAgentIDs.length + (roomIncludesCurrentUser ? 1 : 0) })}</span>
-                </div>
-              </header>
-              <div className="channel-room-member-list">
-                {roomIncludesCurrentUser ? (
-                  <div className="channel-room-member-row current" aria-label={t("channels.you")}>
-                    <span className="channel-room-member-avatar">
-                      <HumanAvatarMark />
-                    </span>
-                    <span className="channel-room-member-identity">
-                      <strong>{t("channels.you")}</strong>
-                    </span>
-                  </div>
-                ) : null}
-                {agents.filter((agent) => roomAgentIDs.includes(agent.id)).map((agent) => (
-                  <div className="channel-room-member-row" key={agent.id}>
-                    <span className="channel-room-member-avatar">
-                      <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={activityFor(agent)} />
-                    </span>
-                    <span className="channel-room-member-identity">
-                      <strong>{agent.name}</strong>
-                    </span>
-                    <button
-                      className="channel-room-member-remove"
-                      type="button"
-                      aria-label={t("channels.removeMember", { name: agent.name })}
-                      disabled={updatingRoomMembers}
-                      onClick={() => void removeRoomMember(agent.id)}
-                    >
-                      <X className="icon" aria-hidden="true" />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  className="channel-room-member-add"
-                  type="button"
-                  onClick={() => openRoomMemberMode("add")}
-                  disabled={roomAgentIDs.length >= MAX_ROOM_AGENTS || agents.every((agent) => roomAgentIDs.includes(agent.id))}
-                >
-                  <Plus className="icon" aria-hidden="true" />
-                  <span>{t("channels.addMember")}</span>
-                </button>
-              </div>
-            </section>
-            <section className="channel-room-settings-section" aria-labelledby="channel-room-settings-title">
-              <h3 id="channel-room-settings-title">{t("channels.groupSettings")}</h3>
-              <label className="sidebar-name-dialog-field">
-                <span className="sidebar-name-dialog-label">{t("channels.name")}</span>
-                <input
-                  className="sidebar-name-dialog-input"
-                  value={roomName}
-                  onChange={(event) => setRoomName(event.currentTarget.value)}
-                  onBlur={() => {
-                    if (!roomName.trim()) {
-                      setRoomName(savedRoomNameRef.current);
-                      return;
-                    }
-                    void persistRoomName();
-                  }}
-                />
-              </label>
-            </section>
-            <section className="channel-room-danger-zone" aria-labelledby="channel-room-danger-title">
-              <div>
-                <h3 id="channel-room-danger-title">{t("channels.dangerZone")}</h3>
-                <p>{t("channels.deleteRoomHint")}</p>
-              </div>
-              <button type="button" onClick={() => void deleteRoom()}>{t("channels.deleteRoom")}</button>
-            </section>
-          </div>
-        ) : (
-          <div className="channel-setup-form">
-            <div className="channel-identity-row">
-              <button
-                className="channel-identity-avatar-button"
-                type="button"
-                aria-label={t("channels.customGroupAvatar")}
-                onClick={() => chooseRoomAvatar("")}
-              >
-                <ChannelGroupAvatar
-                  room={{
-                    id: editingRoomID || "new-room",
-                    kind: "channel",
-                    name: roomName,
-                    avatar_image: roomAvatarImage || undefined,
-                    created_by: "local-user",
-                    created_at: "",
-                    members: [
-                      { room_id: editingRoomID || "new-room", member_type: "human", member_id: "local-user", joined_at: "" },
-                      ...roomAgentIDs.map((agentID) => ({ room_id: editingRoomID || "new-room", member_type: "agent" as const, member_id: agentID, joined_at: "" })),
-                    ],
-                  }}
-                  agents={agents}
-                />
-                <span className="channel-identity-avatar-badge" aria-hidden="true"><ImagePlus className="icon" /></span>
-              </button>
-              <label className="channel-form-field">
-                <span>{t("channels.name")}</span>
-                <input value={roomName} onChange={(event) => setRoomName(event.currentTarget.value)} autoFocus placeholder={t("channels.newRoom")} />
-              </label>
-            </div>
-            <ChannelMemberPicker agents={agents} selectedAgentIDs={roomAgentIDs} onToggle={toggleRoomAgent} maxSelected={MAX_ROOM_AGENTS} />
-          </div>
-        )}
+        content={roomDetailsContent}
       />
       <SidebarNameDialog
         open={Boolean(editingRoomID && roomMemberMode)}

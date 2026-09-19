@@ -54,8 +54,13 @@ function launchEnvironment(
     WUU_WEB_TLS_CERT: env.WUU_WEB_TLS_CERT,
     WUU_WEB_TLS_KEY: env.WUU_WEB_TLS_KEY,
   };
+  // LaunchServices does not inherit the invoking shell's proxy configuration.
+  for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy"]) {
+    if (env[name] !== undefined) values[name] = env[name];
+  }
   return Object.entries(values)
-    .filter(([, value]) => typeof value === "string" && value.length > 0)
+    .filter(([name, value]) => typeof value === "string" && (value.length > 0 || /_proxy$/i.test(name)))
     .map(([name, value]) => `${name}=${value}`);
 }
 

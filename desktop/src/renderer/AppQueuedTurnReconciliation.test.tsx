@@ -57,15 +57,26 @@ vi.mock("./ComposerView", async (importOriginal) => {
           </button>
         ) : null}
         {props.queuedMessages[0] ? (
-          <button
-            type="button"
-            aria-label="edit-first-queued"
-            onClick={() =>
-              props.onEditQueuedMessage(props.queuedMessages[0].id)
-            }
-          >
-            edit queued
-          </button>
+          <>
+            <button
+              type="button"
+              aria-label="edit-first-queued"
+              onClick={() =>
+                props.onEditQueuedMessage(props.queuedMessages[0].id)
+              }
+            >
+              edit queued
+            </button>
+            <button
+              type="button"
+              aria-label="steer-first-queued"
+              onClick={() =>
+                props.onGuideQueuedMessage(props.queuedMessages[0].id)
+              }
+            >
+              steer queued
+            </button>
+          </>
         ) : null}
       </div>;
     },
@@ -365,6 +376,69 @@ describe("queued turn reconciliation", () => {
       });
     });
     expect(container.querySelector('[data-user-message-id="accepted-input"]')).not.toBeNull();
+    expect(tail()).toBeGreaterThan(0);
+    expect(top).toBeCloseTo(1650);
+  });
+
+  it("positions a drawer-steered queued message when it enters the conversation", async () => {
+    const steerTurn = vi.fn();
+    installWuuApi({
+      steerTurn: steerTurn as unknown as WuuDesktopApi["steerTurn"],
+    });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+    // Seed a server-restored queued entry so no placement intent was
+    // registered when the message was originally queued.
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({
+        kind: "notification", workdir: workspace,
+        message: { method: "turn/queued", params: {
+          thread_id: threadID,
+          message: { id: "queued-drawer", thread_id: threadID, origin: "queue", prompt: "drawer follow-up" },
+        } },
+      });
+    });
+    expect(composerProbe().dataset.queuedIds).toContain("queued-drawer");
+    vi.mocked(window.matchMedia).mockImplementation(query => ({
+      matches: query.includes("prefers-reduced-motion"),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+    const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
+    const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
+    let top = 1400;
+    const tail = () => Number.parseFloat(viewport.parentElement!.style.getPropertyValue("--session-tail-space") || "0");
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, get: () => 600 },
+      scrollHeight: { configurable: true, get: () => 2000 + tail() },
+      scrollTop: { configurable: true, get: () => top, set: value => { top = Math.max(0, Math.min(value, 1400 + tail())); } },
+    });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === viewport) return { top: 100, bottom: 700, height: 600 } as DOMRect;
+      if (this === content) return { height: 2000 + tail() } as DOMRect;
+      if (this.hasAttribute("data-user-message-id")) return { top: 1870 - top, bottom: 1950 - top, height: 80 } as DOMRect;
+      return originalRect.call(this);
+    });
+    await act(async () => {
+      composerProbe().querySelector<HTMLButtonElement>('[aria-label="steer-first-queued"]')!.click();
+    });
+    expect(steerTurn).toHaveBeenCalled();
+    const sourceID = steerTurn.mock.calls[0][4];
+    expect(sourceID).toBe("queued-drawer");
+    expect(tail()).toBe(0);
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({
+        kind: "notification", workdir: workspace,
+        message: { method: "item/completed", params: {
+          thread_id: threadID, turn_id: "turn-current",
+          item: { id: "accepted-drawer-input", type: "user_message", status: "completed", text: "drawer follow-up", source_id: sourceID },
+        } },
+      });
+    });
+    expect(container.querySelector('[data-user-message-id="accepted-drawer-input"]')).not.toBeNull();
     expect(tail()).toBeGreaterThan(0);
     expect(top).toBeCloseTo(1650);
   });

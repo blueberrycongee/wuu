@@ -52,10 +52,10 @@ it("mixes recent groups and DMs, keeps new agents reachable, and opens each targ
   expect(callbacks.onSelectRoom).toHaveBeenCalledTimes(1);
 });
 
-it("keeps pinned rooms first, reorders incoming conversations, and filters by the current agent name", () => {
+it("keeps pinned rooms first in the standalone sidebar, reorders incoming conversations, and filters by the current agent name", () => {
   render([dm, group], ["dm"]);
   expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
-  render([{ ...dm, last_message: { ...dm.last_message!, body: "Next reply", created_at: "2026-09-12T12:00:00Z" } }, group]);
+  render([{ ...dm, last_message: { ...dm.last_message!, body: "Next reply", created_at: "2026-09-12T12:00:00Z" } }, group], ["dm"]);
   expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
   const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
   act(() => {
@@ -64,6 +64,12 @@ it("keeps pinned rooms first, reorders incoming conversations, and filters by th
   });
   expect(rows()).toHaveLength(1);
   expect(rows()[0].querySelector("strong")?.textContent).toBe("Alpha");
+});
+
+it("omits pinned rooms from the embedded collaboration section", () => {
+  act(() => root.render(<WuuUIRoot><CollaborationSidebar embedded initialized agents={[agent]} rooms={[dm, group]}
+    pinnedRoomIDs={["dm"]} {...callbacks} /></WuuUIRoot>));
+  expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["Design"]);
 });
 
 it.each([false, true])("manages groups, DM agents, and agents without a DM from the context menu (rail=%s)", (collapsed) => {
@@ -144,16 +150,11 @@ it("keeps embedded navigation flat and opens each conversation directly after co
   expect(callbacks.onSelectRoom).toHaveBeenCalledExactlyOnceWith(dm.id);
 });
 
-it("keeps the shared mode switch in the sidebar with Collaboration selected", () => {
+it("keeps the shared brand lockup without a mode switch", () => {
   render();
-  const modes = host.querySelector('[role="group"]')!;
-  const currentMode = modes.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!;
-  expect(currentMode).not.toBeNull();
-  act(() => currentMode.click());
+  expect(host.querySelector(".sidebar-brand-wordmark")?.textContent).toBe("wuu");
+  expect(host.querySelector('[role="group"]')).toBeNull();
   expect(callbacks.onSwitchToHarness).not.toHaveBeenCalled();
-  const harness = modes.querySelector<HTMLButtonElement>('[aria-pressed="false"]')!;
-  act(() => harness.click());
-  expect(callbacks.onSwitchToHarness).toHaveBeenCalledOnce();
 });
 
 it("keeps collapsed conversations accessible, selected and unread while exposing expand and creation actions", () => {

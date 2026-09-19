@@ -27,7 +27,6 @@ import type {
   ThreadResumeResult,
   ServerEvent,
   ThemePreference,
-  VoiceInputSettings,
   WuuDesktopApi,
   TerminalSessionEvent,
 } from "@wuu/protocol";
@@ -129,15 +128,11 @@ export class UnavailableHostOperationError extends Error {
 const unavailableWebMethods = [
   "cleanupProjectState",
   "getBuildInfo",
-  "startSpeechRecognition",
-  "stopSpeechRecognition",
   "getRemoteControlSnapshot",
   "setRemoteRelay",
   "setRemoteHostEnabled",
   "startRemotePairing",
   "removeRemoteDevice",
-  "updateVoiceInputSettings",
-  "openVoicePrivacySettings",
   "listCodexPets",
   "updateCodexPetSettings",
   "updateCodexPetRuntime",
@@ -166,7 +161,6 @@ export class RemoteDesktopBridge {
   private readonly serverListeners = new Set<ServerEventListener>();
   private readonly runningListeners = new Set<RunningListener>();
   private readonly themeListeners = new Set<PreferenceListener<ThemePreference>>();
-  private readonly voiceListeners = new Set<PreferenceListener<VoiceInputSettings>>();
   private readonly pendingServerRequests = new Map<
     string,
     { resolve: (result: ServerRequestResult) => void }
@@ -605,10 +599,6 @@ export class RemoteDesktopBridge {
    return this.applyProjectState(await this.call(id?'desktop/projects/relocate':'desktop/projects/add',{path,id}));
   }
   private createApi(): WuuDesktopApi {
-    const initialVoiceInputSettings: VoiceInputSettings = {
-      polish_enabled: false,
-      language: "system",
-    };
     const target: WuuDesktopApi = {
       ...unavailableWebActions,
       hostKind: "web",
@@ -633,7 +623,6 @@ export class RemoteDesktopBridge {
       initialThemePreference: storedTheme(),
       initialLanguagePreference: storedLanguage(),
       initialSystemLocale: navigator.language,
-      initialVoiceInputSettings,
       initialChannelRoomPreferences: storedChannelRoomPreferences(),
       initialMessageFlowFontSize: storedMessageSize(),
       popOutInit: () => ({ kind: null, threadID: null, context: null }),
@@ -921,7 +910,6 @@ export class RemoteDesktopBridge {
         this.call("process/stop", { thread_id, process_id }),
       // Native event sources do not exist in a browser. These subscriptions
       // are inert; their actions are explicitly unavailable below.
-      onSpeechRecognitionEvent: () => () => {},
       onRemoteControlEvent: () => () => {},
       onCodexPetJumpRequest: () => () => {},
       startTerminalSession: async (params) => {const result=await this.call<import("@wuu/protocol").TerminalSessionStartResult>("desktop/terminal/start",{params,root:params?.cwd});this.terminalIDs.add(result.id);return result;},
@@ -947,15 +935,6 @@ export class RemoteDesktopBridge {
       },
       onLanguagePreferenceChange: (listener: PreferenceListener<LanguagePreference>) => {
         return languagePreferenceStore.subscribe(listener);
-      },
-      getVoiceInputSettings: async () => ({
-        settings: initialVoiceInputSettings,
-        microphone_permission: "unavailable",
-        speech_permission: "unavailable",
-      }),
-      onVoiceInputSettingsChange: (listener: PreferenceListener<VoiceInputSettings>) => {
-        this.voiceListeners.add(listener);
-        return () => this.voiceListeners.delete(listener);
       },
       getMessageFlowFontSize: async () => storedMessageSize(),
       setMessageFlowFontSize: async (fontSize: MessageFlowFontSize) => {

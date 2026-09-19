@@ -4,7 +4,7 @@
   --workspace-panel-title-icon: var(--wuu-color-text-muted, #6d7378);
   --workspace-tool-tab-text: var(--wuu-color-text-muted, #666d72);
   --workspace-tab-highlight: rgba(255, 255, 255, 0.72);
-  --workspace-tab-active-bg: var(--selection-surface);
+  --workspace-tab-active-bg: var(--surface-3);
   --workspace-tab-close-icon: var(--wuu-color-text-muted, #8b9095);
   --workspace-tab-focus-ring: var(--focus-ring);
   --workspace-menu-item-hover-bg: #ebebe8;

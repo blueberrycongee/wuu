@@ -874,7 +874,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params plugin
 		ForkedFromID: fork.ForkedFromID,
 		WorktreePath: worktree.Path, WorktreeBaseHEAD: worktree.BaseHEAD, WorktreeBaseRepo: worktree.BaseRepo,
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant,
-		Effort: selection.Effort, PermissionMode: selection.PermissionMode,
+		Effort: selection.Effort, PermissionMode: selection.PermissionMode, ApproveForMe: selection.ApproveForMe,
 		Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord

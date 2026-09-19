@@ -114,7 +114,7 @@ it("keeps an inline companion mounted while adding and removing the history jump
   expect(host.querySelectorAll("button")).toHaveLength(2);
   expect(host.querySelector("[data-companion]")).toBe(companion);
   act(() => host.querySelector<HTMLButtonElement>(".jump-to-latest-pill")!.click());
-  expect(scrollTo).toHaveBeenCalledWith({ top: 1500, behavior: "smooth" });
+  expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
   act(() => { setScrollTop(1000); node.dispatchEvent(new Event("scroll")); });
   expect(host.querySelectorAll("button")).toHaveLength(1);
   expect(host.querySelector("[data-companion]")).toBe(companion);
@@ -258,7 +258,45 @@ describe("JumpToLatestPill", () => {
         .querySelector<HTMLButtonElement>(".jump-to-latest-pill")
         ?.click();
     });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 600, behavior: "smooth" });
+  });
+
+  it("treats leftover submission tail as already at latest", () => {
+    const { node, setScrollTop, scrollTo } = scrollContainer({
+      scrollHeight: 2000,
+      clientHeight: 600,
+      scrollTop: 920,
+    });
+    const pane = document.createElement("main");
+    pane.className = "conversation-pane";
+    pane.style.setProperty("--session-tail-space", "480px");
+    pane.append(node);
+    document.body.append(pane);
+    mountedContainers.push(pane);
+    const host = document.createElement("div");
+    node.append(host);
+    const root = createRoot(host);
+    mountedRoots.push(root);
+    act(() => {
+      root.render(
+        createElement(JumpToLatestPill, {
+          containerRef: { current: node },
+          bottomAnchor: null,
+          inline: true,
+        }),
+      );
+    });
+    expect(host.querySelector(".jump-to-latest-pill")).toBeNull();
+
+    act(() => {
+      setScrollTop(0);
+      node.dispatchEvent(new Event("scroll"));
+    });
+    expect(host.querySelector(".jump-to-latest-pill")).not.toBeNull();
+    act(() => {
+      host.querySelector<HTMLButtonElement>(".jump-to-latest-pill")?.click();
+    });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 920, behavior: "smooth" });
   });
 
   it("hides again once the container scrolls back within the threshold", () => {

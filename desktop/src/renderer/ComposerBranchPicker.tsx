@@ -76,7 +76,7 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
   return (
     <div className="composer-project-menu composer-branch-menu" role="menu" aria-label={t("git.branch")} aria-busy={pending}>
       <label className="menu-search">
-        <Search />
+        <Search className="icon-sm" aria-hidden="true" />
         <input autoFocus value={query} aria-label={t("environment.searchBranches")} placeholder={t("environment.searchBranches")}
           onChange={(event) => setQuery(event.target.value)} />
       </label>

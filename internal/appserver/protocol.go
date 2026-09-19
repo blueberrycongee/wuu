@@ -432,7 +432,8 @@ type ConfigModelCatalogRefreshResult struct {
 }
 
 type PermissionSummary struct {
-	Mode string `json:"mode,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	ApproveForMe bool   `json:"approve_for_me,omitempty"`
 }
 
 type MCPServerStatus struct {
@@ -925,6 +926,7 @@ type ConfigModelUpdateParams struct {
 	Effort         *string `json:"effort,omitempty"`
 	Variant        *string `json:"variant,omitempty"`
 	PermissionMode *string `json:"permission_mode,omitempty"`
+	ApproveForMe   *bool   `json:"approve_for_me,omitempty"`
 	BaseURL        *string `json:"base_url,omitempty"`
 	APIKey         *string `json:"api_key,omitempty"`
 	AuthToken      *string `json:"auth_token,omitempty"`
@@ -1261,6 +1263,8 @@ type ThreadStartParams struct {
 	Effort         string `json:"effort,omitempty"`
 	PermissionMode string `json:"permission_mode,omitempty"`
 	Provider       string `json:"provider,omitempty"`
+	// Nil leaves the default unchanged; false explicitly disables approval review.
+	ApproveForMe *bool `json:"approve_for_me,omitempty"`
 	// Handoff creates a seed-backed session from the current conversation.
 	// The destination model is explicit; the cutoff is fixed at submit time.
 	Handoff *ThreadHandoffParams `json:"handoff,omitempty"`
@@ -2110,6 +2114,7 @@ type Thread struct {
 	ModelVariant   string                `json:"model_variant"`
 	ModelEffort    string                `json:"model_effort"`
 	PermissionMode string                `json:"permission_mode"`
+	ApproveForMe   bool                  `json:"approve_for_me"`
 	// EngineID is the agent engine the thread is bound to ("wuu" for the
 	// built-in engine; external engines like Claude or Codex will carry
 	// their own ids).

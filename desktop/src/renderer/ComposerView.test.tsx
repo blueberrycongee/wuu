@@ -25,9 +25,9 @@ import type {
   PermissionSummary,
   RuntimeContext,
   SkillSummary,
-  SpeechRecognitionEvent,
   WuuDesktopApi,
 } from "../shared/protocol";
+
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -101,6 +101,7 @@ function handoffInitialized(): InitializeResult {
 
 function renderComposer(props: {
   accessMenuOpen?: boolean;
+  activeEngine?: string;
   variant?: ComposerVariant;
   canSelectProject?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
@@ -137,13 +138,13 @@ function renderComposer(props: {
   activeContext?: RuntimeContext;
   setPrompt?: (value: string) => void;
   pluginHost?: PluginHost;
-  onSelectPermissionMode?: (mode: PermissionMode) => void;
+  onSelectPermissionMode?: (mode: PermissionMode, approveForMe?: boolean) => void;
   tokensPerSecond?: number;
   tokenSpeedSampledAt?: number;
   tokenSpeedSource?: "real" | "estimated" | "none";
   activeProject?: DesktopProject;
   projects?: DesktopProject[];
-}): { onSelectPermissionMode: (mode: PermissionMode) => void } {
+}): { onSelectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => void } {
   const codexModels: CodexModelLoadState = {
     loading: false,
     error: "",
@@ -173,6 +174,7 @@ function renderComposer(props: {
           statusLiveProgress={props.statusLiveProgress}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
+          activeEngine={props.activeEngine}
           gitStatus={props.gitStatus}
           branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
@@ -605,14 +607,6 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
 }
 
 describe("Composer send control", () => {
-  const voiceInputTest = import.meta.env.VITE_ENABLE_VOICE_INPUT === "true" ? it : it.skip;
-
-  it("hides voice input and BYOK polish by default", () => {
-    renderComposer({ prompt: "" });
-
-    expect(container.querySelector(".composer-voice-input")).toBeNull();
-  });
-
   it("keeps the draft editable but disables send when the workbench is disconnected", () => {
     const commitPrompt = vi.fn();
     const onSend = vi.fn();
@@ -698,62 +692,6 @@ describe("Composer send control", () => {
     expect(stopButton).not.toBeNull();
     act(() => stopButton.click());
     expect(onInterrupt).not.toHaveBeenCalled();
-  });
-
-  voiceInputTest("stops recording and steers the running turn with the final transcript", async () => {
-    let speechHandler: ((event: SpeechRecognitionEvent) => void) | undefined;
-    const stopSpeechRecognition = vi.fn().mockResolvedValue({ ok: true });
-    const onSend = vi.fn();
-    const onSteer = vi.fn();
-    const voiceInputSettings = {
-      polish_enabled: true,
-      language: "system" as const,
-    };
-    (window as unknown as { wuu: WuuDesktopApi }).wuu = {
-      platform: "darwin",
-      initialVoiceInputSettings: voiceInputSettings,
-      getVoiceInputSettings: vi.fn().mockResolvedValue({
-        settings: voiceInputSettings,
-        microphone_permission: "granted",
-        speech_permission: "granted",
-      }),
-      updateVoiceInputSettings: vi.fn().mockResolvedValue(voiceInputSettings),
-      onVoiceInputSettingsChange: vi.fn(() => () => undefined),
-      startSpeechRecognition: vi.fn().mockResolvedValue({
-        ok: true,
-        session_id: "speech-1",
-      }),
-      stopSpeechRecognition,
-      onSpeechRecognitionEvent: vi.fn((handler) => {
-        speechHandler = handler;
-        return () => undefined;
-      }),
-      polishText: vi.fn().mockResolvedValue({ text: "润色后直接发送" }),
-    } as unknown as WuuDesktopApi;
-    renderComposer({ running: true, onSend, onSteer });
-
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>(".composer-voice-button")?.click();
-    });
-    act(() => {
-      speechHandler?.({ type: "state", state: "listening" });
-      speechHandler?.({ type: "result", text: "直接发送这段话", is_final: false });
-    });
-
-    const sendButton = container.querySelector<HTMLButtonElement>(
-      ".composer-action-button",
-    );
-    expect(sendButton?.classList.contains("composer-send-button")).toBe(true);
-    expect(sendButton?.getAttribute("aria-label")).toBe("发送引导");
-    expect(sendButton?.disabled).toBe(false);
-    await act(async () => {
-      sendButton?.click();
-    });
-
-    expect(stopSpeechRecognition).toHaveBeenCalledOnce();
-    expect(onSteer).toHaveBeenCalledOnce();
-    expect(onSteer).toHaveBeenCalledWith("润色后直接发送");
-    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("sends on Enter when Chromium leaves a stale IME keyCode", () => {
@@ -2750,10 +2688,15 @@ describe("Composer permission menu", () => {
         "button[role=\"menuitemradio\"] strong",
       ),
     ).map((label) => label.textContent?.trim());
-    expect(labels).toEqual(["工作区内完全信任", "只读", "无边界"]);
+    expect(labels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
     expect(document.body.textContent).not.toContain("平衡");
     expect(document.body.textContent).not.toContain("严格");
-    expect(document.body.textContent).not.toContain("替我审批");
+    const menuLabels = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        ".access-menu button strong",
+      ),
+    ).map((label) => label.textContent?.trim());
+    expect(menuLabels).toEqual(["工作区内完全信任", "替我审批", "只读", "无边界"]);
 
     const checkedLabels = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>(
@@ -2761,6 +2704,9 @@ describe("Composer permission menu", () => {
       ),
     ).map((label) => label.textContent?.trim());
     expect(checkedLabels).toEqual(["工作区内完全信任"]);
+    expect(document.body.querySelector(
+      "button[role=\"menuitemradio\"][aria-checked=\"true\"] svg",
+    )).not.toBeNull();
     expect(document.body.textContent).not.toContain("profile:");
     expect(document.body.textContent).not.toContain("reviewer:");
   });
@@ -2786,7 +2732,7 @@ describe("Composer permission menu", () => {
       );
     });
 
-    expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only");
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only", false);
 
     const unconfinedOption = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>(
@@ -2801,7 +2747,116 @@ describe("Composer permission menu", () => {
       );
     });
 
-    expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined");
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined", false);
+  });
+
+  it("turns Approve for me off when Standard is selected", () => {
+    const onSelectPermissionMode = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: true },
+      onSelectPermissionMode,
+    });
+
+    const standard = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(
+        "button[role=\"menuitemradio\"]",
+      ),
+    ).find((button) => button.textContent?.includes("工作区内完全信任"));
+    act(() => {
+      standard?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", false);
+  });
+
+  it.each([undefined, "", "wuu"])("selects Approve for me as a peer option in Wuu mode with engine %s", (activeEngine) => {
+    const onSelectPermissionMode = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: false },
+      activeEngine,
+      onSelectPermissionMode,
+    });
+    const option = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    ).find((button) => button.textContent?.includes("替我审批"));
+    expect(option).not.toBeUndefined();
+    expect(option?.disabled).toBe(false);
+    act(() => {
+      option?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
+  });
+
+  it("shows Approve for me as selected on the chip and with a check in the menu", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: true },
+    });
+
+    const chip = container.querySelector<HTMLButtonElement>(
+      "button[aria-label=\"权限模式：替我审批\"]",
+    );
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toContain("替我审批");
+
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    );
+    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
+    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
+    expect(approveForMe?.getAttribute("aria-checked")).toBe("true");
+    expect(approveForMe?.querySelector("svg")).not.toBeNull();
+    expect(standard?.getAttribute("aria-checked")).toBe("false");
+    expect(standard?.querySelector("svg")).toBeNull();
+  });
+
+  it("does not mark Approve for me selected when it is off", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "standard", approve_for_me: false },
+    });
+
+    expect(container.querySelector<HTMLButtonElement>(
+      "button[aria-label=\"权限模式：标准\"]",
+    )).not.toBeNull();
+
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    );
+    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
+    const standard = radios.find((button) => button.textContent?.includes("工作区内完全信任"));
+    expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
+    expect(approveForMe?.querySelector("svg")).toBeNull();
+    expect(standard?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("keeps Approve for me selectable from unconfined mode", () => {
+    const onSelectPermissionMode = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      permissions: { mode: "unconfined", approve_for_me: true },
+      onSelectPermissionMode,
+    });
+    const radios = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    );
+    const approveForMe = radios.find((button) => button.textContent?.includes("替我审批"));
+    const unconfined = radios.find((button) => button.textContent?.includes("无边界"));
+    expect(approveForMe).not.toBeUndefined();
+    expect(approveForMe?.disabled).toBe(false);
+    expect(approveForMe?.getAttribute("aria-checked")).toBe("false");
+    expect(approveForMe?.querySelector("svg")).toBeNull();
+    expect(unconfined?.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector<HTMLButtonElement>(
+      "button[aria-label=\"权限模式：无边界\"]",
+    )).not.toBeNull();
+    act(() => {
+      approveForMe?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("standard", true);
   });
 });
 

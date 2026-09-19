@@ -75,7 +75,12 @@
   --channel-directory-row-gap: 8px;
   --channel-avatar-size: 30px;
   --channel-message-column-gap: 10px;
+  --channel-message-cluster-gap: var(--space-1);
+  --channel-message-group-gap: var(--space-4);
   --channel-content-max-width: 1120px;
+  /* Collaboration assistant bubbles keep a chat measure, not the session
+     composer column. The previous 100% cap made long replies fill the pane. */
+  --channel-agent-message-max-width: min(640px, 78%);
   --channel-horizontal-gutter: clamp(16px, 2vw, 24px);
   --bg-primary: var(--paper);
   --bg-secondary: var(--surface-1);
@@ -540,24 +545,31 @@
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px var(--channel-horizontal-gutter) calc(var(--channel-footer-height, 0px) + 20px);
+  gap: var(--channel-message-cluster-gap);
+  padding: var(--space-3) var(--channel-horizontal-gutter) calc(var(--channel-footer-height, 0px) + 20px);
 }
 
 .channel-timestamp {
   align-self: center;
-  padding: 14px 0 10px;
+  margin: var(--space-3) 0 0;
+  padding: 0;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.channel-timestamp:first-child {
+  margin-top: 0;
 }
 
 .channel-system-message {
   align-self: center;
+  margin: var(--space-3) 0 0;
   color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.5;
-  padding: 4px 12px;
+  padding: 0 12px;
   text-align: center;
 }
 
@@ -719,12 +731,16 @@
   /* Match the attachment button's center while retaining the avatar/content gap. */
   padding-inline-start: calc(23px - var(--channel-avatar-size) / 2);
 }
-.channel-message:not(.channel-message-continuation) { margin-top: 12px; }
-.channel-timestamp + .channel-message { margin-top: 0; }
+.channel-message + .channel-message:not(.channel-message-continuation) { margin-top: var(--channel-message-group-gap); }
+.channel-message.channel-message-continuation { margin-top: 0; }
+.channel-timestamp + .channel-message,
+.channel-system-message + .channel-message { margin-top: var(--space-2); }
+.channel-message + .channel-timestamp,
+.channel-message + .channel-system-message { margin-top: var(--space-3); }
 
 .channel-message.chat-row > .channel-message-content {
   /* Reserve a readable column before the bubble sizes to its actual text. */
-  width: min(var(--conversation-message-max-width, 720px), 100%);
+  width: var(--channel-agent-message-max-width);
   max-width: 100%;
   min-width: 0;
   display: flex;
@@ -739,12 +755,14 @@
 }
 
 .channel-message-meta {
-  min-height: 19px;
+  min-height: 16px;
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  margin-bottom: 2px;
   font-size: 12px;
+  line-height: 1.3;
 }
 
 .channel-message.own .channel-message-meta {
@@ -1177,7 +1195,9 @@
 }
 
 .channel-message-content > .composer-attachments {
-  margin-bottom: 8px;
+  gap: var(--space-2);
+  padding: 0;
+  margin: 0 0 var(--space-2);
 }
 
 .channel-message.own .composer-attachments {
@@ -3616,7 +3636,7 @@
   .channel-room-header-title { gap: 4px; flex: 1; }
   .channel-room-header-title h2 { font-size: 14px; }
   .channel-room-members-button { min-height: 44px; }
-  .channel-message-stream { padding-top: 12px; gap: 6px; }
+  .channel-message-stream { padding-top: var(--space-3); }
   .channel-message.agent:not(.channel-direct-message) { padding-inline-start: calc(27px - var(--channel-avatar-size) / 2); }
   .channel-message.chat-row > .channel-message-content { width: 100%; }
   .channel-message.own.chat-row > .channel-message-content { width: 88%; }

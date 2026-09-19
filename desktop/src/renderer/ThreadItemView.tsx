@@ -392,9 +392,10 @@ function BuiltInThreadItemView({
       const actionsPersistent =
         actionsVisible &&
         (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
-      // The provider may confirm terminal only at completion. Reserve actions
-      // for live candidates too, so confirmation cannot grow the answer.
-      const reserveActionSlot = (!isProcessText || item.status === "in_progress") &&
+      // Reserve the action slot only in the answer region. Live process
+      // commentary is also in_progress; a reserved bar there is invisible
+      // but still occupies the answer-action gap until the item completes.
+      const reserveActionSlot = !isProcessText &&
         (copyable || item.status === "in_progress");
       return (
         <article

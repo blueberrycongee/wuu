@@ -51,6 +51,8 @@ jobs:
           sudo apt-get install -y postgresql
           echo "WUU_TEST_PG_BIN=$(pg_config --bindir)" >> "$GITHUB_ENV"
       - name: Remote behavior tests
+        # PR/main Go check already runs these with PostgreSQL enabled.
+        if: github.event_name == 'workflow_dispatch'
         run: bash clients/native/with-postgres.sh go test ./internal/remote/... -count=1
       - name: Deployment lifecycle and WebSocket probes
         run: |

@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     title: "Wuu — Onboarding preview (not saved)",
     ...(process.platform === "darwin" ? {
       titleBarStyle: "hiddenInset" as const,
-      trafficLightPosition: { x: 18, y: 15 },
+      trafficLightPosition: { x: 18, y: 17 },
     } : {}),
     webPreferences: {
       contextIsolation: true,

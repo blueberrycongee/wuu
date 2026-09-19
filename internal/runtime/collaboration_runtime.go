@@ -48,6 +48,22 @@ func (s *Session) newCollaborationSession(rootDir, orientation string, selected 
 	// Model limits come from the selected provider, while execution and
 	// compaction behavior use the built-in contract, never interactive settings.
 	budget := ResolveModelBudget(model.Model, model.RuleProviderConfig, 0)
+	// A collaboration turn must fit both the retained input and the model's
+	// response in the provider window. Some provider profiles publish only the
+	// context size, leaving OutputReserveTokens at zero even though the wire
+	// adapter has a substantially larger default output allowance. Without
+	// reserving that output space, long-running rooms send one request too late
+	// and receive context_length_exceeded before proactive compaction runs.
+	if budget.OutputReserveTokens <= 0 {
+		budget.OutputReserveTokens = providers.MaxOutputTokensFor(model.Model)
+	}
+	if budget.ContextWindowTokens > 0 && budget.OutputReserveTokens > 0 {
+		buffer := 13_000
+		threshold := budget.ContextWindowTokens - budget.OutputReserveTokens - buffer
+		if threshold < budget.CompactThresholdTokens {
+			budget.CompactThresholdTokens = max(0, threshold)
+		}
+	}
 	preference := config.Default().Agent.ToolLoadingPreference()
 	loadingMode, searchEnabled, deferredDiscovery := resolveToolLoadingModeForProvider(preference, model.RuleProviderConfig, model.APIModel, model.ProviderOptions)
 	kit, err := tools.New(rootDir)

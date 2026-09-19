@@ -57,7 +57,22 @@ export function collaborationConversations(
   }
   const normalizedQuery = searchable(query.trim());
   return conversations.filter((item) => !archivedRoomIDs.includes(item.id) && (!normalizedQuery || searchable(item.name).includes(normalizedQuery)))
-    .sort((left, right) => Number(right.pinned) - Number(left.pinned)
-      || (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0)
+    .sort((left, right) => (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0)
       || left.id.localeCompare(right.id));
+}
+
+export function orderedPinnedCollaborationConversations(
+  conversations: readonly CollaborationConversation[],
+  pinnedRoomIDs: readonly string[],
+): CollaborationConversation[] {
+  const byID = new Map(conversations.filter((item) => item.pinned).map((item) => [item.id, item]));
+  const ordered: CollaborationConversation[] = [];
+  for (const id of pinnedRoomIDs) {
+    const item = byID.get(id);
+    if (!item) continue;
+    ordered.push(item);
+    byID.delete(id);
+  }
+  ordered.push(...[...byID.values()]);
+  return ordered;
 }

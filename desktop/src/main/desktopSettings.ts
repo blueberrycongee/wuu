@@ -19,7 +19,6 @@ import {
   type LanguagePreference,
   type PluginConflictPreferences,
   type ThemePreference,
-  type VoiceInputSettings,
 } from "../shared/protocol";
 import type { WindowBounds } from "./windowState";
 
@@ -28,7 +27,6 @@ export type {
   MessageFlowFontSize,
   ThemePreference,
   LanguagePreference,
-  VoiceInputSettings,
   WindowBounds,
 };
 
@@ -49,7 +47,6 @@ export type DesktopSettings = {
   // renderer resolves it to a concrete data-theme on <html>.
   theme?: ThemePreference;
   language?: LanguagePreference;
-  voice_input?: VoiceInputSettings;
   channel_room_preferences?: ChannelRoomPreferences;
   phone_access_enabled?: boolean;
   // User-facing reading size for the message stream, in pixels. The
@@ -97,19 +94,6 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
     }
     if (isLanguagePreference(record.language)) {
       settings.language = record.language;
-    }
-    if (
-      typeof record.voice_input === "object" &&
-      record.voice_input !== null &&
-      !Array.isArray(record.voice_input)
-    ) {
-      const voiceInput = record.voice_input as Record<string, unknown>;
-      settings.voice_input = {
-        polish_enabled: voiceInput.polish_enabled === true,
-        language: isLanguagePreference(voiceInput.language)
-          ? voiceInput.language
-          : "system",
-      };
     }
     if (
       isMessageFlowFontSize(record.message_flow_font_size)
@@ -272,35 +256,6 @@ export function setPluginConflictPreference(
   };
   writeDesktopSettings({ ...settings, plugin_conflict_preferences: preferences }, filePath);
   return preferences;
-}
-
-export function getVoiceInputSettings(filePath?: string): VoiceInputSettings {
-  return (
-    readDesktopSettings(filePath).voice_input ?? {
-      polish_enabled: false,
-      language: "system",
-    }
-  );
-}
-
-export function setVoiceInputSettings(
-  voiceInput: VoiceInputSettings,
-  filePath?: string,
-): void {
-  const settings = readDesktopSettings(filePath);
-  const language = isLanguagePreference(voiceInput.language)
-    ? voiceInput.language
-    : "system";
-  writeDesktopSettings(
-    {
-      ...settings,
-      voice_input: {
-        polish_enabled: voiceInput.polish_enabled === true,
-        language,
-      },
-    },
-    filePath,
-  );
 }
 
 export function getChannelRoomPreferences(

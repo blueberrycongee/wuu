@@ -1,11 +1,18 @@
 /// <reference types="vite/client" />
 
-/** Phone access is available on native hosts; Web hides it via host capabilities. */
-export const ENABLE_REMOTE_CONTROL = true;
+/** Phone access is available in development; the local desktop release hides it. */
+export const ENABLE_REMOTE_CONTROL =
+  import.meta.env.VITE_ENABLE_REMOTE_CONTROL !== "false";
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
 export const ENABLE_CONVERSATION_TURN_RAIL = false;
+
+/**
+ * Same turn output-summary family as the file-change card. Hide the file-list
+ * card until that surface returns; keep snapshots and inline image previews.
+ */
+export const ENABLE_TURN_ARTIFACT_SUMMARY = false;
 
 /**
  * Collaboration is part of the default desktop product in development and
@@ -16,13 +23,12 @@ export const ENABLE_GROUP_CHAT =
   import.meta.env.VITE_ENABLE_GROUP_CHAT !== "false";
 
 /**
- * Voice input and its optional BYOK text polish are hidden while the native
- * recognition flow and polish experience are still being stabilized.
- *
- * Use `VITE_ENABLE_VOICE_INPUT=true npm run dev` for internal testing.
+ * Account and device-linking UI stays available in development, but the
+ * current desktop release is intentionally unauthenticated until that flow
+ * is ready for users.
  */
-export const ENABLE_VOICE_INPUT =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_VOICE_INPUT === "true";
+export const ENABLE_ACCOUNT =
+  import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
 /**
  * The embedded browser remains an internal development capability. Production
@@ -31,13 +37,3 @@ export const ENABLE_VOICE_INPUT =
  */
 export const ENABLE_EMBEDDED_BROWSER =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_BROWSER === "true";
-
-/**
- * The Skills management assistant is an early surface-assistant experiment.
- * Keep it out of release builds until its
- * ephemeral-session and correction UX have been validated through dogfooding.
- *
- * Use `VITE_ENABLE_MANAGEMENT_ASSISTANT=true npm run dev` for internal testing.
- */
-export const ENABLE_MANAGEMENT_ASSISTANT =
-  import.meta.env.VITE_ENABLE_MANAGEMENT_ASSISTANT === "true";

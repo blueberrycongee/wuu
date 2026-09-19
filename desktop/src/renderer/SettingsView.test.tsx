@@ -206,12 +206,11 @@ function renderSettings(props: {
 describe("SettingsView shell", () => {
   it("omits native settings and does not request desktop build info on a browser host", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "1970-01-01" } });
-    window.wuu.unsupportedMethods = ["getBuildInfo", "listCodexPets", "startSpeechRecognition", "getRemoteControlSnapshot"];
+    window.wuu.unsupportedMethods = ["getBuildInfo", "listCodexPets", "getRemoteControlSnapshot"];
     renderSettings({ initialized: baseInitialized(), initialPage: "general" });
     await act(async () => { await Promise.resolve(); });
     expect(window.wuu.getBuildInfo).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="settings-codex-pet-enabled"]')).toBeNull();
-    expect(container.querySelector('[data-testid="settings-voice-input"]')).toBeNull();
     expect(container.querySelector('[data-testid="settings-appearance"]')).not.toBeNull();
   });
 
@@ -863,67 +862,6 @@ describe("SettingsView provider model catalog", () => {
   });
 });
 
-describe("SettingsView collaboration models", () => {
-  it("saves and clears the independent verification model", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "collaboration",
-      initialized: baseInitialized({
-        provider: "openai",
-        model: "gpt-default",
-        providers: [{
-          name: "openai",
-          type: "openai",
-          model: "gpt-default",
-          models: [
-            { id: "gpt-default", display_name: "GPT Default" },
-            { id: "gpt-review", display_name: "GPT Review" },
-          ],
-        }],
-        model_roles: [
-          { role: "verification", provider: "openai", model: "gpt-default", inherited: true },
-        ],
-      }),
-      onAdvancedSave,
-    });
-
-    const page = container.querySelector('[data-testid="settings-collaboration"]');
-    expect(page).not.toBeNull();
-    const triggers = Array.from(page!.querySelectorAll<HTMLButtonElement>(".settings-select-trigger"));
-    expect(triggers).toHaveLength(1);
-
-    await act(async () => {
-      triggers[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const verificationOption = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".select-menu-panel .select-menu-item"),
-    ).find((item) => item.getAttribute("data-value") === "openai\u0000gpt-review");
-    await act(async () => {
-      verificationOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({
-      verification_model: { provider: "openai", model: "gpt-review" },
-    });
-
-    await act(async () => {
-      triggers[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const inheritOption = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".select-menu-panel .select-menu-item"),
-    ).find((item) => item.getAttribute("data-value") === "");
-    await act(async () => {
-      inheritOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({
-      verification_model: { provider: "", model: "" },
-    });
-  });
-});
-
 describe("SettingsView advanced settings", () => {
   it("renders compaction controls and saves each field on commit", async () => {
     installBuildInfoStub({
@@ -1133,7 +1071,6 @@ describe("SettingsView general settings", () => {
       await Promise.resolve();
     });
     expect(container.querySelector("[data-testid=\"settings-general\"]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=\"settings-voice-input\"]")).toBeNull();
     expect(rootText()).toContain("docs");
     expect(rootText()).toContain("search");
 

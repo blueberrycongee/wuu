@@ -204,6 +204,20 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     fireScroll();
   });
 
+  it("does not follow into leftover submission tail when switching sessions", () => {
+    const node = mount({
+      activeThreadID: "thread-long",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 2400 - 600,
+    });
+    fireScroll();
+    node.style.setProperty("--session-tail-space", "500px");
+
+    switchThread("thread-short");
+    expect(layout?.scrollTop).toBe(1300);
+  });
+
   it("restores a thread's saved away-from-bottom position when switching back", () => {
     mount({
       activeThreadID: "thread-a",

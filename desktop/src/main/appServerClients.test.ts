@@ -475,6 +475,47 @@ describe("AppServerClient child lifecycle", () => {
     expect(child.killed).toBe(true);
   });
 
+  it("keeps live stderr off the composer status and still reports it on exit", async () => {
+    const child = new FakeAppServerChild();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { client, events } = makeClient(() => child.asChildProcess());
+    try {
+      const pending = client.request("initialize");
+      child.stderr.write(
+        "wuu: agent.tool_loading = \"native\", but grok-4.6 does not support provider-native deferred tool discovery.\n",
+      );
+      expect(events.filter((event) => event.kind === "server-error")).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[app-server\] .*agent\.tool_loading/),
+      );
+
+      child.emit("exit", 1, null);
+      child.emit("close", 1, null);
+      await expect(pending).rejects.toThrow(/agent\.tool_loading/);
+      expect(serverExitEvents(events)).toHaveLength(1);
+      expect(serverExitEvents(events)[0]?.message).toContain("agent.tool_loading");
+    } finally {
+      warn.mockRestore();
+      await client.dispose();
+    }
+  });
+
+  it("still reports invalid app-server JSON as a protocol error", async () => {
+    const child = new FakeAppServerChild();
+    const { client, events } = makeClient(() => child.asChildProcess());
+    try {
+      client.start();
+      child.stdout.write("not-json\n");
+      expect(events).toEqual([
+        { kind: "server-error", message: "Invalid app-server JSON: not-json" },
+      ]);
+    } finally {
+      child.emit("exit", 0, null);
+      child.emit("close", 0, null);
+      await client.dispose();
+    }
+  });
+
   it("clears pending and running state on EPIPE without letting stale child events clear its replacement", async () => {
     const first = new FakeAppServerChild();
     const second = new FakeAppServerChild();

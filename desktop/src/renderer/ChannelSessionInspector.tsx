@@ -41,8 +41,6 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
   const isCoordinator = detail?.session.purpose === "coordination";
   const turns = detail?.thread.turns ?? [];
   const targetTurn = turnID ? turns.find((turn) => turn.id === turnID) : undefined;
-  const statusTurn = targetTurn ?? turns.at(-1);
-  const status = statusTurn ? t(`agent.status.${statusTurn.status === "in_progress" ? "running" : statusTurn.status === "interrupted" ? "cancelled" : statusTurn.status}`) : detail ? t(`channels.sessions.state.${detail.session.state}`) : "";
   const followLatest = scroll.scrollToBottom;
   const alignAnchor = () => {
     const node = history.current;
@@ -96,7 +94,6 @@ export function ChannelSessionInspector({ sessionRef, turnID, name, agents, over
       </button>
       {onBack ? <button type="button" className="icon-button" aria-label={t("channels.sessions.back")} onClick={onBack}><ArrowLeft className="icon" /></button> : null}
       <>{isCoordinator ? <RoomCoordinatorAvatar size={24} /> : null}<strong>{isCoordinator ? `Room · ${name}` : name}</strong></>
-      {status ? <div className="channel-session-meta">{status}</div> : null}
     </header>
     {children}
     {error ? <div className="channel-error" role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>{t("channels.sessions.retry")}</button></div> : null}
