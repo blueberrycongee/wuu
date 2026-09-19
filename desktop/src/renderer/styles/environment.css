@@ -148,7 +148,13 @@
 .environment-panel-actions .icon-button {
   width: 26px;
   height: 26px;
+  padding: 0;
+  line-height: 0;
   border-radius: var(--radius-sm);
+}
+
+.environment-panel-actions .icon-button > svg {
+  display: block;
 }
 
 .environment-panel-body {
@@ -156,7 +162,14 @@
   gap: 3px;
 }
 
-.environment-panel-header.floating + .environment-panel-body .environment-row:first-child {
+/* Floating close sits over the top-right. Clear plugin inspector sections
+   (they render above the body) and the first body row, even when sections
+   sit between the header and the body. */
+.environment-panel-header.floating ~ .plugin-inspector-sections {
+  padding-right: 40px;
+}
+
+.environment-panel-header.floating ~ .environment-panel-body .environment-row:first-child {
   padding-right: 40px;
 }
 
