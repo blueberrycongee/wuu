@@ -375,6 +375,88 @@ describe("RuntimePicker", () => {
     expect(document.querySelector(".codex-model-item-name")?.textContent).toBe("DeepSeek Chat");
   });
 
+  it("reuses the model and effort a provider was last used with", () => {
+    writeDraftRuntimeMemory({
+      provider: "deepseek",
+      model: "deepseek-reasoner",
+      effort: "high",
+    });
+    const initialized = runtimeWithEffort();
+    initialized.provider = "tokenhub";
+    initialized.model = "gpt-5.6-sol";
+    initialized.providers = [
+      {
+        name: "deepseek",
+        type: "openai-compatible",
+        model: "deepseek-chat",
+        models: [
+          { id: "deepseek-chat", display_name: "DeepSeek Chat" },
+          {
+            id: "deepseek-reasoner",
+            display_name: "DeepSeek Reasoner",
+            supported_efforts: ["low", "high"],
+            default_effort: "low",
+          },
+        ],
+      },
+      {
+        name: "tokenhub",
+        type: "openai-compatible",
+        model: "gpt-5.6-sol",
+        models: [{ id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol" }],
+      },
+    ];
+    const onSelectModel = vi.fn();
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    const providerContext = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-panel-context button"))
+      .find((button) => button.textContent?.includes("tokenhub"));
+    act(() => providerContext?.click());
+    // The configured model stays the fallback, but the provider's own last pick
+    // wins so switching back does not reset the model or its effort.
+    const deepseek = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option"))
+      .find((button) => button.textContent?.includes("deepseek"));
+    act(() => deepseek?.click());
+
+    expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-reasoner", "high");
+  });
+
+  it("falls back to the provider's configured model when the remembered one is gone", () => {
+    writeDraftRuntimeMemory({
+      provider: "deepseek",
+      model: "retired-model",
+      effort: "high",
+    });
+    const initialized = runtimeWithEffort();
+    initialized.provider = "tokenhub";
+    initialized.model = "gpt-5.6-sol";
+    initialized.providers = [
+      {
+        name: "deepseek",
+        type: "openai-compatible",
+        model: "deepseek-chat",
+        models: [{ id: "deepseek-chat", display_name: "DeepSeek Chat" }],
+      },
+      {
+        name: "tokenhub",
+        type: "openai-compatible",
+        model: "gpt-5.6-sol",
+        models: [{ id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol" }],
+      },
+    ];
+    const onSelectModel = vi.fn();
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    const providerContext = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-panel-context button"))
+      .find((button) => button.textContent?.includes("tokenhub"));
+    act(() => providerContext?.click());
+    const deepseek = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-provider-option"))
+      .find((button) => button.textContent?.includes("deepseek"));
+    act(() => deepseek?.click());
+
+    expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-chat", "");
+  });
+
   it("selects a discrete effort by dragging the unlabeled slider", () => {
     const onSelectEffort = vi.fn();
     renderPicker("model", runtimeWithEffort(), vi.fn(), onSelectEffort);

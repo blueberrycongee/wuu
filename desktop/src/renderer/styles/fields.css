@@ -15,8 +15,9 @@
 
 /* Filter rows inside menus, cards, and command palettes stay unboxed: the
  * outer surface already supplies the frame, so a nested field box is extra
- * chrome. New in-card searches should use .menu-search. Page, sidebar, and
- * form searches keep their own field chrome. */
+ * chrome. A hairline under the row separates typing from selection.
+ * New in-card searches should use .menu-search. Page, sidebar, and form
+ * searches keep their own field chrome. */
 .menu-search {
   display: flex;
   flex: 0 0 auto;
@@ -27,9 +28,10 @@
   margin: 0;
   padding: var(--control-padding-block) var(--menu-item-padding-inline);
   border: 0;
+  border-bottom: 1px solid var(--hairline-soft);
   border-radius: 0;
   background: transparent;
-  color: var(--ink-tertiary);
+  color: var(--ink-muted);
 }
 
 .menu-search input {
@@ -63,6 +65,10 @@
 
 .menu-search svg {
   flex: 0 0 auto;
+}
+
+.menu-search.conversation-search-input-wrap {
+  border-bottom: 0;
 }
 
 .workspace-diff-search {

@@ -198,6 +198,7 @@ import { motionDurationMs } from "./motion";
 import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import type { InstructionFilesEntry } from "./InstructionFilesCard";
 import {
+  rememberedEngineRuntime,
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
@@ -1336,9 +1337,10 @@ export function App(): JSX.Element {
     const runtime = draftEngineRuntimeByID.current[id]
       ?? (id === "wuu"
         ? { model: "", effort: "" }
-        : defaultEngineRuntimeSelection(
-            engineInventory?.engines.find((engine) => engine.id === id),
-          ));
+        : rememberedEngineRuntime(id, engineInventory)
+          ?? defaultEngineRuntimeSelection(
+              engineInventory?.engines.find((engine) => engine.id === id),
+            ));
     draftEngineSeed.current.done = true;
     setDraftEngine(id);
     setDraftPermissionMode(id === "wuu" ? "" : "unconfined");

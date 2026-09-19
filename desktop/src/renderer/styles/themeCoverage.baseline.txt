@@ -219,21 +219,9 @@ turns.css .turn-collapsed-marker background --ink-overlay-18
 turns.css .turn-progress.failed .turn-progress-rule background --turn-progress-failed-rule-bg
 turns.css .turn-progress.in_progress .turn-progress-title color --turn-progress-sweep-base
 turns.css .turn-reasoning-summary:hover, .turn-reasoning-summary:focus-visible text-decoration-color --ink-overlay-18
-turns.css .turn-source-avatar background --turn-sources-pill-bg-fallback
-turns.css .turn-source-fallback color --turn-source-icon-color-fallback
-turns.css .turn-source-icon, .turn-source-icon-frame color --turn-source-icon-color-fallback
-turns.css .turn-source-overflow-badge color --turn-source-icon-color-fallback
-turns.css .turn-source-overflow-badge background --turn-sources-pill-bg-fallback
-turns.css .turn-source-overflow-item color --turn-source-icon-color-fallback
-turns.css .turn-source-overflow-item-host color --turn-sources-pill-color-fallback
-turns.css .turn-source-overflow-item:hover, .turn-source-overflow-item:focus-visible background --turn-sources-pill-bg-fallback
-turns.css .turn-source-overflow-list border --turn-sources-pill-border-fallback
-turns.css .turn-sources-pill background --turn-sources-pill-bg-fallback
-turns.css .turn-sources-pill border --turn-sources-pill-border-fallback
-turns.css .turn-sources-pill color --turn-sources-pill-color-fallback
-turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible background --turn-sources-pill-bg-fallback
-turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible border-color --turn-sources-pill-border-fallback
-turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible color --turn-sources-pill-color-fallback
+turns.css .turn-source-avatar background --ink-overlay-6
+turns.css .turn-sources-pill background --ink-overlay-6
+turns.css button.turn-sources-pill:hover, button.turn-sources-pill:focus-visible background --ink-overlay-8
 workbench.css .plugin-ui-button:focus-visible, .plugin-ui-toolbar-toggle:focus-visible box-shadow --ink-overlay-12
 workbench.css .plugin-ui-button[data-wuu-variant="primary"] background --gray-900
 workbench.css .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover background --gray-900

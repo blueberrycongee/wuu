@@ -1,6 +1,7 @@
 import {
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type JSX,
@@ -21,11 +22,22 @@ import {
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { translateCurrent as translate, useI18n } from "./i18n";
-import { CONDENSED_SUMMARY_MIN_TOOL_COUNT, processSegmentText, mascotActivityForToolKind, condensedToolActivityText } from "./ProcessSummary";
+import {
+  CONDENSED_SUMMARY_MIN_TOOL_COUNT,
+  PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
+  PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
+  condensedToolActivityText,
+  mascotActivityForToolKind,
+  processSegmentText,
+  processSummaryIdentity,
+  processSummarySignature,
+  type ProcessSummaryPresentation,
+} from "./ProcessSummary";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 import { AgentAvatarMark } from "./AgentAvatarMark";
 import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { AgentIdentityContext } from "./AgentIdentityContext";
+import { ACTIVITY_MORPHS } from "./useMascotMorph";
 
 /**
  * How long to wait after the fold opens before snapping the reasoning
@@ -36,6 +48,102 @@ import { AgentIdentityContext } from "./AgentIdentityContext";
  * mid-transition value.
  */
 const REASONING_FOLD_OPEN_SNAP_DELAY_MS = 280;
+
+function useDebouncedProcessSummary(
+  segments: ToolActivityProcessSegment[],
+  toolCount: number,
+  reasoningStreaming: boolean,
+  streaming: boolean,
+): ProcessSummaryPresentation {
+  const [presented, setPresented] = useState<ProcessSummaryPresentation>(() => ({
+    segments,
+    toolCount,
+  }));
+  const pendingRef = useRef<ProcessSummaryPresentation>({ segments, toolCount });
+  pendingRef.current = { segments, toolCount };
+  const presentedIdentityRef = useRef(
+    processSummaryIdentity(segments, toolCount, reasoningStreaming),
+  );
+  const presentedSignatureRef = useRef(
+    processSummarySignature(segments, toolCount, reasoningStreaming),
+  );
+  const idleTimerRef = useRef<number | undefined>(undefined);
+  const maxWaitTimerRef = useRef<number | undefined>(undefined);
+  const liveIdentity = processSummaryIdentity(
+    segments,
+    toolCount,
+    reasoningStreaming,
+  );
+  const liveSignature = processSummarySignature(
+    segments,
+    toolCount,
+    reasoningStreaming,
+  );
+
+  useLayoutEffect(() => {
+    const clearTimers = (): void => {
+      if (idleTimerRef.current !== undefined) {
+        window.clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = undefined;
+      }
+      if (maxWaitTimerRef.current !== undefined) {
+        window.clearTimeout(maxWaitTimerRef.current);
+        maxWaitTimerRef.current = undefined;
+      }
+    };
+    const publish = (next: ProcessSummaryPresentation): void => {
+      clearTimers();
+      presentedIdentityRef.current = processSummaryIdentity(
+        next.segments,
+        next.toolCount,
+        reasoningStreaming,
+      );
+      presentedSignatureRef.current = processSummarySignature(
+        next.segments,
+        next.toolCount,
+        reasoningStreaming,
+      );
+      setPresented(next);
+    };
+
+    if (liveSignature === presentedSignatureRef.current) {
+      return;
+    }
+
+    // A new kind, status, or copy is a phase change. Settling the stream is
+    // also a boundary: never leave a stale count on a completed row.
+    if (!streaming || liveIdentity !== presentedIdentityRef.current) {
+      publish(pendingRef.current);
+      return;
+    }
+
+    if (idleTimerRef.current !== undefined) {
+      window.clearTimeout(idleTimerRef.current);
+    }
+    idleTimerRef.current = window.setTimeout(() => {
+      idleTimerRef.current = undefined;
+      publish(pendingRef.current);
+    }, PROCESS_SUMMARY_COUNT_DEBOUNCE_MS);
+
+    if (maxWaitTimerRef.current === undefined) {
+      maxWaitTimerRef.current = window.setTimeout(() => {
+        maxWaitTimerRef.current = undefined;
+        publish(pendingRef.current);
+      }, PROCESS_SUMMARY_COUNT_MAX_WAIT_MS);
+    }
+  }, [liveIdentity, liveSignature, reasoningStreaming, streaming]);
+
+  useEffect(() => () => {
+    if (idleTimerRef.current !== undefined) {
+      window.clearTimeout(idleTimerRef.current);
+    }
+    if (maxWaitTimerRef.current !== undefined) {
+      window.clearTimeout(maxWaitTimerRef.current);
+    }
+  }, []);
+
+  return presented;
+}
 
 export function ProcessSurfaceMascot({
   active,
@@ -49,9 +157,16 @@ export function ProcessSurfaceMascot({
   model?: string;
 }): JSX.Element | null {
   const agent = useContext(AgentIdentityContext);
-  if (agent === "room") return active ? <span className="process-surface-blobatar"><RoomCoordinatorAvatar size={28} activity={activity} /></span> : null;
+  // Collaboration and room rows wrap the SVG. Publish the morph on that
+  // layout slot so process-row optical alignment can target one node.
+  const slotMorph = ACTIVITY_MORPHS[activity];
+  if (agent === "room") return active ? (
+    <span className="process-surface-blobatar" data-wuu-mascot-morph={slotMorph}>
+      <RoomCoordinatorAvatar size={28} activity={activity} />
+    </span>
+  ) : null;
   if (agent) return active ? (
-    <span className="process-surface-blobatar">
+    <span className="process-surface-blobatar" data-wuu-mascot-morph={slotMorph}>
       <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image}
         activity={activity} status={activity === "responding" ? "responding" : "thinking"} motion="expressive" />
     </span>
@@ -148,9 +263,17 @@ export function ProcessSurface({
     reasoningStreaming || (hasReasoning && toolItems.length === 0)
       ? "thinking"
       : mascotActivityForToolKind(currentToolSegment?.kind);
+  const summaryPresentation = useDebouncedProcessSummary(
+    toolSegments,
+    toolItems.length,
+    reasoningStreaming,
+    streaming,
+  );
+  const summarySegments = summaryPresentation.segments;
+  const summaryToolCount = summaryPresentation.toolCount;
   const useCondensedSummary =
-    toolItems.length >= CONDENSED_SUMMARY_MIN_TOOL_COUNT &&
-    toolSegments.length > 1;
+    summaryToolCount >= CONDENSED_SUMMARY_MIN_TOOL_COUNT &&
+    summarySegments.length > 1;
   // Activity belongs to the synthesized process entry, not to any individual
   // tool item's running/completed status. In the real turn shell `active` is
   // assigned to the latest gray process entry; `streaming` is only the legacy
@@ -187,12 +310,12 @@ export function ProcessSurface({
     hasDetails ? " has-details" : " no-details"
   }${streaming ? " is-streaming" : ""}`;
   const summaryText = useCondensedSummary
-    ? condensedToolActivityText(toolSegments, toolItems.length, reasoningStreaming)
-    : `${toolSegments
+    ? condensedToolActivityText(summarySegments, summaryToolCount, reasoningStreaming)
+    : `${summarySegments
         .map(processSegmentText)
         .join(t("process.actionSeparator"))}${
         hasReasoning
-          ? `${toolSegments.length > 0 ? " · " : ""}${
+          ? `${summarySegments.length > 0 ? " · " : ""}${
               reasoningStreaming ? t("process.thinking") : t("process.reasoning")
             }`
           : ""
@@ -216,13 +339,13 @@ export function ProcessSurface({
           <AnimatedProcessText
             className="process-surface-condensed-summary"
             text={condensedToolActivityText(
-              toolSegments,
-              toolItems.length,
+              summarySegments,
+              summaryToolCount,
               reasoningStreaming,
             )}
           />
         ) : (
-          toolSegments.map((segment, index) => (
+          summarySegments.map((segment, index) => (
             <ProcessSurfaceSegmentView
               key={segment.id}
               segment={segment}
@@ -232,7 +355,7 @@ export function ProcessSurface({
         )}
         {hasReasoning && !useCondensedSummary ? (
           <span className="process-surface-segment process-surface-reasoning-segment">
-            {toolSegments.length > 0 ? (
+            {summarySegments.length > 0 ? (
               <span className="process-surface-separator">{" · "}</span>
             ) : null}
             <AnimatedProcessText

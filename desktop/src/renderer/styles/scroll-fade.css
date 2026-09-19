@@ -20,9 +20,11 @@
 
 @supports (animation-timeline: scroll(self y)) and (animation-range: 0px 1px) {
   [data-scroll-fade] {
-    /* About one row of UI text at the 14px baseline: a shorter ramp only
-     * softens the boundary instead of reading as a gradient across a row. */
-    --scroll-fade-size: 24px;
+    /* About one and a half rows in each tier's own row grid (32px session
+     * rows, 22px tool rows). One row only softens the boundary instead of
+     * reading as a gradient; past two rows the edge starts hiding content
+     * the user is meant to read after one small scroll. */
+    --scroll-fade-size: 48px;
     /* This is alpha, not a surface color: it works on glass and all themes. */
     --scroll-fade-opaque: #000;
     mask-image: linear-gradient(
@@ -42,7 +44,7 @@
       calc(100% - var(--scroll-fade-size)) 100%;
   }
 
-  [data-scroll-fade="compact"] { --scroll-fade-size: 18px; }
+  [data-scroll-fade="compact"] { --scroll-fade-size: 32px; }
 
   @keyframes scroll-fade-top {
     from { --scroll-fade-top: 0px; }

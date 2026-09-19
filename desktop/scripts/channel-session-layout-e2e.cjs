@@ -111,10 +111,10 @@ app.whenReady().then(async () => {
       await moveTo(card);
       // Exercise the real pointer bridge beyond the exit grace period.
       await new Promise(resolve => setTimeout(resolve,250));
-      const measured = await js(`(()=>{const n=document.querySelector('${card}'),r=n?.getBoundingClientRect(),c=document.querySelector('.composer-frame').getBoundingClientRect();return {open:!!n,left:r?.left,right:r?.right,top:r?.top,bottom:r?.bottom,inputTop:c.top,width:innerWidth,rows:[...document.querySelectorAll('.managed-session-preview-title')].map(x=>x.textContent),states:document.querySelectorAll('.managed-session-preview-state').length,nativeTitle:!!document.querySelector('.managed-agent-work-pill').closest('[title]')||!!n?.querySelector('[title]'),spinner:!!document.querySelector('.managed-agent-work-pill .managed-session-spinner'),overflow:document.documentElement.scrollWidth>innerWidth}})()`);
+      const measured = await js(`(()=>{const n=document.querySelector('${card}'),r=n?.getBoundingClientRect(),c=document.querySelector('.composer-frame').getBoundingClientRect();return {open:!!n,left:r?.left,right:r?.right,top:r?.top,bottom:r?.bottom,inputTop:c.top,width:innerWidth,rows:[...document.querySelectorAll('.managed-session-preview-title')].map(x=>x.textContent),runningRows:document.querySelectorAll('.managed-session-preview-list .managed-session-spinner').length,nativeTitle:!!document.querySelector('.managed-agent-work-pill').closest('[title]')||!!n?.querySelector('[title]'),spinner:!!document.querySelector('.managed-agent-work-pill .managed-session-spinner'),overflow:document.documentElement.scrollWidth>innerWidth}})()`);
       assert(measured.open && measured.left>=0 && measured.right<=measured.width && measured.top>=0 && measured.bottom<=measured.inputTop && !measured.nativeTitle && !measured.spinner && !measured.overflow,JSON.stringify({theme,font,width,zoom,state,measured}));
       assert.equal(measured.rows.length,state==='empty'?0:5);
-      assert.equal(measured.states,state==='running'?3:0);
+      assert.equal(measured.runningRows,state==='running'?3:0);
       if(state!=='empty') assert(measured.rows[0].startsWith(state==='running'?'会话 3：':'会话 65：'));
       await shot(`${theme}-${font}-${width}-${zoom}-${state}-preview`);
       win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});

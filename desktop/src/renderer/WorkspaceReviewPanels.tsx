@@ -784,7 +784,7 @@ function GitChangeTreePanel({
         </div>
       </div>
       <label className="menu-search workspace-diff-search" data-wuu-component="workspace-review-search">
-        <Search className="icon" />
+        <Search className="icon-sm" aria-hidden="true" />
         <input
           value={query}
           placeholder={t("workspaceReview.filterFiles")}

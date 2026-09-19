@@ -652,6 +652,22 @@ describe("createRuntimeSettingsActions", () => {
     });
   });
 
+  it("starts the next conversation from the provider default saved in Settings", async () => {
+    const api = installWuuApi();
+    const harness = buildActions();
+
+    await harness.actions.updateProviderSettings("codex", "gpt-5.1", undefined, {
+      base_url: "https://new.example.test",
+    });
+
+    expect(api.updateRuntimeSettings).toHaveBeenCalled();
+    expect(readDraftRuntimeMemory()).toEqual({
+      provider: "codex",
+      model: "gpt-5.1",
+      effort: "high",
+    });
+  });
+
   it("toggles the Codex runtime menu and closes sibling menus", () => {
     const api = installWuuApi();
     const harness = buildActions();

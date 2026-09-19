@@ -605,7 +605,7 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -1514,12 +1514,15 @@
   min-width: 0;
   height: 32px;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
-  font-size: var(--font-ui);
+  /* Compact composer chrome matches the model picker and workspace bar, not
+     the reading-size --font-ui used for menus and body copy. */
+  font-size: var(--font-sm);
   font-weight: 400;
+  line-height: 1;
   padding: 0 8px;
   white-space: nowrap;
 }
@@ -1529,6 +1532,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Beat .composer-bar svg so the warning glyph and chevron stay on the
+   compact chrome size instead of the 16px toolbar-icon default. */
+.composer-bar .permission-chip svg,
+.permission-chip svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 /* The tone belongs to the mode itself: unconfined keeps its danger-red label
@@ -2406,7 +2417,7 @@
   white-space: nowrap;
 }
 
-.composer-project-menu svg {
+.composer-project-menu button svg {
   width: 16px;
   height: 16px;
   color: var(--composer-project-menu-icon);
@@ -2414,9 +2425,13 @@
 }
 
 .composer-project-menu .menu-search {
-  gap: 8px;
   font-weight: 400;
   line-height: var(--line-ui);
+}
+
+.composer-project-menu .menu-search svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 
 .project-picker-empty {

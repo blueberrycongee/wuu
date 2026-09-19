@@ -13,10 +13,10 @@ Put `data-scroll-fade` on the **existing scroll owner**:
 </div>
 ```
 
-Use `compact` (18px) for dense inspection strips and an empty value (24px) for
-navigation and local lists. Both sizes span roughly one row of UI text, so the
-ramp reads as a gradient across a row; a shorter ramp only softens the boundary.
-A local `--scroll-fade-size`
+Use `compact` (32px) for dense inspection strips and an empty value (48px) for
+navigation and local lists. Both sizes span about one and a half rows of that
+surface's own row grid (32px session rows, 22px tool rows), so the ramp reads as
+a gradient instead of a softened boundary. A local `--scroll-fade-size`
 override is possible but should be exceptional. There is no React wrapper,
 event listener, observer, dependency, or change to scroll ownership.
 
@@ -70,8 +70,8 @@ these tests are **not** a visual approval.
 The user owns final inspection in the current Desktop runtime:
 
 - Short content: no fading. Long content: bottom only at the top, both in
-  the middle, top only at the bottom; only the row crossing an edge reads as
-  faded.
+  the middle, top only at the bottom; only the row and a half crossing an edge
+  reads as faded.
 - Stream into an open tool fold, scroll away, collapse/reopen it, switch
   sessions, and resize the window. Existing follow/pause behavior must hold.
 - Check both sidebar views, light/dark themes, and compact widths. Headers,

@@ -328,7 +328,7 @@ export function SelectMenu({
           >
             {searchable ? (
               <label className="menu-search select-menu-search">
-                <Search className="select-menu-search-icon icon" aria-hidden="true" />
+                <Search className="select-menu-search-icon icon-sm" aria-hidden="true" />
                 <input
                   ref={searchInputRef}
                   type="search"
