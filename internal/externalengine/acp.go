@@ -13,8 +13,13 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// ACP v1's prompt response owns completion. Later protocol versions have
-// different turn boundaries; accepting them without a separate driver is unsafe.
+var grokPromptStall = 30 * time.Second
+
+// ACP v1's prompt response owns completion for standard agents. Grok also
+// emits a session prompt-complete extension that can arrive first when the
+// prompt RPC hangs after the turn actually finished. Later protocol versions
+// have different turn boundaries; accepting them without a separate driver is
+// unsafe.
 type acpInitialize struct {
 	Version      int          `json:"protocolVersion"`
 	AuthMethods  []AuthMethod `json:"authMethods"`
@@ -83,9 +88,19 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	defer p.close()
 	ref := s.binding.ExternalRef
 	prompting := false
+	promptID := ""
+	profile := acpProfileFor(s.engine.entry.ID)
+	var stallTimer *time.Timer
+	disarmStall := func() {
+		if stallTimer != nil {
+			stallTimer.Stop()
+			stallTimer = nil
+		}
+	}
 	r := &rpc{child: p}
 	r.handle = func(ctx context.Context, method string, params json.RawMessage, request bool) (any, error) {
 		if request {
+			disarmStall()
 			if method == "session/request_permission" {
 				return s.acpPermission(ctx, ref, params)
 			}
@@ -93,11 +108,22 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			// or terminal capabilities are advertised by this client.
 			return nil, &rpcError{Code: -32601, Message: "unsupported engine request: " + method}
 		}
+		if prompting && profile.promptComplete {
+			if err := decodeACPPromptComplete(ref, promptID, method, params); err != nil {
+				return nil, err
+			}
+		}
 		if method == "session/update" {
+			if prompting && !isACPSessionBoilerplate(params) {
+				disarmStall()
+			}
 			if !prompting {
 				return nil, decodeACPUpdate(ref, params)
 			}
 			return nil, t.acpUpdate(ref, params)
+		}
+		if prompting && isACPPromptCompleteMethod(method) {
+			disarmStall()
 		}
 		return nil, nil
 	}
@@ -151,10 +177,22 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		blocks = append(blocks, map[string]string{"type": "image", "mimeType": image.MediaType, "data": image.Data})
 	}
 	prompting = true
+	promptParams := map[string]any{"sessionId": ref, "prompt": blocks}
+	if profile.promptComplete {
+		promptID = "wuu-p1"
+		promptParams["_meta"] = map[string]string{"promptId": promptID, "requestId": promptID}
+	}
 	var response struct {
 		StopReason string `json:"stopReason"`
 	}
-	err = r.call(ctx, "session/prompt", map[string]any{"sessionId": ref, "prompt": blocks}, &response)
+	promptCtx := ctx
+	if profile.promptStall > 0 {
+		var cancelStall context.CancelFunc
+		promptCtx, cancelStall = context.WithCancel(ctx)
+		stallTimer = time.AfterFunc(profile.promptStall, cancelStall)
+		defer disarmStall()
+	}
+	err = r.call(promptCtx, "session/prompt", promptParams, &response)
 	if ctx.Err() != nil {
 		cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -162,18 +200,126 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		return ctx.Err()
 	}
 	if err != nil {
+		if profile.promptStall > 0 && errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = r.notify(cancelCtx, "session/cancel", map[string]string{"sessionId": ref})
+			return fmt.Errorf("%s did not acknowledge the prompt within %s; %s", s.engine.entry.Name, profile.promptStall, profile.stallHint)
+		}
 		return err
 	}
-	t.stopReason = response.StopReason
-	switch response.StopReason {
+	return finishACPTurn(t, response.StopReason)
+}
+
+type acpProfile struct {
+	promptComplete bool
+	promptStall    time.Duration
+	stallHint      string
+}
+
+func acpProfileFor(id string) acpProfile {
+	switch strings.TrimSpace(id) {
+	case "grok":
+		return acpProfile{
+			promptComplete: true,
+			promptStall:    grokPromptStall,
+			stallHint:      "the agent process is likely wedged by a stale shared leader or a hung startup check",
+		}
+	default:
+		return acpProfile{}
+	}
+}
+
+type acpTurnSettled struct {
+	StopReason string
+}
+
+func (e *acpTurnSettled) Error() string {
+	if e == nil || e.StopReason == "" {
+		return "engine turn settled"
+	}
+	return "engine turn settled: " + e.StopReason
+}
+
+func applyACPTurnSettled(result any, settled *acpTurnSettled) error {
+	if settled == nil {
+		return errors.New("engine turn settled without a stop reason")
+	}
+	if result == nil {
+		return nil
+	}
+	data, err := json.Marshal(map[string]string{"stopReason": settled.StopReason})
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return fmt.Errorf("decode session/prompt result: %w", err)
+	}
+	return nil
+}
+
+func decodeACPPromptComplete(ref, promptID, method string, raw json.RawMessage) error {
+	if !isACPPromptCompleteMethod(method) {
+		return nil
+	}
+	var notification struct {
+		SessionID  string `json:"sessionId"`
+		PromptID   string `json:"promptId"`
+		StopReason string `json:"stopReason"`
+	}
+	if err := json.Unmarshal(raw, &notification); err != nil {
+		return err
+	}
+	if notification.SessionID != ref {
+		return nil
+	}
+	if promptID != "" && notification.PromptID != "" && notification.PromptID != promptID {
+		return nil
+	}
+	stop := strings.TrimSpace(notification.StopReason)
+	if stop == "" {
+		stop = "end_turn"
+	}
+	return &acpTurnSettled{StopReason: stop}
+}
+
+func isACPPromptCompleteMethod(method string) bool {
+	switch method {
+	case "x.ai/session/prompt_complete", "_x.ai/session/prompt_complete":
+		return true
+	default:
+		return false
+	}
+}
+
+func isACPSessionBoilerplate(raw json.RawMessage) bool {
+	var notification struct {
+		Update struct {
+			Type string `json:"sessionUpdate"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(raw, &notification) != nil {
+		return false
+	}
+	switch notification.Update.Type {
+	case "available_commands_update", "config_option_update", "current_mode_update":
+		return true
+	default:
+		return false
+	}
+}
+
+func finishACPTurn(t *turn, stopReason string) error {
+	t.stopReason = stopReason
+	switch stopReason {
 	case "end_turn":
 		return nil
 	case "cancelled":
 		return context.Canceled
 	case "max_tokens", "max_turn_requests", "refusal":
-		return fmt.Errorf("engine stopped: %s", response.StopReason)
+		return fmt.Errorf("engine stopped: %s", stopReason)
 	default:
-		return fmt.Errorf("engine returned an unknown stop reason %q", response.StopReason)
+		return fmt.Errorf("engine returned an unknown stop reason %q", stopReason)
 	}
 }
 

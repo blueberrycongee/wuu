@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/version"
 )
 
 // AuthMethod is an agent-advertised sign-in choice. Only agent-driven methods
@@ -24,11 +27,33 @@ type AuthResult struct {
 
 func initializeACP(ctx context.Context, r *rpc) (acpInitialize, error) {
 	var init acpInitialize
-	err := r.call(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "wuu", "version": "1"}}, &init)
+	err := r.call(ctx, "initialize", acpInitializeParams(), &init)
 	if err == nil && init.Version != 1 {
 		err = fmt.Errorf("unsupported ACP version %d (requires version 1)", init.Version)
 	}
 	return init, err
+}
+
+// ACP clients that omit fs/terminal capabilities can leave agents waiting on
+// host I/O they never advertised. Decline those surfaces so agents use their
+// own filesystem and sandbox instead.
+func acpInitializeParams() map[string]any {
+	clientVersion := strings.TrimSpace(version.Info().Version)
+	if clientVersion == "" {
+		clientVersion = "1"
+	}
+	return map[string]any{
+		"protocolVersion": 1,
+		"clientInfo": map[string]string{
+			"name":    "wuu",
+			"title":   "Wuu",
+			"version": clientVersion,
+		},
+		"clientCapabilities": map[string]any{
+			"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
+			"terminal": false,
+		},
+	}
 }
 
 // Authenticate launches an explicit, bounded sign-in operation. An empty method

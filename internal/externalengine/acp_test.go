@@ -18,11 +18,20 @@ import (
 
 func testEngine(t *testing.T, scenario string) *Engine {
 	t.Helper()
+	return testEngineID(t, "test", scenario)
+}
+
+func testEngineID(t *testing.T, id, scenario string) *Engine {
+	t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(enginecatalog.Entry{ID: "test", Name: "Test", Protocol: "acp", Args: []string{"-test.run=^TestACPHelper$", "--", "wuu-acp-helper", scenario}}, binary, t.TempDir())
+	name := "Test"
+	if entry, ok := enginecatalog.Lookup(id); ok {
+		name = entry.Name
+	}
+	return New(enginecatalog.Entry{ID: id, Name: name, Protocol: "acp", Args: []string{"-test.run=^TestACPHelper$", "--", "wuu-acp-helper", scenario}}, binary, t.TempDir())
 }
 
 func testBinding() agentengine.ThreadBinding {
@@ -275,6 +284,27 @@ func TestACPHelper(t *testing.T) {
 			text("old replay")
 		case "session/prompt":
 			promptID = msg.ID
+			if scenario == "prompt-stall" {
+				continue
+			}
+			if scenario == "prompt-complete-hang" || scenario == "prompt-complete-stale" {
+				var prompt struct {
+					Meta struct {
+						PromptID string `json:"promptId"`
+					} `json:"_meta"`
+				}
+				_ = json.Unmarshal(msg.Params, &prompt)
+				if scenario == "prompt-complete-stale" {
+					write(map[string]any{"jsonrpc": "2.0", "method": "x.ai/session/prompt_complete", "params": map[string]any{"sessionId": "native-session", "promptId": "stale-p0", "stopReason": "cancelled"}})
+				}
+				text("pong")
+				if scenario == "prompt-complete-hang" {
+					write(map[string]any{"jsonrpc": "2.0", "method": "x.ai/session/prompt_complete", "params": map[string]any{"sessionId": "native-session", "promptId": prompt.Meta.PromptID, "stopReason": "end_turn"}})
+					continue
+				}
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "grok" {
 				text(strings.TrimSpace(selectedModel + " " + selectedEffort))
 				result = map[string]string{"stopReason": "end_turn"}
@@ -386,6 +416,54 @@ func grokACPSessionResult() map[string]any {
 				},
 			},
 		},
+	}
+}
+
+func TestACPGrokPromptCompleteSettlesHungPrompt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "grok", "prompt-complete-hang").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "pong" || result.Result.StopReason != "end_turn" {
+		t.Fatalf("hung prompt settlement = %+v", result)
+	}
+}
+
+func TestACPIgnoresStaleGrokPromptComplete(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "grok", "prompt-complete-stale").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "pong" || result.Result.StopReason != "end_turn" {
+		t.Fatalf("stale completion overrode the live turn: %+v", result)
+	}
+}
+
+func TestACPGrokPromptStallSurfacesWedgedAgent(t *testing.T) {
+	previous := grokPromptStall
+	grokPromptStall = 200 * time.Millisecond
+	t.Cleanup(func() { grokPromptStall = previous })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "grok", "prompt-stall").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.RunTurn(ctx, testInput(), nil)
+	if err == nil || !strings.Contains(err.Error(), "did not acknowledge the prompt") {
+		t.Fatalf("stall error = %v", err)
 	}
 }
 

@@ -77,16 +77,40 @@ func (e Entry) Resolve(override string) (string, error) {
 }
 
 func extraLookupPaths(e Entry) []string {
-	if e.ID != "grok" {
-		return nil
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	joinHome := func(parts ...string) string {
+		return filepath.Join(append([]string{home}, parts...)...)
 	}
 	var paths []string
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths,
-			filepath.Join(home, ".local", "bin", "grok"),
-			filepath.Join(home, ".grok", "bin", "grok"),
-			filepath.Join(home, ".npm-global", "bin", "grok"),
-		)
+	addHome := func(parts ...string) {
+		if home == "" {
+			return
+		}
+		paths = append(paths, joinHome(parts...))
 	}
-	return append(paths, filepath.Join("/opt/homebrew/bin", "grok"), filepath.Join("/usr/local/bin", "grok"))
+	addCommon := func(bin string) {
+		paths = append(paths, filepath.Join("/opt/homebrew/bin", bin), filepath.Join("/usr/local/bin", bin))
+	}
+	switch e.ID {
+	case "grok":
+		addHome(".local", "bin", "grok")
+		addHome(".grok", "bin", "grok")
+		addHome(".npm-global", "bin", "grok")
+		addCommon("grok")
+	case "hermes":
+		addHome(".local", "bin", "hermes")
+		addHome(".hermes", "bin", "hermes")
+		addCommon("hermes")
+	case "devin":
+		addHome(".local", "bin", "devin")
+		addCommon("devin")
+	case "pi":
+		addHome(".local", "bin", "pi-acp")
+		addHome(".npm-global", "bin", "pi-acp")
+		addCommon("pi-acp")
+	}
+	return paths
 }

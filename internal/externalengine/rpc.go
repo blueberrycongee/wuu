@@ -63,6 +63,10 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 				isRequest := len(msg.ID) > 0 && string(msg.ID) != "null"
 				value, err := r.handle(ctx, msg.Method, msg.Params, isRequest)
 				if !isRequest {
+					var settled *acpTurnSettled
+					if errors.As(err, &settled) {
+						return applyACPTurnSettled(result, settled)
+					}
 					if err != nil {
 						return err
 					}

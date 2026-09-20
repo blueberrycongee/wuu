@@ -178,7 +178,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Discover models advertised by ACP engines such as Grok on `session/new`, so
   the composer lists `grok-4.6` / `grok-4.5` instead of only Agent default.
   Launch Grok with `--no-auto-update` and `--no-leader` so that probe is not
-  attached to a shared CLI leader.
+  attached to a shared CLI leader. Complete a Grok turn on
+  `x.ai/session/prompt_complete` when the prompt RPC hangs, decline ACP
+  filesystem and terminal host capabilities, and look up Devin, Hermes, and Pi
+  in their native install directories.
 
 - Reveal desktop wallpaper through the Automation plugin and embedded workspace
   plugin pages, while keeping overlapping plugin views opaque.
