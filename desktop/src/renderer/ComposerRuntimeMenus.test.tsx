@@ -186,6 +186,32 @@ describe("RuntimePicker", () => {
     expect(two).toBeLessThan(320);
   });
 
+  it("reserves a row and its separator for every engine", () => {
+    const chooserHeight = (count: number): number => {
+      renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef<HTMLDivElement>(), {
+        engines: Array.from({ length: count }, (_, index) => ({
+          id: index === 0 ? "wuu" : `engine-${index}`,
+          enabled: true,
+          binary_ok: true
+        })),
+        onSelectEngine: vi.fn()
+      });
+      act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button")?.click());
+      return Number.parseFloat(
+        document.querySelector<HTMLElement>(".codex-model-menu")?.style.getPropertyValue("--runtime-chooser-height") ?? ""
+      );
+    };
+
+    const six = chooserHeight(6);
+    const seven = chooserHeight(7);
+
+    // The engine page is a fixed-height shell over a scrolling list, so a
+    // height that forgets a row's separator clips the last engine instead of
+    // showing the page inset below it.
+    expect(seven - six).toBe(37);
+    expect(seven).toBeGreaterThanOrEqual(7 * 36 + 6);
+  });
+
   it("presents engines as the parent navigation for the selected engine's models", () => {
     const onSelectEngine = vi.fn();
     renderPicker(

@@ -152,14 +152,41 @@ function EngineOptionsMenu({
 export type RuntimePanelView = "summary" | "engines" | "providers" | "models";
 type RuntimePanelDirection = "forward" | "back";
 
+// The panel morphs between pages with a height transition, so the shell height
+// is computed here instead of by its content. These numbers mirror the rules
+// in styles/workspace.css: 36px rows separated by a 1px gap, a 40px page
+// header, a 1px shell border per side, and --menu-inset as the page inset.
+const RUNTIME_PANEL_ROW_HEIGHT = 36;
+const RUNTIME_PANEL_ROW_GAP = 1;
+const RUNTIME_PANEL_PAGE_INSET = 6;
+const RUNTIME_PANEL_HEADER_HEIGHT = 40;
+const RUNTIME_PANEL_BORDER = 1;
 const RUNTIME_PANEL_MAX_HEIGHT = 320;
-const RUNTIME_PANEL_SEARCH_EXTRA = 28;
 
-function runtimePanelListHeight(rowCount: number, extra = 0): number {
+function runtimePanelRows(rowCount: number): number {
   const rows = Math.max(rowCount, 1);
-  // 8px top + 8px bottom minus the last row gap. Model rows already return
-  // to the summary, so this page has no back header.
-  return Math.min(RUNTIME_PANEL_MAX_HEIGHT, 15 + extra + rows * 37);
+  return rows * RUNTIME_PANEL_ROW_HEIGHT + (rows - 1) * RUNTIME_PANEL_ROW_GAP;
+}
+
+function runtimeModelRowsHeight(rowCount: number): number {
+  // Model page: rows plus the inset below them. The search row above them is
+  // sized by --control-field-height, so the shell rule in CSS adds it.
+  return Math.min(
+    RUNTIME_PANEL_MAX_HEIGHT,
+    RUNTIME_PANEL_BORDER * 2 + runtimePanelRows(rowCount) + RUNTIME_PANEL_PAGE_INSET
+  );
+}
+
+function runtimeChooserHeight(rowCount: number, header: boolean): number {
+  // Engine and provider pages. Rows already return to the summary, so the
+  // header is optional and a headerless page takes the inset on both sides.
+  return Math.min(
+    RUNTIME_PANEL_MAX_HEIGHT,
+    RUNTIME_PANEL_BORDER * 2
+      + (header ? RUNTIME_PANEL_HEADER_HEIGHT : 0)
+      + runtimePanelRows(rowCount)
+      + RUNTIME_PANEL_PAGE_INSET * (header ? 1 : 2)
+  );
 }
 
 function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => void }): JSX.Element {
@@ -580,8 +607,8 @@ function EngineRuntimeMenu({
       : effectiveModel
         ? engineModelDefaultEffort(effectiveModel)
         : selectedEffort);
-  const chooserHeight = Math.min(RUNTIME_PANEL_MAX_HEIGHT, 50 + engineOptions.length * 36);
-  const modelsHeight = runtimePanelListHeight(filteredModels.length, RUNTIME_PANEL_SEARCH_EXTRA);
+  const chooserHeight = runtimeChooserHeight(engineOptions.length, true);
+  const modelsHeight = runtimeModelRowsHeight(filteredModels.length);
 
   return (
     <div
@@ -830,10 +857,9 @@ export function RuntimeModelMenu({
     .find((model) => model.id === effectiveModelID);
   const chooserRows = view === "providers" ? visibleProviderGroups.length : engineOptions.length;
   // Provider rows already return to the summary, so that page has no back header.
-  const chooserChrome = view === "providers" ? 16 : 50;
-  const chooserHeight = Math.min(RUNTIME_PANEL_MAX_HEIGHT, chooserChrome + chooserRows * 36);
+  const chooserHeight = runtimeChooserHeight(chooserRows, view !== "providers");
   const visibleModelCount = filteredGroups.reduce((count, group) => count + group.models.length, 0);
-  const modelsHeight = runtimePanelListHeight(visibleModelCount, RUNTIME_PANEL_SEARCH_EXTRA);
+  const modelsHeight = runtimeModelRowsHeight(visibleModelCount);
 
   const selectModel = (provider: string, model: string, variant?: string): void => {
     setOptimistic({ provider, model, variant: variant ?? "" });
