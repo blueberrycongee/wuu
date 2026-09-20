@@ -139,9 +139,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Recover crashed desktop renderers with bounded automatic retries and a native
-  reload/close fallback. Stop orphaned window terminals and avoid sending events
-  to unavailable frames while the window recovers.
+- Make hook exit code 2 reliably block even with JSON output, pass rewritten tool
+  arguments to subsequent hooks, retain all post-tool context across later hook
+  failures, and route rich error results to failure hooks without changing the
+  original tool outcome.
+
+- Bound command-hook output and pipe draining, terminate running hook descendants
+  on cancellation, and preserve cancellation and deadline error identities.
+
+- Prevent matching pre-tool hooks from retaining early or concurrent execution
+  privileges derived from tool arguments they can rewrite.
+
+- Avoid a data race between streamed tool execution and final-call metadata
+  updates by keeping each started call's scheduling decision stable.
 
 - Preserve byte-range recovery for archived tool output when escaped text or
   short lines exceed the line-projection budget, so continuation neither skips
@@ -163,6 +173,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   failures within existing retry budgets and tool replay safety checks. Failed
   streams now retain retry counts and stopping reasons across session reloads,
   with expandable desktop diagnostics instead of misleading network labels (#279).
+
+- Recover crashed desktop renderers with bounded automatic retries and a native
+  reload/close fallback. Stop orphaned window terminals and avoid sending events
+  to unavailable frames while the window recovers.
 
 - Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
   Automation creation, updates, and recurring scheduling no longer reject or

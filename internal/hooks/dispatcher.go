@@ -23,10 +23,10 @@ func NewDispatcher(r *Registry) *Dispatcher {
 }
 
 // Dispatch runs all hooks that match the event sequentially. Execution
-// stops at the first hook that returns a blocking error. The returned
-// Output is the merged result of all non-blocking hooks that ran; for
-// fields with a single "last writer wins" semantic (UpdatedInput, Context,
-// Decision, Reason), later hooks override earlier ones.
+// stops at the first error, preserving output already collected. Context is
+// appended in execution order; other fields use the last supplied value.
+// PreToolUse rewrites are passed to subsequent hooks so validators inspect
+// the arguments that will actually execute.
 //
 // The input's Event field is overwritten to guarantee consistency between
 // the caller's intent and the payload delivered to hook processes.
@@ -44,26 +44,42 @@ func (d *Dispatcher) Dispatch(ctx context.Context, ev Event, input *Input) (*Out
 		return &Output{}, nil
 	}
 
+	current := *input
 	merged := &Output{}
 	for _, h := range hooks {
-		out, err := h.Execute(ctx, input)
-		if err != nil {
-			return out, err
+		out, err := h.Execute(ctx, &current)
+		if err != nil && !IsBlocked(err) {
+			return merged, err
 		}
 		if out == nil {
+			if err != nil {
+				return merged, err
+			}
 			continue
 		}
 		if len(out.UpdatedInput) > 0 {
 			merged.UpdatedInput = out.UpdatedInput
+			if ev == PreToolUse {
+				current.ToolInput = out.UpdatedInput
+			}
 		}
 		if out.Context != "" {
-			merged.Context = out.Context
+			if merged.Context != "" {
+				merged.Context += "\n\n"
+			}
+			merged.Context += out.Context
+		}
+		if out.Continue != nil {
+			merged.Continue = out.Continue
 		}
 		if out.Decision != "" {
 			merged.Decision = out.Decision
 		}
 		if out.Reason != "" {
 			merged.Reason = out.Reason
+		}
+		if err != nil {
+			return merged, err
 		}
 	}
 	return merged, nil
@@ -75,6 +91,13 @@ func (d *Dispatcher) HasHooks(ev Event) bool {
 	registry := d.registry
 	d.mu.RUnlock()
 	return registry.HasHooks(ev)
+}
+
+func (d *Dispatcher) hasMatchingHooks(ev Event, toolName string) bool {
+	d.mu.RLock()
+	registry := d.registry
+	d.mu.RUnlock()
+	return len(registry.Match(ev, toolName)) > 0
 }
 
 // Replace swaps the backing registry while keeping the dispatcher identity
