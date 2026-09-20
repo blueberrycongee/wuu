@@ -30,6 +30,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine the Agent editor with opaque surfaces, aligned borderless fields and
+  inset actions that stay visible while scrolling. The expanded avatar picker
+  uses even option grids and one-click colors, with custom hue adjustment retained.
+
 - Fetch lightweight conversation summaries for desktop lists without copying
   loaded histories, reducing IPC payloads and app-server allocation overhead.
   Recover missed completion events with targeted snapshots for stale loaded
@@ -142,6 +146,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Honor explicit Responses turn-continuation signals across HTTP and WebSocket
   without retrying ordinary empty completions. Bound consecutive tool-free
   continuations, including Anthropic pauses, and reject unfinished compact summaries.
+
+- Refresh `grep` and `glob` first pages from current files after edits, including
+  external changes and reopened sessions, while keeping continuation pages bound
+  to their exact result snapshot (#277).
 
 - Make hook exit code 2 reliably block even with JSON output, pass rewritten tool
   arguments to subsequent hooks, retain all post-tool context across later hook

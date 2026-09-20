@@ -485,6 +485,7 @@ export const zhCN = {
   "channels.chooseAvatar": "选择头像 {index}",
   "channels.avatarShape": "形状",
   "channels.avatarColor": "颜色",
+  "channels.customAvatarColor": "自定义颜色",
   "channels.avatarAccessory": "配饰",
   "channels.chooseAvatarColor": "选择色相 {hue}",
   "channels.avatarShapeRound": "圆形",

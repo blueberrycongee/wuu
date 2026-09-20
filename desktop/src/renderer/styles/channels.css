@@ -2431,7 +2431,7 @@
   border-radius: 0;
 }
 
-.channel-avatar-picker > .agent-avatar-color-control {
+.channel-avatar-picker .agent-avatar-color-control {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) 42px;
   align-items: center;
