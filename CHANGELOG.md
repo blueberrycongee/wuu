@@ -184,6 +184,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep a paused reader's place when earlier conversation history pages in: the
+  manual prepend offset is only applied while the viewport still sits where the
+  page was requested, so native scroll anchoring or a deliberate scroll during
+  the load no longer gets the inserted height added a second time.
+
 - Discover models advertised by ACP engines such as Grok on `session/new`, so
   the composer lists `grok-4.6` / `grok-4.5` instead of only Agent default.
   Launch Grok with `--no-auto-update` and `--no-leader` so that probe is not
