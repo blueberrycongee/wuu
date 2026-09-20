@@ -88,7 +88,34 @@ func BuildTurnError(err error, provider string) TurnError {
 		out.Code = extractCodeFromMessage(message)
 	}
 
+	var recoveryErr *providers.StreamRecoveryError
+	if errors.As(err, &recoveryErr) {
+		info := recoveryErr.Recovery
+		out.Recovery = &info
+		out.Category = categoryFromFailure(providers.NormalizeFailure(err))
+	}
+
 	return out
+}
+
+func categoryFromFailure(failure providers.NormalizedFailure) string {
+	switch failure.Category {
+	case providers.FailureAuthentication:
+		return "auth"
+	case providers.FailureCanceled:
+		return "cancelled"
+	case providers.FailureNetwork, providers.FailureDeadline:
+		return "network"
+	case providers.FailureInvalidRequest:
+		return "invalid_request"
+	case providers.FailureReplayUnsafe, providers.FailureBudgetExceeded, providers.FailureCostIndeterminate, providers.FailureLocalBackpressure:
+		return "local"
+	default:
+		if failure.Origin == providers.FailureOriginProvider {
+			return "provider"
+		}
+		return "internal"
+	}
 }
 
 // asHTTPError unwraps to *providers.HTTPError. Returns nil if not
@@ -162,7 +189,7 @@ func categoryFromStreamError(streamErr *providers.StreamError) string {
 	if streamErr.Retryable {
 		return "provider"
 	}
-	return ""
+	return categoryFromFailure(providers.NormalizeFailure(streamErr))
 }
 
 func categoryFromClassifier(class agentcontrol.ErrorClass) string {
@@ -282,8 +309,6 @@ func isLocalOperationMessage(lower string) bool {
 
 func isNetworkOrUpstreamMessage(lower string) bool {
 	return strings.Contains(lower, "network") ||
-		strings.Contains(lower, "stream request failed") ||
-		strings.Contains(lower, "request failed") ||
 		strings.Contains(lower, "connection refused") ||
 		strings.Contains(lower, "connection reset") ||
 		strings.Contains(lower, "connection dropped") ||

@@ -143,6 +143,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   attempts, preserving provider details and recovery limits without executing
   unfinished tool drafts (#263).
 
+- Preserve top-level Responses stream errors and recover recognized transient
+  failures within existing retry budgets and tool replay safety checks. Failed
+  streams now retain retry counts and stopping reasons across session reloads,
+  with expandable desktop diagnostics instead of misleading network labels (#279).
+
 - Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
   Automation creation, updates, and recurring scheduling no longer reject or
   skip selected Sundays (#272). Previously saved next-run times are preserved;

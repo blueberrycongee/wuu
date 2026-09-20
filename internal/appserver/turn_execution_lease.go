@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -284,7 +285,7 @@ const turnTerminalHistoryRecord = "turn_terminal"
 // interrupted so the settled row ("网络异常 · 第 n/m 次重试") survives reload.
 const streamReconnectHistoryRecord = "stream_reconnect"
 
-func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause error, at time.Time, reconnect *ThreadItem) error {
+func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause *TurnError, at time.Time, reconnect *ThreadItem) error {
 	if s == nil || s.rt == nil || th == nil || !th.PersistHistory || strings.TrimSpace(turnID) == "" {
 		return nil
 	}
@@ -308,13 +309,23 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		return nil
 	}
 	message := ""
+	structuredCause := ""
 	if cause != nil {
-		message = cause.Error()
+		message = cause.Message
+		// Cause on turn_terminal meta rows holds the structured diagnostic.
+		// DisplayContent stays plain text for older readers. Keeping both in
+		// the same row makes status and recovery facts one durable write.
+		encoded, err := json.Marshal(cause)
+		if err != nil {
+			return err
+		}
+		structuredCause = string(encoded)
 	}
 	if err := session.AppendHistoryRecord(s.rt.SessionDir, th.ID, session.HistoryRecord{
 		Role:           "meta",
 		Content:        turnTerminalHistoryRecord,
 		DisplayContent: message,
+		Cause:          structuredCause,
 		ClientID:       clientID,
 		StopReason:     string(status),
 		At:             at,
@@ -348,7 +359,8 @@ func (s *Server) abortStartedThreadTurnDurably(th *threadState, started startedT
 	}
 	var persistErr error
 	if started.userMsgSeq > 0 {
-		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, cause, time.Now().UTC(), nil)
+		diagnostic := BuildTurnError(cause, "")
+		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, &diagnostic, time.Now().UTC(), nil)
 	}
 	abortStartedThreadTurn(th, started, cause)
 	if persistErr != nil {

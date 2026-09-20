@@ -2731,9 +2731,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// elapsed duration after restart instead of fabricating a sub-second result.
 	// Internal successful continuations are still folded into the visible turn.
 	shouldPersistTerminal := status != TurnStatusCompleted || turnKind == TurnKindUser
+	var structured *TurnError
+	if err != nil {
+		value := BuildTurnError(err, turnRuntime.ProviderName)
+		structured = &value
+	}
 	var terminalErr error
 	if shouldPersistTerminal {
-		terminalErr = s.persistTurnTerminal(th, turnID, turnKind, status, err, now, reconnectItem)
+		terminalErr = s.persistTurnTerminal(th, turnID, turnKind, status, structured, now, reconnectItem)
 	}
 	if terminalErr != nil {
 		if err != nil {
@@ -2763,7 +2768,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 
 	// Surface the Go core's typed error classification to clients while
 	// preserving the raw Error string inside the structured payload.
-	var structured *TurnError
 	if err != nil {
 		value := BuildTurnError(err, turnRuntime.ProviderName)
 		structured = &value

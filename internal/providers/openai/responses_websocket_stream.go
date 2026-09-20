@@ -814,13 +814,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "response_failed")
 			session.mu.Unlock()
-			if event.Response != nil && event.Response.Error != nil {
-				err := event.Response.Error.asError()
-				lease.FailError(err)
-				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-				return
-			}
-			err := errors.New("response failed")
+			err := event.asError()
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
@@ -830,13 +824,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "response_error")
 			session.mu.Unlock()
-			if event.Error != nil {
-				err := event.Error.asError()
-				lease.FailError(err)
-				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-				return
-			}
-			err := errors.New("response websocket error")
+			err := event.asError()
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
@@ -898,23 +886,7 @@ func responsesWebSocketConnectionLimitReached(event responsesStreamEvent) bool {
 }
 
 func responsesErrorCode(event responsesStreamEvent) string {
-	if event.Error != nil {
-		if code := strings.TrimSpace(event.Error.Code); code != "" {
-			return code
-		}
-		if typ := strings.TrimSpace(event.Error.Type); typ != "" {
-			return typ
-		}
-	}
-	if event.Response != nil && event.Response.Error != nil {
-		if code := strings.TrimSpace(event.Response.Error.Code); code != "" {
-			return code
-		}
-		if typ := strings.TrimSpace(event.Response.Error.Type); typ != "" {
-			return typ
-		}
-	}
-	return ""
+	return strings.TrimSpace(event.errorDetail().Code)
 }
 
 func newResponsesWebSocketFallbackError(reason string, err error, fallback responsesWebSocketFallbackMeta) *responsesWebSocketFallbackError {
