@@ -159,6 +159,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor explicit model selections when resuming or forking `wuu exec` sessions.
+  Include stdin in CLI deadlines, settle runs on SIGTERM and disconnected output,
+  and allow cancellation when stdout is stalled. Bound pending events and reject
+  human interaction requests in noninteractive execution.
+
 - Retry provider-reported `request_timeout`, `408`, and `504` stream errors
   within the existing retry budget and tool replay safety checks, rather than
   stopping the conversation after the first request.

@@ -40,6 +40,11 @@ wuu exec review --commit COMMIT_SHA
 快捷方式；该位置的 `--resume` 或 `-r` 是 `resume` 的快捷方式，不带其他参数时列出
 可用会话。`fork` 从来源历史创建独立对话。
 
+恢复或分叉时，显式指定的 `--provider`、`--model`、`--effort`、`--variant` 会在执行前
+应用到目标会话；不指定则保留已保存的模型选择。恢复会保存对该会话的修改，分叉只修改新
+会话，两者都不会修改工作区默认值或配置文件。绑定命名 Agent 的会话仍遵守该 Agent 的
+模型选择限制。
+
 `review` 为指定范围生成评审任务，再用普通工具检查代码，并不是另一个静态分析器。
 不应修改文件时，选择 `--permission-mode read_only`。
 
@@ -56,7 +61,7 @@ wuu exec review --commit COMMIT_SHA
 | `--env KEY=VALUE` | 设置本次运行的环境变量，可重复 |
 | `--no-tools` | 禁用本地工具 |
 | `--max-turns N` | 设置模型与工具循环上限；零使用配置默认值 |
-| `--timeout 20m` | 限制运行时长；零不设置 CLI 截止时间 |
+| `--timeout 20m` | 设置包含 stdin 读取时间的截止时间；零不设置 CLI 截止时间 |
 | `--ephemeral` | 创建内存会话，不保存为可恢复会话 |
 | `--json` | 输出 JSONL 事件流 |
 | `--output-last-message FILE` | 执行成功后把最终回答写入文件 |
@@ -65,13 +70,32 @@ wuu exec review --commit COMMIT_SHA
 
 普通启动使用用户配置和允许的项目覆盖项。两个显式信任选项会改变这一边界，自动化使用前
 应先检查配置内容。分层规则见[配置参考](../reference/configuration.md)，命令限制见
-[权限模式](../reference/permissions.md)。操作被拒绝时不会弹出交互式审批提示。
+[权限模式](../reference/permissions.md)。`exec` 不提供人机交互：用户提问服务立即返回
+`service_unavailable`，外部执行引擎的交互式审批会被拒绝。非阻塞提问也遵循这一规则，
+因为没有客户端接收问题。插件可以自行处理服务错误，它本身不决定运行退出码。需要回答
+问题的客户端应使用 [app-server 协议](../../en/integrations/app-server-protocol.md)（英文）。
+
+## 超时与取消
+
+`--timeout` 在读取 stdin 前开始计时，执行阶段沿用同一个截止时间。仅在 `--input-json`
+中提供的 `timeout` 要等输入解码后才生效；生产者可能一直不关闭 stdin 时，应使用 CLI
+选项。即使有位置提示词，也会读取管道 stdin；不打算提供输入时可使用 `</dev/null`。
+SIGINT 和 SIGTERM 会取消输入读取或当前执行，返回退出码 `5`；达到截止时间返回 `4`。
+
+取消时会尝试结束当前 Run，并在有限时间内清理资源，因此进程可能在截止时间后稍晚退出。
+应持续读取 stdout 和 stderr，直到进程退出。stdout 无法继续写入时，取消不会无限等待它，
+最终 JSONL 结果仅尽力输出，可能缺失或不完整。输出管道断开会取消执行并返回 `6`。
+SIGKILL 无法清理资源或输出结果。
 
 ## 接收输出
 
 文本模式下，执行成功后 stdout 输出最终回答，进度、会话标识和诊断写入 stderr。
 JSONL 模式下，stdout 每行是一个事件对象。应结合最终 `result` 和进程退出码判断结果，
 不要在第一个 `turn_completed` 后停止读取：一次运行可能包含自动续接或结构化输出修正回合。
+
+待发送事件有容量上限。消费者严重落后时，订阅会以明确的溢出错误结束（退出码 `6`），
+而不是静默丢失事件或无限积压。无人值守的管道应始终设置超时：仍然连接但停止读取的
+消费者，并不等于已经断开的管道。
 
 ```bash
 wuu exec --json --timeout 20m "评审当前改动" > events.jsonl
@@ -125,6 +149,6 @@ JSON
 | `8` | 未恢复的本地或工具失败 |
 | `9` | 目标会话已有执行正在运行 |
 
-参数解析可能在写入任何 JSONL 事件前失败。缺少 `result`、结果失败或退出码非零都应视为
+参数解析失败或读取 stdin 时取消，可能发生在写入任何 JSONL 事件之前。缺少 `result`、结果失败或退出码非零都应视为
 失败，不要根据部分回答推断成功。已保存的会话和执行记录可用
 [`wuu session` 与 `wuu runs`](../reference/cli-commands.md) 查看。

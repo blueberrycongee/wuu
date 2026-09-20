@@ -45,6 +45,13 @@ or `-c` in the first position after `exec` is its shortcut. `--resume` or `-r` i
 that position is a shortcut for `resume`; without further arguments it lists
 available sessions. `fork` creates a separate conversation from the source history.
 
+On resume or fork, explicit `--provider`, `--model`, `--effort`, and `--variant`
+selections apply to the acquired session before execution. Without these flags,
+the saved session selection is retained. A resume saves changes to that session;
+a fork saves them only to the new session. Neither changes workspace defaults or
+the configuration file. Sessions pinned to a named agent still enforce that
+agent's model-selection restrictions.
+
 `review` creates a review prompt for the chosen scope and uses the normal tools
 to inspect it. It is not a separate static analyzer. Choose `--permission-mode
 read_only` when the task should not edit files.
@@ -62,7 +69,7 @@ read_only` when the task should not edit files.
 | `--env KEY=VALUE` | Set a run environment variable; repeatable |
 | `--no-tools` | Disable local tools |
 | `--max-turns N` | Set the model/tool loop limit; zero uses the configured default |
-| `--timeout 20m` | Bound the run duration; zero sets no CLI deadline |
+| `--timeout 20m` | Set a deadline including stdin collection; zero sets no CLI deadline |
 | `--ephemeral` | Create an in-memory session instead of a resumable saved session |
 | `--json` | Write a JSONL event stream |
 | `--output-last-message FILE` | Write the final answer to a file after successful execution |
@@ -73,7 +80,28 @@ Normal startup uses user configuration plus permitted project overrides. The two
 explicit trust flags change that boundary; review the supplied configuration before
 using them in automation. See [configuration](../reference/configuration.md) for
 layering and [permissions](../reference/permissions.md) for command confinement.
-There is no interactive approval prompt to resolve a denied operation.
+`exec` is noninteractive: human question services fail immediately with
+`service_unavailable`, and interactive external-engine approvals are declined.
+This includes nonblocking question offers, which would otherwise have no reader.
+Plugins may recover from that service error; it does not itself determine the
+run's exit code. For a client that can answer questions, use the
+[app-server protocol](../integrations/app-server-protocol.md).
+
+## Deadlines and cancellation
+
+`--timeout` starts before stdin is read and keeps the same deadline through
+execution. A `timeout` supplied only inside `--input-json` starts after input is
+decoded; use the CLI flag when the producer might never close stdin. Even a
+positional prompt consumes piped stdin, so use `</dev/null` when no input is
+intended. SIGINT and SIGTERM cancel input collection or the active execution and
+return exit code `5`; expiration of the deadline returns `4`.
+
+Cancellation attempts to settle the active Run and performs bounded cleanup, so
+process exit can follow the deadline by a short cleanup interval. Keep draining
+stdout and stderr until exit. If stdout stops accepting data, cancellation does
+not wait indefinitely for it: the final JSONL result is best effort and may be
+missing or incomplete. A disconnected output pipe cancels execution and returns
+`6`. SIGKILL cannot perform cleanup or emit a result.
 
 ## Capture output
 
@@ -82,6 +110,11 @@ session identifiers, and diagnostics go to stderr. In JSONL mode stdout contains
 one event object per line; consume the terminal `result` and the process exit code,
 not the first `turn_completed`. A run can contain automatic continuation or
 structured-output correction turns.
+
+Pending events are bounded. A consumer that falls too far behind can lose its
+subscription with an explicit overflow error (exit `6`), rather than silently
+losing events or retaining an unlimited backlog. Always set a timeout for an
+unattended pipeline; a connected reader that stops draining is not a broken pipe.
 
 ```bash
 wuu exec --json --timeout 20m "review the current changes" > events.jsonl
@@ -139,7 +172,8 @@ subcommand does not accept `--input-json`.
 | `8` | Unrecovered local/tool failure |
 | `9` | Target session already has an active execution |
 
-Argument parsing can fail before any JSONL event is written. Treat a missing
+Argument parsing and cancellation during stdin collection can end before any
+JSONL event is written. Treat a missing
 `result`, a failed result, or a nonzero exit code as failure. Do not infer success
 from a partial answer. Inspect saved sessions and execution records through
 [`wuu session` and `wuu runs`](../reference/cli-commands.md).
