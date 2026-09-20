@@ -1663,17 +1663,14 @@
   flex-direction: column;
 }
 
-.sidebar-functional-group-collapse {
-  margin-top: var(--sidebar-functional-heading-gap);
-}
-
-.sidebar-functional-group-collapse.thread-list-collapse,
-.sidebar-functional-group-collapse.thread-list-collapse[data-state="opening"] {
+.sidebar-functional-group-collapse:not(.thread-list-collapse),
+.sidebar-functional-group-collapse.thread-list-collapse[data-state="open"] {
   margin-top: var(--sidebar-functional-heading-gap);
 }
 
 .sidebar-functional-group + .sidebar-functional-group {
   margin-top: var(--sidebar-functional-group-gap);
+  transition: margin-top var(--section-fold-ms) var(--section-fold-ease);
 }
 
 .sidebar-functional-group-body {
@@ -1740,7 +1737,7 @@
   margin: 0;
   flex: 0 0 auto;
   color: var(--ink-muted);
-  transition: transform var(--motion-fast) var(--ease-out);
+  transition: transform var(--section-fold-ms) var(--section-fold-ease);
 }
 
 .sidebar-functional-heading-chevron[data-expanded="true"] {
@@ -1928,8 +1925,9 @@
   margin-top: 0;
 }
 
-/* The append target occupies the group break instead of adding a blank row. */
-.sidebar-functional-group:has(.pinned-append-drop-zone) + .sidebar-functional-group {
+/* The open append target owns the group break. Restore the following margin
+ * during the fold, not when retained rows (and the target) are unmounted. */
+.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + .sidebar-functional-group {
   margin-top: 0;
 }
 
@@ -2353,52 +2351,29 @@
 /* `.sidebar-section-empty-note` (the shared empty-state placeholder) is
  * styled at the bottom of the file. */
 
-/* Section expand/collapse motion.
- *
- * SidebarSection measures the body and writes
- * --sidebar-section-body-height. The outer layer animates between 0px and
- * that measured height, then releases back to auto height once open so live
- * thread rows can keep growing naturally. The inner layer only translates
- * and fades, which keeps row text crisp while the clipped body unfurls. */
+/* One intrinsic-height transition owns the reveal and its heading gap. Avoid
+ * inherited measured heights and descendant phase rules: a functional group
+ * contains independently expanded project/folder folds. Text stays in place
+ * while the outer clip moves, without a second fade or translate phase. */
 .thread-list-collapse {
-  height: var(--sidebar-section-body-height, auto);
-  margin-top: var(--sidebar-section-body-gap);
+  interpolate-size: allow-keywords;
+  height: 0;
+  margin-top: 0;
   min-height: 0;
   overflow: clip;
   transition:
     height var(--section-fold-ms) var(--section-fold-ease),
     margin-top var(--section-fold-ms) var(--section-fold-ease);
-  will-change: height, margin-top;
   contain: layout paint;
+}
+
+.thread-list-collapse[data-state="open"] {
+  height: auto;
+  margin-top: var(--sidebar-section-body-gap);
 }
 
 .thread-list-collapse-inner {
   min-height: 0;
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
-  transition:
-    opacity var(--section-fold-fade-ms) var(--ease-out),
-    transform var(--section-fold-ms) var(--section-fold-ease);
-  will-change: opacity, transform;
-}
-
-.thread-list-collapse[data-state="opening"] {
-  height: var(--sidebar-section-body-height, 0);
-}
-
-.thread-list-collapse[data-state="closing"] {
-  height: 0;
-  margin-top: 0;
-}
-
-.thread-list-collapse[data-state="opening"] .thread-list-collapse-inner {
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
-}
-
-.thread-list-collapse[data-state="closing"] .thread-list-collapse-inner {
-  opacity: 0;
-  transform: translate3d(0, -8px, 0) scale(0.992);
 }
 
 /* Lists own only sibling spacing. Their parent owns heading/group spacing,

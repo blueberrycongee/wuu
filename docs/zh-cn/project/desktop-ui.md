@@ -33,6 +33,12 @@ npm --prefix desktop run dev:onboarding
 
 公开插件主题 token 的契约范围小于所有内部 CSS 变量。暴露新 token 或建议插件作者依赖内部变量前，请查看[主题参考](../customize/theme-surface-matrix.md)。
 
+## 侧栏折叠区
+
+侧栏分区和嵌套分组统一使用 `SidebarCollapseBody`。它让内容自身高度与标题间距同步过渡，在收起结束前保留列表，并阻止隐藏行获得焦点。不要通过可继承的临时高度变量或后代动画规则，让父级切换改变嵌套折叠区。
+
+通过 `/dev/sidebar-collapse/` 预览，可选查询参数包括 `theme=dark`、`size=20` 和 `width=240`。运行 `npm --prefix desktop run test:e2e:sidebar-collapse`，在 Electron 中检查嵌套折叠、反向点击、内容变化和减少动态效果的几何行为；这些检查不能代替视觉验收。
+
 ## 滚动边缘渐隐
 
 [`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css)为有限高度的工具/推理检查区和导航列表提供按需启用的渐隐。将属性加在已有的垂直滚动节点上：
