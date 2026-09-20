@@ -840,6 +840,13 @@
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;
+  /* Optical correction, not layout: the wordmark has no ascenders and the
+   * serif line box keeps descender space below its x-height ink, so centering
+   * the 28px line box leaves the visible glyphs ~3px below the bell glyph,
+   * which is centered in its own box on the trailing accessory column. Lift
+   * the ink onto that column's center; the offset scales with the wordmark
+   * font size and must be re-measured if that size changes. */
+  transform: translateY(-3px);
 }
 
 .sidebar-notifications-button {
