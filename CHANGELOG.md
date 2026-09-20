@@ -139,6 +139,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve byte-range recovery for archived tool output when escaped text or
+  short lines exceed the line-projection budget, so continuation neither skips
+  remaining output nor switches to unrelated line ranges.
+
 - Treat Chat Completions stream error payloads and error finish reasons as failed
   attempts, preserving provider details and recovery limits without executing
   unfinished tool drafts (#263).
