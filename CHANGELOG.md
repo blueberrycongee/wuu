@@ -34,6 +34,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Settle large tool results, including extension results, into recoverable pages
+  before recording them. Preserve original payloads and media, keep search
+  snapshot cursors, and avoid batch-wide text cuts that could erase recovery links.
+
 - Keep desktop tool-call summaries on one line, truncating overflow with an
   ellipsis while preserving the activity icon and diff counts.
 
@@ -159,6 +163,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   text deltas are missing or incomplete, without duplicating streamed content
   or issuing extra model requests. Reconcile corrections across tool-call
   boundaries and keep WebSocket continuation history aligned with final replies.
+
+- Retry provider-reported `request_timeout`, `408`, and `504` stream errors
+  within the existing retry budget and tool replay safety checks, rather than
+  stopping the conversation after the first request.
 
 - Preserve completed tool batches' text budget through provider requests and
   history replay, while retaining media and structured recovery data (#284).

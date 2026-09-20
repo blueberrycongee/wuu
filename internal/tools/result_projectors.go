@@ -114,6 +114,10 @@ func projectRecordArray(rawText, arrayKey, recover string, pc projectorContext, 
 		hasMore := sourceHasMore || kept < total
 		candidate["offset"] = offset
 		candidate["returned_count"] = kept
+		if arrayKey == "matches" {
+			candidate["returned_match_count"] = kept
+			candidate["omitted_match_count"] = intJSONNumber(m["omitted_match_count"]) + total - kept
+		}
 		candidate["has_more"] = hasMore
 		if continuationSupported {
 			candidate["page"] = continuationPage(offset, kept, hasMore, revision)

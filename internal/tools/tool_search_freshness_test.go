@@ -228,9 +228,20 @@ func TestSearchFreshPageKeepsContinuationBound(t *testing.T) {
 			if got := searchFixtureGit(t, root, "status", "--porcelain=v2", "-z"); got != status {
 				t.Fatal("untracked directory status changed")
 			}
-			args["offset"], args["expected_revision"] = first.Page.Next.Offset, first.Page.Next.Revision
-			second := parseSearchFixturePage(t, searchFixtureCall(t, kit, name, args))
-			if got := append(first.paths(), second.paths()...); !reflect.DeepEqual(got, want) {
+			collect := func(kit *Toolkit, first searchFixturePage) []string {
+				t.Helper()
+				paths, page := first.paths(), first
+				for page.Page.Next.Offset != 0 {
+					if len(page.paths()) == 0 || len(paths) > n+1 {
+						t.Fatal("search continuation did not advance")
+					}
+					args["offset"], args["expected_revision"] = page.Page.Next.Offset, page.Page.Next.Revision
+					page = parseSearchFixturePage(t, searchFixtureCall(t, kit, name, args))
+					paths = append(paths, page.paths()...)
+				}
+				return paths
+			}
+			if got := collect(kit, first); !reflect.DeepEqual(got, want) {
 				t.Fatalf("snapshot lost or repeated records: %v", got)
 			}
 			for _, token := range []string{"", "wrong-token"} {
@@ -249,10 +260,8 @@ func TestSearchFreshPageKeepsContinuationBound(t *testing.T) {
 			if out, err := kit.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: mustMarshalMap(args)}); err == nil || !strings.Contains(err.Error(), "stale") {
 				t.Errorf("old token after refresh: err=%v out=%s", err, out)
 			}
-			args["offset"], args["expected_revision"] = fresh.Page.Next.Offset, fresh.Page.Next.Revision
 			kit = searchFixtureKit(t, root, session)
-			last := parseSearchFixturePage(t, searchFixtureCall(t, kit, name, args))
-			if got := append(fresh.paths(), last.paths()...); !reflect.DeepEqual(got, append([]string{"new/000-added.txt"}, want...)) {
+			if got := collect(kit, fresh); !reflect.DeepEqual(got, append([]string{"new/000-added.txt"}, want...)) {
 				t.Errorf("new snapshot lost or repeated records: %v", got)
 			}
 			mustWriteFile(t, filepath.Join(root, "top-level.txt"), "changed revision\n")
@@ -329,7 +338,8 @@ func TestSearchFreshPagePropagatesSearchFailure(t *testing.T) {
 }
 
 func TestSearchFreshLargePagesSurviveArtifactRecovery(t *testing.T) {
-	t.Setenv(projectionModeEnvVar, "active")
+	// Without semantic reducers, generic recovery must retain the search snapshot.
+	t.Setenv(projectionModeEnvVar, "off")
 	for _, mode := range []string{"glob", "count", "files_with_matches"} {
 		t.Run(mode, func(t *testing.T) {
 			root := searchFixtureRepo(t)
@@ -364,7 +374,7 @@ func TestSearchFreshLargePagesSurviveArtifactRecovery(t *testing.T) {
 				}
 				artifact := envelope["artifact_ref"].(string)
 				var recovered strings.Builder
-				recovered.WriteString(envelope["preview_head"].(string))
+				recovered.WriteString(envelope["content"].(string))
 				continuation := envelope["continuation"].(map[string]any)
 				for pages := 0; continuation["has_more"] == true; pages++ {
 					if pages > 100 {
@@ -385,7 +395,6 @@ func TestSearchFreshLargePagesSurviveArtifactRecovery(t *testing.T) {
 					recovered.WriteString(content)
 					continuation = part["continuation"].(map[string]any)
 				}
-				recovered.WriteString(envelope["preview_tail"].(string))
 				if recovered.String() != mustReadFile(t, artifact) {
 					t.Fatal("recovered search page lost or repeated archived bytes")
 				}

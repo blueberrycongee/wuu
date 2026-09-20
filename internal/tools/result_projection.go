@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -36,7 +37,7 @@ const (
 	// projectorVersion is recorded in diagnostics so telemetry can attribute a
 	// projected result to the exact projector revision that produced it. Bump
 	// on any change that alters projected bytes for the same input.
-	projectorVersion = "5"
+	projectorVersion = "6"
 )
 
 // projectionMode selects how the stable projection participates in a run.
@@ -89,6 +90,8 @@ func resolveProjectionMode(configured string) projectionMode {
 // and coordination (load_skill/...) results. Never switch this to a
 // prefix/substring match: "mcp_x_bash" must not match "bash".
 var builtInProjectionAllowlist = map[string]bool{
+	"glob":       true,
+	"grep":       true,
 	"read_file":  true,
 	"list_files": true,
 	"bash":       true,
@@ -183,6 +186,32 @@ func estimateResultTokens(text string) int {
 	return contextbudget.EstimateTokens(text)
 }
 
+// FinalizeToolResult covers every executor path, including extensions and
+// normalized execution errors, before the invocation ledger is settled. Built-in
+// execution also uses this boundary for direct callers and telemetry. A settled
+// result is never paged again or resized to make room for sibling results.
+func (t *Toolkit) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	settled, _, _, _ := t.finalizeToolResult(call, result)
+	return settled
+}
+
+func (t *Toolkit) finalizeToolResult(call providers.ToolCall, result toolresult.Result) (toolresult.Result, string, bool, *ProjectionDiagnostics) {
+	if result.ModelText != nil {
+		return result, "", false, nil
+	}
+	var diagnostic *ProjectionDiagnostics
+	mode := t.env.toolResultProjectionMode()
+	if result.IsTextOnly() && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
+		stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, defaultProjectionTokenBudget)
+		diagnostic = &diag
+		if mode == projectionModeActive && diag.Applied {
+			return stable, diag.ArtifactRef, true, diagnostic
+		}
+	}
+	settled, ref, paged := finalizeGenericToolResult(t.env.SessionDir, call.ID, result, defaultProjectionTokenBudget)
+	return settled, ref, paged, diagnostic
+}
+
 // projectionHash returns a stable content hash of projected text so telemetry
 // can verify a projected result never changes across requests in an epoch.
 func projectionHash(text string) string {
@@ -273,8 +302,7 @@ func finalizeBuiltInToolResult(sessionDir, toolName, callID string, raw toolresu
 		return raw, diag
 	}
 
-	stable := toolresult.FromText(projected)
-	stable.IsError = raw.IsError
+	stable := settleModelText(raw, projected)
 
 	diag.Applied = true
 	diag.Reason = reasonProjected

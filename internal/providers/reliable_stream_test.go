@@ -384,33 +384,47 @@ func TestReliableStreamClientDoesNotReplayLocalBackpressure(t *testing.T) {
 }
 
 func TestReliableStreamClientRetriesTruncatedStream(t *testing.T) {
-	inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{
-		{events: []StreamEvent{{Type: EventContentDelta, Content: "partial"}}},
-		{events: []StreamEvent{{Type: EventContentDelta, Content: "ok"}, {Type: EventDone}}},
-	}}
-	client := newReliableTestClient(inner, nil)
-	ch, err := client.StreamChat(context.Background(), reliableTestRequest())
-	if err != nil {
-		t.Fatalf("StreamChat: %v", err)
-	}
-	events := collectReliableEvents(t, ch)
-	if got, want := eventTypes(nonLifecycleEvents(events)), []StreamEventType{EventContentDelta, EventContentDelta, EventDone}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("events = %v, want %v", got, want)
-	}
-	businessEvents := nonLifecycleEvents(events)
-	if businessEvents[0].Content != "partial" || businessEvents[1].Content != "ok" {
-		t.Fatalf("unexpected content events: %+v", businessEvents)
-	}
-	lifecycle := lifecycleEvents(events)
-	var reconnect *StreamLifecycle
-	for _, event := range lifecycle {
-		if event.Phase == StreamPhaseReconnecting {
-			reconnect = event
-			break
-		}
-	}
-	if reconnect == nil || !reconnect.ResetPartial || reconnect.Attempt != 2 {
-		t.Fatalf("partial retry lifecycle = %+v, want reset for attempt 2", reconnect)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"local close", nil},
+		{"provider timeout", NewProviderStreamError("request_timeout", "stream error: stream disconnected before completion: stream closed before response.completed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			partial := []StreamEvent{{Type: EventContentDelta, Content: "partial"}}
+			if tc.err != nil {
+				partial = append(partial, StreamEvent{Type: EventError, Error: tc.err})
+			}
+			inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{
+				{events: partial},
+				{events: []StreamEvent{{Type: EventContentDelta, Content: "ok"}, {Type: EventDone}}},
+			}}
+			client := newReliableTestClient(inner, nil)
+			ch, err := client.StreamChat(context.Background(), reliableTestRequest())
+			if err != nil {
+				t.Fatalf("StreamChat: %v", err)
+			}
+			events := collectReliableEvents(t, ch)
+			if got, want := eventTypes(nonLifecycleEvents(events)), []StreamEventType{EventContentDelta, EventContentDelta, EventDone}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("events = %v, want %v", got, want)
+			}
+			businessEvents := nonLifecycleEvents(events)
+			if businessEvents[0].Content != "partial" || businessEvents[1].Content != "ok" {
+				t.Fatalf("unexpected content events: %+v", businessEvents)
+			}
+			lifecycle := lifecycleEvents(events)
+			var reconnect *StreamLifecycle
+			for _, event := range lifecycle {
+				if event.Phase == StreamPhaseReconnecting {
+					reconnect = event
+					break
+				}
+			}
+			if reconnect == nil || !reconnect.ResetPartial || reconnect.Attempt != 2 {
+				t.Fatalf("partial retry lifecycle = %+v, want reset for attempt 2", reconnect)
+			}
+		})
 	}
 }
 

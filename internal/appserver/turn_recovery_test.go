@@ -18,7 +18,7 @@ import (
 )
 
 func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
-	for _, code := range []string{"server_error", "custom_failure", "insufficient_quota", "response_too_large"} {
+	for _, code := range []string{"server_error", "request_timeout", "custom_failure", "insufficient_quota", "response_too_large"} {
 		t.Run(code, func(t *testing.T) {
 			var requests atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
 				t.Fatalf("live error = %+v", live)
 			}
 			wantStop, wantRetries := "non_retryable", 0
-			if code == "server_error" {
+			if code == "server_error" || code == "request_timeout" {
 				wantStop, wantRetries = "retry_limit", 1
 			}
 			if live.Recovery.StopReason != wantStop || live.Recovery.RetryCount != wantRetries {

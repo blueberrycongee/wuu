@@ -57,6 +57,13 @@ func (h *HookedExecutor) Definitions() []providers.ToolDefinition {
 	return h.inner.Definitions()
 }
 
+func (h *HookedExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	if finalizer, ok := h.inner.(agent.ToolResultFinalizer); ok {
+		return finalizer.FinalizeToolResult(call, result)
+	}
+	return result
+}
+
 // SupportsTool forwards tool-surface checks through the hook layer. This keeps
 // deferred tool support visible to the agent loop even when hooks decorate the
 // real Toolkit.
