@@ -1447,10 +1447,9 @@ function conversationPaneThreadsByID(
 }
 
 function sortThreads(threads: Thread[]): Thread[] {
-  // Two-section sort. Running threads use `created_at` as the key so that
-  // streaming updates (which bump `updated_at`) do not reshuffle them —
-  // clicking or switching between two running threads must leave the sidebar
-  // order alone. Settled threads keep the recency-first behavior, so the most
+  // Two-section sort: running threads first, then settled ones. Keys come from
+  // `sidebarThreadSortTime`, so a running thread keeps one position for as long
+  // as it runs. Settled threads keep the recency-first behavior, so the most
   // recently completed conversation bubbles to the top of the settled group.
   // Archived threads stay in the list so the Settings → Archive page can show
   // them; sidebar surfaces must filter them out themselves.
@@ -1607,9 +1606,7 @@ function sortThreadCandidates<T extends ThreadSortCandidate>(threads: T[]): T[] 
     const threadRunning = isThreadRunning(thread);
     const entry = {
       thread,
-      time: threadRunning
-        ? threadCreatedTime(thread)
-        : threadTime(thread),
+      time: sidebarThreadSortTime(thread, threadRunning),
     };
     (threadRunning ? running : settled).push(entry);
   }
@@ -1626,6 +1623,22 @@ function sortThreadCandidates<T extends ThreadSortCandidate>(threads: T[]): T[] 
 function threadCreatedTime(thread: Pick<Thread, "created_at" | "updated_at">): number {
   const createdAt = Date.parse(thread.created_at);
   return Number.isFinite(createdAt) ? createdAt : 0;
+}
+
+/**
+ * Ordering key for a sidebar session row.
+ *
+ * `updated_at` advances every time the host projects an item, so it only orders
+ * a row that has settled. A row that is still running keeps a creation-time key
+ * instead: the list must hold still while the sessions in it stream. The
+ * workspace sections and the attention view share this key so the same session
+ * cannot be ordered differently in each.
+ */
+export function sidebarThreadSortTime(
+  thread: Pick<Thread, "created_at" | "updated_at">,
+  running: boolean,
+): number {
+  return running ? threadCreatedTime(thread) : threadTime(thread);
 }
 
 function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {

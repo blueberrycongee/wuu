@@ -65,6 +65,55 @@ describe("partitionAttentionThreads", () => {
     ]);
     expect(settledAttention.unread).toEqual([]);
   });
+
+  it("keeps running sessions in place while their stream advances updated_at", () => {
+    const olderRunning = thread({
+      id: "older-running",
+      status: "in_progress",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    const newerRunning = thread({
+      id: "newer-running",
+      status: "in_progress",
+      created_at: "2026-01-01T01:00:00Z",
+      updated_at: "2026-01-01T01:00:00Z",
+    });
+
+    const before = partitionAttentionThreads([olderRunning, newerRunning], undefined, undefined, {});
+    const streamed = partitionAttentionThreads(
+      [{ ...olderRunning, updated_at: "2026-01-05T00:00:00Z" }, newerRunning],
+      undefined,
+      undefined,
+      {},
+    );
+
+    expect(before.running.map(({ id }) => id)).toEqual(["newer-running", "older-running"]);
+    expect(streamed.running.map(({ id }) => id)).toEqual(before.running.map(({ id }) => id));
+  });
+
+  it("orders unread sessions by recency while pinned ones stay first", () => {
+    const older = thread({ id: "older", updated_at: "2026-01-02T00:00:00Z" });
+    const newer = thread({ id: "newer", updated_at: "2026-01-03T00:00:00Z" });
+    const pinnedOlder = thread({
+      id: "pinned-older",
+      pinned: true,
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+
+    const attention = partitionAttentionThreads(
+      [older, newer, pinnedOlder],
+      undefined,
+      undefined,
+      {},
+    );
+
+    expect(attention.unread.map(({ id }) => id)).toEqual([
+      "pinned-older",
+      "newer",
+      "older",
+    ]);
+  });
 });
 
 describe("reconcileSidebarSectionOrder", () => {

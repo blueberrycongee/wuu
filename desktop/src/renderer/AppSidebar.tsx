@@ -55,7 +55,7 @@ import {
   threadBelongsToProject,
   isThreadExecuting,
   isThreadUnread,
-  threadTime,
+  sidebarThreadSortTime,
   type AppState,
   type ThreadSummary,
 } from "./AppState";
@@ -112,28 +112,48 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
  */
 export const SIDEBAR_SECTION_PINNED = "__wuu_pinned__";
 
+type AttentionRow = {
+  thread: ThreadSummary;
+  running: boolean;
+  time: number;
+};
+
+/**
+ * Splits sidebar sessions into the attention view's two sections: everything
+ * that is running, then the settled sessions with an unread answer. Sort keys
+ * come from `sidebarThreadSortTime` so a running row cannot shuffle while its
+ * session streams.
+ */
 export function partitionAttentionThreads(
   threads: readonly ThreadSummary[],
   activeThreadID: string | undefined,
   pendingThreadID: string | undefined,
   lastViewedTurnByThreadID: Readonly<Record<string, string>>,
 ): { running: ThreadSummary[]; unread: ThreadSummary[] } {
-  const candidates = threads.filter((thread) => !thread.archived);
-  const compare = (left: ThreadSummary, right: ThreadSummary): number => (
-    Number(isThreadExecuting(right)) - Number(isThreadExecuting(left))
-    || Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
-    || threadTime(right) - threadTime(left)
+  const rows = threads
+    .filter((thread) => !thread.archived)
+    .map((thread): AttentionRow => {
+      const running = isThreadExecuting(thread);
+      return { thread, running, time: sidebarThreadSortTime(thread, running) };
+    });
+  const byNewest = (left: AttentionRow, right: AttentionRow): number => (
+    Number(Boolean(right.thread.pinned)) - Number(Boolean(left.thread.pinned))
+    || right.time - left.time
   );
   return {
-    running: candidates.filter(isThreadExecuting).sort(compare),
-    unread: candidates
-      .filter((thread) => (
-        thread.id !== activeThreadID &&
-        thread.id !== pendingThreadID &&
-        !isThreadExecuting(thread) &&
-        isThreadUnread(thread, lastViewedTurnByThreadID[thread.id])
+    running: rows
+      .filter((row) => row.running)
+      .sort(byNewest)
+      .map((row) => row.thread),
+    unread: rows
+      .filter((row) => (
+        !row.running &&
+        row.thread.id !== activeThreadID &&
+        row.thread.id !== pendingThreadID &&
+        isThreadUnread(row.thread, lastViewedTurnByThreadID[row.thread.id])
       ))
-      .sort(compare),
+      .sort(byNewest)
+      .map((row) => row.thread),
   };
 }
 

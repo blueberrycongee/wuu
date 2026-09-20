@@ -10,6 +10,9 @@
  *
  * The settings page itself is stubbed: this test is about the shell swap, not
  * about settings content, and the real page needs host APIs jsdom cannot serve.
+ *
+ * A second test pins the running section's row order: a session that streams
+ * advances `updated_at`, and that must not move its row.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -74,11 +77,14 @@ function initialized(): InitializeResult {
   };
 }
 
-function runningThread(): Thread {
+function runningThread(
+  id = "thread-running",
+  createdAt = "2026-01-01T00:00:00Z",
+): Thread {
   return {
-    id: "thread-running",
-    preview: "还在跑的会话",
-    title: "还在跑的会话",
+    id,
+    preview: id,
+    title: id,
     model_provider: "fake",
     model: "fake-model",
     cwd: workspace,
@@ -86,10 +92,21 @@ function runningThread(): Thread {
     status: "in_progress",
     pinned: false,
     archived: false,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
+    created_at: createdAt,
+    updated_at: createdAt,
     turns: [],
   };
+}
+
+function emitNotification(method: string, params: Record<string, unknown>): void {
+  const event = {
+    kind: "notification",
+    workdir: workspace,
+    message: { method, params },
+  } as ServerEvent;
+  for (const handler of serverEventHandlers) {
+    handler(event);
+  }
 }
 
 function installWindowStubs(): void {
@@ -219,5 +236,42 @@ describe("sidebar attention view", () => {
 
     expect(settingsView()).toBeNull();
     expect(attentionView()).not.toBeNull();
+  });
+
+  it("keeps a running row in place while its session streams", async () => {
+    installWuuApi([
+      runningThread("thread-newer", "2026-01-02T00:00:00Z"),
+      runningThread("thread-older", "2026-01-01T00:00:00Z"),
+    ]);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+    await flushAsync();
+
+    const bell = container.querySelector<HTMLButtonElement>(".sidebar-notifications-button");
+    act(() => bell!.click());
+    const runningRowLabels = (): Array<string | null> =>
+      [...container.querySelectorAll<HTMLElement>(
+        ".sidebar-attention-section .thread-row.running .thread-row-main",
+      )].map((row) => row.getAttribute("aria-label"));
+    expect(runningRowLabels()).toEqual(["thread-newer", "thread-older"]);
+
+    // A new turn advances the older session's updated_at. Recency ordering
+    // would hand it the top slot and shuffle the list under the reader.
+    await act(async () => {
+      emitNotification("turn/started", {
+        thread_id: "thread-older",
+        turn: {
+          id: "turn-older",
+          items: [],
+          items_view: "full",
+          status: "in_progress",
+          started_at: "2026-01-03T00:00:00Z",
+        },
+      });
+    });
+
+    expect(runningRowLabels()).toEqual(["thread-newer", "thread-older"]);
   });
 });
