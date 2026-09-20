@@ -116,8 +116,15 @@ func (r Result) Validate() error {
 			return errors.New("activity.kind is required")
 		}
 	}
-	if size := r.SizeBytes(); size > MaxResultBytes {
+	// The host's derived model view must not make an otherwise valid producer
+	// payload fail validation when it is settled or replayed from the ledger.
+	producer := r
+	producer.ModelText = nil
+	if size := producer.SizeBytes(); size > MaxResultBytes {
 		return fmt.Errorf("tool result exceeds %d bytes", MaxResultBytes)
+	}
+	if r.ModelText != nil && len(*r.ModelText) > MaxResultBytes {
+		return fmt.Errorf("model text exceeds %d bytes", MaxResultBytes)
 	}
 	return nil
 }

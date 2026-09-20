@@ -185,26 +185,8 @@ func (t *Toolkit) executeKnownToolResultWithRepeatPolicy(ctx context.Context, ca
 	resultBudgeted := false
 	var projectionDiag *ProjectionDiagnostics
 	if err == nil {
-		// Tool-specific stable projection runs once here, before the result is
-		// stored. Results without an applicable projector still cross the generic
-		// settlement boundary, which now preserves rich media and metadata.
-		mode := t.env.toolResultProjectionMode()
-		applied := false
-		if result.IsTextOnly() && mode != projectionModeOff && builtInProjectionAllowlist[call.Name] {
-			stable, diag := finalizeBuiltInToolResult(t.env.SessionDir, call.Name, call.ID, result, defaultProjectionTokenBudget)
-			projectionDiag = &diag
-			if mode == projectionModeActive && diag.Applied {
-				returned = stable
-				returnedProjection = stable.TextProjection()
-				resultRef = diag.ArtifactRef
-				resultBudgeted = true
-				applied = true
-			}
-		}
-		if !applied {
-			returned, resultRef, resultBudgeted = finalizeGenericToolResult(t.env.SessionDir, call.ID, result, defaultResultBudget)
-			returnedProjection = returned.TextProjection()
-		}
+		returned, resultRef, resultBudgeted, projectionDiag = t.finalizeToolResult(call, result)
+		returnedProjection = returned.TextProjection()
 	}
 
 	revisionAfter := revisionBefore

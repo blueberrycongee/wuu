@@ -210,42 +210,49 @@ func TestBashProjectorExposesRankedNonOverlappingArtifactRanges(t *testing.T) {
 
 func TestGenericProjectionContinuationCoversOnlyOmittedBytes(t *testing.T) {
 	text := strings.Repeat("head-tail-evidence-", 5000)
-	out := buildBoundedResultReference("/s/generic.txt", text, toolresult.FromText(text), defaultResultBudget)
+	out, ok := buildBoundedResultReference("/s/generic.txt", text, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
 	m := parseOut(t, out)
-	head := m["preview_head"].(string)
-	tail := m["preview_tail"].(string)
+	head := m["content"].(string)
 	next := m["continuation"].(map[string]any)["next"].(map[string]any)
 	continuation, err := decodeReadFileContinuation(next["continuation"].(string))
 	if err != nil || continuation.ExpectedSHA256 == "" {
 		t.Fatalf("generic continuation is not snapshot-bound: %+v", next)
 	}
-	if continuation.ByteOffset == nil || continuation.ByteEndOffset == nil || *continuation.ByteOffset != len(head) || *continuation.ByteEndOffset != len(text)-len(tail) {
-		t.Fatalf("generic continuation overlaps preview: head=%d tail=%d range=%+v", len(head), len(tail), continuation)
+	if continuation.ByteOffset == nil || continuation.ByteEndOffset == nil || *continuation.ByteOffset != len(head) || *continuation.ByteEndOffset != len(text) {
+		t.Fatalf("generic continuation overlaps preview: head=%d range=%+v", len(head), continuation)
 	}
 }
 
-func TestGenericProjectionLineLimitPreviewDoesNotOverlapItself(t *testing.T) {
-	text := strings.Repeat("x\n", defaultResultMaxLines+100)
-	out := buildBoundedResultReference("/s/lines.txt", text, toolresult.FromText(text), defaultResultBudget)
+func TestGenericProjectionKeepsWholeLines(t *testing.T) {
+	text := strings.Repeat("xyz\n", 10_000)
+	out, ok := buildBoundedResultReference("/s/lines.txt", text, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
 	m := parseOut(t, out)
-	head := m["preview_head"].(string)
-	tail := m["preview_tail"].(string)
-	if len(head)+len(tail) > len(text) || head != text[:len(head)] || tail != text[len(text)-len(tail):] {
-		t.Fatalf("line-limit preview overlapped or selected unstable evidence: head=%d tail=%d total=%d", len(head), len(tail), len(text))
+	head := m["content"].(string)
+	if head == "" || !strings.HasPrefix(text, head) || !strings.HasSuffix(head, "\n") {
+		t.Fatal("page did not keep a continuous prefix of whole lines")
 	}
 	continuation := m["continuation"].(map[string]any)
-	if continuation["has_more"].(bool) != (len(head)+len(tail) < len(text)) {
+	if continuation["has_more"].(bool) != (len(head) < len(text)) {
 		t.Fatalf("line-limit continuation did not match omitted bytes: %+v", continuation)
 	}
 }
 
 func TestStructuredGenericProjectionHasSnapshotBoundByteContinuation(t *testing.T) {
-	raw := toolresult.Result{StructuredContent: json.RawMessage(`{"records":["one","two","three"]}`)}
+	raw := toolresult.Result{StructuredContent: json.RawMessage(`{"records":"` + strings.Repeat("one two three", 2000) + `"}`)}
 	contextual := raw.TextProjection()
-	out := buildBoundedResultReference("/s/structured.json", contextual, raw, defaultResultBudget)
+	out, ok := buildBoundedResultReference("/s/structured.json", contextual, false, defaultProjectionTokenBudget)
+	if !ok {
+		t.Fatal("first page did not fit")
+	}
 	m := parseOut(t, out)
-	if m["kind"] != "archived_structured_tool_result" {
-		t.Fatalf("structured result did not use an index envelope: %+v", m)
+	if !strings.HasPrefix(contextual, m["content"].(string)) {
+		t.Fatal("structured result did not preserve a continuous first page")
 	}
 	next := m["continuation"].(map[string]any)["next"].(map[string]any)
 	continuation, err := decodeReadFileContinuation(next["continuation"].(string))
