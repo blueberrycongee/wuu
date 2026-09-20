@@ -150,6 +150,14 @@ export function ConversationTurnList({
       return;
     }
     prependScrollSnapshotRef.current = null;
+    // Native scroll anchoring keeps a paused reader on the same content when
+    // rows are inserted above them, and a scroll made while the page was
+    // loading is deliberate. Adding the growth on top of either would shift the
+    // stream by the inserted height a second time, so only compensate while the
+    // viewport still sits exactly where the snapshot left it.
+    if (Math.abs(snapshot.node.scrollTop - snapshot.scrollTop) > 1) {
+      return;
+    }
     const addedHeight = snapshot.node.scrollHeight - snapshot.scrollHeight;
     snapshot.node.scrollTop = snapshot.scrollTop + Math.max(0, addedHeight);
   }, [visibleStartIndex, turns.length]);

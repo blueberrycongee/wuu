@@ -281,6 +281,57 @@ describe("ConversationTurnList", () => {
     );
   });
 
+  it("does not re-apply the prepended height when the reader already moved", async () => {
+    const prior = window.wuu;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const turns = [makeTurn(40)];
+    const view = (historyCursor?: string) => (
+      <ConversationTurnList
+        threadID="remote"
+        historyCursor={historyCursor}
+        turns={turns}
+        renderTurn={(turn) => <div data-turn-id={turn.id}>{turn.id}</div>}
+      />
+    );
+    window.wuu = {
+      ...prior,
+      loadEarlierThreadHistory: async () => {
+        calls += 1;
+        await gate;
+        turns.unshift(makeTurn(39));
+        root!.render(view());
+      },
+    };
+    container.className = "scroll-region";
+    Object.defineProperty(container, "scrollHeight", {
+      configurable: true,
+      get: () => container.querySelectorAll("[data-turn-id]").length * 10,
+    });
+    try {
+      render(view("cursor"));
+      container.scrollTop = 120;
+      await act(async () => {
+        container.dispatchEvent(new Event("scroll"));
+      });
+      expect(calls).toBe(1);
+
+      // The viewport is no longer where the snapshot left it: native anchoring
+      // or the reader's own scroll owns that offset now.
+      container.scrollTop = 320;
+
+      await act(async () => {
+        release();
+      });
+      expect(container.scrollTop).toBe(320);
+    } finally {
+      window.wuu = prior;
+    }
+  });
+
   it("reveals an unloaded turn before an anchor jump retries", () => {
     const turns = Array.from(
       { length: TURN_LIST_COLLAPSE_THRESHOLD + 10 },
