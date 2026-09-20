@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState, type ComponentProps, type Reac
 import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2, Monitor } from "lucide-react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import type { AppSidebar } from "./AppSidebar";
-import { SCRATCH_PSEUDO_PROJECT_ID, isThreadExecuting, isThreadRunning, isThreadUnread, threadTime } from "./AppState";
+import { SCRATCH_PSEUDO_PROJECT_ID, isThreadExecuting, isThreadRunning, isThreadUnread, sidebarThreadSortTime } from "./AppState";
 import { baseThreadTitle } from "./ThreadTitles";
 import { Modal } from "./Modal";
 import { MobileSessionRow } from "./MobileSessionRow";
@@ -40,11 +40,19 @@ export function MobileSidebar(props: Props): JSX.Element {
   const threads = props.projectThreadsByProjectID[selectedID] ?? [];
   const actionThread = threads.find(thread => thread.id === actionsID);
   const loading = props.loadingProjectThreadIDs?.has(selectedID);
-  const byRecency = (left: typeof threads[number], right: typeof threads[number]) =>
-    threadTime(right) - threadTime(left);
+  // Sessions that are still running lead their group in a fixed order, then
+  // settled sessions follow by recency — the rule the desktop workspace
+  // sections use. Item-level updates while a session streams must not move its
+  // row, and a session that stops running settles into its recency position.
+  const ordered = (list: typeof threads): typeof threads => [...list].sort((left, right) => {
+    const leftRunning = isThreadExecuting(left);
+    const rightRunning = isThreadExecuting(right);
+    return Number(rightRunning) - Number(leftRunning)
+      || sidebarThreadSortTime(right, rightRunning) - sidebarThreadSortTime(left, leftRunning);
+  });
   const groups = [
-    { label: t("sidebar.pinned"), heading: true, threads: threads.filter(thread => thread.pinned).sort(byRecency) },
-    { label: t("sidebar.conversations"), heading: false, threads: threads.filter(thread => !thread.pinned).sort(byRecency) },
+    { label: t("sidebar.pinned"), heading: true, threads: ordered(threads.filter(thread => thread.pinned)) },
+    { label: t("sidebar.conversations"), heading: false, threads: ordered(threads.filter(thread => !thread.pinned)) },
   ];
 
   function closeActions() {

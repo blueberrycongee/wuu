@@ -177,7 +177,7 @@ it("dismisses the drawer when opening an extension view from More", () => {
   expect(openView).toHaveBeenCalledOnce();
 });
 
-it("keeps conversations in recency order instead of pulling unread or running sessions into a separate group", () => {
+it("leads with running sessions in a fixed order instead of pulling them into a separate group", () => {
   const pinned = { ...thread("pinned"), pinned: true, latest_completed_turn_id: "reply" };
   const running: ThreadSummary = { ...thread("running"), status: "in_progress" };
   const unread = { ...thread("unread"), latest_completed_turn_id: "reply" };
@@ -187,20 +187,52 @@ it("keeps conversations in recency order instead of pulling unread or running se
   const rows = () => [...container.querySelectorAll('section button[aria-label]')].map(row => row.getAttribute("aria-label"));
   const groupRows = (key: Parameters<typeof translateCurrent>[0]) =>
     [...container.querySelectorAll(`section[aria-label="${translateCurrent(key)}"] button`)].map(row => row.getAttribute("aria-label"));
-  expect(rows()).toEqual(["pinned", "newer", "older", "unread", "running"]);
+  expect(rows()).toEqual(["pinned", "running", "newer", "older", "unread"]);
   expect(container.querySelector(`section[aria-label="${translateCurrent("sidebar.attentionConversations")}"]`)).toBeNull();
   expect(container.querySelector(`section[aria-label="${translateCurrent("sidebar.recentConversations")}"]`)).toBeNull();
   expect(groupRows("sidebar.pinned")).toEqual(["pinned"]);
-  expect(groupRows("sidebar.conversations")).toEqual(["newer", "older", "unread", "running"]);
+  expect(groupRows("sidebar.conversations")).toEqual(["running", "newer", "older", "unread"]);
   click("unread");
   expect(props.onSelectProjectThread).toHaveBeenCalledWith("one", "unread");
   props.state = { ...props.state, lastViewedTurnByThreadID: { unread: "reply", pinned: "reply" } };
-  props.projectThreadsByProjectID.one = [thread("older"), unread, { ...running, status: "idle" }, pinned, newer];
   render();
-  expect(rows()).toEqual(["pinned", "newer", "older", "unread", "running"]);
-  expect(groupRows("sidebar.pinned")).toEqual(["pinned"]);
-  expect(groupRows("sidebar.conversations")).toEqual(["newer", "older", "unread", "running"]);
+  expect(rows()).toEqual(["pinned", "running", "newer", "older", "unread"]);
   expect(new Set(rows()).size).toBe(5);
+});
+
+it("holds a running row in place while its stream advances updated_at", () => {
+  const older = {
+    ...thread("older-running"),
+    status: "in_progress" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  const newer = {
+    ...thread("newer-running"),
+    status: "in_progress" as const,
+    created_at: "2026-01-02T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z",
+  };
+  const settled = { ...thread("settled"), updated_at: "2026-03-01T00:00:00Z" };
+  props.projectThreadsByProjectID.one = [older, settled, newer];
+  render();
+  const rowLabels = () => [...container.querySelectorAll('section button[aria-label]')].map(row => row.getAttribute("aria-label"));
+  expect(rowLabels()).toEqual(["newer-running", "older-running", "settled"]);
+
+  // Item-level updates order running rows by creation time, so a session that
+  // is streaming cannot climb over the one above it.
+  props.projectThreadsByProjectID.one = [{ ...older, updated_at: "2026-02-01T00:00:00Z" }, settled, newer];
+  render();
+  expect(rowLabels()).toEqual(["newer-running", "older-running", "settled"]);
+
+  // Once it stops running, the row settles back into recency order.
+  props.projectThreadsByProjectID.one = [
+    { ...older, status: "idle" as const, updated_at: "2026-02-01T00:00:00Z" },
+    settled,
+    newer,
+  ];
+  render();
+  expect(rowLabels()).toEqual(["newer-running", "settled", "older-running"]);
 });
 
 it("opens the phone device directory from the sidebar without changing the selected session", () => {
