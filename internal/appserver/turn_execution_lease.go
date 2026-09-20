@@ -135,6 +135,7 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	th.currentTurnResumed = false
 	th.nextItemIndex = 0
 	th.activeAgentItemID = ""
+	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
 	return nil

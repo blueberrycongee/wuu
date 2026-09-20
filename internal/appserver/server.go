@@ -140,6 +140,7 @@ type threadState struct {
 
 	nextItemIndex         int
 	activeAgentItemID     string
+	agentStream           *agentMessageStream
 	activeReasoningItemID string
 	toolItems             map[string]string
 	hiddenToolEvent       bool

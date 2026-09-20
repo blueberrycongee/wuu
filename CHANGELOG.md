@@ -157,7 +157,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve final Responses replies and refusals over SSE and WebSocket when
   text deltas are missing or incomplete, without duplicating streamed content
-  or issuing extra model requests.
+  or issuing extra model requests. Reconcile corrections across tool-call
+  boundaries and keep WebSocket continuation history aligned with final replies.
 
 - Preserve completed tool batches' text budget through provider requests and
   history replay, while retaining media and structured recovery data (#284).

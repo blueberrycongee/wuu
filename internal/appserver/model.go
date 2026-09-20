@@ -122,6 +122,7 @@ func threadWorktreeInfo(path, baseHEAD, baseRepo string) *WorktreeInfo {
 }
 
 func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMessage, now time.Time) Turn {
+	th.agentStream = nil
 	th.currentTurn = turnID
 	th.currentTurnKind = TurnKindUser
 	th.currentTurnResumed = false
@@ -189,6 +190,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 		th.pendingSteers = nil
 		th.nextItemIndex = maxTurnItemIndex(turn)
 		th.activeAgentItemID = ""
+		th.agentStream = nil
 		th.activeReasoningItemID = ""
 		th.toolItems = make(map[string]string)
 		return turn, true
@@ -197,6 +199,7 @@ func (th *threadState) resumePersistedUserTurnLocked(clientID string, now time.T
 }
 
 func (th *threadState) appendUserMessageTurnLocked(turnID string, userMsg providers.ChatMessage, now time.Time) Turn {
+	th.agentStream = nil
 	th.currentTurn = turnID
 	th.currentTurnResumed = false
 	th.UpdatedAt = now
@@ -240,6 +243,7 @@ func (th *threadState) startCompactTurnLocked(turnID string, displayMsg provider
 }
 
 func (th *threadState) startInternalTurnWithKindLocked(turnID string, kind TurnKind, now time.Time) Turn {
+	th.agentStream = nil
 	th.currentTurn = turnID
 	th.currentTurnKind = kind
 	th.currentTurnResumed = false
@@ -360,6 +364,7 @@ func (th *threadState) finishTurnLocked(turnID string, status TurnStatus, err er
 		}
 		th.activeAgentItemID = ""
 	}
+	th.agentStream = nil
 	th.activeReasoningItemID = ""
 	th.toolItems = make(map[string]string)
 
@@ -603,6 +608,13 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			return nil
 		}
 		switch ev.Lifecycle.Phase {
+		case providers.StreamPhaseConnecting:
+			operationID := ev.Lifecycle.OperationID
+			if operationID != "" && (th.agentStream == nil || th.agentStream.operationID != operationID) {
+				out = append(out, th.completeActiveAgentItemLocked(turnID, now, false)...)
+				th.agentStream = &agentMessageStream{operationID: operationID}
+			}
+			return out
 		case providers.StreamPhaseReconnecting:
 			out = append(out, th.upsertStreamReconnectItemLocked(turnID, ev.Lifecycle, now)...)
 			if !ev.Lifecycle.ResetPartial {
@@ -664,8 +676,9 @@ func (th *threadState) applyStreamEventLocked(turnID string, ev providers.Stream
 			},
 		})
 	case providers.EventContentReplace:
+		out = append(out, th.reconcileAgentStreamItemsLocked(turnID, true, now)...)
 		if th.activeAgentItemID == "" && ev.Content == "" {
-			return nil
+			return out
 		}
 		item, started := th.ensureActiveAgentItemLocked(turnID, now)
 		if started {
@@ -957,10 +970,11 @@ func isCompactFailureNoticeContent(content string) bool {
 func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatMessage, now time.Time) []outboundNotification {
 	switch msg.Role {
 	case "assistant":
+		defer func() { th.agentStream = nil }()
+		out := th.reconcileAgentStreamItemsLocked(turnID, strings.TrimSpace(msg.Content) != "", now)
 		if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(msg.ReasoningContent) == "" {
-			return nil
+			return out
 		}
-		var out []outboundNotification
 		if strings.TrimSpace(msg.ReasoningContent) != "" && th.activeReasoningItemID == "" && !th.hasReasoningTextLocked(turnID, msg.ReasoningContent) {
 			item := ThreadItem{
 				ID:       th.nextItemIDLocked(turnID),
@@ -1055,8 +1069,45 @@ func (th *threadState) ensureActiveAgentItemLocked(turnID string, now time.Time)
 		Role:   "assistant",
 	}
 	th.activeAgentItemID = item.ID
+	if th.agentStream != nil {
+		th.agentStream.itemIDs = append(th.agentStream.itemIDs, item.ID)
+	}
 	th.upsertItemLocked(turnID, item, now)
 	return item, true
+}
+
+// A provider operation can close several display rows at tool boundaries while
+// still producing one aggregate ChatMessage. Its replacements and final message
+// must supersede all those rows, without touching earlier model operations.
+type agentMessageStream struct {
+	operationID string
+	itemIDs     []string
+}
+
+func (th *threadState) reconcileAgentStreamItemsLocked(turnID string, keepFirst bool, now time.Time) []outboundNotification {
+	if th.agentStream == nil || len(th.agentStream.itemIDs) == 0 {
+		return nil
+	}
+	var out []outboundNotification
+	var retained string
+	for _, id := range th.agentStream.itemIDs {
+		if _, ok := th.itemLocked(turnID, id); !ok {
+			continue
+		}
+		if keepFirst && retained == "" {
+			retained = id
+			continue
+		}
+		if th.removeItemLocked(turnID, id, now) {
+			out = append(out, itemRemoved(th.ID, turnID, id, now))
+		}
+	}
+	th.activeAgentItemID = retained
+	th.agentStream.itemIDs = nil
+	if retained != "" {
+		th.agentStream.itemIDs = []string{retained}
+	}
+	return out
 }
 
 func (th *threadState) completeActiveAgentItemLocked(turnID string, now time.Time, terminal bool) []outboundNotification {
