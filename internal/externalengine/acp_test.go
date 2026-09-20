@@ -83,12 +83,12 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 }
 
 func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
-	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-error", "no-load", "no-images", "unknown-id"} {
+	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-error", "load-malformed", "no-load", "no-images", "unknown-id"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			binding := testBinding()
-			if scenario == "load-error" || scenario == "no-load" {
+			if scenario == "load-error" || scenario == "load-malformed" || scenario == "no-load" {
 				binding.ExternalRef = "old-session"
 			}
 			input := testInput()
@@ -245,9 +245,17 @@ func TestACPHelper(t *testing.T) {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})
 				continue
 			}
+			if scenario == "load-malformed" {
+				fmt.Println(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"native-session","update":{`)
+			}
 			text("old replay")
 		case "session/prompt":
 			promptID = msg.ID
+			if scenario == "env" {
+				text(os.Getenv("HOME"))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "eof" {
 				os.Exit(0)
 			}
@@ -302,4 +310,22 @@ func TestACPHelper(t *testing.T) {
 		write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result})
 	}
 	os.Exit(0)
+}
+
+func TestACPChildInheritsParentEnvironment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngine(t, "env").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != home {
+		t.Fatalf("ACP child HOME = %q, want inherited %q", result.Result.Content, home)
+	}
 }

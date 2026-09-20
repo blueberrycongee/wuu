@@ -56,7 +56,10 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			// or terminal capabilities are advertised by this client.
 			return nil, &rpcError{Code: -32601, Message: "unsupported engine request: " + method}
 		}
-		if method == "session/update" && prompting {
+		if method == "session/update" {
+			if !prompting {
+				return nil, decodeACPUpdate(ref, params)
+			}
 			return nil, t.acpUpdate(ref, params)
 		}
 		return nil, nil
@@ -211,7 +214,15 @@ func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMes
 	return cancelled, nil
 }
 
+func decodeACPUpdate(ref string, raw json.RawMessage) error {
+	return parseACPUpdate(ref, raw, nil)
+}
+
 func (t *turn) acpUpdate(ref string, raw json.RawMessage) error {
+	return parseACPUpdate(ref, raw, t)
+}
+
+func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 	var notification struct {
 		SessionID string          `json:"sessionId"`
 		Update    json.RawMessage `json:"update"`
@@ -244,7 +255,7 @@ func (t *turn) acpUpdate(ref string, raw json.RawMessage) error {
 		if err := json.Unmarshal(update.Content, &content); err != nil {
 			return err
 		}
-		if content.Type == "text" {
+		if t != nil && content.Type == "text" {
 			t.content(content.Text, update.Type == "agent_thought_chunk")
 		}
 	case "tool_call", "tool_call_update":
@@ -266,9 +277,13 @@ func (t *turn) acpUpdate(ref string, raw json.RawMessage) error {
 				output = strings.Join(text, "\n")
 			}
 		}
-		t.tool(update.ID, update.Title, string(update.Input), update.Status, output)
+		if t != nil {
+			t.tool(update.ID, update.Title, string(update.Input), update.Status, output)
+		}
 	case "plan":
-		t.emit(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: &providers.TodoUpdate{Todos: update.Entries}})
+		if t != nil {
+			t.emit(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: &providers.TodoUpdate{Todos: update.Entries}})
+		}
 	}
 	return nil
 }
