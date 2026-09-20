@@ -152,6 +152,65 @@ function buildActions({
 }
 
 describe("createThreadActivationActions", () => {
+  it.each([false, true])(
+    "reuses sidebar history instead of a runtime summary (cross-project: %s)",
+    async (crossProject) => {
+      const cached = {
+        ...thread("target", "/tmp/project-2"),
+        turns: [{ id: "cached-turn", status: "completed", items_view: "full", items: [] }],
+      } as Thread;
+      const summary = { ...cached, turns: [] };
+      const resume = deferred<{ thread: Thread }>();
+      const api = installWuuApi(cached);
+      api.resumeThread.mockReturnValue(resume.promise);
+      const harness = buildActions({
+        initial: {
+          ...initialState,
+          activeContext: projectContext(crossProject ? "project-1" : "project-2"),
+          activeProjectId: crossProject ? "project-1" : "project-2",
+          projects: [project("project-1"), project("project-2")],
+          threads: [summary],
+        },
+        sidebarThreads: [summary],
+        sidebarProjectThreadsByProjectID: { "project-2": [cached] },
+      });
+
+      const activation = harness.actions.activateThread(cached.id);
+
+      expect(harness.getAppState().thread?.turns).toEqual(cached.turns);
+      expect(harness.getAppState().activeContext).toEqual(projectContext("project-2"));
+      expect(harness.beginViewSwitch).not.toHaveBeenCalled();
+      expect(harness.finishViewSwitch).not.toHaveBeenCalled();
+      resume.resolve({ thread: cached });
+      await activation;
+    },
+  );
+
+  it("keeps live pane history ahead of an older sidebar snapshot", async () => {
+    const cached = {
+      ...thread(),
+      turns: [{ id: "cached-turn", status: "completed", items_view: "full", items: [] }],
+    } as Thread;
+    const live = { ...cached, turns: [...cached.turns, { ...cached.turns[0], id: "new-turn" }] };
+    const resume = deferred<{ thread: Thread }>();
+    installWuuApi(live).resumeThread.mockReturnValue(resume.promise);
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        projects: [project("project-1")],
+        secondaryThread: live,
+        threads: [{ ...cached, turns: [] }],
+      },
+      sidebarThreads: [cached],
+    });
+
+    await harness.actions.selectThread(live.id);
+
+    expect(harness.getAppState().thread?.turns).toEqual(live.turns);
+    resume.resolve({ thread: live });
+  });
+
   it("resumes a thread into the active context", async () => {
     const context = projectContext();
     const resumed = thread("thread-1");

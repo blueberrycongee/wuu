@@ -112,9 +112,7 @@ export function createThreadActivationActions(
     const outgoingDraft = deps.getPrimaryComposerDraft();
     const targetDraft = sessionTabDraftForThread(currentState, threadID);
     const sourceContext = currentState.activeContext;
-    const localThread = currentThreadSnapshot(
-      threadForTab(deps.getAppState(), threadID),
-    );
+    const localThread = findKnownThread(threadID);
     const localThreadContext = localThread
       ? resolveThreadRuntimeContext(localThread, deps.getAppState().projects)
       : undefined;
@@ -130,7 +128,7 @@ export function createThreadActivationActions(
       deps.setAppState((current) => {
         const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
         const optimisticThread =
-          threadForTab(withDraft, threadID) ?? localThread;
+          findKnownThread(threadID, withDraft) ?? localThread;
         return {
           ...withDraft,
           thread: optimisticThread,
@@ -274,9 +272,7 @@ export function createThreadActivationActions(
     const currentState = deps.getAppState();
     const outgoingDraft = deps.getPrimaryComposerDraft();
     const targetDraft = sessionTabDraftForThread(currentState, threadID);
-    const localThread = currentThreadSnapshot(
-      threadForTab(currentState, threadID) ?? findKnownThread(threadID),
-    );
+    const localThread = findKnownThread(threadID, currentState);
     const canSwitchInstantly =
       localThread !== undefined &&
       localThread.turns.length > 0 &&
@@ -292,7 +288,7 @@ export function createThreadActivationActions(
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
         const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
-        const optimisticThread = threadForTab(withDraft, threadID) ?? localThread;
+        const optimisticThread = findKnownThread(threadID, withDraft) ?? localThread;
         return {
           ...withDraft,
           activeContext: targetContext,
@@ -361,9 +357,22 @@ export function createThreadActivationActions(
     }
   }
 
-  function findKnownThread(threadID: string): Thread | undefined {
-    return currentThreadSnapshot(
+  function findKnownThread(
+    threadID: string,
+    state = deps.getAppState(),
+  ): Thread | undefined {
+    const candidates = [
+      threadForTab(state, threadID),
       deps.getSidebarThreads().find((thread) => thread.id === threadID),
+      ...Object.values(deps.getSidebarProjectThreadsByProjectID()).map(
+        (threads) => threads?.find((thread) => thread.id === threadID),
+      ),
+    ];
+    // Runtime reloads replace the catalog with summaries. Prefer a loaded
+    // snapshot, but keep live pane history ahead of older sidebar caches.
+    return currentThreadSnapshot(
+      candidates.find((thread) => thread && thread.turns.length > 0) ??
+        candidates.find((thread) => thread !== undefined),
     );
   }
 

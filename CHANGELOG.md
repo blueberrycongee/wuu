@@ -30,6 +30,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reuse loaded sidebar history when reopening desktop conversations, even after
+  a workspace refresh has replaced the active conversation catalog with summaries.
+
 - Fetch lightweight conversation summaries for desktop lists without copying
   loaded histories, reducing IPC payloads and app-server allocation overhead.
   Recover missed completion events with targeted snapshots for stale loaded
