@@ -65,6 +65,7 @@ import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeM
 import {
   codexEffortOptions,
   displayCodexModelName,
+  orderedEffortOptions,
   providerIsCodex,
   providerModelDisplayName,
   providerModelVariantOptions,
@@ -572,7 +573,7 @@ function EngineRuntimeMenu({
     : models;
   const effectiveModelID = optimistic?.model ?? selectedModel;
   const effectiveModel = models.find((model) => model.id === effectiveModelID);
-  const effortOptions = effectiveModel?.supported_efforts ?? [];
+  const effortOptions = orderedEffortOptions(effectiveModel?.supported_efforts ?? []);
   const effectiveEffort = optimistic?.effort
     ?? (effortOptions.includes(selectedEffort)
       ? selectedEffort
@@ -995,7 +996,9 @@ function EffortSelector({
   onPreviewEffort?: (variant: string) => void;
   onSelectEffort: (variant: string) => void;
 }): JSX.Element {
-  const selectedIndex = Math.max(0, options.indexOf(selectedVariant));
+  const orderedOptions = orderedEffortOptions(options);
+  const matchedIndex = orderedOptions.indexOf(selectedVariant);
+  const selectedIndex = matchedIndex >= 0 ? matchedIndex : orderedOptions.length - 1;
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const pendingIndex = useRef<number | null>(null);
   const activePointer = useRef<number | null>(null);
@@ -1010,20 +1013,20 @@ function EffortSelector({
   const previewTo = (index: number): void => {
     pendingIndex.current = index;
     setPreviewIndex(index);
-    onPreviewEffort?.(options[index] ?? selectedVariant);
+    onPreviewEffort?.(orderedOptions[index] ?? selectedVariant);
   };
   const cancel = (): void => {
     activePointer.current = null;
     pendingIndex.current = null;
     setPreviewIndex(null);
-    onPreviewEffort?.(options[selectedIndex] ?? selectedVariant);
+    onPreviewEffort?.(orderedOptions[selectedIndex] ?? selectedVariant);
   };
   const commit = (): void => {
     activePointer.current = null;
     const index = pendingIndex.current;
     pendingIndex.current = null;
     if (disabled || index === null) return;
-    const next = options[index];
+    const next = orderedOptions[index];
     if (next !== undefined && index !== selectedIndex) onSelectEffort(next);
   };
 
@@ -1035,9 +1038,9 @@ function EffortSelector({
     if (!rect || rect.width <= 0) return;
     const ratio = (clientX - rect.left) / rect.width;
     if (!Number.isFinite(ratio)) return;
-    previewTo(Math.min(options.length - 1, Math.max(0, Math.floor(ratio * options.length))));
+    previewTo(Math.min(orderedOptions.length - 1, Math.max(0, Math.floor(ratio * orderedOptions.length))));
   };
-  const progress = `${((displayIndex + 1) / options.length) * 100}%`;
+  const progress = `${((displayIndex + 1) / orderedOptions.length) * 100}%`;
 
   return (
     <div
@@ -1049,11 +1052,11 @@ function EffortSelector({
         <span className="codex-effort-fill" />
       </span>
       <span className="codex-effort-stops" aria-hidden="true">
-        {options.slice(0, -1).map((variant, index) => (
+        {orderedOptions.slice(0, -1).map((variant, index) => (
           <span
             key={variant || `default-${index}`}
             className={index < displayIndex ? "is-filled" : ""}
-            style={{ left: `${((index + 1) / options.length) * 100}%` }}
+            style={{ left: `${((index + 1) / orderedOptions.length) * 100}%` }}
           />
         ))}
       </span>
@@ -1061,12 +1064,12 @@ function EffortSelector({
       <input
         type="range"
         min={0}
-        max={options.length - 1}
+        max={orderedOptions.length - 1}
         step={1}
         value={displayIndex}
         disabled={disabled}
         aria-label={translate("runtime.reasoningEffort")}
-        aria-valuetext={variantLabel(options[displayIndex] ?? selectedVariant)}
+        aria-valuetext={variantLabel(orderedOptions[displayIndex] ?? selectedVariant)}
         onPointerDown={(event) => {
           if (disabled || event.button !== 0) return;
           event.preventDefault();

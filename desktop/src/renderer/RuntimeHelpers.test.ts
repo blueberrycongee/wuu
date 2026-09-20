@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import {
   codexEffortLabel,
+  orderedEffortOptions,
   providerModelContextWindow,
   pullRequestUnavailableReason,
   providerModelReasoningMode,
@@ -165,6 +166,28 @@ describe("providerModelVariantOptions", () => {
       capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
     });
     expect(providerModelVariantOptions(provider, "with-levels", "")).toEqual(["", "low", "medium", "high"]);
+  });
+
+  it("orders descending effort lists from weakest to strongest", () => {
+    const provider = providerWithModel({
+      id: "grok-4.6",
+      variants: [{ id: "xhigh" }, { id: "high" }, { id: "medium" }, { id: "low" }],
+      supported_efforts: ["xhigh", "high", "medium", "low"],
+      capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
+    });
+    expect(providerModelVariantOptions(provider, "grok-4.6", "xhigh")).toEqual([
+      "",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(orderedEffortOptions(["xhigh", "high", "medium", "low"])).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
   });
 
   it("prefers explicit variants over supported_efforts", () => {

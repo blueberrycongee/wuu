@@ -515,6 +515,32 @@ describe("RuntimePicker", () => {
     expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-chat", "");
   });
 
+  it("places extra high at the rightmost stop even when efforts arrive descending", () => {
+    const initialized = runtimeWithEffort();
+    initialized.provider = "Grok";
+    initialized.model = "grok-4.6";
+    initialized.variant = "xhigh";
+    initialized.providers![0] = {
+      name: "Grok",
+      type: "grok-build",
+      model: "grok-4.6",
+      models: [{
+        id: "grok-4.6",
+        display_name: "Grok 4.6",
+        variants: [{ id: "xhigh" }, { id: "high" }, { id: "medium" }, { id: "low" }],
+        supported_efforts: ["xhigh", "high", "medium", "low"],
+      }],
+    };
+
+    renderPicker("model", initialized);
+
+    const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
+    expect(slider.max).toBe("4");
+    expect(slider.value).toBe("4");
+    expect(slider.getAttribute("aria-valuetext")).toBe("Extra high");
+    expect(document.querySelector(".runtime-panel-model .runtime-panel-effort-value")?.textContent).toBe("Extra high");
+  });
+
   it("selects a discrete effort by dragging the unlabeled slider", () => {
     const onSelectEffort = vi.fn();
     renderPicker("model", runtimeWithEffort(), vi.fn(), onSelectEffort);
