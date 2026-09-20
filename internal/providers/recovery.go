@@ -253,8 +253,14 @@ func normalizeFailure(err error) NormalizedFailure {
 			failure.Category = FailureLocalBackpressure
 		case isTerminalUsageLimit(streamErr.Code, streamErr.Message):
 			failure.Category = FailureQuota
+		case isProviderRateLimited(streamErr.Code, streamErr.Message):
+			failure.Category = FailureRateLimit
 		case isProviderOverloaded(streamErr.Code, streamErr.Message):
 			failure.Category = FailureOverloaded
+		case streamErr.Retryable && isTemporaryProviderFailure(streamErr.Code, streamErr.Message):
+			failure.Category = FailureServer
+		case streamErr.Code == "400" || streamErr.Code == "invalid_request" || streamErr.Code == "invalid_request_error":
+			failure.Category = FailureInvalidRequest
 		case streamErr.Retryable:
 			failure.Category = FailureIncompleteStream
 		default:

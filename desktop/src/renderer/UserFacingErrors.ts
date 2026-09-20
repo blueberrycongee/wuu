@@ -20,7 +20,7 @@ export type UserFacingErrorTone = "neutral" | "warning" | "auth" | "error";
 export type UserFacingErrorContext = "turn" | "tool" | "status";
 
 import type { TurnError } from "../shared/protocol";
-import { translateCurrent as t } from "./i18n";
+import { formatCurrentNumber, translateCurrent as t } from "./i18n";
 
 export type UserFacingErrorDisplay = {
   category: UserFacingErrorCategory;
@@ -254,12 +254,8 @@ export function userFacingErrorForMessage(
         : "internal"
       : classifyUserFacingError(message, context);
 
-  // Message-derived specifics win over structured transport facts: after a
-  // thread resume the turn snapshot is rebuilt from persisted history, which
-  // retains only the message — not status_code / code. A title that depends
-  // on structured fields would flip wording across a resume (tab switch), so
-  // the traceable title is kept only as the fallback for opaque messages
-  // (e.g. a post-200 provider failure whose message carries no status).
+  // Legacy history can contain only the message. Prefer recognized specifics
+  // over transport facts so those records remain readable after resume.
   const structuredCode = structuredProviderCode(structured);
   const specific = extractSpecificDisplay(message, category);
   const specificFromCode = structuredCode
@@ -283,6 +279,7 @@ export function userFacingErrorForMessage(
     defaultTitleForCategory(category);
   // Detail is hover and accessibility copy, not a visible second line.
   const detail =
+    recoveryDetail(structured) ||
     specificDetailForMessage(message, category) ||
     defaultDetailForCategory(category);
 
@@ -293,6 +290,28 @@ export function userFacingErrorForMessage(
     detail,
     diagnostic: message || undefined,
   };
+}
+
+function recoveryDetail(error: TurnError | undefined): string | undefined {
+  const recovery = error?.recovery;
+  if (!recovery) return undefined;
+  const reasonKeys = {
+    non_retryable: "error.recoveryNonRetryable",
+    retry_limit: "error.recoveryRetryLimit",
+    workflow_budget_exceeded: "error.recoveryBudget",
+    workflow_cost_indeterminate: "error.recoveryCost",
+    replay_unsafe: "error.recoveryUnsafe",
+    recovery_unavailable: "error.recoveryUnavailable",
+    recovery_failed: "error.recoveryFailed",
+  } as const;
+  const key = reasonKeys[recovery.stop_reason as keyof typeof reasonKeys];
+  const reason = key ? t(key) : t("error.recoveryStopped");
+  const counts = t("error.recoveryCounts", {
+    retries: formatCurrentNumber(recovery.retry_count),
+    maxRetries: formatCurrentNumber(Math.max(0, recovery.max_attempts - 1)),
+    requests: formatCurrentNumber(recovery.submission_count),
+  });
+  return `${counts}\n${reason}${recovery.budget_dimension ? ` (${recovery.budget_dimension})` : ""}`;
 }
 
 function toneForCategory(category: UserFacingErrorCategory): UserFacingErrorTone {
@@ -426,8 +445,6 @@ function isNetworkOrUpstreamError(message: string): boolean {
   return (
     /\b(500|502|503|504)\b/.test(message) ||
     message.includes("network") ||
-    message.includes("stream request failed") ||
-    message.includes("request failed") ||
     message.includes("connection refused") ||
     message.includes("connection reset") ||
     message.includes("connection dropped") ||
@@ -459,6 +476,7 @@ function isProviderBusinessError(message: string): boolean {
     message.includes("provider") ||
     message.includes("response failed") ||
     message.includes("response error") ||
+    message.includes("previous_response_not_found") ||
     message.includes("content policy") ||
     message.includes("rate_limit")
   );

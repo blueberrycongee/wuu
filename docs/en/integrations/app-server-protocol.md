@@ -70,6 +70,20 @@ selection rather than override it. `turn/queue`, `turn/update-queued`,
 `turn/dequeue`, `turn/steer`, and `turn/unsteer` manage pending user input;
 they are distinct from starting another concurrent turn.
 
+Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
+and `retry_count` count recovery-executor calls that actually started; a prepared
+retry that never runs is excluded. `submission_count` counts physical provider
+requests, including transport fallbacks, not token charges. These counters apply
+to the final failed logical stream, not the entire multi-step turn.
+`max_attempts` is its frozen attempt limit. `stop_reason` distinguishes
+`non_retryable`, `retry_limit`, `workflow_budget_exceeded`,
+`workflow_cost_indeterminate`, `replay_unsafe`, `recovery_unavailable`, and
+`recovery_failed`; `failure_category` and optional `budget_dimension` retain the
+decision's classification. `operation_id` identifies the stream in inference
+diagnostics. Clients must tolerate absent fields on older servers and unknown
+future reason values. Persisted terminal errors retain these facts on
+`thread/resume`; older history without recovery facts does not imply zero retries.
+
 For an invocation that can span automatic continuation or output-correction turns,
 use `run/start`:
 

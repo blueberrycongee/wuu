@@ -233,6 +233,13 @@ func TestReliableStreamClientEmitsFinalErrorAfterMaxRetries(t *testing.T) {
 	if !reflect.DeepEqual(attempts, []int{1, 2, 3}) {
 		t.Fatalf("retry attempts = %v", attempts)
 	}
+	var terminal *StreamRecoveryError
+	if !errors.As(events[0].Error, &terminal) || !errors.Is(events[0].Error, retryErr) {
+		t.Fatalf("final error lost cause/diagnostics: %v", events[0].Error)
+	}
+	if got := terminal.Recovery; got.AttemptCount != inner.callCount || got.RetryCount != 3 || got.SubmissionCount != 4 || got.StopReason != "retry_limit" {
+		t.Fatalf("terminal recovery = %+v", got)
+	}
 }
 
 func TestReliableStreamClientHonorsFrozenOperationAttemptLimit(t *testing.T) {

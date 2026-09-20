@@ -36,6 +36,14 @@ A queued prompt waits for the receiving conversation. A provider failure, held t
 
 ## Read saved diagnostics
 
+For a failed Wuu-engine stream, expand the error notice or the reconnect card's
+**Recovery details**. New failures retain automatic retry counts, physical
+request counts, and why recovery stopped, including non-retryable errors, retry
+or shared-budget limits, and unsafe tool replay. These facts survive reopening
+the conversation. Counts describe the final failed stream, not the whole turn
+or billed tokens; older failures may have no recorded counts. Unknown errors
+are not automatically retried just because their wrapper says "request failed".
+
 ```bash
 wuu version --long
 wuu session list --json

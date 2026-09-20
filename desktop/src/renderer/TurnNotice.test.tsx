@@ -377,6 +377,24 @@ describe("TurnNotice process row", () => {
     expect(host.querySelector("[role=progressbar]")).toBeNull();
   });
 
+  it("exposes recovery diagnostics without disabling manual retry", async () => {
+    const retry = vi.fn();
+    const error = {
+      message: "stream error (server_error): fixture failure", category: "provider" as const,
+      recovery: { attempt_count: 3, retry_count: 2, max_attempts: 3, submission_count: 3, stop_reason: "retry_limit", failure_category: "server" },
+    };
+    const host = mount(<StreamReconnectNotice item={{ id: "retry", type: "stream_reconnect", status: "failed" }} error={error} onRetry={retry} />);
+    const fold = host.querySelector("details")!;
+    expect(fold.open).toBe(false);
+    act(() => { fold.open = true; fold.dispatchEvent(new Event("toggle")); });
+    expect(fold.open).toBe(true);
+    const display = userFacingErrorForMessage(error, "turn");
+    expect(fold.textContent).toContain(display.detail);
+    expect(fold.textContent).toContain(error.message);
+    await act(async () => { host.querySelector("button")?.click(); });
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("disables manual retry until submission settles", async () => {
     let finish!: () => void;
     const retry = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));

@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -1427,6 +1428,10 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					message = "turn start aborted"
 				}
 				current.Error = &TurnError{Message: message}
+				var diagnostic TurnError
+				if json.Unmarshal([]byte(rec.Cause), &diagnostic) == nil && diagnostic.Message == message {
+					current.Error = &diagnostic
+				}
 				appendItem(ThreadItem{
 					ID:       nextItemID(current.ID),
 					SourceID: sourceID,

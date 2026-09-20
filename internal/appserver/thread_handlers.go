@@ -1312,7 +1312,8 @@ func (s *Server) settleThreadExecutionForForcedArchive(threadID string) {
 	if settledTurnID == "" {
 		return
 	}
-	if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, errArchivedWhileRunning, now, reconnectItem); err != nil {
+	diagnostic := BuildTurnError(errArchivedWhileRunning, "")
+	if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem); err != nil {
 		providers.DebugLogf("persist forced archive settlement for thread %q: %v", threadID, err)
 	}
 }
