@@ -34,6 +34,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Hide phone-connection and account entries in all production desktop builds,
+  including local packages, while retaining them in development mode.
+
 - Settle large tool results, including extension results, into recoverable pages
   before recording them. Preserve original payloads and media, keep search
   snapshot cursors, and avoid batch-wide text cuts that could erase recovery links.

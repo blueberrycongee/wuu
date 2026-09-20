@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
-/** Phone access is available in development; the local desktop release hides it. */
+/** Phone access is development-only until the mobile connection flow ships. */
 export const ENABLE_REMOTE_CONTROL =
-  import.meta.env.VITE_ENABLE_REMOTE_CONTROL !== "false";
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_REMOTE_CONTROL !== "false";
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
@@ -20,12 +20,12 @@ export const ENABLE_GROUP_CHAT =
   import.meta.env.VITE_ENABLE_GROUP_CHAT !== "false";
 
 /**
- * Account and device-linking UI stays available in development, but the
- * current desktop release is intentionally unauthenticated until that flow
- * is ready for users.
+ * Account and device-linking UI stays available in development. All production
+ * builds, including local packages, hide it until the flow is ready for users;
+ * a leftover development environment variable must not expose it in a release.
  */
 export const ENABLE_ACCOUNT =
-  import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
 /**
  * The embedded browser remains an internal development capability. Production

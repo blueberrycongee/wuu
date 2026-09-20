@@ -3,7 +3,9 @@
 远程控制通过 Relay 将已配对客户端连接到 Wuu Host。Host 运行 Agent 并访问工作区，
 Relay 转发端到端加密的 app-server 连接。配对授予的是 Host 控制权，不只是只读查看权限。
 
-当前桌面发布流程隐藏账号和远程控制界面。本页说明源码 CLI 与开发客户端，不代表正式
+手机连接发布前，所有桌面生产构建（包括本地打包）均隐藏账号和远程控制界面。
+这些入口仍可通过 `make dev` 使用；设置 `VITE_ENABLE_ACCOUNT=true` 或
+`VITE_ENABLE_REMOTE_CONTROL=true` 不会在生产构建中开启它们。本页说明源码 CLI 与开发客户端，不代表正式
 桌面版已提供手机连接设置页。CLI 构建方法见[开发指南](../project/development.md)。
 
 ## 准备 Relay

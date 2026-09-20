@@ -4,7 +4,10 @@ Remote control connects a paired client to a Wuu host through a Relay. The host
 runs the agent and accesses the workspace; the Relay routes the end-to-end encrypted
 app-server connection. Pairing grants control of the host, not just a read-only view.
 
-The current desktop release workflow hides account and remote-control UI. This
+All production desktop builds, including local packages, hide account and
+remote-control UI until phone access ships. These entries remain available through
+`make dev`; setting `VITE_ENABLE_ACCOUNT=true` or `VITE_ENABLE_REMOTE_CONTROL=true`
+does not enable them in a production build. This
 guide covers the source CLI and development client, not a promised phone setup
 screen in the released desktop. Build the CLI using the
 [development guide](../project/development.md).

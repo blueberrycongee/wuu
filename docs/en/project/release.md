@@ -27,7 +27,7 @@ The macOS job checks Go modules, formatting, vet, cross-builds, and uncached Go 
 
 The local `make release-check` also runs the macOS native Computer Use helper tests. The tagged release build itself excludes that feature: `WUU_SKIP_CUA_MAC=1` and `WUU_ENABLE_CUA_MAC=0` prevent its inclusion, and the packaged-app verifier rejects either CUA executable if present.
 
-The build sets `VITE_ENABLE_ACCOUNT=false` and `VITE_ENABLE_REMOTE_CONTROL=false`. The resulting preview is the local desktop experience, with account and remote-control settings hidden. Source-development capabilities should not be presented as features shipped by this build.
+All production desktop builds hide account and remote-control UI, including local packages built outside this workflow. These features remain development-only even if `VITE_ENABLE_ACCOUNT` or `VITE_ENABLE_REMOTE_CONTROL` is set to `true`; the workflow also sets both to `false`. Source-development capabilities should not be presented as features shipped by this build.
 
 Before publication, the workflow verifies the app's signature and bundle identity, required executables, absence of CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
 

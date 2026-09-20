@@ -1,5 +1,4 @@
 import { hostSupports } from "./HostCapabilities";
-import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { MobileSidebar } from "./MobileSidebar";
 import {
@@ -2129,7 +2128,6 @@ export function AppSidebar({
           />
           {sidebarVisible && <SidebarAccountMenu
             disabled={!state.initialized}
-            localOnly={!ENABLE_ACCOUNT}
             onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
             onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
           />}

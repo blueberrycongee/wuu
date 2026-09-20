@@ -3,6 +3,7 @@ import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { BarChart3, ChevronsUpDown, LogOut, Settings, Smartphone, UserRound } from "lucide-react";
 import type { AccountView } from "./AccountPanel";
 import { hostSupports } from "./HostCapabilities";
+import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { useI18n } from "./i18n";
 import "./SidebarAccountMenu.css";
 
@@ -23,7 +24,8 @@ export function SidebarAccountMenu({ disabled, localOnly = false, onOpenSettings
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(false);
-  const driver = !localOnly && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot")
+  const accountEnabled = ENABLE_ACCOUNT && !localOnly;
+  const driver = accountEnabled && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot")
     ? window.wuu?.remoteAccount : undefined;
 
   useEffect(() => {
@@ -98,9 +100,9 @@ export function SidebarAccountMenu({ disabled, localOnly = false, onOpenSettings
         }}>
         <div className="sidebar-account-profile">{avatar}<div><strong>{account.display_name || account.username || "Wuu"}</strong><span>{account.username ? account.server : t("account.localMode")}</span></div></div>
         <div className="sidebar-account-divider" role="separator" />
-        {!localOnly && phoneNavigation && <button role="menuitem" className="select-menu-item" onClick={() => { close(); phoneNavigation.openDevices(); }}><UserRound size={18} aria-hidden="true" /><span>{t('account.computersAndAccount')}</span></button>}
+        {accountEnabled && phoneNavigation && <button role="menuitem" className="select-menu-item" onClick={() => { close(); phoneNavigation.openDevices(); }}><UserRound size={18} aria-hidden="true" /><span>{t('account.computersAndAccount')}</span></button>}
         <button role="menuitem" className="select-menu-item" onClick={() => navigate("usage")}><BarChart3 size={18} aria-hidden="true" /><span>{t("settings.usage")}</span></button>
-        {!localOnly && driver && onOpenAccount && <button role="menuitem" className="select-menu-item" onClick={() => { close(); onOpenAccount(); }}><Smartphone size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.linkDevices")}</span></button>}
+        {driver && onOpenAccount && <button role="menuitem" className="select-menu-item" onClick={() => { close(); onOpenAccount(); }}><Smartphone size={18} aria-hidden="true" /><span>{t(account.username ? "account.manage" : "account.linkDevices")}</span></button>}
         <button role="menuitem" data-settings-page="providers" className="select-menu-item" onClick={() => navigate("providers")}><Settings size={18} aria-hidden="true" /><span>{t("sidebar.settings")}</span></button>
         {account.username && <button role="menuitem" className="select-menu-item" disabled={busy} onClick={() => void logout()}><LogOut size={18} aria-hidden="true" /><span>{t(busy ? "account.busy" : "account.logout")}</span></button>}
         {error && <p className="sidebar-account-message settings-error" role="alert">{error}</p>}
