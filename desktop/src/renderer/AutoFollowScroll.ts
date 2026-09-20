@@ -246,8 +246,10 @@ export function useAutoFollowScrollContainer({
           // the arrival extends the same trajectory instead of restarting it.
           const { position, done } = glide.step(now, maxScrollTop(node), node.clientHeight);
           node.scrollTop = position;
-          programmaticScrollTopRef.current = node.scrollTop;
-          lastScrollTopRef.current = node.scrollTop;
+          // The glide never passes its target, so the commanded offset is the
+          // achieved one — no read-back to pay for on every frame.
+          programmaticScrollTopRef.current = position;
+          lastScrollTopRef.current = position;
           if (!done) motionFrameRef.current = window.requestAnimationFrame(step);
         };
         motionFrameRef.current = window.requestAnimationFrame(step);

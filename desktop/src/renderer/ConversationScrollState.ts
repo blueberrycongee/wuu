@@ -316,10 +316,13 @@ export function useConversationScrollState({
   function rememberThreadScrollSnapshot(
     threadID: string,
     node: HTMLElement,
-    autoFollow: boolean
+    autoFollow: boolean,
+    scrollTop?: number
   ): void {
     threadScrollSnapshotsRef.current.set(threadID, {
-      scrollTop: clampScrollTop(node, node.scrollTop),
+      // Callers already scrolling inside a frame pass the offset they reached,
+      // so this never re-measures the scroller while motion is in flight.
+      scrollTop: scrollTop ?? clampScrollTop(node, node.scrollTop),
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
@@ -328,12 +331,13 @@ export function useConversationScrollState({
 
   function rememberActiveThreadScrollSnapshot(
     node: HTMLElement,
-    autoFollow: boolean
+    autoFollow: boolean,
+    scrollTop?: number
   ): void {
     if (!activeThreadID) {
       return;
     }
-    rememberThreadScrollSnapshot(activeThreadID, node, autoFollow);
+    rememberThreadScrollSnapshot(activeThreadID, node, autoFollow, scrollTop);
   }
 
   const clearUserScrollIntent = useCallback((): void => {
@@ -556,6 +560,7 @@ export function useConversationScrollState({
     glide.start(screenStart);
     let lastFrameTime: number | undefined;
     let animatedMessage = message;
+    let reservedRange: { target: number; clientHeight: number } | undefined;
     const paint = (now: number | undefined): void => {
       if (scrollModeRef.current !== "placing") return;
       viewport = conversationViewport();
@@ -581,16 +586,32 @@ export function useConversationScrollState({
         : glide.step(now, live.documentTop - live.targetTop, viewport.clientHeight);
       const top = live.documentTop - position;
       // Command the full range first: the reservation is what makes the target
-      // reachable, and the browser clamps against it in the same write.
-      submissionFrameCallbacks.current.ensureTailRange(Math.max(top, live.targetTop));
+      // reachable, and the browser clamps against it in the same write. The
+      // reservation only needs re-syncing when its inputs move, and re-syncing
+      // it walks every disclosure in the thread — do that on change, not on
+      // every frame of a glide.
+      const range = Math.max(top, live.targetTop);
+      if (
+        !reservedRange ||
+        reservedRange.clientHeight !== viewport.clientHeight ||
+        range > reservedRange.target + 0.5 ||
+        done
+      ) {
+        reservedRange = { target: range, clientHeight: viewport.clientHeight };
+        submissionFrameCallbacks.current.ensureTailRange(range);
+      }
       viewport.scrollTop = top;
-      programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
-      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+      // The reservation above makes this offset reachable, so the commanded
+      // value is the achieved one. Read it once and reuse it: re-measuring the
+      // scroller here costs a second synchronous layout every frame.
+      const placed = viewport.scrollTop;
+      programmaticScrollTopRef.current = placed;
+      lastConversationScrollTopRef.current = placed;
       if (done) {
         scrollModeRef.current = "holding";
         reflowSubmittedMotionRef.current = undefined;
       }
-      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false);
+      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
     };
     reflowSubmittedMotionRef.current = () => paint(messageMotionTime() ?? lastFrameTime);
     const step = (now: number): void => {
