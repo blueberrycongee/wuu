@@ -91,6 +91,35 @@ func TestChatExplainsRejectedGrokLogin(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "grok login") {
 		t.Fatalf("err = %v", err)
 	}
+	if providers.IsRetryable(err) {
+		t.Fatal("diagnostic 401 must not be retryable")
+	}
+}
+
+func TestChatGenericProxyAuthIsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"Authentication required"}`))
+	}))
+	defer server.Close()
+	client, _ := New(ClientConfig{BaseURL: server.URL, APIKey: "session-token"})
+	_, err := client.Chat(context.Background(), providers.ChatRequest{
+		Model: "grok-4.6", Messages: []providers.ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "grok login") {
+		t.Fatalf("err = %q, must not ask to grok login", err)
+	}
+	plan := providers.PlanRecovery(providers.NormalizeFailure(err))
+	if plan.Action != providers.RecoveryReplaySame {
+		t.Fatalf("plan = %+v, want replay_same_payload", plan)
+	}
+	if !providers.IsRetryable(err) {
+		t.Fatal("generic proxy 401 must be retryable")
+	}
 }
 
 func TestStreamChatUsesGrokBuildRoute(t *testing.T) {
