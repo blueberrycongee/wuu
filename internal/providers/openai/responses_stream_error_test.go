@@ -33,6 +33,8 @@ func TestResponsesStreamErrorsRecoverOrStop(t *testing.T) {
 			{"invalid request", `{"type":"error","code":"invalid_request_error","message":"Unsupported parameter"}`, "invalid_request_error", "Unsupported parameter", providers.FailureInvalidRequest, false},
 			{"unknown code", `{"type":"error","code":"custom_failure","message":"Diagnostic detail"}`, "custom_failure", "Diagnostic detail", providers.FailureUnknown, false},
 			{"unknown shape", `{"type":"error","opaque":{"content":"private response content"}}`, "", "Responses error event", providers.FailureUnknown, false},
+			{"invalid final message", `{"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":{"text":"private response content"}}}`, "", "invalid Responses message content", providers.FailureUnknown, false},
+			{"invalid terminal message", `{"type":"response.completed","response":{"status":"completed","output":[{"id":"msg_1","type":"message","content":{"text":"private response content"}}]}}`, "", "invalid Responses message content", providers.FailureUnknown, false},
 		} {
 			t.Run(string(transport)+"/"+tc.name, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

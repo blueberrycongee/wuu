@@ -509,8 +509,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 	pendingReasoning := newResponsesPendingReasoning()
 	var sawToolCall bool
 	var sawProviderEvent bool
-	var currentTextPhase providers.MessagePhase
-	var currentTextItemID string
+	var text responsesTextStream
 	var responseID string
 	var responseItems []responsesInputItem
 
@@ -678,7 +677,11 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		}
 		providers.DebugLogfWire("Responses websocket raw: %s", string(frame.data))
 		var event responsesStreamEvent
-		if err := json.Unmarshal(frame.data, &event); err != nil {
+		err := json.Unmarshal(frame.data, &event)
+		if err == nil {
+			err = text.consume(event, emit)
+		}
+		if err != nil {
 			session.mu.Lock()
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "parse_error")
@@ -729,26 +732,10 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		case "response.reasoning_summary_part.done":
 			pendingReasoning.appendDelta(event, "\n\n", emit)
 
-		case "response.output_text.delta":
-			if event.Delta != "" {
-				if event.ItemID != "" {
-					currentTextItemID = event.ItemID
-				}
-				emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Content: event.Delta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-			}
-
 		case "response.output_item.added":
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.start(event.Item, event.outputIndex())
-			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 			case "function_call", "tool_search_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
@@ -771,13 +758,6 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			case "reasoning":
 				pendingReasoning.emitDone(event, emit)
 			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 				if responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
@@ -1370,7 +1350,8 @@ func responsesOutputItemReplayInput(item responsesOutputItem) (responsesInputIte
 		}
 		return responsesInputItem{Raw: append(json.RawMessage(nil), stripResponsesReasoningStatus(item.Raw)...)}, true
 	case "message":
-		content, err := parseResponsesContent(item.Content)
+		parts, err := parseResponsesContentParts(item.Content)
+		content := strings.Join(parts, "")
 		if err != nil || content == "" {
 			return responsesInputItem{}, false
 		}

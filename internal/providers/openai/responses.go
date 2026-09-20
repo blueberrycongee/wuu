@@ -880,8 +880,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	pending := newResponsesPendingTools()
 	pendingReasoning := newResponsesPendingReasoning()
 	var sawToolCall bool
-	var currentTextPhase providers.MessagePhase
-	var currentTextItemID string
+	var text responsesTextStream
 
 	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
@@ -894,7 +893,11 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 		}
 
 		var event responsesStreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		err := json.Unmarshal([]byte(data), &event)
+		if err == nil {
+			err = text.consume(event, emit)
+		}
+		if err != nil {
 			providers.DebugLogfWire("Responses SSE parse error: %v, data: %s", err, data)
 			err = fmt.Errorf("parse chunk: %w", err)
 			failOpenAIResponseLease(lease, resp, err)
@@ -909,26 +912,10 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 		case "response.reasoning_summary_part.done":
 			pendingReasoning.appendDelta(event, "\n\n", emit)
 
-		case "response.output_text.delta":
-			if event.Delta != "" {
-				if event.ItemID != "" {
-					currentTextItemID = event.ItemID
-				}
-				emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Content: event.Delta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-			}
-
 		case "response.output_item.added":
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.start(event.Item, event.outputIndex())
-			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 			case "function_call", "tool_search_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
@@ -948,13 +935,6 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			case "reasoning":
 				pendingReasoning.emitDone(event, emit)
 			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 				if responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
@@ -1593,18 +1573,24 @@ func rawResponseArgumentsString(raw json.RawMessage) string {
 }
 
 type responsesContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type    string `json:"type"`
+	Text    string `json:"text,omitempty"`
+	Refusal string `json:"refusal,omitempty"`
 }
 
 func parseResponsesContent(raw json.RawMessage) (string, error) {
+	parts, err := parseResponsesContentParts(raw)
+	return strings.Join(parts, "\n"), err
+}
+
+func parseResponsesContentParts(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
-		return "", nil
+		return nil, nil
 	}
 
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
-		return asString, nil
+		return []string{asString}, nil
 	}
 
 	var parts []responsesContentPart
@@ -1616,12 +1602,16 @@ func parseResponsesContent(raw json.RawMessage) (string, error) {
 				if part.Text != "" {
 					out = append(out, part.Text)
 				}
+			case "refusal":
+				if part.Refusal != "" {
+					out = append(out, part.Refusal)
+				}
 			}
 		}
-		return strings.Join(out, "\n"), nil
+		return out, nil
 	}
 
-	return "", fmt.Errorf("unsupported response content: %s", string(raw))
+	return nil, fmt.Errorf("unsupported response content: %s", string(raw))
 }
 
 type responsesIncompleteDetails struct {
