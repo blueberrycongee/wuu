@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -160,6 +162,33 @@ func TestKernelExecutionUpdateRoutesToExecutionTable(t *testing.T) {
 		Params: json.RawMessage(`{"execution_id":"exec-7"}`),
 	}); serviceErr == nil || serviceErr.Code != "service_not_authorized" {
 		t.Fatalf("undeclared caller error = %#v, want service_not_authorized", serviceErr)
+	}
+}
+
+func TestNonInteractiveRuntimeRejectsUserQuestionServices(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(root, "state"))
+	rt, err := NewSession(Options{
+		RootDir: root, HomeDir: root, SafeMode: true, NonInteractive: true,
+		Config: config.Config{DefaultProvider: "test", Providers: map[string]config.ProviderConfig{
+			"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKey: "synthetic", Model: "gpt-test"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Cleanup()
+	registry := rt.PluginHost.ServiceRegistry()
+	services := []string{pluginhost.KernelUserQuestionAskService, pluginhost.KernelUserQuestionOfferService}
+	registry.RegisterClients(&kernelConsumer{id: "question-test", requirements: pluginhost.KernelServiceRequirements(services...)})
+	for _, service := range services {
+		_, err := registry.Call(context.Background(), "question-test", pluginhost.ServiceCallParams{
+			Service: service, Method: pluginhost.KernelServiceMethod,
+			Params: json.RawMessage(`{"questions":[{"id":"q","question":"Choose","options":[{"label":"A"}]}]}`),
+		})
+		if err == nil || err.Code != "service_unavailable" {
+			t.Fatalf("%s: got %v, want unavailable without waiting for a human", service, err)
+		}
 	}
 }
 

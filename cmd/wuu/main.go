@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1716,15 +1715,7 @@ func runExec(args []string) error {
 	if err := validateExecFlags(cfg); err != nil {
 		return err
 	}
-	prompt, input, err := resolveExecPromptAndInput(cfg, fs.Args(), hasExecAttachments(cfg))
-	if err != nil {
-		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
-	}
-	opts, err := execOptionsFromCLI(cfg, prompt, "", false, input)
-	if err != nil {
-		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
-	}
-	return runExecWithPrompt(prompt, opts)
+	return runExecWithInput(cfg, fs.Args(), "", false, "")
 }
 
 func runExecResume(args []string) error {
@@ -1748,15 +1739,7 @@ func runExecResume(args []string) error {
 		threadID = strings.TrimSpace(remaining[0])
 		remaining = remaining[1:]
 	}
-	prompt, input, err := resolveExecPromptAndInput(cfg, remaining, hasExecAttachments(cfg))
-	if err != nil {
-		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
-	}
-	opts, err := execOptionsFromCLI(cfg, prompt, threadID, *last, input)
-	if err != nil {
-		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
-	}
-	return runExecWithPrompt(prompt, opts)
+	return runExecWithInput(cfg, remaining, threadID, *last, "")
 }
 
 func runExecFork(args []string) error {
@@ -1777,16 +1760,7 @@ func runExecFork(args []string) error {
 	if forkID == "" {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, errors.New("fork requires a thread id"))
 	}
-	prompt, input, err := resolveExecPromptAndInput(cfg, remaining[1:], hasExecAttachments(cfg))
-	if err != nil {
-		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
-	}
-	opts, err := execOptionsFromCLI(cfg, prompt, "", false, input)
-	if err != nil {
-		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
-	}
-	opts.ForkID = forkID
-	return runExecWithPrompt(prompt, opts)
+	return runExecWithInput(cfg, remaining[1:], "", false, forkID)
 }
 
 func runExecReview(args []string) error {
@@ -1813,7 +1787,9 @@ func runExecReview(args []string) error {
 	if err != nil {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 	}
-	return runExecWithPrompt(prompt, opts)
+	ctx, stop := execContext(opts.Timeout)
+	defer stop()
+	return wuuexec.Run(ctx, opts)
 }
 
 func runExecShowSessions() error {
@@ -2060,12 +2036,6 @@ func applyExecInputPayload(opts *wuuexec.Options, input *execInputPayload) error
 		opts.Timeout = timeout
 	}
 	return nil
-}
-
-func runExecWithPrompt(prompt string, opts wuuexec.Options) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	return wuuexec.Run(ctx, opts)
 }
 
 func resolveExecPromptAndInput(cfg execCLIConfig, args []string, allowEmpty bool) (string, *execInputPayload, error) {

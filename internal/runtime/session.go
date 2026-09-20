@@ -85,6 +85,9 @@ type Options struct {
 	// into sessions.
 	PermissionModeExplicit bool
 	NoTools                bool
+	// NonInteractive disables human questions and interactive engine approvals
+	// for this runtime, including plugin generations loaded later.
+	NonInteractive bool
 	// DriverProfile selects the loop driver for new turns: empty keeps the
 	// in-process default; a profile name binds the plugin that provides the
 	// versioned "driver.<profile>" service. Unknown profiles fail closed.
@@ -428,7 +431,10 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	var agentControl *agentcontrol.AgentControl
 	pluginTurnRouter := NewPluginSessionRouter()
-	userQuestions := pluginhost.NewUserQuestionBroker()
+	var userQuestions *pluginhost.UserQuestionBroker
+	if !opts.NonInteractive {
+		userQuestions = pluginhost.NewUserQuestionBroker()
+	}
 	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
