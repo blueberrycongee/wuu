@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { messageMotionTime } from "./MessageScrollMotion";
+import { messageMotionTime } from "./motion";
 
 type Arrival = { element: HTMLElement; animation?: Animation };
 type MessageArrival = { id: string; element: HTMLElement; own: boolean; fresh: boolean };

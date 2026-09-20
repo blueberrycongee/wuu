@@ -30,8 +30,8 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { createMessageScrollMotion, messageMotionTime } from "./MessageScrollMotion";
+import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, cubicBezier } from "./motion";
+import { createScrollGlide } from "./ScrollGlide";
 import { useSessionTailSpace } from "./SessionTailSpace";
 import { conversationDisclosureHeight, eventTargetsConversationDisclosure } from "./ConversationDisclosure";
 import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
@@ -551,9 +551,9 @@ export function useConversationScrollState({
       return true;
     }
 
-    const duration = motionDurationMs("--query-scroll-duration", 360);
+    const glide = createScrollGlide();
     const screenStart = placement.documentTop - startTop;
-    const sample = createMessageScrollMotion(screenStart, placement.documentTop - targetTop, duration);
+    glide.start(screenStart);
     let lastFrameTime: number | undefined;
     let animatedMessage = message;
     const paint = (now: number | undefined): void => {
@@ -564,8 +564,9 @@ export function useConversationScrollState({
         return;
       }
       // Animate the bubble's position in the reading viewport, not scrollTop.
-      // Reflow moves its document anchor; compensate that displacement directly
-      // so it cannot become a second visible movement or a delayed correction.
+      // Only the target is re-read each frame, so a reflow that moves the
+      // document anchor is compensated by the scroll write below before paint
+      // instead of becoming a second, delayed correction.
       if (animatedMessage.dataset.userMessageId !== submissionRef.current?.messageID || !viewport.contains(animatedMessage)) {
         const replacement = submittedMessage();
         if (!replacement) {
@@ -577,8 +578,10 @@ export function useConversationScrollState({
       const live = submittedMessagePlacement(viewport, animatedMessage);
       const { position, done } = now === undefined
         ? { position: screenStart, done: false }
-        : sample(now, live.documentTop - live.targetTop);
+        : glide.step(now, live.documentTop - live.targetTop, viewport.clientHeight);
       const top = live.documentTop - position;
+      // Command the full range first: the reservation is what makes the target
+      // reachable, and the browser clamps against it in the same write.
       submissionFrameCallbacks.current.ensureTailRange(Math.max(top, live.targetTop));
       viewport.scrollTop = top;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
@@ -643,14 +646,16 @@ export function useConversationScrollState({
     }
     const startTop = clampScrollTop(node, node.scrollTop);
     const duration = motionDurationMs("--query-submit-duration", 220);
+    // The same curve the CSS transition on the optimistic turn rides, so the
+    // scroll and the height/opacity change it shares a deadline with agree.
+    const easing = motionEasing("--query-submit-easing", cubicBezier(1 / 3, 1, 2 / 3, 1));
     let startedAt: number | undefined;
     const step = (now: number): void => {
       submittedScrollFrameRef.current = undefined;
       if (!smoothAutoFollowRef.current || !isFollowing()) return;
       startedAt ??= now;
       const progress = duration > 0 ? Math.min(1, (now - startedAt) / duration) : 1;
-      // CSS uses cubic-bezier(1/3, 1, 2/3, 1): linear time, cubic ease-out.
-      const eased = 1 - (1 - progress) ** 3;
+      const eased = easing(progress);
       // Share one deadline with the diff receipt's exit, even while its height
       // and the optimistic turn change. Layout signals must not restart easing.
       const targetTop = latestFollowScrollTop(

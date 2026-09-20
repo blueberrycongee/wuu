@@ -67,6 +67,11 @@ describe("useAutoFollowScrollContainer", () => {
     act(() => pending.forEach((callback) => callback(now)));
   }
 
+  /** Run pending frames until the arrival scroll stops scheduling them. */
+  function settle(from: number): void {
+    for (let time = from; frames.size > 0 && time <= from + 4000; time += 20) paint(time);
+  }
+
   beforeEach(() => {
     frames = new Map();
     let nextFrame = 0;
@@ -131,7 +136,11 @@ describe("useAutoFollowScrollContainer", () => {
     expect(layout!.scrollTop).toBe(middle);
     paint(180);
     expect(layout!.scrollTop).toBe(middle);
-    paint(360);
+    // The new bottom extends the same trajectory: it advances without either
+    // restarting or stepping backwards.
+    paint(200);
+    expect(layout!.scrollTop).toBeGreaterThan(middle);
+    settle(220);
     expect(layout!.scrollTop).toBe(1300);
     expect(frames.size).toBe(0);
   });
@@ -160,7 +169,9 @@ describe("useAutoFollowScrollContainer", () => {
     expect(layout!.scrollTop).toBe(800);
     act(() => handle!.scrollToBottom({ force: true, animate: true }));
     expect(layout!.scrollTop).toBe(800);
-    paint(600); paint(1000);
+    paint(600);
+    expect(layout!.scrollTop).toBeGreaterThan(800);
+    settle(620);
     expect(layout!.scrollTop).toBe(1200);
   });
 

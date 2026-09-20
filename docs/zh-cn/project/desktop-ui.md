@@ -49,6 +49,14 @@ npm --prefix desktop run dev:onboarding
 
 通过 `/dev/sidebar-collapse/` 预览，可选查询参数包括 `theme=dark`、`size=20` 和 `width=240`。运行 `npm --prefix desktop run test:e2e:sidebar-collapse`，在 Electron 中检查嵌套折叠、反向点击、内容变化和减少动态效果的几何行为；这些检查不能代替视觉验收。
 
+## 动画
+
+动画 token 只有一处来源：[`base.css`](../../../desktop/src/renderer/styles/base.css) 中的阶梯。逐帧代码不要从那套阶梯里复制时长或曲线。[`motion.ts`](../../../desktop/src/renderer/motion.ts) 是唯一的 JS 桥接层：`motionDurationMs` 读取时长 token，`motionEasing` 按 token 名求值对应的 cubic-bezier，`messageMotionTime` 提供逐帧循环与 WAAPI 入场共用的文档时钟。请保持这个结构：在 `cubic-bezier()` token 旁边手写一个 `1 - (1 - p) ** 3`，两者很容易和它原本要对齐的过渡逐渐偏离。
+
+会话内的程序化滚动统一走一条轨迹：[`ScrollGlide`](../../../desktop/src/renderer/ScrollGlide.ts)。每个 60fps 帧保留剩余距离的 `0.85`，因此速率与需要移动的距离无关；逼近过程不会反向或过冲，掉帧最多按八个基准帧补齐，最后 1px 精确落位。目标位置每帧重新读取，所以流式输出、输入框收起或迟到的重排都只会延长同一次运动，而不会重新开始；也是因此，发送后的气泡能在文档位移时保持屏幕位置不动。
+
+该轨迹建模的是“位置 + 实时目标”，而不是剩余距离：放置阶段需要在 React commit 期间（此时尚未流逝任何帧）补偿重排，按流逝时间计算的步进在那里不会移动，会让气泡明显偏移到下一帧才被纠正。因此发送后的放置阶段以轨迹落位结束（约 350ms 覆盖 96%，随后是收敛尾段），不再使用固定截止时间；跨度更大时耗时更长，而不是甩过去。降级动效由调用方决定，直接用一次写入完成放置。
+
 ## 会话详情折叠与滚动
 
 展开或收起工具、推理详情时，保留用户原有的滚动模式。正在跟随最新内容的会话应在高度过渡期间继续跟随；已暂停的会话保留阅读位置。滚轮、触摸、键盘滚动、拖动滚动条和文字选择优先于布局补偿。

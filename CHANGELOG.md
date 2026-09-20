@@ -165,6 +165,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Matched native iOS connection feedback to the desktop bouncing Wuu letters and
   blinking caret, with green branding, typed status text, and reduced-motion support.
 
+- Send and arrival scrolling in desktop conversations settle on one trajectory that
+  keeps a fixed share of the remaining distance per frame, so streaming output, a
+  collapsing composer, and late layout changes extend the same motion instead of
+  restarting it. Programmatic scrolling no longer stops at a fixed deadline.
+
 ### Removed
 
 - Removed the `yield_turn` tool. Sessions use normal provider completion to end

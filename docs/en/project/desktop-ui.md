@@ -49,6 +49,14 @@ Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates in
 
 Preview `/dev/sidebar-collapse/` with optional `theme=dark`, `size=20`, and `width=240` query parameters. Run `npm --prefix desktop run test:e2e:sidebar-collapse` for Electron geometry checks covering nested folds, reversals, changing content, and reduced motion. These checks do not replace visual acceptance.
 
+## Motion
+
+Motion tokens live in one place: the ladder in [`base.css`](../../../desktop/src/renderer/styles/base.css). Frame-driven code never copies a duration or a curve out of that ladder. [`motion.ts`](../../../desktop/src/renderer/motion.ts) is the only JS bridge — `motionDurationMs` reads a duration token, `motionEasing` evaluates the cubic-bezier a token names, and `messageMotionTime` is the shared document clock that frame loops and WAAPI entrances both read. Keep it that way: a hand-rolled `1 - (1 - p) ** 3` next to a `cubic-bezier()` token can drift away from the transition it was meant to match.
+
+Programmatic conversation scrolling uses one trajectory, [`ScrollGlide`](../../../desktop/src/renderer/ScrollGlide.ts). Each 60fps frame it keeps `0.85` of the distance still to travel, so the rate does not depend on how far the viewport has to move, the approach never reverses or overshoots, a dropped frame catches up over at most eight reference frames, and the last pixel lands exactly. The target is re-read every frame, which is what lets streaming output, a collapsing composer, or a late reflow extend the same motion instead of restarting it, and what makes the send bubble hold its screen position while the document shifts under it.
+
+The glide models a position and a live target, not the remaining distance: the placement compensates a reflow during the React commit, at a timestamp where no frame has elapsed, so a step proportional to elapsed time would move nothing and let the bubble visibly shift until the next frame. Sending therefore ends its placement when the glide lands (about 350ms to cover 96%, then a settling tail) rather than at a fixed deadline; a longer jump takes longer instead of whipping. Reduced motion is decided by the caller, which places the bubble in one write.
+
 ## Conversation disclosure scrolling
 
 Opening or closing tool/reasoning details preserves the reader's scroll mode. A conversation following the latest content continues following through the height transition; a paused conversation keeps its reading position. Wheel, touch, keyboard scrolling, scrollbar dragging, and text selection take precedence over layout correction.

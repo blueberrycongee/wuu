@@ -92,6 +92,10 @@ function tick(now: number) {
     callbacks.forEach(callback => callback(now));
   });
 }
+/** Paint frames until the placement stops scheduling them, then stop. */
+function settle(from: number) {
+  for (let time = from; pending.size > 0 && time <= from + 4000; time += 20) tick(time);
+}
 function scrollUp(amount: number) {
   const node = api.conversationScrollRef.current!;
   act(() => {
@@ -103,7 +107,7 @@ function scrollUp(amount: number) {
 function submit(props: Props = {}) {
   act(() => api.requestSubmittedQueryScroll(props.messageID ?? "submitted"));
   render({ running: true, messageID: "submitted", ...props });
-  tick(0); tick(360);
+  tick(0); settle(360);
 }
 function grow(amount: number) {
   naturalHeight += amount;
@@ -383,7 +387,7 @@ it("positions a materialized running input without freezing the preceding output
   expect(tailSpace()).toBe(0);
   messageBottom += 100;
   render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(0); tick(360);
+  tick(0); settle(360);
   const placed = scrollTop();
   expect(placed).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
@@ -401,7 +405,7 @@ it.each([false, true])("preserves earlier queued placement when another input is
     if (fails) api.discardSubmittedMessage("second-input");
   });
   render({ messageID: "first", item: { text: "First", source_id: "first-input" } });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
   grow(600);
@@ -419,7 +423,7 @@ it.each(["scroll", "switch", "failure"])("does not reposition a delayed input af
   if (reason === "failure") act(() => api.discardSubmittedMessage("local-input"));
   const before = scrollTop();
   render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBe(before);
   expect(tailSpace()).toBe(0);
 });
@@ -428,7 +432,7 @@ it("does not mistake another client's message for a local queued input", () => {
   render({ messageID: "old", running: true });
   act(() => api.requestDeferredQueryScroll("local-input"));
   render({ messageID: "remote", item: { text: "Other client", source_id: "remote-input" } });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(tailSpace()).toBe(0);
   render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
   tick(400); tick(760);
@@ -447,7 +451,7 @@ it("starts placement and entrance together for a delayed child-only mount", () =
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
   expect(animations).toHaveLength(1);
   expect(animations[0].element).toBe(bubble);
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
   animations[0].playState = "finished";
@@ -474,7 +478,7 @@ it.each(["following", "placing", "holding", "paused"] as const)("settles queue d
   // The next observer delivery must not produce a second correction.
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
   if (mode === "placing") {
-    tick(196); tick(360);
+    tick(196); settle(360);
     const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
     expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(node, message, false));
     return;
@@ -527,7 +531,7 @@ it("waits for the exact submitted bubble, not the old or hidden cached message",
   expect(scrollTop()).toBe(before);
   expect(tailSpace()).toBe(0);
   render({ messageID: "submitted", running: true });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   expect(tailSpace()).toBeGreaterThan(0);
 });
@@ -580,7 +584,7 @@ it("does not let a native scroll at the old bottom hand pending placement to fol
     for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
   });
   expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
-  tick(360);
+  settle(360);
   const anchored = scrollTop();
   grow(100);
   expect(scrollTop()).toBe(anchored);
@@ -737,7 +741,7 @@ it("keeps the bubble on its screen trajectory when earlier content collapses dur
   expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(screenTop);
   tick(80);
   expect(messageBottom - messageHeight - scrollTop()).toBeCloseTo(screenTop);
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
 
@@ -837,7 +841,7 @@ it("moves immediately and decelerates into the reading position", () => {
   tick(120);
   expect(first).toBeGreaterThan(0);
   expect(scrollTop() - start - first).toBeLessThan(first);
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(api.conversationScrollRef.current!, host.querySelector('[data-user-message-id="submitted"]')!));
 });
 
@@ -855,7 +859,7 @@ it("hands off optimistic motion and positioning without restarting at acknowledg
   expect(animations).toHaveLength(2);
   expect(animations[1].currentTime).toBe(80);
   expect(animations[0].cancel).toHaveBeenCalled();
-  tick(96); tick(360);
+  tick(96); settle(360);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
   render({ messageID: "accepted" });
   expect(animations).toHaveLength(2);
@@ -868,7 +872,7 @@ it("handles acknowledgements before the optimistic bubble mounts", () => {
     api.acknowledgeSubmittedMessage("submitted", "accepted");
   });
   render({ messageID: "accepted" });
-  tick(0); tick(360);
+  tick(0); settle(360);
   expect(animations).toHaveLength(1);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
@@ -948,7 +952,7 @@ it.each([
   messageHeight += 300;
   messageBottom += 300;
   grow(1000);
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBe(before);
   expect(animations).toHaveLength(1);
   act(() => anchor.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')!.click());
@@ -965,7 +969,7 @@ it("adapts to asynchronous attachment sizing during placement without replaying 
   messageBottom += 240;
   naturalHeight += 240;
   act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
-  tick(96); tick(360);
+  tick(96); settle(360);
   expect(scrollTop()).toBeLessThan(messageTop);
   expect(animations).toHaveLength(1);
   const anchored = scrollTop();
@@ -997,7 +1001,7 @@ it("continues an in-flight draft placement through a pane remount and viewport r
   animations[0].currentTime = 80;
   viewportHeight = 900;
   render({ id: "created", messageID: "submitted", mountKey: "promoted" });
-  tick(96); tick(360);
+  tick(96); settle(360);
   const viewport = api.conversationScrollRef.current!;
   const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
   expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(viewport, message, false));
@@ -1032,7 +1036,7 @@ it.each(["wheel", "pointer", "touch", "keyboard"])("yields an in-flight placemen
     if (input === "touch") viewport.dispatchEvent(new TouchEvent("touchstart", { touches: [] }));
     if (input === "keyboard") viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
   });
-  tick(360);
+  settle(360);
   grow(1200);
   expect(scrollTop()).toBe(before);
 });
@@ -1055,7 +1059,7 @@ it.each(["hidden", "reduced motion"])("stops live motion when the document chang
       media.dispatchEvent(new Event("change"));
     }
   });
-  tick(360);
+  settle(360);
   expect(scrollTop()).toBe(before);
   expect(animations[0].cancel).toHaveBeenCalled();
 });

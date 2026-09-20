@@ -11,8 +11,8 @@ import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
-import { createMessageScrollMotion } from "./MessageScrollMotion";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
+import { createScrollGlide } from "./ScrollGlide";
+import { prefersReducedMotion } from "./motion";
 
 export const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 16;
 export const AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS = 700;
@@ -237,11 +237,14 @@ export function useAutoFollowScrollContainer({
       }
       const targetTop = maxScrollTop(node);
       if (options.animate && !document.hidden && !prefersReducedMotion() && Math.abs(node.scrollTop - targetTop) > 1) {
-        const sample = createMessageScrollMotion(node.scrollTop, targetTop, motionDurationMs("--query-scroll-duration", 360));
+        const glide = createScrollGlide();
+        glide.start(node.scrollTop);
         const step = (now: number): void => {
           motionFrameRef.current = undefined;
           if (scrollRef.current !== node || !autoFollowRef.current) return;
-          const { position, done } = sample(now, maxScrollTop(node));
+          // The target is re-read every frame, so content that arrives during
+          // the arrival extends the same trajectory instead of restarting it.
+          const { position, done } = glide.step(now, maxScrollTop(node), node.clientHeight);
           node.scrollTop = position;
           programmaticScrollTopRef.current = node.scrollTop;
           lastScrollTopRef.current = node.scrollTop;
