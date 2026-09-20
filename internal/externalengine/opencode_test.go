@@ -32,6 +32,20 @@ func openCodeTestSession(t *testing.T, scenario string, binding agentengine.Thre
 	return session
 }
 
+func TestOpenCodeRejectsEffortSelection(t *testing.T) {
+	binding := testBinding()
+	binding.Effort = "high"
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New(enginecatalog.Entry{ID: "opencode", Name: "OpenCode", Protocol: "opencode"}, binary, t.TempDir())
+	_, err = engine.SessionForThread(context.Background(), binding)
+	if err == nil || !strings.Contains(err.Error(), "reasoning effort") {
+		t.Fatalf("effort error = %v", err)
+	}
+}
+
 func TestOpenCodeStreamingReconciliationAndResume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

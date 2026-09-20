@@ -258,6 +258,44 @@ describe("RuntimePicker", () => {
     expect(onSelectEngine).toHaveBeenCalledExactlyOnceWith("hermes");
   });
 
+  it("lists advertised Grok models instead of Agent default", () => {
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
+      activeEngine: "grok",
+      engineModel: "grok-4.6",
+      engineEffort: "high",
+      engines: [
+        {
+          id: "grok",
+          display_name: "Grok",
+          enabled: true,
+          binary_ok: true,
+          models: [
+            {
+              id: "grok-4.6",
+              display_name: "Grok 4.6",
+              supported_efforts: ["low", "medium", "high"],
+              is_default: true
+            },
+            {
+              id: "grok-4.5",
+              display_name: "Grok 4.5",
+              supported_efforts: ["low", "medium", "high"]
+            }
+          ]
+        }
+      ],
+      onSelectEngineModel: vi.fn()
+    });
+    const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger")?.textContent ?? "";
+    expect(trigger).toContain("Grok 4.6");
+    expect(trigger).not.toContain("Agent 默认模型");
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item")).map((item) =>
+      item.querySelector(".codex-model-item-name")?.textContent
+    );
+    expect(items).toEqual(["Grok 4.6", "Grok 4.5"]);
+  });
+
   it("keeps every engine visible when the current conversation locks engine switching", () => {
     renderPicker(
       "model",

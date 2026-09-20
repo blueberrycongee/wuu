@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -33,9 +34,45 @@ type acpSession struct {
 	Models *struct {
 		Current   string `json:"currentModelId"`
 		Available []struct {
-			ID string `json:"modelId"`
+			ID   string `json:"modelId"`
+			Name string `json:"name"`
 		} `json:"availableModels"`
 	} `json:"models"`
+	ConfigOptions []acpConfigOption `json:"configOptions"`
+}
+
+// DiscoverModels probes a short-lived ACP session for the agent's advertised
+// catalog. It never persists the probe session or sends a prompt.
+func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) {
+	if e == nil || e.entry.Protocol != "acp" {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	p, err := startChild(e.binary, e.entry.Args, e.root, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer p.close()
+	r := &rpc{child: p, handle: func(_ context.Context, method string, _ json.RawMessage, request bool) (any, error) {
+		if request {
+			return nil, &rpcError{Code: -32601, Message: "unsupported engine request: " + method}
+		}
+		return nil, nil
+	}}
+	if _, err := initializeACP(ctx, r); err != nil {
+		return nil, err
+	}
+	cwd := e.root
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	var session acpSession
+	if err := r.call(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
+		return nil, fmt.Errorf("session/new: %w", err)
+	}
+	return modelsFromACPSession(session), nil
 }
 
 func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) error {
@@ -99,25 +136,8 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			return err
 		}
 	}
-	if model := strings.TrimSpace(s.binding.Model); model != "" {
-		if session.Models == nil {
-			return errors.New("this engine does not advertise model selection; clear the model to use its configured default")
-		}
-		found := false
-		for _, available := range session.Models.Available {
-			if available.ID == model {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("model %q is not advertised by this engine", model)
-		}
-		if session.Models.Current != model {
-			if err := r.call(setupCtx, "session/set_model", map[string]any{"sessionId": ref, "modelId": model}, nil); err != nil {
-				return err
-			}
-		}
+	if err := s.applyACPSelection(setupCtx, r, session, ref); err != nil {
+		return err
 	}
 	cancelSetup()
 	blocks := make([]map[string]string, 0, 2+len(message.Images))
@@ -169,6 +189,51 @@ type acpPermission struct {
 		ID   string `json:"optionId"`
 		Kind string `json:"kind"`
 	} `json:"options"`
+}
+
+func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSession, ref string) error {
+	if model := strings.TrimSpace(s.binding.Model); model != "" {
+		if !session.hasAdvertisedModel(model) {
+			if session.Models == nil && session.modelConfigOption() == nil {
+				return errors.New("this engine does not advertise model selection; clear the model to use its configured default")
+			}
+			return fmt.Errorf("model %q is not advertised by this engine", model)
+		}
+		// Grok Build's picker is first-class `models` + session/set_model.
+		// Setting the same id through a category=model config option can be
+		// ignored on older CLIs, so prefer set_model when that list exists.
+		switch {
+		case session.firstClassHasModel(model):
+			if session.firstClassCurrent() != model {
+				if err := r.call(ctx, "session/set_model", map[string]any{"sessionId": ref, "modelId": model}, nil); err != nil {
+					return err
+				}
+			}
+		default:
+			option := session.modelConfigOption()
+			if option != nil && strings.TrimSpace(option.Current) != model {
+				if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": model}, nil); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	effort := strings.TrimSpace(s.binding.Effort)
+	if effort == "" {
+		return nil
+	}
+	option := session.thoughtLevelOption()
+	if option == nil || !option.hasChoice(effort) {
+		return fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", s.engine.entry.Name)
+	}
+	if strings.TrimSpace(option.Current) == effort {
+		return nil
+	}
+	configID := strings.TrimSpace(option.ID)
+	if configID == "" {
+		configID = "reasoning_effort"
+	}
+	return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": configID, "value": effort}, nil)
 }
 
 func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMessage) (any, error) {

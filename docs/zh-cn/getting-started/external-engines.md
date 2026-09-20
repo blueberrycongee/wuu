@@ -10,7 +10,7 @@
 |---|---|---|
 | `cursor` | `cursor-agent acp` | ACP v1；[Cursor CLI](https://cursor.com/docs/cli/acp) |
 | `devin` | `devin acp` | ACP v1；[Devin CLI](https://docs.devin.ai/cli) |
-| `grok` | `grok agent stdio` | ACP v1；[Grok CLI](https://x.ai/cli) |
+| `grok` | `grok --no-auto-update agent --no-leader stdio` | ACP v1；[Grok CLI](https://x.ai/cli) |
 | `hermes` | `hermes acp` | ACP v1；[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
 | `pi` | `pi-acp` | 通过[社区适配器](https://github.com/svkozak/pi-acp)使用 ACP v1，不是直接运行 `pi` |
 | `opencode` | `opencode serve --hostname 127.0.0.1 --port 0` | 原生 HTTP/SSE，要求 OpenCode 1.x；[OpenCode](https://opencode.ai/docs) |
@@ -40,7 +40,7 @@ Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`�
 
 此界面只支持 Agent 驱动的认证方式，没有可选方式时请使用原生 CLI。查询方式不是检查账号状态，登录成功也不保证模型可用。Wuu 不会把这些引擎的凭据导入模型服务。
 
-七种新引擎在输入框中使用 **Agent 默认值**，模型请在原生 Agent 中配置。Wuu 不会套用自己的模型服务目录。通过 API 指定 ACP 模型时，必须使用 Agent 声明的模型；OpenCode 模型 ID 使用 `provider/model` 格式。图片输入和宿主 HTTP MCP 工具依赖原生能力；ACP 不支持所需能力时会报错，不会丢弃输入或工具。
+ACP 引擎如果在 `session/new` 中声明了模型，输入框会列出这些模型。Grok 使用其一等模型列表（`grok-4.6`、`grok-4.5` 等）并通过 `session/set_model` 切换；推理强度在 Agent 声明 `thought_level` 时可选。Agent 未声明模型时仍显示 **Agent 默认模型**。Wuu 不会套用自己的模型服务目录。通过 API 指定 ACP 模型时，必须使用 Agent 声明的模型；OpenCode 模型 ID 使用 `provider/model` 格式。图片输入和宿主 HTTP MCP 工具依赖原生能力；ACP 不支持所需能力时会报错，不会丢弃输入或工具。
 
 ## 权限与会话恢复
 

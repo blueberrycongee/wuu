@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -30,7 +31,10 @@ func Entries() []Entry {
 		{ID: "claude", Name: "Claude Code", Binary: "claude", Protocol: "claude"},
 		{ID: "cursor", Name: "Cursor", Binary: "cursor-agent", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://cursor.com/docs/cli/acp"},
 		{ID: "devin", Name: "Devin", Binary: "devin", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://docs.devin.ai/cli"},
-		{ID: "grok", Name: "Grok", Binary: "grok", Args: []string{"agent", "stdio"}, Protocol: "acp", InstallURL: "https://x.ai/cli"},
+		// --no-auto-update is top-level and skips the launch-time update
+		// check. --no-leader is on `agent` so stdio does not attach to a
+		// shared ~/.grok/leader.sock from the user's TUI.
+		{ID: "grok", Name: "Grok", Binary: "grok", Args: []string{"--no-auto-update", "agent", "--no-leader", "stdio"}, Protocol: "acp", InstallURL: "https://x.ai/cli"},
 		{ID: "hermes", Name: "Hermes", Binary: "hermes", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp"},
 		{ID: "pi", Name: "Pi", Binary: "pi-acp", Protocol: "acp", InstallURL: "https://github.com/svkozak/pi-acp"},
 		{ID: "opencode", Name: "OpenCode", Binary: "opencode", Protocol: "opencode", InstallURL: "https://opencode.ai/docs"},
@@ -59,10 +63,30 @@ func (e Entry) Resolve(override string) (string, error) {
 	if path, err := exec.LookPath(e.Binary); err == nil {
 		return path, nil
 	}
+	for _, candidate := range extraLookupPaths(e) {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path, nil
+		}
+	}
 	if e.ID == "antigravity" {
 		if path, err := exec.LookPath("agy_acp_server.par"); err == nil {
 			return path, nil
 		}
 	}
 	return "", fmt.Errorf("%s executable %q not found; install it or configure its executable path (%s)", e.Name, e.Binary, e.InstallURL)
+}
+
+func extraLookupPaths(e Entry) []string {
+	if e.ID != "grok" {
+		return nil
+	}
+	var paths []string
+	if home, err := os.UserHomeDir(); err == nil {
+		paths = append(paths,
+			filepath.Join(home, ".local", "bin", "grok"),
+			filepath.Join(home, ".grok", "bin", "grok"),
+			filepath.Join(home, ".npm-global", "bin", "grok"),
+		)
+	}
+	return append(paths, filepath.Join("/opt/homebrew/bin", "grok"), filepath.Join("/usr/local/bin", "grok"))
 }

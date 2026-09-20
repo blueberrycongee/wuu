@@ -44,7 +44,7 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		binding.RootDir = e.root
 	}
 	binding.MCPServers = append([]agentengine.MCPServer(nil), binding.MCPServers...)
-	if binding.Effort != "" {
+	if e.entry.Protocol != "acp" && binding.Effort != "" {
 		return nil, fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", e.entry.Name)
 	}
 	return &Session{engine: e, binding: binding}, nil

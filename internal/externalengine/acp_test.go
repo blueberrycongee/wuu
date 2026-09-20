@@ -225,6 +225,7 @@ func TestACPHelper(t *testing.T) {
 		update("agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": value}})
 	}
 	var promptID json.RawMessage
+	selectedModel, selectedEffort := "", ""
 	for scanner.Scan() {
 		var msg rpcMessage
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
@@ -239,7 +240,30 @@ func TestACPHelper(t *testing.T) {
 			}
 			result = map[string]any{"protocolVersion": version, "agentCapabilities": map[string]any{"loadSession": scenario != "no-load"}}
 		case "session/new":
+			if scenario == "grok" {
+				result = grokACPSessionResult()
+				break
+			}
 			result = map[string]any{"sessionId": "native-session"}
+		case "session/set_model":
+			var params struct {
+				ModelID string `json:"modelId"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			selectedModel = params.ModelID
+			result = map[string]any{}
+		case "session/set_config_option":
+			var params struct {
+				ConfigID string `json:"configId"`
+				Value    string `json:"value"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			switch params.ConfigID {
+			case "model":
+				selectedModel = params.Value
+			case "reasoning_effort":
+				selectedEffort = params.Value
+			}
 		case "session/load":
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})
@@ -251,6 +275,11 @@ func TestACPHelper(t *testing.T) {
 			text("old replay")
 		case "session/prompt":
 			promptID = msg.ID
+			if scenario == "grok" {
+				text(strings.TrimSpace(selectedModel + " " + selectedEffort))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "env" {
 				text(os.Getenv("HOME"))
 				result = map[string]string{"stopReason": "end_turn"}
@@ -327,5 +356,83 @@ func TestACPChildInheritsParentEnvironment(t *testing.T) {
 	}
 	if result.Result.Content != home {
 		t.Fatalf("ACP child HOME = %q, want inherited %q", result.Result.Content, home)
+	}
+}
+
+func grokACPSessionResult() map[string]any {
+	return map[string]any{
+		"sessionId": "native-session",
+		"models": map[string]any{
+			"currentModelId": "grok-4.6",
+			"availableModels": []any{
+				map[string]any{"modelId": "grok-4.6", "name": "Grok 4.6"},
+				map[string]any{"modelId": "grok-4.5", "name": "Grok 4.5"},
+			},
+		},
+		"configOptions": []any{
+			map[string]any{
+				"id": "model", "category": "model", "type": "select", "currentValue": "grok-4.6",
+				"options": []any{
+					map[string]any{"value": "grok-4.6", "name": "Grok 4.6"},
+					map[string]any{"value": "grok-4.5", "name": "Grok 4.5"},
+				},
+			},
+			map[string]any{
+				"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": "high",
+				"options": []any{
+					map[string]any{"value": "low", "name": "Low"},
+					map[string]any{"value": "medium", "name": "Medium"},
+					map[string]any{"value": "high", "name": "High"},
+				},
+			},
+		},
+	}
+}
+
+func TestACPDiscoversGrokModelsFromSessionNew(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	models, err := testEngine(t, "grok").DiscoverModels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "grok-4.6" || !models[0].IsDefault || models[1].ID != "grok-4.5" {
+		t.Fatalf("models = %+v", models)
+	}
+	if models[0].DisplayName != "Grok 4.6" || models[0].DefaultEffort != "high" {
+		t.Fatalf("grok-4.6 = %+v", models[0])
+	}
+}
+
+func TestACPSelectsAdvertisedGrokModelAndEffort(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.Model, binding.Effort = "grok-4.5", "medium"
+	session, err := testEngine(t, "grok").SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "grok-4.5 medium" {
+		t.Fatalf("selection = %q, want grok-4.5 medium", result.Result.Content)
+	}
+}
+
+func TestACPRejectsUnadvertisedGrokModel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.Model = "not-a-grok-model"
+	session, err := testEngine(t, "grok").SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.RunTurn(ctx, testInput(), nil)
+	if err == nil || !strings.Contains(err.Error(), "not-a-grok-model") {
+		t.Fatalf("unadvertised model error = %v", err)
 	}
 }

@@ -10,7 +10,7 @@ Install the agent or adapter yourself using its upstream instructions. Wuu does 
 |---|---|---|
 | `cursor` | `cursor-agent acp` | ACP v1; [Cursor CLI](https://cursor.com/docs/cli/acp) |
 | `devin` | `devin acp` | ACP v1; [Devin CLI](https://docs.devin.ai/cli) |
-| `grok` | `grok agent stdio` | ACP v1; [Grok CLI](https://x.ai/cli) |
+| `grok` | `grok --no-auto-update agent --no-leader stdio` | ACP v1; [Grok CLI](https://x.ai/cli) |
 | `hermes` | `hermes acp` | ACP v1; [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
 | `pi` | `pi-acp` | ACP v1 through the [community adapter](https://github.com/svkozak/pi-acp), not the plain `pi` command |
 | `opencode` | `opencode serve --hostname 127.0.0.1 --port 0` | Native HTTP/SSE, OpenCode 1.x; [OpenCode](https://opencode.ai/docs) |
@@ -40,7 +40,7 @@ Use the agent's native CLI login and configuration. For ACP engines, Settings al
 
 Only agent-driven authentication methods are supported in this UI. If no method is offered, use the native CLI. Discovery is not an account-status check, and a successful login is not a guarantee of model access. Wuu does not import these engines' credentials into a provider.
 
-The seven new engines use **Agent default** in the composer: configure the model in the native agent. Wuu does not substitute its own provider catalog. Programmatic ACP model selection requires an advertised model; OpenCode model IDs use `provider/model`. Image input and host HTTP MCP tools depend on native capabilities; unsupported ACP capabilities produce an error rather than dropping the input or tools.
+ACP engines that advertise models on `session/new` appear in the composer picker. Grok uses that first-class model list (`grok-4.6`, `grok-4.5`, …) plus `session/set_model`; effort uses the agent's `thought_level` option when advertised. If an agent advertises nothing, the composer keeps **Agent default**. Wuu does not substitute its own provider catalog. Programmatic ACP model selection requires an advertised model; OpenCode model IDs use `provider/model`. Image input and host HTTP MCP tools depend on native capabilities; unsupported ACP capabilities produce an error rather than dropping the input or tools.
 
 ## Permissions and session recovery
 

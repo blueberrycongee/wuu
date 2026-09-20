@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -14,9 +15,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/externalengine"
 )
 
-const codexEngineModelCatalogTTL = 6 * time.Hour
+const (
+	codexEngineModelCatalogTTL     = 6 * time.Hour
+	acpEngineModelCatalogTTL       = 10 * time.Minute
+	acpEngineModelDiscoveryTimeout = 10 * time.Second
+)
 
 type codexEngineModelCatalogCacheEntry struct {
 	binaryPath string
@@ -85,6 +91,12 @@ func (s *Server) engineInventory() []EngineInfo {
 		}
 	}
 	settings := s.engineSettingsFromConfig()
+	type acpProbe struct {
+		index int
+		entry enginecatalog.Entry
+		path  string
+	}
+	var probes []acpProbe
 	for _, entry := range enginecatalog.Entries() {
 		id := agentengine.EngineID(entry.ID)
 		desc := descriptors[id]
@@ -125,9 +137,30 @@ func (s *Server) engineInventory() []EngineInfo {
 			path, err := entry.Resolve(override)
 			info.BinaryPath = path
 			info.BinaryOK, info.Error = binaryStatus(path, err)
+			if entry.Protocol == "acp" && info.Enabled && info.BinaryOK {
+				probes = append(probes, acpProbe{index: len(out), entry: entry, path: path})
+			}
 		}
 		out = append(out, info)
 	}
+	if len(probes) == 0 {
+		return out
+	}
+	var wg sync.WaitGroup
+	for _, probe := range probes {
+		wg.Add(1)
+		go func(probe acpProbe) {
+			defer wg.Done()
+			engine := externalengine.New(probe.entry, probe.path, s.rt.RootDir)
+			models, err := s.cachedACPEngineModels(probe.entry.ID, probe.path, engine)
+			if err != nil {
+				out[probe.index].ModelsError = err.Error()
+				return
+			}
+			out[probe.index].Models = models
+		}(probe)
+	}
+	wg.Wait()
 	return out
 }
 
@@ -156,6 +189,60 @@ func (s *Server) cachedCodexEngineModels(binaryPath string, host *codexengine.Ho
 		expiresAt:  now.Add(codexEngineModelCatalogTTL),
 	}
 	return converted, nil
+}
+
+func (s *Server) cachedACPEngineModels(engineID, binaryPath string, engine *externalengine.Engine) ([]EngineModelInfo, error) {
+	s.engineModelCatalogMu.Lock()
+	if entry := s.acpEngineModelCatalogCache[engineID]; entry != nil {
+		if models, ok := entry.load(binaryPath, time.Now()); ok {
+			s.engineModelCatalogMu.Unlock()
+			return models, nil
+		}
+	}
+	s.engineModelCatalogMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), acpEngineModelDiscoveryTimeout)
+	defer cancel()
+	discovered, err := engine.DiscoverModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	converted := acpEngineModels(discovered)
+	s.engineModelCatalogMu.Lock()
+	defer s.engineModelCatalogMu.Unlock()
+	if s.acpEngineModelCatalogCache == nil {
+		s.acpEngineModelCatalogCache = make(map[string]*codexEngineModelCatalogCacheEntry)
+	}
+	s.acpEngineModelCatalogCache[engineID] = &codexEngineModelCatalogCacheEntry{
+		binaryPath: binaryPath,
+		models:     cloneEngineModels(converted),
+		expiresAt:  time.Now().Add(acpEngineModelCatalogTTL),
+	}
+	return converted, nil
+}
+
+func (s *Server) invalidateACPEngineModelCatalog(engineID string) {
+	s.engineModelCatalogMu.Lock()
+	defer s.engineModelCatalogMu.Unlock()
+	delete(s.acpEngineModelCatalogCache, engineID)
+}
+
+func acpEngineModels(models []externalengine.DiscoveredModel) []EngineModelInfo {
+	out := make([]EngineModelInfo, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		out = append(out, EngineModelInfo{
+			ID:               id,
+			DisplayName:      strings.TrimSpace(model.DisplayName),
+			DefaultEffort:    strings.TrimSpace(model.DefaultEffort),
+			SupportedEfforts: append([]string(nil), model.SupportedEfforts...),
+			IsDefault:        model.IsDefault,
+		})
+	}
+	return out
 }
 
 func cloneEngineModels(models []EngineModelInfo) []EngineModelInfo {

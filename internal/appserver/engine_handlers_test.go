@@ -32,3 +32,22 @@ func TestCodexEngineModelCatalogCacheUsesFreshMatchingBinary(t *testing.T) {
 		t.Fatal("cache remained fresh at its expiration boundary")
 	}
 }
+
+func TestACPEngineModelCatalogCacheHitsThenInvalidatesAfterLogin(t *testing.T) {
+	now := time.Now()
+	s := &Server{acpEngineModelCatalogCache: map[string]*codexEngineModelCatalogCacheEntry{
+		"grok": {
+			binaryPath: "/usr/local/bin/grok",
+			models:     []EngineModelInfo{{ID: "grok-4.6", DisplayName: "Grok 4.6"}},
+			expiresAt:  now.Add(time.Hour),
+		},
+	}}
+	models, err := s.cachedACPEngineModels("grok", "/usr/local/bin/grok", nil)
+	if err != nil || len(models) != 1 || models[0].ID != "grok-4.6" {
+		t.Fatalf("cached grok models = (%+v, %v)", models, err)
+	}
+	s.invalidateACPEngineModelCatalog("grok")
+	if _, ok := s.acpEngineModelCatalogCache["grok"]; ok {
+		t.Fatal("login did not drop the grok model cache")
+	}
+}

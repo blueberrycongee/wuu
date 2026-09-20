@@ -253,6 +253,7 @@ type Server struct {
 
 	engineModelCatalogMu         sync.Mutex
 	codexEngineModelCatalogCache *codexEngineModelCatalogCacheEntry
+	acpEngineModelCatalogCache   map[string]*codexEngineModelCatalogCacheEntry
 
 	xaiLoginMu sync.Mutex
 	xaiLogins  *xaisub.LoginHub

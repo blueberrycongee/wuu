@@ -172,6 +172,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Discover models advertised by ACP engines such as Grok on `session/new`, so
+  the composer lists `grok-4.6` / `grok-4.5` instead of only Agent default.
+  Launch Grok with `--no-auto-update` and `--no-leader` so that probe is not
+  attached to a shared CLI leader.
+
 - Reveal desktop wallpaper through the Automation plugin and embedded workspace
   plugin pages, while keeping overlapping plugin views opaque.
 

@@ -89,6 +89,9 @@ func (s *Server) handleEngineAuth(ctx context.Context, req Request) error {
 	if !s.startBackground(func() {
 		result, err := engine.Authenticate(authCtx, params.MethodID)
 		release()
+		if err == nil && result.Authenticated {
+			s.invalidateACPEngineModelCatalog(id)
+		}
 		if writeErr := s.writeResponse(req.ID, result, err); writeErr != nil {
 			log.Printf("wuu: engine authentication response: %v", writeErr)
 		}
