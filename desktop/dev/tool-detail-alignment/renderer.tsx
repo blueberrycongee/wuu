@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import type { ThreadItem } from "../../src/shared/protocol";
 import type { InspectorTodoItemSnapshotV1 } from "../../src/shared/workbench";
 import { ProcessSurface } from "../../src/renderer/ProcessSurface";
+import { ToolActivityRow } from "../../src/renderer/ToolActivity";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { desktopPluginHost, desktopWorkbenchController } from "../../src/renderer/plugins/DesktopPluginRuntime";
 import { PluginInspectorSections } from "../../src/renderer/plugins/PluginInspector";
@@ -25,6 +26,14 @@ function tool(id: string, name: string, args: unknown, status = "completed"): Th
   return { id, type: "tool_call", name, arguments: JSON.stringify(args), status } as ThreadItem;
 }
 
+const editedFile: ThreadItem = {
+  ...tool("edit", "apply_patch", {}),
+  result: JSON.stringify({
+    changed_files: ["desktop/src/renderer/long_tool_activity_summary_component_filename.tsx"],
+    risk_summary: { added_lines: 123, deleted_lines: 45 },
+  }),
+};
+
 const items = [
   tool("git", "bash", { command: "git status --short" }),
   tool("workspace", "set_session_workspace", { root: "/repo" }),
@@ -32,6 +41,8 @@ const items = [
   tool("search", "grep", { pattern: "ToolActivity", path: "desktop/src" }),
   tool("read", "read_file", { path: "docs/en/project/development.md" }),
   tool("long", "long_tool_name_".repeat(12), {}, "in_progress"),
+  { ...tool("label", "custom_tool", {}), display: { label: "Inspect tool activity with a long descriptive label\nand additional context ".repeat(3) } },
+  editedFile,
   tool("failed", "read_file", { path: "missing.md" }, "failed"),
 ] as ThreadItem[];
 
@@ -40,8 +51,11 @@ await desktopPluginHost.activateGeneration({ pluginId: "todo", generation: "prev
 createRoot(document.getElementById("root")!).render(
   <I18nProvider>
     <main className="conversation-pane" style={{ padding: 24, height: "100vh", overflow: "auto" }}>
-      <div className="turn-process-entry" style={{ maxWidth: 1000, margin: "auto" }}>
+      <div className="turn-process-entry" style={{ width: "100%", maxWidth: 1000, margin: "auto" }}>
         <ProcessSurface processItems={items} streaming={false} />
+        <div data-standalone-tool-row style={{ marginTop: 16 }}>
+          <ToolActivityRow items={[editedFile]} />
+        </div>
         <div className="environment-panel" style={{ position: "static", width: "min(328px, 100%)", marginTop: 32 }}>
           <PluginInspectorSections
             host={desktopPluginHost}

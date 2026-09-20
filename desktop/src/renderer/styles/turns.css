@@ -2237,6 +2237,7 @@
   display: inline-flex;
   min-width: 0;
   min-height: 0;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
@@ -2302,9 +2303,21 @@
 .activity-copy {
   display: inline-flex;
   min-width: 0;
-  flex-wrap: wrap;
   align-items: baseline;
   gap: 0 8px;
+  white-space: nowrap;
+}
+
+.activity-summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Keep diff counts visible while the summary gives up space. */
+.activity-copy > .activity-add,
+.activity-copy > .activity-delete {
+  flex: 0 0 auto;
 }
 
                                                                 
@@ -3031,10 +3044,6 @@
   align-self: flex-start;
   /* Center on the first text line, including at larger user font sizes. */
   margin-top: calc((1lh - 14px) / 2);
-}
-
-.process-surface-tool-list .activity-copy {
-  overflow-wrap: anywhere;
 }
 
 .process-surface-reasoning-list {
