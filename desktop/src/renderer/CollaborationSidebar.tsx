@@ -59,7 +59,10 @@ export function CollaborationSidebar({
       ? items.filter((conversation) => !conversation.pinned)
       : [...items].sort((left, right) => Number(right.pinned) - Number(left.pinned));
   }, [agents, rooms, pinnedRoomIDs, archivedRoomIDs, query, collapsed, embedded]);
-  const newConversationButton = <button className="icon-button" type="button" disabled={!initialized}
+  // Embedded headings share the sidebar's trailing accessory column with the
+  // built-in group actions and use the same control; the standalone topbar and
+  // footer keep the generic icon button.
+  const newConversationButton = (actionClass: string) => <button className={actionClass} type="button" disabled={!initialized}
     aria-label={t("channels.newConversation")} title={t("channels.newConversation")} onClick={onCreateRoom}>
     <Plus aria-hidden="true" />
   </button>;
@@ -76,9 +79,9 @@ export function CollaborationSidebar({
             <ChevronRight className="sidebar-functional-heading-chevron" data-expanded={!sectionCollapsed || undefined} aria-hidden="true" />
             <span className="sidebar-functional-heading-label">{t("sidebar.collaboration")}</span>
           </button>
-          <div className="sidebar-functional-heading-action">{newConversationButton}</div>
+          <div className="sidebar-functional-heading-action">{newConversationButton("sidebar-functional-action")}</div>
         </div> : <div className="collaboration-sidebar-topbar">
-          {!collapsed ? newConversationButton : null}
+          {!collapsed ? newConversationButton("icon-button") : null}
 
         </div>}
         {!embedded && !collapsed ? <AppModeSwitch mode="collaboration" /> : null}
@@ -117,7 +120,7 @@ export function CollaborationSidebar({
         {!embedded ? <div className="collaboration-sidebar-footer">
           {collapsed ? <>
             <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("app.expandLeftSidebar")} title={t("app.expandLeftSidebar")} onClick={onToggleCollapsed}><PanelLeftOpen aria-hidden="true" /></button>
-            {newConversationButton}
+            {newConversationButton("icon-button")}
             <button className="collaboration-sidebar-footer-action" type="button" aria-label={t("sidebar.harness")} title={t("sidebar.harness")} onClick={onSwitchToHarness}><Code2 aria-hidden="true" /></button>
           </> : null}
           <SidebarAccountMenu disabled={!initialized} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />

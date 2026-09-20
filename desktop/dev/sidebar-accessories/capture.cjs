@@ -83,9 +83,13 @@ app.whenReady().then(async () => {
   for (const [name, states] of Object.entries(report)) {
     const idle = states.idle;
     const axis = idle.bell[0].x;
-    const aligned = [idle.collapse[0], idle.heading[0], ...idle.add, ...idle.newThread, idle.fork[0], ...idle.spinner, ...idle.archive, ...idle.account];
-    if (aligned.some(icon => Math.abs(icon.x - axis) > 0.1)) throw new Error(`${name}: trailing column drift`);
-    if (Math.abs(idle.heading[1].x - idle.pin[0].x) > 0.1) throw new Error(`${name}: second column drift`);
+    // Trailing column: header toggle, group actions, row actions, account chevron.
+    const trailing = [idle.collapse[0], ...idle.add, ...idle.newThread, idle.fork[0], ...idle.spinner, ...idle.archive, ...idle.account];
+    if (trailing.some(icon => Math.abs(icon.x - axis) > 0.1)) throw new Error(`${name}: trailing column drift`);
+    // Every disclosure chevron keeps the column beside the actions, including
+    // the pinned group, which has no action of its own.
+    const second = [...idle.heading, ...idle.pin, ...idle.fork.slice(1)];
+    if (second.some(icon => Math.abs(icon.x - idle.pin[0].x) > 0.1)) throw new Error(`${name}: disclosure column drift`);
     for (const [state, measurement] of Object.entries(states)) {
       if (measurement.readingGaps.some(gap => gap <= 0)) throw new Error(`${name}/${state}: title overlaps accessories`);
       if (state !== "idle" && measurement.fork[0].x >= measurement.pin[1].x) throw new Error(`${name}/${state}: fork overlaps actions`);
