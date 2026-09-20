@@ -42,3 +42,33 @@ func TestStructuredContentIndexJSONCanonicalHashIgnoresObjectKeyOrder(t *testing
 		t.Fatalf("canonical hashes differ: %v != %v", firstIndex["sha256"], secondIndex["sha256"])
 	}
 }
+
+func TestStructuredContentIndexJSONBoundsNumbersWithoutChangingTheirValue(t *testing.T) {
+	const precise = json.Number("9007199254740993")
+	for _, oversized := range []json.Number{
+		json.Number(strings.Repeat("9", 60000)),
+		json.Number("1e" + strings.Repeat("9", 60000)),
+	} {
+		raw, err := json.Marshal(map[string]any{"count": precise, "payload": oversized})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded := StructuredContentIndexJSON(raw)
+		if len(encoded) > 4096 {
+			t.Fatalf("one numeric scalar bypassed the index budget: %d bytes", len(encoded))
+		}
+		decoder := json.NewDecoder(strings.NewReader(encoded))
+		decoder.UseNumber()
+		var index map[string]any
+		if err := decoder.Decode(&index); err != nil {
+			t.Fatal(err)
+		}
+		preview := index["value_preview"].(map[string]any)
+		if preview["count"] != precise {
+			t.Fatalf("representable numeric evidence lost precision: %v", preview["count"])
+		}
+		if _, isNumber := preview["payload"].(json.Number); isNumber || index["preview_truncated"] != true {
+			t.Fatal("oversized number must be marked omitted rather than clipped into another number")
+		}
+	}
+}
