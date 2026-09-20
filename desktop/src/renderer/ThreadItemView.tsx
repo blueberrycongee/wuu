@@ -567,10 +567,8 @@ function MessagePastedTextPart({
 }: {
   part: Extract<MessageContentPart, { type: "pasted_text" }>;
 }): JSX.Element {
-  const { locale, t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const title = part.title || collapsedComposerPromptTitle(part.text);
-  const characterCount = part.text.length.toLocaleString(locale);
   return (
     <section className={`user-message-pasted-text${expanded ? " expanded" : ""}`}>
       <button
@@ -582,10 +580,7 @@ function MessagePastedTextPart({
         <span className="user-message-pasted-text-icon" aria-hidden="true">
           <FileText />
         </span>
-        <span className="user-message-pasted-text-labels">
-          <strong>{title}</strong>
-          <span>{t("message.pastedTextMeta", { count: characterCount })}</span>
-        </span>
+        <strong className="user-message-pasted-text-title">{title}</strong>
         {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
       </button>
       {expanded ? <pre className="user-message-pasted-text-content">{part.text}</pre> : null}

@@ -571,29 +571,21 @@
   color: var(--ink-muted);
 }
 
-.user-message-pasted-text-labels {
-  display: grid;
+/*
+ * The card names the paste once, as the first line of the text itself: the
+ * file icon already says "attachment", so a "pasted text" label or character
+ * count would only restate what the row is. See the header comment on the
+ * system artifact cards for the same rule.
+ */
+.user-message-pasted-text-title {
   min-width: 0;
-  gap: 2px;
-}
-
-.user-message-pasted-text-labels strong,
-.user-message-pasted-text-labels span {
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.user-message-pasted-text-labels strong {
+  color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
   line-height: 1.2;
-}
-
-.user-message-pasted-text-labels span {
-  color: var(--ink-muted);
-  font-size: var(--font-xs);
-  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-message-pasted-text-content {

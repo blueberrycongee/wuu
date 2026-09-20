@@ -44,6 +44,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show pasted text in a user message as one attachment row — file icon, the first
+  line of the paste as its title, and the collapse control — instead of repeating
+  a "pasted text" label and a character count under it.
+
 - Hide phone-connection and account entries in all production desktop builds,
   including local packages, while retaining them in development mode.
 

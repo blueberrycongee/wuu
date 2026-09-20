@@ -1353,7 +1353,6 @@ export const enUS = {
   "process.finishedUnderSecond": "Finished in under 1 second",
   "process.finishedIn": "Finished in {duration}",
   "message.userActions": "User message actions",
-  "message.pastedTextMeta": "Pasted text · {count} characters",
   "message.showMoreImages": "Show {count} more images",
   "message.collapseImages": "Collapse images",
   "message.showMoreFiles": "{count} more files",

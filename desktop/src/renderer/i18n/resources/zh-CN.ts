@@ -1350,7 +1350,6 @@ export const zhCN = {
   "process.finishedUnderSecond": "用时不到 1 秒",
   "process.finishedIn": "用时 {duration}",
   "message.userActions": "用户消息操作",
-  "message.pastedTextMeta": "粘贴文本 · {count} 字符",
   "message.showMoreImages": "再显示 {count} 张图片",
   "message.collapseImages": "收起图片",
   "message.showMoreFiles": "还有 {count} 个文件",
