@@ -21,8 +21,16 @@ html[data-app-background] :is(
   .conversation-pane, .settings-main, .workspace-right-panel,
   .workspace-panel-body, .workspace-bottom-panel, .side-thread-panel,
   .account-screen, .plugin-workbench-view-primary,
-  .plugin-view-content
+  .plugin-view-content, .empty-home, .project-empty-pane,
+  .skills-scroll-region, .conversation-split-pane, .channel-view
 ) {
+  background: transparent;
+}
+
+/* :is() cannot wrap pseudo-elements. The dock covers paint the strip below the
+ * rounded composer, so they keep a paper fill that would cut the image short
+ * at the bottom of the conversation. */
+html[data-app-background] :is(.dock-composer-wrap, .channel-conversation-footer)::before {
   background: transparent;
 }
 

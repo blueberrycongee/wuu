@@ -152,6 +152,28 @@ app.whenReady().then(async () => {
     assert.equal(bounds.height, 960);
     assert.notEqual(bounds.hit, "app-background");
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+    // The empty greeting and the strip under the rounded composer are canvases
+    // too. Hide the image between captures so only a real paint difference can
+    // pass, exactly as the plugin pages do below.
+    await win.loadURL(`${origin}/dev/three-pane/?empty&theme=${theme}&size=${size}`);
+    await waitFor(win, `document.querySelector('.empty-home') && document.documentElement.hasAttribute('data-app-background')`);
+    await settle(win);
+    const samples = await evaluate(win, `const empty = document.querySelector('.empty-home').getBoundingClientRect();
+      const dock = document.querySelector('.dock-composer-wrap').getBoundingClientRect();
+      return [{ name: 'empty conversation', x: Math.round(empty.left + 16), y: Math.round(empty.top + 16), width: 8, height: 8 },
+        { name: 'dock cover', x: Math.round(dock.left + 12), y: Math.round(dock.bottom - 10), width: 6, height: 6 }];`);
+    const visible = await win.webContents.capturePage();
+    await evaluate(win, `document.querySelector('.app-background').style.visibility = 'hidden';`);
+    await settle(win);
+    const hidden = await win.webContents.capturePage();
+    for (const sample of samples) {
+      const before = average(hidden, sample, width), after = average(visible, sample, width);
+      const difference = Math.max(...before.map((value, c) => Math.abs(value - after[c])));
+      assert(difference > 3, `Wallpaper must be visible behind the ${sample.name} (${theme}, ${size}, ${width}); pixel difference: ${difference}`);
+    }
+    await evaluate(win, `document.querySelector('.app-background').style.visibility = '';`);
+    await settle(win);
+    fs.writeFileSync(path.join(output, `${theme}-${size}-${width}-empty.png`), (await win.webContents.capturePage()).toPNG());
   }
   for (const theme of ["light", "dark"]) {
     await win.loadURL(`${fixture}&theme=${theme}&size=20`);
@@ -191,7 +213,7 @@ app.whenReady().then(async () => {
   await win.loadURL(fixture);
   await waitFor(win, `document.querySelector('input[type=file]') && !document.querySelector('input[type=file]').disabled`);
   assert.equal(await evaluate(win, `const { readBackground } = ${preferences}; return await readBackground();`), null);
-  console.log("PASS: bundled worker/CSP/resizing, import, invalid input, write rollback, effect/strength controls, reload, multi-window sync/removal, three-pane and plugin pixels, opaque overlays, menu hit tests, 20 render captures");
+  console.log("PASS: bundled worker/CSP/resizing, import, invalid input, write rollback, effect/strength controls, reload, multi-window sync/removal, three-pane/empty-conversation/dock/plugin pixels, opaque overlays, menu hit tests, 28 render captures");
   windows.forEach(window => window.destroy());
   app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
