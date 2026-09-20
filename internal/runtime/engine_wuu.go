@@ -107,6 +107,14 @@ func (s *Session) Engines() *agentengine.Registry {
 	return s.engines
 }
 
+// SetEnginesForTest installs a registry on runtimes constructed without NewSession.
+func (s *Session) SetEnginesForTest(reg *agentengine.Registry) {
+	if s == nil {
+		return
+	}
+	s.engines = reg
+}
+
 // RebuildCodexEngine re-registers the codex engine after a settings change
 // (binary path override or enable/disable). The host instance is preserved
 // so a running app-server keeps its process; only future acquisitions use

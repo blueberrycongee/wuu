@@ -1261,7 +1261,9 @@ type ThreadStartParams struct {
 	// fixed at creation.
 	Engine string `json:"engine,omitempty"`
 	// Model and Effort are engine-native runtime options for the new thread.
-	// Empty values inherit the current runtime selection.
+	// Empty values inherit the current Wuu runtime selection for the built-in
+	// engine. Protocol engines treat empty values as the agent's native
+	// default and never inherit Wuu's provider catalog or effort.
 	Model          string `json:"model,omitempty"`
 	Effort         string `json:"effort,omitempty"`
 	PermissionMode string `json:"permission_mode,omitempty"`
