@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -427,7 +428,14 @@ func (c *Client) responsesWebSocketDial(ctx context.Context, wsURL string, extra
 
 func (c *Client) responsesWebSocketReadPump(session *responsesWebSocketSession, conn *websocket.Conn, generation uint64) {
 	for {
-		typ, data, err := conn.Read(context.Background())
+		typ, reader, err := conn.Reader(context.Background())
+		var data []byte
+		if err == nil {
+			data, err = io.ReadAll(io.LimitReader(reader, providers.MaxStreamEventBytes+1))
+			if len(data) > providers.MaxStreamEventBytes {
+				err = &providers.StreamEventTooLargeError{Transport: "WebSocket", LimitBytes: providers.MaxStreamEventBytes}
+			}
+		}
 
 		session.mu.Lock()
 		if session.conn != conn || session.generation != generation {
@@ -600,7 +608,8 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()})
 				return
 			}
-			if providers.NormalizeFailure(frame.err).Category == providers.FailureLocalBackpressure {
+			failure := providers.NormalizeFailure(frame.err)
+			if failure.Category == providers.FailureLocalBackpressure || failure.Category == providers.FailureResponseTooLarge {
 				session.mu.Lock()
 				c.responsesWebSocketReleaseLocked(session, readCh)
 				session.mu.Unlock()

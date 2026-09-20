@@ -44,6 +44,14 @@ the conversation. Counts describe the final failed stream, not the whole turn
 or billed tokens; older failures may have no recorded counts. Unknown errors
 are not automatically retried just because their wrapper says "request failed".
 
+**Response data too large** means one event exceeded Wuu's local receive limit,
+not the model's context-token window. SSE data payloads and Responses WebSocket
+messages support up to 16 MiB per event; the whole answer may span many events.
+Larger events stop without automatic replay or transport fallback because neither
+raises the limit. Ask for smaller outputs or try another model connection. Older
+builds can report `read stream: bufio.Scanner: token too long` at the former 1 MiB
+SSE limit; update Wuu before retrying those failures.
+
 ```bash
 wuu version --long
 wuu session list --json

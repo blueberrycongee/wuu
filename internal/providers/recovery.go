@@ -31,6 +31,7 @@ const (
 	FailureIncompleteStream  FailureCategory = "incomplete_stream"
 	FailureContextOverflow   FailureCategory = "context_overflow"
 	FailureRequestTooLarge   FailureCategory = "request_too_large"
+	FailureResponseTooLarge  FailureCategory = "response_too_large"
 	FailureNotFound          FailureCategory = "not_found"
 	FailureInvalidRequest    FailureCategory = "invalid_request"
 	FailureLocalBackpressure FailureCategory = "local_backpressure"
@@ -188,6 +189,13 @@ func normalizeFailure(err error) NormalizedFailure {
 		failure.ClassificationConfidence = ConfidenceHigh
 		return failure
 	}
+	var eventTooLarge *StreamEventTooLargeError
+	if errors.As(err, &eventTooLarge) {
+		failure.Origin = FailureOriginLocal
+		failure.Category = FailureResponseTooLarge
+		failure.ClassificationConfidence = ConfidenceHigh
+		return failure
+	}
 	if errors.Is(err, context.Canceled) {
 		failure.Origin = FailureOriginCaller
 		failure.Category = FailureCanceled
@@ -308,7 +316,7 @@ func PlanRecovery(failure NormalizedFailure) RecoveryPlan {
 		return RecoveryPlan{Action: RecoveryStop, Reason: "authentication failed"}
 	case FailureReplayUnsafe:
 		return RecoveryPlan{Action: RecoveryBlockUnsafe, Reason: "replay safety fence"}
-	case FailureCanceled, FailureQuota, FailureRequestTooLarge, FailureInvalidRequest, FailureLocalBackpressure,
+	case FailureCanceled, FailureQuota, FailureRequestTooLarge, FailureResponseTooLarge, FailureInvalidRequest, FailureLocalBackpressure,
 		FailureBudgetExceeded, FailureCostIndeterminate, FailureUnknown:
 		return RecoveryPlan{Action: RecoveryStop, Reason: string(failure.Category)}
 	default:

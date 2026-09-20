@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,12 +18,16 @@ import (
 )
 
 func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
-	for _, code := range []string{"server_error", "custom_failure", "insufficient_quota"} {
+	for _, code := range []string{"server_error", "custom_failure", "insufficient_quota", "response_too_large"} {
 		t.Run(code, func(t *testing.T) {
 			var requests atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				w.Header().Set("Content-Type", "text/event-stream")
+				if code == "response_too_large" {
+					fmt.Fprint(w, "data: ", strings.Repeat("x", providers.MaxStreamEventBytes+1), "\n\n")
+					return
+				}
 				fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":%q,\"message\":\"Fixture failure\"}\n\n", code)
 			}))
 			defer upstream.Close()
@@ -48,7 +53,14 @@ func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
 			}
 			terminal = fmt.Errorf("stream request failed: %w", terminal)
 			live := BuildTurnError(terminal, "compatible")
-			if live.Recovery == nil || live.Recovery.AttemptCount != int(requests.Load()) || live.Recovery.SubmissionCount != int(requests.Load()) || live.Category != "provider" || live.Code != code {
+			wantCategory := "provider"
+			if code == "response_too_large" {
+				wantCategory = "local"
+				if live.Recovery == nil || live.Recovery.FailureCategory != providers.FailureResponseTooLarge {
+					t.Fatalf("lost local receive limit classification: %+v", live)
+				}
+			}
+			if live.Recovery == nil || live.Recovery.AttemptCount != int(requests.Load()) || live.Recovery.SubmissionCount != int(requests.Load()) || live.Category != wantCategory || live.Code != code {
 				t.Fatalf("live error = %+v", live)
 			}
 			wantStop, wantRetries := "non_retryable", 0

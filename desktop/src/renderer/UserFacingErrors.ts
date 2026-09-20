@@ -242,6 +242,21 @@ export function userFacingErrorForMessage(
     return { category: "invalid_request", tone: "warning", title: t("composer.attachment.videoUnavailable"), detail: "", diagnostic: message };
   }
 
+  if (
+    structured?.code === "response_too_large" ||
+    structured?.recovery?.failure_category === "response_too_large" ||
+    (context === "turn" && (
+      message.includes("response event exceeds local receive limit of") ||
+      message.includes("read stream: bufio.Scanner: token too long")
+    ))
+  ) {
+    const reason = t("error.responseTooLargeDetail");
+    return {
+      category: "local", tone: "error", title: t("error.responseTooLargeTitle"),
+      detail: recoveryDetail(structured, reason) ?? reason, diagnostic: message || undefined,
+    };
+  }
+
   // Category: prefer the wire value, fall back to the legacy classifier.
   // A wire value we do not recognize (a newer Go core added a category
   // before this renderer learned it) degrades to the internal-error
@@ -292,7 +307,7 @@ export function userFacingErrorForMessage(
   };
 }
 
-function recoveryDetail(error: TurnError | undefined): string | undefined {
+function recoveryDetail(error: TurnError | undefined, reasonOverride?: string): string | undefined {
   const recovery = error?.recovery;
   if (!recovery) return undefined;
   const reasonKeys = {
@@ -305,7 +320,7 @@ function recoveryDetail(error: TurnError | undefined): string | undefined {
     recovery_failed: "error.recoveryFailed",
   } as const;
   const key = reasonKeys[recovery.stop_reason as keyof typeof reasonKeys];
-  const reason = key ? t(key) : t("error.recoveryStopped");
+  const reason = reasonOverride ?? (key ? t(key) : t("error.recoveryStopped"));
   const counts = t("error.recoveryCounts", {
     retries: formatCurrentNumber(recovery.retry_count),
     maxRetries: formatCurrentNumber(Math.max(0, recovery.max_attempts - 1)),
