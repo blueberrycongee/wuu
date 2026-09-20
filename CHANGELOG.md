@@ -139,6 +139,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Treat Chat Completions stream error payloads and error finish reasons as failed
+  attempts, preserving provider details and recovery limits without executing
+  unfinished tool drafts (#263).
+
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
   lists and metadata updates.
