@@ -488,6 +488,7 @@ export const enUS = {
   "channels.chooseAvatar": "Choose avatar {index}",
   "channels.avatarShape": "Shape",
   "channels.avatarColor": "Color",
+  "channels.customAvatarColor": "Custom color",
   "channels.avatarAccessory": "Accessory",
   "channels.chooseAvatarColor": "Choose hue {hue}",
   "channels.avatarShapeRound": "Round",

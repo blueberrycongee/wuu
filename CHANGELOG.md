@@ -30,6 +30,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Refine the Agent editor with opaque surfaces, aligned borderless fields and
+  inset actions that stay visible while scrolling. The expanded avatar picker
+  uses even option grids and one-click colors, with custom hue adjustment retained.
+
 - Fetch lightweight conversation summaries for desktop lists without copying
   loaded histories, reducing IPC payloads and app-server allocation overhead.
   Recover missed completion events with targeted snapshots for stale loaded
