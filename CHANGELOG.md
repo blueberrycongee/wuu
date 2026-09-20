@@ -32,6 +32,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Reuse loaded sidebar history when reopening desktop conversations, even after
   a workspace refresh has replaced the active conversation catalog with summaries.
+  Cross-workspace activation now displays the resumed conversation without waiting
+  for live and archived conversation lists, while preserving drafts and live updates.
 
 - Fetch lightweight conversation summaries for desktop lists without copying
   loaded histories, reducing IPC payloads and app-server allocation overhead.

@@ -3378,7 +3378,6 @@ export function App(): JSX.Element {
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
-    loadRuntime,
     selectRuntimeContext,
   });
 

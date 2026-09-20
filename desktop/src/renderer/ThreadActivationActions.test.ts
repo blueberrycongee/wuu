@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
   DesktopProject,
+  InitializeResult,
   RuntimeContext,
   Thread,
 } from "../shared/protocol";
 import {
+  createThreadSessionTab,
   emptyComposerDraft,
   initialState,
   threadSessionTabID,
@@ -13,7 +15,11 @@ import {
   type ComposerDraftState,
 } from "./AppState";
 import { createThreadActivationActions } from "./ThreadActivationActions";
+import { loadRuntimeConfiguration, loadRuntimeThreadList } from "./RuntimeLoadState";
+import { showErrorToast } from "./Toast";
 import type { PendingViewSwitch } from "./ViewSwitchState";
+
+vi.mock("./Toast", () => ({ showErrorToast: vi.fn() }));
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -30,6 +36,7 @@ function restoreWuu(): void {
 
 afterEach(() => {
   restoreWuu();
+  vi.clearAllMocks();
 });
 
 function project(id: string, path = `/tmp/${id}`): DesktopProject {
@@ -66,12 +73,15 @@ function thread(id = "thread-1", cwd = "/tmp/project-1"): Thread {
 function deferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (error: Error) => void;
 } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
     resolve = promiseResolve;
+    reject = promiseReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function installWuuApi(resumedThread: Thread): {
@@ -104,16 +114,25 @@ function buildActions({
 }) {
   let appState = initial;
   let currentDraft = draft;
-  const beginViewSwitch = vi.fn(() => 1);
-  const beginInstantThreadSwitch = vi.fn(() => 2);
-  const finishViewSwitch = vi.fn(() => true);
-  const cancelViewSwitch = vi.fn();
+  let requestID = 0;
+  const beginViewSwitch = vi.fn(() => ++requestID);
+  const beginInstantThreadSwitch = vi.fn(() => ++requestID);
+  const finishViewSwitch = vi.fn((id: number) => id === requestID);
+  const cancelViewSwitch = vi.fn(() => { requestID++; });
   const restorePrimaryComposerDraft = vi.fn((nextDraft: ComposerDraftState) => {
     currentDraft = nextDraft;
   });
   const resetSplitComposerDrafts = vi.fn();
-  const selectRuntimeContext = vi.fn().mockResolvedValue({});
-  const loadRuntime = vi.fn().mockResolvedValue(loadedState ?? {});
+  const selectRuntimeContext = vi.fn().mockImplementation(async (context: RuntimeContext) => ({
+    projects: appState.projects,
+    active_context: context,
+  }));
+  const loadConfiguration = vi.fn().mockImplementation(async (projects) => loadedState ?? {
+    activeContext: projects.active_context,
+    activeProjectId: projects.active_context?.project_id,
+    projects: projects.projects,
+  });
+  const loadCatalog = vi.fn().mockResolvedValue([]);
 
   const actions = createThreadActivationActions({
     getAppState: () => appState,
@@ -132,14 +151,18 @@ function buildActions({
     beginInstantThreadSwitch,
     finishViewSwitch,
     cancelViewSwitch,
-    isCurrentViewSwitchRequest: vi.fn(() => true),
-    loadRuntime,
+    isCurrentViewSwitchRequest: (id) => id === requestID,
+    loadRuntimeConfiguration: loadConfiguration,
+    loadRuntimeThreadList: loadCatalog,
     selectRuntimeContext,
   });
 
   return {
     actions,
     getAppState: () => appState,
+    setAppState: (next: AppState) => { appState = next; },
+    getDraft: () => currentDraft,
+    setDraft: (next: ComposerDraftState) => { currentDraft = next; },
     beginViewSwitch,
     beginInstantThreadSwitch,
     finishViewSwitch,
@@ -147,7 +170,8 @@ function buildActions({
     restorePrimaryComposerDraft,
     resetSplitComposerDrafts,
     selectRuntimeContext,
-    loadRuntime,
+    loadRuntimeConfiguration: loadConfiguration,
+    loadRuntimeThreadList: loadCatalog,
   };
 }
 
@@ -263,9 +287,8 @@ describe("createThreadActivationActions", () => {
     await harness.actions.activateThread("thread-2");
 
     expect(harness.selectRuntimeContext).toHaveBeenCalledWith(targetContext);
-    expect(harness.loadRuntime).toHaveBeenCalledWith(
-      {},
-      { resumeLatestThread: false },
+    expect(harness.loadRuntimeConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ active_context: targetContext }),
     );
     expect(harness.getAppState().activeProjectId).toBe("project-2");
     expect(harness.getAppState().thread?.id).toBe("thread-2");
@@ -331,6 +354,224 @@ describe("createThreadActivationActions", () => {
 
     expect(api.resumeThread).not.toHaveBeenCalled();
     expect(harness.beginViewSwitch).not.toHaveBeenCalled();
+  });
+
+  it("opens a cold conversation after initialization without waiting for catalogs, then preserves live edits", async () => {
+    const target = thread("target", "/tmp/project-2");
+    const initialized = deferred<InitializeResult>();
+    const listed = deferred<{ threads: Thread[] }>();
+    const archived = deferred<{ threads: Thread[] }>();
+    const api = installWuuApi(target);
+    const initialize = vi.fn(() => initialized.promise);
+    const listThreads = vi.fn(() => listed.promise);
+    Object.assign(window.wuu, {
+      initialize,
+      listThreads,
+      listArchivedThreads: vi.fn(() => archived.promise),
+    });
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        activeProjectId: "project-1",
+        projects: [project("project-1"), project("project-2")],
+      },
+    });
+    harness.loadRuntimeConfiguration.mockImplementation(loadRuntimeConfiguration);
+    harness.loadRuntimeThreadList.mockImplementation(loadRuntimeThreadList);
+
+    const activation = harness.actions.selectProjectThread("project-2", target.id);
+    await Promise.resolve(); // Runtime selection has resolved; initialization has not.
+    expect(api.resumeThread).toHaveBeenCalledWith(target.id);
+    expect(harness.getAppState().activeProjectId).toBe("project-1");
+    expect(harness.finishViewSwitch).not.toHaveBeenCalled();
+    initialized.resolve({ status: "ready", workspace_root: target.cwd } as InitializeResult);
+    await activation;
+
+    expect(harness.getAppState().thread?.id).toBe(target.id);
+    expect(harness.getAppState().initialized?.workspace_root).toBe(target.cwd);
+    expect(harness.finishViewSwitch).toHaveReturnedWith(true);
+    expect(listThreads).toHaveBeenCalledWith(target.cwd);
+    const live = {
+      ...target,
+      status: "in_progress",
+      turns: [{ id: "new-turn", status: "in_progress", items_view: "full", items: [] }],
+    } as Thread;
+    const editedDraft = { ...emptyComposerDraft(), prompt: "typed after activation" };
+    harness.setDraft(editedDraft);
+    harness.setAppState({ ...harness.getAppState(), thread: live, threads: [live], running: true });
+    const saved = { ...thread("archived", "/tmp/project-3"), archived: true };
+    listed.resolve({ threads: [target, thread("other", target.cwd)] });
+    archived.resolve({ threads: [saved] });
+    await harness.loadRuntimeThreadList.mock.results[0].value;
+
+    expect(harness.getAppState().threads.map((item) => item.id)).toContain(saved.id);
+    expect(harness.getAppState().threads.map((item) => item.id)).toContain("other");
+    expect(harness.getAppState().thread).toBe(live);
+    expect(harness.getAppState().threads.find((item) => item.id === live.id)).toBe(live);
+    expect(harness.getAppState().running).toBe(true);
+    expect(harness.getDraft()).toEqual(editedDraft);
+  });
+
+  it("still hydrates catalogs after a same-context selection without undoing local catalog changes", async () => {
+    const target = thread("target", "/tmp/project-2");
+    const next = thread("next", target.cwd);
+    const removed = thread("removed", target.cwd);
+    const archived = thread("archived", target.cwd);
+    const api = installWuuApi(target);
+    const pending = deferred<Thread[]>();
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        activeProjectId: "project-1",
+        projects: [project("project-1"), project("project-2")],
+        threads: [removed, archived],
+      },
+    });
+    harness.loadRuntimeThreadList.mockReturnValue(pending.promise);
+    await harness.actions.selectProjectThread("project-2", target.id);
+    api.resumeThread.mockResolvedValue({ thread: next });
+    await harness.actions.selectThread(next.id);
+    const created = thread("created", target.cwd);
+    harness.setAppState({
+      ...harness.getAppState(),
+      threads: [target, next, { ...archived, archived: true }, created],
+    });
+    const listed = thread("listed", target.cwd);
+    pending.resolve([target, removed, archived, listed]);
+    await pending.promise;
+
+    expect(harness.getAppState().thread?.id).toBe(next.id);
+    expect(harness.getAppState().threads.map((item) => item.id).sort())
+      .toEqual([target.id, next.id, archived.id, created.id, listed.id].sort());
+    expect(harness.getAppState().threads.find((item) => item.id === archived.id)?.archived).toBe(true);
+  });
+
+  it("ignores a catalog from an earlier visit to the same workspace", async () => {
+    const target = thread("target", "/tmp/project-2");
+    const api = installWuuApi(target);
+    const pending = deferred<Thread[]>();
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        activeProjectId: "project-1",
+        projects: [project("project-1"), project("project-2")],
+      },
+    });
+    harness.loadRuntimeThreadList.mockReturnValueOnce(pending.promise);
+    await harness.actions.selectProjectThread("project-2", target.id);
+    api.resumeThread.mockResolvedValueOnce({ thread: thread("source") });
+    await harness.actions.selectProjectThread("project-1", "source");
+    await harness.actions.selectProjectThread("project-2", target.id);
+    const current = harness.getAppState();
+    pending.resolve([thread("obsolete", target.cwd)]);
+    await pending.promise;
+
+    expect(harness.getAppState()).toBe(current);
+  });
+
+  it("does not overwrite either draft when a cached cross-project resume finishes", async () => {
+    const source = thread("source");
+    const target = {
+      ...thread("target", "/tmp/project-2"),
+      turns: [{ id: "turn", status: "completed", items_view: "full", items: [] }],
+    } as Thread;
+    const outgoingDraft = { ...emptyComposerDraft(), prompt: "source draft" };
+    const targetDraft = { ...emptyComposerDraft(), prompt: "saved target draft" };
+    const resume = deferred<{ thread: Thread }>();
+    installWuuApi(target).resumeThread.mockReturnValue(resume.promise);
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        activeProjectId: "project-1",
+        projects: [project("project-1"), project("project-2")],
+        thread: source,
+        sessionTabs: [
+          createThreadSessionTab(source, projectContext()),
+          createThreadSessionTab(target, projectContext("project-2"), targetDraft),
+        ],
+        activeSessionTabID: threadSessionTabID(source.id),
+      },
+      draft: outgoingDraft,
+      sidebarThreads: [target],
+    });
+    const activation = harness.actions.selectProjectThread("project-2", target.id);
+    expect(harness.getDraft()).toEqual(targetDraft);
+    const editedDraft = { ...targetDraft, prompt: "edited while waiting" };
+    harness.setDraft(editedDraft);
+    resume.resolve({ thread: target });
+    await activation;
+
+    expect(harness.getDraft()).toEqual(editedDraft);
+    expect(harness.getAppState().sessionTabs.find((tab) => tab.id === threadSessionTabID(source.id)))
+      .toMatchObject({ prompt: outgoingDraft.prompt });
+    expect(harness.getAppState().sessionTabs.find((tab) => tab.id === threadSessionTabID(target.id)))
+      .toMatchObject({ prompt: editedDraft.prompt });
+  });
+
+  it.each(["selection", "resume", "catalog"] as const)(
+    "ignores an obsolete cross-project %s after a newer activation",
+    async (phase) => {
+      const older = thread("older", "/tmp/project-2");
+      const newer = thread("newer", "/tmp/project-3");
+      const pending = deferred<unknown>();
+      const api = installWuuApi(newer);
+      const harness = buildActions({
+        initial: {
+          ...initialState,
+          activeContext: projectContext(),
+          activeProjectId: "project-1",
+          projects: [project("project-1"), project("project-2"), project("project-3")],
+        },
+      });
+      if (phase === "selection") harness.selectRuntimeContext.mockReturnValueOnce(pending.promise);
+      if (phase === "resume") api.resumeThread.mockReturnValueOnce(pending.promise);
+      if (phase === "catalog") {
+        api.resumeThread.mockResolvedValueOnce({ thread: older });
+        harness.loadRuntimeThreadList.mockReturnValueOnce(pending.promise);
+      }
+      const olderActivation = harness.actions.selectProjectThread("project-2", older.id);
+      if (phase === "catalog") await olderActivation;
+      else await Promise.resolve();
+      await harness.actions.selectProjectThread("project-3", newer.id);
+      const newerState = harness.getAppState();
+
+      pending.resolve(phase === "selection"
+        ? { projects: newerState.projects, active_context: projectContext("project-2") }
+        : phase === "resume" ? { thread: older } : [older]);
+      await pending.promise;
+      await olderActivation;
+
+      expect(harness.getAppState()).toBe(newerState);
+      if (phase === "selection") expect(api.resumeThread).not.toHaveBeenCalledWith(older.id);
+    },
+  );
+
+  it("keeps the resumed conversation usable when a background catalog fails", async () => {
+    const target = thread("target", "/tmp/project-2");
+    installWuuApi(target);
+    const pending = deferred<Thread[]>();
+    const harness = buildActions({
+      initial: {
+        ...initialState,
+        activeContext: projectContext(),
+        activeProjectId: "project-1",
+        projects: [project("project-1"), project("project-2")],
+      },
+    });
+    harness.loadRuntimeThreadList.mockReturnValue(pending.promise);
+    await harness.actions.selectProjectThread("project-2", target.id);
+    const activated = harness.getAppState();
+    pending.reject(new Error("catalog unavailable"));
+    await pending.promise.catch(() => {});
+
+    expect(harness.getAppState()).toBe(activated);
+    expect(activated.thread?.id).toBe(target.id);
+    expect(activated.status).toBe("ready");
+    expect(showErrorToast).toHaveBeenCalledWith("catalog unavailable");
   });
 
   it("keeps a cached resume pending when its selected tab is clicked after loading appears", async () => {
