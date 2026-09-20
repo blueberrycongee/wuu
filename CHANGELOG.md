@@ -139,6 +139,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Refresh `grep` and `glob` first pages from current files after edits, including
+  external changes and reopened sessions, while keeping continuation pages bound
+  to their exact result snapshot (#277).
+
 - Treat Chat Completions stream error payloads and error finish reasons as failed
   attempts, preserving provider details and recovery limits without executing
   unfinished tool drafts (#263).
