@@ -81,11 +81,32 @@ func ProjectToolResult(result toolresult.Result) ProjectedToolResult {
 		// intentionally has no user-facing text to return.
 		projected.ToolText = emptyToolResultText
 	}
+	if result.ModelText != nil {
+		// Text settlement does not suppress media or discard recovery data.
+		// In particular, an intentional zero allocation must stay empty.
+		projected.ToolText = *result.ModelText
+	}
 	return projected
 }
 
 func structuredToolResultIndex(raw json.RawMessage) string {
 	return toolresult.StructuredContentIndexJSON(raw)
+}
+
+// ProjectToolMessage is the shared model projection used by batch budgeting
+// and request preparation, including the fallback for legacy empty results.
+func ProjectToolMessage(msg ChatMessage) ProjectedToolResult {
+	projected := ProjectedToolResult{ToolText: msg.Content}
+	if msg.ToolResult != nil {
+		projected = ProjectToolResult(*msg.ToolResult)
+		if msg.ToolResult.ModelText != nil {
+			return projected
+		}
+	}
+	if strings.TrimSpace(projected.ToolText) == "" {
+		projected.ToolText = emptyToolResultText
+	}
+	return projected
 }
 
 func ApplyToolResultProjections(messages []ChatMessage) []ChatMessage {
@@ -103,17 +124,10 @@ func ApplyToolResultProjections(messages []ChatMessage) []ChatMessage {
 		var files []InputFile
 		for index < len(messages) && messages[index].Role == "tool" {
 			msg := CloneChatMessage(messages[index])
-			if msg.ToolResult != nil {
-				projected := ProjectToolResult(*msg.ToolResult)
-				msg.Content = projected.ToolText
-				images = append(images, projected.ObservationImages...)
-				files = append(files, projected.ObservationFiles...)
-			}
-			if strings.TrimSpace(msg.Content) == "" {
-				// Older persisted tool messages may not have rich result data.
-				// Keep those histories valid for providers that require output.
-				msg.Content = emptyToolResultText
-			}
+			projected := ProjectToolMessage(msg)
+			msg.Content = projected.ToolText
+			images = append(images, projected.ObservationImages...)
+			files = append(files, projected.ObservationFiles...)
 			out = append(out, msg)
 			index++
 		}

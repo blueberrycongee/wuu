@@ -67,6 +67,11 @@ type Result struct {
 	Meta              json.RawMessage `json:"meta,omitempty"`
 	IsError           bool            `json:"is_error,omitempty"`
 	Activity          *ActivityRef    `json:"activity,omitempty"`
+	// ModelText is the host-set, budgeted model projection. A non-nil value,
+	// including an empty string, replaces all derived text but not media. Keep
+	// it with the result so replay cannot restore omitted text from Content or
+	// StructuredContent; those fields remain intact for recovery and clients.
+	ModelText *string `json:"model_text,omitempty"`
 }
 
 func FromText(text string) Result {
@@ -197,6 +202,10 @@ func (r Result) Clone() Result {
 		Meta:              cloneRaw(r.Meta),
 		IsError:           r.IsError,
 	}
+	if r.ModelText != nil {
+		text := *r.ModelText
+		out.ModelText = &text
+	}
 	if len(r.Content) > 0 {
 		out.Content = make([]ContentPart, len(r.Content))
 		copy(out.Content, r.Content)
@@ -220,6 +229,9 @@ func (r Result) Clone() Result {
 }
 
 func (r Result) TextProjection() string {
+	if r.ModelText != nil {
+		return *r.ModelText
+	}
 	if len(r.Content) == 1 && r.Content[0].Type == ContentTypeText && len(bytes.TrimSpace(r.StructuredContent)) == 0 {
 		return r.Content[0].Text
 	}

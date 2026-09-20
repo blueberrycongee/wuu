@@ -152,6 +152,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve completed tool batches' text budget through provider requests and
+  history replay, while retaining media and structured recovery data (#284).
+
 - Make sidebar groups and nested workspace folders expand and collapse in one
   continuous motion, without inheriting a parent's temporary height or jumping
   at the end. Rapid reversals preserve rows, and reduced motion closes immediately.

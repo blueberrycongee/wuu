@@ -399,7 +399,7 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 		input = append(input, responsesInputItem{
 			Type:   "function_call_output",
 			CallID: msg.ToolCallID,
-			Output: msg.Content,
+			Output: &msg.Content,
 		})
 		if nativeDeferred {
 			if tools := responsesToolDefinitionsFromLoadable(model, msg.DiscoveredTools); len(tools) > 0 {
@@ -1368,7 +1368,7 @@ type responsesInputItem struct {
 	Status    string          `json:"status,omitempty"`
 	Execution string          `json:"execution,omitempty"`
 	Arguments any             `json:"arguments,omitempty"`
-	Output    string          `json:"output,omitempty"`
+	Output    *string         `json:"output,omitempty"`
 	Tools     any             `json:"tools,omitempty"`
 }
 

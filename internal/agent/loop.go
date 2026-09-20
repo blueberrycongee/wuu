@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -16,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // Bound provider-requested tool-free continuations even when MaxSteps is unset.
@@ -1642,27 +1644,30 @@ const maxAggregateResultChars = 200_000
 func enforceAggregateResultBudget(msgs []providers.ChatMessage) {
 	total := 0
 	type toolResult struct {
-		index  int
-		length int
+		index int
+		text  string
 	}
 	results := make([]toolResult, 0, len(msgs))
 	for i, m := range msgs {
 		if m.Role == "tool" {
-			total += len(m.Content)
-			results = append(results, toolResult{index: i, length: len(m.Content)})
+			// Budget what providers actually send, including structured indexes
+			// and empty-result fallbacks, rather than the legacy display text.
+			text := providers.ProjectToolMessage(m).ToolText
+			total += len(text)
+			results = append(results, toolResult{index: i, text: text})
 		}
 	}
 	if total <= maxAggregateResultChars {
 		return
 	}
 	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].length > results[j].length
+		return len(results[i].text) > len(results[j].text)
 	})
 	for _, result := range results {
 		if total <= maxAggregateResultChars {
 			break
 		}
-		original := msgs[result.index].Content
+		original := result.text
 		excess := total - maxAggregateResultChars
 		targetLen := len(original) - excess
 		if targetLen < 0 {
@@ -1683,8 +1688,20 @@ func enforceAggregateResultBudget(msgs []providers.ChatMessage) {
 			replacement = marker[:targetLen]
 		default:
 			prefixLen := targetLen - len(marker)
+			for prefixLen > 0 && !utf8.RuneStart(original[prefixLen]) {
+				prefixLen--
+			}
 			replacement = original[:prefixLen] + marker
 		}
+		// Keep the producer payload for recovery, but make this allocation
+		// authoritative for every later text projection, including replay.
+		// Clone before settlement so executor/ledger-owned results stay intact.
+		detail := toolresult.FromText(msgs[result.index].Content)
+		if msgs[result.index].ToolResult != nil {
+			detail = msgs[result.index].ToolResult.Clone()
+		}
+		detail.ModelText = &replacement
+		msgs[result.index].ToolResult = &detail
 		msgs[result.index].Content = replacement
 		total = total - len(original) + len(replacement)
 	}

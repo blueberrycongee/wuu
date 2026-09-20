@@ -3,11 +3,56 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
+
+func TestBudgetedToolResultSurvivesStorageHydration(t *testing.T) {
+	for _, text := range []string{"budgeted projection", ""} {
+		t.Run(fmt.Sprintf("bytes_%d", len(text)), func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := CreateWithMetadata(dir, "budget-storage", t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			result := toolresult.Result{
+				Content:           []toolresult.ContentPart{{Type: "text", Text: "original unbounded text"}},
+				StructuredContent: json.RawMessage(`{"continuation":{"next":"cursor"}}`),
+				Meta:              json.RawMessage(`{"private":"metadata"}`), ModelText: &text, IsError: true,
+			}
+			payload, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := AppendHistoryRecord(dir, "budget-storage", HistoryRecord{Role: "tool", Content: text, ToolCallID: "call_1", ToolResult: payload}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := MaintainRedundantStorage(context.Background(), dir); err != nil {
+				t.Fatal(err)
+			}
+			history, err := LoadHistoryRecords(dir, "budget-storage", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(history) != 1 || history[0].Content != text {
+				t.Fatal("storage hydration restored omitted text")
+			}
+			var restored toolresult.Result
+			if err := json.Unmarshal(history[0].ToolResult, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restored, result) {
+				t.Fatal("storage lost projection or recovery data")
+			}
+			if providers.ProjectToolResult(restored).ToolText != text {
+				t.Fatal("replay restored omitted text")
+			}
+		})
+	}
+}
 
 func TestToolResultProjectionIsStoredOnceAndHydrated(t *testing.T) {
 	dir := t.TempDir()
