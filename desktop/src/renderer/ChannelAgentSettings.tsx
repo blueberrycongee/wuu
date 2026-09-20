@@ -48,7 +48,9 @@ export function ChannelAgentSettings(props: SidebarNameDialogProps & {
       <button className="icon-button" type="button" disabled={props.busy} onClick={props.onClose} aria-label={t("common.close")}><X /></button>
     </header>
     <form className="channel-settings-form" aria-busy={props.busy || undefined} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
-      <fieldset disabled={props.busy} className="channel-settings-fields">{props.content}</fieldset>
+      <div className="channel-settings-scroll">
+        <fieldset disabled={props.busy} className="channel-settings-fields">{props.content}</fieldset>
+      </div>
       {props.error ? <div className="channel-error" role="alert">{props.error}</div> : null}
       {props.hideActions ? null : <div className="sidebar-name-dialog-actions channel-settings-actions">
         <button type="button" disabled={props.busy} onClick={props.onClose}>{props.cancelLabel}</button>

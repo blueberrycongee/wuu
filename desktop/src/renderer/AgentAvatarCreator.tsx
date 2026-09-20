@@ -1,4 +1,7 @@
 import type { CSSProperties } from "react";
+import { palette } from "blobatar";
+import { Check, ChevronDown } from "lucide-react";
+import { AVATAR_HUES } from "./DefaultAvatar";
 import {
   AGENT_AVATAR_ACCESSORIES,
   AGENT_AVATAR_SHAPES,
@@ -72,21 +75,28 @@ export function AgentAvatarCreator({
 
       <fieldset className="channel-avatar-picker agent-avatar-color-picker">
         <legend>{t("channels.avatarColor")}</legend>
-        <div
-          className="agent-avatar-color-control"
-          style={{ "--agent-avatar-hue": config.hue } as CSSProperties}
-        >
-          <span className="agent-avatar-color-preview" aria-hidden="true" />
-          <input
-            type="range"
-            min="0"
-            max="359"
-            value={config.hue}
-            aria-label={t("channels.avatarColor")}
-            onChange={(event) => update({ hue: Number(event.currentTarget.value) })}
-          />
-          <output>{config.hue}°</output>
+        <div className="agent-avatar-color-swatches">
+          {AVATAR_HUES.map((hue) => {
+            const active = !avatarImage && config.hue === hue;
+            const colors = palette(hue);
+            return <button key={hue} type="button" className={active ? "active" : ""}
+              aria-label={t("channels.chooseAvatarColor", { hue })} aria-pressed={active}
+              style={{ "--agent-avatar-swatch-fill": colors.head, "--agent-avatar-swatch-ink": colors.eye } as CSSProperties}
+              onClick={() => update({ hue })}>
+              <span aria-hidden="true">{active ? <Check /> : null}</span>
+            </button>;
+          })}
         </div>
+        <details className="agent-avatar-custom-color">
+          <summary>{t("channels.customAvatarColor")}<ChevronDown className="icon" aria-hidden="true" /></summary>
+          <div className="agent-avatar-color-control" style={{ "--agent-avatar-hue": config.hue } as CSSProperties}>
+            <span className="agent-avatar-color-preview" aria-hidden="true" />
+            <input type="range" min="0" max="359" value={config.hue}
+              aria-label={t("channels.avatarColor")}
+              onChange={(event) => update({ hue: Number(event.currentTarget.value) })} />
+            <output>{config.hue}°</output>
+          </div>
+        </details>
       </fieldset>
 
       <fieldset className="channel-avatar-picker agent-avatar-accessory-picker">

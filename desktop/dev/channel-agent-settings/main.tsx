@@ -8,11 +8,14 @@ import type { ChannelRoom, InitializeResult, NamedAgent } from "../../src/shared
 import "../../src/renderer/styles.css";
 
 const host = window as any;
-document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") || "light";
+const params = new URLSearchParams(location.search);
+document.documentElement.dataset.theme = params.get("theme") || "light";
+document.documentElement.style.setProperty("--conversation-message-font-size", `${Number(params.get("font")) || 14}px`);
 document.documentElement.dataset.platform = "mac";
 const created_at = "2026-09-12T14:00:00Z";
 let agents: NamedAgent[] = ["日程助手", "研究助手"].map((name, index) => ({
-  id: `agent-${index}`, name, role: index ? "对照原始资料，检查引用与结论。" : "管理日程和待办。在指定时间提醒，并清楚说明下一步。",
+  id: `agent-${index}`, name,
+  role: params.has("empty") ? "" : params.has("stress") ? "Review primary sources, preserve citations, and explain the next step. ".repeat(4) : index ? "对照原始资料，检查引用与结论。" : "管理日程和待办。在指定时间提醒，并清楚说明下一步。",
   memory_dir: "/preview", avatar_key: `abstract-${index + 1}`, provider_override: "openai", model_override: "gpt-6-astra", effort_override: "high", autostart: true, created_at,
 }));
 const rooms: ChannelRoom[] = [
@@ -22,12 +25,13 @@ const rooms: ChannelRoom[] = [
 const initialized = {
   protocol_version: "1", provider: "openai", model: "gpt-6-astra", effort: "high", workspace_root: "/preview",
   providers: [{ name: "openai", type: "openai", model: "gpt-6-astra", models: [
-    { id: "gpt-6-astra", display_name: "GPT-6 Astra", supported_efforts: ["low", "medium", "high"], default_effort: "medium" },
+    { id: "gpt-6-astra", display_name: params.has("stress") ? "Preview model with a deliberately long provider-specific display name" : "GPT-6 Astra", supported_efforts: ["low", "medium", "high"], default_effort: "medium" },
     { id: "gpt-5.5", display_name: "GPT-5.5", supported_efforts: ["low", "medium", "high"], default_effort: "medium" },
   ] }],
 } as InitializeResult;
 host.updates = [];
 host.wuu = {
+  initialLanguagePreference: params.get("locale") || "zh-CN",
   bootstrapChannels: async () => ({ agents, rooms }),
   listNamedAgents: async () => ({ agents }), listChannelRooms: async () => ({ rooms }),
   listChannelTasks: async () => ({ tasks: [] }), listChannelSessions: async () => ({ sessions: [] }),
@@ -51,6 +55,7 @@ function Preview() {
   const [selected, setSelected] = useState("dm");
   const [collapsed, setCollapsed] = useState(false);
   host.selectRoom = setSelected;
+  if (params.has("modal")) return <ChannelView section="agents" initialized={initialized} editAgentRequestID="agent-0" />;
   return <div className={`app-shell${collapsed ? " collaboration-rail" : ""}`} style={{ height: "100vh", display: "grid", gridTemplateColumns: "var(--sidebar-width) minmax(0, 1fr)", "--sidebar-width": collapsed ? "88px" : "240px" } as React.CSSProperties}>
     <CollaborationSidebar initialized agents={agents} rooms={rooms} pinnedRoomIDs={[]}
       collapsed={collapsed} selectedRoomID={selected} onToggleCollapsed={() => setCollapsed(!collapsed)}

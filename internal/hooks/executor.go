@@ -79,12 +79,16 @@ func (h *HookedExecutor) SupportsTool(name string) bool {
 	return false
 }
 
-// ToolMetadata forwards to the inner executor if it implements
-// agent.ToolMetadataProvider, so the loop's concurrency partitioning
-// works through the hook layer.
+// ToolMetadata forwards inner metadata, but disables speculative and concurrent
+// execution when pre-tool hooks can change the arguments after classification.
 func (h *HookedExecutor) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
 	if mp, ok := h.inner.(agent.ToolMetadataProvider); ok {
-		return mp.ToolMetadata(call)
+		meta, found := mp.ToolMetadata(call)
+		if found && h.dispatcher != nil && h.dispatcher.hasMatchingHooks(PreToolUse, call.Name) {
+			meta.ReadOnly = false
+			meta.ConcurrencySafe = false
+		}
+		return meta, found
 	}
 	return agent.ToolMetadata{}, false
 }
@@ -182,14 +186,19 @@ func (h *HookedExecutor) ExecuteResult(ctx context.Context, call providers.ToolC
 		result.IsError = true
 	}
 
-	// PostToolUse / PostToolUseFailure
-	if execErr != nil {
+	// Rich tools can report a domain failure without a Go execution error.
+	// Preserve that distinction while routing both forms to the failure event.
+	if execErr != nil || result.IsError {
+		errorText := result.HookProjection()
+		if execErr != nil {
+			errorText = execErr.Error()
+		}
 		failInput := &Input{
 			SessionID: h.sessionID,
 			CWD:       h.cwd,
 			ToolName:  call.Name,
 			ToolInput: json.RawMessage(call.Arguments),
-			Error:     execErr.Error(),
+			Error:     errorText,
 		}
 		_, _ = h.dispatcher.Dispatch(ctx, PostToolUseFailure, failInput)
 		return result, execErr

@@ -35,6 +35,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Cross-workspace activation now displays the resumed conversation without waiting
   for live and archived conversation lists, while preserving drafts and live updates.
 
+- Refine the Agent editor with opaque surfaces, aligned borderless fields and
+  inset actions that stay visible while scrolling. The expanded avatar picker
+  uses even option grids and one-click colors, with custom hue adjustment retained.
+
 - Fetch lightweight conversation summaries for desktop lists without copying
   loaded histories, reducing IPC payloads and app-server allocation overhead.
   Recover missed completion events with targeted snapshots for stale loaded
@@ -143,6 +147,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   tracked artifacts.
 
 ### Fixed
+
+- Make hook exit code 2 reliably block even with JSON output, pass rewritten tool
+  arguments to subsequent hooks, retain all post-tool context across later hook
+  failures, and route rich error results to failure hooks without changing the
+  original tool outcome.
+
+- Bound command-hook output and pipe draining, terminate running hook descendants
+  on cancellation, and preserve cancellation and deadline error identities.
+
+- Prevent matching pre-tool hooks from retaining early or concurrent execution
+  privileges derived from tool arguments they can rewrite.
+
+- Avoid a data race between streamed tool execution and final-call metadata
+  updates by keeping each started call's scheduling decision stable.
 
 - Preserve byte-range recovery for archived tool output when escaped text or
   short lines exceed the line-projection budget, so continuation neither skips

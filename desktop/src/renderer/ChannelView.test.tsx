@@ -1904,6 +1904,15 @@ describe("ChannelView", () => {
     const capsule = editor.querySelector<HTMLButtonElement>('button[aria-label="胶囊形"]');
     expect(capsule).not.toBeNull();
     act(() => capsule!.click());
+    act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="耳麦"]')!.click());
+    const swatch = editor.querySelector<HTMLButtonElement>('button[aria-label="选择色相 150"]')!;
+    act(() => swatch.click());
+    expect(swatch.getAttribute("aria-pressed")).toBe("true");
+    const hue = editor.querySelector<HTMLInputElement>('.agent-avatar-color-control input')!;
+    expect(hue.value).toBe("150");
+    act(() => editor.querySelector<HTMLElement>('.agent-avatar-custom-color summary')!.click());
+    act(() => setInputValue(hue, "173"));
+    expect(swatch.getAttribute("aria-pressed")).toBe("false");
     act(() => editor.querySelector<HTMLButtonElement>('button[aria-label="编辑头像"]')?.click());
     expect(editor.querySelector(".agent-avatar-creator")).toBeNull();
     act(() => setInputValue(editor.querySelector<HTMLTextAreaElement>("textarea")!, "Reviews the interface"));
@@ -1924,7 +1933,7 @@ describe("ChannelView", () => {
       agent_id: "agent-1",
       name: "Reasoner",
       role: "Reviews the interface",
-      avatar_key: expect.stringContaining(":capsule:"),
+      avatar_key: "mascot-v1:capsule:headset:173",
       avatar_image: "",
       provider_override: "openai",
       model_override: "gpt-reasoner",
