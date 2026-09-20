@@ -5,12 +5,14 @@ export function SettingsRow({
   title,
   description,
   hint,
+  error,
   children,
   block = false,
 }: {
   title: string;
   description?: string;
   hint?: string;
+  error?: string;
   children: ReactNode;
   block?: boolean;
 }): JSX.Element {
@@ -22,6 +24,7 @@ export function SettingsRow({
         {hint && !isTouchWebShell() ? <span className="settings-row-label-description">{hint}</span> : null}
       </div>
       <div className={block ? "settings-row-control-block" : "settings-row-control"}>{children}</div>
+      {error ? <div className="settings-row-error settings-error" role="alert">{error}</div> : null}
     </div>
   );
 }

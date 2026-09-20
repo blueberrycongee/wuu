@@ -79,6 +79,7 @@ import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
+import { toastErrorMessage } from "./Toast";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
@@ -1906,7 +1907,7 @@ function SettingsGeneralPage({
       await onGeneralSave({ mcp_enabled_toggles: next });
     } catch (toggleError) {
       setMCPEnabledDraft(previous);
-      setMCPToggleError(toggleError instanceof Error ? toggleError.message : t("settings.saveFailed"));
+      setMCPToggleError(toastErrorMessage(toggleError, t("settings.saveFailed")));
     } finally {
       setMCPToggleBusy("");
     }
@@ -1924,7 +1925,7 @@ function SettingsGeneralPage({
       });
     } catch (error) {
       setGitAttributionError(
-        error instanceof Error ? error.message : t("settings.saveGitAttributionFailed"),
+        toastErrorMessage(error, t("settings.saveGitAttributionFailed")),
       );
     } finally {
       setGitAttributionBusy(false);
@@ -2077,6 +2078,7 @@ function SettingsGeneralPage({
           <SettingsRow
             title={t("settings.gitAttribution")}
             hint={t("settings.gitAttributionDescription")}
+            error={gitAttributionError}
           >
             <button
               className="settings-switch"
@@ -2084,7 +2086,7 @@ function SettingsGeneralPage({
               role="switch"
               aria-checked={gitAttributionEnabled}
               data-testid="settings-git-attribution"
-              disabled={running || !initialized || gitAttributionBusy}
+              disabled={!initialized || gitAttributionBusy}
               onClick={() => void toggleGitAttribution()}
             >
               <span className="settings-switch-thumb" aria-hidden="true" />
@@ -2092,11 +2094,6 @@ function SettingsGeneralPage({
                 {gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
               </span>
             </button>
-            {gitAttributionError ? (
-              <small className="settings-muted-line settings-error">
-                {gitAttributionError}
-              </small>
-            ) : null}
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
@@ -2119,6 +2116,7 @@ function SettingsGeneralPage({
                   key={name}
                   title={name}
                   description={server ? formatMCPServerMeta(server, t) : undefined}
+                  error={server?.error}
                 >
                   {server ? (
                     <span className="settings-row-control-value">
@@ -2224,9 +2222,6 @@ function SettingsGeneralPage({
                     <span className="settings-switch-thumb" aria-hidden="true" />
                     <span className="sr-only">{enabled ? t("mcp.disableNamed", { name }) : t("mcp.enableNamed", { name })}</span>
                   </button>
-                  {server?.error ? (
-                    <small className="settings-mcp-error">{server.error}</small>
-                  ) : null}
                 </SettingsRow>
               );
             })

@@ -116,6 +116,7 @@ function readyEngineInventory(): EngineListResult {
 
 function renderSettings(props: {
   initialized: InitializeResult | undefined;
+  running?: boolean;
   usage?: SettingsUsageResponse;
   usageLoading?: boolean;
   usageError?: string;
@@ -153,7 +154,7 @@ function renderSettings(props: {
     <SettingsView
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
-        running={false}
+        running={props.running ?? false}
         usage={props.usage}
         usageLoading={props.usageLoading}
         usageError={props.usageError}
@@ -1015,7 +1016,8 @@ describe("SettingsView general settings", () => {
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
     });
-    const failure = new Error("settings write rejected");
+    const reason = "settings write rejected";
+    const failure = new Error(`Error invoking remote method 'wuu:config-general-update': Error: ${reason}`);
     let rejectSave!: (error: Error) => void;
     const pendingSave = new Promise<void>((_resolve, reject) => { rejectSave = reject; });
     const onGeneralSave = vi.fn()
@@ -1036,17 +1038,19 @@ describe("SettingsView general settings", () => {
     expect(attributionSwitch.disabled).toBe(true);
     await act(async () => { rejectSave(failure); });
 
-    expect(container.textContent).toContain(failure.message);
+    const generalSection = container.querySelector('[data-testid="settings-general"]')!;
+    expect(generalSection.querySelector('[role="alert"]')?.textContent).toBe(reason);
+    expect(container.textContent).not.toContain("wuu:config-general-update");
     expect(attributionSwitch.getAttribute("aria-checked")).toBe("true");
     expect(attributionSwitch.disabled).toBe(false);
 
     await act(async () => { attributionSwitch.click(); });
-    expect(container.textContent).not.toContain(failure.message);
+    expect(generalSection.querySelector('[role="alert"]')).toBeNull();
     expect(onGeneralSave).toHaveBeenCalledTimes(2);
     expect(onGeneralSave).toHaveBeenLastCalledWith({ git_attribution_enabled: false });
   });
 
-  it("loads and toggles WUU Agent commit attribution", async () => {
+  it.each([false, true])("loads and toggles WUU Agent commit attribution while running=%s", async (running) => {
     installBuildInfoStub({
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
@@ -1054,6 +1058,7 @@ describe("SettingsView general settings", () => {
     const onGeneralSave = vi.fn().mockResolvedValue(undefined);
     renderSettings({
       locale: "en-US",
+      running,
       initialized: baseInitialized({
         general_settings: {
           git_attribution_enabled: true,

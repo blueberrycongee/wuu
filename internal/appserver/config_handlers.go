@@ -1115,8 +1115,10 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if s.hasRunningThread() {
-		return s.writeResponse(req.ID, nil, errors.New("cannot change general settings while a turn is running"))
+	// Attribution changes are persisted now and applied to active threads only
+	// when their deferred runtime reset is safe. MCP changes still require idle turns.
+	if len(params.MCPEnabledToggles) > 0 && s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change MCP settings while a turn is running"))
 	}
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))

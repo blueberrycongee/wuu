@@ -168,6 +168,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Allow saving Agent commit attribution while conversations run, applying it to
+  active conversations after their work settles. Keep settings-row errors below
+  controls so long messages do not squeeze labels into a narrow column.
+
 - Keep enabled settings switches compact by using the shared switch track instead
   of painting the taller click target as a second background.
 

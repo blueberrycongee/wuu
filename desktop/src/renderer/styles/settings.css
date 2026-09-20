@@ -344,7 +344,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-6);
+  gap: 8px var(--space-6);
   border-bottom: 1px solid var(--hairline-soft);
   padding: var(--card-padding) 0;
 }
@@ -361,6 +361,12 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.settings-row-error {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .settings-row-label-title {
