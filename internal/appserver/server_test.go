@@ -1656,7 +1656,7 @@ func TestServerConfigModelUpdateRejectsRunningTargetThread(t *testing.T) {
 		t.Fatalf("config/model/update: %v", err)
 	}
 	response := responseByID(t, parseOutput(t, out.String()), "1")
-	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "cannot change model or permission mode") {
+	if rejection := remarshal[ResponseError](t, response["error"]); rejection.Code != "thread_busy" {
 		t.Fatalf("expected running-thread rejection, got %+v", response["error"])
 	}
 	if rt.Model != "fake-model" || rt.Permissions.Mode != config.PermissionModeReadOnly {
@@ -1767,7 +1767,7 @@ func TestServerConfigModelUpdateRejectsTargetOwnedByAnotherServer(t *testing.T) 
 		t.Fatalf("config/model/update: %v", err)
 	}
 	response := responseByID(t, parseOutput(t, out.String()), "1")
-	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "cannot change model or permission mode") {
+	if rejection := remarshal[ResponseError](t, response["error"]); rejection.Code != "thread_busy" {
 		t.Fatalf("expected external running-thread rejection, got %+v", response["error"])
 	}
 	if rt.Model != "fake-model" {

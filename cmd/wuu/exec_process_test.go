@@ -171,6 +171,46 @@ func TestExecProcessSignalsSettleRun(t *testing.T) {
 	}
 }
 
+func TestExecProcessBusyResumeWithModelSelection(t *testing.T) {
+	root := t.TempDir()
+	config, started := stalledExecProvider(t, root, "hello")
+	active, _, activeStderr := execProcess(t, root, "--config", config, "--no-tools", "--json", "work")
+	active.Stdout = io.Discard
+	if err := active.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(15 * time.Second):
+		t.Fatal("provider was not reached")
+	}
+	store, err := execution.NewStore(statepath.SessionsDir(filepath.Join(root, "state")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.List(context.Background(), execution.ListOptions{})
+	if err != nil || len(runs) != 1 || runs[0].Status.Terminal() {
+		t.Fatalf("expected one active Run: %+v, %v", runs, err)
+	}
+	for _, selection := range [][]string{nil, {"--model", "gpt-test"}} {
+		t.Run(fmt.Sprint(selection), func(t *testing.T) {
+			args := []string{"resume", "--config", config, "--no-tools", "--json"}
+			args = append(args, selection...)
+			args = append(args, runs[0].ThreadID, "work")
+			cmd, _, stderr := execProcess(t, root, args...)
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waitExecProcess(t, cmd, stderr, wuuexec.ExitConflict)
+		})
+	}
+	if err := active.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	waitExecProcess(t, active, activeStderr, wuuexec.ExitInterrupted)
+	assertSettledExecRun(t, root)
+}
+
 func TestExecProcessTimeoutWithUnreadStdout(t *testing.T) {
 	root := t.TempDir()
 	config, started := stalledExecProvider(t, root, strings.Repeat("x", 2<<20))
