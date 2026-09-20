@@ -153,9 +153,26 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Avoid a data race between streamed tool execution and final-call metadata
   updates by keeping each started call's scheduling decision stable.
 
+- Preserve byte-range recovery for archived tool output when escaped text or
+  short lines exceed the line-projection budget, so continuation neither skips
+  remaining output nor switches to unrelated line ranges.
+
+- Bound structured tool-result previews when field names or numeric values are
+  unusually large, retaining complete data and a snapshot-bound recovery cursor.
+
 - Treat Chat Completions stream error payloads and error finish reasons as failed
   attempts, preserving provider details and recovery limits without executing
   unfinished tool drafts (#263).
+
+- Accept SSE response events up to 16 MiB across OpenAI-compatible and Anthropic
+  streams, matching the Responses WebSocket limit. Oversized events now retain a
+  local receive-limit diagnostic instead of an internal error, without futile
+  retries or transport fallback.
+
+- Preserve top-level Responses stream errors and recover recognized transient
+  failures within existing retry budgets and tool replay safety checks. Failed
+  streams now retain retry counts and stopping reasons across session reloads,
+  with expandable desktop diagnostics instead of misleading network labels (#279).
 
 - Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
   Automation creation, updates, and recurring scheduling no longer reject or

@@ -86,16 +86,16 @@ func replaceToolResultContext(raw toolresult.Result, preview string) toolresult.
 }
 
 func buildBoundedResultReference(path, contextual string, raw toolresult.Result, threshold int) string {
-	if len(raw.Content) == 0 && len(raw.StructuredContent) > 0 {
-		if indexed := buildStructuredResultIndex(path, raw.StructuredContent, contextual); indexed != "" {
-			return indexed
-		}
-	}
-	contentSHA := sha256Hex([]byte(contextual))
 	limit := projectionPreviewBytes
 	if threshold > 0 && threshold < limit {
 		limit = threshold
 	}
+	if len(raw.Content) == 0 && len(raw.StructuredContent) > 0 {
+		if indexed := buildStructuredResultIndex(path, raw.StructuredContent, contextual, limit); indexed != "" {
+			return indexed
+		}
+	}
+	contentSHA := sha256Hex([]byte(contextual))
 	build := func(evidenceBytes int) string {
 		headBudget := min(evidenceBytes*2/3, len(contextual))
 		head := utf8SafePrefix(contextual, headBudget)
@@ -155,7 +155,7 @@ func utf8SafeSuffix(s string, maximum int) string {
 	return s[start:]
 }
 
-func buildStructuredResultIndex(path string, raw json.RawMessage, contextual string) string {
+func buildStructuredResultIndex(path string, raw json.RawMessage, contextual string, limit int) string {
 	var value any
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.UseNumber()
@@ -184,12 +184,19 @@ func buildStructuredResultIndex(path string, raw json.RawMessage, contextual str
 		sort.Strings(keys)
 		index["shape"] = "object"
 		index["key_count"] = len(keys)
-		if len(keys) > 64 {
-			index["keys"] = keys[:64]
-			index["keys_omitted"] = len(keys) - 64
-		} else {
-			index["keys"] = keys
+		// Key counts alone do not bound an index: names can be arbitrarily
+		// long or expand when JSON-escaped. Keep only complete names that fit
+		// alongside the recovery metadata in the serialized preview.
+		setKeys := func(keep int) {
+			index["keys"] = keys[:keep]
+			index["keys_omitted"] = len(keys) - keep
 		}
+		keep := largestFitting(min(len(keys), 64), limit, func(keep int) int {
+			setKeys(keep)
+			encoded, _ := json.Marshal(index)
+			return len(encoded)
+		})
+		setKeys(keep)
 	case []any:
 		index["shape"] = "array"
 		index["item_count"] = len(typed)
@@ -197,7 +204,7 @@ func buildStructuredResultIndex(path string, raw json.RawMessage, contextual str
 		index["shape"] = fmt.Sprintf("%T", typed)
 	}
 	encoded, err := json.Marshal(index)
-	if err != nil {
+	if err != nil || len(encoded) > limit {
 		return ""
 	}
 	return string(encoded)

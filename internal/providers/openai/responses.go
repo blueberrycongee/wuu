@@ -982,26 +982,8 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			})
 			return
 
-		case "response.failed":
-			if event.Response != nil && event.Response.Error != nil {
-				err := event.Response.Error.asError()
-				lease.FailError(err)
-				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-				return
-			}
-			err := errors.New("response failed")
-			lease.FailError(err)
-			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-			return
-
-		case "error":
-			if event.Error != nil {
-				err := event.Error.asError()
-				lease.FailError(err)
-				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
-				return
-			}
-			err := errors.New("response stream error")
+		case "response.failed", "error":
+			err := event.asError()
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
@@ -1697,6 +1679,8 @@ func (e *responsesError) asError() error {
 
 type responsesStreamEvent struct {
 	Type        string              `json:"type"`
+	Code        string              `json:"code,omitempty"`
+	Message     string              `json:"message,omitempty"`
 	Delta       string              `json:"delta,omitempty"`
 	Arguments   json.RawMessage     `json:"arguments,omitempty"`
 	ItemID      string              `json:"item_id,omitempty"`
@@ -1704,6 +1688,39 @@ type responsesStreamEvent struct {
 	Item        responsesOutputItem `json:"item,omitempty"`
 	Response    *responsesResponse  `json:"response,omitempty"`
 	Error       *responsesError     `json:"error,omitempty"`
+}
+
+// Responses uses top-level code/message for error events. Compatible gateways
+// also send error objects, and response.failed carries response.error. Prefer
+// those more specific objects, filling missing fields from the top level.
+func (e responsesStreamEvent) errorDetail() responsesError {
+	detail := responsesError{Code: e.Code, Message: e.Message}
+	nested := e.Error
+	if e.Type == "response.failed" && e.Response != nil && e.Response.Error != nil {
+		nested = e.Response.Error
+	}
+	if nested != nil {
+		detail.Type = nested.Type
+		if strings.TrimSpace(nested.Code) != "" {
+			detail.Code = nested.Code
+		} else if strings.TrimSpace(nested.Type) != "" {
+			detail.Code = nested.Type
+		}
+		if strings.TrimSpace(nested.Message) != "" {
+			detail.Message = nested.Message
+		}
+	}
+	return detail
+}
+
+func (e responsesStreamEvent) asError() error {
+	detail := e.errorDetail()
+	if strings.TrimSpace(detail.Code) == "" && strings.TrimSpace(detail.Message) == "" {
+		// Retain the protocol identity without copying arbitrary event fields
+		// (which can include response content) into durable error messages.
+		return &providers.StreamError{ProviderFamily: "openai", Message: "Responses " + e.Type + " event without error code or message"}
+	}
+	return detail.asError()
 }
 
 func (e responsesStreamEvent) outputIndex() int {

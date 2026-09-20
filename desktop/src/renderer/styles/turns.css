@@ -2789,14 +2789,19 @@
   border-radius: 12px;
   background: var(--surface-1);
   color: var(--ink);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--conversation-process-font-size);
+  line-height: var(--conversation-process-line-height);
 }
 
 .stream-reconnect-notice {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+.stream-reconnect-diagnostics {
+  grid-column: 1 / -1;
 }
 
 /*
@@ -2819,9 +2824,7 @@
   );
 }
 
-.stream-reconnect-icon { flex: 0 0 auto; }
 .stream-reconnect-title {
-  flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -2830,7 +2833,6 @@
 .stream-reconnect-retry,
 .stream-reconnect-stopped {
   position: relative;
-  flex: 0 0 auto;
   overflow: hidden;
   padding: 3px 10px;
   border: 0;
@@ -2838,8 +2840,6 @@
   background: var(--surface-2);
   color: inherit;
   font: inherit;
-  font-size: 12px;
-  line-height: 20px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   min-height: 26px;
@@ -2870,9 +2870,7 @@
 }
 
 .stream-reconnect-stopped {
-  flex: 0 0 auto;
   color: var(--ink-muted);
-  font-size: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -310,5 +312,74 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	mustWriteFile(t, path, "changed\n")
 	if _, err := tool.Execute(context.Background(), savedNext); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("projected continuation accepted changed file: %v", err)
+	}
+}
+
+func TestReadFileByteRecoverySurvivesResultSettlement(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "active")
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "escaped text", body: strings.Repeat("\t\r\n\"\\<>&", 1800)},
+		{name: "short lines", body: strings.Repeat("\n", 10000)},
+		{name: "binary", body: strings.Repeat("\x00\xff\n", 3500)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kit, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.env.SessionDir = t.TempDir()
+			artifact := filepath.Join(kit.env.SessionDir, "tool-results", "output.txt")
+			prefix := "previously displayed head\n"
+			original := prefix + tc.body + "previously displayed tail\n"
+			mustWriteFile(t, artifact, original)
+			end := len(prefix) + len(tc.body)
+			token := encodeReadFileByteContinuation(artifact, len(prefix), projectionPreviewBytes, end, sha256Hex([]byte(original)))
+			args := mustMarshalMap(map[string]any{"continuation": token})
+			var recovered strings.Builder
+			for pageNumber := 0; ; pageNumber++ {
+				if pageNumber == 20 {
+					t.Fatal("byte recovery did not finish")
+				}
+				result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+					ID: fmt.Sprintf("recover-%d", pageNumber), Name: "read_file", Arguments: args,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				page := parseOut(t, result.TextProjection())
+				if page["action"] != "read_bytes" || page["byte_offset"] != float64(len(prefix)+recovered.Len()) {
+					t.Fatalf("recovery left its byte range on page %d: action=%v offset=%v", pageNumber, page["action"], page["byte_offset"])
+				}
+				content, _ := page["content"].(string)
+				if page["encoding"] == "base64" {
+					decoded, err := base64.StdEncoding.DecodeString(page["content_base64"].(string))
+					if err != nil {
+						t.Fatal(err)
+					}
+					content = string(decoded)
+				}
+				if len(content) == 0 || page["byte_count"] != float64(len(content)) || len(content) > projectionPreviewBytes {
+					t.Fatalf("byte page count disagrees with displayed content: count=%v displayed=%d", page["byte_count"], len(content))
+				}
+				recovered.WriteString(content)
+				continuation := page["continuation"].(map[string]any)
+				if continuation["has_more"] != true {
+					break
+				}
+				args = mustMarshalMap(continuation["next"].(map[string]any))
+			}
+			if recovered.String() != tc.body {
+				t.Fatalf("recovery changed the omitted range: got %d bytes, want %d", recovered.Len(), len(tc.body))
+			}
+			mustWriteFile(t, artifact, original+"changed")
+			if _, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+				ID: "recover-stale", Name: "read_file", Arguments: args,
+			}); err == nil || !strings.Contains(err.Error(), "stale") {
+				t.Fatalf("byte recovery accepted a changed artifact: %v", err)
+			}
+		})
 	}
 }

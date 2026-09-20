@@ -442,9 +442,12 @@ func isTerminalUsageLimit(code, message string) bool {
 }
 
 func isProviderOverloaded(code, message string) bool {
+	if isProviderRateLimited(code, message) {
+		return true
+	}
 	code = strings.ToLower(strings.TrimSpace(code))
 	switch code {
-	case "429", "529", "1305", "rate_limit_error", "overloaded_error":
+	case "529", "overloaded_error":
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(message))
@@ -454,6 +457,15 @@ func isProviderOverloaded(code, message string) bool {
 		strings.Contains(msg, "temporarily unavailable") ||
 		strings.Contains(msg, "访问量过大") ||
 		strings.Contains(msg, "稍后再试")
+}
+
+func isProviderRateLimited(code, message string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "429", "1305", "rate_limit_error", "rate_limit_exceeded":
+		return true
+	}
+	msg := strings.ToLower(message)
+	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "too many requests")
 }
 
 func isTemporaryProviderFailure(code, message string) bool {
@@ -471,7 +483,7 @@ func isTemporaryProviderFailure(code, message string) bool {
 func isStreamAuthError(code, message string) bool {
 	code = strings.ToLower(strings.TrimSpace(code))
 	switch code {
-	case "401", "403", "authentication_error", "permission_error":
+	case "401", "403", "authentication_error", "permission_error", "invalid_api_key":
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(message))
