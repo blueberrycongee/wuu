@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { ENGINE_ICON_PATHS } from "./EngineIcons";
+import { ENGINE_ICON_EVENODD, ENGINE_ICON_PATHS } from "./EngineIcons";
 import { WuuMascot } from "./WuuMascot";
 
 import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
@@ -77,7 +77,7 @@ function CompanionEquipment({
         {engineMark ? (
           <g className="onboarding-equipment-module" data-onboarding-engine-mark={engineID}>
             <g className="onboarding-engine-mark" transform="translate(68 18) scale(0.72)">
-              <path d={engineMark} />
+              <path d={engineMark} fillRule={engineID && ENGINE_ICON_EVENODD.has(engineID) ? "evenodd" : undefined} />
             </g>
           </g>
         ) : null}
