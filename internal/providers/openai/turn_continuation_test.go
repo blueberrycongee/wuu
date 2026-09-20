@@ -61,51 +61,60 @@ func TestResponsesTurnContinuation(t *testing.T) {
 							return
 						}
 						defer conn.CloseNow()
-						_, request, err = conn.Read(ctx)
-					} else {
-						request, err = io.ReadAll(r.Body)
 					}
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					n := requests.Add(1)
-					text, metadata := tc.content, tc.metadata
-					if n > 1 {
-						if n != 2 || !tc.continueTurn {
-							t.Errorf("unexpected billable request %d", n)
-						}
-						if tc.content != "" && !strings.Contains(string(request), tc.content) {
-							t.Errorf("continuation lost prior assistant content: %s", request)
-						}
-						text, metadata = "final answer", `"status":"completed","end_turn":true`
-					}
-					encodedText, _ := json.Marshal(text)
-					item := fmt.Sprintf(`{"id":"msg_%d","type":"message","role":"assistant","phase":"commentary","status":"completed","content":[{"type":"output_text","text":%s}]}`, n, encodedText)
-					response := fmt.Sprintf(`{"id":"resp_%d",%s,"output":[%s],"usage":{"input_tokens":7,"output_tokens":3}}`, n, metadata, item)
-					if transport == "unary" {
-						w.Header().Set("Content-Type", "application/json")
-						fmt.Fprint(w, response)
-						return
-					}
-					eventType := "response.completed"
-					if strings.Contains(metadata, `"status":"incomplete"`) {
-						eventType = "response.incomplete"
-					}
-					events := []string{
-						fmt.Sprintf(`{"type":"response.output_item.added","output_index":0,"item":%s}`, item),
-						fmt.Sprintf(`{"type":"response.output_text.delta","delta":%s}`, encodedText),
-						fmt.Sprintf(`{"type":"%s","response":%s}`, eventType, response),
-					}
-					w.Header().Set("Content-Type", "text/event-stream")
-					for _, event := range events {
+					// Continuation reuses the WebSocket. Closing after the first response
+					// races the next request and exercises transport fallback instead.
+					for {
 						if conn != nil {
-							if err := conn.Write(ctx, websocket.MessageText, []byte(event)); err != nil {
-								t.Error(err)
-								return
-							}
+							_, request, err = conn.Read(ctx)
 						} else {
-							fmt.Fprintf(w, "data: %s\n\n", event)
+							request, err = io.ReadAll(r.Body)
+						}
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						n := requests.Add(1)
+						text, metadata := tc.content, tc.metadata
+						if n > 1 {
+							if n != 2 || !tc.continueTurn {
+								t.Errorf("unexpected billable request %d", n)
+							}
+							if tc.content != "" && !strings.Contains(string(request), tc.content) {
+								t.Errorf("continuation lost prior assistant content: %s", request)
+							}
+							text, metadata = "final answer", `"status":"completed","end_turn":true`
+						}
+						encodedText, _ := json.Marshal(text)
+						item := fmt.Sprintf(`{"id":"msg_%d","type":"message","role":"assistant","phase":"commentary","status":"completed","content":[{"type":"output_text","text":%s}]}`, n, encodedText)
+						response := fmt.Sprintf(`{"id":"resp_%d",%s,"output":[%s],"usage":{"input_tokens":7,"output_tokens":3}}`, n, metadata, item)
+						if transport == "unary" {
+							w.Header().Set("Content-Type", "application/json")
+							fmt.Fprint(w, response)
+							return
+						}
+						eventType := "response.completed"
+						if strings.Contains(metadata, `"status":"incomplete"`) {
+							eventType = "response.incomplete"
+						}
+						events := []string{
+							fmt.Sprintf(`{"type":"response.output_item.added","output_index":0,"item":%s}`, item),
+							fmt.Sprintf(`{"type":"response.output_text.delta","delta":%s}`, encodedText),
+							fmt.Sprintf(`{"type":"%s","response":%s}`, eventType, response),
+						}
+						w.Header().Set("Content-Type", "text/event-stream")
+						for _, event := range events {
+							if conn != nil {
+								if err := conn.Write(ctx, websocket.MessageText, []byte(event)); err != nil {
+									t.Error(err)
+									return
+								}
+							} else {
+								fmt.Fprintf(w, "data: %s\n\n", event)
+							}
+						}
+						if conn == nil || !tc.continueTurn || n >= 2 {
+							return
 						}
 					}
 				}))
