@@ -160,7 +160,7 @@ See [subagents](../desktop/subagents.md) for worker use and recovery.
 
 With `thread_id`, selection-only requests change that conversation without
 changing workspace defaults. Omitted fields inherit its current selection.
-Selection changes are rejected while the conversation has active execution,
+Selection changes return `thread_busy` while the conversation has active execution,
 including outstanding workers or a cross-process execution lease. Collaboration
 sessions with a pinned named-agent selection reject this change as well.
 

@@ -159,6 +159,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor explicit model selections when resuming or forking `wuu exec` sessions.
+  Preserve the busy-session exit code when a resume includes a model selection.
+  Include stdin in CLI deadlines, settle runs on SIGTERM and disconnected output,
+  and allow cancellation when stdout is stalled. Bound pending events and reject
+  human interaction requests in noninteractive execution.
+
 - Preserve conversation following when tool/reasoning details expand or collapse.
   Restore submission reading space temporarily occupied by details, while actual
   response growth and deliberate scrolling still consume it.

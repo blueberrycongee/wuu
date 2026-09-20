@@ -116,17 +116,26 @@ type eventSubscriber struct {
 	out       chan Event
 	clientEnd <-chan struct{}
 
-	mu    sync.Mutex
-	queue []Event
-	wake  chan struct{}
+	mu        sync.Mutex
+	queue     []Event
+	bytes     int
+	maxEvents int
+	maxBytes  int
+	err       error
+	wake      chan struct{}
 }
 
-// Subscription is a lossless event stream. Consumers must drain Events or call
-// Close; pending events are retained per subscription without blocking Client
-// RPC or other subscribers.
+// ErrSubscriptionOverflow means a consumer fell behind its pending-event limit.
+// The subscription closes instead of silently dropping events or blocking RPCs.
+var ErrSubscriptionOverflow = errors.New("SDK event subscription overflow")
+
+// Subscription delivers events in order. Consumers must drain Events or call
+// Close and check Err when Events closes. Pending events are bounded separately
+// for each subscription; a slow consumer does not block RPCs or other subscribers.
 type Subscription struct {
 	Events <-chan Event
 	close  func()
+	err    func() error
 	once   sync.Once
 }
 
@@ -137,6 +146,19 @@ type SubscriptionOptions struct {
 	// Values less than one use an unbuffered consumer channel; additional pending
 	// events remain in the subscription's private queue.
 	Buffer int
+	// MaxPendingEvents and MaxPendingBytes bound the private queue, excluding
+	// Buffer and the event being delivered. Nonpositive values use 1024 events
+	// and 16 MiB of encoded payload respectively. Overflow closes the stream.
+	MaxPendingEvents int
+	MaxPendingBytes  int
+}
+
+// Err reports why event delivery stopped. Explicit Close is not an error.
+func (s *Subscription) Err() error {
+	if s == nil || s.err == nil {
+		return nil
+	}
+	return s.err()
 }
 
 // Close stops the subscription. It does not close the Client or Session.
@@ -262,9 +284,17 @@ func (c *Client) subscribe(ctx context.Context, sessionID string, opts Subscript
 		buffer = 0
 	}
 	subscriberCtx, cancel := context.WithCancel(ctx)
+	maxEvents, maxBytes := opts.MaxPendingEvents, opts.MaxPendingBytes
+	if maxEvents <= 0 {
+		maxEvents = 1024
+	}
+	if maxBytes <= 0 {
+		maxBytes = 16 << 20
+	}
 	subscriber := &eventSubscriber{
 		ctx: subscriberCtx, cancel: cancel, filterID: strings.TrimSpace(sessionID),
 		out: make(chan Event, buffer), clientEnd: c.eventDone, wake: make(chan struct{}, 1),
+		maxEvents: maxEvents, maxBytes: maxBytes,
 	}
 	c.mu.Lock()
 	c.subs[subscriber] = struct{}{}
@@ -275,6 +305,11 @@ func (c *Client) subscribe(ctx context.Context, sessionID string, opts Subscript
 	}()
 	return &Subscription{
 		Events: subscriber.out,
+		err: func() error {
+			subscriber.mu.Lock()
+			defer subscriber.mu.Unlock()
+			return subscriber.err
+		},
 		close: func() {
 			cancel()
 			c.removeSubscriber(subscriber)
@@ -291,6 +326,9 @@ func closedSubscription() *Subscription {
 func (s *eventSubscriber) run() {
 	defer close(s.out)
 	for {
+		if s.ctx.Err() != nil {
+			return
+		}
 		event, ok := s.next()
 		if ok {
 			select {
@@ -319,6 +357,7 @@ func (s *eventSubscriber) next() (Event, bool) {
 		return Event{}, false
 	}
 	event := s.queue[0]
+	s.bytes -= len(event.Method) + len(event.Params)
 	s.queue[0] = Event{}
 	if len(s.queue) == 1 {
 		s.queue = nil
@@ -343,7 +382,21 @@ func (s *eventSubscriber) enqueue(event Event) {
 	default:
 	}
 	s.mu.Lock()
+	if s.err != nil {
+		s.mu.Unlock()
+		return
+	}
+	size := len(event.Method) + len(event.Params)
+	if len(s.queue) >= s.maxEvents || size > s.maxBytes-s.bytes {
+		s.err = ErrSubscriptionOverflow
+		s.queue = nil
+		s.bytes = 0
+		s.cancel()
+		s.mu.Unlock()
+		return
+	}
 	s.queue = append(s.queue, event)
+	s.bytes += size
 	s.mu.Unlock()
 	select {
 	case s.wake <- struct{}{}:

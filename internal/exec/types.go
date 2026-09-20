@@ -96,9 +96,11 @@ type Options struct {
 	ResumeID          string
 	ResumeLast        bool
 	ForkID            string
-	Stdout            io.Writer
-	Stderr            io.Writer
-	Controller        Controller
+	// Stdout is not closed by Run. On cancellation, one blocked Write may
+	// outlive Run; callers must unblock it before reusing a non-concurrent writer.
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Controller Controller
 }
 
 // Controller is the app-server control surface for one exec invocation. An

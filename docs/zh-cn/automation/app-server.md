@@ -46,7 +46,8 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 无法恢复。
 
 每个对话保留自己的模型和权限选择。应在对话空闲时，用带 `thread_id` 的
-`config/model/update` 修改；这不会改变工作区默认值。不带 `thread_id` 的请求修改未来
+`config/model/update` 修改；这不会改变工作区默认值。对话忙时返回 `thread_busy`，客户端可
+等待后重试。不带 `thread_id` 的请求修改未来
 对话的默认设置。不要通过 `turn/start` 临时覆盖单个回合的权限模式。
 
 ## Named Agent 媒体交接

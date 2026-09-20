@@ -16,6 +16,12 @@ One run can contain several turns. Neither a final message replacement nor
 invalid CLI input can fail before emitting JSONL, and a killed process or broken
 output pipe may leave no complete result. See [`wuu exec`](exec.md) for exit codes.
 
+SIGINT, SIGTERM, and timeouts attempt to emit a terminal result after cancelling
+execution. This cannot be guaranteed when the output consumer is stalled or
+disconnected. Input collection can also be cancelled before JSONL begins.
+Drain the stream continuously: pending events are bounded, and subscription
+overflow is a protocol failure rather than a successful but incomplete stream.
+
 ## Final result
 
 ```json
@@ -59,6 +65,10 @@ no `error` event appeared.
 storage. Usage snapshots are not deltas: use the latest snapshot per turn rather
 than summing every event. When `awaiting_auto_continuation` is true another turn
 is expected; even when it is false, wait for `result` to determine run settlement.
+
+`session_configured` describes runtime defaults. On resume or fork, the acquired
+thread event reports the session's actual model route after any explicit CLI
+selection; it may differ from those defaults.
 
 ## Tool and command events
 

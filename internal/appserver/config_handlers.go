@@ -1821,6 +1821,8 @@ func skillSummaries(items []skills.Skill) []SkillSummary {
 	return out
 }
 
+var errThreadRuntimeSelectionBusy = errors.New("cannot change model or permission mode")
+
 func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadState, func(), error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
@@ -1835,7 +1837,7 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 		(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
 	if busy {
 		th.mu.Unlock()
-		return nil, func() {}, fmt.Errorf("cannot change model or permission mode while thread %q is running", threadID)
+		return nil, func() {}, fmt.Errorf("%w while thread %q is running", errThreadRuntimeSelectionBusy, threadID)
 	}
 	th.runtimeSelectionMutation = true
 	persist := th.PersistHistory
@@ -1849,7 +1851,7 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 			th.runtimeSelectionMutation = false
 			th.mu.Unlock()
 			if errors.Is(err, errThreadExecutionBusy) {
-				return nil, func() {}, fmt.Errorf("cannot change model or permission mode while thread %q is running", threadID)
+				return nil, func() {}, fmt.Errorf("%w while thread %q is running", errThreadRuntimeSelectionBusy, threadID)
 			}
 			return nil, func() {}, err
 		}
@@ -1866,6 +1868,9 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
 	th, release, err := s.beginThreadRuntimeSelectionMutation(params.ThreadID)
 	if err != nil {
+		if errors.Is(err, errThreadRuntimeSelectionBusy) {
+			return s.writeRunError(req.ID, "thread_busy", err)
+		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer release()
