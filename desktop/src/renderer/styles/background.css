@@ -21,7 +21,7 @@ html[data-app-background] :is(
   .conversation-pane, .settings-main, .workspace-right-panel,
   .workspace-panel-body, .workspace-bottom-panel, .side-thread-panel,
   .account-screen, .plugin-workbench-view-primary,
-  .settings-page > .plugin-view-content
+  .plugin-view-content
 ) {
   background: transparent;
 }

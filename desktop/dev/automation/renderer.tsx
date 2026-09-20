@@ -3,14 +3,16 @@ import { SettingsRow } from "../../src/renderer/SettingsRow";
 import { SelectMenu } from "../../src/renderer/SelectMenu";
 import { createRoot } from "react-dom/client";
 import { PluginHost, type PluginGenerationApi } from "../../src/renderer/plugins/PluginHost";
-import { PluginViewContent, WorkbenchController } from "../../src/renderer/plugins/Workbench";
+import { DesktopWorkbench, PluginViewContent, WorkbenchController } from "../../src/renderer/plugins/Workbench";
+import { AppBackground } from "../../src/renderer/background/AppBackground";
+import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import source from "../../../internal/plugin/bundled/automation/desktop.js?raw";
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 import "../../src/renderer/styles.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "dark" ? "dark" : "light";
-document.documentElement.style.setProperty("--conversation-message-font-size", params.get("font") === "18" ? "18px" : "14px");
+applyMessageFlowFontSize(Number(params.get("font")) || 14);
 const workspace = { id: "wuu", name: "wuu", root: "/projects/wuu", available: true };
 let tasks = [
   { id: "brief", title: "每日简报", prompt: "汇总这个项目最近的变更、待办工作，以及今天需要我关注的事项。", cron: "0 8 * * 1-5", timezone: "Asia/Shanghai", mode: "new_thread", recurring: true, paused: false, workspace_mode: "shared", next_run_at: "2026-09-16T00:00:00Z" },
@@ -30,15 +32,23 @@ const host = new PluginHost({ react: React,
   },
 });
 await host.activateGeneration({ pluginId: "automation", generation: "preview", register: activate });
-const controller = new WorkbenchController(host);
+const controller = new WorkbenchController(host, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+const region = params.get("region") || "workspace";
+const portalRegion = region === "primary" || region === "overlay" || region === "auxiliary";
+if (portalRegion) await controller.openPluginView("automation", "automation.catalog", { region });
 const style = document.createElement("style");
 style.textContent = "html,body,#root { width:100%; height:100%; margin:0; } .plugin-view-content {height:100%;} body {background:var(--paper);} ";
 document.head.append(style);
 function Preview() {
   const [value, setValue] = React.useState("daily");
-  return <>{params.has("reference") ? <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--hairline)" }}>
+  const content = <PluginViewContent controller={controller} pluginId="automation" viewTypeId="automation.catalog" />;
+  return <><AppBackground />{params.has("reference") ? <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--hairline)" }}>
     <SettingsRow title="Wuu 原生设置行"><SelectMenu ariaLabel="原生计划" value={value} onChange={setValue} options={[{ value: "daily", label: "每天" }, { value: "weekdays", label: "工作日" }]} /></SettingsRow>
-  </div> : null}<div style={{ minHeight: 0, flex: 1 }}><PluginViewContent controller={controller} pluginId="automation" viewTypeId="automation.catalog" /></div></>;
+  </div> : null}{portalRegion ? <>
+    <main className="conversation-pane" style={{ flex: 1 }}><header /></main>
+    <DesktopWorkbench host={host} controller={controller} />
+  </> : region === "settings" ? <div className="settings-main" style={{ flex: 1 }}><div className="settings-page" style={{ height: "100%" }}>{content}</div></div>
+    : <div className="workspace-panel-body" style={{ minHeight: 0, flex: 1 }}>{content}</div>}</>;
 }
 style.textContent += "#root {display:flex; flex-direction:column;}";
 createRoot(document.getElementById("root")!).render(<Preview />);

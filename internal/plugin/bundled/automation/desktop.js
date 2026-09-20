@@ -65,7 +65,7 @@ export async function activate(api) {
       --automation-gap: calc(var(--automation-unit) * 4);
       --automation-inset: calc(var(--automation-unit) * 6);
       height:100%; min-height:0; container-type:inline-size;
-      color:var(--wuu-color-text, var(--ink)); background:var(--wuu-color-canvas, var(--paper));
+      color:var(--wuu-color-text, var(--ink));
       font-size:var(--wuu-font-size-ui, var(--font-ui));
     }
     .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
