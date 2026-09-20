@@ -1,9 +1,9 @@
 import { showErrorToast } from "./Toast";
 import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ThreadItem, ThreadItemStatus } from "../shared/protocol";
+import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
 import { isUnchangedContextCompaction, type TurnEventDisplay } from "./TurnEvents";
-import type { UserFacingErrorDisplay, UserFacingErrorTone } from "./UserFacingErrors";
+import { userFacingErrorForMessage, type UserFacingErrorDisplay, type UserFacingErrorTone } from "./UserFacingErrors";
 import { formatCurrentNumber, translateCurrent as t } from "./i18n";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { ProcessSurfaceMascot } from "./ProcessSurface";
@@ -134,9 +134,11 @@ export function StreamStatusNotice({
 
 export function StreamReconnectNotice({
   item,
+  error,
   onRetry,
 }: {
   item: ThreadItem;
+  error?: TurnError;
   onRetry?: () => void | Promise<void>;
 }): JSX.Element | null {
   const inProgress = item.status === "in_progress";
@@ -155,7 +157,8 @@ export function StreamReconnectNotice({
     }
   }
   if (item.status !== "in_progress" && item.status !== "failed") return null;
-  const title = streamReconnectTitle(item);
+  const failure = !inProgress && error?.recovery ? userFacingErrorForMessage(error, "turn") : undefined;
+  const title = failure?.title ?? streamReconnectTitle(item);
   return (
     <aside
       className="stream-event-card stream-reconnect-notice"
@@ -190,6 +193,15 @@ export function StreamReconnectNotice({
       ) : (
         <span className="stream-reconnect-stopped">{t("error.cancelledTitle")}</span>
       )}
+      {failure ? (
+        <SystemEventNotice
+          className="stream-reconnect-diagnostics"
+          event={{
+            label: t("error.recoveryDetails"),
+            expandedDetail: [failure.detail, failure.diagnostic].filter(Boolean).join("\n\n"),
+          }}
+        />
+      ) : null}
     </aside>
   );
 }

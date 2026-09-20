@@ -2202,6 +2202,8 @@ type TurnError struct {
 	Category   string `json:"category,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+	// Recovery describes the final failed stream operation, when available.
+	Recovery *providers.StreamRecoveryInfo `json:"recovery,omitempty"`
 }
 
 type ThreadItemType string

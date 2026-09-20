@@ -8000,7 +8000,7 @@ func TestServerRetriedInterruptedTurnReloadsCompleted(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
 	turnID := sess.ID + "-turn-0001"
-	if err := srv.persistTurnTerminal(th, turnID, TurnKindUser, TurnStatusInterrupted, context.Canceled, time.Now().UTC(), nil); err != nil {
+	if err := srv.persistTurnTerminal(th, turnID, TurnKindUser, TurnStatusInterrupted, &TurnError{Message: context.Canceled.Error()}, time.Now().UTC(), nil); err != nil {
 		t.Fatalf("persist interrupted terminal: %v", err)
 	}
 	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "assistant", Content: "final answer"}); err != nil {
@@ -8051,7 +8051,7 @@ func TestServerFailedInternalTurnReloadsOnVisibleAggregate(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
 	failedAt := time.Date(2026, 7, 16, 11, 30, 0, 0, time.UTC)
-	if err := srv.persistTurnTerminal(th, session.NewID(), TurnKindInternal, TurnStatusFailed, errors.New("goal continuation failed"), failedAt, nil); err != nil {
+	if err := srv.persistTurnTerminal(th, session.NewID(), TurnKindInternal, TurnStatusFailed, &TurnError{Message: "goal continuation failed"}, failedAt, nil); err != nil {
 		t.Fatalf("persist internal terminal: %v", err)
 	}
 
@@ -8099,7 +8099,7 @@ func TestServerSettledStreamReconnectSurvivesReload(t *testing.T) {
 		MaxRetries: 5,
 	}
 	interruptedAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	if err := srv.persistTurnTerminal(th, turnID, TurnKindUser, TurnStatusInterrupted, errors.New("stream interrupted"), interruptedAt, reconnect); err != nil {
+	if err := srv.persistTurnTerminal(th, turnID, TurnKindUser, TurnStatusInterrupted, &TurnError{Message: "stream interrupted"}, interruptedAt, reconnect); err != nil {
 		t.Fatalf("persist interrupted terminal with reconnect: %v", err)
 	}
 

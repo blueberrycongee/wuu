@@ -23,16 +23,16 @@ func TestStreamChat_DeclaredErrors(t *testing.T) {
 		name, payload, code, message string
 		category                     providers.FailureCategory
 	}{
-		{"openrouter", chatStreamFailure, "server_error", "Provider disconnected unexpectedly", providers.FailureIncompleteStream},
+		{"openrouter", chatStreamFailure, "server_error", "Provider disconnected unexpectedly", providers.FailureServer},
 		// Additional compatible-endpoint robustness cases, not claimed OpenRouter fixtures.
-		{"top_level_only", `{"error":{"code":"server_error","message":"synthetic failure"}}`, "server_error", "synthetic failure", providers.FailureIncompleteStream},
-		{"error_overrides_tool_finish", `{"error":{"code":"server_error","message":"synthetic failure"},"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`, "server_error", "synthetic failure", providers.FailureIncompleteStream},
-		{"numeric_code", `{"error":{"code":503,"message":"synthetic failure"}}`, "503", "synthetic failure", providers.FailureIncompleteStream},
-		{"numeric_string_code", `{"error":{"code":"503","message":"synthetic failure"}}`, "503", "synthetic failure", providers.FailureIncompleteStream},
+		{"top_level_only", `{"error":{"code":"server_error","message":"synthetic failure"}}`, "server_error", "synthetic failure", providers.FailureServer},
+		{"error_overrides_tool_finish", `{"error":{"code":"server_error","message":"synthetic failure"},"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`, "server_error", "synthetic failure", providers.FailureServer},
+		{"numeric_code", `{"error":{"code":503,"message":"synthetic failure"}}`, "503", "synthetic failure", providers.FailureServer},
+		{"numeric_string_code", `{"error":{"code":"503","message":"synthetic failure"}}`, "503", "synthetic failure", providers.FailureServer},
 		{"auth", `{"error":{"code":401,"message":"synthetic failure"}}`, "401", "synthetic failure", providers.FailureAuthentication},
 		{"quota", `{"error":{"code":"insufficient_quota","message":"synthetic failure"}}`, "insufficient_quota", "synthetic failure", providers.FailureQuota},
 		{"context", `{"error":{"code":"context_length_exceeded","message":"synthetic failure"}}`, "context_length_exceeded", "synthetic failure", providers.FailureContextOverflow},
-		{"type_fallback", `{"error":{"type":"rate_limit_error","message":"synthetic failure"}}`, "rate_limit_error", "synthetic failure", providers.FailureOverloaded},
+		{"type_fallback", `{"error":{"type":"rate_limit_error","message":"synthetic failure"}}`, "rate_limit_error", "synthetic failure", providers.FailureRateLimit},
 		{"unknown", `{"error":{"code":"custom_failure","message":"synthetic failure"}}`, "custom_failure", "synthetic failure", providers.FailureUnknown},
 		{"finish_only", `{"choices":[{"delta":{},"finish_reason":"error"}]}`, "", "", providers.FailureUnknown},
 		{"empty_error", `{"error":{}}`, "", "", providers.FailureUnknown},

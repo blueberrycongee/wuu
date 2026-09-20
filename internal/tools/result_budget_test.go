@@ -2,11 +2,13 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -92,5 +94,60 @@ func TestFinalizeGenericToolResultFailsOpenWithoutArtifactStorage(t *testing.T) 
 	got, ref, bounded := finalizeGenericToolResult("", "call-no-store", raw, 1_000)
 	if bounded || ref != "" || got.JSONProjection() != raw.JSONProjection() {
 		t.Fatal("settlement without recoverable storage must fail open")
+	}
+}
+
+func TestStructuredResultProjectionBoundsOversizedScalars(t *testing.T) {
+	longKey := strings.Repeat("key", 20000)
+	wide := map[string]any{"status": "ready"}
+	for i := 0; i < 64; i++ {
+		wide[fmt.Sprintf("key-%02d-%s", i, strings.Repeat("<&\"", 200))] = i
+	}
+	for _, tc := range []struct {
+		name  string
+		value map[string]any
+	}{
+		{name: "long key", value: map[string]any{longKey: "value", "status": "ready"}},
+		{name: "escaped keys", value: wide},
+		{name: "large number", value: map[string]any{"count": json.Number(strings.Repeat("9", 60000)), "status": "ready"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := toolresult.Result{StructuredContent: encoded, Meta: json.RawMessage(`{"source":"tool"}`)}
+			if err := raw.Validate(); err != nil {
+				t.Fatalf("fixture must be a valid tool result: %v", err)
+			}
+			got, ref, bounded := finalizeGenericToolResult(t.TempDir(), "structured", raw, defaultResultBudget)
+			if !bounded || ref == "" {
+				t.Fatal("oversized structured result was not archived")
+			}
+			if size := len(got.TextProjection()); size > projectionPreviewBytes {
+				t.Errorf("archive index exceeds preview budget: %d bytes", size)
+			}
+			// Provider lowering adds a semantic index of the retained structured
+			// data. That second projection must not reintroduce oversized scalars.
+			if size := len(providers.ProjectToolResult(got).ToolText); size > defaultResultBudget {
+				t.Errorf("provider projection reintroduced oversized data: %d bytes", size)
+			}
+			if string(got.StructuredContent) != string(encoded) || string(got.Meta) != string(raw.Meta) {
+				t.Fatal("projection changed durable structured data")
+			}
+			archived, err := os.ReadFile(ref)
+			if err != nil || string(archived) != raw.TextProjection() {
+				t.Fatalf("archive did not preserve the complete result: %v", err)
+			}
+			index := parseOut(t, got.TextProjection())
+			if index["shape"] != "object" || index["key_count"] != float64(len(tc.value)) {
+				t.Fatalf("archive index lost the original shape: %+v", index)
+			}
+			next := index["continuation"].(map[string]any)["next"].(map[string]any)
+			cursor, err := decodeReadFileContinuation(next["continuation"].(string))
+			if err != nil || cursor.Path != ref || cursor.ExpectedSHA256 != sha256Hex(archived) || cursor.ByteOffset == nil || *cursor.ByteOffset != 0 || cursor.ByteEndOffset == nil || *cursor.ByteEndOffset != len(archived) {
+				t.Fatalf("archive recovery does not cover the original result: %+v, err=%v", cursor, err)
+			}
+		})
 	}
 }

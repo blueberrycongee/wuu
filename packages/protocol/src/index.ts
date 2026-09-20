@@ -2260,6 +2260,21 @@ export type TurnError = {
   category?: TurnErrorCategory;
   provider?: string;
   status_code?: number;
+  recovery?: StreamRecoveryInfo;
+};
+
+// Facts about the final failed logical stream, not totals for a multi-step turn.
+// Prepared retries that never started are excluded from attempt/retry counts.
+// Physical submissions include transport fallbacks; they are not token charges.
+export type StreamRecoveryInfo = {
+  operation_id?: string;
+  attempt_count: number;
+  retry_count: number;
+  max_attempts: number;
+  submission_count: number;
+  stop_reason: string;
+  failure_category: string;
+  budget_dimension?: string;
 };
 
 // Canonical error category taxonomy shared with the Go core. The values
