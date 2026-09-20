@@ -148,6 +148,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Make sidebar groups and nested workspace folders expand and collapse in one
+  continuous motion, without inheriting a parent's temporary height or jumping
+  at the end. Rapid reversals preserve rows, and reduced motion closes immediately.
+
 - Honor explicit Responses turn-continuation signals across HTTP and WebSocket
   without retrying ordinary empty completions. Bound consecutive tool-free
   continuations, including Anthropic pauses, and reject unfinished compact summaries.

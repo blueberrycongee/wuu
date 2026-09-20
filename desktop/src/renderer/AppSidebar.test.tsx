@@ -411,9 +411,7 @@ describe("AppSidebar layout", () => {
       vi.runAllTimers();
     });
 
-    expect(
-      container.querySelector('[data-functional-group-id="workspace"] .thread-list-collapse'),
-    ).toBeNull();
+    expect(container.querySelector(".sidebar-functional-group-body > section[data-section-id]")).toBeNull();
     expect(container.querySelector('[aria-label="展开工作区"]')).not.toBeNull();
   });
 });
