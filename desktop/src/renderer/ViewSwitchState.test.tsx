@@ -201,16 +201,23 @@ describe("useViewSwitchState", () => {
     expect(hook.get().visiblePendingThreadID).toBe("uncached");
   });
 
-  it("does not show a completed or cancelled switch after the delay", async () => {
+  it.each(["thread", "project", "runtime"] as const)("never flashes loading for a fast %s switch", async (kind) => {
     vi.useFakeTimers();
     const hook = await renderViewSwitchState();
-    act(() => {
-      const requestID = hook.get().beginInstantThreadSwitch("fast");
-      hook.get().finishViewSwitch(requestID);
-    });
+    let requestID = 0;
+    act(() => { requestID = hook.get().beginViewSwitch(kind, "fast"); });
+    act(() => { vi.advanceTimersByTime(49); });
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    act(() => { hook.get().finishViewSwitch(requestID); });
+    expect(hook.get().viewSwitchPending).toBe(false);
     act(() => { vi.advanceTimersByTime(100); });
     expect(document.querySelector('[role="status"]')).toBeNull();
     expect(hook.get().visiblePendingThreadID).toBeUndefined();
+  });
+
+  it("does not show a cancelled switch after the delay", async () => {
+    vi.useFakeTimers();
+    const hook = await renderViewSwitchState();
     act(() => {
       hook.get().beginViewSwitch("thread", "cancelled");
       hook.get().cancelViewSwitch();

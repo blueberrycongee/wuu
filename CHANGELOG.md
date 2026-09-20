@@ -30,6 +30,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reuse loaded sidebar history when reopening desktop conversations, even after
+  a workspace refresh has replaced the active conversation catalog with summaries.
+  Cross-workspace activation now displays the resumed conversation without waiting
+  for live and archived conversation lists, while preserving drafts and live updates.
+
 - Refine the Agent editor with opaque surfaces, aligned borderless fields and
   inset actions that stay visible while scrolling. The expanded avatar picker
   uses even option grids and one-click colors, with custom hue adjustment retained.

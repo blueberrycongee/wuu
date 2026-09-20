@@ -92,6 +92,8 @@ export function useViewSwitchState({
         return false;
       }
       clearViewSwitchDelay();
+      // Content readiness wins over animation: never impose a minimum display
+      // time or wait for an exit animation before releasing the conversation.
       setPendingViewSwitch(undefined);
       return true;
     },

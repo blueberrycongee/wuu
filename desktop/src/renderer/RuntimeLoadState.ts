@@ -27,6 +27,44 @@ export type LoadedRuntimeState = Partial<AppState> & {
   heldComposerMessages?: QueuedComposerMessage[];
 };
 
+function runtimeConfiguration(
+  projectState: ProjectListResult,
+  initialized: InitializeResult,
+): Partial<AppState> {
+  return {
+    initialized,
+    projects: projectState.projects,
+    activeContext: projectState.active_context,
+    activeProjectId: activeProjectID(projectState.active_context),
+    gitStatus: undefined,
+    status:
+      initialized.status === "needs_setup"
+        ? (initialized.issues?.[0]?.message ?? translateCurrent("runtime.configureCredentials"))
+        : "ready",
+  };
+}
+
+export async function loadRuntimeConfiguration(
+  projectState: ProjectListResult,
+): Promise<Partial<AppState>> {
+  if (!projectState.active_context) {
+    return emptyRuntimeState(projectState);
+  }
+  if (projectState.runtime_issue?.code === "active_project_unavailable") {
+    return unavailableProjectRuntimeState(projectState);
+  }
+  return runtimeConfiguration(projectState, await window.wuu.initialize());
+}
+
+export async function loadRuntimeThreadList(cwd?: string): Promise<Thread[]> {
+  const [listed, archived] = await Promise.all([
+    window.wuu.listThreads(cwd),
+    window.wuu.listArchivedThreads(),
+  ]);
+  // Settings → Archive reads this same catalog, including other workspaces.
+  return sortThreads([...listed.threads, ...archived.threads]);
+}
+
 export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> {
   const listed = await window.wuu.listThreads(state.activeContext?.cwd);
   const runningHistoryIDs = new Set(
@@ -63,16 +101,10 @@ export async function loadRuntime(
     return unavailableProjectRuntimeState(projectState);
   }
   const resumeLatestThread = options.resumeLatestThread ?? true;
-  const [initialized, listed, archived] = await Promise.all([
+  const [initialized, listedThreads] = await Promise.all([
     window.wuu.initialize(),
-    window.wuu.listThreads(),
-    window.wuu.listArchivedThreads(),
+    loadRuntimeThreadList(),
   ]);
-  // The archive page (Settings → Archive) reads from state.threads, so we
-  // merge the cross-cwd archived list into the same sorted array. The
-  // archives are never re-fetched on context switch — RuntimeLoadState is
-  // the single rebuild path.
-  const listedThreads = sortThreads([...listed.threads, ...archived.threads]);
   // Archived conversations ride along in listedThreads for the Settings →
   // Archive page, but they are put away — a context switch must never
   // resurrect one into the composer. Resume the most recent live thread:
@@ -89,11 +121,8 @@ export async function loadRuntime(
     ? requireThread(resumed, translateCurrent("thread.resumeMissing"))
     : undefined;
   return {
+    ...runtimeConfiguration(projectState, initialized),
     initialized: thread ? initialized : applyDraftRuntimeMemory(initialized),
-    projects: projectState.projects,
-    activeContext: projectState.active_context,
-    activeProjectId: activeProjectID(projectState.active_context),
-    gitStatus: undefined,
     thread,
     secondaryThread: undefined,
     activePane: "primary",
@@ -105,10 +134,6 @@ export async function loadRuntime(
     // `thread/resumed` notification is emitted before the app finishes
     // booting, when the active-context gate still drops every server event.
     heldComposerMessages: heldComposerMessagesFromResumeResult(resumed),
-    status:
-      initialized.status === "needs_setup"
-        ? (initialized.issues?.[0]?.message ?? translateCurrent("runtime.configureCredentials"))
-        : "ready",
   };
 }
 
