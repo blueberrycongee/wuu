@@ -33,6 +33,12 @@ Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. 
 
 Public plugin theme tokens are a smaller contract than all internal CSS variables. Consult the [theme reference](../customize/theme-surface-matrix.md) before exposing a new token or telling plugin authors to depend on an internal variable.
 
+## Background images
+
+Preview the global background with `/dev/three-pane/?background`; omit `background` to check the same image across the three panes. Import and processed images stay in the local desktop profile, and raster work runs in a worker rather than during layout. Only main canvases reveal the image; menus, inputs, editors, and overlapping drawers retain their theme surfaces.
+
+With Vite running on port 5189, run `npm --prefix desktop run test:e2e:background-image` (or set `WUU_FIXTURE_ORIGIN` for another port). It uses an isolated profile to check import failures, transaction rollback, effects, persistence, cross-window updates, and the bundled worker under the production CSP. It also captures light/dark, default/large-font, wide/narrow previews in `artifacts/background-image/`. Review those captures separately; pixel and geometry checks do not establish visual acceptance.
+
 ## Sidebar folds
 
 Use `SidebarCollapseBody` for sidebar sections and nested groups. It animates intrinsic height and the heading gap together, retains rows until closing finishes, and prevents hidden rows from receiving focus. Avoid inherited measured-height variables or descendant animation rules that change a nested fold when its parent toggles.

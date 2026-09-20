@@ -3,6 +3,7 @@ import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { AccountScreen } from "./AccountScreen";
 import { App } from "./App";
 import { startAppearanceSync } from "./AppearancePreferences";
+import { AppBackground } from "./background/AppBackground";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxWindowControls";
@@ -79,6 +80,7 @@ console.error = (...args: unknown[]): void => {
 ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
+      <AppBackground />
       <LinuxWindowControls />
       {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
