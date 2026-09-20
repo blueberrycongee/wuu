@@ -184,6 +184,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep sessions that are still running in one sidebar position while they stream:
+  the running section and the phone list now order running sessions by creation
+  time, with settled sessions following by recency, instead of moving a row every
+  time an item is projected.
+
 - Keep a paused reader's place when earlier conversation history pages in: the
   manual prepend offset is only applied while the viewport still sits where the
   page was requested, so native scroll anchoring or a deliberate scroll during
