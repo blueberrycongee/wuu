@@ -85,7 +85,7 @@ func TestDispatcher_UpdatedInput(t *testing.T) {
 	}
 }
 
-func TestDispatcher_MergeLastWriterWins(t *testing.T) {
+func TestDispatcher_AccumulatesContext(t *testing.T) {
 	r := NewRegistry(map[Event][]HookConfig{
 		PreToolUse: {
 			{Matcher: "*", Command: `echo '{"additional_context":"first"}'`},
@@ -97,8 +97,8 @@ func TestDispatcher_MergeLastWriterWins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Context != "second" {
-		t.Fatalf("expected last context to win, got %s", out.Context)
+	if out.Context != "first\n\nsecond" {
+		t.Fatalf("expected both contexts in order, got %s", out.Context)
 	}
 }
 
