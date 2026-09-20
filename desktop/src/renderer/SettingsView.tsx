@@ -77,6 +77,7 @@ export type ArchivedRoomView = {
 import { normalizedVariantForProviderModel, providerModelReasoningMode, providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
+import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { SettingsRemotePage } from "./SettingsRemotePage";
@@ -1989,6 +1990,7 @@ function SettingsGeneralPage({
     <>
       <SettingsSection title={t("settings.appearance")} testID="settings-appearance">
         <ThemePreferenceControl />
+        {!isTouchWebShell() && <SettingsCard><BackgroundSettings /></SettingsCard>}
       </SettingsSection>
       <SettingsSection title={t("settings.typography")} testID="settings-typography">
         <SettingsCard><AppearanceTypography /></SettingsCard>

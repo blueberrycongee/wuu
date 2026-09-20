@@ -33,6 +33,12 @@ npm --prefix desktop run dev:onboarding
 
 公开插件主题 token 的契约范围小于所有内部 CSS 变量。暴露新 token 或建议插件作者依赖内部变量前，请查看[主题参考](../customize/theme-surface-matrix.md)。
 
+## 背景图片
+
+通过 `/dev/three-pane/?background` 预览全局背景；去掉 `background` 参数可检查同一张图片在三栏中的呈现。导入与处理后的图片保留在本地桌面 profile，栅格处理在线程中完成，不随布局变化重复执行。只有主画布透出图片；菜单、输入框、编辑器和覆盖式抽屉保留主题底色。
+
+在端口 5189 启动 Vite 后，运行 `npm --prefix desktop run test:e2e:background-image`（其他端口可设置 `WUU_FIXTURE_ORIGIN`）。它使用隔离 profile 检查导入失败、事务回滚、图片效果、持久化、跨窗口更新，以及生产 CSP 下的打包线程，同时将浅深色、默认与大字号、宽窄窗口截图写入 `artifacts/background-image/`。截图需要另外审阅；像素和几何检查不代表视觉验收通过。
+
 ## 侧栏折叠区
 
 侧栏分区和嵌套分组统一使用 `SidebarCollapseBody`。它让内容自身高度与标题间距同步过渡，在收起结束前保留列表，并阻止隐藏行获得焦点。不要通过可继承的临时高度变量或后代动画规则，让父级切换改变嵌套折叠区。

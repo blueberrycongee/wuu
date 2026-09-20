@@ -8,6 +8,12 @@ Use **Settings → Appearance** to choose a theme and adjust reading preferences
 
 Disabling or removing a plugin also removes its contributed themes. If a theme makes the interface difficult to use, return to a built-in theme or disable the plugin through plugin management.
 
+## Use a background image
+
+On desktop, choose **Background image → Choose image** in Appearance. Import a local PNG, JPEG or WebP up to 20 MB and 64 megapixels. Wuu stores a resized copy (up to 2048 pixels on its longest edge) in this desktop profile; the original file can be moved or deleted. Images are not uploaded or synced to other devices. Animated images use a still frame.
+
+The picture covers the sidebar, conversation, settings and workspace canvas as one centered, cropped background. Menus, inputs, editors and previews keep their own surfaces for readability. Choose Original, Dither, Halftone, ASCII or Scanlines, and adjust image strength from 5% to 30%. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image.
+
 ## Adjust text and motion
 
 The UI font-size preference controls the interface and conversation prose together. Code size is separate, so you can make messages easier to read without enlarging code blocks and editors by the same amount. Valid saved preferences are preserved across upgrades.

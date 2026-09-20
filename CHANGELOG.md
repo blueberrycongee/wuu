@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Desktop appearance settings can import a device-local background image across
+  the sidebar and workspace, with five image effects and adjustable strength.
+
 - Preview delivered file snapshots in desktop workspace tabs beside the
   conversation. A single supported delivery can open after successful completion
   when the panel is available, without taking over manual panel or browser use.

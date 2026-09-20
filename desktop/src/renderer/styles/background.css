@@ -1,0 +1,62 @@
+/* One viewport-sized image keeps the artwork continuous across navigation and
+ * content. Only the main canvases reveal it; controls and overlays retain their
+ * theme surfaces so the picture cannot compromise their reading contrast. */
+html[data-app-background] body {
+  isolation: isolate;
+  background: var(--paper);
+}
+
+.app-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  animation: background-reveal 180ms ease-out;
+}
+
+html[data-app-background] :is(
+  .conversation-pane, .settings-main, .workspace-right-panel,
+  .workspace-panel-body, .workspace-bottom-panel, .side-thread-panel,
+  .account-screen, .plugin-workbench-view-primary,
+  .settings-page > .plugin-view-content
+) {
+  background: transparent;
+}
+
+html[data-app-background] :is(.sidebar, .settings-sidebar) {
+  background: color-mix(in srgb, var(--sidebar-material-fill) 25%, transparent);
+}
+
+/* Drawers overlap readable content, rather than merely sitting beside it. */
+html[data-app-background] :is(.sidebar-collapsed, .compact-navigation) :is(.sidebar, .settings-sidebar) {
+  background: var(--sidebar-drawer-bg);
+}
+
+.background-file-picker {
+  position: relative;
+  overflow: hidden;
+}
+
+.background-file-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.background-file-picker:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.background-file-picker.disabled { opacity: 0.5; }
+
+@keyframes background-reveal { from { opacity: 0; } }
+
+:root[data-appearance-motion="reduce"] .app-background { animation: none; }
+@media (prefers-reduced-motion: reduce) { .app-background { animation: none; } }
+@media (forced-colors: active), print { .app-background { display: none; } }
