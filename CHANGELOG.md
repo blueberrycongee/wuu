@@ -143,6 +143,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve completed tool batches' text budget through provider requests and
+  history replay, while retaining media and structured recovery data (#284).
+
 - Honor explicit Responses turn-continuation signals across HTTP and WebSocket
   without retrying ordinary empty completions. Bound consecutive tool-free
   continuations, including Anthropic pauses, and reject unfinished compact summaries.
