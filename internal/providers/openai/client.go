@@ -620,6 +620,15 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 			}
 		}
 
+		// A committed HTTP 200 can still carry a provider failure. Stop before
+		// processing deltas or finalizing drafts, including on a later EOF/DONE.
+		if err := chunk.streamError(); err != nil {
+			lease.ObserveUsage(lastUsage)
+			failOpenAIResponseLease(lease, resp, err)
+			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
+			return
+		}
+
 		if len(chunk.Choices) == 0 {
 			continue
 		}
@@ -1221,6 +1230,42 @@ type chatResponseMessage struct {
 type chatCompletionsChunk struct {
 	Choices []chatChunkChoice `json:"choices"`
 	Usage   *chunkUsage       `json:"usage,omitempty"`
+	Error   *struct {
+		Code    json.RawMessage `json:"code"`
+		Type    string          `json:"type"`
+		Message string          `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+func (c chatCompletionsChunk) streamError() *providers.StreamError {
+	var code, message string
+	if c.Error != nil {
+		// Compatible endpoints report both symbolic strings and numeric codes.
+		// Keep numbers exact and let the shared classifier decide recovery.
+		if err := json.Unmarshal(c.Error.Code, &code); err != nil {
+			var number json.Number
+			if json.Unmarshal(c.Error.Code, &number) == nil {
+				code = number.String()
+			}
+		}
+		if strings.TrimSpace(code) == "" {
+			code = c.Error.Type
+		}
+		message = c.Error.Message
+	} else {
+		for _, choice := range c.Choices {
+			if choice.FinishReason != nil && strings.EqualFold(strings.TrimSpace(*choice.FinishReason), "error") {
+				message = "provider reported finish_reason=error"
+				break
+			}
+		}
+		if message == "" {
+			return nil
+		}
+	}
+	err := providers.NewProviderStreamError(code, message)
+	err.ProviderFamily = "openai"
+	return err
 }
 
 type chatChunkChoice struct {

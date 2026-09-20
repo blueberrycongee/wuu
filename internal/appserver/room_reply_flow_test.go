@@ -277,14 +277,12 @@ func TestRoomReplyMultipleBubblesStayInOneTurn(t *testing.T) {
 					call = provider.next(t)
 				}
 			}
-			const privateReason = "The complete response is already delivered as separate bubbles."
 			switch ending {
 			case "final bubble":
 				bubbles = append(bubbles, "我建议在连接变化时重新绑定回调。")
 				call.response <- providers.ChatResponse{Content: bubbles[len(bubbles)-1]}
 			case "already answered":
-				args, _ := json.Marshal(map[string]any{"reason": privateReason})
-				call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "finish-chat", Name: "yield_turn", Arguments: string(args)}}}
+				call.response <- providers.ChatResponse{StopReason: "completed"}
 			case "duplicate final":
 				call.response <- providers.ChatResponse{Content: bubbles[len(bubbles)-1]}
 			}
@@ -305,10 +303,6 @@ func TestRoomReplyMultipleBubblesStayInOneTurn(t *testing.T) {
 					t.Fatalf("bubble lost its text, order, identity, or provenance: %+v", message)
 				}
 				seen[message.ID] = true
-			}
-			encoded, _ := json.Marshal(room)
-			if strings.Contains(string(encoded), privateReason) {
-				t.Fatal("private completion reason became a public bubble")
 			}
 			select {
 			case <-provider.calls:

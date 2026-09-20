@@ -124,7 +124,7 @@ func TestHarnessSessionVisibleIdempotentAndWakesOriginalConversation(t *testing.
 	if _, err := f.server.HarnessSession(context.Background(), actor, channels.HarnessSessionParams{Action: "manage", SessionID: id, Prompt: "Track the installation review", OperationID: "update-running-management"}); err != nil {
 		t.Fatal(err)
 	}
-	coordinatorModelTool(decision, "yield-parent", "yield_turn", map[string]any{"reason": "Waiting for execution result"})
+	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 	worker.response <- providers.ChatResponse{Content: "Inspected docs; stale installation instructions remain."}
 	wake := provider.next(t)
@@ -201,7 +201,7 @@ func TestHarnessTakeoverFencesQueuedWorkAndLeavesHistory(t *testing.T) {
 	if err != nil || !found || m.Entries == 0 {
 		t.Fatalf("takeover lost session history: %+v %v", m, err)
 	}
-	coordinatorModelTool(decision, "yield-parent", "yield_turn", map[string]any{"reason": "User is editing the session"})
+	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 }
 
@@ -248,7 +248,7 @@ func TestHarnessManageExistingReleaseAndStop(t *testing.T) {
 	if err != nil || !found || metadata.ParentID != "" || metadata.Owner != "user" {
 		t.Fatalf("management changed identity: %+v %v", metadata, err)
 	}
-	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Work stopped"})
+	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 }
 
@@ -305,7 +305,7 @@ func TestHarnessTaskCancellationStopsOnlyItsExecution(t *testing.T) {
 	}
 	otherCall.response <- providers.ChatResponse{Content: "Branch evidence"}
 	waitForTurnCompletedForThread(t, f.out, other.ID)
-	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Task cancelled"})
+	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 }
 
@@ -345,7 +345,7 @@ func TestHarnessInspectIncludesUnsettledProgress(t *testing.T) {
 	}
 	worker.response <- providers.ChatResponse{Content: "Documentation built"}
 	waitForTurnCompletedForThread(t, f.out, id)
-	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Waiting for result"})
+	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 }
 
@@ -403,6 +403,6 @@ func TestHarnessUnconsumedCorrectionSurvivesTerminalReconciliation(t *testing.T)
 	}
 	continued.response <- providers.ChatResponse{Content: "Installation verified"}
 	waitForThreadLeaseRelease(t, f.server.rt.SessionDir, id)
-	coordinatorModelTool(decision, "yield", "yield_turn", map[string]any{"reason": "Waiting for corrected evidence"})
+	decision.response <- providers.ChatResponse{StopReason: "completed"}
 	f.waitForCompletion(t)
 }

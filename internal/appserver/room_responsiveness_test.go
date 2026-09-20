@@ -2,7 +2,6 @@ package appserver
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +71,7 @@ func TestRoomFollowupReachesIdlePeerWhileFirstMemberKeepsWorking(t *testing.T) {
 		if i == 0 && !strings.Contains(collaborationRequestText(next.request), reply) {
 			t.Fatal("deferred member lost the available peer's response")
 		}
-		coordinatorModelTool(next, fmt.Sprintf("pass-%d", i), "yield_turn", map[string]any{"reason": "No additional contribution"})
+		next.response <- providers.ChatResponse{StopReason: "completed"}
 	}
 	for range 4 {
 		select {
