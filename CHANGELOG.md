@@ -143,6 +143,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Honor explicit Responses turn-continuation signals across HTTP and WebSocket
+  without retrying ordinary empty completions. Bound consecutive tool-free
+  continuations, including Anthropic pauses, and reject unfinished compact summaries.
+
 - Refresh `grep` and `glob` first pages from current files after edits, including
   external changes and reopened sessions, while keeping continuation pages bound
   to their exact result snapshot (#277).

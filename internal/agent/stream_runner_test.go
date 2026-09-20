@@ -2522,7 +2522,7 @@ func TestStreamRunner_PauseTurnContinuesTheTurn(t *testing.T) {
 	client := &mockStreamClient{attempts: []mockStreamAttempt{
 		{events: []providers.StreamEvent{
 			{Type: providers.EventContentDelta, Content: "searching..."},
-			{Type: providers.EventDone, StopReason: "pause_turn"},
+			{Type: providers.EventDone, StopReason: "pause_turn", FinishReason: providers.FinishReasonContinue},
 		}},
 		{events: []providers.StreamEvent{
 			{Type: providers.EventContentDelta, Content: "final answer"},

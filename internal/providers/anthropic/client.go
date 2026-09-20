@@ -291,7 +291,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	if resp.StopReason == "max_tokens" {
 		resp.Truncated = true
 	}
-	resp.FinishReason = providers.NormalizeFinishReason(resp.StopReason, resp.Truncated, len(toolCalls) > 0)
+	resp.FinishReason = anthropicFinishReason(resp.StopReason, resp.Truncated, len(toolCalls) > 0)
 	if parsed.Usage != nil {
 		resp.Usage = &providers.TokenUsage{
 			InputTokens:         parsed.Usage.InputTokens,
@@ -1278,7 +1278,7 @@ func (c *Client) handleSSEEvent(
 			Type:         providers.EventDone,
 			Usage:        terminalUsage,
 			StopReason:   *stopReason,
-			FinishReason: providers.NormalizeFinishReason(*stopReason, truncated, false),
+			FinishReason: anthropicFinishReason(*stopReason, truncated, false),
 			Truncated:    truncated,
 		})
 		return true
@@ -1686,6 +1686,13 @@ type anthropicTool struct {
 	InputSchema  map[string]any         `json:"input_schema"`
 	DeferLoading bool                   `json:"defer_loading,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+func anthropicFinishReason(stopReason string, truncated, hasToolCalls bool) providers.FinishReason {
+	if strings.EqualFold(strings.TrimSpace(stopReason), "pause_turn") && !truncated && !hasToolCalls {
+		return providers.FinishReasonContinue
+	}
+	return providers.NormalizeFinishReason(stopReason, truncated, hasToolCalls)
 }
 
 type anthropicResponse struct {

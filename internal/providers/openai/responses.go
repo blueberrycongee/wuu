@@ -970,7 +970,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 
 		case "response.completed", "response.done", "response.incomplete":
 			pending.emitEnds(emit)
-			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall)
+			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall, event.Type)
 			lease.SucceedWithUsage(usage)
 			emit.Send(providers.StreamEvent{
 				Type:              providers.EventDone,
@@ -1058,7 +1058,7 @@ func responsesInferredFinalAnswerDoneEvent() providers.StreamEvent {
 	}
 }
 
-func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool) (*providers.TokenUsage, string, providers.FinishReason, bool) {
+func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool, eventType string) (*providers.TokenUsage, string, providers.FinishReason, bool) {
 	if resp == nil {
 		if sawToolCall {
 			return nil, "tool_calls", providers.FinishReasonToolCalls, false
@@ -1068,6 +1068,9 @@ func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool) (*provider
 
 	usage := resp.Usage.asTokenUsage()
 	stopReason := strings.ToLower(strings.TrimSpace(resp.Status))
+	if stopReason == "" && eventType == "response.completed" {
+		stopReason = "completed"
+	}
 	truncated := false
 	if resp.IncompleteDetails != nil && strings.TrimSpace(resp.IncompleteDetails.Reason) != "" {
 		stopReason = strings.ToLower(strings.TrimSpace(resp.IncompleteDetails.Reason))
@@ -1076,7 +1079,15 @@ func responsesDoneMetadata(resp *responsesResponse, sawToolCall bool) (*provider
 	if sawToolCall && !truncated {
 		stopReason = "tool_calls"
 	}
-	return usage, stopReason, providers.NormalizeFinishReason(stopReason, truncated, sawToolCall), truncated
+	finishReason := providers.NormalizeFinishReason(stopReason, truncated, sawToolCall)
+	// end_turn is an optional Responses extension, not a Chat Completions
+	// finish_reason. Missing/null must not turn ordinary BYOK completions into
+	// extra billable requests. Incomplete/error evidence always wins over it.
+	if stopReason == "completed" && eventType != "response.incomplete" &&
+		resp.Error == nil && resp.IncompleteDetails == nil && resp.EndTurn != nil && !*resp.EndTurn {
+		finishReason = providers.FinishReasonContinue
+	}
+	return usage, stopReason, finishReason, truncated
 }
 
 type responsesPendingTool struct {
@@ -1403,6 +1414,7 @@ type responsesToolDefinition struct {
 type responsesResponse struct {
 	ID                string                      `json:"id,omitempty"`
 	Status            string                      `json:"status"`
+	EndTurn           *bool                       `json:"end_turn,omitempty"`
 	Output            []responsesOutputItem       `json:"output"`
 	Usage             *responsesUsage             `json:"usage,omitempty"`
 	Error             *responsesError             `json:"error,omitempty"`
@@ -1457,16 +1469,7 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 		}
 	}
 
-	stopReason := strings.ToLower(strings.TrimSpace(r.Status))
-	truncated := false
-	if r.IncompleteDetails != nil && strings.TrimSpace(r.IncompleteDetails.Reason) != "" {
-		stopReason = strings.ToLower(strings.TrimSpace(r.IncompleteDetails.Reason))
-		truncated = stopReason == "max_output_tokens"
-	}
-	if len(calls) > 0 && !truncated {
-		stopReason = "tool_calls"
-	}
-	finishReason := providers.NormalizeFinishReason(stopReason, truncated, len(calls) > 0)
+	usage, stopReason, finishReason, truncated := responsesDoneMetadata(&r, len(calls) > 0, "")
 
 	return providers.ChatResponse{
 		Content:           strings.Join(contentParts, "\n"),
@@ -1475,7 +1478,7 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 		ProviderItemModel: model,
 		ReasoningBlocks:   reasoningBlocks,
 		ToolCalls:         calls,
-		Usage:             r.Usage.asTokenUsage(),
+		Usage:             usage,
 		StopReason:        stopReason,
 		FinishReason:      finishReason,
 		Truncated:         truncated,
