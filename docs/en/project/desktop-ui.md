@@ -35,7 +35,7 @@ Public plugin theme tokens are a smaller contract than all internal CSS variable
 
 ## Background images
 
-Preview the global background with `/dev/three-pane/?background`; omit `background` to check the same image across the three panes. Import and processed images stay in the local desktop profile, and raster work runs in a worker rather than during layout. Only main canvases reveal the image; menus, inputs, editors, and overlapping drawers retain their theme surfaces.
+Preview the global background with `/dev/three-pane/?background`; omit `background` to check the same image across the three panes, and add `empty` to check the empty-session canvas and the dock strip under the composer. Import and processed images stay in the local desktop profile, and raster work runs in a worker rather than during layout. Only main canvases reveal the image; menus, inputs, editors, and overlapping drawers retain their theme surfaces.
 
 Plugin page roots should leave the canvas to their host instead of painting another opaque canvas. This lets primary, settings, and workspace pages share the wallpaper while overlay and auxiliary hosts retain their solid surfaces. Preview the real Automation plugin with `/dev/automation/?region=primary`; `workspace`, `settings`, `overlay`, and `auxiliary` exercise the other containers.
 

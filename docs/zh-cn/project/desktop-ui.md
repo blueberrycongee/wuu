@@ -35,7 +35,7 @@ npm --prefix desktop run dev:onboarding
 
 ## 背景图片
 
-通过 `/dev/three-pane/?background` 预览全局背景；去掉 `background` 参数可检查同一张图片在三栏中的呈现。导入与处理后的图片保留在本地桌面 profile，栅格处理在线程中完成，不随布局变化重复执行。只有主画布透出图片；菜单、输入框、编辑器和覆盖式抽屉保留主题底色。
+通过 `/dev/three-pane/?background` 预览全局背景；去掉 `background` 参数可检查同一张图片在三栏中的呈现，加上 `empty` 参数可检查空会话画布与输入框下方的底部纸带。导入与处理后的图片保留在本地桌面 profile，栅格处理在线程中完成，不随布局变化重复执行。只有主画布透出图片；菜单、输入框、编辑器和覆盖式抽屉保留主题底色。
 
 插件页面根节点应由宿主提供画布，不要重复铺不透明底色。这样主页面、设置页和工作区页面可以共享壁纸，覆盖式视图和辅助视图仍由宿主保留实色底。通过 `/dev/automation/?region=primary` 预览真实自动化插件；`workspace`、`settings`、`overlay` 和 `auxiliary` 可检查其他容器。
 
