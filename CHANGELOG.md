@@ -159,6 +159,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep settings save and provider-removal failures in Settings instead of the
+  conversation composer, and preserve conversation progress and errors after
+  successful settings changes.
+
 - Honor explicit model selections when resuming or forking `wuu exec` sessions.
   Preserve the busy-session exit code when a resume includes a model selection.
   Include stdin in CLI deadlines, settle runs on SIGTERM and disconnected output,

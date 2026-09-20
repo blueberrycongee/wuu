@@ -1010,6 +1010,42 @@ describe("SettingsView advanced settings", () => {
 });
 
 describe("SettingsView general settings", () => {
+  it("shows a rejected attribution save locally and allows retry without changing the switch", async () => {
+    installBuildInfoStub({
+      core: undefined,
+      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
+    });
+    const failure = new Error("settings write rejected");
+    let rejectSave!: (error: Error) => void;
+    const pendingSave = new Promise<void>((_resolve, reject) => { rejectSave = reject; });
+    const onGeneralSave = vi.fn()
+      .mockReturnValueOnce(pendingSave)
+      .mockResolvedValue(undefined);
+    renderSettings({
+      initialized: baseInitialized({
+        general_settings: { git_attribution_enabled: true, mcp_server_enabled: {} },
+      }),
+      initialPage: "general",
+      onGeneralSave,
+    });
+    const attributionSwitch = container.querySelector<HTMLButtonElement>(
+      '[data-testid="settings-git-attribution"]',
+    )!;
+
+    await act(async () => { attributionSwitch.click(); });
+    expect(attributionSwitch.disabled).toBe(true);
+    await act(async () => { rejectSave(failure); });
+
+    expect(container.textContent).toContain(failure.message);
+    expect(attributionSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(attributionSwitch.disabled).toBe(false);
+
+    await act(async () => { attributionSwitch.click(); });
+    expect(container.textContent).not.toContain(failure.message);
+    expect(onGeneralSave).toHaveBeenCalledTimes(2);
+    expect(onGeneralSave).toHaveBeenLastCalledWith({ git_attribution_enabled: false });
+  });
+
   it("loads and toggles WUU Agent commit attribution", async () => {
     installBuildInfoStub({
       core: undefined,
