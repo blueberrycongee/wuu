@@ -858,6 +858,7 @@ func NewSession(opts Options) (*Session, error) {
 	if claudeEnabled {
 		runtimeSession.engines.Register(claudeengine.NewEngine(claudeBinary, rootDir))
 	}
+	runtimeSession.RebuildProtocolEngines(cfg.Engines)
 	if runtimeSession.DefaultEngine != "" && !runtimeSession.EngineAvailable(runtimeSession.DefaultEngine) {
 		runtimeSession.DefaultEngine = agentengine.EngineWuu
 	}

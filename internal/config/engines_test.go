@@ -1,11 +1,64 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestProtocolEngineSettingsMergeAndDisableDefault(t *testing.T) {
+	for _, id := range []string{"cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"} {
+		t.Run(id, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			base := `{"default_provider":"home","providers":{"home":{"type":"openai","base_url":"http://local","model":"m","api_key_env":"K"}},"engines":{"claude":{"binary_path":"preserved"}}}`
+			if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			apply := func(payload string) {
+				t.Helper()
+				var update EnginesSettingsUpdate
+				if err := json.Unmarshal([]byte(payload), &update); err != nil {
+					t.Fatal(err)
+				}
+				if err := UpdateEnginesSettings(path, update); err != nil {
+					t.Fatal(err)
+				}
+			}
+			apply(`{"default_engine":"` + id + `","` + id + `":{"enabled":true,"binary_path":"custom-agent"}}`)
+			cfg, _, err := LoadPath(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Engines.DefaultEngine != id || cfg.Engines.Binary(id) == nil || cfg.Engines.Binary(id).BinaryPath != "custom-agent" {
+				t.Fatalf("engine selection did not survive reload: %+v", cfg.Engines)
+			}
+			apply(`{"` + id + `":{"enabled":false}}`)
+			cfg, _, err = LoadPath(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Engines.DefaultEngine != "" || cfg.Engines.Binary(id).BinaryPath != "custom-agent" || cfg.Engines.Claude.BinaryPath != "preserved" {
+				t.Fatalf("disable lost settings or retained unavailable default: %+v", cfg.Engines)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DefaultProvider != "home" || cfg.Providers["home"].Model != "m" {
+				t.Fatal("unrelated settings lost")
+			}
+			if err := UpdateEnginesSettings(path, EnginesSettingsUpdate{DefaultEngine: &id}); err == nil {
+				t.Fatal("disabled default accepted")
+			}
+			after, _ := os.ReadFile(path)
+			if string(after) != string(before) {
+				t.Fatal("rejected update changed persisted settings")
+			}
+		})
+	}
+}
 
 func TestUpdateEnginesSettingsRoundTrip(t *testing.T) {
 	dir := t.TempDir()

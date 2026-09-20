@@ -1280,6 +1280,9 @@ type ThreadHandoffParams struct {
 // EngineInfo describes one agent engine for the settings surface.
 type EngineInfo struct {
 	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name,omitempty"`
+	Protocol     string   `json:"protocol,omitempty"`
+	InstallURL   string   `json:"install_url,omitempty"`
 	Version      string   `json:"version,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	// Enabled reports whether the engine is registered (settings-driven).
@@ -1312,11 +1315,7 @@ type EngineListResult struct {
 
 // EngineUpdateParams is the engine/update request body. Nil fields are
 // left unchanged.
-type EngineUpdateParams struct {
-	DefaultEngine *string                    `json:"default_engine,omitempty"`
-	Codex         *config.EngineBinaryUpdate `json:"codex,omitempty"`
-	Claude        *config.EngineBinaryUpdate `json:"claude,omitempty"`
-}
+type EngineUpdateParams = config.EnginesSettingsUpdate
 
 type ThreadStartResult struct {
 	Thread Thread `json:"thread"`

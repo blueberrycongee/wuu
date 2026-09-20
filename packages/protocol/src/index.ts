@@ -1406,6 +1406,9 @@ export type ConfigGeneralUpdateResult = {
 /** One agent engine as reported by engine/list for the settings surface. */
 export type EngineInfo = {
   id: string;
+  display_name?: string;
+  protocol?: string;
+  install_url?: string;
   version?: string;
   capabilities?: string[];
   enabled: boolean;
@@ -1436,6 +1439,13 @@ export type EngineSettingsConfig = {
   default_engine?: string;
   codex?: EngineBinarySettings;
   claude?: EngineBinarySettings;
+  cursor?: EngineBinarySettings;
+  devin?: EngineBinarySettings;
+  grok?: EngineBinarySettings;
+  hermes?: EngineBinarySettings;
+  pi?: EngineBinarySettings;
+  opencode?: EngineBinarySettings;
+  antigravity?: EngineBinarySettings;
 };
 
 export type EngineListResult = {
@@ -1444,11 +1454,7 @@ export type EngineListResult = {
 };
 
 /** engine/update request body. Nil fields are left unchanged. */
-export type EngineUpdateParams = {
-  default_engine?: string;
-  codex?: EngineBinarySettings;
-  claude?: EngineBinarySettings;
-};
+export type EngineUpdateParams = EngineSettingsConfig;
 
 export type CodexModelSummary = {
   slug: string;
