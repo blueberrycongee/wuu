@@ -44,6 +44,17 @@ function inventory(overrides?: Partial<EngineListResult>): EngineListResult {
 }
 
 describe("draft engine memory", () => {
+  it("uses the live inventory for protocol engines and drops stale model overrides when the agent owns its catalog", () => {
+    const live = inventory({ engines: [{ id: "devin", enabled: true, binary_ok: true }] });
+    writeDraftEngineMemory({ engine: "devin", model: "stale-model", effort: "high" });
+    expect(resolveDraftEngineMemory(live)).toEqual({ engine: "devin", model: "", effort: "" });
+    expect(rememberedEngineRuntime("devin", live)).toEqual({ model: "", effort: "" });
+    live.engines[0].enabled = false;
+    expect(resolveDraftEngineMemory(live)).toBeUndefined();
+    live.engines[0].enabled = true;
+    expect(resolveDraftEngineMemory(live)?.engine).toBe("devin");
+  });
+
   it("restores the engine, model and effort last picked in the composer", () => {
     writeDraftEngineMemory({
       engine: "codex",

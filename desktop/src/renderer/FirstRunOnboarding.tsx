@@ -10,6 +10,7 @@ import type {
   RuntimeConnectionUpdate,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { engineLabel } from "./EngineDisplay";
 import { ONBOARDING_ENGINES, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { PREVIEW_PLUGINS } from "./onboardingPreview";
@@ -133,11 +134,16 @@ export function FirstRunOnboarding({
     return ids;
   }, [bundledPlugins, selectedPluginIDs]);
   const selectableEngines = useMemo(
-    () => ONBOARDING_ENGINES.flatMap((choice) => {
-      if (choice.id === "wuu") return [{ ...choice, ready: true }];
-      const engine = engines?.engines.find((item) => item.id === choice.id);
-      return engine ? [{ ...choice, ready: engine.enabled && engine.binary_ok }] : [];
-    }),
+    () => [
+      { ...ONBOARDING_ENGINES[0], ready: true },
+      ...(engines?.engines ?? []).filter((engine) => engine.id !== "wuu").map((engine) => ({
+        id: engine.id,
+        label: engineLabel(engine.id, engine),
+        ready: engine.enabled && engine.binary_ok,
+        readyDescription: ONBOARDING_ENGINES.find((choice) => choice.id === engine.id)?.readyDescription ?? "settings.engineReady" as const,
+        missingDescription: engine.binary_ok ? "settings.engineDisabled" as const : "settings.engineNotInstalled" as const,
+      })),
+    ],
     [engines],
   );
 

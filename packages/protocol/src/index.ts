@@ -2411,7 +2411,7 @@ export type StreamEventPayload = {
 
 export type ExternalAgentActivity = {
   id: string;
-  engine: "codex" | "claude";
+  engine: string;
   label: string;
   state: "queued" | "running" | "waiting" | "failed" | "completed";
 };
