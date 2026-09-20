@@ -55,8 +55,10 @@ async function select(win, index, value) {
   await waitFor(win, `document.querySelector(${JSON.stringify(option)})`);
   await evaluate(win, `document.querySelector(${JSON.stringify(option)}).click();`);
 }
-function average(image, rect) {
-  const pixels = image.crop(rect).toBitmap();
+function average(image, rect, viewportWidth) {
+  // capturePage may return physical pixels even when its scale factor is 1.
+  const scale = image.getSize().width / viewportWidth;
+  const pixels = image.crop(Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, Math.round(value * scale)]))).toBitmap();
   const result = [0, 0, 0];
   for (let i = 0; i < pixels.length; i += 4) for (let c = 0; c < 3; c++) result[c] += pixels[i + c];
   return result.map(value => value / (pixels.length / 4));
@@ -104,7 +106,7 @@ app.whenReady().then(async () => {
     return { x: Math.round(rect.x + 10), y: Math.round(rect.bottom - 80), width: 12, height: 12 };
   });`);
   for (const [i, region] of regions.entries()) {
-    const before = average(baseline, region), after = average(rendered, region);
+    const before = average(baseline, region, win.getContentSize()[0]), after = average(rendered, region, win.getContentSize()[0]);
     assert(before.some((value, c) => Math.abs(value - after[c]) > 3), `Background must be visible in pane ${i}`);
   }
   const saved = await evaluate(win, `const { readBackground } = ${preferences}; const p = await readBackground(); return { id: p.imageID, size: p.image.size };`);
@@ -163,12 +165,33 @@ app.whenReady().then(async () => {
     assert.deepEqual(menu, { visible: true, reachable: true });
     fs.writeFileSync(path.join(output, `${theme}-settings-menu.png`), (await win.webContents.capturePage()).toPNG());
   }
+  // Render the real plugin through both workbench portals and embedded views.
+  // Only hide the image between captures, so differences prove it is visible
+  // through every nested canvas rather than just checking computed CSS.
+  for (const theme of ["light", "dark"]) for (const region of ["primary", "workspace", "settings", "overlay", "auxiliary"]) {
+    await win.loadURL(`${origin}/dev/automation/?theme=${theme}&font=20&region=${region}`);
+    await waitFor(win, `document.querySelectorAll('.plugin-automation-list .plugin-automation-item').length === 2 && document.documentElement.hasAttribute('data-app-background')`);
+    await settle(win);
+    const sample = await evaluate(win, `const r = document.querySelector('.plugin-automation-main').getBoundingClientRect();
+      return { x: Math.round(r.left + 16), y: Math.round(r.bottom - 24), width: 8, height: 8 };`);
+    const visible = await win.webContents.capturePage();
+    await evaluate(win, `document.querySelector('.app-background').style.visibility = 'hidden';`);
+    await settle(win);
+    const hidden = await win.webContents.capturePage();
+    const before = average(hidden, sample, win.getContentSize()[0]), after = average(visible, sample, win.getContentSize()[0]);
+    const difference = Math.max(...before.map((value, c) => Math.abs(value - after[c])));
+    if (region === "overlay" || region === "auxiliary") assert(difference < 1, `${region} must retain an opaque surface`);
+    else assert(difference > 3, `Wallpaper must be visible inside the ${region} plugin page (${theme}); pixel difference: ${difference}`);
+    await evaluate(win, `document.querySelector('.app-background').style.visibility = '';`);
+    await settle(win);
+    fs.writeFileSync(path.join(output, `${theme}-plugin-${region}.png`), (await win.webContents.capturePage()).toPNG());
+  }
   await evaluate(win, `const { updateBackground } = ${preferences}; await updateBackground(() => null);`);
   await waitFor(second, `!document.documentElement.hasAttribute('data-app-background')`);
   await win.loadURL(fixture);
   await waitFor(win, `document.querySelector('input[type=file]') && !document.querySelector('input[type=file]').disabled`);
   assert.equal(await evaluate(win, `const { readBackground } = ${preferences}; return await readBackground();`), null);
-  console.log("PASS: bundled worker/CSP/resizing, import, invalid input, write rollback, effect/strength controls, reload, multi-window sync/removal, three-pane pixels, menu hit tests, 10 render captures");
+  console.log("PASS: bundled worker/CSP/resizing, import, invalid input, write rollback, effect/strength controls, reload, multi-window sync/removal, three-pane and plugin pixels, opaque overlays, menu hit tests, 20 render captures");
   windows.forEach(window => window.destroy());
   app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });

@@ -37,7 +37,9 @@ npm --prefix desktop run dev:onboarding
 
 通过 `/dev/three-pane/?background` 预览全局背景；去掉 `background` 参数可检查同一张图片在三栏中的呈现。导入与处理后的图片保留在本地桌面 profile，栅格处理在线程中完成，不随布局变化重复执行。只有主画布透出图片；菜单、输入框、编辑器和覆盖式抽屉保留主题底色。
 
-在端口 5189 启动 Vite 后，运行 `npm --prefix desktop run test:e2e:background-image`（其他端口可设置 `WUU_FIXTURE_ORIGIN`）。它使用隔离 profile 检查导入失败、事务回滚、图片效果、持久化、跨窗口更新，以及生产 CSP 下的打包线程，同时将浅深色、默认与大字号、宽窄窗口截图写入 `artifacts/background-image/`。截图需要另外审阅；像素和几何检查不代表视觉验收通过。
+插件页面根节点应由宿主提供画布，不要重复铺不透明底色。这样主页面、设置页和工作区页面可以共享壁纸，覆盖式视图和辅助视图仍由宿主保留实色底。通过 `/dev/automation/?region=primary` 预览真实自动化插件；`workspace`、`settings`、`overlay` 和 `auxiliary` 可检查其他容器。
+
+在端口 5189 启动 Vite 后，运行 `npm --prefix desktop run test:e2e:background-image`（其他端口可设置 `WUU_FIXTURE_ORIGIN`）。它使用隔离 profile 检查导入失败、事务回滚、图片效果、持久化、跨窗口更新，以及生产 CSP 下的打包线程。实际渲染像素检查覆盖上述容器中的真实插件，包括覆盖式视图保留实色底，同时将浅深色、默认与大字号、宽窄窗口截图写入 `artifacts/background-image/`。截图需要另外审阅；像素和几何检查不代表视觉验收通过。
 
 ## 侧栏折叠区
 

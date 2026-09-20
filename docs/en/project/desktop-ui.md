@@ -37,7 +37,9 @@ Public plugin theme tokens are a smaller contract than all internal CSS variable
 
 Preview the global background with `/dev/three-pane/?background`; omit `background` to check the same image across the three panes. Import and processed images stay in the local desktop profile, and raster work runs in a worker rather than during layout. Only main canvases reveal the image; menus, inputs, editors, and overlapping drawers retain their theme surfaces.
 
-With Vite running on port 5189, run `npm --prefix desktop run test:e2e:background-image` (or set `WUU_FIXTURE_ORIGIN` for another port). It uses an isolated profile to check import failures, transaction rollback, effects, persistence, cross-window updates, and the bundled worker under the production CSP. It also captures light/dark, default/large-font, wide/narrow previews in `artifacts/background-image/`. Review those captures separately; pixel and geometry checks do not establish visual acceptance.
+Plugin page roots should leave the canvas to their host instead of painting another opaque canvas. This lets primary, settings, and workspace pages share the wallpaper while overlay and auxiliary hosts retain their solid surfaces. Preview the real Automation plugin with `/dev/automation/?region=primary`; `workspace`, `settings`, `overlay`, and `auxiliary` exercise the other containers.
+
+With Vite running on port 5189, run `npm --prefix desktop run test:e2e:background-image` (or set `WUU_FIXTURE_ORIGIN` for another port). It uses an isolated profile to check import failures, transaction rollback, effects, persistence, cross-window updates, and the bundled worker under the production CSP. Rendered pixel checks cover the real plugin across those containers, including opaque overlays. It also captures light/dark, default/large-font, wide/narrow previews in `artifacts/background-image/`. Review those captures separately; pixel and geometry checks do not establish visual acceptance.
 
 ## Sidebar folds
 

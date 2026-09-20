@@ -168,6 +168,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reveal desktop wallpaper through the Automation plugin and embedded workspace
+  plugin pages, while keeping overlapping plugin views opaque.
+
 - Allow saving Agent commit attribution while conversations run, applying it to
   active conversations after their work settles. Keep settings-row errors below
   controls so long messages do not squeeze labels into a narrow column.
