@@ -1,7 +1,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
+import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
+import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
 import type { ThreadItem, Turn } from "../shared/protocol";
 const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
 vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
@@ -16,6 +17,61 @@ function presentedImage(id: string, hash: string, name = "chart.svg"): ThreadIte
     artifact: { ref: id, sha256: hash, placement: "inline", size_bytes: 100 },
   }] } };
 }
+
+it("routes a delivered file card using its source thread rather than the active conversation", async () => {
+  const artifact = { ...collectTurnArtifacts({ items: [presentedImage("file", "snapshot")] } as Turn)[0], type: "file" as const, placement: "turn_end" as const, mimeType: "text/html" };
+  const open = vi.fn();
+  const container = document.createElement("div"), root = createRoot(container);
+  try {
+    await act(async () => root.render(
+      <ArtifactPreviewContext.Provider value={open}>
+        <ArtifactThreadContext.Provider value="source-thread">
+          <TurnEndArtifactOutputs artifacts={[artifact]} cwd="source-workspace" />
+        </ArtifactThreadContext.Provider>
+      </ArtifactPreviewContext.Provider>,
+    ));
+    await act(async () => container.querySelector("button")!.click());
+    expect(open).toHaveBeenCalledWith({ threadID: "source-thread", cwd: "source-workspace", artifact });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  } finally { act(() => root.unmount()); }
+});
+
+it("previews HTML in a non-modal sandbox without moving focus or downloading", async () => {
+  const artifact = { ...collectTurnArtifacts({ items: [presentedImage("html", "snapshot")] } as Turn)[0], mimeType: "text/html" };
+  const container = document.createElement("div"), root = createRoot(container);
+  const composer = document.createElement("textarea");
+  document.body.append(composer, container);
+  composer.focus();
+  const previous = window.wuu;
+  const save = vi.fn().mockResolvedValue(undefined);
+  window.wuu = { saveArtifactFile: save } as unknown as typeof window.wuu;
+  try {
+    await act(async () => root.render(<ArtifactPreview artifact={artifact} mode="panel" onClose={() => {}} />));
+    expect(document.activeElement).toBe(composer);
+    const iframe = container.querySelector("iframe")!;
+    expect(iframe.getAttribute("sandbox")).toBe("");
+    expect(iframe.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => container.querySelector("button")!.click());
+    expect(save).toHaveBeenCalledWith(artifact.name, artifact.uri);
+  } finally { act(() => root.unmount()); container.remove(); composer.remove(); window.wuu = previous; }
+});
+
+it("loads managed text content and reports an oversized preview without losing download access", async () => {
+  const artifact = { ...collectTurnArtifacts({ items: [presentedImage("text", "snapshot")] } as Turn)[0], mimeType: "text/plain" };
+  const fetchMock = vi.fn().mockResolvedValueOnce(new Response("Delivered text"))
+    .mockResolvedValueOnce(new Response("x".repeat(2 * 1024 * 1024 + 1)));
+  vi.stubGlobal("fetch", fetchMock);
+  const container = document.createElement("div"), root = createRoot(container);
+  try {
+    await act(async () => root.render(<ArtifactPreview artifact={artifact} mode="panel" onClose={() => {}} />));
+    expect(container.querySelector("pre")?.textContent).toBe("Delivered text");
+    await act(async () => root.render(<ArtifactPreview key="large" artifact={{ ...artifact, uri: `${artifact.uri}&revision=large` }} mode="panel" onClose={() => {}} />));
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.textContent).toContain("artifacts.previewUnavailable");
+    expect(container.querySelector('[aria-label="artifacts.downloadNamed"]')).not.toBeNull();
+  } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
+});
 
 it("deduplicates identical published snapshots per turn without hiding new versions or other named outputs", () => {
   const first = presentedImage("first", "old");

@@ -254,6 +254,8 @@ import { WorkspaceDocumentTurnDock } from "./WorkspaceDocumentTurnDock";
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
+import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
 import {
   desktopPluginHost,
   desktopWorkbenchController,
@@ -742,6 +744,7 @@ export function App(): JSX.Element {
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
+    openWorkspaceArtifactTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
@@ -2182,6 +2185,19 @@ export function App(): JSX.Element {
     turns.length === 0 &&
     activeContextCompositionEntries.length === 0;
 
+  useArtifactAutoPreview({
+    thread: activeThread,
+    enabled: Boolean(state.initialized) && appMode === "harness"
+      && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
+      && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
+      && !workspaceRightPanelAutoGlobalized
+      && activeBrowserActivity?.state !== "foreground_controlled"
+      && activeBrowserActivity?.state !== "user_controlled",
+    panelOpen: rightPanelOpen,
+    activeTabID: workspaceActiveViewTabID,
+    onOpen: openWorkspaceArtifactTab,
+  });
+
   // Past user queries for the input-box hover popover. We collect them
   // in turn order, oldest first, so the popover mirrors the order in
   // which the user asked them. Empty / handoff / image-only items are
@@ -2210,23 +2226,24 @@ export function App(): JSX.Element {
     mainConversationDockVisible && appMode === "harness" && !poppedOutMode;
 
   useEffect(() => {
-    // Diff tabs are scoped to the thread whose turn they came from: they
-    // don't make sense to keep browsing once we've navigated away from
-    // that thread (or away from the conversation view entirely), so prune
-    // them eagerly instead of leaving stale diffs sitting in the tab strip.
-    const isStaleDiffTab = (tab: WorkspaceViewTab): boolean =>
-      tab.kind === "diff" &&
-      (!activeThreadID ||
-        tab.threadID !== activeThreadID ||
-        showingManagementCatalog ||
-        emptyConversation);
-    if (!workspaceViewTabs.some(isStaleDiffTab)) {
+    // Delivered snapshots may belong to either visible conversation pane.
+    // Closing them on navigation also releases viewer resources.
+    const isStaleTurnTab = (tab: WorkspaceViewTab): boolean => {
+      if (tab.kind === "artifact") {
+        return showingManagementCatalog || emptyConversation
+          || ![state.thread, state.secondaryThread].some((thread) =>
+            thread?.id === tab.threadID && thread.cwd === tab.cwd);
+      }
+      return tab.kind === "diff" &&
+        (!activeThreadID || tab.threadID !== activeThreadID || showingManagementCatalog || emptyConversation);
+    };
+    if (!workspaceViewTabs.some(isStaleTurnTab)) {
       return;
     }
     const activeTab = workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID);
-    const closingActiveDiffTab = Boolean(activeTab && isStaleDiffTab(activeTab));
-    closeWorkspaceViewTabsWhere(isStaleDiffTab);
-    if (closingActiveDiffTab) {
+    const closingActiveTurnTab = Boolean(activeTab && isStaleTurnTab(activeTab));
+    closeWorkspaceViewTabsWhere(isStaleTurnTab);
+    if (closingActiveTurnTab) {
       setRightPanelOpenWithMotion(false);
     }
   }, [
@@ -2236,6 +2253,8 @@ export function App(): JSX.Element {
     showingManagementCatalog,
     workspaceActiveViewTabID,
     workspaceViewTabs,
+    state.thread,
+    state.secondaryThread,
   ]);
 
   const [statusClusterNode, statusClusterRef] = useState<HTMLDivElement | null>(null);
@@ -5073,6 +5092,7 @@ export function App(): JSX.Element {
       {archiveTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
+      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
           ref={appShellRef}
           className={shellClassName}
@@ -5953,6 +5973,7 @@ export function App(): JSX.Element {
         }}
       />
       </div>
+    </ArtifactPreviewContext.Provider>
     </ImagePreviewProvider>
     </WuuMascotRuntimeProvider>
   );
