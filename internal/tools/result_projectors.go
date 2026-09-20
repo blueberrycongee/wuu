@@ -269,6 +269,12 @@ func projectReadFileResult(rawText string, pc projectorContext) (string, project
 	if !ok {
 		return "", projectionOmission{}, false
 	}
+	// Byte recovery pages already have a bounded payload and a cursor covering
+	// the remaining artifact segment. Reinterpreting them as numbered lines can
+	// replace that cursor or falsely declare the segment complete.
+	if m["action"] != "read" {
+		return "", projectionOmission{}, false
+	}
 	content, ok := m["content"].(string)
 	if !ok {
 		return "", projectionOmission{}, false
