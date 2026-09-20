@@ -17,6 +17,7 @@
             "zh-cn/getting-started/index.md",
             "zh-cn/getting-started/installation.md",
             "zh-cn/getting-started/model-services.md",
+            "zh-cn/getting-started/external-engines.md",
             "zh-cn/getting-started/first-task.md"
           ]
         },
@@ -106,6 +107,7 @@
             "en/getting-started/index.md",
             "en/getting-started/installation.md",
             "en/getting-started/model-services.md",
+            "en/getting-started/external-engines.md",
             "en/getting-started/first-task.md"
           ]
         },
