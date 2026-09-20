@@ -3,6 +3,8 @@
 // our own blobatar identity layout (wuu-mascot-spec.ts). Icons render in
 // currentColor so they follow the surrounding text color, same as lucide.
 
+import { Terminal } from "lucide-react";
+
 export const ENGINE_ICON_PATHS: Record<string, string> = {
   // The Codex CLI has no standalone mark; it reuses the OpenAI knot.
   codex:
@@ -28,7 +30,7 @@ export function EngineIcon({
 }): JSX.Element | null {
   const path = ENGINE_ICON_PATHS[engine];
   if (!path) {
-    return null;
+    return <Terminal className={className} aria-hidden="true" />;
   }
   return (
     <svg

@@ -80,6 +80,15 @@ func (s *Server) handleThreadStart(req Request) error {
 		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))
 	}
 	selection := s.currentSessionRuntimeSelection()
+	if engineID != agentengine.EngineWuu {
+		// Protocol engines do not share Wuu's provider catalog or effort
+		// surface. Empty model/effort means the agent's native default, not
+		// the current Wuu conversation's selection.
+		selection.Provider = string(engineID)
+		selection.Model = ""
+		selection.Variant = ""
+		selection.Effort = ""
+	}
 	if model := strings.TrimSpace(params.Model); model != "" {
 		selection.Model = model
 	}
@@ -98,9 +107,6 @@ func (s *Server) handleThreadStart(req Request) error {
 			// display and execution read the effort column first.
 			selection.Variant = ""
 		}
-	}
-	if engineID != agentengine.EngineWuu {
-		selection.Provider = string(engineID)
 	}
 	if provider := strings.TrimSpace(params.Provider); provider != "" {
 		selection.Provider = provider
@@ -144,10 +150,10 @@ func (s *Server) handleThreadStart(req Request) error {
 		if err := session.WritePluginGenerationSnapshot(s.rt.SessionDir, id, s.rt.PluginGenerationSnapshot()); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, id, selection); err != nil {
+		if _, err := session.SetEngine(s.rt.SessionDir, id, string(engineID)); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if _, err := session.SetEngine(s.rt.SessionDir, id, string(engineID)); err != nil {
+		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, id, selection); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		// Bind project threads to the active workspace's stable id so their

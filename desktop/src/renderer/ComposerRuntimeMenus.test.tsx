@@ -238,6 +238,26 @@ describe("RuntimePicker", () => {
     expect(onSelectEngine).toHaveBeenCalledWith("wuu");
   });
 
+  it("offers installed protocol engines and retains an unavailable active binding without leaking Wuu models", () => {
+    const onSelectEngine = vi.fn();
+    renderPicker("model", runtimeWithEffort(), vi.fn(), vi.fn(), vi.fn(), createRef(), {
+      activeEngine: "devin",
+      engines: [
+        { id: "devin", display_name: "Devin", enabled: false, binary_ok: false },
+        { id: "hermes", display_name: "Hermes", enabled: true, binary_ok: true },
+        { id: "grok", enabled: false, binary_ok: false },
+      ],
+      onSelectEngine,
+    });
+    expect(document.querySelector('.codex-runtime-menu')!.textContent).not.toContain("Claude Sonnet");
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-context button")!.click());
+    const choices = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    expect(choices.find((choice) => choice.getAttribute("aria-checked") === "true")!.textContent).toContain("Devin");
+    expect(choices.some((choice) => choice.textContent?.includes("grok"))).toBe(false);
+    act(() => choices.find((choice) => choice.textContent?.includes("Hermes"))!.click());
+    expect(onSelectEngine).toHaveBeenCalledExactlyOnceWith("hermes");
+  });
+
   it("keeps every engine visible when the current conversation locks engine switching", () => {
     renderPicker(
       "model",

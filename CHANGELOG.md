@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Added Cursor, Devin, Grok, Hermes, Pi, OpenCode, and Antigravity external
+  engines, with executable detection, per-engine settings, session recovery,
+  native permission handling, and explicit cancellable ACP sign-in.
+
 - Drag the Collaboration sidebar heading to reorder it alongside Pinned,
   Folders, and Workspace, with the order preserved across restarts.
 

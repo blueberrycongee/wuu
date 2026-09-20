@@ -773,6 +773,7 @@
 }
 
 .settings-engine-row-name {
+  flex-shrink: 0;
   color: var(--ink);
   font-weight: var(--weight-medium);
 }
@@ -816,14 +817,44 @@
 
 /* Indent aligns the override controls with the row content past the radio. */
 .settings-engine-advanced {
-  display: flex;
-  align-items: center;
+  display: grid;
+  justify-items: start;
   gap: 12px;
   padding: 0 0 12px 24px;
 }
 
+.settings-engine-path-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
 .settings-engine-advanced .settings-input {
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-engine-detail {
+  overflow-wrap: anywhere;
+}
+
+.settings-engine-auth {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-engine-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-engine-auth-actions .settings-button {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* Brand mark sitting next to an agent name; currentColor keeps it monochrome. */

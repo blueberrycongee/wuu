@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 )
 
 const codexEngineModelCatalogTTL = 6 * time.Hour
@@ -53,12 +54,7 @@ func (s *Server) handleEngineUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	update := config.EnginesSettingsUpdate{
-		DefaultEngine: params.DefaultEngine,
-		Codex:         params.Codex,
-		Claude:        params.Claude,
-	}
-	if err := config.UpdateEnginesSettings(s.rt.ConfigPath, update); err != nil {
+	if err := config.UpdateEnginesSettings(s.rt.ConfigPath, params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.applyEngineSettingsToRuntime()
@@ -88,10 +84,15 @@ func (s *Server) engineInventory() []EngineInfo {
 			descriptors[desc.ID] = desc
 		}
 	}
-	for _, id := range []agentengine.EngineID{"codex", "claude"} {
+	settings := s.engineSettingsFromConfig()
+	for _, entry := range enginecatalog.Entries() {
+		id := agentengine.EngineID(entry.ID)
 		desc := descriptors[id]
 		info := EngineInfo{
 			ID:           string(id),
+			DisplayName:  entry.Name,
+			Protocol:     entry.Protocol,
+			InstallURL:   entry.InstallURL,
 			Version:      desc.Version,
 			Capabilities: append([]string(nil), desc.Capabilities...),
 			Enabled:      s.rt.EngineAvailable(id),
@@ -116,6 +117,14 @@ func (s *Server) engineInventory() []EngineInfo {
 			if info.Enabled && info.BinaryOK {
 				info.Models = claudeEngineModels()
 			}
+		default:
+			override := ""
+			if setting := settings.Binary(entry.ID); setting != nil {
+				override = setting.BinaryPath
+			}
+			path, err := entry.Resolve(override)
+			info.BinaryPath = path
+			info.BinaryOK, info.Error = binaryStatus(path, err)
 		}
 		out = append(out, info)
 	}
@@ -275,6 +284,7 @@ func (s *Server) applyEngineSettingsToRuntime() {
 	}
 	s.rt.RebuildCodexEngine(codexEnabled, codexBinary)
 	s.rt.RebuildClaudeEngine(claudeEnabled, claudeBinary)
+	s.rt.RebuildProtocolEngines(cfg.Engines)
 	if !s.rt.EngineAvailable(defaultEngine) {
 		defaultEngine = agentengine.EngineWuu
 	}

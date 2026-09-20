@@ -1406,6 +1406,9 @@ export type ConfigGeneralUpdateResult = {
 /** One agent engine as reported by engine/list for the settings surface. */
 export type EngineInfo = {
   id: string;
+  display_name?: string;
+  protocol?: string;
+  install_url?: string;
   version?: string;
   capabilities?: string[];
   enabled: boolean;
@@ -1436,6 +1439,13 @@ export type EngineSettingsConfig = {
   default_engine?: string;
   codex?: EngineBinarySettings;
   claude?: EngineBinarySettings;
+  cursor?: EngineBinarySettings;
+  devin?: EngineBinarySettings;
+  grok?: EngineBinarySettings;
+  hermes?: EngineBinarySettings;
+  pi?: EngineBinarySettings;
+  opencode?: EngineBinarySettings;
+  antigravity?: EngineBinarySettings;
 };
 
 export type EngineListResult = {
@@ -1444,10 +1454,16 @@ export type EngineListResult = {
 };
 
 /** engine/update request body. Nil fields are left unchanged. */
-export type EngineUpdateParams = {
-  default_engine?: string;
-  codex?: EngineBinarySettings;
-  claude?: EngineBinarySettings;
+export type EngineUpdateParams = EngineSettingsConfig;
+
+export type EngineAuthParams = {
+  engine_id: string;
+  method_id?: string;
+};
+
+export type EngineAuthResult = {
+  methods: { id: string; name: string; description?: string; type?: string }[];
+  authenticated: boolean;
 };
 
 export type CodexModelSummary = {
@@ -2395,7 +2411,7 @@ export type StreamEventPayload = {
 
 export type ExternalAgentActivity = {
   id: string;
-  engine: "codex" | "claude";
+  engine: string;
   label: string;
   state: "queued" | "running" | "waiting" | "failed" | "completed";
 };
@@ -2912,6 +2928,9 @@ export type WuuDesktopApi = {
   ) => Promise<ConfigGeneralUpdateResult>;
   listEngines: () => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
+  listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
+  authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;
+  cancelEngineAuth: (engineID: string) => Promise<{ ok: boolean }>;
   updateExtensionPackage: (
     params: ExtensionPackageUpdateParams
   ) => Promise<ExtensionPackageUpdateResult>;

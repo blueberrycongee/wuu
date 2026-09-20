@@ -30,6 +30,9 @@ const (
 	MethodConfigGeneralUpdate             = "config/general/update"
 	MethodEngineList                      = "engine/list"
 	MethodEngineUpdate                    = "engine/update"
+	MethodEngineAuthMethods               = "engine/auth/methods"
+	MethodEngineAuthenticate              = "engine/authenticate"
+	MethodEngineAuthCancel                = "engine/auth/cancel"
 	MethodExtensionCatalogRefresh         = "extension/catalog/refresh"
 	MethodExtensionPackageUpdate          = "extension/package/update"
 	MethodPluginPackageInspect            = "plugin/package/inspect"
@@ -1258,7 +1261,9 @@ type ThreadStartParams struct {
 	// fixed at creation.
 	Engine string `json:"engine,omitempty"`
 	// Model and Effort are engine-native runtime options for the new thread.
-	// Empty values inherit the current runtime selection.
+	// Empty values inherit the current Wuu runtime selection for the built-in
+	// engine. Protocol engines treat empty values as the agent's native
+	// default and never inherit Wuu's provider catalog or effort.
 	Model          string `json:"model,omitempty"`
 	Effort         string `json:"effort,omitempty"`
 	PermissionMode string `json:"permission_mode,omitempty"`
@@ -1280,6 +1285,9 @@ type ThreadHandoffParams struct {
 // EngineInfo describes one agent engine for the settings surface.
 type EngineInfo struct {
 	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name,omitempty"`
+	Protocol     string   `json:"protocol,omitempty"`
+	InstallURL   string   `json:"install_url,omitempty"`
 	Version      string   `json:"version,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	// Enabled reports whether the engine is registered (settings-driven).
@@ -1312,11 +1320,7 @@ type EngineListResult struct {
 
 // EngineUpdateParams is the engine/update request body. Nil fields are
 // left unchanged.
-type EngineUpdateParams struct {
-	DefaultEngine *string                    `json:"default_engine,omitempty"`
-	Codex         *config.EngineBinaryUpdate `json:"codex,omitempty"`
-	Claude        *config.EngineBinaryUpdate `json:"claude,omitempty"`
-}
+type EngineUpdateParams = config.EnginesSettingsUpdate
 
 type ThreadStartResult struct {
 	Thread Thread `json:"thread"`

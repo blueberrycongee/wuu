@@ -263,6 +263,9 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:config-general-update", settings),
   listEngines: () => ipcRenderer.invoke("wuu:engines-list"),
   updateEngines: (params) => ipcRenderer.invoke("wuu:engines-update", params),
+  listEngineAuthMethods: (engineID) => ipcRenderer.invoke("wuu:engine-auth-methods", engineID),
+  authenticateEngine: (engineID, methodID) => ipcRenderer.invoke("wuu:engine-authenticate", { engine_id: engineID, method_id: methodID }),
+  cancelEngineAuth: (engineID) => ipcRenderer.invoke("wuu:engine-auth-cancel", engineID),
   updateExtensionPackage: (params) =>
     ipcRenderer.invoke("wuu:extension-package-update", params),
   refreshExtensionCatalog: () =>

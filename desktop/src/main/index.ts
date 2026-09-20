@@ -40,6 +40,8 @@ import type {
   ConfigModelUpdateResult,
   EngineListResult,
   EngineUpdateParams,
+  EngineAuthParams,
+  EngineAuthResult,
   ExtensionCatalogRefreshResult,
   ExtensionPackageUpdateParams,
   ExtensionPackageUpdateResult,
@@ -1681,6 +1683,15 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:engines-update", (event, params: EngineUpdateParams) =>
     appServerRequest<EngineListResult>(event, "engine/update", params ?? {}),
+  );
+  ipcMain.handle("wuu:engine-auth-methods", (event, engineID: string) =>
+    appServerRequest<EngineAuthResult>(event, "engine/auth/methods", { engine_id: engineID }),
+  );
+  ipcMain.handle("wuu:engine-authenticate", (event, params: EngineAuthParams) =>
+    appServerRequest<EngineAuthResult>(event, "engine/authenticate", params),
+  );
+  ipcMain.handle("wuu:engine-auth-cancel", (event, engineID: string) =>
+    appServerRequest<{ ok: boolean }>(event, "engine/auth/cancel", { engine_id: engineID }),
   );
   ipcMain.handle(
     "wuu:extension-package-update",

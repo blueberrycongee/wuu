@@ -275,6 +275,8 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
+	engineAuthMu                 sync.Mutex
+	engineAuthCancels            map[string]context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
@@ -786,6 +788,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
 			s.storageMaintenanceCancel()
 			s.storageMaintenanceCancel = nil
@@ -1092,6 +1095,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return nil
 	case MethodEngineUpdate:
 		return s.handleEngineUpdate(req)
+	case MethodEngineAuthMethods, MethodEngineAuthenticate, MethodEngineAuthCancel:
+		return s.handleEngineAuth(ctx, req)
 	case MethodExtensionCatalogRefresh:
 		return s.handleExtensionCatalogRefresh(req)
 	case MethodExtensionPackageUpdate:

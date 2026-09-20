@@ -13,11 +13,6 @@ import { clearRecentSelections, readRecentSelections, rememberRecentSelection } 
 // parses as one entry.
 const DRAFT_ENGINE_MEMORY_KEY = "wuu.desktop.lastDraftEngine";
 
-// External engines that can be bound at thread creation. Mirrors the composer
-// picker so a value written by a newer build (or hand-edited storage) cannot
-// seed an engine the picker itself would not offer.
-const EXTERNAL_ENGINE_IDS = new Set(["codex", "claude"]);
-
 export type DraftEngineMemory = {
   engine: string;
   // Empty means "use the engine default". The composer already resolves an
@@ -116,7 +111,7 @@ export function rememberedEngineRuntime(
   inventory: EngineListResult | undefined,
 ): { model: string; effort: string } | undefined {
   const id = engineID.trim();
-  if (!EXTERNAL_ENGINE_IDS.has(id)) return undefined;
+  if (!id || id === "wuu") return undefined;
   const memory = recentDraftEngineSelections().find((entry) => entry.engine === id);
   if (!memory) return undefined;
   const engine = engineForMemory(id, inventory);
@@ -128,7 +123,7 @@ function engineForMemory(
   engineID: string,
   inventory: EngineListResult | undefined,
 ): EngineInfo | undefined {
-  if (!EXTERNAL_ENGINE_IDS.has(engineID) || !inventory) return undefined;
+  if (!engineID || engineID === "wuu" || !inventory) return undefined;
   const engine = inventory.engines.find((item) => item.id === engineID);
   if (!engine?.enabled || !engine.binary_ok) return undefined;
   return engine;
@@ -146,7 +141,7 @@ function runtimeWithinCatalog(
 ): { model: string; effort: string } | undefined {
   const models = engine.models ?? [];
   if (models.length === 0) {
-    return { model, effort };
+    return engine.models_error ? { model, effort } : { model: "", effort: "" };
   }
   const rememberedModel = models.find((item) => item.id === model);
   if (!rememberedModel) return undefined;

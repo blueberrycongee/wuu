@@ -179,6 +179,43 @@ Worker/title model roles and context budgets derive from the owning conversation
 and role configuration. Process or call overrides do not mean that an unrelated
 workspace default should be read during execution.
 
+## Engine inventory and authentication
+
+`engine/list` returns `{ engines, settings }`, including missing and disabled
+engines. Each entry has an `id`, `enabled`, and `binary_ok`; optional metadata
+includes `display_name`, `protocol`, `install_url`, `binary_path`, `error`,
+`models`, and `models_error`. `enabled` describes runtime availability, while
+`settings.<id>.enabled` is the persisted opt-in/opt-out preference. Do not infer
+an installed program or authenticated account from the preference alone.
+
+`engine/update` accepts `default_engine` and per-engine objects with `enabled`
+and `binary_path`. Omitted fields remain unchanged. It persists settings, updates
+runtime registration, and returns the same shape as `engine/list`. Discover engine
+IDs from the inventory instead of hardcoding a client allowlist.
+
+ACP sign-in has separate explicit operations:
+
+| Method | Params | Result |
+|---|---|---|
+| `engine/auth/methods` | `engine_id` | `{ methods, authenticated: false }`; starts the agent and initializes ACP, but does not authenticate or create a chat session |
+| `engine/authenticate` | `engine_id`, `method_id` | `{ methods, authenticated: true }` on native authentication success |
+| `engine/auth/cancel` | `engine_id` | `{ ok: true }`; cancels any active authentication operation for that engine |
+
+Each method has `id`, `name`, optional `description`, and optional `type`.
+Only agent-driven methods are returned. Discovery does not report current login
+status. Authentication revalidates the selected method with the launched agent;
+unsupported methods and native failures return request errors. There is one active
+operation per engine per server, with a five-minute limit and a 30-second
+initialization limit. Cancellation and server shutdown clean up the child process;
+clients should wait for the original operation to settle before retrying.
+
+Do not call discovery automatically when rendering settings. The user must
+explicitly request discovery and then authentication, because the installed agent
+owns any browser interaction and credential persistence. These methods do not
+support Codex, Claude Code, or OpenCode; use their native login flows. See
+[external engines](../getting-started/external-engines.md) for installation,
+protocol versions, model selection, and permission boundaries.
+
 ## Notifications
 
 | Family | Client handling |

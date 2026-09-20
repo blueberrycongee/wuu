@@ -60,6 +60,7 @@ import type {
   PermissionMode
 } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
+import { engineLabel } from "./EngineDisplay";
 import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
 import {
   codexEffortOptions,
@@ -77,18 +78,6 @@ import { isTouchWebShell } from "./ComposerFocus";
 
 type ChipTone = "neutral" | "danger";
 
-// Runtime engine display names. Models and effort remain subordinate to the
-// selected engine because each engine owns a different runtime contract.
-const ENGINE_LABELS: Record<string, string> = {
-  wuu: "Wuu",
-  codex: "Codex",
-  claude: "Claude Code"
-};
-
-function engineLabel(id: string): string {
-  return ENGINE_LABELS[id] ?? id;
-}
-
 export type EngineOption = {
   id: string;
   label: string;
@@ -104,9 +93,12 @@ function availableEngineOptions(
 ): EngineOption[] {
   const options: EngineOption[] = [{ id: "wuu", label: engineLabel("wuu") }];
   for (const engine of engines ?? []) {
-    if (engine.id !== "codex" && engine.id !== "claude") continue;
-    if (!engine.enabled || (!engine.binary_ok && engine.id !== activeEngine)) continue;
-    options.push({ id: engine.id, label: engineLabel(engine.id) });
+    if (engine.id === "wuu") continue;
+    if ((!engine.enabled || !engine.binary_ok) && engine.id !== activeEngine) continue;
+    options.push({ id: engine.id, label: engineLabel(engine.id, engine) });
+  }
+  if (activeEngine && activeEngine !== "wuu" && !options.some((option) => option.id === activeEngine)) {
+    options.push({ id: activeEngine, label: engineLabel(activeEngine) });
   }
   return options;
 }
@@ -433,7 +425,7 @@ export function RuntimePicker({
         ? `${handoff.provider} · ${t("runtime.selectModel")}`
         : t("runtime.selectModel")
     : externalEngine
-      ? `${engineLabel(externalEngine)} · ${externalModelInfo?.display_name || engineModel || t("runtime.selectModel")}`
+      ? `${engineLabel(externalEngine, externalEngineInfo)} · ${externalModelInfo?.display_name || engineModel || t("runtime.engineDefaultModel")}`
       : `${engineLabel("wuu")} · ${runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, targetModel)}`;
   const effortLabelText = handoff
     ? handoff.model
@@ -602,9 +594,9 @@ function EngineRuntimeMenu({
       <div key={`${engine?.id ?? "engine"}:${view}`} className={`runtime-panel-page is-${direction}`}>
         {view === "summary" ? (
           <RuntimePanelSummary
-            engine={selectedEngine}
+            engine={engineLabel(selectedEngine, engine)}
             engineLocked={engineLocked}
-            model={effectiveModel?.display_name || effectiveModelID || t("runtime.selectModel")}
+            model={effectiveModel?.display_name || effectiveModelID || t("runtime.engineDefaultModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveEffort}
             effortDisabled={disabled}
@@ -653,7 +645,7 @@ function EngineRuntimeMenu({
                   <span>{engine.models_error}</span>
                 </div>
               ) : null}
-              {models.length === 0 ? <div className="composer-menu-empty">{t("runtime.noModels")}</div> : null}
+              {models.length === 0 ? <div className="composer-menu-empty">{t(engine?.models_error ? "runtime.noModels" : "runtime.engineDefaultModelHint")}</div> : null}
               {models.length > 0 && filteredModels.length === 0 ? (
                 <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div>
               ) : null}

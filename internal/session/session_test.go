@@ -1082,3 +1082,25 @@ func setSessionUpdatedAt(t *testing.T, dir, id string, at time.Time) {
 		t.Fatal(err)
 	}
 }
+
+func TestSetRuntimeSelectionAllowsEmptyModelForProtocolEngines(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := CreateWithMetadata(dir, "thread-protocol", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetEngine(dir, "thread-protocol", "cursor"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetRuntimeSelection(dir, "thread-protocol", RuntimeSelection{Provider: "cursor"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetRuntimeSelection(dir, "thread-protocol", RuntimeSelection{Provider: "cursor", Model: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateWithMetadata(dir, "thread-wuu", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetRuntimeSelection(dir, "thread-wuu", RuntimeSelection{Provider: "kimi"}); err == nil {
+		t.Fatal("wuu sessions still require a model")
+	}
+}

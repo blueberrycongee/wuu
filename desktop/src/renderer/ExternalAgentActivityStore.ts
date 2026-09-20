@@ -1,4 +1,5 @@
 import type { ExternalAgentActivity, ServerEvent } from "../shared/protocol";
+import { engineLabel } from "./EngineDisplay";
 import type {
   ComposerStatusItem,
   ComposerStatusState,
@@ -80,7 +81,7 @@ class ExternalAgentActivityStore {
           label: activity.label,
           state,
           secondaryText: activity.state,
-          tooltip: `${activity.engine === "codex" ? "Codex" : "Claude"} native agent`,
+          tooltip: `${engineLabel(activity.engine)} native agent`,
           updatedAt: new Date().toISOString(),
         }),
       }));
@@ -131,7 +132,7 @@ function parseActivity(value: unknown): ExternalAgentActivity | undefined {
   const engine = stringField(activity, "engine");
   const label = stringField(activity, "label");
   const state = stringField(activity, "state");
-  if (!id || !label || (engine !== "codex" && engine !== "claude")) return undefined;
+  if (!id || !label || !engine || engine === "wuu") return undefined;
   if (state !== "queued" && state !== "running" && state !== "waiting"
     && state !== "failed" && state !== "completed") return undefined;
   return { id, engine, label, state };

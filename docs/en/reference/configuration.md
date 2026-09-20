@@ -48,7 +48,7 @@ A provider entry names a model connection. For example, this user-configuration 
 
 Replace the endpoint and model with values your service supports, and supply the named environment variable to the process running Wuu. For subscription login, provider types, and desktop setup, see [model services](../getting-started/model-services.md).
 
-External Codex and Claude Code engines are separate programs, not provider types. Their machine-local `engines` configuration controls detection and executable selection. In the desktop, changing a conversation's model does not necessarily change the workspace default; use settings when you intend to change future sessions.
+[External engines](../getting-started/external-engines.md) are separate programs, not provider types. Their machine-local `engines` configuration controls detection, executable selection, and the default engine. In the desktop, changing a conversation's model does not necessarily change the workspace default; use settings when you intend to change future sessions.
 
 ## Instructions and plugin settings
 

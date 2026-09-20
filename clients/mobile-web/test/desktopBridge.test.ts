@@ -84,6 +84,18 @@ describe("browser host contract", () => {
     }, 30_000, expect.any(String));
   });
 
+  it("allows host-owned engine login to finish and keeps cancellation responsive", async () => {
+    const host = await api();
+    await host.authenticateEngine("antigravity", "browser");
+    expect(remote.call).toHaveBeenLastCalledWith("engine/authenticate", {
+      engine_id: "antigravity", method_id: "browser",
+    }, 310_000, expect.any(String));
+    await host.cancelEngineAuth("antigravity");
+    expect(remote.call).toHaveBeenLastCalledWith("engine/auth/cancel", {
+      engine_id: "antigravity",
+    }, 30_000, expect.any(String));
+  });
+
   it("forwards question holds and preserves mixed message parts", async () => {
     const host = await api();
     await host.holdUserQuestion("question-1");

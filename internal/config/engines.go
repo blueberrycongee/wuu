@@ -6,10 +6,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
-// EnginesConfig configures external agent engines (codex, claude) in the
+// EnginesConfig configures external agent engines in the
 // desktop settings. A nil section means auto-detection: the engine is
 // available when its CLI binary is found. The settings are machine-local and
 // live in the settings JSON next to the rest of the user config.
@@ -19,6 +20,59 @@ type EnginesConfig struct {
 	DefaultEngine string              `json:"default_engine,omitempty"`
 	Codex         *EngineBinaryConfig `json:"codex,omitempty"`
 	Claude        *EngineBinaryConfig `json:"claude,omitempty"`
+	Cursor        *EngineBinaryConfig `json:"cursor,omitempty"`
+	Devin         *EngineBinaryConfig `json:"devin,omitempty"`
+	Grok          *EngineBinaryConfig `json:"grok,omitempty"`
+	Hermes        *EngineBinaryConfig `json:"hermes,omitempty"`
+	Pi            *EngineBinaryConfig `json:"pi,omitempty"`
+	OpenCode      *EngineBinaryConfig `json:"opencode,omitempty"`
+	Antigravity   *EngineBinaryConfig `json:"antigravity,omitempty"`
+}
+
+// Binary returns the settings for a catalog engine. A nil result means auto.
+func (c *EnginesConfig) Binary(id string) *EngineBinaryConfig {
+	if c == nil {
+		return nil
+	}
+	switch id {
+	case "codex":
+		return c.Codex
+	case "claude":
+		return c.Claude
+	case "cursor":
+		return c.Cursor
+	case "devin":
+		return c.Devin
+	case "grok":
+		return c.Grok
+	case "hermes":
+		return c.Hermes
+	case "pi":
+		return c.Pi
+	case "opencode":
+		return c.OpenCode
+	case "antigravity":
+		return c.Antigravity
+	default:
+		return nil
+	}
+}
+
+func (c *EnginesConfig) validate() error {
+	if c == nil {
+		return nil
+	}
+	id := strings.TrimSpace(c.DefaultEngine)
+	if id == "" || id == "wuu" {
+		return nil
+	}
+	if _, ok := enginecatalog.Lookup(id); !ok {
+		return fmt.Errorf("engines.default_engine %q is not supported", id)
+	}
+	if engineExplicitlyDisabled(c.Binary(id)) {
+		return fmt.Errorf("engines.default_engine cannot be %s while engines.%s is disabled", id, id)
+	}
+	return nil
 }
 
 // EngineBinaryConfig configures one external engine's binary.
@@ -41,6 +95,13 @@ type EnginesSettingsUpdate struct {
 	DefaultEngine *string             `json:"default_engine,omitempty"`
 	Codex         *EngineBinaryUpdate `json:"codex,omitempty"`
 	Claude        *EngineBinaryUpdate `json:"claude,omitempty"`
+	Cursor        *EngineBinaryUpdate `json:"cursor,omitempty"`
+	Devin         *EngineBinaryUpdate `json:"devin,omitempty"`
+	Grok          *EngineBinaryUpdate `json:"grok,omitempty"`
+	Hermes        *EngineBinaryUpdate `json:"hermes,omitempty"`
+	Pi            *EngineBinaryUpdate `json:"pi,omitempty"`
+	OpenCode      *EngineBinaryUpdate `json:"opencode,omitempty"`
+	Antigravity   *EngineBinaryUpdate `json:"antigravity,omitempty"`
 }
 
 // UpdateEnginesSettings persists engine settings into the config JSON,
@@ -60,8 +121,14 @@ func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) erro
 		engines = make(map[string]any)
 		raw["engines"] = engines
 	}
-	applyEngineBinaryUpdate(engines, "codex", update.Codex)
-	applyEngineBinaryUpdate(engines, "claude", update.Claude)
+	updates := map[string]*EngineBinaryUpdate{
+		"codex": update.Codex, "claude": update.Claude, "cursor": update.Cursor,
+		"devin": update.Devin, "grok": update.Grok, "hermes": update.Hermes,
+		"pi": update.Pi, "opencode": update.OpenCode, "antigravity": update.Antigravity,
+	}
+	for id, binaryUpdate := range updates {
+		applyEngineBinaryUpdate(engines, id, binaryUpdate)
+	}
 	if update.DefaultEngine != nil {
 		defaultEngine := strings.TrimSpace(*update.DefaultEngine)
 		if defaultEngine == "" || defaultEngine == "wuu" {
@@ -70,8 +137,9 @@ func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) erro
 			engines["default_engine"] = defaultEngine
 		}
 	}
-	resetDisabledDefaultEngine(engines, "codex", update.Codex)
-	resetDisabledDefaultEngine(engines, "claude", update.Claude)
+	for id, binaryUpdate := range updates {
+		resetDisabledDefaultEngine(engines, id, binaryUpdate)
+	}
 	if len(engines) == 0 {
 		delete(raw, "engines")
 	}

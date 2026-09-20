@@ -41,6 +41,21 @@ function render(result: EngineListResult | undefined, onUpdate = vi.fn(), onRefr
 }
 
 describe("EngineSettingsSection", () => {
+  it("saves defaults and disables engines discovered outside the native pair", async () => {
+    const live: EngineListResult = {
+      engines: [{ id: "devin", display_name: "Devin", enabled: true, binary_ok: true }],
+      settings: { devin: { binary_path: "/opt/devin" } },
+    };
+    const onUpdate = vi.fn().mockResolvedValue(live);
+    render(live, onUpdate);
+    await act(async () => container.querySelector<HTMLInputElement>('[data-testid="settings-engine-devin-radio"]')!.click());
+    expect(onUpdate).toHaveBeenLastCalledWith({ default_engine: "devin" });
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-advanced-toggle"]')!.click());
+    expect(container.querySelector<HTMLInputElement>('[data-testid="settings-engine-devin-path"]')!.value).toBe("/opt/devin");
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-enabled"]')!.click());
+    expect(onUpdate).toHaveBeenLastCalledWith({ devin: { enabled: false } });
+  });
+
   it("renders a supplied session snapshot without starting detection on mount", () => {
     const onRefresh = vi.fn();
     render(inventory, vi.fn(), onRefresh);

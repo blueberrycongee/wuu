@@ -652,7 +652,7 @@ func SetRuntimeSelection(sessDir, id string, selection RuntimeSelection) (Sessio
 	if selection.Provider == "" {
 		return Session{}, fmt.Errorf("provider is required")
 	}
-	if selection.Model == "" {
+	if selection.Model == "" && !allowsEmptyModel(sessDir, id) {
 		return Session{}, fmt.Errorf("model is required")
 	}
 	return updateMetadata(sessDir, id, false, func(s *Session) {
@@ -669,6 +669,16 @@ func SetRuntimeSelection(sessDir, id string, selection RuntimeSelection) (Sessio
 // creation and never silently switches; changing it requires an explicit
 // product action. The engine id must be non-empty; callers pass the
 // normalized id of a known engine (the built-in id is "wuu").
+// Protocol engines may persist an empty model to mean the agent's native default.
+func allowsEmptyModel(sessDir, id string) bool {
+	sess, ok, err := Find(sessDir, id)
+	if err != nil || !ok {
+		return false
+	}
+	engineID := strings.TrimSpace(sess.EngineID)
+	return engineID != "" && engineID != "wuu"
+}
+
 func SetEngine(sessDir, id, engineID string) (Session, error) {
 	engineID = strings.TrimSpace(engineID)
 	if engineID == "" {
