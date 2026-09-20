@@ -268,7 +268,8 @@ func TestSearchFreshPageWithoutRevisionOrRipgrep(t *testing.T) {
 	root := t.TempDir()
 	kit := searchFixtureKit(t, root, t.TempDir())
 	// A failed revision computation is represented by an empty context revision.
-	ctx := toolctx.WithWorkspaceRevision(context.Background(), root, "")
+	ctx := context.Background()
+	ctx = toolctx.WithWorkspaceRevision(ctx, kit.env.RevisionRoot(ctx), "")
 	for _, mode := range []string{"content", "count", "files_with_matches", "glob"} {
 		t.Run(mode, func(t *testing.T) {
 			path := filepath.Join(root, mode+".txt")
