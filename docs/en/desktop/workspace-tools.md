@@ -6,6 +6,12 @@ Use the workspace panels to inspect what actually happened during a task. A conv
 
 Open **Files** or enter `/files` to browse the project. Select a file to view supported text, code, images, or documents. This view follows the current file, not its content at the time of an earlier message.
 
+### Agent file search
+
+The agent's `grep` and `glob` tools search current files when `offset` is omitted or `0`. This also applies after external edits or reopening a conversation; a previous search cache does not establish that files are unchanged.
+
+Later pages are a snapshot continuation, not a refresh. Keep the search arguments and pass both values from `page.next`: `offset` and `expected_revision`. Missing or mismatched tokens are rejected. A new first page can invalidate an older continuation even when the workspace revision summary is unchanged. If a continuation is stale, restart at `offset: 0` without `expected_revision`. Searches observe files as they are read, not an atomic filesystem snapshot during concurrent edits.
+
 ## Delivered artifacts
 
 An agent can present a requested image, chart, or document as an output in the conversation. Images, including SVG, appear inline with a larger preview on click; other files appear as output cards.

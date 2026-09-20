@@ -143,6 +143,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Refresh `grep` and `glob` first pages from current files after edits, including
+  external changes and reopened sessions, while keeping continuation pages bound
+  to their exact result snapshot (#277).
+
 - Make hook exit code 2 reliably block even with JSON output, pass rewritten tool
   arguments to subsequent hooks, retain all post-tool context across later hook
   failures, and route rich error results to failure hooks without changing the

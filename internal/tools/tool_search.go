@@ -47,7 +47,7 @@ func (t *GrepTool) IsConcurrencySafe() bool { return true }
 func (t *GrepTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "grep",
-		Description: "Search file contents with a regex. Results are streamed and paged; use page.next with the same arguments for stable continuation. Use read_file to inspect match ranges.",
+		Description: "Search file contents with a regex. Offset 0 searches current files; use page.next with the same arguments for snapshot-bound continuation. If stale, restart at offset 0 without expected_revision. Use read_file to inspect match ranges.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -187,7 +187,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	case "files_with_matches":
 		key := searchCursorKey("grep:files", execRoot, searchRoot, args.Pattern, args.Include, fmt.Sprintf("%t", opts.ignoreCase), revisionKey)
 		cachePath := searchCursorPath(t.env, key)
-		files, ok := loadSearchCursor[string](cachePath)
+		files, ok := loadSearchCursor[string](cachePath, args.Offset)
 		if !ok {
 			var err error
 			files, err = grepFilesWithMatches(ctx, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
@@ -221,7 +221,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	case "count":
 		key := searchCursorKey("grep:count", execRoot, searchRoot, args.Pattern, args.Include, fmt.Sprintf("%t", opts.ignoreCase), revisionKey)
 		cachePath := searchCursorPath(t.env, key)
-		counts, ok := loadSearchCursor[grepCountResult](cachePath)
+		counts, ok := loadSearchCursor[grepCountResult](cachePath, args.Offset)
 		var total int
 		if !ok {
 			var err error
@@ -260,7 +260,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	default: // "content"
 		key := searchCursorKey("grep:content", execRoot, searchRoot, args.Pattern, args.Include, fmt.Sprintf("%d:%d:%d:%t", opts.context, opts.before, opts.after, opts.ignoreCase), revisionKey)
 		cachePath := searchCursorPath(t.env, key)
-		matches, ok := loadSearchCursor[grepMatch](cachePath)
+		matches, ok := loadSearchCursor[grepMatch](cachePath, args.Offset)
 		if !ok {
 			var err error
 			matches, err = grepWithRipgrep(ctx, t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
@@ -298,7 +298,7 @@ func (t *GlobTool) IsConcurrencySafe() bool { return true }
 func (t *GlobTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "glob",
-		Description: "Find files by glob pattern. Results are streamed and paged; use page.next with the same arguments for stable continuation. Use grep for content search.",
+		Description: "Find files by glob pattern. Offset 0 searches current files; use page.next with the same arguments for snapshot-bound continuation. If stale, restart at offset 0 without expected_revision. Use grep for content search.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -377,7 +377,7 @@ func (t *GlobTool) Execute(ctx context.Context, argsJSON string) (string, error)
 	revisionKey := searchWorkspaceRevision(ctx, t.env)
 	key := searchCursorKey("glob", execRoot, searchRoot, args.Pattern, revisionKey)
 	cachePath := searchCursorPath(t.env, key)
-	matches, ok := loadSearchCursor[string](cachePath)
+	matches, ok := loadSearchCursor[string](cachePath, args.Offset)
 	if !ok {
 		var err error
 		matches, err = globWithRipgrep(ctx, execRoot, searchRoot, args.Pattern, 0)
@@ -612,8 +612,13 @@ func saveSearchCursor(path string, records any) error {
 	return os.WriteFile(path, stored, 0o644)
 }
 
-func loadSearchCursor[T any](path string) ([]T, bool) {
-	if path == "" {
+// Only continuation can reuse a materialized result. Workspace revisions are
+// best-effort summaries, not proof that current search results are unchanged.
+// Refreshing offset 0 replaces this cache; the result hash in the continuation
+// token rejects old pages if the refreshed records differ, even at the same
+// workspace revision. Cache misses still rescan and validate that exact token.
+func loadSearchCursor[T any](path string, offset int) ([]T, bool) {
+	if offset <= 0 || path == "" {
 		return nil, false
 	}
 	data, err := os.ReadFile(path)
