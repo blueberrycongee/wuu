@@ -130,23 +130,14 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
           {formatNumber(completed)}/{formatNumber(total)}
         </span>
       </div>
-      <div className="conversation-status-todo-card" role="tooltip">
-        <div className="conversation-status-todo-card-header">
-          <strong>TODO</strong>
-          <span>{formatNumber(completed)}/{formatNumber(total)}</span>
-        </div>
-        {todoUpdate.explanation ? (
-          <p className="conversation-status-todo-explanation">{todoUpdate.explanation}</p>
-        ) : null}
-        <ol className="conversation-status-todo-list">
-          {todoUpdate.todos.map((item, index) => (
-            <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
-              <span aria-hidden="true">{item.status === "completed" ? "✓" : index + 1}</span>
-              <span>{item.content}</span>
-            </li>
-          ))}
-        </ol>
-      </div>
+      <ol className="conversation-status-todo-card" role="tooltip">
+        {todoUpdate.todos.map((item, index) => (
+          <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
+            <span aria-hidden="true">{item.status === "completed" ? "✓" : index + 1}</span>
+            <span>{item.content}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

@@ -54,6 +54,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep desktop tool-call summaries on one line, truncating overflow with an
   ellipsis while preserving the activity icon and diff counts.
 
+- Show only the current TODO items in the composer status hover card, without
+  repeating the TODO title, progress count, or tool explanation.
+
 - Reuse loaded sidebar history when reopening desktop conversations, even after
   a workspace refresh has replaced the active conversation catalog with summaries.
   Cross-workspace activation now displays the resumed conversation without waiting

@@ -1370,10 +1370,10 @@ button.conversation-status-capsule,
 .conversation-status-todo-card,
 .conversation-status-preview-card {
   display: flex;
-  width: min(360px, calc(100vw - 48px));
-  max-height: min(360px, 50vh);
+  width: min(280px, calc(100vw - 48px));
+  max-height: min(320px, 50vh);
   flex-direction: column;
-  gap: 6px;
+  gap: 1px;
   padding: var(--menu-inset);
   overflow: auto;
   border: 1px solid var(--shell-todo-card-border);
@@ -1387,6 +1387,8 @@ button.conversation-status-capsule,
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
+  margin: 0;
+  list-style: none;
   opacity: 0;
   visibility: hidden;
   transform: translate(-50%, 4px);
@@ -1405,21 +1407,6 @@ button.conversation-status-capsule,
   transform: translate(-50%, 0);
   transition-delay: 0s;
   pointer-events: auto;
-}
-
-.conversation-status-todo-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px 2px;
-  color: var(--shell-todo-card-ink);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.conversation-status-todo-card-header strong {
-  font-weight: var(--weight-semibold);
 }
 
 .conversation-status-preview-card {
@@ -1477,52 +1464,32 @@ button.conversation-status-capsule,
 .managed-session-preview-all:hover { background: var(--ink-overlay-6); color: var(--shell-todo-card-ink); }
 .managed-session-preview-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
-.conversation-status-todo-card-header span,
-.conversation-status-todo-explanation {
-  color: var(--shell-todo-card-muted);
-}
-
-.conversation-status-todo-explanation {
-  margin: 0;
-  padding: 0 8px 4px;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.conversation-status-todo-list {
+.conversation-status-todo-card li {
   display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.conversation-status-todo-list li {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 7px;
-  padding: 6px 8px;
+  grid-template-columns: var(--icon-size-xs) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--menu-item-gap);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   border-radius: var(--radius-xs);
   color: var(--shell-todo-card-soft);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--font-ui);
+  line-height: var(--line-ui);
   overflow-wrap: anywhere;
 }
 
-.conversation-status-todo-list li > span:first-child {
+.conversation-status-todo-card li > span:first-child {
   color: var(--shell-todo-card-muted);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
-.conversation-status-todo-list li.is-in_progress {
+.conversation-status-todo-card li.is-in_progress {
   background: var(--menu-hover);
   color: var(--shell-todo-card-ink);
   font-weight: var(--weight-medium);
 }
 
-.conversation-status-todo-list li.is-completed {
+.conversation-status-todo-card li.is-completed {
   color: var(--shell-todo-card-muted);
 }
 
