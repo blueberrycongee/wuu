@@ -1278,29 +1278,39 @@ html.resizing-workspace-file-split * {
   padding-bottom: 180px;
 }
 
+/* Tool picker: the right panel with no open tab. The list stays vertically
+ * centered, but items are typographic rather than filled tiles — an empty
+ * panel should not read as a stack of gray slabs. The fill is reserved for
+ * the pointer and for keyboard focus, so it also marks the hit area. */
 .workspace-tool-menu {
   display: grid;
   height: 100%;
   min-width: 0;
+  justify-items: center;
   align-content: safe center;
-  gap: 12px;
+  /* Item gaps stay wider than the icon-to-label gap so each entry still
+   * reads as one unit. */
+  gap: 6px;
   overflow-y: auto;
-  padding: 28px 24px;
+  padding: 24px;
 }
 
 .workspace-tool-menu-item {
   display: grid;
-  width: 100%;
+  width: min(100%, 260px);
   min-width: 0;
-  min-height: 64px;
+  min-height: 60px;
   align-content: center;
   justify-items: center;
-  gap: 8px;
+  gap: 6px;
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  background: transparent;
   color: var(--ink);
-  padding: 10px 14px;
+  padding: 6px 12px;
   text-align: center;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .workspace-tool-menu-item:hover,
@@ -1308,19 +1318,36 @@ html.resizing-workspace-file-split * {
   background: var(--workspace-menu-item-hover-bg);
 }
 
+.workspace-tool-menu-item:focus-visible {
+  background: var(--workspace-menu-item-hover-bg);
+  outline: 2px solid var(--workspace-tab-focus-ring);
+  outline-offset: -2px;
+}
+
+.workspace-tool-menu-item:active {
+  background: var(--surface-3);
+}
+
 .workspace-tool-menu-icon {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   color: var(--ink-tertiary);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.workspace-tool-menu-item:hover .workspace-tool-menu-icon,
+.workspace-tool-menu-item.active .workspace-tool-menu-icon,
+.workspace-tool-menu-item:focus-visible .workspace-tool-menu-icon {
+  color: var(--ink);
 }
 
 .workspace-tool-menu-copy {
   display: grid;
   min-width: 0;
   justify-items: center;
-  gap: 5px;
+  gap: 3px;
 }
 
 .workspace-tool-menu-copy strong,
@@ -1333,13 +1360,13 @@ html.resizing-workspace-file-split * {
 
 .workspace-tool-menu-copy strong {
   color: var(--ink);
-  font-size: var(--font-heading);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 
 .workspace-tool-menu-copy span {
   color: var(--ink-tertiary);
-  font-size: var(--font-title);
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }
 
