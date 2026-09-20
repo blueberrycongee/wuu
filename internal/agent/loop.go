@@ -18,6 +18,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 )
 
+// Bound provider-requested tool-free continuations even when MaxSteps is unset.
+// A broken compatible endpoint must not create an unlimited billing loop.
+const maxConsecutiveContinuations = 8
+
 // EmptyAnswerError is returned when the model completes a turn without
 // producing any text content or tool calls. StopReason carries the
 // provider's finish signal (e.g. "stop", "end_turn") when one was
@@ -60,6 +64,8 @@ type ToolSurfaceFreezer interface {
 //
 // Behavior:
 //   - Loops up to cfg.MaxSteps rounds (0 = unlimited).
+//   - Allows at most eight consecutive tool-free continuation requests before
+//     returning an error, even with an unlimited step budget.
 //   - On context-overflow errors from the step, calls cfg.Compact
 //     once and re-issues the step. If that compact does not shrink
 //     history, the loop force-trims older turns onto a valid tool-call
@@ -378,6 +384,7 @@ func RunToolLoop(
 		}, nil
 	}
 
+	consecutiveContinuations := 0
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
 		if cfg.BeforeStep != nil {
 			injected := cfg.BeforeStep()
@@ -940,14 +947,17 @@ func RunToolLoop(
 			appendMessage(assistant)
 		}
 
-		// Anthropic's pause_turn pauses a long-running turn (server-side tool
-		// use such as web search) and expects the conversation — including
-		// the paused assistant content just appended — to be resent so the
-		// model can continue. Treating it as a terminal stop silently
-		// truncated those turns. The step cap still bounds repeated pauses.
-		if len(result.ToolCalls) == 0 && strings.EqualFold(strings.TrimSpace(result.StopReason), "pause_turn") {
+		// Only an explicit, normalized continuation signal admits another
+		// tool-free round. Empty text and commentary are not such signals.
+		if len(result.ToolCalls) == 0 && finishReason == providers.FinishReasonContinue && !result.Truncated {
+			if consecutiveContinuations >= maxConsecutiveContinuations {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead),
+					fmt.Errorf("provider continuation limit exceeded (%d consecutive tool-free continuations)", maxConsecutiveContinuations)
+			}
+			consecutiveContinuations++
 			continue
 		}
+		consecutiveContinuations = 0
 
 		// No tool calls → model is done. Return content plus finish metadata.
 		if len(result.ToolCalls) == 0 {

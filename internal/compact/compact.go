@@ -674,6 +674,10 @@ func validateCompactResponse(resp providers.ChatResponse) error {
 	if resp.Truncated || finish == providers.FinishReasonLength {
 		return errCompactSummaryOutputLimit
 	}
+	if finish == providers.FinishReasonContinue {
+		// A one-shot summary cannot replace history with an intermediate response.
+		return errors.New("compact summary did not finish: provider requested continuation")
+	}
 	if strings.TrimSpace(resp.Content) == "" {
 		return errors.New("compact summary was empty")
 	}

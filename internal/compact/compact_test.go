@@ -628,6 +628,28 @@ func TestCompact_LengthRecoveryFailureLeavesHistoryUnchanged(t *testing.T) {
 	}
 }
 
+func TestCompact_ContinuationLeavesHistoryUnchanged(t *testing.T) {
+	messages := []providers.ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "first reply"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "second reply"},
+		{Role: "user", Content: "third"},
+		{Role: "assistant", Content: "third reply"},
+	}
+	original := providers.CloneChatMessages(messages)
+	client := &scriptedCompactClient{responses: []providers.ChatResponse{
+		{Content: "intermediate summary", FinishReason: providers.FinishReasonContinue},
+	}}
+	result, err := CompactWithBudget(context.Background(), messages, client, "test", Budget{OutputReserveTokens: 16_000})
+	if err == nil || len(client.requests) != 1 {
+		t.Fatalf("err=%v requests=%d, want failure without another request", err, len(client.requests))
+	}
+	if !reflect.DeepEqual(result, original) || !reflect.DeepEqual(messages, original) {
+		t.Fatal("intermediate response replaced conversation history")
+	}
+}
+
 func TestSummarizeCompactChunk_CancellationDoesNotRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &cancelingStreamCompactClient{cancel: cancel}

@@ -93,7 +93,11 @@ func NormalizeToolCallKind(kind string) ToolCallKind {
 type FinishReason string
 
 const (
-	FinishReasonStop          FinishReason = "stop"
+	FinishReasonStop FinishReason = "stop"
+
+	// FinishReasonContinue requests another model round without requiring a
+	// client tool call. It is not a retry, truncation, or proof of task completion.
+	FinishReasonContinue      FinishReason = "continue"
 	FinishReasonLength        FinishReason = "length"
 	FinishReasonToolCalls     FinishReason = "tool_calls"
 	FinishReasonContentFilter FinishReason = "content_filter"
@@ -107,7 +111,7 @@ func NormalizeFinishReason(stopReason string, truncated bool, hasToolCalls bool)
 		return FinishReasonLength
 	}
 	switch reason {
-	case "stop", "end_turn", "stop_sequence", "pause_turn", "completed":
+	case "stop", "end_turn", "stop_sequence", "completed":
 		if hasToolCalls {
 			return FinishReasonToolCalls
 		}

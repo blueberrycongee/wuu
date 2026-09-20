@@ -793,7 +793,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 				responseID = event.Response.ID
 			}
 			pending.emitEnds(emit)
-			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall)
+			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall, event.Type)
 			session.mu.Lock()
 			if useCachedContext {
 				responsesWebSocketStoreContinuation(session, generation, fullPayload, responseID, responseItems)
