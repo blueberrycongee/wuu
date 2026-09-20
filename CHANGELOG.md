@@ -146,7 +146,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
   Automation creation, updates, and recurring scheduling no longer reject or
   skip selected Sundays (#272). Previously saved next-run times are preserved;
-  save an affected task again to recalculate its next run immediately.
+  on desktop, edit a field such as the task name, then choose **Save changes**
+  to recalculate immediately. The cron expression can stay unchanged; saving
+  is disabled until the task is edited. Without saving, a one-shot task keeps
+  its old deadline. Paused tasks stay paused, including after saving.
 
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
