@@ -15,7 +15,8 @@ import (
 // ACP v1's prompt response owns completion. Later protocol versions have
 // different turn boundaries; accepting them without a separate driver is unsafe.
 type acpInitialize struct {
-	Version      int `json:"protocolVersion"`
+	Version      int          `json:"protocolVersion"`
+	AuthMethods  []AuthMethod `json:"authMethods"`
 	Capabilities struct {
 		Load   bool `json:"loadSession"`
 		Prompt struct {
@@ -62,12 +63,9 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	}
 	setupCtx, cancelSetup := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelSetup()
-	var init acpInitialize
-	if err := r.call(setupCtx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "wuu", "version": "1"}}, &init); err != nil {
+	init, err := initializeACP(setupCtx, r)
+	if err != nil {
 		return err
-	}
-	if init.Version != 1 {
-		return fmt.Errorf("unsupported ACP version %d (requires version 1)", init.Version)
 	}
 	if len(message.Images) > 0 && !init.Capabilities.Prompt.Image {
 		return errors.New("this engine does not advertise image input support")

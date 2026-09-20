@@ -1456,6 +1456,16 @@ export type EngineListResult = {
 /** engine/update request body. Nil fields are left unchanged. */
 export type EngineUpdateParams = EngineSettingsConfig;
 
+export type EngineAuthParams = {
+  engine_id: string;
+  method_id?: string;
+};
+
+export type EngineAuthResult = {
+  methods: { id: string; name: string; description?: string; type?: string }[];
+  authenticated: boolean;
+};
+
 export type CodexModelSummary = {
   slug: string;
   display_name?: string;
@@ -2918,6 +2928,9 @@ export type WuuDesktopApi = {
   ) => Promise<ConfigGeneralUpdateResult>;
   listEngines: () => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
+  listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
+  authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;
+  cancelEngineAuth: (engineID: string) => Promise<{ ok: boolean }>;
   updateExtensionPackage: (
     params: ExtensionPackageUpdateParams
   ) => Promise<ExtensionPackageUpdateResult>;

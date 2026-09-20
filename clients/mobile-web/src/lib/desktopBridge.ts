@@ -461,7 +461,10 @@ export class RemoteDesktopBridge {
       if (pending) return pending as Promise<T>;
     }
     const request = (async () => {
-      const result = await this.client.call<T>(method, params, snapshotRead ? SNAPSHOT_READ_TIMEOUT_MS : 30_000, workdir);
+      // Browser login runs on the host and can outlive an ordinary RPC. Keep
+      // its deadline beyond the host's five-minute bound so errors arrive intact.
+      const timeout = method === "engine/authenticate" ? 310_000 : snapshotRead ? SNAPSHOT_READ_TIMEOUT_MS : 30_000;
+      const result = await this.client.call<T>(method, params, timeout, workdir);
       if (this.stopped || this.connection.revision !== revision) {
         throw new Error("Remote connection changed while the request was in flight");
       }
@@ -831,6 +834,9 @@ export class RemoteDesktopBridge {
       updateAdvancedSettings: (params) => this.call("config/advanced/update", params),
       updateGeneralSettings: (params) => this.call("config/general/update", params),
       updateEngines: (params) => this.call("engine/update", params),
+      listEngineAuthMethods: (engineID) => this.call("engine/auth/methods", { engine_id: engineID }),
+      authenticateEngine: (engineID, methodID) => this.call("engine/authenticate", { engine_id: engineID, method_id: methodID }),
+      cancelEngineAuth: (engineID) => this.call("engine/auth/cancel", { engine_id: engineID }),
       updateExtensionPackage: (params) => this.call("extension/package/update", params),
       loadPluginDesktopModule: async (params) => this.pluginAssets.module(await this.call("plugin/desktop-module/read",params)),
       loadPluginIcon: async (params) => this.pluginAssets.icon(await this.call("plugin/icon/read",params)),
