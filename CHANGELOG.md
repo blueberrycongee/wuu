@@ -155,6 +155,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Retry provider-reported `request_timeout`, `408`, and `504` stream errors
+  within the existing retry budget and tool replay safety checks, rather than
+  stopping the conversation after the first request.
+
 - Preserve completed tool batches' text budget through provider requests and
   history replay, while retaining media and structured recovery data (#284).
 

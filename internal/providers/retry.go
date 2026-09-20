@@ -471,6 +471,10 @@ func isProviderRateLimited(code, message string) bool {
 func isTemporaryProviderFailure(code, message string) bool {
 	code = strings.ToLower(strings.TrimSpace(code))
 	switch code {
+	case "408", "504", "request_timeout":
+		// Upstream timeouts can arrive inside an HTTP 200 stream. Recover them
+		// like HTTP timeout responses, without treating them as caller cancellation.
+		return true
 	case "500", "502", "503", "internal_error", "server_error", "api_error", "stream_read_error":
 		return true
 	}
