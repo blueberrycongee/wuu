@@ -41,7 +41,6 @@ import {
   recordSessionSwitchPaneRender,
   SESSION_SWITCH_PERF_ENABLED,
 } from "./SessionSwitchPerformance";
-import { observeSessionSwitchSettle } from "./SessionSwitchSettleProbe";
 
 export type CachedConversationPanesProps = {
   threadIDs: string[];
@@ -178,7 +177,6 @@ const CachedConversationPane = memo(function CachedConversationPane({
 }: CachedConversationPaneProps): JSX.Element {
   const threadRef = useRef(thread);
   threadRef.current = thread;
-  const paneRef = useRef<HTMLDivElement | null>(null);
   const wasActiveRef = useRef(isActive);
   useLayoutEffect(() => {
     if (!SESSION_SWITCH_PERF_ENABLED) {
@@ -186,10 +184,6 @@ const CachedConversationPane = memo(function CachedConversationPane({
     }
     if (isActive && !wasActiveRef.current) {
       markSessionSwitch(thread.id, "pane-layout-effect");
-      const pane = paneRef.current;
-      if (pane) {
-        observeSessionSwitchSettle({ threadID: thread.id, pane });
-      }
       const frame = window.requestAnimationFrame(() => {
         markSessionSwitch(thread.id, "next-animation-frame");
       });
@@ -340,7 +334,6 @@ const CachedConversationPane = memo(function CachedConversationPane({
           data-active={isActive}
           data-thread-id={thread.id}
           inert={isActive ? undefined : true}
-          ref={paneRef}
         >
           <div className="conversation-width session-flow">
             <ConversationTurnList
