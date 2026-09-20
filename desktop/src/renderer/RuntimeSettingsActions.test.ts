@@ -3,7 +3,7 @@ import type { InitializeResult, Thread } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
 import type { CodexModelLoadState, CodexRuntimeMenu } from "./ComposerTypes";
 import { readDraftApproveForMeMemory, readDraftPermissionMemory, readDraftRuntimeMemory } from "./DraftRuntimeMemory";
-import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
+import { createRuntimeSettingsActions, type RuntimeSettingsActions } from "./RuntimeSettingsActions";
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
 
@@ -209,6 +209,73 @@ function buildActions({
 }
 
 describe("createRuntimeSettingsActions", () => {
+  const settingsOperations = [
+    {
+      name: "provider defaults",
+      api: "updateRuntimeSettings",
+      save: (actions: RuntimeSettingsActions) => actions.updateProviderSettings("codex", "gpt-5.1"),
+    },
+    {
+      name: "advanced settings",
+      api: "updateAdvancedSettings",
+      save: (actions: RuntimeSettingsActions) => actions.updateAdvancedSettings({ max_steps: 20 }),
+    },
+    {
+      name: "general settings",
+      api: "updateGeneralSettings",
+      save: (actions: RuntimeSettingsActions) => actions.updateGeneralSettings({ git_attribution_enabled: false }),
+    },
+    {
+      name: "provider removal",
+      api: "removeProvider",
+      save: (actions: RuntimeSettingsActions) => actions.removeProvider("unused-provider"),
+    },
+  ] as const;
+
+  it.each(settingsOperations)("keeps $name failures out of running conversations", async ({ api: method, save }) => {
+    const api = installWuuApi();
+    const failure = new Error("settings write rejected");
+    api[method].mockRejectedValue(failure);
+    const initial: AppState = {
+      ...initialState,
+      initialized: initialized(),
+      thread: thread(),
+      secondaryThread: thread("thread-2"),
+      running: true,
+      status: "running",
+    };
+    const harness = buildActions({ initial });
+
+    await expect(save(harness.actions)).rejects.toBe(failure);
+
+    expect(harness.getAppState()).toBe(initial);
+    expect(harness.clearThreadPendingComposerMessages).not.toHaveBeenCalled();
+  });
+
+  it.each(settingsOperations)("preserves conversation progress and errors after saving $name", async ({ save }) => {
+    installWuuApi();
+    for (const status of ["running", "conversation request failed"]) {
+      const initial: AppState = {
+        ...initialState,
+        initialized: initialized(),
+        thread: thread(),
+        secondaryThread: thread("thread-2"),
+        running: status === "running",
+        status,
+      };
+      const harness = buildActions({ initial });
+
+      await save(harness.actions);
+
+      const { initialized: updated, ...conversation } = harness.getAppState();
+      const { initialized: previous, ...originalConversation } = initial;
+      expect(updated).not.toBe(previous);
+      expect(conversation).toEqual(originalConversation);
+      expect(harness.getAppState().thread).toBe(initial.thread);
+      expect(harness.getAppState().secondaryThread).toBe(initial.secondaryThread);
+    }
+  });
+
   it("saves provider defaults without targeting or patching running sessions", async () => {
     const api = installWuuApi();
     const primary = thread();
@@ -224,17 +291,6 @@ describe("createRuntimeSettingsActions", () => {
     expect(harness.getAppState().running).toBe(true);
     expect(harness.getAppState().status).toBe("running");
     expect(harness.getAppState().initialized?.model).toBe("gpt-5.1");
-  });
-
-  it("leaves session status alone when saving provider settings fails", async () => {
-    const api = installWuuApi();
-    api.updateRuntimeSettings.mockRejectedValue(new Error("save failed"));
-    const harness = buildActions({ initial: {
-      ...initialState, initialized: initialized(), thread: thread(), running: true, status: "running",
-    } });
-    await expect(harness.actions.updateProviderSettings("codex", "gpt-5.1")).rejects.toThrow("save failed");
-    expect(harness.getAppState().status).toBe("running");
-    expect(harness.getAppState().running).toBe(true);
   });
 
   it("saves trimmed runtime settings and patches initialized runtime state", async () => {

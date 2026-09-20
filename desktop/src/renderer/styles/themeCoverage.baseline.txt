@@ -107,11 +107,6 @@ settings.css .settings-inline-flag.success background --success-soft
 settings.css .settings-model-chart-bar span background --settings-heatmap-level-4
 settings.css .settings-provider-remove:hover:not(:disabled) background --ink-overlay-8
 settings.css .settings-remote-qr background --settings-remote-qr-quiet-zone
-settings.css .settings-switch background --gray-350
-settings.css .settings-switch-thumb background --gray-0
-settings.css .settings-switch:focus-visible box-shadow --ink-overlay-12
-settings.css .settings-switch:hover box-shadow --ink-overlay-6
-settings.css .settings-switch[aria-checked="true"] background --gray-900
 settings.css .settings-theme-preview-window-dark background --settings-preview-dark-canvas
 settings.css .settings-theme-preview-window-dark .settings-theme-preview-line background --settings-preview-dark-line
 settings.css .settings-theme-preview-window-dark .settings-theme-preview-sidebar background --settings-preview-dark-sidebar

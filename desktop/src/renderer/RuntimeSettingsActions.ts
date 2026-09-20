@@ -355,37 +355,24 @@ export function createRuntimeSettingsActions(
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
       return;
     }
-    try {
-      const updated = await window.wuu.updateAdvancedSettings(settings);
-      deps.setAppState((current) => {
-        const initialized = current.initialized
-          ? {
-              ...current.initialized,
-              advanced_settings: updated.advanced_settings,
-              model_aliases:
-                updated.model_aliases ??
-                settings.model_aliases ??
-                current.initialized.model_aliases,
-              model_roles: updated.model_roles ?? current.initialized.model_roles,
-              providers: updated.providers ?? current.initialized.providers,
-            }
-          : current.initialized;
-        return {
-          ...current,
-          initialized,
-          status: current.status === "ready" ? current.status : "ready",
-        };
-      });
-    } catch (error) {
-      deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error
-            ? error.message
-            : translateCurrent("runtime.advancedUpdateFailed"),
-      }));
-      throw error;
-    }
+    // Settings owns save feedback; neither success nor failure changes the
+    // conversation status consumed by the composer.
+    const updated = await window.wuu.updateAdvancedSettings(settings);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            advanced_settings: updated.advanced_settings,
+            model_aliases:
+              updated.model_aliases ??
+              settings.model_aliases ??
+              current.initialized.model_aliases,
+            model_roles: updated.model_roles ?? current.initialized.model_roles,
+            providers: updated.providers ?? current.initialized.providers,
+          }
+        : current.initialized,
+    }));
   }
 
   async function updateGeneralSettings(
@@ -394,31 +381,16 @@ export function createRuntimeSettingsActions(
     if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
       return;
     }
-    try {
-      const updated = await window.wuu.updateGeneralSettings(settings);
-      deps.setAppState((current) => {
-        const initialized = current.initialized
-          ? {
-              ...current.initialized,
-              general_settings: updated.general_settings,
-            }
-          : current.initialized;
-        return {
-          ...current,
-          initialized,
-          status: current.status === "ready" ? current.status : "ready",
-        };
-      });
-    } catch (error) {
-      deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error
-            ? error.message
-            : translateCurrent("runtime.generalUpdateFailed"),
-      }));
-      throw error;
-    }
+    const updated = await window.wuu.updateGeneralSettings(settings);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            general_settings: updated.general_settings,
+          }
+        : current.initialized,
+    }));
   }
 
   async function removeProvider(
@@ -433,43 +405,28 @@ export function createRuntimeSettingsActions(
     if (!target) {
       return;
     }
-    try {
-      const updated = await window.wuu.removeProvider(target, options);
-      deps.setAppState((current) => {
-        const initialized = current.initialized
-          ? {
-              ...current.initialized,
-              provider: updated.provider ?? current.initialized.provider,
-              model: updated.model ?? current.initialized.model,
-              effort: updated.effort ?? current.initialized.effort,
-              variant: updated.variant ?? current.initialized.variant,
-              permissions:
-                updated.permissions ?? current.initialized.permissions,
-              extension_trust:
-                updated.extension_trust ?? current.initialized.extension_trust,
-              providers: updated.providers ?? current.initialized.providers,
-              advanced_settings:
-                updated.advanced_settings ??
-                current.initialized.advanced_settings,
-            }
-          : current.initialized;
-        return {
-          ...current,
-          initialized,
-          status: current.status === "ready" ? current.status : "ready",
-        };
-      });
-      if (state.initialized) {
-        void loadCodexModelsForProvider(updated.provider);
-      }
-    } catch (error) {
-      deps.setAppState((current) => ({
-        ...current,
-        status:
-          error instanceof Error ? error.message : translateCurrent("runtime.providerRemoveFailed"),
-      }));
-      throw error;
-    }
+    const updated = await window.wuu.removeProvider(target, options);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            provider: updated.provider ?? current.initialized.provider,
+            model: updated.model ?? current.initialized.model,
+            effort: updated.effort ?? current.initialized.effort,
+            variant: updated.variant ?? current.initialized.variant,
+            permissions:
+              updated.permissions ?? current.initialized.permissions,
+            extension_trust:
+              updated.extension_trust ?? current.initialized.extension_trust,
+            providers: updated.providers ?? current.initialized.providers,
+            advanced_settings:
+              updated.advanced_settings ??
+              current.initialized.advanced_settings,
+          }
+        : current.initialized,
+    }));
+    void loadCodexModelsForProvider(updated.provider);
   }
 
   function toggleCodexRuntimeMenu(

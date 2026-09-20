@@ -665,55 +665,6 @@
   padding: 0;
 }
 
-/* --- Switch ------------------------------------------------------------------ */
-
-.settings-switch {
-  position: relative;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 auto;
-  justify-self: end;
-  border-radius: var(--radius-pill);
-  background: var(--gray-350);
-  transition:
-    background var(--motion-base) var(--menu-enter-easing),
-    box-shadow var(--motion-base) var(--menu-enter-easing);
-}
-
-.settings-switch[aria-checked="true"] {
-  background: var(--gray-900);
-}
-
-.settings-switch:hover {
-  box-shadow: 0 0 0 4px var(--ink-overlay-6);
-}
-
-.settings-switch:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 4px var(--ink-overlay-12);
-}
-
-.settings-switch:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.settings-switch-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--radius-pill);
-  background: var(--gray-0);
-  box-shadow: var(--shadow-soft);
-  transition: transform var(--motion-base) var(--menu-enter-easing);
-}
-
-.settings-switch[aria-checked="true"] .settings-switch-thumb {
-  transform: translateX(16px);
-}
-
 /* --- Feedback text, empty states, quiet lines ---------------------------------- */
 
 .settings-error {
