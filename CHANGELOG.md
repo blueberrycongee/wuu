@@ -143,6 +143,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   external changes and reopened sessions, while keeping continuation pages bound
   to their exact result snapshot (#277).
 
+- Preserve byte-range recovery for archived tool output when escaped text or
+  short lines exceed the line-projection budget, so continuation neither skips
+  remaining output nor switches to unrelated line ranges.
+
+- Bound structured tool-result previews when field names or numeric values are
+  unusually large, retaining complete data and a snapshot-bound recovery cursor.
+
 - Treat Chat Completions stream error payloads and error finish reasons as failed
   attempts, preserving provider details and recovery limits without executing
   unfinished tool drafts (#263).

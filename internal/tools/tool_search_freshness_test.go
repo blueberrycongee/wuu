@@ -326,3 +326,103 @@ func TestSearchFreshPagePropagatesSearchFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchFreshLargePagesSurviveArtifactRecovery(t *testing.T) {
+	t.Setenv(projectionModeEnvVar, "active")
+	for _, mode := range []string{"glob", "count", "files_with_matches"} {
+		t.Run(mode, func(t *testing.T) {
+			root := searchFixtureRepo(t)
+			kit := searchFixtureKit(t, root, t.TempDir())
+			want := make([]string, globPageSize+5)
+			for i := range want {
+				// Escaped paths force generic settlement even for a single search page.
+				want[i] = fmt.Sprintf("new/f%04d-%s.txt", i, strings.Repeat("path&", 32))
+				mustWriteFile(t, filepath.Join(root, want[i]), "violet seed\n")
+			}
+			name, args := "grep", map[string]any{"path": "new", "pattern": "violet", "output_mode": mode}
+			if mode == "glob" {
+				name, args = "glob", map[string]any{"path": "new", "pattern": "*.txt"}
+			}
+			sequence := 0
+			execute := func(name string, args map[string]any) (string, error) {
+				sequence++
+				result, err := kit.ExecuteResult(context.Background(), providers.ToolCall{
+					ID: fmt.Sprintf("large-search-%d", sequence), Name: name, Arguments: mustMarshalMap(args),
+				})
+				return providers.ProjectToolResult(result).ToolText, err
+			}
+			readPage := func(args map[string]any) (searchFixturePage, string) {
+				t.Helper()
+				raw, err := execute(name, args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				envelope := parseOut(t, raw)
+				if envelope["kind"] != "archived_tool_result" {
+					return parseSearchFixturePage(t, raw), ""
+				}
+				artifact := envelope["artifact_ref"].(string)
+				var recovered strings.Builder
+				recovered.WriteString(envelope["preview_head"].(string))
+				continuation := envelope["continuation"].(map[string]any)
+				for pages := 0; continuation["has_more"] == true; pages++ {
+					if pages > 100 {
+						t.Fatal("artifact recovery did not finish")
+					}
+					raw, err := execute("read_file", continuation["next"].(map[string]any))
+					if err != nil {
+						t.Fatal(err)
+					}
+					part := parseOut(t, raw)
+					if part["action"] != "read_bytes" || part["byte_offset"] != float64(recovered.Len()) {
+						t.Fatalf("artifact recovery changed its range: %v", part)
+					}
+					content, _ := part["content"].(string)
+					if len(content) == 0 || part["byte_count"] != float64(len(content)) {
+						t.Fatal("recovery did not advance by the displayed bytes")
+					}
+					recovered.WriteString(content)
+					continuation = part["continuation"].(map[string]any)
+				}
+				recovered.WriteString(envelope["preview_tail"].(string))
+				if recovered.String() != mustReadFile(t, artifact) {
+					t.Fatal("recovered search page lost or repeated archived bytes")
+				}
+				return parseSearchFixturePage(t, recovered.String()), artifact
+			}
+			first, artifact := readPage(args)
+			if artifact == "" || first.Total != len(want) || first.Page.Next.Offset == 0 {
+				t.Fatalf("fixture must archive a paginated search result: %+v", first)
+			}
+			oldArchive := mustReadFile(t, artifact)
+			status := searchFixtureGit(t, root, "status", "--porcelain=v2", "-z")
+			mustWriteFile(t, filepath.Join(root, "new/000-added.txt"), "violet seed\n")
+			if searchFixtureGit(t, root, "status", "--porcelain=v2", "-z") != status {
+				t.Fatal("fixture must retain the collapsed untracked status")
+			}
+			fresh, freshArtifact := readPage(args)
+			if freshArtifact == "" || fresh.Total != len(want)+1 || fresh.Revision == first.Revision {
+				t.Fatalf("archived first page did not refresh: %+v", fresh)
+			}
+			args["offset"], args["expected_revision"] = first.Page.Next.Offset, first.Page.Next.Revision
+			if _, err := execute(name, args); err == nil || !strings.Contains(err.Error(), "stale") {
+				t.Fatalf("old search token accepted after refreshing archived results: %v", err)
+			}
+			paths, page := fresh.paths(), fresh
+			for page.Page.Next.Offset != 0 {
+				if len(page.paths()) == 0 || len(paths) > len(want)+1 {
+					t.Fatal("search continuation did not finish")
+				}
+				args["offset"], args["expected_revision"] = page.Page.Next.Offset, page.Page.Next.Revision
+				page, _ = readPage(args)
+				paths = append(paths, page.paths()...)
+			}
+			if !reflect.DeepEqual(paths, append([]string{"new/000-added.txt"}, want...)) {
+				t.Fatal("fresh search pages lost or repeated records across artifact recovery")
+			}
+			if mustReadFile(t, artifact) != oldArchive {
+				t.Fatal("refreshing search overwrote the original archived page")
+			}
+		})
+	}
+}
