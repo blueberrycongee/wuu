@@ -65,6 +65,8 @@ Opening or closing tool/reasoning details preserves the reader's scroll mode. A 
 
 Sending a query reserves reading space below the bubble. Expanded details may temporarily occupy that space, but closing them restores what remains after actual response growth or deliberate browsing. A temporarily empty gap is not proof that the response has filled the reservation. Inspect repeated toggles while streaming, including a fold taller than the remaining gap and a session switch with the fold open.
 
+Earlier-history paging inserts rows above the viewport. A paused reader's offset belongs to native scroll anchoring, so the manual prepend correction applies only while the offset still sits where the page was requested; adding the inserted height on top of anchoring moves the whole stream down by that height the moment the page arrives, which reads as a jump.
+
 ## Scroll-edge fading
 
 [`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips and navigation lists. Add the attribute to the existing vertical scroll owner:
