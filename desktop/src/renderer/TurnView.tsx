@@ -267,6 +267,7 @@ function TurnContent({
         <StreamReconnectNotice
           key={item.id}
           item={item}
+          error={turn.error}
           onRetry={isLatestTurn && turn.status === "failed" && retryMessage && onEditMessage && onSubmitEditMessage
             ? () => onSubmitEditMessage(
                 turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",

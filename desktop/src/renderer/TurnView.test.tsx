@@ -648,7 +648,6 @@ describe("TurnView", () => {
 
     expect(view.textContent).toContain("partial progress");
     expect(view.querySelectorAll(".turn-notice")).toHaveLength(1);
-    expect(view.textContent).toContain("网络异常");
     const notice = view.querySelector(".turn-notice")!;
     expect(notice.querySelector("summary")?.textContent).not.toContain("previous_response_not_found");
     expect(notice.querySelector("details")?.open).toBe(false);

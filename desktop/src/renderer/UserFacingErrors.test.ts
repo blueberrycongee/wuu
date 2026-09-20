@@ -7,6 +7,44 @@ import { setActiveLocale, translateCurrent as t } from "./i18n";
 afterEach(() => setActiveLocale("zh-CN"));
 
 describe("userFacingErrorForMessage", () => {
+  it("preserves local stream-size failures and their recovery facts after resume", () => {
+    const error: TurnError = {
+      message: "stream request failed: read stream: SSE response event exceeds local receive limit of 16777216 bytes",
+      code: "response_too_large", category: "local",
+      recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "response_too_large" },
+    };
+    const live = userFacingErrorForMessage(error, "turn");
+    expect(live.category).toBe("local");
+    expect(live.diagnostic).toBe(error.message);
+    expect(userFacingErrorForMessage(JSON.parse(JSON.stringify(error)), "turn")).toEqual(live);
+    const restoredWithoutFacts = userFacingErrorForMessage(error.message, "turn");
+    expect(restoredWithoutFacts.category).toBe(live.category);
+    expect(restoredWithoutFacts.title).toBe(live.title);
+    expect(restoredWithoutFacts.detail).not.toBe(live.detail);
+    const legacy = userFacingErrorForMessage({ message: "stream request failed: read stream: bufio.Scanner: token too long", category: "internal" }, "turn");
+    expect(legacy.category).toBe("local");
+    expect(legacy.title).toBe(live.title);
+  });
+
+  it("does not infer a network failure from a generic request wrapper", () => {
+    const display = userFacingErrorForMessage("stream request failed: response stream error", "turn");
+    expect(display.category).not.toBe("network");
+  });
+
+  it("keeps structured recovery diagnostics across a wire round trip", () => {
+    const error: TurnError = {
+      message: "stream request failed: stream error (server_error): Fixture failure",
+      code: "server_error", category: "provider",
+      recovery: { attempt_count: 3, retry_count: 2, max_attempts: 3, submission_count: 3, stop_reason: "retry_limit", failure_category: "server" },
+    };
+    const live = userFacingErrorForMessage(error, "turn");
+    expect(userFacingErrorForMessage(JSON.parse(JSON.stringify(error)), "turn")).toEqual(live);
+    expect(live.category).toBe("provider");
+    expect(live.detail).not.toBe(userFacingErrorForMessage({ ...error, recovery: undefined }, "turn").detail);
+    expect(live.diagnostic).toBe(error.message);
+    expect(userFacingErrorForMessage({ ...error, recovery: { ...error.recovery!, retry_count: 0, stop_reason: "replay_unsafe" } }, "turn").detail).not.toBe(live.detail);
+  });
+
   it.each(["zh-CN", "en-US"] as const)("distinguishes empty replies from generic provider errors in %s", (locale) => {
     setActiveLocale(locale);
     const message = "model returned empty answer (stop_reason=completed)";
