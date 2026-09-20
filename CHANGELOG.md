@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Preview delivered file snapshots in desktop workspace tabs beside the
+  conversation. A single supported delivery can open after successful completion
+  when the panel is available, without taking over manual panel or browser use.
+
 - Named Agents can explicitly attach selected room images, PDFs and supported
   videos to execution-session create/send handoffs, preserving source evidence
   and rejecting inaccessible, missing or unsupported media instead of losing it.
@@ -29,6 +33,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   source navigation, and expandable existing chat bubbles on Desktop and native mobile.
 
 ### Changed
+
+- Reuse loaded sidebar history when reopening desktop conversations, even after
+  a workspace refresh has replaced the active conversation catalog with summaries.
+  Cross-workspace activation now displays the resumed conversation without waiting
+  for live and archived conversation lists, while preserving drafts and live updates.
 
 - Refine the Agent editor with opaque surfaces, aligned borderless fields and
   inset actions that stay visible while scrolling. The expanded avatar picker
@@ -145,6 +154,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve completed tool batches' text budget through provider requests and
   history replay, while retaining media and structured recovery data (#284).
+
+- Make sidebar groups and nested workspace folders expand and collapse in one
+  continuous motion, without inheriting a parent's temporary height or jumping
+  at the end. Rapid reversals preserve rows, and reduced motion closes immediately.
 
 - Honor explicit Responses turn-continuation signals across HTTP and WebSocket
   without retrying ordinary empty completions. Bound consecutive tool-free

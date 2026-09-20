@@ -13,6 +13,7 @@ import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
 import { ThreadItemView } from "./ThreadItemView";
 import { TurnArtifactSummaryPresentation } from "./ArtifactOutputs";
+import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -64,6 +65,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   }
   const threadId = props.threadID ?? desktopPluginHost.getActiveConversationThreadId();
   return (
+    <ArtifactThreadContext.Provider value={threadId}>
     <PluginSurface
       host={desktopPluginHost}
       id="conversation.timeline"
@@ -83,6 +85,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
       }}
       fallback={<TurnContent {...props} turn={projectedTurn} />}
     />
+    </ArtifactThreadContext.Provider>
   );
 }
 

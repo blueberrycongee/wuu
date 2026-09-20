@@ -18,6 +18,7 @@ import {
   turnOutputSummaryVisible,
 } from "./TurnOutputSummaryCard";
 import { Tooltip } from "./Tooltip";
+import { useArtifactPreview } from "./ArtifactPreviewContext";
 
 const WorkspacePdfPreview = lazy(async () => ({
   default: (await import("./WorkspacePdfPreview")).WorkspacePdfPreview,
@@ -40,6 +41,7 @@ export type TurnArtifact = Readonly<{
   ref?: string;
   sha256?: string;
   sizeBytes?: number;
+  delivered?: boolean;
 }>;
 
 export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
@@ -57,7 +59,7 @@ export function collectTurnArtifacts(turn: Turn): readonly TurnArtifact[] {
       // Re-publishing an unchanged snapshot in the same turn should not repeat
       // its preview. Preserve ordered mixed results and different file versions.
       if (artifact.type !== "text" && artifact.sha256) {
-        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement]);
+        const key = JSON.stringify([artifact.sha256, artifact.name, artifact.mimeType, artifact.placement, artifact.delivered]);
         const owner = presented.get(key);
         if (owner && owner !== item.id) return;
         presented.set(key, item.id);
@@ -73,7 +75,7 @@ export function turnEndFileArtifacts(artifacts: readonly TurnArtifact[]): readon
 }
 
 export function turnHasTurnEndArtifacts(turn: Turn): boolean {
-  return turnEndFileArtifacts(collectTurnArtifacts(turn)).length > 0;
+  return turnEndFileArtifacts(collectTurnArtifacts(turn)).some((artifact) => artifact.delivered);
 }
 
 export function TurnArtifactSummaryPresentation({
@@ -89,7 +91,7 @@ export function TurnArtifactSummaryPresentation({
   onOpenFile?: (path: string) => void;
   onCollapseComplete?: () => void;
 }): JSX.Element | null {
-  const artifacts = collectTurnArtifacts(turn);
+  const artifacts = collectTurnArtifacts(turn).filter((artifact) => artifact.delivered);
   return (
     <TurnOutputSummaryPresentation
       visible={turnOutputSummaryVisible(turn, isLatestTurn) && turnEndFileArtifacts(artifacts).length > 0}
@@ -117,6 +119,7 @@ export function TurnInlineArtifactOutputs({
 }): JSX.Element | null {
   const [preview, setPreview] = useState<TurnArtifact>();
   // The image stream is visual output, not another tool-result inspector.
+  const openPreview = useArtifactPreview(setPreview, cwd);
   const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text");
   if (inline.length === 0) return null;
   return (
@@ -128,13 +131,13 @@ export function TurnInlineArtifactOutputs({
             cwd={cwd}
             key={artifact.id}
             onOpenFile={onOpenFile}
-            onPreview={setPreview}
+            onPreview={openPreview}
             variant="inline"
           />
         ))}
       </div>
       {preview ? (
-        <ArtifactPreviewOverlay artifact={preview} cwd={cwd} onClose={() => setPreview(undefined)} />
+        <ArtifactPreview artifact={preview} cwd={cwd} onClose={() => setPreview(undefined)} />
       ) : null}
     </>
   );
@@ -158,6 +161,7 @@ export function TurnEndArtifactOutputs({
   const [visibleCount, setVisibleCount] = useState(TURN_OUTPUT_SUMMARY_BATCH_SIZE);
   const [expanded, setExpanded] = useState(false);
   const files = turnEndFileArtifacts(artifacts);
+  const openPreview = useArtifactPreview(setPreview, cwd);
 
   useEffect(() => {
     if (preview && !files.some((artifact) => artifact.id === preview.id)) {
@@ -169,7 +173,7 @@ export function TurnEndArtifactOutputs({
 
   const openArtifact = (artifact: TurnArtifact): void => {
     if (canPreviewArtifact(artifact)) {
-      setPreview(artifact);
+      openPreview(artifact);
       return;
     }
     const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
@@ -181,7 +185,7 @@ export function TurnEndArtifactOutputs({
       void window.wuu?.openExternal?.(artifact.uri);
       return;
     }
-    setPreview(artifact);
+    openPreview(artifact);
   };
 
   if (compact) {
@@ -255,7 +259,7 @@ export function TurnEndArtifactOutputs({
         />
       )}
       {preview ? (
-        <ArtifactPreviewOverlay
+        <ArtifactPreview
           artifact={preview}
           cwd={cwd}
           onClose={() => setPreview(undefined)}
@@ -425,20 +429,23 @@ function ArtifactCard({
   );
 }
 
-function ArtifactPreviewOverlay({
+export function ArtifactPreview({
   artifact,
   cwd,
   onClose,
+  mode = "overlay",
 }: {
   artifact: TurnArtifact;
   cwd?: string;
   onClose: () => void;
+  mode?: "overlay" | "panel";
 }): JSX.Element {
   const { t } = useI18n();
   const source = useArtifactPreviewSource(artifact, cwd);
   const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (mode === "panel") return;
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : undefined;
@@ -476,11 +483,11 @@ function ArtifactPreviewOverlay({
       window.removeEventListener("keydown", handleKeyDown);
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [onClose]);
+  }, [onClose, mode]);
 
   const download = (): void => {
     if (!source) return;
-    if (window.wuu.saveArtifactFile) {
+    if (window.wuu?.saveArtifactFile) {
       void window.wuu.saveArtifactFile(artifact.name,source).catch(error=>setDownloadError(String(error)));
       return;
     }
@@ -515,22 +522,22 @@ function ArtifactPreviewOverlay({
   } else if (artifact.mimeType.startsWith("audio/")) {
     body = <audio className="artifact-preview-audio" src={source} controls />;
   } else if (artifact.mimeType.startsWith("text/") || artifact.text !== undefined) {
-    body = <pre className="artifact-preview-text">{artifact.text ?? decodedArtifactText(artifact)}</pre>;
+    body = <ArtifactTextPreview artifact={artifact} source={source} />;
   } else {
     body = <div className="artifact-preview-empty">{t("artifacts.previewUnavailable")}</div>;
   }
 
   return (
     <div
-      className="artifact-preview-overlay"
-      role="dialog"
-      aria-modal="true"
+      className={mode === "panel" ? "artifact-preview-panel" : "artifact-preview-overlay"}
+      role={mode === "panel" ? "region" : "dialog"}
+      aria-modal={mode === "overlay" ? true : undefined}
       aria-label={t("artifacts.previewNamed", { name: artifact.name })}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (mode === "overlay" && event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="artifact-preview-shell" ref={dialogRef} tabIndex={-1}>
+      <div className={mode === "panel" ? "artifact-preview-content" : "artifact-preview-shell"} ref={dialogRef} tabIndex={-1}>
         <header className="artifact-preview-toolbar">
           <div>
             <strong>{artifact.name}</strong>
@@ -552,6 +559,56 @@ function ArtifactPreviewOverlay({
       </div>
     </div>
   );
+}
+
+const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
+
+function ArtifactTextPreview({ artifact, source }: { artifact: TurnArtifact; source: string }): JSX.Element {
+  const { t } = useI18n();
+  const [result, setResult] = useState<{ source: string; text?: string; failed?: boolean }>();
+  const inlineText = artifact.text ?? (artifact.data ? decodedArtifactText(artifact) : undefined);
+  useEffect(() => {
+    if (inlineText !== undefined) return;
+    const controller = new AbortController();
+    let disposed = false;
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    void (async () => {
+      try {
+        const response = await fetch(source, { signal: controller.signal });
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw new Error("Preview unavailable");
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let size = 0;
+        let text = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > MAX_TEXT_PREVIEW_BYTES) throw new Error("Preview too large");
+            text += decoder.decode(value, { stream: true });
+          }
+          text += decoder.decode();
+        } finally {
+          await reader.cancel();
+        }
+        if (!disposed) setResult(controller.signal.aborted ? { source, failed: true } : { source, text });
+      } catch {
+        if (!disposed) setResult({ source, failed: true });
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    })();
+    return () => { disposed = true; controller.abort(); window.clearTimeout(timeout); };
+  }, [source, inlineText]);
+  const current = result?.source === source ? result : undefined;
+  const text = inlineText ?? current?.text;
+  return text !== undefined
+    ? <pre className="artifact-preview-text">{text}</pre>
+    : <div className="artifact-preview-empty">{t(current?.failed ? "artifacts.previewUnavailable" : "imagePreview.loading")}</div>;
 }
 
 function artifactFromContentPart(
@@ -586,6 +643,7 @@ function artifactFromContentPart(
     ref: part.artifact?.ref,
     sha256: part.artifact?.sha256,
     sizeBytes: part.artifact?.size_bytes,
+    delivered: part.artifact?.placement === "turn_end" && item.status === "completed" && !item.result_detail?.is_error,
   });
 }
 

@@ -50,6 +50,7 @@ import {
   resolveWorkspaceFileTarget,
 } from "./LinkTargets";
 import { TurnFileDiffPanel } from "./TurnFileDiffPanel";
+import { ArtifactPreview } from "./ArtifactOutputs";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import {
   WorkspaceFilePreview,
@@ -896,6 +897,13 @@ export function WorkspaceRightPanel({
                     selection={activeTab.selection}
                     onClose={() => onCloseTab(activeTab.id)}
                   />
+                ) : activeTab.kind === "artifact" ? (
+                  <ArtifactPreview
+                    artifact={activeTab.artifact}
+                    cwd={activeTab.cwd}
+                    mode="panel"
+                    onClose={() => onCloseTab(activeTab.id)}
+                  />
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
                     gitStatus={gitStatus}
@@ -1224,13 +1232,13 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 }
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
-  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin"
+  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
-  if (tab.kind === "plugin") return tab.title;
+  if (tab.kind === "plugin" || tab.kind === "artifact") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1240,7 +1248,7 @@ function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; class
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
   }
-  if (tab.kind === "file") {
+  if (tab.kind === "file" || tab.kind === "artifact") {
     return <FileText className={className} />;
   }
   if (tab.kind === "plugin") {

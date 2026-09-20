@@ -5,6 +5,7 @@ import {
   createThreadSessionTab,
   ensureSessionTab,
   isThreadRunning,
+  mergeListedThreads,
   persistActiveSessionTabDraft,
   reconcileResumedThreadTurns,
   requireThread,
@@ -20,7 +21,8 @@ import {
   type ComposerDraftState,
 } from "./AppState";
 import {
-  loadRuntime as defaultLoadRuntime,
+  loadRuntimeConfiguration as defaultLoadRuntimeConfiguration,
+  loadRuntimeThreadList as defaultLoadRuntimeThreadList,
   selectRuntimeContext as defaultSelectRuntimeContext,
 } from "./RuntimeLoadState";
 import type { PendingViewSwitch } from "./ViewSwitchState";
@@ -50,7 +52,8 @@ export type ThreadActivationActionsDeps = {
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   isCurrentViewSwitchRequest: (requestID: number) => boolean;
-  loadRuntime?: typeof defaultLoadRuntime;
+  loadRuntimeConfiguration?: typeof defaultLoadRuntimeConfiguration;
+  loadRuntimeThreadList?: typeof defaultLoadRuntimeThreadList;
   selectRuntimeContext?: typeof defaultSelectRuntimeContext;
 };
 
@@ -64,7 +67,9 @@ export type ThreadActivationActions = {
 export function createThreadActivationActions(
   deps: ThreadActivationActionsDeps,
 ): ThreadActivationActions {
-  const loadRuntime = deps.loadRuntime ?? defaultLoadRuntime;
+  const loadRuntimeConfiguration =
+    deps.loadRuntimeConfiguration ?? defaultLoadRuntimeConfiguration;
+  const loadRuntimeThreadList = deps.loadRuntimeThreadList ?? defaultLoadRuntimeThreadList;
   const selectRuntimeContext =
     deps.selectRuntimeContext ?? defaultSelectRuntimeContext;
 
@@ -112,9 +117,7 @@ export function createThreadActivationActions(
     const outgoingDraft = deps.getPrimaryComposerDraft();
     const targetDraft = sessionTabDraftForThread(currentState, threadID);
     const sourceContext = currentState.activeContext;
-    const localThread = currentThreadSnapshot(
-      threadForTab(deps.getAppState(), threadID),
-    );
+    const localThread = findKnownThread(threadID);
     const localThreadContext = localThread
       ? resolveThreadRuntimeContext(localThread, deps.getAppState().projects)
       : undefined;
@@ -130,7 +133,7 @@ export function createThreadActivationActions(
       deps.setAppState((current) => {
         const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
         const optimisticThread =
-          threadForTab(withDraft, threadID) ?? localThread;
+          findKnownThread(threadID, withDraft) ?? localThread;
         return {
           ...withDraft,
           thread: optimisticThread,
@@ -274,9 +277,7 @@ export function createThreadActivationActions(
     const currentState = deps.getAppState();
     const outgoingDraft = deps.getPrimaryComposerDraft();
     const targetDraft = sessionTabDraftForThread(currentState, threadID);
-    const localThread = currentThreadSnapshot(
-      threadForTab(currentState, threadID) ?? findKnownThread(threadID),
-    );
+    const localThread = findKnownThread(threadID, currentState);
     const canSwitchInstantly =
       localThread !== undefined &&
       localThread.turns.length > 0 &&
@@ -292,7 +293,7 @@ export function createThreadActivationActions(
       deps.resetSplitComposerDrafts();
       deps.setAppState((current) => {
         const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
-        const optimisticThread = threadForTab(withDraft, threadID) ?? localThread;
+        const optimisticThread = findKnownThread(threadID, withDraft) ?? localThread;
         return {
           ...withDraft,
           activeContext: targetContext,
@@ -315,8 +316,11 @@ export function createThreadActivationActions(
     }
     try {
       const projectState = await selectRuntimeContext(targetContext);
+      if (!deps.isCurrentViewSwitchRequest(requestID)) {
+        return;
+      }
       const [loadedState, resumed] = await Promise.all([
-        loadRuntime(projectState, { resumeLatestThread: false }),
+        loadRuntimeConfiguration(projectState),
         window.wuu.resumeThread(threadID),
       ]);
       const thread = requireThread(
@@ -326,17 +330,32 @@ export function createThreadActivationActions(
       if (!deps.finishViewSwitch(requestID)) {
         return;
       }
-      deps.restorePrimaryComposerDraft(targetDraft);
-      deps.resetSplitComposerDrafts();
+      // An instant switch already restored the target draft. The user may have
+      // edited it while initialization was pending, so do not restore it twice.
+      const resumedDraft = canSwitchInstantly ? deps.getPrimaryComposerDraft() : targetDraft;
+      if (!canSwitchInstantly) {
+        deps.restorePrimaryComposerDraft(targetDraft);
+        deps.resetSplitComposerDrafts();
+      }
       deps.setAppState((current) => {
-        const withDraft = persistActiveSessionTabDraft(current, outgoingDraft);
+        const withDraft = canSwitchInstantly
+          ? current
+          : persistActiveSessionTabDraft(current, outgoingDraft);
         const localThread = conversationPaneThreadsByID(
           current.threads,
           current.thread,
           current.secondaryThread,
         ).get(thread.id);
         const reconciled = reconcileResumedThreadTurns(thread, localThread);
-        const next = { ...withDraft, ...loadedState };
+        const next = {
+          ...withDraft,
+          ...loadedState,
+          threads: withDraft.threads.filter((candidate) =>
+            candidate.archived || sameRuntimeContext(
+              resolveThreadRuntimeContext(candidate, withDraft.projects), targetContext,
+            ),
+          ),
+        };
         return {
           ...next,
           thread: reconciled,
@@ -345,7 +364,7 @@ export function createThreadActivationActions(
           allowThreadAutoActivation: true,
           sessionTabs: ensureSessionTab(
             next.sessionTabs,
-            createThreadSessionTab(reconciled, targetContext, targetDraft),
+            createThreadSessionTab(reconciled, targetContext, resumedDraft),
           ),
           activeSessionTabID: threadSessionTabID(reconciled.id),
           threads: upsertThread(next.threads, reconciled),
@@ -353,6 +372,11 @@ export function createThreadActivationActions(
           status: "ready",
         };
       });
+      // Catalogs are not needed to display or send to the resumed conversation.
+      // Start them after activation so large archives cannot delay its first paint.
+      if (loadedState.activeContext) {
+        void refreshThreadCatalog(loadedState.activeContext);
+      }
     } catch (error) {
       if (!deps.finishViewSwitch(requestID)) {
         return;
@@ -361,9 +385,53 @@ export function createThreadActivationActions(
     }
   }
 
-  function findKnownThread(threadID: string): Thread | undefined {
-    return currentThreadSnapshot(
+  async function refreshThreadCatalog(context: RuntimeContext): Promise<void> {
+    const before = new Map(deps.getAppState().threads.map((thread) => [thread.id, thread]));
+    try {
+      const threads = await loadRuntimeThreadList(context.cwd);
+      deps.setAppState((current) => {
+        // A same-context thread selection still needs this catalog. Context
+        // identity changes on runtime reload, including leaving and returning
+        // to the same workspace. Check inside the updater, after activation.
+        if (current.activeContext !== context) return current;
+        const currentByID = new Map(current.threads.map((thread) => [thread.id, thread]));
+        const unchanged = threads.filter((thread) =>
+          !before.has(thread.id) || currentByID.has(thread.id),
+        );
+        const changed = current.threads.filter((thread) => before.get(thread.id) !== thread);
+        return {
+          ...current,
+          // Local archives, new threads, and streaming updates may be newer
+          // than the list response. Keep those snapshots and live panes.
+          threads: upsertThread(
+            upsertThread(mergeListedThreads(current.threads, [...unchanged, ...changed]), current.thread),
+            current.secondaryThread,
+          ),
+        };
+      });
+    } catch (error) {
+      if (deps.getAppState().activeContext === context) {
+        setStatus(error instanceof Error ? error.message : translateCurrent("thread.loadFailed"));
+      }
+    }
+  }
+
+  function findKnownThread(
+    threadID: string,
+    state = deps.getAppState(),
+  ): Thread | undefined {
+    const candidates = [
+      threadForTab(state, threadID),
       deps.getSidebarThreads().find((thread) => thread.id === threadID),
+      ...Object.values(deps.getSidebarProjectThreadsByProjectID()).map(
+        (threads) => threads?.find((thread) => thread.id === threadID),
+      ),
+    ];
+    // Runtime reloads replace the catalog with summaries. Prefer a loaded
+    // snapshot, but keep live pane history ahead of older sidebar caches.
+    return currentThreadSnapshot(
+      candidates.find((thread) => thread && thread.turns.length > 0) ??
+        candidates.find((thread) => thread !== undefined),
     );
   }
 

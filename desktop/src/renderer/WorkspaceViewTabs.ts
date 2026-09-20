@@ -8,6 +8,7 @@ import {
 } from "./LinkTargets";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
+import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 
 /**
  * Content shown in the workspace right panel's tab strip. Built-in tools are
@@ -48,7 +49,20 @@ export type WorkspacePluginViewTab = {
   icon?: ExtensionIconDescriptor;
 };
 
-export type WorkspaceViewTab = WorkspaceToolViewTab | WorkspaceDiffViewTab | WorkspaceFileViewTab | WorkspacePluginViewTab;
+export type WorkspaceArtifactViewTab = ArtifactPreviewRequest & {
+  kind: "artifact";
+  id: string;
+  title: string;
+};
+
+export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): WorkspaceArtifactViewTab {
+  const { artifact, threadID, cwd } = input;
+  // Snapshot identity is separate from the editable workspace file path.
+  const identity = [threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
+  return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
+}
+
+export type WorkspaceViewTab = WorkspaceToolViewTab | WorkspaceDiffViewTab | WorkspaceFileViewTab | WorkspacePluginViewTab | WorkspaceArtifactViewTab;
 
 export type WorkspaceViewTabsState = {
   tabs: WorkspaceViewTab[];
