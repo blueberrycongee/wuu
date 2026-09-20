@@ -62,6 +62,7 @@ function Fixture() {
   }, []);
   const empty = params.has("empty");
   const agentNav = params.has("agents");
+  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const managed: ThreadSummary[] = empty ? [] : Array.from({ length: 68 }, (_, i) => ({
     ...threads[i % threads.length], id: `managed-${i}`, title: `会话 ${i + 1}：验证长标题与独立的状态显示`,
     status: !params.has("idle") && i < 3 ? "in_progress" : "idle",
@@ -93,6 +94,7 @@ function Fixture() {
       onToggleSidebarSectionCollapsed={id => setExpanded(current => current.has(id) ? new Set() : new Set([id]))}
       onStartNewThreadForProject={noop} onSelectProjectThread={(_project, id) => setActive(id)}
       onRemoveProject={noop} onRelocateProject={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
+      unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(open => !open)}
       sidebarCollapsed={false} onToggleSidebar={noop}
     />
     {agentNav ? <main className="conversation-pane collaboration-room-pane">

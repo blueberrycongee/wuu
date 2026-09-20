@@ -549,6 +549,10 @@ export function App(): JSX.Element {
   // rail. Keep a docked sidebar docked; only an already-collapsed or compact
   // sidebar remains a drawer while the workspace is expanded.
   const [appMode, setAppMode] = useState<AppMode>("harness");
+  // The bell view is a sidebar-level navigation mode rather than sidebar-local
+  // state: settings and account replace the whole workbench tree, so the flag
+  // has to live above it for the user to come back to the view they left.
+  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
@@ -5287,6 +5291,8 @@ export function App(): JSX.Element {
             onMarkThreadsViewed={(threads) => {
               setState((current) => markThreadSummariesViewed(current, threads));
             }}
+            unreadViewOpen={unreadViewOpen}
+            onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
               openHarnessView();

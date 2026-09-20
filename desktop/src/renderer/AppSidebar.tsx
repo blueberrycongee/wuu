@@ -397,6 +397,8 @@ export function AppSidebar({
   onOpenAccount,
   onSwitchToCollaboration,
   onMarkThreadsViewed,
+  unreadViewOpen,
+  onToggleUnreadView,
   pluginHost = desktopPluginHost,
   workbenchController = desktopWorkbenchController,
   mobileNavigation = false,
@@ -489,6 +491,11 @@ export function AppSidebar({
   onOpenAccount?: () => void;
   onSwitchToCollaboration?: () => void;
   onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
+  // The bell view is a sidebar navigation mode, so App owns the flag: faces
+  // that replace this component wholesale (settings, account) must bring the
+  // user back to the view they left, not to the session list.
+  unreadViewOpen: boolean;
+  onToggleUnreadView: () => void;
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
   mobileNavigation?: boolean;
@@ -499,7 +506,6 @@ export function AppSidebar({
   onToggleSidebar?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const organizationSourceThreads = useMemo(() => {
     const byID = new Map<string, ThreadSummary>();
     for (const threads of Object.values(projectThreadsByProjectID)) {
@@ -1686,7 +1692,7 @@ export function AppSidebar({
           mode="harness"
           unreadViewOpen={unreadViewOpen}
           unreadCount={attentionCount}
-          onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
+          onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         />
         {unreadViewOpen ? (

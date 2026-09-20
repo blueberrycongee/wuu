@@ -1,4 +1,4 @@
-import { act, createRef, type ReactNode } from "react";
+import { act, createRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -90,87 +90,98 @@ interface RenderOptions {
   onOpenChannelTasks?: () => void;
 }
 
-function renderSidebar({
-  expandedSidebarSectionIDs = new Set(),
-  projectThreadsByProjectID = {},
-  activeThreadID,
-  pendingThreadID,
-  onSelectThread = () => {},
-  onSelectProjectThread = () => {},
-  sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
-  state = {
-    ...initialState,
-    initialized: initialized(),
-    activeContext: {
-      kind: "project",
-      project_id: "project-1",
-      cwd: "/repo/wuu",
+// The bell view is driven by App-owned state (it has to survive faces that
+// replace the whole workbench, such as settings), so the harness owns the flag
+// here and hands AppSidebar the same controlled props it gets in production.
+function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
+  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
+  const {
+    expandedSidebarSectionIDs = new Set(),
+    projectThreadsByProjectID = {},
+    activeThreadID,
+    pendingThreadID,
+    onSelectThread = () => {},
+    onSelectProjectThread = () => {},
+    sectionOrder = [SCRATCH_PSEUDO_PROJECT_ID, "project-1", "project-2"],
+    state = {
+      ...initialState,
+      initialized: initialized(),
+      activeContext: {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/wuu",
+      },
     },
-  },
-  groupChatEnabled = false,
-  channelRooms = [],
-  pinnedChannelRooms = [],
-  pinnedCollaborationConversations = [],
-  collaborationNavigation,
-  activeChannelRoomID,
-  activeChannelSection = null,
-  collapsedSidebarSectionIDs = new Set(),
-  onSelectChannelRoom,
-  onToggleChannelRoomPinned,
-  onArchiveChannelRoom,
-  onOpenChannelAgents,
-  onOpenChannelTasks,
-}: RenderOptions = {}): void {
+    groupChatEnabled = false,
+    channelRooms = [],
+    pinnedChannelRooms = [],
+    pinnedCollaborationConversations = [],
+    collaborationNavigation,
+    activeChannelRoomID,
+    activeChannelSection = null,
+    collapsedSidebarSectionIDs = new Set(),
+    onSelectChannelRoom,
+    onToggleChannelRoomPinned,
+    onArchiveChannelRoom,
+    onOpenChannelAgents,
+    onOpenChannelTasks,
+  } = options;
+  return (
+    <AppSidebar
+      state={state}
+      sidebarProjects={sidebarProjects}
+      pinnedThreads={[]}
+      activeThreadID={activeThreadID}
+      pendingThreadID={pendingThreadID}
+      pendingProjectID={undefined}
+      collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
+      expandedSidebarSectionIDs={expandedSidebarSectionIDs}
+      projectThreadsByProjectID={projectThreadsByProjectID}
+      projectMenuOpen={false}
+      projectMenuRef={createRef<HTMLDivElement>()}
+      searchOpen={false}
+      sectionOrder={sectionOrder}
+      onStartNewThread={() => {}}
+      onOpenSkillsTab={() => {}}
+      groupChatEnabled={groupChatEnabled}
+      channelRooms={channelRooms}
+      pinnedChannelRooms={pinnedChannelRooms}
+      pinnedCollaborationConversations={pinnedCollaborationConversations}
+      collaborationNavigation={collaborationNavigation}
+      activeChannelRoomID={activeChannelRoomID}
+      activeChannelSection={activeChannelSection}
+      onSelectChannelRoom={onSelectChannelRoom}
+      onToggleChannelRoomPinned={onToggleChannelRoomPinned}
+      onArchiveChannelRoom={onArchiveChannelRoom}
+      onOpenChannelAgents={onOpenChannelAgents}
+      onOpenChannelTasks={onOpenChannelTasks}
+      onOpenChannels={() => {}}
+      onMarkThreadsViewed={() => {}}
+      unreadViewOpen={unreadViewOpen}
+      onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
+      onToggleConversationSearch={() => {}}
+      onSelectThread={onSelectThread}
+      onTogglePinned={() => {}}
+      onArchiveThread={() => {}}
+      onDeleteThread={() => {}}
+      onRenameThread={() => {}}
+      onToggleProjectMenu={() => {}}
+      onCreateProject={() => {}}
+      onOpenProjectFolder={() => {}}
+      onToggleSidebarSectionCollapsed={() => {}}
+      onStartNewThreadForProject={() => {}}
+      onSelectProjectThread={onSelectProjectThread}
+      onRemoveProject={() => {}}
+      onRelocateProject={() => {}}
+      onOpenSettings={() => {}}
+    />
+  );
+}
+
+function renderSidebar(options: RenderOptions = {}): void {
   act(() => {
     root ??= createRoot(container);
-    root.render(
-      <AppSidebar
-        state={state}
-        sidebarProjects={sidebarProjects}
-        pinnedThreads={[]}
-        activeThreadID={activeThreadID}
-        pendingThreadID={pendingThreadID}
-        pendingProjectID={undefined}
-        collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
-        expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-        projectThreadsByProjectID={projectThreadsByProjectID}
-        projectMenuOpen={false}
-        projectMenuRef={createRef<HTMLDivElement>()}
-        searchOpen={false}
-        sectionOrder={sectionOrder}
-        onStartNewThread={() => {}}
-        onOpenSkillsTab={() => {}}
-        groupChatEnabled={groupChatEnabled}
-        channelRooms={channelRooms}
-        pinnedChannelRooms={pinnedChannelRooms}
-        pinnedCollaborationConversations={pinnedCollaborationConversations}
-        collaborationNavigation={collaborationNavigation}
-        activeChannelRoomID={activeChannelRoomID}
-        activeChannelSection={activeChannelSection}
-        onSelectChannelRoom={onSelectChannelRoom}
-        onToggleChannelRoomPinned={onToggleChannelRoomPinned}
-        onArchiveChannelRoom={onArchiveChannelRoom}
-        onOpenChannelAgents={onOpenChannelAgents}
-        onOpenChannelTasks={onOpenChannelTasks}
-        onOpenChannels={() => {}}
-        onMarkThreadsViewed={() => {}}
-        onToggleConversationSearch={() => {}}
-        onSelectThread={onSelectThread}
-        onTogglePinned={() => {}}
-        onArchiveThread={() => {}}
-        onDeleteThread={() => {}}
-        onRenameThread={() => {}}
-        onToggleProjectMenu={() => {}}
-        onCreateProject={() => {}}
-        onOpenProjectFolder={() => {}}
-        onToggleSidebarSectionCollapsed={() => {}}
-        onStartNewThreadForProject={() => {}}
-        onSelectProjectThread={onSelectProjectThread}
-        onRemoveProject={() => {}}
-        onRelocateProject={() => {}}
-        onOpenSettings={() => {}}
-      />,
-    );
+    root.render(<SidebarHarness options={options} />);
   });
 }
 

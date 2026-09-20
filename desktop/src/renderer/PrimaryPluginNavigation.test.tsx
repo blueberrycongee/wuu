@@ -94,6 +94,8 @@ function renderShell({ inventory: available }: { inventory?: ExtensionInventoryR
       onRelocateProject={() => {}}
       onOpenSettings={() => {}}
       onMarkThreadsViewed={() => {}}
+      unreadViewOpen={false}
+      onToggleUnreadView={() => {}}
       pluginHost={host}
       workbenchController={controller}
     />
