@@ -647,6 +647,15 @@ func workspaceRevision(ctx context.Context, rootDir string) string {
 	if len(head) >= 12 {
 		head = head[:12]
 	}
+	// Porcelain v2 names dirty paths (or an untracked directory) but not the
+	// current bytes. Equal-length edits and files added inside an already
+	// untracked directory leave the status records unchanged.
+	if len(records) > 0 {
+		dirty := digestGitDirtyWorktree(revCtx, rootDir, records)
+		records = append(records, []byte("dirty-content:")...)
+		records = append(records, dirty...)
+		records = append(records, 0)
+	}
 	sum := sha256.Sum256(records)
 	return "git:" + head + ":worktree:" + hex.EncodeToString(sum[:])[:16]
 }
@@ -747,6 +756,134 @@ func recordSpecialWorkspaceEntry(hash io.Writer, rel string, mode os.FileMode, p
 		}
 	}
 	fmt.Fprintf(hash, "special\t%s\t%s\n", rel, mode.Type().String())
+}
+
+// porcelainV2DirtyPath returns the worktree path from a porcelain v2 -z file
+// record. Untracked directories are reported as "dir/" and must be walked.
+func porcelainV2DirtyPath(record []byte) (path string, untrackedDir bool) {
+	switch {
+	case bytes.HasPrefix(record, []byte("? ")):
+		path = string(record[2:])
+		return path, strings.HasSuffix(path, "/")
+	case bytes.HasPrefix(record, []byte("! ")):
+		return "", false
+	case bytes.HasPrefix(record, []byte("2 ")):
+		// rename/copy: "<fields> <path>\t<origPath>"
+		if i := bytes.IndexByte(record, '\t'); i >= 0 {
+			left := record[:i]
+			if sp := bytes.LastIndexByte(left, ' '); sp >= 0 {
+				return string(left[sp+1:]), false
+			}
+		}
+		return "", false
+	case bytes.HasPrefix(record, []byte("1 ")), bytes.HasPrefix(record, []byte("u ")):
+		// ordinary: 8 space-separated fields then path
+		// unmerged: 10 space-separated fields then path
+		wantSpaces := 8
+		if record[0] == 'u' {
+			wantSpaces = 10
+		}
+		spaces := 0
+		for i, b := range record {
+			if b != ' ' {
+				continue
+			}
+			spaces++
+			if spaces == wantSpaces {
+				return string(record[i+1:]), false
+			}
+		}
+	}
+	return "", false
+}
+
+func digestGitDirtyWorktree(ctx context.Context, rootDir string, records []byte) []byte {
+	hash := sha256.New()
+	seen := make(map[string]struct{})
+	fileCount := 0
+	var byteCount int64
+	for _, record := range bytes.Split(records, []byte{0}) {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		raw, dirHint := porcelainV2DirtyPath(record)
+		if raw == "" {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Clean(raw))
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+			continue
+		}
+		if _, dup := seen[rel]; dup {
+			continue
+		}
+		seen[rel] = struct{}{}
+		abs := filepath.Join(rootDir, filepath.FromSlash(rel))
+		info, err := os.Lstat(abs)
+		if err != nil {
+			fmt.Fprintf(hash, "missing\t%s\n", rel)
+			continue
+		}
+		if info.IsDir() || dirHint {
+			fileCount, byteCount = digestGitDirtyTree(ctx, hash, rootDir, abs, fileCount, byteCount)
+			continue
+		}
+		fileCount, byteCount = appendGitDirtyFile(hash, rel, info, abs, fileCount, byteCount)
+	}
+	fmt.Fprintf(hash, "summary\tfiles=%d\tbytes=%d\n", fileCount, byteCount)
+	return hash.Sum(nil)
+}
+
+func digestGitDirtyTree(ctx context.Context, hash io.Writer, rootDir, dir string, fileCount int, byteCount int64) (int, int64) {
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if path != dir && isWorkspaceRevisionSkippedDir(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		fileCount, byteCount = appendGitDirtyFile(hash, rel, info, path, fileCount, byteCount)
+		if fileCount >= workspaceDigestMaxFiles || byteCount >= workspaceDigestMaxBytes {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return fileCount, byteCount
+}
+
+func appendGitDirtyFile(hash io.Writer, rel string, info os.FileInfo, path string, fileCount int, byteCount int64) (int, int64) {
+	mode := info.Mode()
+	if mode.Type() != 0 {
+		recordSpecialWorkspaceEntry(hash, rel, mode, path)
+		return fileCount, byteCount
+	}
+	if fileCount >= workspaceDigestMaxFiles || byteCount >= workspaceDigestMaxBytes {
+		fmt.Fprintf(hash, "file\t%s\ttruncated\n", rel)
+		return fileCount, byteCount
+	}
+	fileDigest, copied, err := digestWorkspaceFile(path, workspaceDigestMaxBytesPerFile, workspaceDigestMaxBytes-byteCount)
+	if err != nil {
+		fmt.Fprintf(hash, "file\t%s\tunreadable\t%d\n", rel, info.Size())
+		return fileCount + 1, byteCount
+	}
+	fmt.Fprintf(hash, "file\t%s\t%d\t%x\n", rel, info.Size(), fileDigest)
+	return fileCount + 1, byteCount + copied
 }
 
 func digestWorkspaceFile(path string, perFileLimit, remainingLimit int64) ([]byte, int64, error) {
