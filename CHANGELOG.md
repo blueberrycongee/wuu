@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Preview delivered file snapshots in desktop workspace tabs beside the
+  conversation. A single supported delivery can open after successful completion
+  when the panel is available, without taking over manual panel or browser use.
+
 - Named Agents can explicitly attach selected room images, PDFs and supported
   videos to execution-session create/send handoffs, preserving source evidence
   and rejecting inaccessible, missing or unsupported media instead of losing it.

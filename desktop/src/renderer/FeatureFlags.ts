@@ -8,11 +8,8 @@ export const ENABLE_REMOTE_CONTROL =
 export const ENABLE_TURN_EDIT_SUMMARY = false;
 export const ENABLE_CONVERSATION_TURN_RAIL = false;
 
-/**
- * Same turn output-summary family as the file-change card. Hide the file-list
- * card until that surface returns; keep snapshots and inline image previews.
- */
-export const ENABLE_TURN_ARTIFACT_SUMMARY = false;
+/** Explicit file deliveries remain accessible beside their conversation. */
+export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
 
 /**
  * Collaboration is part of the default desktop product in development and

@@ -33,6 +33,7 @@
     "test:renderer-recovery": "node scripts/renderer-recovery-smoke.cjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
+    "test:e2e:artifact-preview": "npm run build && electron scripts/artifact-preview-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",
     "test:e2e:process-mascot-clip": "npm run build && electron scripts/process-mascot-clip-e2e.cjs",
     "test:e2e:window-resize": "npm run build && electron scripts/window-resize-perf-e2e.cjs",
