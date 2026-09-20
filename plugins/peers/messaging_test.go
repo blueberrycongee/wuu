@@ -12,12 +12,13 @@ import (
 )
 
 type messagingHost struct {
-	mu          sync.Mutex
-	stored      *string
-	sends       []pluginapi.SessionSendParams
-	turns       map[string]pluginapi.SessionTurnInspection
-	workspaceID string
-	sessions    []pluginapi.SessionSummary
+	mu           sync.Mutex
+	stored       *string
+	sends        []pluginapi.SessionSendParams
+	turns        map[string]pluginapi.SessionTurnInspection
+	workspaceID  string
+	sessions     []pluginapi.SessionSummary
+	steerReplies bool
 }
 
 func (h *messagingHost) InitializeParams() pluginapi.InitializeParams {
@@ -63,9 +64,15 @@ func (h *messagingHost) CallHost(ctx context.Context, method string, params, out
 		if !exists || turn.State == "discarded" && turn.Retryable {
 			h.sends = append(h.sends, p)
 			turn = pluginapi.SessionTurnInspection{RequestID: p.RequestID, State: "queued", QueueID: fmt.Sprintf("queued-%d", len(h.sends))}
+			if h.steerReplies && strings.HasPrefix(p.RequestID, responsePrefix) {
+				turn.State, turn.TurnID, turn.QueueID = "running", "active-turn", ""
+			}
 			h.turns[p.RequestID] = turn
 		}
-		result = pluginapi.SessionSendResult{SessionID: p.SessionID, State: turn.State, QueueID: turn.QueueID, TurnID: turn.TurnID}
+		result = pluginapi.SessionSendResult{
+			SessionID: p.SessionID, State: turn.State, QueueID: turn.QueueID, TurnID: turn.TurnID,
+			Steered: h.steerReplies && strings.HasPrefix(p.RequestID, responsePrefix) && turn.State == "running",
+		}
 	default:
 		return fmt.Errorf("unexpected host method %s", method)
 	}
@@ -113,6 +120,9 @@ func TestMessagingRoundTripPreservesBodyAndSourceWithoutReplyLoop(t *testing.T) 
 		t.Fatalf("reply must be delivered once: %d sends", len(h.sends))
 	}
 	response := h.sends[1]
+	if response.IfRunning != pluginapi.SessionIfRunningSteer {
+		t.Fatalf("receipt must join active work without requiring another response: %+v", response)
+	}
 	if response.SessionID != "source" || response.Presentation.Text != reply || response.Presentation.RelatedSessionID != "target" || response.Presentation.Kind != "session_message" {
 		t.Fatalf("reply = %+v", response)
 	}

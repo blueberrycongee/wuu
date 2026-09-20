@@ -1,118 +1,97 @@
-# Remote devices and Relay
+# Remote hosts and Relay
 
-wuu's remote capability lets one computer act as a Host and provide remote control to
-paired phones or other clients through a self-hostable Relay. The Relay only forwards
-encrypted connections; the Host still runs wuu in the designated workspace, and the
-model configuration, permissions, and file-access boundary remain decided by the Host.
+Remote control connects a paired client to a Wuu host through a Relay. The host
+runs the agent and accesses the workspace; the Relay routes the end-to-end encrypted
+app-server connection. Pairing grants control of the host, not just a read-only view.
 
-## Initialize the Host
+The current desktop release workflow hides account and remote-control UI. This
+guide covers the source CLI and development client, not a promised phone setup
+screen in the released desktop. Build the CLI using the
+[development guide](../project/development.md).
 
-First create a remote identity for the current user. Remote state is saved to
-`~/.wuu/remote.json` by default; with `WUU_HOME` set it moves together with the user
-directory.
+## Prepare a Relay
+
+The host and client need a reachable WebSocket endpoint ending in `/v1/connect`.
+For local development on one machine:
 
 ```bash
-wuu remote init --relay wss://relay.example.com/v1/connect --name my-mac
+wuu relay --addr 127.0.0.1:8787
 ```
 
-`--relay` can be omitted and added later by running the init command again; the command
-prints the remote identity fingerprint, which you can use during pairing or
-troubleshooting to confirm you are connecting to the right Host.
+Keep this process running and use `ws://127.0.0.1:8787/v1/connect`. A different
+device cannot reach your computer through its own loopback address. For network
+use, deploy a Relay reachable by both sides and use `wss://` with TLS. The server
+supports TLS certificate/key flags and deployment behind a reverse proxy; encrypted
+message content does not remove the need to protect routing metadata, service
+availability, or operator access.
 
-## Start the Host and pair a phone
+Account service and browser hosting are optional server features with separate
+configuration. The basic paired CLI flow below does not require account registration.
+Server options are defined in
+[`internal/remote/server/server.go`](../../../internal/remote/server/server.go).
 
-Start the Host on the computer you want to control remotely:
+## Start and pair a host
+
+On the workspace computer:
 
 ```bash
+wuu remote init --relay ws://127.0.0.1:8787/v1/connect --name my-mac
 wuu remote host --workdir /path/to/project --pair
 ```
 
-The terminal prints a pairing URI. Turn the URI into a QR code or copy it to the phone;
-the pairing window lasts 10 minutes by default and closes automatically after the first
-device pairs. To adjust the behavior:
+Initialization creates or updates the host identity and prints its fingerprint.
+The host connects outward to the Relay and prints a pairing URI after registration.
+The default pairing window is 10 minutes and closes after the first successful
+pairing. Use `--pair-timeout 30m` or `--pair-once=false` only when needed.
+
+`remote host` accepts `--provider`, `--model`, `--workspace-id`, and `--relay`
+overrides. Keep the host running. A Wuu home can have only one remote-host owner;
+close the other host before starting another against the same home.
+
+On the development client, import the URI privately:
 
 ```bash
-wuu remote host --pair --pair-timeout 30m --pair-once=false
-```
-
-You can also override the provider, model, workspace, or Relay when starting the Host:
-
-```bash
-wuu remote host \
-  --workdir /path/to/project \
-  --provider openai \
-  --model gpt-5.6 \
-  --relay wss://relay.example.com/v1/connect
-```
-
-The Host process must keep running; stopping the Host or Relay does not delete saved
-pairing identities.
-
-## Manage paired devices
-
-View the Host identity, Relay, and device count:
-
-```bash
-wuu remote status
-wuu remote status --json
-wuu remote devices
-wuu remote devices --json
-```
-
-Revoke a device using its displayed fingerprint:
-
-```bash
-wuu remote devices remove <fingerprint>
-```
-
-Revoking blocks new handshakes; a running Host may need a reload or restart before it
-fully adopts the latest device list. Do not publish full public keys, pairing URIs, or
-`remote.json` to issues or chats.
-
-## Phone-side commands
-
-The phone side first imports the pairing URI:
-
-```bash
-wuu remote phone pair --uri 'wuu://pair?...'
-```
-
-Then you can view connection status, send tasks, and watch events:
-
-```bash
+wuu remote phone pair --uri 'wuu://pair?...' --name dev-client
 wuu remote phone status
-wuu remote phone send "check the test status of the current workspace"
+wuu remote phone send "summarize the current workspace"
+wuu remote phone send --thread THREAD_ID "continue the investigation"
 wuu remote phone watch
 ```
 
-The phone-side state file lives in the user directory by default; to isolate multiple
-identities, use `--store FILE` to point at a separate file. The permissions for sent
-tasks are still decided by the Host's runtime and workspace policy; the phone cannot
-bypass read-only mode or sensitive-path protections.
+`phone` is a CLI development client and can run on another computer. `send` starts
+a new session unless `--thread` is supplied, then streams the turn's output.
+`watch` displays connection state and abbreviated notifications. These are not the
+[`wuu exec` JSONL](jsonl-events.md) output contract.
 
-## Troubleshooting
+## State and device removal
 
-- **Cannot connect to the Relay:** check the `ws://`/`wss://` address, port, firewall,
-  and the Relay's `/v1/connect` path; the Host and phone must use the same reachable
-  Relay.
-- **Pairing URI expired:** restart `wuu remote host --pair` to generate a new window
-  and URI.
-- **Device shows paired but cannot operate:** run `wuu remote status` first, then
-  confirm the Host process is still running, the workspace exists, and the model
-  service credentials are available.
-- **A task starts but the result is interrupted:** look at the phone's `watch` output
-  and the Host logs; do not resend the same task, first confirm whether the previous
-  run is still in progress.
+Host identity and paired devices live in `WUU_HOME/remote.json`; client identity
+lives in `WUU_HOME/phone.json`, with `~/.wuu` as the default home. A phone subcommand's
+`--store FILE` selects a separate client identity. These files and pairing URIs
+contain sensitive access material; do not attach them to issue reports.
 
-When the remote feature involves public-network connections, configure TLS, access
-control, and log redaction for the Relay; do not treat the Relay as a model service or
-credential store.
+```bash
+wuu remote status --json
+wuu remote devices --json
+wuu remote devices remove DEVICE_FINGERPRINT
+```
 
-## Related documentation
+Removal updates the saved device list, not the running host's in-memory store.
+For reliable revocation, stop the host, remove the device, then restart the host
+without reopening pairing. Do not assume removal alone disconnects an active client.
 
-- [Model services](../getting-started/model-services.md): configure the provider and
-  model the Host uses;
-- [Permission modes](../reference/permissions.md): which paths and commands the Host
-  can read and write;
-- [App-server integration](app-server.md): use the core protocol when building other
-  clients.
+## Diagnose a connection
+
+If pairing fails, check that both sides use the same reachable Relay and that the
+pairing window is still open. A saved identity in `remote status` does not prove
+the host is online. Check the running host's logs and the client's connection status.
+
+A dropped client connection does not by itself stop the host's agent. Reconnect
+and inspect the existing session before resending a task. Event replay is bounded;
+do not treat it as unlimited durable log storage.
+
+Paired clients use the host's app-server control surface. Trust them as controllers,
+including their ability to request configuration changes. Agent operations remain
+subject to the effective [permission mode](../reference/permissions.md); pairing
+is not a separate per-device read-only policy. For a custom client, see
+[app-server integration](app-server.md).

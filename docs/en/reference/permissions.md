@@ -1,83 +1,62 @@
 # Permission modes
 
-Permission modes control which local paths the agent can access and modify. In the
-desktop you can switch them in the runtime menu next to the input box; in the CLI you
-can override a single run with `wuu exec --permission-mode`.
+Choose the permission mode beside the desktop composer, or pass `--permission-mode` to `wuu exec`. The same labels are available across engines, but the built-in Wuu engine and external programs enforce them differently.
 
 ## The three modes
 
-| Mode | Suited to | Behavior |
+For the Wuu engine:
+
+| Mode | Dedicated tools | Commands |
 |---|---|---|
-| Standard `standard` | Everyday project tasks | Reads and writes the file roots registered with the current runtime, including the agent home, user workspaces, and system temporary directories, and keeps protection for sensitive paths and high-risk operations |
-| Read only `read_only` | Understanding code, investigation, and review | Keeps the same read scope but refuses file modifications |
-| Unconfined `unconfined` | Trusted tasks that explicitly need files outside the workspace | Removes Wuu's path boundary, allowing access to and modification of everything the current system user can operate on |
+| Standard `standard` | Read and write within registered file roots, subject to sensitive-path guards | Filesystem sandbox permits writes within execution roots and a private temporary directory |
+| Read only `read_only` | Same read scope; mutating calls are refused | Allowed commands run with filesystem writes restricted |
+| Unconfined `unconfined` | Removes the normal path boundary; dedicated sensitive-path guards remain | Removes Wuu's filesystem process sandbox |
 
-Use standard mode unless there is a clear reason not to. Use read-only when you only
-need analysis. Treat `unconfined` as handing the current logged-in user's local
-permissions to the agent, and enable it briefly only for trusted tasks.
+Registered file roots can include the agent's scoped home, user workspaces, and the system temporary directory. Commands do not receive the whole shared temporary directory as a writable root: they get a private temporary directory instead.
 
-## Approve for me
-
-In the desktop permission menu, **Approve for me** is a Standard-mode option for
-the built-in Wuu engine. It is not a fourth permission mode and does not raise
-the workspace boundary.
-
-When it is on, high-risk native tool calls — shell, Git, process, browser, MCP,
-and other destructive or high-risk tools — are reviewed before they run.
-Ordinary workspace-local reads stay on the normal allow path. The reviewer can
-allow the exact call, deny it, or leave the main agent to explain the action in
-conversation and wait for informed user approval of that target. A timeout or
-review failure is not a safety verdict: the action does not run, and the agent
-must not bypass the check.
-
-Approve for me cannot switch the session to Unconfined, read or write Wuu
-credential files, or write known sensitive paths through the dedicated file
-tools. `wuu exec` does not expose this option; non-interactive runs remain
-allow-or-deny.
-
-Even under `unconfined`, the dedicated tools keep the following defense in depth:
-
-- known sensitive paths such as `.env`, SSH private keys, and credential
-  configurations cannot be written through the dedicated file tools, nor staged or
-  committed through the structured Git tools;
-- the app credential files under `~/.wuu` (or `WUU_HOME`) — `auth.json`,
-  `credentials.json`, `remote.json`, `phone.json` — cannot be read or written directly
-  through these dedicated tools;
-- common key formats in command output are always redacted.
-
-These are protections of specific tools, not a promise for every execution path.
-Arbitrary shell commands, scripts, and child processes inherit the system permissions
-of the Wuu process and may bypass the file and Git restrictions above; output
-redaction also cannot recognize every key or indirect disclosure path. So "credentials
-are inaccessible" or "sensitive files cannot be committed" must not be treated as a
-system-level security guarantee.
+Use **Read only** for investigation and **Standard** for ordinary changes. Unconfined gives commands the local authority of the user running Wuu. Choose it only when you understand why the task needs that access.
 
 ## System permissions and isolation
 
-In `standard` and `read_only`, Wuu's command tools apply a filesystem sandbox.
-Standard mode allows writes to registered working directories and a private temporary
-directory; read-only mode restricts file writes. macOS uses a built-in backend. If no
-backend is available, execution is refused until a sandbox extension is configured or
-the user explicitly switches to `unconfined`.
+The process sandbox controls filesystem writes, not all reads, network access, process visibility, or inherited environment variables. In particular, read-only does not mean that commands cannot disclose data. Dedicated file-tool boundaries and subprocess confinement are separate protections.
 
-This sandbox preserves the process identity, inherited environment, and network
-access. It does not guarantee credential secrecy or cover every plugin, MCP server,
-or external program. Use a container, virtual machine, or separate system account
-for further isolation when handling malicious repositories, dependencies, or native code.
+The built-in backend is available on macOS. On other platforms, or when that backend cannot run, confined commands require a configured `sandbox.process@1` extension. A missing, failed, or partially enforcing backend causes execution to fail; Wuu does not silently retry unconfined.
+
+This is not a sandbox for all installed code. Plugins, hooks, MCP servers, external engines, and commands typed manually into the desktop terminal have their own execution paths. Use an isolated environment or separate OS account for untrusted repositories and dependencies. See the [security model](security-model.md).
+
+## Approve for me
+
+**Approve for me** is a desktop option for the Wuu engine in Standard mode. It adds model review before selected native tool calls; it does not create a fourth mode or expand the workspace boundary.
+
+All shell execution goes through review, including commands classified as read-only. Other destructive or high-risk calls, and applicable Git, process, browser, and MCP actions, are also reviewed. Ordinary low-risk reads do not require it. Review uses the active conversation's model and can add model requests, cost, and latency.
+
+The reviewer can allow the call, deny it, or leave it unresolved so the agent can explain the proposed action and seek informed user approval in conversation. A timeout, cancellation, or review failure leaves the action unexecuted; it is not permission to bypass review. The option cannot elevate the session to Unconfined or override dedicated credential and sensitive-write guards.
+
+`wuu exec` does not expose this option. Its native permission checks allow or deny calls without opening an interactive approval dialog.
+
+## Sensitive paths
+
+Dedicated file tools refuse writes to known sensitive paths such as environment files and SSH private keys, including in Unconfined mode. Wuu credential files such as `auth.json`, `credentials.json`, `remote.json`, and `phone.json` under Wuu's home remain blocked for direct reads and writes. Structured Git tools also guard sensitive staging and commits.
+
+Tool output redaction recognizes common secret patterns, but cannot recognize every secret or encoding. These guards do not guarantee secrecy across arbitrary shell programs, third-party code, or network requests.
+
+## External engines
+
+The adapters pass the selected mode to the external program:
+
+| Wuu selection | Codex | Claude Code |
+|---|---|---|
+| Standard | `workspace-write`, approvals `on-request` | `dontAsk` |
+| Read only | `read-only`, approvals `never` | `plan` |
+| Unconfined | `danger-full-access`, approvals `never` | `bypassPermissions` |
+
+These are adapter settings, not a claim that the engines provide identical protection. Claude Code's headless transport has no permission-prompt bridge; Standard uses `dontAsk` so permission requests are denied rather than waiting indefinitely. External program versions and configuration determine their native behavior.
 
 ## CLI examples
 
 ```bash
-wuu exec --permission-mode read_only "explain this repository without modifying files"
-wuu exec --permission-mode standard "fix the tests and verify"
+wuu exec --permission-mode read_only "Explain the repository without changing files"
+wuu exec --permission-mode standard "Fix the failing test and run the relevant checks"
 ```
 
-`wuu exec` is a non-interactive entry point; permission decisions are either allow or
-deny, and it never pops a confirmation dialog in a script.
-
-## Configuration ownership
-
-On normal startup, project configuration cannot replace the permission mode you
-chose. This prevents a repository from silently expanding local permissions when you
-open it. See the [configuration model](configuration.md) for the full load order, and
-the [security model](security-model.md) for the detailed risk boundary.
+Normal project configuration cannot silently replace the user's permission mode. Explicit automation configuration has separate trust rules; see [configuration](configuration.md).

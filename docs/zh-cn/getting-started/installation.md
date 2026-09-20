@@ -1,40 +1,32 @@
-# 安装 wuu
+# 安装
 
-wuu 桌面预览版支持 Apple 芯片 Mac，自带运行所需的 core，无需另装 Go 或 CLI。
+桌面应用自带 Wuu core。只有需要从终端或脚本运行 Wuu 时，才需要单独安装 CLI。
 
-## 安装 macOS 桌面应用
+## 在 macOS 上安装
 
-1. 打开 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases)。
-2. 下载 `wuu-<version>-mac-arm64.dmg` 或 `wuu-<version>-mac-arm64.zip`。
-3. 将 `wuu.app` 放入 `/Applications`。
-4. 打开 wuu。
+当前发布流程构建 Apple 芯片版本。安装前，请查看 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases) 中对应版本的附件和说明。
 
-预览版使用固定的自签身份，没有 Apple Developer ID 和公证。确认下载来自官方 GitHub
-Release 后，尝试打开 `/Applications/wuu.app`。如果被 macOS 拦截，前往**系统设置 →
-隐私与安全性 → 仍要打开**。无需安装证书，也不要全局关闭系统安全保护。
+1. 下载 `wuu-<version>-mac-arm64.dmg` 或 `wuu-<version>-mac-arm64.zip`。
+2. 将 `wuu.app` 移入 `/Applications`，从那里打开。
+3. 按[首次设置](index.md)选择执行引擎并连接模型服务。
 
-## 从 GitHub Releases 更新
+发布流程使用固定的自签身份，没有采用 Apple Developer ID 签名和公证。如果 macOS 阻止打开，请先确认应用来自官方发布，再到**系统设置 → 隐私与安全性 → 仍要打开**放行。不要为了绕过提示而全局关闭系统安全保护或安装证书。
 
-1. 从官方 Release 页面下载新版 DMG 或 ZIP。
-2. 按 **Cmd+Q** 退出 Wuu，等待退出完成。关闭窗口不等于退出应用。
-3. 用下载的应用替换 `/Applications/wuu.app`，保持名称和位置不变；不要从 DMG 或下载目录
-   同时运行另一份 Wuu。
-4. 打开 `/Applications/wuu.app`。会话和设置保存在 Wuu 用户数据中，升级不需要删除这些数据。
+## 更新应用
 
-## 电脑操作权限
+下载新版后，用 **Cmd+Q** 退出 Wuu，再替换 `/Applications/wuu.app`。只关闭窗口不等于退出应用。请从「应用程序」打开替换后的版本，不要同时运行下载目录或磁盘映像中的另一份应用。
 
-当前 GitHub Release 不包含 Computer Use 或原生 CUA 辅助程序。以下权限说明仅适用于
-启用了 CUA 的源码构建。
+设置和会话保存在应用包之外。替换应用时保留这些数据，并查看发布说明是否有该版本特有的迁移要求。
 
-使用 Computer Use 时，按提示在系统设置中授予**辅助功能**或**屏幕录制**权限。
-Wuu 会提供设置入口，授权需由你完成；无需安装开发工具或自行签名。
+## 取决于构建方式的功能
 
-升级后可能需要重新授权，尤其是从旧的未签名版本升级时。请授权当前的
-`/Applications/wuu.app`，不要重置全部隐私权限或删除用户数据。
+当前公开发布流程关闭了账号、远程控制和 Computer Use 功能。文档中有关这些功能的说明适用于启用了它们的构建；源码中存在某项功能，不代表下载的应用已经包含它。
 
-## 安装 CLI
+启用了 Computer Use 的 macOS 构建可能需要**屏幕录制**和**辅助功能**权限，才能截取屏幕或操作桌面。请授权实际运行的应用。更新后 macOS 可能再次要求授权，无需删除 Wuu 数据或重置其他应用的隐私权限。
 
-需要终端或脚本调用时，安装 [go.mod](../../../go.mod) 要求的 Go 版本，再从源码构建：
+## 从源码安装 CLI
+
+安装 [go.mod](../../../go.mod) 要求的 Go 版本，然后运行：
 
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
@@ -43,15 +35,12 @@ make install
 wuu --version
 ```
 
-找不到 `wuu` 命令时，将 Go 的二进制目录加入 `PATH`；如果设置过 `GOBIN`，请使用该目录：
+`make install` 使用 Go 的安装目录。如果找不到 `wuu` 且没有设置 `GOBIN`，将默认目录加入 shell 的 `PATH`：
 
 ```bash
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-确认生效后，可将设置加入 shell 启动文件。CLI 与桌面内置 core 独立，版本可能不同。
-GitHub Releases 不提供独立 CLI 压缩包；产品的日期版本标签也不适用于
-`go install ...@latest`，请使用上面的源码安装方式。
+如果设置了 `GOBIN`，应添加该目录。CLI 与桌面应用内置的 core 独立安装，版本可能不同。发布流程不提供独立 CLI 压缩包。产品标签使用日期版本，请从检出的源码安装，不要使用 `go install ...@latest`。
 
-安装完成后，继续[连接模型服务](model-services.md)。
-桌面源码构建见[开发指南](../../en/project/development.md)（英文）。
+接下来[连接模型服务](model-services.md)。构建桌面应用请参阅[开发指南](../../en/project/development.md)（英文）。

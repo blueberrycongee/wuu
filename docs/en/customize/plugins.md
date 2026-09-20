@@ -1,131 +1,56 @@
-# Wuu Plugins
+# Wuu plugins
 
-A Wuu Plugin is an installable and upgradeable extension package. It can provide one
-capability or combine an Agent runtime, Desktop UI, themes, settings, Skills, Hooks,
-MCP servers, and commands. Installing a plugin means you trust its code to run with
-your user authority; Wuu does not sandbox it.
+A Wuu plugin packages agent behavior, desktop UI, or other extension contributions. A package can include tools, skills, hooks, MCP servers, themes, and settings. Enable only code you trust: plugins run with your user authority and are not sandboxed by Wuu.
 
-If you are not sure that you need a plugin, start with [Extend Wuu](index.md). A
-repeatable instruction set may only need a Skill, and an existing tool service may
-only need MCP. Use a Wuu Plugin when you need code lifecycle, host services, or
-desktop UI.
+## Install a local package
 
-The platform is local-first: there is no marketplace or central registry. Authors
-normally develop and release plugins from their own repositories. The current installer
-accepts a local directory or zip package; direct npm and Git-source installation are not
-available yet.
+Open **Skills & Plugins**, choose a local directory or zip package, and open its details. In the current package flow, **Approve and enable** confirms trust and activates the package in one action. There is no central marketplace, and the installer does not fetch npm packages or Git repositories directly.
 
-## Get and install plugins
-
-In Wuu Desktop, choose a local directory or zip package in the plugin catalog. Wuu then
-opens that plugin's detail page; **Approve and enable** is the single trust confirmation
-and enables the package immediately.
-
-The package-management CLI currently exposes the lower-level local-package flow:
+The CLI exposes the same local-package operations separately:
 
 ```bash
-wuu plugin install ./foo
-wuu plugin install ./foo-1.0.0.zip
+wuu plugin install ./my-plugin
+wuu plugin approve my-plugin
+wuu plugin list
 ```
 
-The current CLI stages the local package; use `wuu plugin approve <id>` to enable it.
-Packages are stored under `~/.wuu/plugins/`, or below `WUU_HOME` when set.
+Use the ID declared by the package. Installation copies files under `plugins/` in Wuu's home directory, normally `~/.wuu/plugins/`; `WUU_HOME` changes that location. The CLI's install operation stages the package but does not approve code execution by itself.
 
-## Trust, update, and user-visible state
+## Update, disable, and remove
 
-- Approving and enabling a package means trusting that package's code.
-- The current local-package updater stages each new package fingerprint and keeps the
-  installed generation active until the replacement is confirmed.
-- Extensions in a trusted project directory load with the project's trust, without
-  per-plugin confirmation.
-- A path passed to `wuu plugin dev` is explicit development execution and never inherits
-  trust from an installed package.
-- A failed update reports the failure and keeps a recoverable entry; the user is not
-  sent through onboarding again.
-
-A plugin is always in one of three user-visible states: `Enabled` (installed and
-running), `Disabled` (the user turned it off), or `Failed` (load or run failure; the
-error is viewable and the plugin can be disabled).
+Install a replacement package from its directory or zip, or use:
 
 ```bash
-wuu plugin list
+wuu plugin update my-plugin ./my-plugin-next.zip
+wuu plugin approve my-plugin
+```
+
+The current local updater stages a replacement fingerprint and leaves the installed generation in place until it is accepted. Check the pending update in the detail page. A package whose content changed can require a refreshed trust decision; do not assume that copying new files has activated them.
+
+Disable a package to stop its contributions without removing its files. Remove it when it is no longer needed:
+
+```bash
 wuu plugin disable my-plugin
+wuu plugin enable my-plugin
 wuu plugin remove my-plugin
 ```
 
+Settings and plugin storage are preserved by default. Removal does not erase all data the plugin created or undo completed operations.
+
 ## Recovery and troubleshooting
 
-- **Failed:** the error is visible in the plugin list and settings page; disable the
-  plugin or reinstall it. Other enabled plugins keep running.
-- **Render failure:** Wuu falls back only at the failed Slot, Presenter, Surface, or View;
-  plugin management and default-UI recovery remain available.
-- **Immediate isolation:** run `wuu plugin disable <id>`. The CLI can disable a plugin
-  even when its Desktop contribution is broken. If Wuu enters safe mode after a crash,
-  leave the suspected plugin disabled while investigating.
-- **Removal:** run `wuu plugin remove <id>`. Wuu currently preserves plugin settings and
-  Storage by default, so removing a package is not the same as erasing all user data.
+The detail page distinguishes pending trust, disabled, starting, active, failed, and update states. Read the actual error instead of treating every missing feature as an installation failure. A package may also be blocked by a missing requirement or an incompatible peer package.
 
-## Common capabilities
+If desktop code fails to render, Wuu isolates the failing contribution where possible and keeps plugin management and default-UI recovery available. Disable the suspected plugin and retry with the default interface. The CLI is useful when the desktop contribution itself is broken. Safe mode provides a recovery path after plugin-related startup failure; it does not certify the package as safe to re-enable.
 
-- **Change themes:** declarative token themes appear under **Settings → Appearance**
-  and are removed cleanly when disabled. See [plugin themes and settings](themes-settings.md)
-  for user actions.
-- **Add settings:** schema fields create host-rendered controls stored in the plugin
-  namespace. Settings and Storage remain available after reinstall by default.
-- **Extend the agent:** a managed runtime can register model-visible tools, contribute
-  context, transform supported request fields, observe lifecycle events, and provide or
-  consume versioned services.
-- **Customize Desktop UI:** add persistent Views, insert fixed Slots, wrap or replace
-  semantic Presenters and Surfaces, show conversation cards, and register styles.
-- **Compose extension types:** carry Skills, Hooks, MCP servers, commands, Agent code,
-  and Desktop code in one package with one install and upgrade lifecycle.
+## What plugins can provide
 
-## Coordinate existing sessions
+Agent runtimes can register tools, contribute context, observe supported lifecycle events, and provide or consume versioned services. Desktop modules can add views, fixed insertion points, semantic rendering replacements, conversation cards, and styles. Declarative themes and settings do not require a desktop module; see [themes and settings](themes-settings.md).
 
-The bundled **Peers** plugin lets an agent contact another existing conversation.
-It is enabled by default; an explicit disabled preference is preserved. Enable it
-in plugin settings if needed, then ask the agent to contact a session by its copied
-ID, or use `/peer` to discover available conversations in the current workspace.
-Private, archived, and other-workspace sessions are excluded. Local forks in the
-same workspace remain available; cross-workspace delivery is not supported.
+Bundled features use these mechanisms too. Guides cover [subagents](../desktop/subagents.md), [automations](../automation/scheduled-tasks.md), and [memory](memory.md). The Peers plugin lets an agent contact existing conversations in the same workspace; it is separate from creating a child subagent or working with a named Collaboration identity.
 
-Requests start a turn on an idle target or queue behind its current work. The
-target's final response is returned once; that return does not automatically send
-another reply. Messages keep their own source label and use the normal bubble,
-including long-text expansion and copying. On Desktop, clicking the source opens
-that conversation alongside the current one. Native phones also show the source.
-Opt-in account history copies preserve attribution as a text heading for older
-server compatibility; offline copies do not provide source navigation.
-Cross-session messages are not direct user instructions and do not change the
-target's permissions or goal. The agent can decline a request; `peer_policy` can
-refuse incoming requests for a session. Disabling Peers removes its tools and
-automatic coordination behavior.
+## Develop a plugin
 
-A queued reply is not considered delivered until its receiving turn starts.
-While Peers is enabled, it recovers replies lost from the host's pending queue
-after a restart, using the original request identity and retained result. It
-honors explicit queue cancellation. If a send is cancelled before its outcome
-is known, an already accepted target can still return its result. Retryable
-delivery failures do not turn a completed result into a request-timeout message.
+Start with the [agent quickstart](plugin-quickstart.md) or [desktop quickstart](desktop-plugin-quickstart.md). Local development is distinct from installing a distributable package. The [authoring reference](plugin-authoring.md) covers manifests, development commands, version requirements, and package relationships.
 
-## Trust boundary
-
-Install code plugins only from sources you trust. Runtime processes have your user
-authority, desktop modules can change the interface, and Hooks can run local commands.
-Wuu does not review, certify, or sandbox third-party plugin code.
-
-## Current compatibility boundary
-
-Keeping plugins working across compatible Wuu product releases without a fork is the platform's
-current completion gate, but the compatibility matrix has not yet been verified.
-Declare `minimum_wuu_version` and retest after Wuu upgrades.
-
-Simple package relationships are available: missing `requires` blocks activation,
-`breaks` prevents both plugins from being enabled, and `conflicts` shows a warning.
-There is no version-range solver or automatic conflict resolution today.
-
-## Develop and publish
-
-Start with the [Agent plugin quickstart](plugin-quickstart.md) or
-[Desktop plugin quickstart](desktop-plugin-quickstart.md). For package formats and
-development commands, see the [authoring reference](plugin-authoring.md).
+Wuu does not audit, certify, or host third-party extensions. Check compatibility with your Wuu build and review the [security model](../reference/security-model.md) before running unfamiliar code.

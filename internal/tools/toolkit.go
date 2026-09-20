@@ -362,7 +362,6 @@ func (t *Toolkit) rebuildRegistry() {
 		NewThreadGetTool(e),
 		NewSetSessionWorkspaceTool(e),
 		NewNewContextTool(),
-		NewYieldTurnTool(),
 		NewNotesTool(e),
 		NewHistoryReadTool(e),
 		NewHistorySearchTool(e),

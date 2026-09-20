@@ -1,107 +1,79 @@
-# Wuu 配置模型
+# 配置
 
-Wuu 把配置分成“用户拥有”和“项目补充”两类。核心原则是：打开一个仓库时，
-仓库可以描述自己的工作方式，但不能替用户决定凭据发往哪里、读取哪些工作区外
-文件，或扩大本地权限。
+Wuu 把模型连接和执行选择放在用户配置中，项目可以补充行为设置。CLI 首次使用先运行 `wuu init`，桌面则通过首次引导配置，之后只修改需要的选项。未知字段会报错，不会悄悄忽略拼写错误。
 
-## 配置来源与顺序
+## 用户配置与项目层
 
-正常启动先读取用户配置，再按顺序叠加项目来源：
+正常启动选择 `~/.wuu/config.json`；设置 `WUU_HOME` 时使用 `$WUU_HOME/config.json`。旧路径 `~/.config/wuu/config.json` 用于迁移和后备读取，不是在当前用户文件之后继续叠加的一层。
 
-1. `~/.wuu/config.json`，或 `WUU_HOME/config.json`
-2. 旧版 `~/.config/wuu/config.json`（仅用于兼容与迁移）
-3. 项目 `.wuu.json`，不存在时读取 `wuu.json`
-4. 项目 `.wuu/settings.json`
-5. 项目 `.wuu/settings.local.json`
+随后按以下顺序合并项目文件，在允许覆盖的字段上，后者优先：
 
-对象会递归合并，标量和数组由后面的来源替换。加载成功后返回的可写配置路径始终
-是用户配置路径，因此桌面设置和模型切换不会意外改写仓库文件。
+1. `.wuu.json`，不存在时使用 `wuu.json`。
+2. 共享设置 `.wuu/settings.json`。
+3. 本地设置 `.wuu/settings.local.json`。
 
-## 始终由用户拥有的字段
+对象递归合并，数组和标量直接替换。本地设置文件应排除在版本控制之外。用户配置缺失时，不会悄悄把项目文件当作可信基础；CLI 会要求先初始化。
 
-正常启动会忽略所有项目来源中的以下字段，并在标准错误输出一条说明：
+## 受保护的用户设置
 
-- `default_provider`
-- `providers`
-- `instructions`（旧版 `memory` 指令发现字段也按这一边界处理）
-- `agent.model_roles`
-- `agent.model_aliases`
-- `agent.permission_mode`
+正常启动会从所有项目层移除以下字段，包括 `settings.local.json`，并报告忽略了哪些字段：
 
-这些字段分别控制默认提供商、端点与凭据来源、工作区外指令发现、后台角色的模型路由，
-可供 Agent 显式选择的稳定模型别名，以及 Wuu 的本地权限边界。字段名按 JSON 的大小写匹配规则处理，所以换成
-`Providers`、`Memory` 或 `Permission_Mode` 也不会绕过限制。
+| 字段 | 归用户所有的原因 |
+|---|---|
+| `default_provider`、`providers` | 选择模型服务、端点、凭据和连接选项 |
+| `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
+| `agent.model_roles`、`agent.model_aliases` | 路由模型工作 |
+| `agent.permission_mode` | 设置本地执行权限 |
 
-其他项目行为仍会正常叠加。长期指令应写进 `AGENTS.md`。项目配置必须符合完整
-配置结构；未知字段会直接报错，避免拼写错误被静默忽略。
+改变 JSON 字段大小写不能绕过限制。其他允许的项目字段仍可能影响提示、工具、Hook 和服务，因此这种过滤不代表陌生仓库可以安全执行。
 
-## 指令、Memory 与 Dream
+## 模型与引擎配置
 
-需要团队共同遵守的长期规则应写进仓库的 `AGENTS.md` 或项目文档。`instructions`
-只控制核心的通用指令文件发现，因此项目不能把它重定向到工作区外。旧版顶层 `memory`
-只在读取边界迁移其中的指令发现字段，不再配置或启停任何核心记忆产品。
-
-用户、工作区和会话记忆由一方 [Memory 插件](../customize/memory.md)管理；后台整理由
-[Dream 插件](../customize/dream.md)管理。两者的设置保存在插件自己的命名空间中，不写入
-核心配置。禁用插件会同时移除相应 Prompt、Tool、后台 Timer 和界面。
-
-## 显式信任完整配置
-
-自动化场景可以显式选择完整配置：
-
-- `wuu exec --config <path>`：只读取并信任指定文件。
-- `wuu exec --ignore-user-config`：忽略用户配置，读取并信任项目 `.wuu.json`
-  （或 `wuu.json`）及两个项目 settings 层。
-
-这两种方式会接受文件中的提供商端点、凭据环境变量名、指令路径、hooks 和 MCP
-服务器，因此只应对自己控制的文件使用。普通桌面和 CLI 启动不会通过空 `HOME`
-等隐式条件获得这项信任。
-
-## 匿名 Worker 并发与主动委派
-
-核心只保存通用执行容量：
+Provider 条目为一条模型连接命名。例如，下面的用户配置片段使用 OpenAI 兼容 Chat 端点：
 
 ```json
 {
-  "agent": {
-    "max_parallel": 5
-  }
+  "default_provider": "work",
+  "providers": {
+    "work": {
+      "type": "openai-compatible",
+      "base_url": "https://api.example.com/v1",
+      "api_key_env": "WORK_MODEL_API_KEY",
+      "model": "your-model-id"
+    }
+  },
+  "agent": { "permission_mode": "standard" }
 }
 ```
 
-| 字段 | 填写方式 | 默认值 | 语义 |
-| --- | --- | --- | --- |
-| `agent.max_parallel` | 非负整数；`0` 等同省略 | `5` | 控制可同时执行的匿名 worker 数量；超出的异步执行进入 `queued`。 |
+请替换为服务实际支持的端点和模型，并把对应环境变量传给运行 Wuu 的进程。订阅登录、服务类型和桌面配置见[模型服务](../getting-started/model-services.md)。
 
-`queued` 和 `waiting_children` 状态都不占执行槽。子结果唤醒父 worker 做整合不是新
-spawn，因此不经过 spawn 排队闸门；整合开始时，实际运行数可能短暂高于
-`max_parallel`。负数配置无效。`initialize`、`config/read`、`config/model/update` 和
-`wuu exec --json` 的 `session_configured` 事件都会回读实际生效的 `max_parallel`。
+外部 Codex 和 Claude Code 引擎是独立程序，不是 provider 类型。机器本地的 `engines` 配置控制检测和可执行文件选择。在桌面中修改某个会话的模型，不一定改变工作区默认值；需要影响未来会话时，应从设置中修改。
 
-主动委派不是核心配置或 app-server 模式。它由 Subagent 插件在自己的命名空间存储中保存开关，
-通过 `agent.pre_step` 为后续模型步骤追加带来源、可持久化的隐藏消息，并在 Composer 工具栏提供
-A+ 控件。核心没有
-`agent.ultra_mode`、Turn 快照、`ultra` 协议字段或 `wuu exec --ultra`；禁用 Subagent 插件会同时
-移除委派 Tool、Prompt、状态和界面入口。
+## 指令与插件设置
 
-## 从旧项目配置迁移
+团队共享规则放在 `AGENTS.md` 中。核心 `instructions` 对象控制文件名、项目根标记、用户目录和可选的旧指令发现。顶层旧字段 `memory` 用于迁移指令发现设置，不是 Memory 插件设置接口。
 
-如果旧项目把提供商放在 `.wuu.json` 中：
+[Memory](../customize/memory.md)、[Dream](../customize/dream.md) 和其他插件维护各自的产品设置与存储。核心的持久会话工作笔记也与插件记忆分开。请使用插件设置页，不要把过时的 `memory.dream` 或委派开关复制进核心配置。
 
-1. 运行 `wuu init` 创建用户配置。
-2. 把 `default_provider`、`providers`、`instructions`、`agent.model_roles`、
-   `agent.model_aliases` 和 `agent.permission_mode` 移到用户配置。
-3. 在项目文件中保留真正属于仓库的提示词和其他项目行为。
+## Worker 容量
 
-`WUU_HOME` 可以整体移动用户配置、认证、会话、记忆和日志目录。例如设置
-`WUU_HOME=/data/wuu` 后，用户配置路径就是 `/data/wuu/config.json`；即使
-`HOME` 环境变量没有设置，这个路径仍然有效。
+`agent.max_parallel` 设置通用匿名 worker 的执行容量，默认 `5`；`0` 表示采用默认值，负数无效。
 
-## Windows 上的 shell
+```json
+{ "agent": { "max_parallel": 5 } }
+```
 
-bash 语法在所有平台上都是命令执行的契约。Windows 上 wuu 会解析
-Git Bash：优先读取 `WUU_GIT_BASH_PATH` 环境变量；否则依次探测标准
-安装位置（`%ProgramFiles%\Git`、`%ProgramFiles(x86)%\Git`、
-`%LOCALAPPDATA%\Programs\Git`），再从 PATH 上的 `git.exe` 反推
-`bash.exe`。全部失败时命令执行会报错并提示安装 Git for Windows。
-TTY 模式的后台进程在 Windows 上不可用，会自动退回管道模式。
+排队或等待子任务的 worker 不占用通常的执行槽位。这是执行容量设置，不是要求每个任务都委派，也不是所有后台进程的总量上限。[子代理行为](../desktop/subagents.md)由已启用的委派插件负责。
+
+## 显式自动化配置
+
+`wuu exec --config /path/to/config.json` 只加载一个完整文件，不叠加正常项目层。`wuu exec --ignore-user-config` 则把项目 `.wuu.json` 或 `wuu.json` 当作可信基础，再应用两个项目设置层。
+
+两种选择都会明确接受这些文件里的连接、凭据引用、指令路径、Hook 和 MCP 定义，只应使用已经检查的配置。将 `HOME` 留空不会隐式授予同样的信任。
+
+## 更换用户状态目录
+
+启动 Wuu 前设置 `WUU_HOME`，可以选择不同的用户状态根目录。它影响配置、认证状态、会话、记忆、插件和日志，而不只是配置文件。例如，`WUU_HOME=/data/wuu` 会选择 `/data/wuu/config.json`。请保护该目录，不要把它整体作为诊断材料分享。
+
+Windows 命令执行需要 Git Bash，可通过 `WUU_GIT_BASH_PATH` 指定可执行文件。命令可用与沙箱支持是两个独立要求，详见[权限](permissions.md)和[命令系统](agent-command-system.md)。

@@ -1,42 +1,31 @@
 # Workspaces and projects
 
-A workspace is a local folder. Select the right directory before starting a task
-so the agent does not change files in the wrong project.
+A workspace connects conversations to a local folder. The agent reads and changes the files in that folder, so choose the project before sending a task.
 
 ## Add a workspace
 
-In the **Workspaces** area of the sidebar, choose **Add workspace**:
+Choose **Add workspace** in the sidebar. **Use existing folder** selects a project already on disk; **Create blank project** opens a folder dialog where you can create a directory. Neither option copies an existing project into Wuu.
 
-- **Use existing folder:** register an existing project directory;
-- **Create blank project:** create and register a new empty directory.
+Adding a folder registers its path. It does not upload the whole project. During a task, however, the agent can send relevant file contents and tool results to the selected model provider. See the [security model](../reference/security-model.md).
 
-Files stay in their original location. Adding a workspace does not itself upload the
-whole project. During tasks, prompts, relevant file contents, and tool results may
-be sent to your chosen provider; see [security](../reference/security-model.md).
+## Work without a project
 
-Without a project, you can start in **Conversations**. Project-less conversations
-share a persistent Wuu-managed directory where they can create files and open a
-terminal. To keep results in your own project, specify the target workspace.
+Use **Conversations** when the task does not belong to a registered project. These conversations use a persistent Wuu-managed directory and can still create files or open a terminal. They share that directory rather than receiving an isolated folder for each conversation.
 
-## Switch between and organize projects
+For work you want to keep in a repository, add and select that repository first. Tell the agent where existing outputs should go rather than assuming that switching the sidebar will move them.
 
-Select a project name in the sidebar to see its conversations, reopen one, or start
-a new one there. Multiple conversations may change the same folder at once. Use a
-[worktree fork](conversations.md#fork-from-an-earlier-message) when you need file isolation.
+## Switch between projects
 
-After moving or renaming a directory, choose **Relocate…** from the workspace menu
-and select its new location. This preserves the project identity and conversation
-ownership without adding a second project with the same name.
+Select a workspace to see its conversations or start a new one. Reopening a saved conversation continues its own work; changing the foreground selection does not redirect other running sessions.
 
-**Remove workspace** removes the sidebar registration, leaving files and saved
-conversations intact. Use conversation archive or delete actions to manage history;
-see [conversations and branches](conversations.md).
+Conversations in the same folder share its files. Separate conversation history does not prevent two agents from editing the same file. Use a [Git worktree fork](conversations.md#fork-from-an-earlier-message) when parallel changes need separate directories.
 
-## Workspace boundary
+## Move or remove a workspace
 
-Choose **Read only** for inspection and **Standard** for edits. If access is denied
-outside the workspace, check that the target directory has been added before
-considering unconfined mode. See [permission modes](../reference/permissions.md)
-for command sandbox and sensitive-path restrictions.
+If you move a project on disk, choose **Relocate…** from its workspace menu and select the new path. Wuu updates the path while retaining the project identity used by its state and conversation history. Relocate does not move the files for you. A missing folder is reported as unavailable rather than silently replaced with another project.
 
-Use [files, diffs, and terminals](workspace-tools.md) to check the result.
+**Remove workspace** removes its registration from the sidebar. It does not delete project files or saved conversations. Manage history with the archive and delete actions described under [conversations](conversations.md).
+
+## Check access boundaries
+
+For the Wuu engine, use **Read only** for inspection and **Standard** for editing. If a tool reports an out-of-workspace denial, check the target path and workspace registration before changing permissions. Workspace selection, Git isolation, and command confinement solve different problems; see [permission modes](../reference/permissions.md).

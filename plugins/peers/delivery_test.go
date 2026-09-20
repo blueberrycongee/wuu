@@ -174,6 +174,58 @@ func TestQueuedReplySurvivesShutdownButHonorsUserCancellation(t *testing.T) {
 	}
 }
 
+func TestSteeredReplySurvivesRestartUntilConsumed(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		name := "accepted"
+		if uncertain {
+			name = "acceptance_response_lost"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			base := &messagingHost{steerReplies: true}
+			if _, err := executeTool(ctx, base, peerSendCall()); err != nil {
+				t.Fatal(err)
+			}
+			input := pluginapi.TurnLifecycleInput{RequestID: base.sends[0].RequestID, State: "completed", FinalOutput: "Important result"}
+			base.turns[input.RequestID] = pluginapi.SessionTurnInspection{RequestID: input.RequestID, State: input.State, FinalOutput: input.FinalOutput}
+			h := &uncertainSendHost{messagingHost: base, failOnce: uncertain, accept: true}
+			raw, _ := json.Marshal(input)
+			_, err := invokeCapability(ctx, h, pluginapi.CapabilityCall{Capability: capabilityLifecycle, Input: raw})
+			if uncertain && !errors.Is(err, context.Canceled) || !uncertain && err != nil {
+				t.Fatalf("terminal delivery: %v", err)
+			}
+			if len(base.sends) != 2 || requestState(t, h).Replied {
+				t.Fatalf("in-memory steering acceptance settled the reply: %+v", base.sends)
+			}
+			reply := base.sends[1]
+			// Inspection reports running for a pending steer as well as a
+			// consumed input. Maintenance must neither settle nor duplicate it.
+			(&controller{host: h}).reconcileRequests(ctx)
+			if len(base.sends) != 2 || requestState(t, h).Replied {
+				t.Fatal("maintenance treated a pending steer as durable delivery")
+			}
+			// A host restart loses the unconsumed steer, but retains the target's
+			// terminal receipt and plugin storage. Recover the same reply.
+			delete(base.turns, reply.RequestID)
+			(&controller{host: h}).reconcileRequests(ctx)
+			if len(base.sends) != 3 || base.sends[2].RequestID != reply.RequestID || base.sends[2].Presentation.Text != reply.Presentation.Text || requestState(t, h).Replied {
+				t.Fatalf("steered reply was not recovered with its original identity/body: %+v", base.sends)
+			}
+			// Consumed steering has durable history after the source turn ends,
+			// even without an individual lifecycle callback for that input.
+			base.turns[reply.RequestID] = pluginapi.SessionTurnInspection{RequestID: reply.RequestID, State: "completed", TurnID: "active-turn"}
+			(&controller{host: h}).reconcileRequests(ctx)
+			if !requestState(t, h).Replied || len(base.sends) != 3 {
+				t.Fatal("durable steering receipt did not settle exactly once")
+			}
+			(&controller{host: h}).reconcileRequests(ctx)
+			if len(base.sends) != 3 {
+				t.Fatal("settled steering receipt was redelivered")
+			}
+		})
+	}
+}
+
 func TestRecoveryUsesCompletedResultInsteadOfRequestTimeout(t *testing.T) {
 	ctx := context.Background()
 	h := &messagingHost{}

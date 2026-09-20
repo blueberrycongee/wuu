@@ -287,7 +287,7 @@ func (s *Service) RoomTurnContext(ctx context.Context, deliveryID string) (RoomT
 	for _, message := range messages {
 		lines = append(lines, fmt.Sprintf("%s %s: %s", message.AuthorType, message.AuthorID, message.Body))
 	}
-	return RoomTurnContext{Prompt: fmt.Sprintf("Room discussion, source message %s. You are %s. Read the recent room history below and act on the user's latest request. Earlier speakers may already have answered it. Add useful work or information; if you have nothing new to contribute, call yield_turn. Do not repeat an answer or acknowledge a pass.\n%s", sourceID, memberID, strings.Join(lines, "\n")), Messages: messages}, nil
+	return RoomTurnContext{Prompt: fmt.Sprintf("Room discussion, source message %s. You are %s. Read the recent room history below and act on the user's latest request. Earlier speakers may already have answered it. Add useful work or information; if you have nothing new to contribute, end without a reply. Do not repeat an answer or acknowledge a pass.\n%s", sourceID, memberID, strings.Join(lines, "\n")), Messages: messages}, nil
 }
 
 func refreshRoomTurnMembersTx(ctx context.Context, tx *sql.Tx, roomID string, now int64) ([]string, error) {

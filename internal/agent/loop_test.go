@@ -2543,28 +2543,45 @@ func TestRunToolLoop_EmptyAnswerWithoutStopReasonIsError(t *testing.T) {
 }
 
 func TestRunToolLoop_EmptyAnswerCarriesStopReason(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "", StopReason: "stop"}}}
+	step := &fakeStep{results: []StepResult{{StopReason: "unexpected_stop"}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
 	if err == nil || !IsEmptyAnswer(err) {
 		t.Fatalf("expected EmptyAnswerError, got %v", err)
 	}
 	var emptyErr *EmptyAnswerError
-	if !errors.As(err, &emptyErr) || emptyErr.StopReason != "stop" {
-		t.Fatalf("expected StopReason=stop, got %+v", emptyErr)
+	if !errors.As(err, &emptyErr) || emptyErr.StopReason != "unexpected_stop" {
+		t.Fatalf("expected original stop reason, got %+v", emptyErr)
 	}
 }
 
 func TestRunToolLoop_EmptyAnswerWithNaturalStopReasonSucceeds(t *testing.T) {
-	step := &fakeStep{results: []StepResult{{Content: "  ", StopReason: "end_turn"}}}
-	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err != nil {
-		t.Fatalf("expected empty completion to succeed, got %v", err)
+	for _, stop := range []string{"end_turn", "completed", "stop"} {
+		t.Run(stop, func(t *testing.T) {
+			step := &fakeStep{results: []StepResult{{Content: "  ", StopReason: stop, Usage: &providers.TokenUsage{OutputTokens: 4}}}}
+			res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
+			if err != nil || res.FinishReason != providers.FinishReasonStop || res.StopReason != stop {
+				t.Fatalf("expected normal empty completion, got %+v, %v", res, err)
+			}
+			if res.Content != "" || len(res.DurableNewMessages) != 0 || len(step.calls) != 1 || res.OutputTokens != 4 {
+				t.Fatalf("empty completion retried, lost usage or fabricated text: calls=%d result=%+v", len(step.calls), res)
+			}
+		})
 	}
-	if res.Content != "" {
-		t.Fatalf("expected empty final content, got %q", res.Content)
+}
+
+func TestRunToolLoop_EmptyCompletionAfterToolResults(t *testing.T) {
+	tools := &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "read_file"}}, results: map[string]string{"inspect": "review result"}}
+	step := &fakeStep{results: []StepResult{
+		{ToolCalls: []providers.ToolCall{{ID: "inspect", Name: "read_file", Arguments: `{}`}}},
+		{StopReason: "completed"},
+	}}
+	res, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("Review this delivery")}, LoopConfig{Model: "m", Tools: tools}, step)
+	if err != nil || len(step.calls) != 2 || len(res.DurableNewMessages) != 2 || res.Content != "" {
+		t.Fatalf("tool work did not settle normally: calls=%d result=%+v err=%v", len(step.calls), res, err)
 	}
-	if len(visibleMessagesForTest(res.NewMessages)) != 0 {
-		t.Fatalf("expected no persisted empty assistant message, got %+v", res.NewMessages)
+	last := step.calls[1].Messages[len(step.calls[1].Messages)-1]
+	if last.Role != "tool" || last.ToolCallID != "inspect" {
+		t.Fatalf("completion skipped the tool result: %+v", last)
 	}
 }
 

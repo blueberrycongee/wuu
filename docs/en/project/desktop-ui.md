@@ -1,41 +1,41 @@
 # Desktop UI maintenance
 
-Use the shared renderer components and design variables for equivalent controls.
-The [contributor instructions](../../../AGENTS.md#ui-design-and-visual-acceptance)
-define typography, spacing, accessibility and actual-rendering acceptance.
-Update previews and documentation with the behavior they demonstrate; do not keep
-branch-specific change journals as current design specifications.
+Use the renderer's shared components and design variables when changing the desktop interface. Check the result in a real browser or Electron window: type checks and jsdom tests cannot establish readable spacing, working scroll effects, or a visible keyboard focus ring.
 
-## Reusable previews
+## Preview real components
 
-The [desktop preview directory](../../../desktop/dev/) contains development-only
-entries with synthetic data. These support repeatable checks of real components
-and states; they are not product entry points or evidence that a release passed.
-Run `npx vite --host 127.0.0.1` from `desktop/` and open the relevant `/dev/` path,
-using the port Vite reports. The [mascot preview](../../../desktop/dev/mascot/README.md)
-uses `npm run lab:mascot`; the isolated onboarding window uses
-`npm run dev:onboarding`. Neither needs real account credentials.
+After [development setup](development.md), start a renderer preview server:
 
-Keep previews useful when changing their components. Store temporary captures in
-ignored artifact directories, not beside the fixture source. Inspect light/dark
-themes, default/large fonts, narrow/wide windows, long/empty content, scrolling,
-menus and keyboard focus. Automated component tests do not replace rendered UI
-inspection; report which conditions were actually checked.
+```bash
+cd desktop
+npx vite --host 127.0.0.1
+```
 
-## Nested corners
+Open a path such as `/dev/design-system/` or `/dev/button-standards/` on the port Vite reports. The [`desktop/dev`](../../../desktop/dev/) directory contains fixtures for specific components and states. These use synthetic data and do not reproduce every product bridge or lifecycle.
 
-Use the radius and menu variables from
-[base.css](../../../desktop/src/renderer/styles/base.css). Concentric nested
-corners generally need an outer radius close to the inner radius plus the inset;
-using the same radius on both padded layers does not make them concentric.
-Prefer the existing compact-menu recipe to new per-component constants. Check
-the rendered relationship rather than treating the formula as visual acceptance.
+The onboarding preview has its own Electron entry:
+
+```bash
+npm --prefix desktop run dev:onboarding
+```
+
+It renders the real first-run component without the product preload, app-server, or persistent profile. Choices are not saved; use dummy model credentials. Reload with Cmd+R or Ctrl+R to start again. The temporary profile is removed on normal exit. This preview checks presentation, not login or settings persistence.
+
+The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
+
+## Shared typography and geometry
+
+[`base.css`](../../../desktop/src/renderer/styles/base.css) defines the renderer's base roles, including typography, colors, corners, focus, and elevation. [`spacing.css`](../../../desktop/src/renderer/styles/spacing.css) defines spacing roles, density boundaries, and minimum control sizes. Prefer these existing roles to new per-component constants.
+
+Respect the user's separate UI and code font preferences. Let rows grow with their content, reserve space for trailing actions and status indicators, and align peer labels independently of whether a row is running or unread. Density changes whitespace rather than removing minimum target sizes; coarse pointers have larger control floors.
+
+Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. The shell radius combines the inner radius with the inset to keep nested corners related. Panel and dialog overlays use their own radius role. Reusing one numeric radius on every padded layer does not produce the same geometry.
+
+Public plugin theme tokens are a smaller contract than all internal CSS variables. Consult the [theme reference](../customize/theme-surface-matrix.md) before exposing a new token or telling plugin authors to depend on an internal variable.
 
 ## Scroll-edge fading
 
-[scroll-fade.css](../../../desktop/src/renderer/styles/scroll-fade.css) is opt-in
-for bounded tool/reasoning inspection strips and navigation lists. Put the
-attribute on the existing vertical scroll owner:
+[`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips and navigation lists. Add the attribute to the existing vertical scroll owner:
 
 ```tsx
 <div className="existing-scroll-region" data-scroll-fade="compact" ref={scrollRef}>
@@ -43,21 +43,12 @@ attribute on the existing vertical scroll owner:
 </div>
 ```
 
-Use `compact` for dense inspection strips and an empty value for navigation lists.
-Primary reading surfaces, including message streams, settings and documents, keep
-ordinary clipping. Do not apply the mask to input fields, terminals, editors,
-image/PDF canvases or horizontal scrollers. Keep fixed headers, composers and
-menus outside the masked scroll owner. The utility owns `animation` and
-`mask-image`; check for conflicts before opting in.
+Use `compact` for dense inspection strips and an empty value for navigation lists. Keep ordinary clipping on primary reading surfaces such as messages, settings, and documents. Inputs, terminals, editors, image/PDF canvases, and horizontal scrollers are not intended targets. Fixed headers, composers, and menus should remain outside the masked owner.
 
-Native self-scroll timelines fade only edges with more content beyond them;
-non-overflowing regions do not fade, and tiny viewports cap each edge at half the
-viewport. Nested scroll owners remain independent. The alpha mask adds no input
-overlay and preserves native scrolling, selection and auto-follow. Unsupported
-engines, reduced motion, forced colors and print use ordinary clipping.
+The utility uses self-scroll timelines and an alpha mask, with no overlay or React scroll updates. An edge fades only when more content lies beyond it; no overflow means no fade. Nested scroll owners remain independent, and each edge is capped at half the viewport. Unsupported engines, reduced motion, forced colors, and print fall back to ordinary clipping. Check for existing `animation` or `mask-image` declarations before opting in, because the utility owns both.
 
-Inspect short and overflowing content at the top, middle and bottom. Stream into
-an open fold, scroll away, collapse/reopen it, switch sessions and resize. Verify
-follow/pause behavior, readable text, keyboard navigation, usable menus and
-scrollbars, and no fade at primary reading-surface edges. jsdom does not evaluate
-scroll timelines, so passing unit tests is not visual approval.
+## Inspect the affected states
+
+Check light and dark themes, default and large fonts, wide and narrow windows, empty and long content, and keyboard focus. Combine states that can coexist, such as selected, running, unread, hovered, disabled, and dragging. Look for clipping, overlaps, moving click targets, and labels displaced by hidden actions or placeholders.
+
+For scrolling changes, inspect the top, middle, and bottom with both short and overflowing content. Append streaming content, scroll away from the bottom, close and reopen folds, switch sessions, and resize. Confirm follow/pause behavior, text selection, menus, and scrollbars remain usable. Report the conditions actually inspected; one screenshot or a passing unit suite is not full visual acceptance.

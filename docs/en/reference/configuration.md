@@ -1,128 +1,79 @@
-# Wuu configuration model
+# Configuration
 
-Wuu splits configuration into two kinds: "user-owned" and "project-supplemented".
-The core principle: when you open a repository, the repository can describe how it
-likes to work, but it cannot decide where your credentials go, read files outside the
-workspace, or expand local permissions for you.
+Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 
-## Configuration sources and order
+## User configuration and project layers
 
-A normal startup reads the user configuration first, then layers project sources on
-top, in order:
+Normal startup selects the user file at `~/.wuu/config.json`, or `$WUU_HOME/config.json` when set. The legacy `~/.config/wuu/config.json` path is a migration and fallback source, not another overlay applied after the current user file.
 
-1. `~/.wuu/config.json`, or `WUU_HOME/config.json`
-2. Legacy `~/.config/wuu/config.json` (compatibility and migration only)
-3. Project `.wuu.json`, or `wuu.json` when the former does not exist
-4. Project `.wuu/settings.json`
-5. Project `.wuu/settings.local.json`
+Wuu then merges project files in this order, with later values taking precedence where allowed:
 
-Objects are merged recursively; scalars and arrays are replaced by the later source.
-After loading, the writable configuration path returned is always the user
-configuration path, so desktop settings and model switching do not accidentally
-rewrite repository files.
+1. `.wuu.json`, or `wuu.json` if the first does not exist.
+2. `.wuu/settings.json` for shared settings.
+3. `.wuu/settings.local.json` for local settings.
 
-## Fields that always belong to the user
+Objects merge recursively; arrays and scalar values are replaced. Keep the local settings file out of version control. A missing user configuration does not silently turn a project file into the trusted base; the CLI asks you to initialize one.
 
-A normal startup ignores the following fields in all project sources and prints a
-note to standard error:
+## Protected user settings
 
-- `default_provider`
-- `providers`
-- `instructions` (the legacy `memory` instruction-discovery field follows the same
-  boundary)
-- `agent.model_roles`
-- `agent.model_aliases`
-- `agent.permission_mode`
+Normal startup removes these fields from every project layer, including `settings.local.json`, and reports the ignored fields:
 
-These fields respectively control the default provider, endpoint and credential
-sources, out-of-workspace instruction discovery, model routing for background roles,
-stable model aliases the agent can select explicitly, and Wuu's local permission
-boundary. Field names follow JSON's case-matching rules, so renaming them to
-`Providers`, `Memory`, or `Permission_Mode` does not bypass the restriction.
+| Field | Why it stays user-owned |
+|---|---|
+| `default_provider`, `providers` | Select model services, endpoints, credentials, and connection options |
+| `instructions`, legacy `memory` | Control instruction discovery, including user paths |
+| `agent.model_roles`, `agent.model_aliases` | Route model work |
+| `agent.permission_mode` | Set local execution authority |
 
-Other project behaviors still layer on normally. Long-term instructions belong
-in `AGENTS.md`. Project configuration must conform to the full configuration
-structure; unknown fields are reported as errors so typos are not silently
-ignored.
+Case changes in JSON keys do not bypass the restriction. Other allowed project fields can still affect prompts, tools, hooks, and services, so this filtering does not make an unfamiliar repository safe to execute.
 
-## Instructions, Memory, and Dream
+## Model and engine configuration
 
-Long-term rules that the whole team should follow belong in the repository's
-`AGENTS.md` or project documentation. `instructions` only controls the core's generic
-instruction-file discovery, so a project cannot redirect it outside the workspace.
-The legacy top-level `memory` only migrates the instruction-discovery fields within
-the read boundary; it no longer configures or toggles any core memory product.
-
-User, workspace, and session memory are managed by the [Memory
-plugin](../customize/memory.md); background consolidation is managed by the [Dream
-plugin](../customize/dream.md). Their settings live in the plugins' own namespaces and
-are not written into the core configuration. Disabling a plugin removes the
-corresponding prompts, tools, background timers, and UI together.
-
-## Explicitly trusting a full configuration
-
-Automation scenarios can explicitly opt into a full configuration:
-
-- `wuu exec --config <path>`: reads and trusts only the specified file.
-- `wuu exec --ignore-user-config`: ignores the user configuration and reads and
-  trusts the project `.wuu.json` (or `wuu.json`) plus the two project settings layers.
-
-Both approaches accept the provider endpoints, credential environment variable names,
-instruction paths, hooks, and MCP servers in the files, so only use them with files
-you control. Ordinary desktop and CLI startups do not gain this trust through implicit
-conditions such as an empty `HOME`.
-
-## Anonymous worker concurrency and proactive delegation
-
-The core only stores a generic execution capacity:
+A provider entry names a model connection. For example, this user-configuration fragment uses an OpenAI-compatible Chat endpoint:
 
 ```json
 {
-  "agent": {
-    "max_parallel": 5
-  }
+  "default_provider": "work",
+  "providers": {
+    "work": {
+      "type": "openai-compatible",
+      "base_url": "https://api.example.com/v1",
+      "api_key_env": "WORK_MODEL_API_KEY",
+      "model": "your-model-id"
+    }
+  },
+  "agent": { "permission_mode": "standard" }
 }
 ```
 
-| Field | How to fill | Default | Semantics |
-| --- | --- | --- | --- |
-| `agent.max_parallel` | Non-negative integer; `0` equals omitted | `5` | Controls how many anonymous workers can execute at the same time; excess async executions enter `queued`. |
+Replace the endpoint and model with values your service supports, and supply the named environment variable to the process running Wuu. For subscription login, provider types, and desktop setup, see [model services](../getting-started/model-services.md).
 
-`queued` and `waiting_children` states do not occupy execution slots. A child result
-waking the parent worker for integration is not a new spawn, so it does not pass the
-spawn queue gate; while integration starts, the actually running count may briefly
-exceed `max_parallel`. Negative values are invalid. `initialize`, `config/read`,
-`config/model/update`, and the `session_configured` event of `wuu exec --json` all
-read back the effective `max_parallel`.
+External Codex and Claude Code engines are separate programs, not provider types. Their machine-local `engines` configuration controls detection and executable selection. In the desktop, changing a conversation's model does not necessarily change the workspace default; use settings when you intend to change future sessions.
 
-Proactive delegation is not a core configuration or app-server mode. The Subagent
-plugin stores its switch in its own namespace, appends a sourced, persistable hidden
-message to subsequent model steps through `agent.pre_step`, and provides an A+
-control in the Composer toolbar. The core has no `agent.ultra_mode`, turn snapshot,
-`ultra` protocol field, or `wuu exec --ultra`; disabling the Subagent plugin removes
-the delegation tool, prompts, state, and UI entry together.
+## Instructions and plugin settings
 
-## Migrating from legacy project configuration
+Put shared project rules in `AGENTS.md`. The core `instructions` object controls filenames, project-root markers, user directories, and optional legacy instruction discovery. The old top-level `memory` name is accepted for instruction-discovery migration; it is not the Memory plugin's settings interface.
 
-If an old project keeps providers in `.wuu.json`:
+[Memory](../customize/memory.md), [Dream](../customize/dream.md), and other plugins maintain their own product settings and storage. The core's persistent session working notes are separate from plugin memory. Use each plugin's settings page rather than copying obsolete `memory.dream` or delegation flags into the core config.
 
-1. Run `wuu init` to create a user configuration.
-2. Move `default_provider`, `providers`, `instructions`, `agent.model_roles`,
-   `agent.model_aliases`, and `agent.permission_mode` into the user configuration.
-3. Keep in the project files the prompts and other project behavior that genuinely
-   belong to the repository.
+## Worker capacity
 
-`WUU_HOME` moves the user configuration, authentication, sessions, memory, and log
-directories as a whole. For example, with `WUU_HOME=/data/wuu` the user configuration
-path becomes `/data/wuu/config.json`; this path still works even when the `HOME`
-environment variable is not set.
+`agent.max_parallel` sets the generic anonymous-worker execution capacity. It defaults to `5`; `0` means use that default, and negative values are invalid.
 
-## The shell on Windows
+```json
+{ "agent": { "max_parallel": 5 } }
+```
 
-Bash syntax is the contract for command execution on every platform. On Windows, wuu
-resolves Git Bash: it prefers the `WUU_GIT_BASH_PATH` environment variable; otherwise
-it probes the standard install locations (`%ProgramFiles%\Git`,
-`%ProgramFiles(x86)%\Git`, `%LOCALAPPDATA%\Programs\Git`), then derives `bash.exe`
-from a `git.exe` on PATH. If all of that fails, command execution reports an error and
-prompts to install Git for Windows. TTY-mode background processes are not available on
-Windows and automatically fall back to pipe mode.
+Queued workers and workers waiting for children do not occupy normal execution slots. This is an execution-capacity setting, not a request to delegate every task or a limit on all background processes. [Subagent behavior](../desktop/subagents.md) belongs to the enabled delegation plugin.
+
+## Explicit automation configuration
+
+`wuu exec --config /path/to/config.json` loads one complete file without normal project overlays. `wuu exec --ignore-user-config` instead trusts the project's `.wuu.json` or `wuu.json` as the base and applies its two settings layers.
+
+Both choices deliberately accept connections, credential references, instruction paths, hooks, and MCP definitions from those files. Use them only with reviewed configuration. An empty `HOME` does not grant the same trust implicitly.
+
+## Moving user state
+
+Set `WUU_HOME` before starting Wuu to select a different user-state root. It affects configuration, authentication state, sessions, memory, plugins, and logs, not just the config file. For example, `WUU_HOME=/data/wuu` selects `/data/wuu/config.json`. Protect that directory and avoid sharing it in diagnostics.
+
+On Windows, command execution requires Git Bash; `WUU_GIT_BASH_PATH` can select its executable. Command availability and sandbox support are separate requirements, described in [permissions](permissions.md) and the [command system](agent-command-system.md).

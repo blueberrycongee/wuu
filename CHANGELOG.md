@@ -131,6 +131,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Removed
 
+- Removed the `yield_turn` tool. Sessions use normal provider completion to end
+  without an outward reply, including room discussions and peer follow-ups.
+
 - Removed stale message-flow screenshots and the disposable output-card demo from
   tracked artifacts.
 
@@ -139,6 +142,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Accept model-stream events up to 32 MiB so full reasoning and tool payloads do
   not fail at the former 1 MiB limit. Keep bounded reads and report oversized
   events as a local reader limit instead of a network failure.
+
+- Treat Chat Completions stream error payloads and error finish reasons as failed
+  attempts, preserving provider details and recovery limits without executing
+  unfinished tool drafts (#263).
+
+- Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
+  Automation creation, updates, and recurring scheduling no longer reject or
+  skip selected Sundays (#272). Previously saved next-run times are preserved;
+  on desktop, edit a field such as the task name, then choose **Save changes**
+  to recalculate immediately. The cron expression can stay unchanged; saving
+  is disabled until the task is edited. Without saving, a one-shot task keeps
+  its old deadline. Paused tasks stay paused, including after saving.
 
 - Keep collaboration-managed sessions out of ordinary sidebar groups after
   switching projects by preserving their management state in persisted session
@@ -151,9 +166,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   of reviving the removed conversation tab strip. Preserve view switching,
   closing, return navigation, and durable view recovery across desktop restarts.
 
-- Let ordinary sessions explicitly finish peer follow-ups without a final reply.
-  Recover an empty response once, while keeping repeated empty responses visible
-  as failures instead of silently treating them as acknowledgements.
+- Preserve fresh-context recovery instructions through checkpoints, turn completion
+  and session reloads, preventing unintended system-prefix changes (#265).
+
+- Accept normal provider completion without final text instead of retrying or
+  failing it. Preserve transport failures, abnormal stops, and truncation metadata.
+  Peer results join active work when possible, with late receipts retained for
+  a follow-up rather than one queued turn per result.
 
 - Stop streaming auto-follow from pulling messages back to the bottom when a
   keyboard, touch, or scrollbar gesture takes control before native scroll delivery.
