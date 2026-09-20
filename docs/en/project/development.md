@@ -41,6 +41,12 @@ make build-go
 
 Type checks, unit tests, and successful bundles are different evidence from a working app. For UI changes, inspect the affected rendering and interactions using the [desktop UI guide](desktop-ui.md). For plugin changes, also exercise actual tool calls or rendered contributions; package validation alone does not do that.
 
+`npm --prefix desktop run test:renderer-recovery` intentionally crashes hidden
+Chromium renderers to check recovery, retry limits, window isolation, and IPC.
+It uses a temporary profile and synthetic content, not your Wuu data. Run it in
+a graphical desktop session; it does not validate native dialog appearance or
+packaged-app behavior.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:

@@ -8,6 +8,21 @@ Quit the app completely and reopen it. Confirm that the installed build matches 
 
 For a persistent initialization failure, keep the version and visible error. If it began after enabling a plugin, use [plugin recovery](../customize/plugins.md#recovery-and-troubleshooting) and try the default interface.
 
+## A desktop window crashes or goes blank
+
+Wuu reloads a window after a renderer crash, out-of-memory exit, abnormal exit,
+or launch failure. It tries automatically up to three times, at least five seconds
+apart. After repeated failures, a native dialog offers **Reload** or **Close window**.
+The retry budget resets after the page has stayed loaded for one minute. Closing a
+window or quitting the app cancels pending recovery.
+
+Saved conversations remain available, and the app-server is not restarted by
+renderer recovery. Unsent drafts and other unsaved window state may be lost.
+Terminals owned by the crashed window are stopped rather than left running without
+a usable terminal panel; reopening the panel starts a new terminal. Other windows'
+terminals are unaffected. If crashes recur, record the app version and redacted
+`[renderer] process gone` / `recovery load failed` messages for a report.
+
 ## Model or engine unavailable
 
 Check whether the session uses the Wuu engine or an external Codex or Claude Code executable. Configuring a model provider does not install or authenticate an external engine.

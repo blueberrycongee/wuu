@@ -41,6 +41,10 @@ make build-go
 
 类型检查、单元测试和构建成功，与应用实际可用是不同的证据。UI 修改需按[桌面 UI 指南](desktop-ui.md)检查受影响的渲染与交互；插件修改还需验证实际工具调用或界面贡献，包验证不会完成这些检查。
 
+`npm --prefix desktop run test:renderer-recovery` 会主动让隐藏的 Chromium 渲染进程
+崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
+你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
+
 ## 原生手机与远程服务
 
 当前手机实现位于 [`clients/native`](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android 使用 Jetpack Compose。专用验证命令为：

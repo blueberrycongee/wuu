@@ -182,6 +182,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   streams now retain retry counts and stopping reasons across session reloads,
   with expandable desktop diagnostics instead of misleading network labels (#279).
 
+- Recover crashed desktop renderers with bounded automatic retries and a native
+  reload/close fallback. Stop orphaned window terminals and avoid sending events
+  to unavailable frames while the window recovers.
+
 - Honor cron weekday `7` as Sunday, including lists and stepped ranges, so
   Automation creation, updates, and recurring scheduling no longer reject or
   skip selected Sundays (#272). Previously saved next-run times are preserved;

@@ -235,6 +235,7 @@ import {
   productionApplicationMenuTemplate,
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
+import { installRendererRecovery, sendToWindow } from "./rendererProcessGone";
 import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
@@ -593,10 +594,7 @@ function emitServerEvent(event: ServerEvent): void {
 
 function broadcastToAll(channel: string, payload: unknown): void {
   for (const window of windowRegistry.allWindows()) {
-    if (window.isDestroyed() || window.webContents.isDestroyed()) {
-      continue;
-    }
-    window.webContents.send(channel, payload);
+    sendToWindow(window, channel, payload);
   }
 }
 
@@ -605,14 +603,10 @@ function emitTerminalEvent(
   event: Parameters<TerminalSessionManager["emit"]>[1],
 ): void {
   const window = windowRegistry.windowForID(windowID);
-  if (
-    !window ||
-    window.isDestroyed() ||
-    window.webContents.isDestroyed()
-  ) {
+  if (!window) {
     return;
   }
-  window.webContents.send("wuu:terminal-event", event);
+  sendToWindow(window, "wuu:terminal-event", event);
 }
 
 function unregisterWindow(windowID: number): void {
@@ -723,10 +717,27 @@ function loadRenderer(window: BrowserWindow): void {
       console.error(`[preload] ${preloadPath}: ${error.message}`);
     });
   }
-
   const devRendererURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
   const rendererPath = join(__dirname, "../renderer/index.html");
   const rendererURL = devRendererURL ?? pathToFileURL(rendererPath).toString();
+  installRendererRecovery(window, {
+    app,
+    load: () => devRendererURL ? window.loadURL(devRendererURL) : window.loadFile(rendererPath),
+    stopTerminals: (ownerID) => terminalSessionManager.stopForOwner(ownerID),
+    prompt: async () => {
+      const { response } = await dialog.showMessageBox(window, {
+        type: "error",
+        title: "Wuu",
+        message: mainTranslate("rendererRecoveryFailed"),
+        detail: mainTranslate("rendererRecoveryDetail"),
+        buttons: [mainTranslate("reloadWindow"), mainTranslate("closeWindow")],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      return response === 0 ? "reload" : "close";
+    },
+  });
   wireExternalNavigationGuards(window, {
     rendererURL,
     openExternal: openExternalNavigation,
@@ -863,7 +874,7 @@ function registerThemedChromeWindow(win: BrowserWindow): void {
   themedChromeWindows.add(win);
   const sendMaximized = (): void => {
     if (win.isDestroyed()) return;
-    win.webContents.send("wuu:window-maximized-changed", win.isMaximized());
+    sendToWindow(win, "wuu:window-maximized-changed", win.isMaximized());
   };
   win.on("maximize", sendMaximized);
   win.on("unmaximize", sendMaximized);
@@ -1786,7 +1797,9 @@ app.whenReady().then(async () => {
         // Put the snapshot on the same ordered channel as subsequent deltas.
         // The invoke promise can resolve after later stdout notifications.
         if (params.requestId && !response.error && !event.sender.isDestroyed()) {
-          event.sender.send("wuu:server-event", {
+          const window = windowRegistry.windowForID(event.sender.id);
+          if (!window) return;
+          sendToWindow(window, "wuu:server-event", {
             kind: "notification", workdir,
             message: { method: "channel/session/snapshot", params: { request_id: params.requestId, result: response.result } },
           } satisfies ServerEvent);
@@ -2031,9 +2044,7 @@ app.whenReady().then(async () => {
       if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
       if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
       if (['login', 'register', 'logout', 'password', 'revoke'].includes(action) || (action === 'github-poll' && result.username)) {
-        for (const win of windowRegistry.allWindows()) {
-          if (!win.isDestroyed()) win.webContents.send("wuu:account-changed");
-        }
+        broadcastToAll("wuu:account-changed", undefined);
       }
       return result;
     });
