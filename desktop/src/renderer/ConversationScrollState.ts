@@ -684,9 +684,12 @@ export function useConversationScrollState({
         sessionTailSpacePx(conversationPaneRef.current ?? node),
       );
       node.scrollTop = startTop + (targetTop - startTop) * eased;
-      programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
-      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      rememberActiveThreadScrollSnapshot(node, true);
+      // The browser already clamped the write above; reading it back once and
+      // reusing it avoids two more extent measurements per frame.
+      const placed = node.scrollTop;
+      programmaticScrollTopRef.current = placed;
+      lastConversationScrollTopRef.current = placed;
+      rememberActiveThreadScrollSnapshot(node, true, placed);
       if (progress < 1) {
         submittedScrollFrameRef.current = window.requestAnimationFrame(step);
       } else {
