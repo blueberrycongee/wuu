@@ -161,6 +161,10 @@ Most kernel services use method `call`. Storage is not a transaction across keys
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
 
+A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
+
+The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
+
 ## Providing a service
 
 Return `provided_services` during initialization and implement `invokeService`. A descriptor contains a dotted lowercase name, strict `MAJOR.MINOR.PATCH` version, and methods with `input_schema` and `output_schema` identifiers. These identifiers name contracts; they are not inline JSON Schema definitions.

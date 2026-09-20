@@ -27,6 +27,12 @@ An existing-chat task continues that conversation's context and workspace. If it
 
 Custom schedules use five-field cron expressions. `0 9 * * 1-5` means 09:00 on weekdays in the selected timezone. Use IANA timezone names such as `Asia/Shanghai`; the desktop initially selects the system timezone.
 
+The weekday field accepts `0`–`7`: `0` and `7` both mean Sunday, and `1`–`6` mean Monday through Saturday. Lists and ranges keep their numeric step selection before interpreting Sunday: `6,7` and `6-7` select the weekend, `5-7/2` selects Friday and Sunday, but `6-7/2` selects only Saturday. Including both `0` and `7` does not create an extra Sunday occurrence.
+
+Older versions could save a next-run time that skipped a selected Sunday. Restarting Wuu preserves that stored time. After upgrading, open an affected task, edit a field such as its name, then choose **Save changes** to recalculate immediately. The cron expression can stay unchanged; **Save changes** is disabled until the task is edited.
+
+Without that update, an active recurring task recalculates after dispatch at its saved deadline; a one-shot task keeps its old deadline. Paused tasks stay paused after upgrading or saving; resume them explicitly when ready. Missed Sundays are not replayed.
+
 The plugin checks due tasks about every 15 seconds, so a schedule is not a promise of an exact start second. After downtime, an overdue one-shot task is dispatched once. An overdue recurring task is dispatched once and then scheduled forward from the current time, rather than replaying every missed occurrence.
 
 A one-shot task leaves the schedule when dispatched, even if execution later fails. Check its run record for the outcome; it is not automatically retried as a new one-shot task.
