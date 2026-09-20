@@ -26,6 +26,7 @@ export function installRendererRecovery(window: BrowserWindow, options: Recovery
   const contents = window.webContents;
   const ownerID = contents.id;
   let disposed = false;
+  let recovering = false;
   let attempts = 0;
   let lastAttemptAt: number | undefined;
   let generation = 0;
@@ -45,6 +46,7 @@ export function installRendererRecovery(window: BrowserWindow, options: Recovery
   }
 
   function invalidate(): void {
+    recovering = true;
     generation++;
     cancelTimers();
     unavailableRenderers.add(contents);
@@ -66,7 +68,11 @@ export function installRendererRecovery(window: BrowserWindow, options: Recovery
     loadTimer = setTimeout(() => failed(new Error("Renderer load timed out")), LOAD_TIMEOUT_MS);
     try {
       // Load the known app entry, not a failed/empty Chromium navigation entry.
-      void options.load().catch(failed);
+      void options.load().then(() => {
+        if (!active() || generation !== attempt) return;
+        recovering = false;
+        loaded();
+      }, failed);
     } catch (error) {
       failed(error);
     }
@@ -107,7 +113,9 @@ export function installRendererRecovery(window: BrowserWindow, options: Recovery
   }
 
   function loaded(): void {
-    if (!active()) return;
+    // Chromium error pages also emit did-finish-load. During recovery, only the
+    // load promise can confirm success; the event must not hide its rejection.
+    if (!active() || recovering) return;
     generation++;
     cancelTimers();
     // A page that loads then immediately crashes must not reset the budget.

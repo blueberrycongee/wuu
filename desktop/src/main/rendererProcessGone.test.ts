@@ -148,6 +148,26 @@ describe("renderer recovery lifecycle", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("does not treat Chromium error-page completion as a successful recovery load", async () => {
+    const f = fixture();
+    f.load.mockImplementation(() => {
+      // Electron can emit completion for an error page before rejecting loadURL.
+      f.loaded();
+      return Promise.reject(new Error("ERR_FILE_NOT_FOUND"));
+    });
+    f.gone();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.load).toHaveBeenCalledTimes(3);
+    expect(f.prompt).toHaveBeenCalledOnce();
+
+    // Late page events must not reset the exhausted budget either.
+    f.loaded();
+    await vi.advanceTimersByTimeAsync(60_000);
+    f.gone();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.load).toHaveBeenCalledTimes(3);
+  });
+
   it("times out hung recovery loads and ignores a late dialog response after shutdown", async () => {
     const f = fixture();
     f.load.mockImplementation(() => new Promise(() => {}));

@@ -54,7 +54,7 @@ if (!process.versions.electron) {
     void window.loadURL("chrome://crash").catch(() => {});
   }
 
-  async function createWindow(partition) {
+  async function createWindow(partition, recoveryEntry = "index.html") {
     const window = new BrowserWindow({
       show: false,
       webPreferences: {
@@ -66,7 +66,7 @@ if (!process.versions.electron) {
     const state = { window, attempts: 0, choose: undefined };
     installRendererRecovery(window, {
       app,
-      load: () => { state.attempts++; return window.loadFile(path.join(directory, "index.html")); },
+      load: () => { state.attempts++; return window.loadFile(path.join(directory, recoveryEntry)); },
       stopTerminals: (id) => cleanupOwners.push(id),
       prompt: () => new Promise((resolve) => {
         state.choose = resolve;
@@ -128,7 +128,19 @@ if (!process.versions.electron) {
     first.window.close();
     await acknowledge(second.window);
     assert.equal(first.attempts, 4);
-    console.log("PASS: real renderer crashes, cooldown recovery, bounded retries, manual retry, window isolation, persisted state, and IPC during frame disposal");
+
+    // Chromium can finish loading its error page after the app entry fails.
+    // That must not cancel recovery or count as a stable app renderer.
+    const failed = await createWindow("recovery-failed-load", "missing.html");
+    const failedPrompt = event(failed.window, "recovery-prompt");
+    crash(failed.window);
+    await failedPrompt;
+    assert.equal(failed.attempts, 3);
+    const closed = event(failed.window, "closed");
+    failed.choose("close");
+    await closed;
+    await acknowledge(second.window);
+    console.log("PASS: real renderer crashes, cooldown recovery, bounded retries, manual retry, failed loads, window isolation, persisted state, and IPC during frame disposal");
   }).then(() => finish(0), (error) => { console.error(error); finish(1); });
 
   function finish(code) {
