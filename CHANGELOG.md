@@ -159,6 +159,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve conversation following when tool/reasoning details expand or collapse.
+  Restore submission reading space temporarily occupied by details, while actual
+  response growth and deliberate scrolling still consume it.
+
 - Retry provider-reported `request_timeout`, `408`, and `504` stream errors
   within the existing retry budget and tool replay safety checks, rather than
   stopping the conversation after the first request.

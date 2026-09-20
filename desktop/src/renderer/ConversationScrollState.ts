@@ -33,6 +33,7 @@ import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { createMessageScrollMotion, messageMotionTime } from "./MessageScrollMotion";
 import { useSessionTailSpace } from "./SessionTailSpace";
+import { conversationDisclosureHeight, eventTargetsConversationDisclosure } from "./ConversationDisclosure";
 import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 
 // Tight threshold so the conversation only re-engages auto-follow when the
@@ -234,6 +235,7 @@ export function useConversationScrollState({
     scrollModeRef.current = next ? "following" : "paused";
   }, []);
   const lastConversationScrollTopRef = useRef(0);
+  const lastDisclosureHeightRef = useRef(0);
   const programmaticScrollTopRef = useRef<number | undefined>(undefined);
   const suppressAutoFollowRearmRef = useRef(false);
   const smoothAutoFollowRef = useRef(false);
@@ -394,6 +396,7 @@ export function useConversationScrollState({
     }
     programmaticScrollTopRef.current = actualTop;
     lastConversationScrollTopRef.current = actualTop;
+    lastDisclosureHeightRef.current = conversationDisclosureHeight(node);
     const nextAutoFollow = autoFollow;
     if (!submissionPhase()) setAutoFollow(nextAutoFollow);
     setAutoFollowOverflowAnchor(node, nextAutoFollow || Boolean(submissionPhase()));
@@ -428,6 +431,12 @@ export function useConversationScrollState({
 
   const scrollConversationToBottom = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
+    const node = conversationViewport();
+    const previousMax = node ? maxScrollTop(node) : 0;
+    const restorePausedTop = node && scrollModeRef.current === "paused" &&
+      !userScrollAwayIntentRef.current && !pointerScrollGestureRef.current && !selectionPausedAutoFollowRef.current &&
+      lastConversationScrollTopRef.current > previousMax && node.scrollTop >= previousMax - 1
+      ? lastConversationScrollTopRef.current : undefined;
     // Active placement owns the screen-space trajectory. Once it has settled,
     // preserve the held scroll position if a larger viewport clamps its range.
     if (scrollModeRef.current === "placing") {
@@ -446,10 +455,15 @@ export function useConversationScrollState({
     // later parent render after the bubble has already painted at full opacity.
     reconcileSubmittedArrival();
     syncTailLayout();
+    if (node && restorePausedTop !== undefined && maxScrollTop(node) > previousMax) {
+      // A closing disclosure can clamp against the zero-gap layout before the
+      // reservation is restored. Repair it whether scroll or resize arrives first.
+      node.scrollTop = clampScrollTop(node, restorePausedTop);
+      programmaticScrollTopRef.current = node.scrollTop;
+    }
     // Cached/windowed turns can mount in a child-only commit. The parent
     // layout effect is not guaranteed to run when the exact bubble appears.
     if (scrollModeRef.current === "pending") positionSubmittedMessageRef.current?.(true);
-    const node = conversationViewport();
     if (node && scrollModeRef.current === "holding" &&
       tailFilled(submittedMessage()?.getBoundingClientRect().height ?? 0)) {
       setAutoFollow(true);
@@ -820,6 +834,9 @@ export function useConversationScrollState({
     if (!node) {
       return;
     }
+    const disclosureHeight = conversationDisclosureHeight(node);
+    const disclosureResized = Math.abs(disclosureHeight - lastDisclosureHeightRef.current) > 0.5;
+    lastDisclosureHeightRef.current = disclosureHeight;
     if (submissionPhase()) {
       // Wheel/key/touch/scrollbar and content actions release ownership before
       // their scroll event. Native anchoring, clamping and coalesced rAF events
@@ -829,6 +846,17 @@ export function useConversationScrollState({
       }
       programmaticScrollTopRef.current = undefined;
       rememberActiveThreadScrollSnapshot(node, false);
+      return;
+    }
+    if (disclosureResized && !userScrollAwayIntentRef.current &&
+      !pointerScrollGestureRef.current && !selectionPausedAutoFollowRef.current) {
+      // Native anchoring can report a disclosure's layout scroll before the
+      // resize observer. Preserve the owner and do not spend browsing space.
+      // Paused readers keep the browser's anchor; followers track the new end.
+      programmaticScrollTopRef.current = undefined;
+      scrollConversationToBottom();
+      lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+      rememberActiveThreadScrollSnapshot(node, isFollowing());
       return;
     }
     if (isWindowResizing()) {
@@ -1170,6 +1198,10 @@ export function useConversationScrollState({
       }
     };
     const handlePointerDown = (event: PointerEvent): void => {
+      if (eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollAwayIntent();
+        return;
+      }
       if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       cancelArrivals();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
@@ -1207,6 +1239,10 @@ export function useConversationScrollState({
       }
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if ((event.key === "Enter" || event.key === " ") && eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollAwayIntent();
+        return;
+      }
       if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) deferredSubmissionRef.current.clear();
       if (SCROLL_TOWARD_LATEST_KEYS.has(event.key) || ((event.key === "Enter" || event.key === " ") &&
         event.target instanceof Element && event.target.closest('button, [role="button"], summary'))) {
@@ -1227,6 +1263,11 @@ export function useConversationScrollState({
       }
     };
     const handleTouchStart = (event: TouchEvent): void => {
+      if (eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollAwayIntent();
+        touchLastYRef.current = event.touches[0]?.clientY;
+        return;
+      }
       deferredSubmissionRef.current.clear();
       if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
@@ -1251,6 +1292,9 @@ export function useConversationScrollState({
       }
       const currentY = event.touches[0]?.clientY;
       const previousY = touchLastYRef.current;
+      if (currentY !== undefined && previousY !== undefined && currentY !== previousY && submissionPhase()) {
+        disableConversationAutoFollow();
+      }
       if (
         currentY !== undefined &&
         previousY !== undefined &&
@@ -1278,6 +1322,10 @@ export function useConversationScrollState({
     // content actions do not change reading ownership: a fold expanded at
     // the bottom must keep following, while an away viewport stays paused.
     const handleContentAction = (event: MouseEvent): void => {
+      if (eventTargetsConversationDisclosure(event.target)) {
+        clearUserScrollAwayIntent();
+        return;
+      }
       if (!(event.target instanceof Element) || !event.target.closest('button, [role="button"], summary, a, input, textarea, select, video, audio')) return;
       deferredSubmissionRef.current.clear();
       if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();

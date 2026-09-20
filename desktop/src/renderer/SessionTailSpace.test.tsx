@@ -14,6 +14,7 @@ let api: ReturnType<typeof useConversationScrollState>;
 let root: Root;
 let host: HTMLDivElement;
 let naturalHeight: number;
+let disclosureHeight: number;
 let viewportHeight: number;
 let statusHeight: number;
 let composerHeight: number;
@@ -110,8 +111,41 @@ function grow(amount: number) {
   tick(1000);
 }
 
+const processItems: ThreadItem[] = [
+  { id: "read-1", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"one.ts"}' },
+  { id: "read-2", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"two.ts"}' },
+];
+
+function toggleTools(input = "pointer") {
+  const fold = host.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
+  const summary = fold.querySelector<HTMLElement>("summary")!;
+  const wasOpen = fold.open;
+  act(() => {
+    if (input === "pointer") summary.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    if (input === "keyboard") summary.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    if (input === "touch") summary.dispatchEvent(new TouchEvent("touchstart", { touches: [], bubbles: true }));
+    summary.click();
+    fold.dispatchEvent(new Event("toggle", { bubbles: true }));
+  });
+  expect(fold.open).toBe(!wasOpen);
+}
+
+function resizeDisclosure(height: number, nativeScroll = 0, resizeFirst = false) {
+  naturalHeight += height - disclosureHeight;
+  disclosureHeight = height;
+  act(() => {
+    // A layout/anchoring scroll can precede ResizeObserver and differ from
+    // the last programmatic write during the native details transition.
+    api.conversationScrollRef.current!.scrollTop += nativeScroll;
+    if (resizeFirst) for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+    api.handleConversationScroll();
+    if (!resizeFirst) for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver);
+  });
+}
+
 beforeEach(() => {
   naturalHeight = 2000;
+  disclosureHeight = 0;
   viewportHeight = 600;
   statusHeight = 34;
   composerHeight = 100;
@@ -136,6 +170,7 @@ beforeEach(() => {
     unobserve() {}
   });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.matches("details")) return { height: 34 + disclosureHeight } as DOMRect;
     if (this.hasAttribute("data-content")) return { height: naturalHeight + statusSpace() + tailSpace() } as DOMRect;
     if (this.hasAttribute("data-viewport")) return { top: 100, height: this.clientHeight } as DOMRect;
     if (this.classList.contains("conversation-status-cluster")) return { height: statusHeight } as DOMRect;
@@ -163,27 +198,115 @@ it("does not invent submission space when opening a running thread", () => {
 });
 
 it.each([false, true])("preserves reading ownership when toggling grouped tools (away: %s)", away => {
-  render({ messageID: "old", processItems: [
-    { id: "read-1", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"one.ts"}' },
-    { id: "read-2", type: "tool_call", name: "read_file", status: "completed", arguments: '{"path":"two.ts"}' },
-  ] });
+  render({ messageID: "old", processItems });
   if (away) scrollUp(200);
   const readingTop = scrollTop();
-  const fold = host.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
-  const summary = fold.querySelector<HTMLElement>("summary")!;
   for (const open of [true, false]) {
-    act(() => {
-      summary.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-      summary.click();
-      fold.dispatchEvent(new Event("toggle", { bubbles: true }));
-    });
-    expect(fold.open).toBe(open);
-    naturalHeight += open ? 300 : -300;
-    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    toggleTools();
+    resizeDisclosure(open ? 300 : 0, away ? 0 : -2);
     expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
   }
   grow(100);
   expect(scrollTop()).toBe(away ? readingTop : naturalHeight - viewportHeight);
+});
+
+it.each(["pointer", "keyboard", "touch"])("restores submission clearance after inspecting tools with %s while output grows", input => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const anchored = scrollTop();
+  const initial = tailSpace();
+  expect(initial).toBeGreaterThan(80);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    toggleTools(input);
+    resizeDisclosure(initial + 100);
+    expect(tailSpace()).toBe(0);
+    expect(scrollTop()).toBe(anchored);
+    expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+    grow(40);
+    toggleTools(input);
+    resizeDisclosure(80);
+    resizeDisclosure(0);
+    expect(tailSpace()).toBeCloseTo(initial - (cycle + 1) * 40);
+    expect(scrollTop()).toBe(anchored);
+  }
+  grow(initial);
+  expect(tailSpace()).toBe(0);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it.each([false, true])("does not let layout scrolling consume a paused reservation or resume following (resize first: %s)", resizeFirst => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  scrollUp(80);
+  const remaining = tailSpace();
+  const readingTop = scrollTop();
+  toggleTools();
+  resizeDisclosure(300, 0, resizeFirst);
+  toggleTools();
+  resizeDisclosure(0, 0, resizeFirst);
+  expect(scrollTop()).toBe(readingTop);
+  expect(tailSpace()).toBe(remaining);
+  grow(1000);
+  expect(scrollTop()).toBe(readingTop);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+});
+
+it("yields following to an outer scroll during the disclosure transition", () => {
+  render({ messageID: "old", processItems, running: true });
+  toggleTools();
+  resizeDisclosure(150);
+  scrollUp(100);
+  const readingTop = scrollTop();
+  resizeDisclosure(300);
+  grow(100);
+  expect(scrollTop()).toBe(readingTop);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+});
+
+it("keeps a temporarily occupied reservation across thread switches", () => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const initial = tailSpace();
+  toggleTools();
+  resizeDisclosure(initial + 100);
+  render({ id: "b", messageID: "other", processItems });
+  render({ id: "a", messageID: "submitted", processItems });
+  grow(40);
+  toggleTools();
+  resizeDisclosure(0);
+  expect(tailSpace()).toBeCloseTo(initial - 40);
+  expect(api.captureConversationScrollPosition()?.submissionPhase).toBe("holding");
+});
+
+it("does not replenish clearance after real output fills it while tools are open", () => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const initial = tailSpace();
+  toggleTools();
+  resizeDisclosure(initial + 100);
+  grow(initial + 50);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+  toggleTools();
+  resizeDisclosure(0);
+  expect(tailSpace()).toBe(0);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it("yields a held submission when a tap on the summary becomes a swipe", () => {
+  render({ messageID: "old", processItems });
+  submit({ processItems });
+  const summary = host.querySelector<HTMLElement>(".process-surface-fold > summary")!;
+  act(() => {
+    summary.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 100 } as Touch], bubbles: true }));
+    summary.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 130 } as Touch], bubbles: true }));
+    api.conversationScrollRef.current!.scrollTop -= 30;
+    api.handleConversationScroll();
+  });
+  const readingTop = scrollTop();
+  grow(1000);
+  expect(scrollTop()).toBe(readingTop);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
 });
 
 it.each(["following", "holding", "paused"])("reserves trailing status space without shortening the reading viewport while %s", mode => {
