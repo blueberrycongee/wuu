@@ -1753,11 +1753,15 @@
 }
 
 .sidebar-functional-group-sortable > .sidebar-functional-heading,
+.sidebar-functional-group-sortable .collaboration-sidebar-section .sidebar-functional-heading,
+.sidebar-functional-group-sortable .collaboration-sidebar-section .sidebar-functional-heading-toggle,
 .sidebar-functional-group-sortable > .sidebar-functional-heading .sidebar-functional-heading-toggle {
   cursor: grab;
 }
 
 .sidebar-functional-group-sortable[data-dragging="true"] > .sidebar-functional-heading,
+.sidebar-functional-group-sortable[data-dragging="true"] .collaboration-sidebar-section .sidebar-functional-heading,
+.sidebar-functional-group-sortable[data-dragging="true"] .collaboration-sidebar-section .sidebar-functional-heading-toggle,
 .sidebar-functional-group-sortable[data-dragging="true"] > .sidebar-functional-heading .sidebar-functional-heading-toggle {
   cursor: grabbing;
 }

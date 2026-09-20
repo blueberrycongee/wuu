@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChannelRoom, DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
+import { CollaborationSidebar } from "./CollaborationSidebar";
 import type { CollaborationConversation } from "./CollaborationConversations";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { NavigationSnapshotV1 } from "../shared/workbench";
@@ -18,11 +19,13 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   container = document.createElement("div");
   document.body.appendChild(container);
 });
 
 afterEach(() => {
+  window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   root = null;
@@ -172,6 +175,37 @@ function renderSidebar({
 }
 
 describe("AppSidebar layout", () => {
+  it.each([
+    { saved: ["workspace", "pinned", "folders"], expected: ["collaboration", "workspace", "pinned", "folders"] },
+    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "collaboration", "workspace", "pinned"] },
+  ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
+    window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
+    const onCreateRoom = vi.fn();
+    const options = {
+      collaborationNavigation: <CollaborationSidebar embedded initialized agents={[]} rooms={[]}
+        onSelectAgent={() => {}} onSelectRoom={() => {}} onManageAgents={() => {}}
+        onCreateRoom={onCreateRoom} onSwitchToHarness={() => {}} onOpenSettings={() => {}} />,
+    };
+    const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
+      .map((element) => element.dataset.functionalGroupId ?? element.dataset.sectionId);
+    renderSidebar(options);
+    expect(order()).toEqual(expected);
+
+    const collaboration = container.querySelector('[data-wuu-component="collaboration-sidebar"]')!;
+    const toggle = collaboration.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    act(() => collaboration.querySelector<HTMLButtonElement>(".sidebar-functional-heading-action button")!.click());
+    expect(onCreateRoom).toHaveBeenCalledOnce();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(order()).toEqual(expected);
+
+    renderSidebar();
+    expect(order()).toEqual(expected.filter((id) => id !== "collaboration"));
+    renderSidebar(options);
+    expect(order()).toEqual(expected);
+  });
+
   it("keeps the current session in sync between the workspace and bell views", () => {
     const threads: ThreadSummary[] = ["First session", "Second session"].map((title, index) => ({
       id: `running-${index}`, title, cwd: "/repo/wuu", workspace_id: "project-1",

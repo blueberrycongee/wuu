@@ -101,6 +101,7 @@ export function SortableSidebarSection({
       className={className}
       aria-label={ariaLabel}
       data-section-id={id}
+      data-dragging={isDragging || undefined}
       data-drop-over={isOver || undefined}
       data-sort-indicator={sortIndicator}
       style={style}

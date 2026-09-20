@@ -6,6 +6,7 @@ import { AppModeSwitch } from "./AppModeSwitch";
 import { CollaborationConversationRow } from "./CollaborationConversationRow";
 import { collaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
+import { useSidebarSectionDragHandle } from "./SidebarSection";
 import { useI18n } from "./i18n";
 
 export function CollaborationSidebar({
@@ -46,6 +47,8 @@ export function CollaborationSidebar({
   onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const sectionDragHandle = useSidebarSectionDragHandle();
+  const dragHandle = embedded ? sectionDragHandle : null;
   const [query, setQuery] = useState("");
   const [sectionCollapsed, setSectionCollapsed] = useState(false);
   const conversations = useMemo(() => {
@@ -63,12 +66,13 @@ export function CollaborationSidebar({
 
   const Container = embedded ? "section" : "aside";
   return (
-    <Container className={embedded ? "sidebar-functional-group collaboration-sidebar-section" : `sidebar collaboration-sidebar${collapsed ? " collaboration-sidebar-rail" : ""}`} data-wuu-component="collaboration-sidebar"
+    <Container className={embedded ? `${dragHandle ? "" : "sidebar-functional-group "}collaboration-sidebar-section` : `sidebar collaboration-sidebar${collapsed ? " collaboration-sidebar-rail" : ""}`} data-wuu-component="collaboration-sidebar"
       onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
       <div className={embedded ? undefined : "sidebar-content"}>
         {embedded ? <div className="sidebar-functional-heading">
           <button type="button" className="sidebar-functional-heading-toggle" aria-expanded={!sectionCollapsed}
-            onClick={() => setSectionCollapsed((value) => !value)}>
+            onPointerDown={dragHandle?.dragHandleProps.onPointerDown}
+            onClick={() => { if (!dragHandle?.isDragging) setSectionCollapsed((value) => !value); }}>
             <ChevronRight className="sidebar-functional-heading-chevron" data-expanded={!sectionCollapsed || undefined} aria-hidden="true" />
             <span className="sidebar-functional-heading-label">{t("sidebar.collaboration")}</span>
           </button>

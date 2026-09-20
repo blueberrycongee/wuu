@@ -148,7 +148,7 @@ const SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY = "wuu.desktop.sidebarFunctionalGroupOr
 const SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY = "wuu.desktop.sidebarCollapsedFunctionalGroups";
 const SIDEBAR_PINNED_ITEMS_KEY = "wuu.desktop.sidebarPinnedItems";
 const LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY = "wuu.desktop.sidebarPinnedContainers";
-const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["pinned", "folders", "workspace"] as const;
+const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["collaboration", "pinned", "folders", "workspace"] as const;
 type SidebarFunctionalGroupID = (typeof SIDEBAR_FUNCTIONAL_GROUP_IDS)[number];
 type SidebarPinnedItem = {
   kind: "thread" | "folder" | "workspace" | "collaboration";
@@ -210,15 +210,14 @@ function loadSidebarFunctionalGroupOrder(): SidebarFunctionalGroupID[] {
       window.localStorage.getItem(SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY) ?? "[]",
     );
     if (!Array.isArray(parsed)) return [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
-    const order = parsed.filter(
+    const order = [...new Set(parsed.filter(
       (id): id is SidebarFunctionalGroupID =>
         typeof id === "string"
         && SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID),
-    );
-    return order.length === SIDEBAR_FUNCTIONAL_GROUP_IDS.length
-      && new Set(order).size === SIDEBAR_FUNCTIONAL_GROUP_IDS.length
-      ? order
-      : [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
+    ))];
+    // Keep saved relative positions when adding groups. Collaboration used to
+    // sit above the sortable groups, so old preferences retain that layout.
+    return [...SIDEBAR_FUNCTIONAL_GROUP_IDS.filter((id) => !order.includes(id)), ...order];
   } catch {
     return [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
   }
@@ -1457,6 +1456,7 @@ export function AppSidebar({
   const navigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
     const nodes: NavigationSourceNode[] = [];
     const functionalGroupNodes: Record<SidebarFunctionalGroupID, NavigationSourceNode[]> = {
+      collaboration: [...collaborationNavigationNodes],
       pinned: [],
       folders: [],
       workspace: [],
@@ -1651,7 +1651,7 @@ export function AppSidebar({
     onSelectProjectThread, onSelectProjectWorkspace, onSelectThread,
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
-    pinnedCollaborationConversations, collaborationDraftSelected,
+    pinnedCollaborationConversations, collaborationDraftSelected, collaborationNavigationNodes,
     selectedCollaborationAgentID, selectedCollaborationRoomID,
     onSelectCollaborationConversation, onToggleCollaborationPinned,
     visibleProjectThreadsByProjectID,
@@ -1832,7 +1832,6 @@ export function AppSidebar({
               </div>
             </section>
           ) : null}
-          {collaborationNavigation}
           <DndContext
             sensors={sensors}
             collisionDetection={sidebarCollisionDetection}
@@ -1842,8 +1841,27 @@ export function AppSidebar({
             onDragEnd={handleSidebarDragEnd}
             onDragCancel={handleSidebarDragCancel}
           >
-            <SortableContext items={functionalGroupOrder} strategy={verticalListSortingStrategy}>
-              {functionalGroupOrder.map((groupID) => groupID === "pinned" ? (
+            <SortableContext
+              items={functionalGroupOrder.filter((id) => id !== "collaboration" || Boolean(collaborationNavigation))}
+              strategy={verticalListSortingStrategy}
+            >
+              {functionalGroupOrder.map((groupID) => groupID === "collaboration" ? (
+                collaborationNavigation ? <SortableSidebarSection
+                  key={groupID}
+                  id={groupID}
+                  className="sidebar-functional-group sidebar-functional-group-sortable"
+                  ariaLabel={t("sidebar.collaboration")}
+                  headerInfo={{
+                    label: t("sidebar.collaboration"),
+                    iconKind: "collaboration",
+                    CollapsedIcon: MessagesSquare,
+                    ExpandedIcon: MessagesSquare,
+                  }}
+                  registerHeaderInfo={registerSectionHeaderInfo}
+                >
+                  {collaborationNavigation}
+                </SortableSidebarSection> : null
+              ) : groupID === "pinned" ? (
                 <SortableFunctionalGroup
                   key={groupID}
                   id={groupID}
@@ -2095,11 +2113,13 @@ export function AppSidebar({
                 <div className="sidebar-functional-group-drag-overlay">
                   <span>
                     {t(
-                      draggingFunctionalGroupID === "pinned"
-                        ? "sidebar.pinned"
-                        : draggingFunctionalGroupID === "folders"
-                          ? "sidebar.folders"
-                          : "sidebar.workspace",
+                      draggingFunctionalGroupID === "collaboration"
+                        ? "sidebar.collaboration"
+                        : draggingFunctionalGroupID === "pinned"
+                          ? "sidebar.pinned"
+                          : draggingFunctionalGroupID === "folders"
+                            ? "sidebar.folders"
+                            : "sidebar.workspace",
                     )}
                   </span>
                 </div>
@@ -2224,7 +2244,6 @@ export function AppSidebar({
       nodes={[
         ...primaryNavigationNodes,
         ...pluginNavigationNodes,
-        ...collaborationNavigationNodes,
         ...navigationNodes,
       ]}
       fallback={organizedSidebar}

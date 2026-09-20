@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Drag the Collaboration sidebar heading to reorder it alongside Pinned,
+  Folders, and Workspace, with the order preserved across restarts.
+
 - Desktop appearance settings can import a device-local background image across
   the sidebar and workspace, with five image effects and adjustable strength.
 
