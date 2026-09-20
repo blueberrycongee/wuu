@@ -35,7 +35,10 @@ type frame struct {
 
 func startChild(binary string, args []string, cwd string, env []string) (*child, error) {
 	cmd := exec.Command(binary, args...)
-	cmd.Dir, cmd.Env, cmd.Stderr = cwd, env, io.Discard
+	cmd.Dir, cmd.Stderr = cwd, io.Discard
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.WaitDelay = 2 * time.Second
 	configureChild(cmd)
 	stdin, err := cmd.StdinPipe()
