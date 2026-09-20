@@ -2100,12 +2100,8 @@ func TestStreamRunner_NoFallbackOnNormalStop(t *testing.T) {
 	}
 	runner := &StreamRunner{Client: client, Model: "test"}
 	_, err := runner.Run(context.Background(), "hello")
-	// Should produce an EmptyAnswerError (from the loop), not trigger fallback.
-	if err == nil {
-		t.Fatal("expected error for empty content with stop reason")
-	}
-	if !IsEmptyAnswer(err) {
-		t.Fatalf("expected EmptyAnswerError, got %v", err)
+	if err != nil {
+		t.Fatalf("normal empty completion must not recover or fail: %v", err)
 	}
 	if client.chatCallCount != 0 {
 		t.Fatalf("expected 0 Chat() calls (no fallback), got %d", client.chatCallCount)

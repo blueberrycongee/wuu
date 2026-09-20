@@ -169,6 +169,68 @@ it("opens managed sessions through their agent conversation without duplicating 
   expect(remaining.some(button => button.textContent?.includes("managed-active"))).toBe(false);
 });
 
+it("keeps newly created managed work reachable after a delayed workspace list", async () => {
+  agents = [{ id: "manager", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
+  rooms = [{ id: "manager-dm", name: "Research", kind: "dm", created_by: "human", created_at: agents[0].created_at,
+    members: [{ room_id: "manager-dm", member_type: "agent", member_id: "manager", joined_at: agents[0].created_at }] }];
+  const target = {
+    id: "beta", name: "Beta", path: "/tmp/wuu-managed-navigation-test",
+    created_at: agents[0].created_at, updated_at: agents[0].created_at,
+  };
+  vi.mocked(window.wuu.listProjects).mockResolvedValue({
+    projects: [target], active_context: { kind: "no_project", cwd: workspace },
+  });
+  let resolveList!: (result: { threads: Thread[] }) => void;
+  vi.mocked(window.wuu.listThreads).mockImplementation(async (cwd) => {
+    if (cwd === target.path) return new Promise(resolve => { resolveList = resolve; });
+    return { threads: [] };
+  });
+  const created: Thread = {
+    id: "new-managed-work", title: "Review navigation", preview: "Review navigation", source: "collaboration",
+    cwd: target.path, workspace_id: target.id, workspace_kind: "project",
+    model_provider: "byok", model: "reasoner", status: "idle", turns: [],
+    created_at: agents[0].created_at, updated_at: agents[0].created_at,
+  };
+  const managed: Thread = { ...created,
+    session_control: { manager_id: "manager", manager_name: "Research", state: "active", revision: 1 },
+  };
+  window.wuu.resumeThread = vi.fn().mockResolvedValue({ thread: managed });
+  window.wuu.selectProject = vi.fn().mockResolvedValue({
+    projects: [target], active_context: { kind: "project", project_id: target.id, cwd: target.path },
+  });
+  await act(async () => { root.render(<App />); });
+  await click(t("threadSidebar.expandProject", { name: target.name, unread: "" }));
+  expect(window.wuu.listThreads).toHaveBeenCalledWith(target.path);
+  await selectSidebarConversation("Research");
+
+  const workspaceRows = () => [...container.querySelectorAll<HTMLButtonElement>("button.thread-row-main")]
+    .filter(button => button.textContent?.includes(created.title!));
+  // Creation precedes the control update; only the latter moves the session into its manager's work.
+  await act(async () => {
+    for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: target.path, message: {
+      method: "thread/started", params: { thread: created },
+    } });
+  });
+  expect(workspaceRows()).toHaveLength(1);
+  await act(async () => {
+    for (const onEvent of eventListeners) onEvent({ kind: "notification", workdir: target.path, message: {
+      method: "thread/updated", params: { thread: managed },
+    } });
+  });
+  expect(workspaceRows()).toHaveLength(0);
+  const showAll = container.querySelector<HTMLButtonElement>(".managed-agent-work-pill");
+  expect(showAll).toBeTruthy();
+  await act(async () => showAll!.click());
+  const results = () => [...container.querySelectorAll<HTMLButtonElement>(".managed-session-result")]
+    .filter(button => button.textContent?.includes(created.title!));
+  expect(results()).toHaveLength(1);
+
+  await act(async () => { resolveList({ threads: [] }); });
+  expect(results()).toHaveLength(1);
+  await act(async () => results()[0].click());
+  expect(window.wuu.resumeThread).toHaveBeenCalledWith(created.id);
+});
+
 it("pins a new Agent without navigation, persists hiding, and restores its DM from settings", async () => {
   agents = [{ id: "new-agent", name: "Research", avatar_key: "abstract-1", memory_dir: "/preview", autostart: true, created_at: "2026-09-12T00:00:00Z" }];
   rooms = [{ id: "general", name: "General", kind: "channel", members: [], created_by: "human", created_at: agents[0].created_at }];

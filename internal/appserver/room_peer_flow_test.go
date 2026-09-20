@@ -60,12 +60,12 @@ func TestRoomMembersTakeTurnsWithoutACoordinatorModel(t *testing.T) {
 	if !strings.Contains(collaborationRequestText(next.request), "First independent observation") {
 		t.Fatal("next member cannot see the earlier answer")
 	}
-	coordinatorModelTool(next, "pass-1", "yield_turn", map[string]any{"reason": "Nothing new"})
+	next.response <- providers.ChatResponse{StopReason: "completed"}
 	// One productive round permits another. The second round rotates its order.
 	next = provider.next(t)
-	coordinatorModelTool(next, "pass-2", "yield_turn", map[string]any{"reason": "Nothing new"})
+	next.response <- providers.ChatResponse{StopReason: "completed"}
 	next = provider.next(t)
-	coordinatorModelTool(next, "pass-3", "yield_turn", map[string]any{"reason": "Nothing new"})
+	next.response <- providers.ChatResponse{StopReason: "completed"}
 	for range 4 {
 		select {
 		case <-fixture.completed:
@@ -102,7 +102,7 @@ func TestRoomDiscussionAdvancesAfterMemberProviderFailure(t *testing.T) {
 	}
 	provider.next(t).failure <- errors.New("permanent provider rejection")
 	next := provider.next(t)
-	coordinatorModelTool(next, "pass", "yield_turn", map[string]any{"reason": "No contribution"})
+	next.response <- providers.ChatResponse{StopReason: "completed"}
 	for range 2 {
 		select {
 		case <-fixture.completed:
