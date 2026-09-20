@@ -34,6 +34,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep desktop tool-call summaries on one line, truncating overflow with an
+  ellipsis while preserving the activity icon and diff counts.
+
 - Reuse loaded sidebar history when reopening desktop conversations, even after
   a workspace refresh has replaced the active conversation catalog with summaries.
   Cross-workspace activation now displays the resumed conversation without waiting

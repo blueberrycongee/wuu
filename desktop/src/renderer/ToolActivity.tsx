@@ -158,6 +158,7 @@ export function ToolActivityRow({
         />
         <span className="activity-copy">
           <LightweightStreamingText
+            className="activity-summary-text"
             text={summaryText}
             live={streaming ?? false}
           />

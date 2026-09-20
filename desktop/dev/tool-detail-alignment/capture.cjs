@@ -15,23 +15,39 @@ function measure() {
     const marker = row.querySelector(".tool-activity-marker, .plugin-todo-marker");
     const icon = marker.querySelector("svg") || marker;
     const text = row.querySelector(".activity-copy") || marker.nextElementSibling;
+    const summary = row.querySelector(".activity-copy > span");
     const m = icon.getBoundingClientRect();
     const t = text.getBoundingClientRect();
     const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+    let previousRight = summary?.getBoundingClientRect().right;
+    const countsVisible = [...row.querySelectorAll(".activity-add, .activity-delete")].every(count => {
+      const rect = count.getBoundingClientRect();
+      const visible = rect.left > previousRight && rect.right <= row.getBoundingClientRect().right + 1
+        && rect.height <= lineHeight + 1 && count.scrollWidth <= count.clientWidth + 1;
+      previousRight = rect.right;
+      return visible;
+    });
     return {
       text: text.textContent,
+      fontSize: parseFloat(getComputedStyle(text).fontSize),
+      tool: summary !== null,
+      truncated: summary !== null && summary.scrollWidth > summary.clientWidth + 1,
+      countsVisible,
       iconLeft: m.left,
       textLeft: t.left,
       centerError: m.top + m.height / 2 - (t.top + lineHeight / 2),
       wrapped: t.height > lineHeight + 1,
-      overflow: row.scrollWidth > row.clientWidth + 1,
+      overflow: row.scrollWidth > row.clientWidth + 1
+        || row.getBoundingClientRect().right > container.getBoundingClientRect().right + 1,
     };
   });
   return {
     rows: measureRows(body),
+    standalone: measureRows(document.querySelector("[data-standalone-tool-row]")),
     inspector: measureRows(document.querySelector(".environment-panel")),
     scrollable: body.scrollHeight > body.clientHeight,
-    horizontalOverflow: body.scrollWidth > body.clientWidth + 1,
+    horizontalOverflow: [body, document.querySelector(".conversation-pane")]
+      .some(element => element.scrollWidth > element.clientWidth + 1),
   };
 }
 
@@ -63,7 +79,7 @@ app.whenReady().then(async () => {
         const result = await win.webContents.executeJavaScript(`(${measure})()`);
         await win.webContents.executeJavaScript("document.querySelector('.process-surface-body').scrollTop = 0");
         fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
-        reports.push({ name, ...result });
+        reports.push({ name, size, ...result });
         console.log(name, JSON.stringify(result));
       }
     }
@@ -72,9 +88,12 @@ app.whenReady().then(async () => {
   const misaligned = rows => rows.some(row =>
       row.overflow || Math.abs(row.textLeft - rows[0].textLeft) > 0.5 ||
       Math.abs(row.iconLeft - rows[0].iconLeft) > 0.5 || Math.abs(row.centerError) > 0.5);
-  const failures = reports.filter(({ rows, inspector, horizontalOverflow }) =>
-    rows.length !== 10 || inspector.length !== 4 || horizontalOverflow || misaligned(rows) || misaligned(inspector));
-  if (failures.length) throw new Error(`Alignment failed in ${failures.map(r => r.name).join(", ")}`);
+  const failures = reports.filter(({ rows, standalone, inspector, horizontalOverflow, size }) =>
+    rows.length !== 12 || standalone.length !== 1 || inspector.length !== 4 || horizontalOverflow
+    || misaligned(rows) || misaligned(standalone) || misaligned(inspector)
+    || [...rows, ...standalone].some(row => row.tool && (row.wrapped || !row.countsVisible || row.fontSize !== size))
+    || !rows.some(row => row.tool && row.truncated));
+  if (failures.length) throw new Error(`Tool row layout failed in ${failures.map(r => r.name).join(", ")}`);
   clearTimeout(timeout);
   app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });
