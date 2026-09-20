@@ -54,10 +54,54 @@ func TestSSEReaderPreservesReadFailureAfterCompleteEvent(t *testing.T) {
 	}
 }
 
-func TestSSEReaderBoundsMultilineEvent(t *testing.T) {
-	reader := NewSSEReader(strings.NewReader(strings.Repeat("data: "+strings.Repeat("x", 1024)+"\n", 1024)+"\n"), nil)
-	if reader.Scan() || reader.Err() == nil || IsRetryable(reader.Err()) {
-		t.Fatalf("oversized event: %v", reader.Err())
+func TestSSEReaderEventSizeBoundary(t *testing.T) {
+	for _, newline := range []string{"\n", "\r\n", "\r"} {
+		for _, multiline := range []bool{false, true} {
+			for _, extra := range []int{0, 1} {
+				payload := strings.Repeat("x", MaxStreamEventBytes+extra)
+				wire := "data: " + payload + newline + newline
+				if multiline {
+					mid := len(payload) / 2
+					payload = payload[:mid] + "\n" + payload[mid+1:]
+					wire = "data: " + payload[:mid] + newline + "data: " + payload[mid+1:] + newline + newline
+				}
+				reader := NewSSEReader(strings.NewReader(wire+"data: next"+newline+newline), nil)
+				if extra == 0 {
+					if !reader.Scan() || reader.Event().Data != payload {
+						t.Fatalf("boundary event (newline=%q multiline=%v): %v", newline, multiline, reader.Err())
+					}
+					if !reader.Scan() || reader.Event().Data != "next" || reader.Scan() || reader.Err() != nil {
+						t.Fatalf("event after boundary payload: %v", reader.Err())
+					}
+					continue
+				}
+				var oversized *StreamEventTooLargeError
+				if reader.Scan() || !errors.As(reader.Err(), &oversized) || IsRetryable(reader.Err()) {
+					t.Fatalf("oversized event (newline=%q multiline=%v): %v", newline, multiline, reader.Err())
+				}
+				if oversized.LimitBytes != MaxStreamEventBytes || reader.Scan() {
+					t.Fatalf("invalid limit or continued after oversized event: %+v", oversized)
+				}
+			}
+		}
+	}
+}
+
+func TestSSEReaderBoundsUnterminatedLine(t *testing.T) {
+	bytesRead := 0
+	reader := NewSSEReader(sseReadFunc(func(p []byte) (int, error) {
+		if bytesRead+len(p) > MaxStreamEventBytes+64 {
+			t.Fatal("unbounded read of unterminated SSE line")
+		}
+		for i := range p {
+			p[i] = 'x'
+		}
+		bytesRead += len(p)
+		return len(p), nil
+	}), nil)
+	var oversized *StreamEventTooLargeError
+	if reader.Scan() || !errors.As(reader.Err(), &oversized) || IsRetryable(reader.Err()) {
+		t.Fatalf("unterminated oversized line: %v", reader.Err())
 	}
 }
 

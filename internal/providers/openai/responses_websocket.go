@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/coder/websocket"
 )
 
@@ -15,7 +16,9 @@ import (
 // Without it the upgrade request is rejected as a non-Responses endpoint.
 const CodexWebSocketBetaTag = "responses_websockets=2026-02-06"
 
-const codexWebSocketReadLimitBytes = 16 << 20
+// Allow one lookahead byte so the read pump can report a typed local limit
+// error before the WebSocket library replaces it with an untyped read error.
+const codexWebSocketReadLimitBytes = providers.MaxStreamEventBytes + 1
 
 // Converts an HTTP Responses base URL into its WebSocket-equivalent endpoint.
 // The regular Responses client stores a base URL and appends /responses at

@@ -904,6 +904,8 @@ export const enUS = {
   "error.providerTitle": "Model provider error",
   "error.contextOverflowTitle": "Context exceeds model limit",
   "error.requestTooLargeTitle": "Request too large",
+  "error.responseTooLargeTitle": "Response data too large",
+  "error.responseTooLargeDetail": "A single response event exceeded Wuu's local receive limit, not the model's context window. Automatic retries cannot raise this limit. Ask for smaller outputs or use another model connection.",
   "error.toolTitle": "Tool call failed",
   "error.localTitle": "Local operation failed",
   "error.internalTitle": "Internal Wuu error",

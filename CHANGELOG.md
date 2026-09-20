@@ -150,6 +150,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   attempts, preserving provider details and recovery limits without executing
   unfinished tool drafts (#263).
 
+- Accept SSE response events up to 16 MiB across OpenAI-compatible and Anthropic
+  streams, matching the Responses WebSocket limit. Oversized events now retain a
+  local receive-limit diagnostic instead of an internal error, without futile
+  retries or transport fallback.
+
 - Preserve top-level Responses stream errors and recover recognized transient
   failures within existing retry budgets and tool replay safety checks. Failed
   streams now retain retry counts and stopping reasons across session reloads,

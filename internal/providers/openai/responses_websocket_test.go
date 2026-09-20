@@ -22,6 +22,95 @@ import (
 
 func immediateStreamRetryWait(context.Context, time.Duration) error { return nil }
 
+func TestResponsesWebSocketEventSizeBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		extra      int
+		afterEvent bool
+	}{
+		{name: "at-limit"},
+		{name: "oversized-first-event", extra: 1},
+		{name: "oversized-after-event", extra: 1024, afterEvent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const prefix = `{"type":"response.output_text.delta","delta":"`
+			const suffix = `"}`
+			payload := strings.Repeat("x", providers.MaxStreamEventBytes+tc.extra-len(prefix)-len(suffix))
+			var requests, sseRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Header.Get("Upgrade") == "" {
+					sseRequests.Add(1)
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return
+				}
+				conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.CloseNow()
+				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+				defer cancel()
+				if _, _, err := conn.Read(ctx); err != nil {
+					t.Error(err)
+					return
+				}
+				if tc.afterEvent {
+					writeWSEvent(t, ctx, conn, `{"type":"response.created","response":{"id":"resp_large"}}`)
+				}
+				// Oversized messages may be rejected before the write finishes.
+				if err := conn.Write(ctx, websocket.MessageText, []byte(prefix+payload+suffix)); err != nil && tc.extra == 0 {
+					t.Error(err)
+				}
+				if tc.extra == 0 {
+					writeWSEvent(t, ctx, conn, `{"type":"response.completed","response":{"id":"resp_large","status":"completed","output":[]}}`)
+				}
+			}))
+			defer server.Close()
+			store := false
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test", WireAPI: "responses", ResponsesStore: &store, ResponsesTransport: providers.StreamTransportAuto, ResponsesWebSocketCache: NewResponsesWebSocketCache()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reliable := providers.NewReliableStreamClient(client, nil, providers.WithStreamRetryWait(immediateStreamRetryWait))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			events, err := reliable.StreamChat(ctx, providers.ChatRequest{Model: "test", Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}, CacheHint: &providers.CacheHint{PromptCacheKey: tc.name}, Operation: providers.NewInferenceOperation(providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var content strings.Builder
+			var terminal error
+			done := 0
+			for event := range events {
+				switch event.Type {
+				case providers.EventContentDelta:
+					content.WriteString(event.Content)
+				case providers.EventError:
+					terminal = event.Error
+				case providers.EventDone:
+					done++
+				}
+			}
+			if requests.Load() != 1 || sseRequests.Load() != 0 {
+				t.Fatalf("size limit triggered replay/fallback: requests=%d SSE=%d", requests.Load(), sseRequests.Load())
+			}
+			if tc.extra == 0 {
+				if terminal != nil || done != 1 || content.String() != payload {
+					t.Fatalf("boundary event: done=%d content bytes=%d err=%v", done, content.Len(), terminal)
+				}
+				return
+			}
+			var limitErr *providers.StreamEventTooLargeError
+			if done != 0 || content.Len() != 0 || !errors.As(terminal, &limitErr) || providers.NormalizeFailure(terminal).Category != providers.FailureResponseTooLarge {
+				t.Fatalf("oversized event: done=%d content bytes=%d err=%v", done, content.Len(), terminal)
+			}
+		})
+	}
+}
+
 func TestResolveCodexWebSocketURL(t *testing.T) {
 	cases := []struct {
 		in   string

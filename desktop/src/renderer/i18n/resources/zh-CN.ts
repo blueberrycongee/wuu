@@ -901,6 +901,8 @@ export const zhCN = {
   "error.providerTitle": "模型服务异常",
   "error.contextOverflowTitle": "上下文超出模型上限",
   "error.requestTooLargeTitle": "请求超出大小限制",
+  "error.responseTooLargeTitle": "响应数据过大",
+  "error.responseTooLargeDetail": "单条响应事件超出 Wuu 本地接收上限，并非模型上下文超限。自动重试无法提高此上限；请让模型分批输出，或更换模型连接。",
   "error.toolTitle": "工具调用失败",
   "error.localTitle": "本地操作失败",
   "error.internalTitle": "wuu 内部错误",

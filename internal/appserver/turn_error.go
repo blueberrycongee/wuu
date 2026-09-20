@@ -54,6 +54,12 @@ func BuildTurnError(err error, provider string) TurnError {
 		}
 	}
 
+	var eventTooLarge *providers.StreamEventTooLargeError
+	if errors.As(err, &eventTooLarge) {
+		out.Code = string(providers.FailureResponseTooLarge)
+		out.Category = "local"
+	}
+
 	if isResponseCompletedMissingMessage(lowerMessage) {
 		if out.Code == "" {
 			out.Code = responseCompletedMissingCode
@@ -108,7 +114,7 @@ func categoryFromFailure(failure providers.NormalizedFailure) string {
 		return "network"
 	case providers.FailureInvalidRequest:
 		return "invalid_request"
-	case providers.FailureReplayUnsafe, providers.FailureBudgetExceeded, providers.FailureCostIndeterminate, providers.FailureLocalBackpressure:
+	case providers.FailureReplayUnsafe, providers.FailureBudgetExceeded, providers.FailureCostIndeterminate, providers.FailureLocalBackpressure, providers.FailureResponseTooLarge:
 		return "local"
 	default:
 		if failure.Origin == providers.FailureOriginProvider {
