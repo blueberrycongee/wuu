@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
 import { SelectMenu } from "../SelectMenu";
@@ -11,17 +11,37 @@ export function BackgroundSettings(): JSX.Element {
   const { preferences, error: readError, loading } = useBackground();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<"image" | "save" | null>(null);
+  const importController = useRef<AbortController | null>(null);
+  useEffect(() => () => importController.current?.abort(), []);
   async function save(action: () => Promise<void>) {
     setBusy(true); setError(null);
     try { await action(); } catch { setError("save"); }
     finally { setBusy(false); }
   }
   async function importImage(file: File) {
+    importController.current?.abort();
+    const controller = new AbortController();
+    importController.current = controller;
+    const { signal } = controller;
     setBusy(true); setError(null);
-    let image: Blob;
-    try { image = await processBackground(file, "none", false); }
-    catch { setError("image"); setBusy(false); return; }
-    await save(() => updateBackground(current => ({ image, imageID: crypto.randomUUID(), name: file.name, effect: current?.effect ?? "none", opacity: current?.opacity ?? 0.15 })));
+    let stage: "image" | "save" = "image";
+    try {
+      const image = await processBackground(file, "none", false, signal);
+      if (signal.aborted) return;
+      stage = "save";
+      await updateBackground(current => {
+        // Opening IndexedDB can outlive this page; recheck before changing storage.
+        if (signal.aborted) return current;
+        return { image, imageID: crypto.randomUUID(), name: file.name, effect: current?.effect ?? "none", opacity: current?.opacity ?? 0.15 };
+      });
+    } catch {
+      if (!signal.aborted) setError(stage);
+    } finally {
+      if (importController.current === controller) {
+        importController.current = null;
+        if (!signal.aborted) setBusy(false);
+      }
+    }
   }
   return <>
     <SettingsRow title={t("settings.backgroundImage")} hint={t("settings.backgroundImageHint")}>
