@@ -81,6 +81,8 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 		err = fmt.Errorf("%s does not enforce Wuu's read-only boundary; choose another engine or change the permission mode explicitly", s.engine.entry.Name)
 	case s.engine.entry.Protocol == "acp":
 		err = s.runACP(ctx, message, t)
+	case s.engine.entry.Protocol == "opencode":
+		err = s.runOpenCode(ctx, message, t)
 	default:
 		err = fmt.Errorf("unsupported engine protocol %q", s.engine.entry.Protocol)
 	}
