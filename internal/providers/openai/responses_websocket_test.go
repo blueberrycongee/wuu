@@ -961,7 +961,7 @@ func TestResponsesStreamChatWebSocket_RunnerKeepsDeltaAcrossTurnsWithChangingCon
 			writeWSEvent(t, ctx, conn, `{"type":"response.created","response":{"id":"resp_`+id+`","status":"in_progress"}}`)
 			writeWSEvent(t, ctx, conn, `{"type":"response.output_item.added","item":{"id":"msg_`+id+`","type":"message","role":"assistant","phase":"final_answer","status":"in_progress"},"output_index":0}`)
 			writeWSEvent(t, ctx, conn, `{"type":"response.output_text.delta","delta":"answer-`+id+`","item_id":"msg_`+id+`","output_index":0}`)
-			writeWSEvent(t, ctx, conn, `{"type":"response.output_item.done","item":{"id":"msg_`+id+`","type":"message","role":"assistant","phase":"final_answer","status":"completed","content":[{"type":"output_text","text":"answer-`+id+`"}]},"output_index":0}`)
+			writeWSEvent(t, ctx, conn, `{"type":"response.output_item.done","item":{"id":"msg_`+id+`","type":"message","role":"assistant","phase":"final_answer","status":"completed","content":[{"type":"output_text","text":"answer-"},{"type":"output_text","text":"`+id+`"}]},"output_index":0}`)
 			writeWSEvent(t, ctx, conn, `{"type":"response.completed","response":{"id":"resp_`+id+`","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":2}}}`)
 		}
 	}))

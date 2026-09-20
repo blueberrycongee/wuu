@@ -509,8 +509,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 	pendingReasoning := newResponsesPendingReasoning()
 	var sawToolCall bool
 	var sawProviderEvent bool
-	var currentTextPhase providers.MessagePhase
-	var currentTextItemID string
+	var text responsesTextStream
 	var responseID string
 	var responseItems []responsesInputItem
 
@@ -678,7 +677,11 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		}
 		providers.DebugLogfWire("Responses websocket raw: %s", string(frame.data))
 		var event responsesStreamEvent
-		if err := json.Unmarshal(frame.data, &event); err != nil {
+		err := json.Unmarshal(frame.data, &event)
+		if err == nil {
+			err = text.consume(event, emit)
+		}
+		if err != nil {
 			session.mu.Lock()
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "parse_error")
@@ -729,26 +732,10 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		case "response.reasoning_summary_part.done":
 			pendingReasoning.appendDelta(event, "\n\n", emit)
 
-		case "response.output_text.delta":
-			if event.Delta != "" {
-				if event.ItemID != "" {
-					currentTextItemID = event.ItemID
-				}
-				emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Content: event.Delta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-			}
-
 		case "response.output_item.added":
 			switch event.Item.Type {
 			case "reasoning":
 				pendingReasoning.start(event.Item, event.outputIndex())
-			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 			case "function_call", "tool_search_call":
 				sawToolCall = true
 				disarmFinalAnswerTail()
@@ -771,13 +758,6 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			case "reasoning":
 				pendingReasoning.emitDone(event, emit)
 			case "message":
-				if event.Item.ID != "" {
-					currentTextItemID = event.Item.ID
-				}
-				if phase := providers.NormalizeMessagePhase(event.Item.Phase); phase != "" {
-					currentTextPhase = phase
-					emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Phase: currentTextPhase, ProviderItemID: currentTextItemID})
-				}
 				if responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
@@ -794,9 +774,10 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			}
 			pending.emitEnds(emit)
 			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall, event.Type)
+			replayItems, replayComplete := responsesWebSocketFinalReplayItems(event.Response, responseItems, text.emitted.String())
 			session.mu.Lock()
-			if useCachedContext {
-				responsesWebSocketStoreContinuation(session, generation, fullPayload, responseID, responseItems)
+			if useCachedContext && replayComplete {
+				responsesWebSocketStoreContinuation(session, generation, fullPayload, responseID, replayItems)
 			} else {
 				session.continuation = nil
 			}
@@ -1239,6 +1220,30 @@ func responsesCachedInputDeltaFromBaseline(current, baseline []responsesInputIte
 	return delta, true
 }
 
+func responsesWebSocketFinalReplayItems(response *responsesResponse, items []responsesInputItem, content string) ([]responsesInputItem, bool) {
+	// A terminal output snapshot supersedes output_item.done, just as it does
+	// for visible text. Some compatible endpoints send an empty output array
+	// after complete item snapshots, so keep those streamed items as a fallback.
+	if response != nil && len(response.Output) > 0 {
+		items = nil
+		for _, output := range response.Output {
+			if item, ok := responsesOutputItemReplayInput(output); ok {
+				items = append(items, item)
+			}
+		}
+	}
+	var replayText strings.Builder
+	for _, item := range items {
+		if item.Type == "message" {
+			replayText.WriteString(responsesInputItemText(item))
+		}
+	}
+	// Deltas or metadata-only snapshots may leave the replay baseline short of
+	// the recovered answer. A full request is safer than sending that answer
+	// again as new input alongside previous_response_id.
+	return items, replayText.String() == content
+}
+
 func responsesWebSocketStoreContinuation(session *responsesWebSocketSession, generation uint64, payload responsesRequest, responseID string, responseItems []responsesInputItem) {
 	if strings.TrimSpace(responseID) == "" {
 		session.continuation = nil
@@ -1370,7 +1375,8 @@ func responsesOutputItemReplayInput(item responsesOutputItem) (responsesInputIte
 		}
 		return responsesInputItem{Raw: append(json.RawMessage(nil), stripResponsesReasoningStatus(item.Raw)...)}, true
 	case "message":
-		content, err := parseResponsesContent(item.Content)
+		parts, err := parseResponsesContentParts(item.Content)
+		content := strings.Join(parts, "")
 		if err != nil || content == "" {
 			return responsesInputItem{}, false
 		}

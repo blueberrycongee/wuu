@@ -165,6 +165,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and allow cancellation when stdout is stalled. Bound pending events and reject
   human interaction requests in noninteractive execution.
 
+- Preserve final Responses replies and refusals over SSE and WebSocket when
+  text deltas are missing or incomplete, without duplicating streamed content
+  or issuing extra model requests. Reconcile corrections across tool-call
+  boundaries and keep WebSocket continuation history aligned with final replies.
+
 - Retry provider-reported `request_timeout`, `408`, and `504` stream errors
   within the existing retry budget and tool replay safety checks, rather than
   stopping the conversation after the first request.
