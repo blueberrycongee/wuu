@@ -264,6 +264,49 @@ it("yields following to an outer scroll during the disclosure transition", () =>
   expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
 });
 
+it.each(["wheel", "keyboard", "touch"].flatMap(input =>
+  [false, true].map(resizing => ({ input, resizing })),
+))("resumes following after a disclosure resize without scrolling ($input, resizing: $resizing)", ({ input, resizing }) => {
+  render({ messageID: "old", processItems, running: true });
+  scrollUp(200);
+  toggleTools();
+  naturalHeight += 300;
+  disclosureHeight = 300;
+  // Expanding below the browser's anchor need not move the outer viewport.
+  act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+  const node = api.conversationScrollRef.current!;
+  act(() => {
+    if (input === "wheel") node.dispatchEvent(new WheelEvent("wheel", { deltaY: 500, bubbles: true }));
+    if (input === "keyboard") node.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    if (input === "touch") {
+      node.dispatchEvent(new TouchEvent("touchstart", { touches: [{ clientY: 500 } as Touch], bubbles: true }));
+      node.dispatchEvent(new TouchEvent("touchmove", { touches: [{ clientY: 0 } as Touch], bubbles: true }));
+    }
+    // A transition can advance between input and the browser's scroll event.
+    if (resizing) {
+      naturalHeight += 40;
+      disclosureHeight += 40;
+    }
+    node.scrollTop = node.scrollHeight - node.clientHeight;
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(true);
+  grow(100);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it.each([false, true])("keeps a layout-only disclosure scroll paused at the bottom (resize first: %s)", resizeFirst => {
+  render({ messageID: "old", processItems, running: true });
+  act(() => api.disableConversationAutoFollow());
+  toggleTools();
+  resizeDisclosure(300, 300, resizeFirst);
+  const readingTop = scrollTop();
+  expect(readingTop).toBe(naturalHeight - viewportHeight);
+  expect(api.captureConversationScrollPosition()?.autoFollow).toBe(false);
+  grow(100);
+  expect(scrollTop()).toBe(readingTop);
+});
+
 it("keeps a temporarily occupied reservation across thread switches", () => {
   render({ messageID: "old", processItems });
   submit({ processItems });
