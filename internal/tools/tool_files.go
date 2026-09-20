@@ -2,10 +2,8 @@ package tools
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -735,13 +733,6 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 	if limit > projectionPreviewBytes {
 		return "", fmt.Errorf("read_file byte_range.limit must be <= %d", projectionPreviewBytes)
 	}
-	segmentEnd := fileSize
-	if endOffset > 0 {
-		if endOffset <= offset || int64(endOffset) > fileSize {
-			return "", errors.New("read_file byte_range.end_offset must be greater than offset and within the file")
-		}
-		segmentEnd = int64(endOffset)
-	}
 	f, err := os.Open(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
@@ -754,11 +745,20 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 	if expectedSHA256 != "" && expectedSHA256 != contentSHA {
 		return "", fmt.Errorf("read_file continuation is stale: file content changed from %q to %q; restart without expected_sha256", expectedSHA256, contentSHA)
 	}
+	segmentEnd := fileSize
+	if endOffset > 0 {
+		if endOffset <= offset || int64(endOffset) > fileSize {
+			return "", errors.New("read_file byte_range.end_offset must be greater than offset and within the file")
+		}
+		segmentEnd = int64(endOffset)
+	}
 	if int64(offset) > fileSize {
 		offset = int(fileSize)
 	}
 	remaining := segmentEnd - int64(offset)
-	readSize := limit
+	// Look ahead through the last UTF-8 rune. The page builder still enforces
+	// limit, but can distinguish a split rune from genuinely binary content.
+	readSize := limit + utf8.UTFMax - 1
 	if remaining < int64(readSize) {
 		readSize = int(remaining)
 	}
@@ -777,37 +777,24 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 	if confirmedSHA != contentSHA {
 		return "", errors.New("read_file snapshot changed while it was being read; retry the request")
 	}
-	consumed := len(data)
+	if int64(offset+len(data)) < segmentEnd {
+		for trim := 0; trim < utf8.UTFMax-1 && len(data) > 0 && !utf8.Valid(data); trim++ {
+			data = data[:len(data)-1]
+		}
+	}
 	result := map[string]any{
 		"action":             "read_bytes",
 		"path":               displayPath,
 		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx)),
 		"content_sha256":     contentSHA,
-		"byte_offset":        offset,
-		"byte_count":         consumed,
 		"total_bytes":        fileSize,
 		"segment_end_offset": segmentEnd,
 	}
-	if utf8.Valid(data) && !bytes.ContainsRune(data, '\x00') {
-		result["content"] = string(data)
-		result["encoding"] = "utf-8"
-	} else {
-		result["content_base64"] = base64.StdEncoding.EncodeToString(data)
-		result["encoding"] = "base64"
+	page, ok := buildResultPage(result, displayPath, data, offset, int(segmentEnd), limit, contentSHA, defaultProjectionTokenBudget)
+	if !ok {
+		return "", errors.New("read_file recovery metadata exceeds the page budget; use a shorter path")
 	}
-	hasMore := int64(offset+consumed) < segmentEnd
-	continuation := map[string]any{"has_more": hasMore}
-	if hasMore && consumed > 0 {
-		nextRange := map[string]any{"offset": offset + consumed, "limit": limit}
-		if endOffset > 0 {
-			nextRange["end_offset"] = endOffset
-		}
-		continuation["next"] = map[string]any{
-			"continuation": encodeReadFileByteContinuation(displayPath, offset+consumed, limit, endOffset, contentSHA),
-		}
-	}
-	result["continuation"] = continuation
-	return mustJSON(result)
+	return page, nil
 }
 
 // ---------------------------------------------------------------------------

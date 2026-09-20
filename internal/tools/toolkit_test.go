@@ -125,7 +125,7 @@ func TestToolkitExecuteResultPrefersRichToolAndKeepsTextAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute text adapter: %v", err)
 	}
-	if !strings.Contains(text, "rich text") || !strings.Contains(text, "[image:") || strings.Contains(text, `{"ok":true}`) {
+	if text != providers.ProjectToolResult(result).ToolText {
 		t.Fatalf("text adapter projection = %q", text)
 	}
 	if rich.richCalls != 2 || rich.legacyCalls != 0 {
@@ -838,7 +838,7 @@ func TestToolkit_ApplyPatchEditsAddsDeletesAndMoves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply_patch: %v", err)
 	}
-	resp := result.TextProjection()
+	resp := result.Content[0].Text
 	wantResponse := strings.Join([]string{
 		"Success. Updated the following files:",
 		"M a.txt",
@@ -982,7 +982,7 @@ func TestToolkit_ApplyPatchDryRunDoesNotMutate(t *testing.T) {
 	if len(files) != 4 {
 		t.Fatalf("unexpected dry-run file changes: %+v", files)
 	}
-	resp := result.TextProjection()
+	resp := result.Content[0].Text
 	if !strings.HasPrefix(resp, "Patch validation succeeded.") || strings.Contains(resp, `"diff"`) || strings.Contains(resp, "Patch journal:") {
 		t.Fatalf("unexpected dry-run model response:\n%s", resp)
 	}

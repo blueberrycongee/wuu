@@ -589,6 +589,63 @@ func TestTurnToolRuntimeDurablySettlesBeforeReturningResult(t *testing.T) {
 	}
 }
 
+type finalizingRuntimeTools struct {
+	runtimeTestTools
+	err error
+}
+
+func (f *finalizingRuntimeTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	text, _ := f.runtimeTestTools.Execute(ctx, call)
+	return text, f.err
+}
+
+func (*finalizingRuntimeTools) FinalizeToolResult(_ providers.ToolCall, result toolresult.Result) toolresult.Result {
+	text := "settled: " + result.TextProjection()
+	result.ModelText = &text
+	return result
+}
+
+func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		ctx := context.Background()
+		executor := &finalizingRuntimeTools{runtimeTestTools: runtimeTestTools{results: map[string]string{"call-1": "producer"}}}
+		if failed {
+			executor.err = errors.New("execution failed")
+		}
+		dir := t.TempDir()
+		ledger, err := toolledger.New(dir, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: executor, Ledger: ledger, OperationID: "turn"})
+		var observed toolresult.Result
+		runtime.SetResultCallback(func(_ providers.ToolCall, result toolresult.Result) { observed = result })
+		messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "call-1", Name: "read_file", Arguments: `{}`}}, nil)
+		if err != nil || len(messages) != 1 {
+			t.Fatalf("execute: %v messages=%v", err, messages)
+		}
+		// Reopening reads the serialized ledger, not the in-memory completion.
+		reopened, err := toolledger.New(dir, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := reopened.PendingProjection(ctx)
+		if err != nil || len(pending) != 1 {
+			t.Fatalf("replay: %v pending=%v", err, pending)
+		}
+		result := pending[0].Result
+		if result.ModelText == nil || !strings.HasPrefix(*result.ModelText, "settled: ") || result.IsError != failed {
+			t.Fatalf("replay lost the final view or error state: %+v", result)
+		}
+		if result.JSONProjection() != observed.JSONProjection() || result.JSONProjection() != messages[0].ToolResult.JSONProjection() || result.TextProjection() != messages[0].Content {
+			t.Fatal("ledger, callback and history disagree")
+		}
+		if failed && !strings.Contains(*result.ModelText, executor.err.Error()) {
+			t.Fatal("finalizer ran before execution-error normalization")
+		}
+	}
+}
+
 type historyAwareRuntimeTools struct{}
 
 func (historyAwareRuntimeTools) Definitions() []providers.ToolDefinition {

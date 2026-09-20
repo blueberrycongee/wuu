@@ -20,8 +20,8 @@ import (
 )
 
 // Exercise each real serializer, not only shared preparation. In particular,
-// Responses must include output:"" when the largest result gets no allocation.
-func TestAggregateBudgetProviderHTTP(t *testing.T) {
+// Responses must also replay historical settlements with explicit empty text.
+func TestSettledResultProviderHTTP(t *testing.T) {
 	for _, api := range []string{"chat", "responses", "anthropic"} {
 		for _, zero := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/zero=%v", api, zero), func(t *testing.T) {
@@ -35,8 +35,12 @@ func TestAggregateBudgetProviderHTTP(t *testing.T) {
 					small = toolresult.FromText(strings.Repeat("b", 200000))
 				}
 				small.Content = append(small.Content, toolresult.ContentPart{Type: "file", MIMEType: "application/pdf", Data: "cGRm", Name: "synthetic.pdf"})
+				page := `{"content":"界🙂","continuation":{"has_more":true,"next":{"continuation":"synthetic-cursor"}}}`
+				if zero {
+					page = ""
+				}
+				large.ModelText = &page
 				history := budgetHistory(large, small)
-				enforceAggregateResultBudget(history)
 				before := providers.CloneChatMessages(history)
 				bodies := make(chan []byte, 1)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

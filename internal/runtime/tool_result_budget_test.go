@@ -56,13 +56,20 @@ func (c *budgetToolClient) ExecuteTool(_ context.Context, input pluginhost.ToolE
 }
 
 func TestNativeToolResultBudgetHTTP(t *testing.T) {
+	// Even a batch of individually bounded pages must retain every recovery
+	// cursor. Its combined text exceeds the old batch-wide truncation threshold.
+	largeBatch := make([]int, 45)
+	for i := range largeBatch {
+		largeBatch[i] = 10000
+	}
 	for _, tc := range []struct {
 		name  string
 		sizes []int
 	}{
-		{"at_limit", []int{200000}},
-		{"one_over", []int{200001}},
-		{"asymmetric", []int{170000, 50001}},
+		{"small", []int{100}},
+		{"large", []int{200001}},
+		{"mixed", []int{170000, 100, 50001}},
+		{"many_pages", largeBatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, root := t.TempDir(), t.TempDir()
@@ -202,8 +209,48 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				if text != returned[index].Content {
 					t.Errorf("result %d: HTTP=%d returned=%d", index, len(text), len(returned[index].Content))
 				}
-				if (tc.name == "at_limit" || index == 1) && text != plugin.texts[index] {
-					t.Error("untrimmed text changed")
+				if returned[index].ToolResult.Content[0].Text != plugin.texts[index] {
+					t.Fatal("settlement changed the producer payload")
+				}
+				if tc.sizes[index] <= 100 {
+					if text != plugin.texts[index] {
+						t.Error("small result changed")
+					}
+				} else {
+					var recovered strings.Builder
+					pageText := text
+					for pages := 0; ; pages++ {
+						if pages > 200 {
+							t.Fatal("recovery failed to finish")
+						}
+						var page struct {
+							Content      string `json:"content"`
+							Offset       int    `json:"byte_offset"`
+							Continuation struct {
+								HasMore bool            `json:"has_more"`
+								Next    json.RawMessage `json:"next"`
+							} `json:"continuation"`
+						}
+						if err := json.Unmarshal([]byte(pageText), &page); err != nil {
+							t.Fatal(err)
+						}
+						if page.Offset != recovered.Len() || page.Content == "" {
+							t.Fatal("recovery lost its contiguous range")
+						}
+						recovered.WriteString(page.Content)
+						if !page.Continuation.HasMore {
+							break
+						}
+						pageText, err = runner.Tools.Execute(ctx, providers.ToolCall{
+							ID: fmt.Sprintf("read-%d-%d", index, pages), Name: "read_file", Arguments: string(page.Continuation.Next),
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					if recovered.String() != plugin.texts[index] {
+						t.Fatal("recovery lost or repeated original result bytes")
+					}
 				}
 				total += len(text)
 			}
@@ -214,9 +261,6 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				t.Fatalf("wire IDs=%v execution IDs=%v want=%v", ids, calls, wantIDs)
 			}
 			t.Logf("produced=%v wire_tool_bytes=%d requests=2 history_rewritten=false", tc.sizes, total)
-			if total > 200000 {
-				t.Errorf("HTTP tool text exceeds batch budget: %d", total)
-			}
 		})
 	}
 }

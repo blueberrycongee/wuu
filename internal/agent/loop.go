@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
@@ -17,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
-	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // Bound provider-requested tool-free continuations even when MaxSteps is unset.
@@ -1045,7 +1042,9 @@ func RunToolLoop(
 		}
 		postToolContextSegments = append(postToolContextSegments, toolRuntime.TakeRequestContextSegments()...)
 		acceptedContextRequest := freshContextEnabled && acceptedNewContextRequest(orderedToolMessages)
-		enforceAggregateResultBudget(orderedToolMessages)
+		// Each result was settled before the invocation ledger. Keep those
+		// pages intact; total context pressure belongs to compaction, never
+		// to a second text cut that can erase status or recovery cursors.
 		for _, toolMsg := range orderedToolMessages {
 			appendMessage(toolMsg)
 		}
@@ -1630,81 +1629,6 @@ func partitionToolCalls(executor ToolExecutor, calls []providers.ToolCall) []too
 	})
 
 	return batches
-}
-
-// maxAggregateResultChars caps the total content of all tool-role messages in
-// a single batch. Prevents N parallel tools x 50K each from bloating the prompt.
-const maxAggregateResultChars = 200_000
-
-// enforceAggregateResultBudget trims tool messages in-place so their total
-// content stays within the aggregate budget. It trims the largest results
-// first and assigns each replacement its final byte length up front. The
-// marker must count against that length; repeatedly appending an unbudgeted
-// marker can otherwise leave total unchanged and spin forever.
-func enforceAggregateResultBudget(msgs []providers.ChatMessage) {
-	total := 0
-	type toolResult struct {
-		index int
-		text  string
-	}
-	results := make([]toolResult, 0, len(msgs))
-	for i, m := range msgs {
-		if m.Role == "tool" {
-			// Budget what providers actually send, including structured indexes
-			// and empty-result fallbacks, rather than the legacy display text.
-			text := providers.ProjectToolMessage(m).ToolText
-			total += len(text)
-			results = append(results, toolResult{index: i, text: text})
-		}
-	}
-	if total <= maxAggregateResultChars {
-		return
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		return len(results[i].text) > len(results[j].text)
-	})
-	for _, result := range results {
-		if total <= maxAggregateResultChars {
-			break
-		}
-		original := result.text
-		excess := total - maxAggregateResultChars
-		targetLen := len(original) - excess
-		if targetLen < 0 {
-			targetLen = 0
-		}
-		marker := fmt.Sprintf(
-			"\n[trimmed: original %d chars, aggregate budget %d]",
-			len(original),
-			maxAggregateResultChars,
-		)
-		var replacement string
-		switch {
-		case targetLen == 0:
-			replacement = ""
-		case targetLen <= len(marker):
-			// An unusually large batch can leave less room than the marker itself.
-			// A bounded partial marker is preferable to exceeding the hard budget.
-			replacement = marker[:targetLen]
-		default:
-			prefixLen := targetLen - len(marker)
-			for prefixLen > 0 && !utf8.RuneStart(original[prefixLen]) {
-				prefixLen--
-			}
-			replacement = original[:prefixLen] + marker
-		}
-		// Keep the producer payload for recovery, but make this allocation
-		// authoritative for every later text projection, including replay.
-		// Clone before settlement so executor/ledger-owned results stay intact.
-		detail := toolresult.FromText(msgs[result.index].Content)
-		if msgs[result.index].ToolResult != nil {
-			detail = msgs[result.index].ToolResult.Clone()
-		}
-		detail.ModelText = &replacement
-		msgs[result.index].ToolResult = &detail
-		msgs[result.index].Content = replacement
-		total = total - len(original) + len(replacement)
-	}
 }
 
 func systemReminderBlockKinds(content string) []string {

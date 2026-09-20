@@ -274,8 +274,11 @@ func TestRichMediaSettlement_IsStableAndKeepsNativeObservation(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatal("rich result request projection is not byte-stable")
 	}
-	if got := toolContent(first, call.ID); !strings.Contains(got, record.ResultRef) || !strings.Contains(got, "structured metadata") || strings.Contains(got, `"source":"mcp"`) {
-		t.Fatalf("wire tool text lacks bounded structured semantics or leaks private meta: %.500q", got)
+	if got := toolContent(first, call.ID); got != returned.TextProjection() {
+		t.Fatal("request preparation changed the settled page")
+	}
+	if archived := mustReadFile(t, record.ResultRef); !strings.Contains(archived, "structured metadata") || strings.Contains(archived, `"source":"mcp"`) {
+		t.Fatal("archived text lost structured semantics or leaked private metadata")
 	}
 	if len(first) != 4 || len(first[3].Images) != 1 || first[3].Images[0].Data != "aW1hZ2U=" {
 		t.Fatalf("native image observation missing: %+v", first)

@@ -86,6 +86,13 @@ func (e *pluginToolExecutor) Execute(ctx context.Context, call providers.ToolCal
 	return result.TextProjection(), err
 }
 
+func (e *pluginToolExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
+	if finalizer, ok := e.inner.(agent.ToolResultFinalizer); ok {
+		return finalizer.FinalizeToolResult(call, result)
+	}
+	return result
+}
+
 func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	input, err := e.toolInput(ctx, call)
 	if err != nil {

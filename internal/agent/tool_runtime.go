@@ -311,6 +311,9 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			if executionErr != nil {
 				result = toolresult.FromErrorText(errorJSON(executionErr))
 			}
+			if finalizer, ok := r.executor.(ToolResultFinalizer); ok {
+				result = finalizer.FinalizeToolResult(call, result)
+			}
 			if r.ledger != nil {
 				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
 					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))

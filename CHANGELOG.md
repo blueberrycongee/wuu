@@ -34,6 +34,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Settle large tool results, including extension results, into recoverable pages
+  before recording them. Preserve original payloads and media, keep search
+  snapshot cursors, and avoid batch-wide text cuts that could erase recovery links.
+
 - Keep desktop tool-call summaries on one line, truncating overflow with an
   ellipsis while preserving the activity icon and diff counts.
 
