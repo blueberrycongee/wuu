@@ -57,8 +57,10 @@ may still require Open Anyway.
 ## Signing regression test
 
 Run `npm run test:release-signing`. On macOS it tests certificate-free signing,
-verification, and rejection of tampered resources. On GitHub Actions it also creates, imports, trusts,
-and removes a temporary test identity, without using production secrets. Locally,
+verification, and rejection of tampered resources. On GitHub Actions, explicitly
+set `WUU_TEST_CERTIFICATE_SIGNING=1` to create, import, trust, and remove a temporary
+test identity without production secrets. Public preview releases do not run this
+optional certificate test. Locally,
 set `WUU_RELEASE_SIGN_ID` to an existing code-signing identity to exercise changed
 builds without modifying trust settings; otherwise that integration case is skipped.
 The test verifies the second build satisfies the first build's designated requirement.

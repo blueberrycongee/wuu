@@ -61,6 +61,7 @@ jobs:
           node -e 'require("electron")'
 
       - name: Test
+        timeout-minutes: 10
         run: |
           npm test
           npm run test:release-signing

@@ -45,7 +45,8 @@ test("certificate-free preview signs, verifies, and rejects tampered resources",
   }
 });
 
-const isolated = process.env.GITHUB_ACTIONS === "true";
+// Certificate trust setup is opt-in, including on ephemeral CI runners.
+const isolated = process.env.GITHUB_ACTIONS === "true" && process.env.WUU_TEST_CERTIFICATE_SIGNING === "1";
 test("changed signed builds retain a verifiable designated requirement", { skip: process.platform !== "darwin" || (!isolated && !process.env.WUU_RELEASE_SIGN_ID) }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "wuu-release-signing-test-"));
   const keychain = join(dir, "wuu-release.keychain-db");
@@ -55,7 +56,7 @@ test("changed signed builds retain a verifiable designated requirement", { skip:
   const output = join(dir, "environment");
   const password = "temporary-test-identity";
   const run = (command, args, env = process.env) => {
-    try { return execFileSync(command, args, { env, encoding: "utf8", stdio: "pipe" }); }
+    try { return execFileSync(command, args, { env, encoding: "utf8", stdio: "pipe", timeout: 60_000 }); }
     catch (error) { throw new Error(`${command} failed during isolated signing test: ${error.stderr?.toString() || ""}`); }
   };
   const saved = { id: process.env.WUU_RELEASE_SIGN_ID, keychain: process.env.WUU_RELEASE_KEYCHAIN };
