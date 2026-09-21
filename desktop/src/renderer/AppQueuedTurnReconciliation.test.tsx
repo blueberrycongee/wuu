@@ -326,7 +326,7 @@ describe("queued turn reconciliation", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["queue", "steer"])("respects %s scroll intent when its message enters the conversation", async mode => {
+  it.each(["queue", "steer"])("preserves reading flow when a %s message enters the conversation", async mode => {
     const { queuedClientIDs } = installWuuApi();
     await act(async () => {
       root = createRoot(container);
@@ -376,16 +376,11 @@ describe("queued turn reconciliation", () => {
       });
     });
     expect(container.querySelector('[data-user-message-id="accepted-input"]')).not.toBeNull();
-    if (mode === "queue") {
-      expect(tail()).toBe(0);
-      expect(top).toBe(1400);
-    } else {
-      expect(tail()).toBeGreaterThan(0);
-      expect(top).toBeCloseTo(1650);
-    }
+    expect(tail()).toBe(0);
+    expect(top).toBe(1400);
   });
 
-  it("positions a drawer-steered queued message when it enters the conversation", async () => {
+  it("keeps a drawer-steered message in the existing reading flow", async () => {
     const steerTurn = vi.fn();
     installWuuApi({
       steerTurn: steerTurn as unknown as WuuDesktopApi["steerTurn"],
@@ -395,8 +390,7 @@ describe("queued turn reconciliation", () => {
       root.render(<App />);
     });
     await flushAsync();
-    // Seed a server-restored queued entry so no placement intent was
-    // registered when the message was originally queued.
+    // A restored queue entry follows the same policy as a locally queued one.
     await act(async () => {
       for (const handler of serverEventHandlers) handler({
         kind: "notification", workdir: workspace,
@@ -444,8 +438,8 @@ describe("queued turn reconciliation", () => {
       });
     });
     expect(container.querySelector('[data-user-message-id="accepted-drawer-input"]')).not.toBeNull();
-    expect(tail()).toBeGreaterThan(0);
-    expect(top).toBeCloseTo(1650);
+    expect(tail()).toBe(0);
+    expect(top).toBe(1400);
   });
 
   it("leaves the running state when stopping a submission before start returns", async () => {

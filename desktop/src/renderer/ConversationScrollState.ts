@@ -220,8 +220,6 @@ export function useConversationScrollState({
   enableConversationAutoFollow: () => void;
   /** Position this submission once its optimistic bubble has mounted. */
   requestSubmittedQueryScroll: (messageID: string) => void;
-  /** Steers request placement on materialization; queueing revokes that intent. */
-  requestDeferredQueryScroll: (sourceID: string, origin?: "queue" | "steer") => void;
   acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
   discardSubmittedMessage: (messageID: string) => void;
   /**
@@ -247,7 +245,6 @@ export function useConversationScrollState({
   });
   const conversationPaneRef = useRef<HTMLElement | null>(null);
   const submissionRef = useRef<{ messageID: string; threadID?: string; animate: boolean } | undefined>(undefined);
-  const deferredSubmissionRef = useRef(new Set<string>());
   // Exactly one owner can write scrollTop. Geometry alone cannot transfer
   // ownership: a submission's padded bottom is not the bottom of its output.
   const scrollModeRef = useRef<ConversationScrollMode>("following");
@@ -421,7 +418,6 @@ export function useConversationScrollState({
   }, [applyLeadSpace]);
 
   const markUserScrollIntent = useCallback((direction: "away" | "latest", startTop?: number): void => {
-    deferredSubmissionRef.current.clear();
     cancelSubmittedQueryScroll();
     if (submissionPhase()) setAutoFollow(false);
     userScrollIntentRef.current = direction;
@@ -580,7 +576,6 @@ export function useConversationScrollState({
   }, [acknowledgeArrival]);
 
   const discardSubmittedMessage = useCallback((messageID: string) => {
-    deferredSubmissionRef.current.delete(messageID);
     for (const [threadID, snapshot] of threadScrollSnapshotsRef.current) {
       if (snapshot.submittedMessageID !== messageID) continue;
       snapshot.submissionPhase = undefined;
@@ -744,8 +739,7 @@ export function useConversationScrollState({
 
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 
-  const requestSubmittedQueryScroll = useCallback((messageID: string, fromDeferred = false): void => {
-    if (!fromDeferred) deferredSubmissionRef.current.clear();
+  const requestSubmittedQueryScroll = useCallback((messageID: string): void => {
     // Collaboration keeps its existing bottom-follow behavior. Ordinary
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
@@ -821,21 +815,7 @@ export function useConversationScrollState({
     splitConversation,
   ]);
 
-  const requestDeferredQueryScroll = useCallback((sourceID: string, origin: "queue" | "steer" = "steer"): void => {
-    // A queued turn starts on the server's schedule, not a fresh send gesture.
-    // Requeueing a steer also revokes its previous placement intent.
-    if (origin === "queue") {
-      deferredSubmissionRef.current.delete(sourceID);
-      return;
-    }
-    if (!activeThreadID || splitConversation) return;
-    // Pending composer entries are not conversation bubbles. Keep the current
-    // reading policy until the server publishes the matching user message.
-    deferredSubmissionRef.current.add(sourceID);
-  }, [activeThreadID, splitConversation]);
-
   useLayoutEffect(() => {
-    deferredSubmissionRef.current.clear();
     if (!adoptingSubmission) cancelSubmittedQueryScroll();
   }, [activeThreadID, activePane, splitConversation, cancelSubmittedQueryScroll]);
   useLayoutEffect(() => cancelSubmittedQueryScroll, [cancelSubmittedQueryScroll]);
@@ -871,7 +851,6 @@ export function useConversationScrollState({
   }, [activeThreadID, scrollConversationToBottom, syncTailLayout]);
 
   const enableConversationAutoFollow = useCallback((): void => {
-    deferredSubmissionRef.current.clear();
     cancelSubmittedQueryScroll();
     suppressAutoFollowRearmRef.current = false;
     selectionPausedAutoFollowRef.current = false;
@@ -885,7 +864,6 @@ export function useConversationScrollState({
   }, [activePane, activeThreadID, cancelSubmittedQueryScroll, setAutoFollow, splitConversation]);
 
   const disableConversationAutoFollow = useCallback((): void => {
-    deferredSubmissionRef.current.clear();
     cancelSubmittedQueryScroll();
     suppressAutoFollowRearmRef.current = true;
     setAutoFollow(false);
@@ -1173,7 +1151,6 @@ export function useConversationScrollState({
       setNativeBottomOverscrollEnabled(node, true);
     }
     if ((scrolledUp || scrolledDown) && !layoutClamp && !nextAutoFollow && !splitConversation) {
-      deferredSubmissionRef.current.clear();
       consumeTailSpace(Math.abs(previousScrollTop - node.scrollTop));
     }
     rememberActiveThreadScrollSnapshot(node, nextAutoFollow);
@@ -1232,23 +1209,9 @@ export function useConversationScrollState({
     return undefined;
   }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry]);
 
-  // Runs after restoration and every commit, including deferred steer
-  // materialization. Never infer ownership from an arbitrary arriving message.
+  // Only a direct submission owns placement. Queue/steer materialization is
+  // incoming content and must preserve the current following/reading policy.
   useLayoutEffect(() => {
-    const deferred = deferredSubmissionRef.current;
-    let latestMessageID: string | undefined;
-    if (deferred.size) {
-      for (const turn of primaryTurns ?? []) {
-        for (const item of turn.items) {
-          if (item.type === "user_message" && item.source_id && deferred.delete(item.source_id)) {
-            latestMessageID = item.id;
-          }
-        }
-      }
-    }
-    // A batched server update has one visible destination; later steered inputs
-    // retain their own intent until they materialize or the reader takes over.
-    if (latestMessageID) requestSubmittedQueryScroll(latestMessageID, true);
     positionSubmittedMessage(true);
   });
 
@@ -1278,7 +1241,6 @@ export function useConversationScrollState({
       bottomOverscrollFromAwayRef.current,
     );
     const handleWheel = (event: WheelEvent): void => {
-      if (event.deltaY !== 0) deferredSubmissionRef.current.clear();
       if (event.deltaY !== 0 && (submittedScrollFrameRef.current !== undefined || submissionPhase())) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         if (event.deltaY < 0) {
@@ -1360,7 +1322,6 @@ export function useConversationScrollState({
         clearUserScrollIntent();
         return;
       }
-      if (SCROLL_TOWARD_LATEST_KEYS.has(event.key)) deferredSubmissionRef.current.clear();
       if (SCROLL_TOWARD_LATEST_KEYS.has(event.key) || ((event.key === "Enter" || event.key === " ") &&
         event.target instanceof Element && event.target.closest('button, [role="button"], summary'))) {
         if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
@@ -1386,7 +1347,6 @@ export function useConversationScrollState({
         touchLastYRef.current = event.touches[0]?.clientY;
         return;
       }
-      deferredSubmissionRef.current.clear();
       if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       if (eventTargetsNestedAutoFollowScroll(event.target, node)) {
         touchLastYRef.current = event.touches[0]?.clientY;
@@ -1446,7 +1406,6 @@ export function useConversationScrollState({
         return;
       }
       if (!(event.target instanceof Element) || !event.target.closest('button, [role="button"], summary, a, input, textarea, select, video, audio')) return;
-      deferredSubmissionRef.current.clear();
       if (submittedScrollFrameRef.current !== undefined || submissionPhase()) disableConversationAutoFollow();
       cancelArrivals();
     };
@@ -1591,7 +1550,6 @@ export function useConversationScrollState({
     captureConversationScrollPosition,
     restoreConversationScrollPosition,
     requestSubmittedQueryScroll,
-    requestDeferredQueryScroll,
     acknowledgeSubmittedMessage,
     discardSubmittedMessage,
   };

@@ -216,6 +216,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep live `steer` inputs in the same reading flow as queued messages, including
+  messages sent from the pending drawer, without replaying the submission glide.
+
 - Keep queued messages in the normal reading flow instead of replaying the send
   glide when they start. Queue receipt fades locally, and appending turns no
   longer collapses mounted history or replaces measured heights with estimates.

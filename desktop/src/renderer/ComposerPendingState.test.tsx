@@ -69,7 +69,6 @@ async function renderComposerPendingState({
   restorePrimaryComposerDraft: ReturnType<typeof vi.fn>;
   restoreComposerDraftForThread: ReturnType<typeof vi.fn>;
   sendComposerMessageToThread: ReturnType<typeof vi.fn>;
-  requestDeferredQueryScroll: ReturnType<typeof vi.fn>;
   setPrimaryDraft: (draft: ComposerDraftState) => void;
   setAppState: (state: AppState) => void;
 }> {
@@ -85,7 +84,6 @@ async function renderComposerPendingState({
       restorePrimaryComposerDraft(draft),
   );
   const sendComposerMessageToThread = vi.fn();
-  const requestDeferredQueryScroll = vi.fn();
 
   function Probe() {
     latest = useComposerPendingState({
@@ -94,7 +92,6 @@ async function renderComposerPendingState({
       restoreComposerDraftForThread,
       setStatus,
       sendComposerMessageToThread,
-      requestDeferredQueryScroll,
     });
     return null;
   }
@@ -120,7 +117,6 @@ async function renderComposerPendingState({
     restorePrimaryComposerDraft,
     restoreComposerDraftForThread,
     sendComposerMessageToThread,
-    requestDeferredQueryScroll,
     setPrimaryDraft: (draft) => {
       currentPrimaryDraft = draft;
     },
@@ -649,7 +645,7 @@ describe("useComposerPendingState", () => {
     ]);
   });
 
-  it.each([false, true])("keeps placement only for accepted drawer steers (rejected: %s)", async rejected => {
+  it.each([false, true])("keeps the pending message in its accepted mode (steer rejected: %s)", async rejected => {
     const steerTurn = rejected ? vi.fn().mockRejectedValue(new Error("offline"))
       : vi.fn().mockResolvedValue({ turn_id: "turn-running" });
     installWuuStub({ steerTurn });
@@ -671,17 +667,19 @@ describe("useComposerPendingState", () => {
       await hook.get().guideQueuedMessage("queue-1");
     });
 
-    expect(hook.requestDeferredQueryScroll).toHaveBeenCalledWith("queue-1", "steer");
     expect(steerTurn).toHaveBeenCalled();
     if (rejected) {
-      expect(hook.requestDeferredQueryScroll).toHaveBeenLastCalledWith("queue-1", "queue");
       expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued).toEqual([
+        expect.objectContaining({ id: "queue-1", operationState: undefined }),
+      ]);
+    } else {
+      expect(hook.get().pendingComposerMessagesByThread["thread-a"].guides).toEqual([
         expect.objectContaining({ id: "queue-1", operationState: undefined }),
       ]);
     }
   });
 
-  it("revokes deferred placement when a guide is requeued from the drawer", async () => {
+  it("returns a guide to the queue from the drawer", async () => {
     const requeueTurn = vi.fn().mockResolvedValue({
       ok: true,
       state: "queued",
@@ -711,8 +709,10 @@ describe("useComposerPendingState", () => {
       await hook.get().guideQueuedMessage("guide-1");
     });
 
-    expect(hook.requestDeferredQueryScroll).toHaveBeenCalledWith("guide-1", "queue");
     expect(requeueTurn).toHaveBeenCalledWith("thread-a", "guide-1");
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued).toEqual([
+      expect.objectContaining({ id: "guide-1", operationState: undefined }),
+    ]);
   });
 
   it("restores a queued message into the primary composer for editing", async () => {

@@ -226,11 +226,6 @@ type ComposerPendingStateOptions = {
     message: QueuedComposerMessage,
     targetThread: Thread,
   ) => Promise<boolean>;
-  /**
-   * Steers may request placement when their source_id materializes. Queued
-   * inputs preserve the reader's current policy and revoke any prior steer intent.
-   */
-  requestDeferredQueryScroll: (sourceID: string, origin?: "queue" | "steer") => void;
 };
 
 export function useComposerPendingState({
@@ -238,7 +233,6 @@ export function useComposerPendingState({
   getPrimaryComposerDraft,
   restoreComposerDraftForThread,
   setStatus,
-  requestDeferredQueryScroll,
 }: ComposerPendingStateOptions): ComposerPendingStateController {
   const [pendingComposerMessagesByThread, setPendingComposerMessagesByThread] =
     useState<PendingComposerMessagesByThread>({});
@@ -630,11 +624,6 @@ export function useComposerPendingState({
       setStatus(localizedText("composer.noActiveTurnToGuide"));
       return;
     }
-    // Explicit intervention can request placement, unlike an automatic dequeue.
-    // Register before IPC since the user message can arrive before its response.
-    if (activeThreadIDForState(currentState) === target.threadID) {
-      requestDeferredQueryScroll(target.message.id, "steer");
-    }
     updateThreadPendingComposerMessages(target.threadID, (previous) => ({
       ...previous,
       queued: previous.queued.map((message) =>
@@ -672,7 +661,6 @@ export function useComposerPendingState({
             });
       });
     } catch (error) {
-      if (activeThreadIDForState(getAppState()) === target.threadID) requestDeferredQueryScroll(id, "queue");
       updateThreadPendingComposerMessages(target.threadID, (previous) => ({
         ...previous,
         queued: previous.queued.map((message) =>
@@ -709,10 +697,6 @@ export function useComposerPendingState({
         }));
         setStatus(localizedText("composer.guideAlreadyHandled"));
         return;
-      }
-      // Returning to the queue cancels the earlier intervention's scroll intent.
-      if (activeThreadIDForState(getAppState()) === target.threadID) {
-        requestDeferredQueryScroll(id, "queue");
       }
       updateThreadPendingComposerMessages(target.threadID, (previous) => {
         const withoutGuide = {

@@ -97,6 +97,10 @@ contextBridge.exposeInMainWorld("wuu", {
     ipcRenderer.send("test:queued-input", { threadId, text, id });
     return { queued: { id, thread_id: threadId } };
   },
+  steerTurn: async (threadId, turnId, text, _images, id) => {
+    ipcRenderer.send("test:queued-input", { threadId, turnId, text, id });
+    return { turn_id: turnId };
+  },
   startTurn: async (threadId, text, images = []) => {
     const now = new Date().toISOString();
     return {

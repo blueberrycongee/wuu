@@ -3,6 +3,7 @@
 // Timings are diagnostic, not hardware-dependent CI thresholds.
 // WUU_PERF_VARIANT=large-narrow exercises dark mode and 20px UI text at 820px.
 // WUU_PERF_VARIANT=reduced exercises the system reduced-motion preference.
+// WUU_PERF_PENDING=steer exercises Enter during a running turn instead of Tab.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -157,6 +158,7 @@ app.whenReady().then(async () => {
   });
   await waitFor(win, () => [...document.querySelectorAll(".streaming-markdown")].some(node => node.textContent.includes("Streaming paragraph 59")));
   const completedAnswer = { id: stream.item_id, type: "agent_message", status: "completed", text: Array.from({ length: 60 }, (_, i) => `Streaming paragraph ${i} with **formatted text** and a little more content.\n\n`).join("") };
+  const steer = process.env.WUU_PERF_PENDING === "steer";
   // Pause in history before enqueueing. Receiving the queued turn must not
   // create a submission reservation or move the reader to the new bubble.
   await evaluate(win, () => {
@@ -171,11 +173,15 @@ app.whenReady().then(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, "Queued follow-up.");
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await evaluate(win, () => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", code: "Tab", bubbles: true, cancelable: true })));
+  if (steer) {
+    await evaluate(win, () => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true })));
+  } else {
+    await evaluate(win, () => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", code: "Tab", bubbles: true, cancelable: true })));
+  }
   const [, queued] = await queuedEvent;
   await waitFor(win, () => !!document.querySelector(".composer-pending-preview"));
   await delay(250);
-  emit(win, "turn/completed", { thread_id: thread.id, turn: { id: stream.turn_id, status: "completed", items_view: "full", items: [
+  if (!steer) emit(win, "turn/completed", { thread_id: thread.id, turn: { id: stream.turn_id, status: "completed", items_view: "full", items: [
     { id: `user-${thread.id}`, type: "user_message", status: "completed", text: "Measure submitted message motion." }, completedAnswer,
   ], completed_at: now } });
   await delay(500);
@@ -194,9 +200,12 @@ app.whenReady().then(async () => {
     window.__queueReadingAnchor = anchor;
     return anchor.getBoundingClientRect().top;
   });
-  emit(win, "turn/started", { thread_id: thread.id, turn: { id: "dequeued-turn", status: "in_progress", items_view: "full", started_at: now, items: [
-    { id: "dequeued-user", type: "user_message", status: "completed", text: queued.text, source_id: queued.id },
-  ] } });
+  const acceptedInput = { id: "dequeued-user", type: "user_message", status: "completed", text: queued.text, source_id: queued.id };
+  if (steer) {
+    emit(win, "item/completed", { thread_id: thread.id, turn_id: stream.turn_id, item: acceptedInput });
+  } else {
+    emit(win, "turn/started", { thread_id: thread.id, turn: { id: "dequeued-turn", status: "in_progress", items_view: "full", started_at: now, items: [acceptedInput] } });
+  }
   await waitFor(win, () => !!document.querySelector('[data-user-message-id="dequeued-user"]') && !document.querySelector(".composer-pending-preview"));
   await delay(750);
   const afterDequeue = await evaluate(win, () => ({
@@ -207,8 +216,8 @@ app.whenReady().then(async () => {
   }));
   assert.ok(afterDequeue.connected && Math.abs(afterDequeue.anchor - readingAnchor) <= 1, `Dequeue must preserve the visible reading anchor: ${readingAnchor} -> ${afterDequeue.anchor}, scroll ${readingTop} -> ${afterDequeue.top}`);
   assert.equal(afterDequeue.tail, 0, "Dequeue must not reserve blank response space");
-  console.log(JSON.stringify({ name: "queued-reading-position", before: { top: readingTop, anchor: readingAnchor }, after: afterDequeue }));
-  emit(win, "turn/completed", { thread_id: thread.id, turn: { id: "dequeued-turn", status: "completed", completed_at: now } });
+  console.log(JSON.stringify({ name: steer ? "steer-reading-position" : "queued-reading-position", before: { top: readingTop, anchor: readingAnchor }, after: afterDequeue }));
+  emit(win, "turn/completed", { thread_id: thread.id, turn: { id: steer ? stream.turn_id : "dequeued-turn", status: "completed", completed_at: now } });
   await delay(300);
   await measure(win, "settled-idle", async () => {});
   win.destroy();

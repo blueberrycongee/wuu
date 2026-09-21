@@ -411,11 +411,10 @@ it.each(["following", "holding", "paused"])("reserves trailing status space with
   expect(scrollTop()).toBe(mode === "paused" ? readingTop : naturalHeight - viewportHeight);
 });
 
-it.each([false, true])("keeps automatic dequeues in the current reading flow (paused: %s)", paused => {
+it.each([false, true])("keeps materialized pending inputs in the current reading flow (paused: %s)", paused => {
   render({ messageID: "old", running: true });
   if (paused) scrollUp(200);
   const readingTop = scrollTop();
-  act(() => api.requestDeferredQueryScroll("local-input", "queue"));
   grow(100);
   messageBottom += 100;
   render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
@@ -428,57 +427,8 @@ it.each([false, true])("keeps automatic dequeues in the current reading flow (pa
   expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
 });
 
-it("revokes a steer's placement when it returns to the queue", () => {
-  render({ messageID: "old", running: true });
-  act(() => {
-    api.requestDeferredQueryScroll("local-input", "steer");
-    api.requestDeferredQueryScroll("local-input", "queue");
-  });
-  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(0); settle(360);
-  expect(tailSpace()).toBe(0);
-  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
-});
-
-it("positions a materialized steer without freezing the preceding output", () => {
-  render({ messageID: "old", running: true });
-  act(() => api.requestDeferredQueryScroll("local-input"));
-  grow(100);
-  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
-  expect(tailSpace()).toBe(0);
-  messageBottom += 100;
-  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(0); settle(360);
-  const placed = scrollTop();
-  expect(placed).toBeCloseTo(messageBottom - 200);
-  expect(tailSpace()).toBeGreaterThan(0);
-  grow(50);
-  expect(scrollTop()).toBe(placed);
-  grow(1000);
-  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
-});
-
-it.each([false, true])("preserves earlier steer placement when another steer is sent (later fails: %s)", fails => {
-  render({ messageID: "old", running: true });
-  act(() => {
-    api.requestDeferredQueryScroll("first-input");
-    api.requestDeferredQueryScroll("second-input");
-    if (fails) api.discardSubmittedMessage("second-input");
-  });
-  render({ messageID: "first", item: { text: "First", source_id: "first-input" } });
-  tick(0); settle(360);
-  expect(scrollTop()).toBeCloseTo(messageBottom - 200);
-  expect(tailSpace()).toBeGreaterThan(0);
-  grow(600);
-  messageBottom += 600;
-  render({ messageID: "second", item: { text: "Second", source_id: "second-input" } });
-  tick(1000); tick(1360);
-  expect(tailSpace() > 0).toBe(!fails);
-});
-
 it.each(["scroll", "switch", "failure"])("does not reposition a delayed input after %s", reason => {
   render({ messageID: "old", running: true });
-  act(() => api.requestDeferredQueryScroll("local-input"));
   if (reason === "scroll") scrollUp(200);
   if (reason === "switch") { render({ id: "b", messageID: "other" }); render({ messageID: "old" }); }
   if (reason === "failure") act(() => api.discardSubmittedMessage("local-input"));
@@ -487,17 +437,6 @@ it.each(["scroll", "switch", "failure"])("does not reposition a delayed input af
   tick(0); settle(360);
   expect(scrollTop()).toBe(before);
   expect(tailSpace()).toBe(0);
-});
-
-it("does not mistake another client's message for a local steer", () => {
-  render({ messageID: "old", running: true });
-  act(() => api.requestDeferredQueryScroll("local-input"));
-  render({ messageID: "remote", item: { text: "Other client", source_id: "remote-input" } });
-  tick(0); settle(360);
-  expect(tailSpace()).toBe(0);
-  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
-  tick(400); tick(760);
-  expect(tailSpace()).toBeGreaterThan(0);
 });
 
 it("starts placement and entrance together for a delayed child-only mount", () => {
