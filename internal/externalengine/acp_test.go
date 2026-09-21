@@ -96,7 +96,7 @@ func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 	// the saved session continues in a fresh one with a notice (see
 	// TestACPUnresumableSessionStartsFreshAndSaysSo). A stream that desyncs
 	// (load-malformed) stays a failure — the fallback cannot trust it.
-	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-malformed", "no-images", "unknown-id"} {
+	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-malformed", "unknown-id"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -105,9 +105,6 @@ func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 				binding.ExternalRef = "old-session"
 			}
 			input := testInput()
-			if scenario == "no-images" {
-				input.History[0].Images = []providers.InputImage{{MediaType: "image/png", Data: "aGVsbG8="}}
-			}
 			session, err := testEngine(t, scenario).SessionForThread(ctx, binding)
 			if err != nil {
 				t.Fatal(err)
@@ -123,6 +120,129 @@ func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestACPUnadvertisedImagesArePassedAsFilePaths(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.ThreadID = t.Name()
+	t.Cleanup(func() { _ = os.RemoveAll(acpImageDir(binding.ThreadID)) })
+	input := testInput()
+	input.History[0].Images = []providers.InputImage{{MediaType: "image/png", Data: "aGVsbG8="}}
+	session, err := testEngine(t, "echo-prompt").SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompt []map[string]string
+	if err := json.Unmarshal([]byte(result.Result.Content), &prompt); err != nil {
+		t.Fatalf("prompt %q: %v", result.Result.Content, err)
+	}
+	if len(prompt) != 1 || prompt[0]["type"] != "text" {
+		t.Fatalf("prompt = %+v", prompt)
+	}
+	text := prompt[0]["text"]
+	if !strings.Contains(text, "Please inspect the project") {
+		t.Fatalf("user text missing: %q", text)
+	}
+	path := acpImagePathFromPrompt(t, text)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("file %s = %q %v", path, got, err)
+	}
+}
+
+func TestACPUnadvertisedImageOnlyPromptStillIncludesAPath(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.ThreadID = t.Name()
+	t.Cleanup(func() { _ = os.RemoveAll(acpImageDir(binding.ThreadID)) })
+	input := testInput()
+	input.History[0].Content = ""
+	input.History[0].Images = []providers.InputImage{{MediaType: "image/png", Data: "aGVsbG8="}}
+	session, err := testEngine(t, "echo-prompt").SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompt []map[string]string
+	if err := json.Unmarshal([]byte(result.Result.Content), &prompt); err != nil {
+		t.Fatalf("prompt %q: %v", result.Result.Content, err)
+	}
+	if len(prompt) != 1 || prompt[0]["type"] != "text" {
+		t.Fatalf("prompt = %+v", prompt)
+	}
+	path := acpImagePathFromPrompt(t, prompt[0]["text"])
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("file %s = %q %v", path, got, err)
+	}
+}
+
+func TestACPAdvertisedImageCapabilityStillUsesFilePaths(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.ThreadID = t.Name()
+	t.Cleanup(func() { _ = os.RemoveAll(acpImageDir(binding.ThreadID)) })
+	input := testInput()
+	input.History[0].Images = []providers.InputImage{{MediaType: "image/png", Data: "aGVsbG8="}}
+	session, err := testEngine(t, "echo-prompt-images").SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompt []map[string]string
+	if err := json.Unmarshal([]byte(result.Result.Content), &prompt); err != nil {
+		t.Fatalf("prompt %q: %v", result.Result.Content, err)
+	}
+	if len(prompt) != 1 || prompt[0]["type"] != "text" {
+		t.Fatalf("prompt = %+v", prompt)
+	}
+	path := acpImagePathFromPrompt(t, prompt[0]["text"])
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("file %s = %q %v", path, got, err)
+	}
+}
+
+func TestACPInvalidImageDataFailsTheTurn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	input := testInput()
+	input.History[0].Images = []providers.InputImage{{MediaType: "image/png", Data: "not-base64"}}
+	session, err := testEngine(t, "echo-prompt").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.RunTurn(ctx, input, nil); err == nil {
+		t.Fatal("invalid image data succeeded")
+	}
+}
+
+func acpImagePathFromPrompt(t *testing.T, text string) string {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		path, ok := strings.CutPrefix(line, "- ")
+		if !ok || !strings.Contains(path, string(os.PathSeparator)) {
+			continue
+		}
+		return path
+	}
+	t.Fatalf("no image path in %q", text)
+	return ""
 }
 
 func TestACPUnresumableSessionStartsFreshAndSaysSo(t *testing.T) {
@@ -368,7 +488,11 @@ func TestACPHelper(t *testing.T) {
 			if scenario == "version" {
 				version = 2
 			}
-			result = map[string]any{"protocolVersion": version, "agentCapabilities": map[string]any{"loadSession": scenario != "no-load"}}
+			caps := map[string]any{"loadSession": scenario != "no-load"}
+			if scenario == "echo-prompt-images" {
+				caps["promptCapabilities"] = map[string]any{"image": true}
+			}
+			result = map[string]any{"protocolVersion": version, "agentCapabilities": caps}
 		case "session/new":
 			if scenario == "grok" {
 				result = grokACPSessionResult()
@@ -431,6 +555,15 @@ func TestACPHelper(t *testing.T) {
 			text("old replay")
 		case "session/prompt":
 			promptID = msg.ID
+			if strings.HasPrefix(scenario, "echo-prompt") {
+				var params struct {
+					Prompt json.RawMessage `json:"prompt"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				text(string(params.Prompt))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "prompt-stall" {
 				continue
 			}

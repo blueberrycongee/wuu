@@ -184,6 +184,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Send ACP image attachments as local file paths in the prompt instead of
+  failing the turn when the agent does not advertise image blocks. Grok and
+  similar agents read those files with their own tools.
+
 - Keep sessions that are still running in one sidebar position while they stream:
   the running section and the phone list now order running sessions by creation
   time, with settled sessions following by recency, instead of moving a row every

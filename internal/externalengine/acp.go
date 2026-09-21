@@ -2,10 +2,12 @@ package externalengine
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -147,9 +149,6 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	if err != nil {
 		return acpEngineError(s.engine.entry, p, err)
 	}
-	if len(message.Images) > 0 && !init.Capabilities.Prompt.Image {
-		return errors.New("this engine does not advertise image input support")
-	}
 	mcp := make([]map[string]any, 0, len(s.binding.MCPServers))
 	if len(s.binding.MCPServers) > 0 && !init.Capabilities.MCP.HTTP {
 		return errors.New("this engine does not support the host's HTTP MCP tools")
@@ -198,15 +197,16 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		return err
 	}
 	cancelSetup()
-	blocks := make([]map[string]string, 0, 2+len(message.Images))
+	text, err := acpPromptMedia(s.binding.ThreadID, message)
+	if err != nil {
+		return err
+	}
+	blocks := make([]map[string]string, 0, 2)
 	if s.binding.Instructions != "" {
 		blocks = append(blocks, map[string]string{"type": "text", "text": "Session instructions supplied by the host:\n" + s.binding.Instructions})
 	}
-	if message.Content != "" {
-		blocks = append(blocks, map[string]string{"type": "text", "text": message.Content})
-	}
-	for _, image := range message.Images {
-		blocks = append(blocks, map[string]string{"type": "image", "mimeType": image.MediaType, "data": image.Data})
+	if text != "" {
+		blocks = append(blocks, map[string]string{"type": "text", "text": text})
 	}
 	prompting = true
 	promptParams := map[string]any{"sessionId": ref, "prompt": blocks}
@@ -241,6 +241,94 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		return acpEngineError(s.engine.entry, p, err)
 	}
 	return finishACPTurn(t, response.StopReason)
+}
+
+const (
+	acpImageOnlyPrompt = "See the attached image(s)."
+	acpImagePathHeader = "Attached images (local files — open them to view):"
+)
+
+// acpPromptMedia keeps user-supplied images in the turn. ACP session/prompt
+// here is text-only: Grok advertises promptCapabilities.image=false, and the
+// working host path is to write the bytes to local files and put those
+// absolute paths in the prompt so the agent's own read_file can see them.
+func acpPromptMedia(threadID string, message providers.ChatMessage) (string, error) {
+	text := message.Content
+	if len(message.Images) == 0 {
+		return text, nil
+	}
+	paths, err := writeACPImageFiles(threadID, message.Images)
+	if err != nil {
+		return "", err
+	}
+	return acpImagePathPrompt(text, paths), nil
+}
+
+func acpImagePathPrompt(text string, paths []string) string {
+	if len(paths) == 0 {
+		return text
+	}
+	body := strings.TrimSpace(text)
+	if body == "" {
+		body = acpImageOnlyPrompt
+	}
+	lines := make([]string, 0, len(paths))
+	for _, path := range paths {
+		lines = append(lines, "- "+path)
+	}
+	return body + "\n\n" + acpImagePathHeader + "\n" + strings.Join(lines, "\n")
+}
+
+func writeACPImageFiles(threadID string, images []providers.InputImage) ([]string, error) {
+	dir := acpImageDir(threadID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("write image attachments: %w", err)
+	}
+	paths := make([]string, 0, len(images))
+	for i, image := range images {
+		raw, err := base64.StdEncoding.DecodeString(image.Data)
+		if err != nil {
+			return nil, fmt.Errorf("image %d: invalid base64: %w", i+1, err)
+		}
+		if len(raw) == 0 {
+			return nil, fmt.Errorf("image %d is empty", i+1)
+		}
+		path := filepath.Join(dir, fmt.Sprintf("%d-%d%s", time.Now().UnixNano(), i+1, acpImageExt(image.MediaType)))
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			return nil, fmt.Errorf("write image attachments: %w", err)
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, abs)
+	}
+	return paths, nil
+}
+
+func acpImageDir(threadID string) string {
+	id := strings.TrimSpace(threadID)
+	id = strings.ReplaceAll(id, string(filepath.Separator), "-")
+	id = strings.ReplaceAll(id, "..", "")
+	if id == "" {
+		id = "thread"
+	}
+	return filepath.Join(os.TempDir(), "wuu-acp-images", id)
+}
+
+func acpImageExt(mediaType string) string {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	mediaType, _, _ = strings.Cut(mediaType, ";")
+	switch mediaType {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
 }
 
 type acpProfile struct {
