@@ -71,6 +71,12 @@
   border-bottom: 0;
 }
 
+/* Autofocused conversation search uses the caret; the dialog already frames the field. */
+.menu-search.conversation-search-input-wrap:has(input:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
 .workspace-diff-search {
   margin: 0 8px 7px;
 }
