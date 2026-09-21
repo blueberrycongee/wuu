@@ -4933,6 +4933,10 @@ html.resizing-workspace-file-split * {
     var(--conversation-status-space, 0px) + var(--dock-composer-height) -
     var(--conversation-input-inset, var(--dock-composer-height))
   );
+  /* First-turn send parks the query on a lead spacer, then the submit glide
+     consumes it. Keep this off CSS transitions — JS owns the trajectory, and
+     a padding transition would fight it. */
+  padding-top: calc(var(--conversation-flow-top-gap) + var(--session-lead-space, 0px));
   padding-bottom: var(--conversation-flow-bottom-space);
 }
 

@@ -26,8 +26,9 @@ export function useSessionTailSpace({
   const naturalHeight = useCallback(() => {
     // scrollHeight is floored at clientHeight, so it cannot measure short
     // first turns. The content wrapper includes the tail but not that floor.
-    return Math.max(0, (contentRef.current?.getBoundingClientRect().height ?? 0) - space.current);
-  }, [contentRef]);
+    const lead = Math.max(0, Number.parseFloat(paneRef.current?.style.getPropertyValue("--session-lead-space") || "0") || 0);
+    return Math.max(0, (contentRef.current?.getBoundingClientRect().height ?? 0) - space.current - lead);
+  }, [contentRef, paneRef]);
   const syncLayout = useCallback(() => {
     // Child layout effects may report stream frames before our thread restore.
     // Never save the outgoing reservation under the incoming thread's ID.

@@ -39,12 +39,13 @@ type Props = {
   processItems?: ThreadItem[];
   todoComplete?: boolean;
   composer?: boolean;
+  processRow?: boolean;
 };
 function LayoutSignal() {
   React.useLayoutEffect(() => { api.scheduleStreamScroll(); });
   return null;
 }
-function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer }: Props) {
+function Probe({ id = "a", running = false, split = false, messageID, pluginHost, onOpenSession = () => undefined, signalLayout = false, item, mountKey, processItems, todoComplete, composer, processRow }: Props) {
   const [statusClusterNode, setStatusClusterNode] = React.useState<HTMLDivElement | null>(null);
   const primaryTurns: Turn[] = messageID ? [{ id: "turn", items_view: "full", status: running ? "in_progress" : "completed", items: [{ ...item, id: messageID, type: "user_message" }] }] : [];
   api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false, statusClusterNode });
@@ -60,7 +61,10 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
     }} onScroll={() => api.handleConversationScroll()}>
       <div ref={api.scrollContentRef} data-content>
         {messageID ? item ? <ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider>
-          : <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div> : null}
+          : <>
+            <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div>
+            {processRow ? <div className="assistant-turn-shell" data-process-row /> : null}
+          </> : null}
         <div aria-hidden="true"><div data-user-message-id="hidden" /></div>
         {processItems ? <ProcessSurface processItems={processItems} streaming={running} /> : null}
         {signalLayout ? <LayoutSignal /> : null}
@@ -79,6 +83,9 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
 // scrollTop models Chromium's clamp, including after a layout-only shrink.
 function tailSpace() {
   return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--session-tail-space") || "0");
+}
+function leadSpace() {
+  return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--session-lead-space") || "0");
 }
 function statusSpace() {
   return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--conversation-status-space") || "0");
@@ -179,11 +186,15 @@ beforeEach(() => {
   });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     if (this.matches("details")) return { height: 34 + disclosureHeight } as DOMRect;
-    if (this.hasAttribute("data-content")) return { height: naturalHeight + statusSpace() + tailSpace() } as DOMRect;
+    if (this.hasAttribute("data-content")) return { height: naturalHeight + statusSpace() + tailSpace() + leadSpace() } as DOMRect;
     if (this.hasAttribute("data-viewport")) return { top: 100, height: this.clientHeight } as DOMRect;
     if (this.classList.contains("conversation-status-cluster")) return { height: statusHeight } as DOMRect;
     if (this.hasAttribute("data-dock")) return { height: composerHeight } as DOMRect;
     if (this.hasAttribute("data-user-message-id")) return { top: 100 + messageBottom - messageHeight - top, bottom: 100 + messageBottom - top, height: messageHeight } as DOMRect;
+    if (this.hasAttribute("data-process-row")) {
+      const processTop = 100 + messageBottom - top;
+      return { top: processTop, bottom: processTop + 26, height: 26 } as DOMRect;
+    }
     return { height: 34 } as DOMRect;
   });
   host = document.createElement("div");
@@ -701,17 +712,18 @@ it("lifts a short first bubble from the composer when the viewport cannot scroll
   render({ id: null });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ id: null, messageID: "submitted", running: true });
-  expect(motionY()).toBeGreaterThan(100);
+  expect(leadSpace()).toBeGreaterThan(100);
+  expect(motionY()).toBe(0);
   expect(scrollTop()).toBe(0);
   tick(0);
-  const start = motionY();
+  const start = leadSpace();
   tick(60);
-  const first = start - motionY();
+  const first = start - leadSpace();
   tick(120);
   expect(first).toBeGreaterThan(0);
-  expect(start - motionY() - first).toBeLessThan(first);
+  expect(start - leadSpace() - first).toBeLessThan(first);
   settle(360);
-  expect(motionY()).toBe(0);
+  expect(leadSpace()).toBe(0);
   expect(scrollTop()).toBe(0);
 });
 
@@ -722,13 +734,13 @@ it("keeps a short first-bubble lift through thread adoption", () => {
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ id: null, messageID: "submitted", running: true });
   tick(0); tick(80);
-  const before = motionY();
+  const before = leadSpace();
   expect(before).toBeGreaterThan(0);
   render({ id: "created", messageID: "submitted", running: true });
-  expect(motionY()).toBeCloseTo(before);
+  expect(leadSpace()).toBeCloseTo(before);
   expect(scrollTop()).toBe(0);
   settle(360);
-  expect(motionY()).toBe(0);
+  expect(leadSpace()).toBe(0);
 });
 
 it("places a short first bubble without a composer lift with reduced motion", () => {
@@ -738,7 +750,7 @@ it("places a short first bubble without a composer lift with reduced motion", ()
   render({ id: null });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ id: null, messageID: "submitted", running: true });
-  expect(motionY()).toBe(0);
+  expect(leadSpace()).toBe(0);
   expect(scrollTop()).toBe(0);
   expect(animations).toHaveLength(0);
 });
@@ -750,20 +762,40 @@ it("clears an in-flight first-bubble lift when the user scrolls", () => {
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ id: null, messageID: "submitted", running: true });
   tick(0);
-  expect(motionY()).toBeGreaterThan(0);
+  expect(leadSpace()).toBeGreaterThan(0);
   scrollUp(100);
+  expect(leadSpace()).toBe(0);
+});
+
+it("lifts the in-progress timer with a short first bubble instead of a second transform", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true, processRow: true });
+  const process = host.querySelector<HTMLElement>("[data-process-row]");
+  expect(leadSpace()).toBeGreaterThan(100);
   expect(motionY()).toBe(0);
+  expect(motionY(process)).toBe(0);
+  tick(0); tick(80);
+  expect(leadSpace()).toBeGreaterThan(0);
+  expect(motionY()).toBe(0);
+  expect(motionY(process)).toBe(0);
+  settle(360);
+  expect(leadSpace()).toBe(0);
 });
 
 it("does not lift a follow-up bubble that can scroll into place", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));
   render({ messageID: "submitted", running: true });
+  expect(leadSpace()).toBe(0);
   expect(motionY()).toBe(0);
   tick(0);
+  expect(leadSpace()).toBe(0);
   expect(motionY()).toBe(0);
   settle(360);
-  expect(motionY()).toBe(0);
+  expect(leadSpace()).toBe(0);
   expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
 
@@ -958,12 +990,13 @@ it("does not replay a completed entrance on acknowledgement or draft promotion",
   messageBottom = 100;
   render({ id: null });
   submit({ id: null });
-  animations[0].playState = "finished";
+  expect(leadSpace()).toBe(0);
+  expect(animations).toHaveLength(0);
   render({ id: "created", messageID: "submitted", mountKey: "promoted" });
-  expect(animations).toHaveLength(1);
+  expect(animations).toHaveLength(0);
   act(() => api.acknowledgeSubmittedMessage("submitted", "accepted"));
   render({ id: "created", messageID: "accepted" });
-  expect(animations).toHaveLength(1);
+  expect(animations).toHaveLength(0);
   expect(scrollTop()).toBe(0);
 });
 
