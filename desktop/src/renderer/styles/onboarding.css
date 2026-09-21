@@ -561,7 +561,7 @@
 
 .onboarding-choice {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px;
+  grid-template-columns: 36px minmax(0, 1fr) 22px;
   align-items: center;
   gap: 13px;
   min-height: 76px;

@@ -259,6 +259,7 @@ describe("RuntimePicker", () => {
       "Wuu",
       "Codex"
     ]);
+    expect(engineChoices.every((choice) => choice.querySelector("svg.engine-icon"))).toBe(true);
     expect(engineChoices[1]?.getAttribute("aria-checked")).toBe("true");
     act(() => engineChoices[0]?.click());
     expect(onSelectEngine).toHaveBeenCalledWith("wuu");
@@ -312,9 +313,11 @@ describe("RuntimePicker", () => {
       ],
       onSelectEngineModel: vi.fn()
     });
-    const trigger = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger")?.textContent ?? "";
+    const triggerButton = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
+    const trigger = triggerButton?.textContent ?? "";
     expect(trigger).toContain("Grok 4.6");
     expect(trigger).not.toContain("Agent 默认模型");
+    expect(triggerButton?.querySelector("svg.engine-icon")).not.toBeNull();
     act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item")).map((item) =>
       item.querySelector(".codex-model-item-name")?.textContent

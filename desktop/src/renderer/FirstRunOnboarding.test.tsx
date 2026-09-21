@@ -143,6 +143,9 @@ describe("FirstRunOnboarding", () => {
     expect(container.querySelector("[data-wuu-mascot-follows-pointer]")).not.toBeNull();
     expect(mascotStage()?.getAttribute("data-onboarding-engine")).toBe("wuu");
     expect(mascotStage()?.querySelector("[data-onboarding-engine-mark]")).toBeNull();
+    expect(
+      container.querySelector("[data-testid=onboarding-engine-codex] svg.engine-icon"),
+    ).not.toBeNull();
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>("[data-testid=onboarding-engine-codex]")

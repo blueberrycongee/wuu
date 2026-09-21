@@ -11,6 +11,7 @@ import type {
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { engineLabel } from "./EngineDisplay";
+import { EngineIcon } from "./EngineIcons";
 import { ONBOARDING_ENGINES, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { PREVIEW_PLUGINS } from "./onboardingPreview";
@@ -479,6 +480,9 @@ export function FirstRunOnboarding({
                     disabled={savingRuntime || !engine.ready}
                     onClick={() => setSelectedEngine(engine.id)}
                   >
+                    <span className="onboarding-plugin-icon" aria-hidden="true">
+                      <EngineIcon engine={engine.id} />
+                    </span>
                     <span className="onboarding-choice-copy">
                       <strong>
                         {engine.label}

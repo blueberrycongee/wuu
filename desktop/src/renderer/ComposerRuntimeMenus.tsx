@@ -61,6 +61,7 @@ import type {
 } from "./ComposerTypes";
 import { lastEffortForEngineModel } from "./DraftEngineMemory";
 import { engineLabel } from "./EngineDisplay";
+import { EngineIcon } from "./EngineIcons";
 import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
 import {
   codexEffortOptions,
@@ -140,6 +141,7 @@ function EngineOptionsMenu({
               if (!isSelected) onSelect(option.id);
             }}
           >
+            <EngineIcon engine={option.id} />
             <span className="runtime-engine-option-name">{option.label}</span>
             {locked && isSelected ? <Lock aria-hidden="true" /> : isSelected ? <Check aria-hidden="true" /> : null}
           </button>
@@ -203,6 +205,7 @@ function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => vo
 
 function RuntimePanelSummary({
   engine,
+  engineId,
   provider,
   engineLocked,
   hideEngine = false,
@@ -218,6 +221,7 @@ function RuntimePanelSummary({
   onSelectEffort
 }: {
   engine: string;
+  engineId: string;
   provider?: string;
   engineLocked: boolean;
   hideEngine?: boolean;
@@ -243,6 +247,7 @@ function RuntimePanelSummary({
     <div className="runtime-panel-summary">
       <div className="runtime-panel-context">
         {!hideEngine ? <button type="button" onClick={onOpenEngines}>
+          <EngineIcon engine={engineId} />
           <span>{engineLabel(engine)}</span>
           {engineLocked ? <Lock aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
         </button> : null}
@@ -472,6 +477,7 @@ export function RuntimePicker({
           onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
           onClick={() => onToggleMenu("model")}
         >
+          <EngineIcon engine={selectedEngine} />
           <span>{triggerLabel}</span>
           <span className="codex-runtime-effort">{effortLabelText}</span>
           <ChevronDown className="icon" />
@@ -623,6 +629,7 @@ function EngineRuntimeMenu({
         {view === "summary" ? (
           <RuntimePanelSummary
             engine={engineLabel(selectedEngine, engine)}
+            engineId={selectedEngine}
             engineLocked={engineLocked}
             model={effectiveModel?.display_name || effectiveModelID || t("runtime.engineDefaultModel")}
             effortOptions={effortOptions}
@@ -881,6 +888,7 @@ export function RuntimeModelMenu({
         {view === "summary" ? (
           <RuntimePanelSummary
             engine={selectedEngine}
+            engineId={selectedEngine}
             provider={effectiveProviderName}
             engineLocked={engineLocked}
             hideEngine={hideEngine}

@@ -88,7 +88,7 @@
 .agent-onboarding-runtime .runtime-panel .runtime-panel-summary { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); grid-template-rows: 36px auto; align-items: center; column-gap: 8px; }
 .agent-onboarding-runtime .runtime-panel-context { max-width: 72px; }
 .agent-onboarding-runtime .runtime-panel-context button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-onboarding-runtime .runtime-panel-context button > svg { display: none; }
+.agent-onboarding-runtime .runtime-panel-context button > svg:not(.engine-icon) { display: none; }
 .agent-onboarding-runtime .runtime-panel-effort-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .agent-onboarding-runtime .runtime-panel-effort-row .codex-effort-slider { flex: 1; min-width: 0; margin-top: 0; }
 .agent-onboarding-runtime .runtime-panel .runtime-panel-effort-value { flex: 0 0 auto; color: var(--ink-muted); font-size: var(--font-sm); font-weight: var(--weight-medium); }

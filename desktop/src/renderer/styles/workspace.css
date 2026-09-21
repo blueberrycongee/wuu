@@ -4361,11 +4361,15 @@ html.resizing-workspace-file-split * {
   white-space: nowrap;
 }
 
-.codex-runtime-trigger > span:first-child {
+.codex-runtime-trigger > span:not(.codex-runtime-effort) {
   flex: 1 1 auto;
 }
 
-.codex-runtime-trigger svg {
+.codex-runtime-trigger .engine-icon {
+  color: inherit;
+}
+
+.codex-runtime-trigger > svg.icon {
   flex: 0 0 auto;
   color: var(--codex-runtime-trigger-icon);
 }
@@ -4459,6 +4463,10 @@ html.resizing-workspace-file-split * {
   width: 14px;
   height: 14px;
   flex: 0 0 auto;
+}
+
+.runtime-engine-option > svg.engine-icon {
+  color: inherit;
 }
 
 .codex-model-groups {
@@ -4739,6 +4747,10 @@ html.resizing-workspace-file-split * {
   color: var(--ink-tertiary);
 }
 
+.runtime-panel-context button > svg.engine-icon {
+  color: inherit;
+}
+
 .runtime-panel-context-separator {
   flex: 0 0 auto;
   padding: 0;
@@ -4846,7 +4858,7 @@ html.resizing-workspace-file-split * {
   background: var(--selection-surface);
 }
 
-.runtime-panel .runtime-engine-option[aria-checked="true"] > svg,
+.runtime-panel .runtime-engine-option[aria-checked="true"] > svg:not(.engine-icon),
 .runtime-panel .runtime-provider-option[aria-checked="true"] > svg,
 .runtime-panel .codex-model-item[aria-checked="true"] > svg {
   color: var(--ink-secondary);
