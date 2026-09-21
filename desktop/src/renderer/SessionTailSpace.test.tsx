@@ -85,7 +85,7 @@ function tailSpace() {
   return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--session-tail-space") || "0");
 }
 function leadSpace() {
-  return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--session-lead-space") || "0");
+  return Number.parseFloat(host.querySelector<HTMLElement>("[data-content]")?.style.paddingTop || "0");
 }
 function statusSpace() {
   return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--conversation-status-space") || "0");
@@ -742,6 +742,29 @@ it("lifts a short first bubble from the composer when the viewport cannot scroll
   settle(360);
   expect(leadSpace()).toBe(0);
   expect(scrollTop()).toBe(0);
+});
+
+it("does not feed fractional layout noise back into the submission reservation", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  const reserved = tailSpace();
+  const content = api.scrollContentRef.current!;
+  // The browser quantizes box geometry, not the animation's fractional input.
+  content.getBoundingClientRect = () => ({
+    height: Math.round((naturalHeight + tailSpace() + leadSpace()) * 64) / 64,
+  }) as DOMRect;
+  for (let time = 0; time < 700; time += 16) {
+    tick(time);
+    act(() => { for (const callback of [...resizeCallbacks]) callback([], {} as ResizeObserver); });
+    expect(tailSpace()).toBe(reserved);
+  }
+  grow(50);
+  expect(tailSpace()).toBeCloseTo(reserved - 50, 1);
+  grow(1000);
+  expect(tailSpace()).toBe(0);
 });
 
 it("keeps a short first-bubble lift through thread adoption", () => {

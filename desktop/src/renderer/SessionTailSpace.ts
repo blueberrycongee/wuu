@@ -20,15 +20,20 @@ export function useSessionTailSpace({
   const layoutScope = useRef<{ threadID?: string; enabled: boolean } | undefined>(undefined);
   const apply = useCallback((height: number) => {
     if (height === space.current) return;
+    // Layout rounds fractional padding while the motion keeps a continuous
+    // position. Feeding that measurement noise back into an inherited token
+    // causes another style/layout pass on every frame. Preserve the applied
+    // value below half a CSS pixel, but always clear a consumed reservation.
+    if (height > 0 && space.current > 0 && Math.abs(height - space.current) < 0.5) return;
     space.current = height;
     paneRef.current?.style.setProperty("--session-tail-space", `${height}px`);
   }, [paneRef]);
   const naturalHeight = useCallback(() => {
     // scrollHeight is floored at clientHeight, so it cannot measure short
     // first turns. The content wrapper includes the tail but not that floor.
-    const lead = Math.max(0, Number.parseFloat(paneRef.current?.style.getPropertyValue("--session-lead-space") || "0") || 0);
+    const lead = Math.max(0, Number.parseFloat(contentRef.current?.style.paddingTop || "0") || 0);
     return Math.max(0, (contentRef.current?.getBoundingClientRect().height ?? 0) - space.current - lead);
-  }, [contentRef, paneRef]);
+  }, [contentRef]);
   const syncLayout = useCallback(() => {
     // Child layout effects may report stream frames before our thread restore.
     // Never save the outgoing reservation under the incoming thread's ID.
@@ -108,7 +113,7 @@ export function useSessionTailSpace({
       // First-query lead is in-flight motion on the outgoing thread, not a
       // saved reservation. Drop it before measuring so the incoming pane does
       // not inherit a composer-sized padding-top for one layout.
-      paneRef.current?.style.removeProperty("--session-lead-space");
+      contentRef.current?.style.removeProperty("padding-top");
     }
     if (!enabled) {
       extent.current = 0;

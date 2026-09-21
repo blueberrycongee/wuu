@@ -213,6 +213,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reduce send-animation style recalculation by keeping the first-message spacer
+  local to the content wrapper and ignoring subpixel reservation feedback.
+
 - Keep conversation scrolling aligned with text reflow during window resizing,
   update composer clearance while dragging, and restore session history against
   the incoming composer's viewport rather than the previous session's height.

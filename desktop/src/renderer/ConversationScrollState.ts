@@ -401,10 +401,13 @@ export function useConversationScrollState({
   const applyLeadSpace = useCallback((px: number): void => {
     const next = px <= 1 ? 0 : px;
     leadSpaceRef.current = next;
-    const pane = conversationPaneRef.current;
-    if (!pane) return;
-    if (next === 0) pane.style.removeProperty("--session-lead-space");
-    else pane.style.setProperty("--session-lead-space", `${next}px`);
+    const content = scrollContentRef.current;
+    if (!content) return;
+    // This changes every animation frame. An inherited variable on the pane
+    // invalidates the composer and every cached turn as well as the spacer.
+    // Keep the lead in flow, but change only the content wrapper's box.
+    const value = next === 0 ? "" : `${next}px`;
+    if (content.style.paddingTop !== value) content.style.paddingTop = value;
   }, []);
 
   const cancelSubmittedQueryScroll = useCallback((): void => {
