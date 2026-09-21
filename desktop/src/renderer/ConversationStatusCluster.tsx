@@ -83,6 +83,7 @@ export function ConversationStatusCluster({
   return (
     <div
       className="jump-to-latest-cluster conversation-status-cluster"
+      data-pip-obstacle="status"
       ref={clusterRef}
       aria-label={t("channels.status")}
     >

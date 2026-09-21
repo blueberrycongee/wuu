@@ -21,10 +21,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   does not steal focus from another workspace tool or a foreground Agent
   browser.
 
-- Embedded browser automation is available by default. Agents browse in a
-  hidden host and only overlay the current session's right-side browser after
-  an explicit `set_visibility(true)`. Background browsing still does not open
-  the panel from a chat URL. Set `WUU_ENABLE_BROWSER=0` to hide the tool.
+- Embedded browser automation is available by default. While an agent is
+  browsing, the page stays in a floating card inside the conversation column.
+  Dragging the card snaps it to a corner of that column, clear of the composer.
+  The workspace panel opens when the user opens the browser or expands the
+  card, and does not open or close on its own. Set `WUU_ENABLE_BROWSER=0` to
+  hide the tool.
 
 ### Changed
 

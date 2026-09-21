@@ -2,10 +2,11 @@ import { useEffect, useRef } from "react";
 import type { ActivitySession, BrowserBoundsRect } from "../shared/protocol";
 import { submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 
-// The workspace browser panel and the agent's page are the same tab. This
-// hook decides when that panel opens or closes. Painting the page is owned
-// by the panel: it reports a rectangle while the tab is on screen and null
-// when it is not. A torn-down core still drops leftover activity UI here.
+// The workspace browser panel and the agent's page are the same tab. Painting
+// is owned by the panel: it reports a rectangle while that tab is on screen.
+// The agent does not open or close the panel; the floating card is the live
+// preview until the user docks the page. A torn-down core still drops leftover
+// activity UI here.
 
 // ── Pure helpers (unit-tested) ─────────────────────────────────────────────
 
@@ -320,47 +321,17 @@ export function observeBrowserPanelBounds(
 // ── Hook ─────────────────────────────────────────────────────────────────
 
 export function useBrowserVisibility({
-  activeThreadID,
-  activeBrowserActivity,
-  onOpenBrowser,
-  onCloseBrowser,
   onInvalidateWorkdir,
 }: {
-  activeThreadID: string | undefined;
-  activeBrowserActivity: ActivitySession | undefined;
-  onOpenBrowser: () => void;
-  onCloseBrowser: () => void;
+  activeThreadID?: string | undefined;
+  activeBrowserActivity?: ActivitySession | undefined;
   onInvalidateWorkdir: (workdir: string) => void;
 }): void {
-  const onOpenBrowserRef = useRef(onOpenBrowser);
-  const onCloseBrowserRef = useRef(onCloseBrowser);
   const onInvalidateWorkdirRef = useRef(onInvalidateWorkdir);
-  const foregroundSnapshotRef = useRef<ForegroundSnapshot>({});
 
-  useEffect(() => {
-    onOpenBrowserRef.current = onOpenBrowser;
-  }, [onOpenBrowser]);
-  useEffect(() => {
-    onCloseBrowserRef.current = onCloseBrowser;
-  }, [onCloseBrowser]);
   useEffect(() => {
     onInvalidateWorkdirRef.current = onInvalidateWorkdir;
   }, [onInvalidateWorkdir]);
-
-  // Open the panel only on a real foreground transition. Close it when the
-  // agent hides that same page. Switching threads does neither.
-  useEffect(() => {
-    const previous = foregroundSnapshotRef.current;
-    const retreat = computeForegroundRetreat(previous, activeThreadID, activeBrowserActivity);
-    const { open, snapshot } = computeForegroundPromotion(
-      previous,
-      activeThreadID,
-      activeBrowserActivity,
-    );
-    foregroundSnapshotRef.current = snapshot;
-    if (open) onOpenBrowserRef.current();
-    else if (retreat) onCloseBrowserRef.current();
-  }, [activeThreadID, activeBrowserActivity]);
 
   // Server-exit fallback: when a core is torn down/evicted its Close-time
   // "stopped" events can be lost, leaving ghost browser activity UI hanging

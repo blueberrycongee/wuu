@@ -173,6 +173,7 @@ import type {
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
 import { ObservationCoordinator, activityControlMethod } from "./cuaActivityWindows";
+import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
 import {
@@ -385,7 +386,11 @@ const observationCoordinator = new ObservationCoordinator(
     );
     return result.activities ?? [];
   },
-  createObservationPiPFactory({ browserHost: browserHostCoordinator, isPackaged: app.isPackaged }),
+  createObservationPiPFactory({
+    browserHost: browserHostCoordinator,
+    isPackaged: app.isPackaged,
+    parent: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
+  }),
   async (activity, action) => {
     const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
       activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id },
@@ -404,6 +409,7 @@ observationCoordinator.setBrowserInPanel((activity) =>
   activity.kind === "browser" &&
   browserHostCoordinator.isInPanel(activity.workdir, activity.target || activity.id),
 );
+observationCoordinator.setBrowserExpandHandler(() => broadcastToAll("wuu:browser-dock"));
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden or minimized. Its
 // right-click menu disables the setting, which also tears the window down.
@@ -2540,6 +2546,16 @@ app.whenReady().then(async () => {
   // while an agent view is taken over (rAF-polled — pure motion isn't caught by
   // ResizeObserver), so main can position the reparented WebContentsView. The
   // target window is derived from event.sender, not trusted from the payload.
+  ipcMain.handle("wuu:browser-pip-host-layout", (event, payload: unknown) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow || senderWindow.isDestroyed()) return { ok: false };
+    observationCoordinator.setBrowserPiPHostLayout(
+      event.sender.id,
+      senderWindow,
+      browserPiPHostClient(payload),
+    );
+    return { ok: true };
+  });
   ipcMain.handle(
     "wuu:browser-report-bounds",
     (

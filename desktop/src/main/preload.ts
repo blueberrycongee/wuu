@@ -631,6 +631,13 @@ type BrowserTakeoverApi = {
     handler: (payload: { workdir: string; tabID: string }) => void,
   ) => () => void;
   onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
+  onBrowserDock: (handler: () => void) => () => void;
+  reportBrowserPiPHostLayout: (
+    payload: {
+      host: { x: number; y: number; width: number; height: number };
+      obstacles: Array<{ x: number; y: number; width: number; height: number }>;
+    } | null,
+  ) => void;
 };
 const browserApi = api as WuuDesktopApi & BrowserTakeoverApi;
 browserApi.reportBrowserBounds = (workdir, tabID, rect, force) => {
@@ -673,6 +680,14 @@ browserApi.onBrowserTabAdopted = (handler) => {
     handler(payload);
   ipcRenderer.on("wuu:browser-tab-adopted", listener);
   return () => ipcRenderer.removeListener("wuu:browser-tab-adopted", listener);
+};
+browserApi.reportBrowserPiPHostLayout = (payload) => {
+  void ipcRenderer.invoke("wuu:browser-pip-host-layout", payload);
+};
+browserApi.onBrowserDock = (handler) => {
+  const listener = () => handler();
+  ipcRenderer.on("wuu:browser-dock", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
 
 contextBridge.exposeInMainWorld("wuu", api);

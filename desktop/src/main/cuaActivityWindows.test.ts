@@ -9,6 +9,7 @@ import {
   activityVisibleForThread,
   frameStreamRetryDelay,
   nativePiPInitialBounds,
+  browserPiPInitialBounds,
   observationActivityFromServerEvent,
   observationKey,
 } from "./cuaActivityWindows";
@@ -49,6 +50,10 @@ describe("CUA native picture-in-picture", () => {
     )).toEqual({ x: 1028, y: 92, width: 260, height: 170 });
     expect(nativePiPInitialBounds(undefined, { x: 1440, y: 0, width: 1200, height: 900 }))
       .toEqual({ x: 2356, y: 24, width: 260, height: 170 });
+    expect(browserPiPInitialBounds(
+      { x: 100, y: 80, width: 1200, height: 800 },
+      { x: 0, y: 0, width: 1440, height: 900 },
+    )).toEqual({ x: 1026, y: 606, width: 250, height: 250 });
   });
 
   it("backs off native capture restarts", () => {
@@ -236,13 +241,16 @@ describe("browser observation surface", () => {
     expect(surfaces[0].start).toHaveBeenCalledTimes(1);
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
-    // Visibility takeover: the real page is on screen full-size — the mirror hides.
-    coordinator.update(browserActivity({ state: "foreground_controlled", controller: "user", updated_at: "2026-07-10T10:00:02Z" }));
+    // Asking to show the page does not dismiss the card. Docking it does.
+    coordinator.update(browserActivity({ state: "foreground_controlled", controller: "agent", updated_at: "2026-07-10T10:00:02Z" }));
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    coordinator.setBrowserInPanel(() => true);
+    coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
-    expect(surfaces[0].stop).toBeDefined();
-    expect(surfaces).toHaveLength(1); // same surface, not replaced
+    expect(surfaces).toHaveLength(1);
 
-    coordinator.update(browserActivity({ state: "background_controlled", controller: "agent", updated_at: "2026-07-10T10:00:03Z" }));
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
 

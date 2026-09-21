@@ -73,6 +73,9 @@ class FakePipWindow {
   getBounds(): Rectangle {
     return this.bounds;
   }
+  setBounds(bounds: Rectangle): void {
+    this.bounds = bounds;
+  }
   on(event: string, listener: (...args: unknown[]) => void): void {
     const list = this.listeners.get(event) ?? [];
     list.push(listener);
@@ -269,7 +272,7 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
     await settle();
 
-    // viewport 1000×500 into 260×170: scale 0.26, letterboxed vertically.
+    // viewport 1000×500 contained in the 260×170 card: scale 0.26, letterboxed.
     expect(host.mounts).toHaveLength(1);
     expect(host.mounts[0].zoom).toBeCloseTo(0.26);
     expect(host.mounts[0].rect.width).toBeCloseTo(260);
@@ -428,5 +431,28 @@ describe("BrowserPiPSurface", () => {
   it("never leaks third-party product names into the overlay page", () => {
     const html = browserPiPOverlayHTML("example.com");
     expect(html).not.toMatch(/chatgpt|openai|claude|anthropic/i);
+    expect(html).not.toContain("-webkit-app-region:drag");
+  });
+
+  it("snaps a drag to the nearest corner of the conversation column", () => {
+    vi.useFakeTimers();
+    try {
+      const { surface, win, overlay } = makeSurface();
+      surface.start();
+      surface.setHostLayout({
+        host: { x: 0, y: 0, width: 800, height: 600 },
+        obstacles: [],
+        visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+      });
+      expect(win.bounds).toMatchObject({ x: 526, y: 326, width: 250, height: 250 });
+
+      overlay.navigate("wuu-pip://drag?phase=start&x=546&y=346&vx=0&vy=0");
+      overlay.navigate("wuu-pip://drag?phase=end&x=64&y=64&vx=0&vy=0");
+      vi.advanceTimersByTime(300);
+      expect(win.bounds).toMatchObject({ x: 24, y: 24, width: 250, height: 250 });
+      surface.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

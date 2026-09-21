@@ -235,6 +235,7 @@ import type {
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
+import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { externalAgentActivityStore } from "./ExternalAgentActivityStore";
 import { SkillsCatalog } from "./SkillsCatalog";
@@ -1684,17 +1685,18 @@ export function App(): JSX.Element {
     Boolean(pendingFork) ||
     conversationSearch.open;
   useBrowserVisibility({
-    activeThreadID,
-    activeBrowserActivity,
-    onOpenBrowser: () => openWorkspaceTool("browser"),
-    onCloseBrowser: () => {
-      if (workspaceActiveViewTabID === "browser") setRightPanelOpenWithMotion(false);
-    },
     onInvalidateWorkdir: (workdir) =>
       setActivitySessions((current) =>
         clearActivitiesForWorkdir(current, workdir),
       ),
   });
+  const openWorkspaceBrowserRef = useRef(openWorkspaceTool);
+  openWorkspaceBrowserRef.current = openWorkspaceTool;
+  useEffect(() => {
+    const subscribe = window.wuu.onBrowserDock;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe(() => openWorkspaceBrowserRef.current("browser"));
+  }, []);
   const activeTodoUpdate = latestTodoUpdateForThread(activeThread);
   const activeContextKey = state.activeContext
     ? runtimeContextKey(state.activeContext)
@@ -5163,6 +5165,7 @@ export function App(): JSX.Element {
           data-wuu-component="app-shell"
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
+          <BrowserPiPHostReporter />
           {!poppedOutMode ? (
             <>
           <div
@@ -5679,6 +5682,7 @@ export function App(): JSX.Element {
 
         {state.initialized ? (
           <div
+            data-pip-anchor-host="conversation"
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}

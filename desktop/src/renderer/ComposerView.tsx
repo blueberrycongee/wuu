@@ -1499,6 +1499,7 @@ export function Composer({
   ) : (
     <footer
       className={className}
+      data-pip-obstacle="composer"
       data-main-conversation-composer={mainConversation ? variant : undefined}
       ref={containerRef}
     >

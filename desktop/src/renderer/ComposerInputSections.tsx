@@ -305,7 +305,7 @@ export function SplitPaneComposer({
   }
 
   return (
-    <footer className="composer-wrap dock-composer-wrap split-composer">
+    <footer className="composer-wrap dock-composer-wrap split-composer" data-pip-obstacle="composer">
       <div className="composer-stack">
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">

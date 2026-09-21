@@ -104,6 +104,7 @@ export function EnvironmentSideStack({
   return (
     <div
       className="environment-side-stack environment-info-side-stack"
+      data-pip-obstacle="environment"
       ref={stackRef}
     >
       <EnvironmentPanel

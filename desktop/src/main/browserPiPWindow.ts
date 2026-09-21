@@ -1,6 +1,20 @@
 import { BrowserWindow, WebContentsView, type Rectangle } from "electron";
 import type { ActivitySession } from "../shared/protocol";
 import { appShellWebPreferences } from "./appShellGuards";
+import {
+  browserPiPAnchors,
+  browserPiPCardSize,
+  browserPiPClampOrigin,
+  browserPiPDragCommand,
+  browserPiPNearestAnchor,
+  browserPiPOrigin,
+  browserPiPSnapEase,
+  browserPiPSnapPoint,
+  PIP_SNAP_MS,
+  type BrowserPiPScreenLayout,
+  type PipAlignment,
+  type PipPoint,
+} from "./browserPiPPlacement";
 import type {
   BrowserHostCoordinator,
   BrowserInteractionHint,
@@ -80,6 +94,8 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   hide(): void;
   isVisible(): boolean;
   getBounds(): Rectangle;
+  setBounds(bounds: Rectangle): void;
+  setParentWindow?(parent: unknown): void;
   on(
     event: "close" | "closed" | "moved" | "resized" | "ready-to-show",
     listener: (...args: unknown[]) => void,
@@ -112,6 +128,7 @@ type BrowserPiPSurfaceDeps = {
   // Injectable for tests; production uses real Electron views/windows.
   createWindow?: (bounds: Rectangle) => BrowserPiPWindowHandle;
   createOverlay?: () => BrowserPiPOverlayHandle;
+  parent?: () => { isDestroyed(): boolean } | null | undefined;
 };
 
 export class BrowserPiPSurface implements ObservationPiPHandle {
@@ -126,6 +143,16 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private activity: ActivitySession;
   private lastInteractionRevision = 0;
   private readonly unsubs: Array<() => void> = [];
+  // Resting corner inside the conversation column. A release may change it;
+  // later column resizes keep the card on that same corner.
+  private alignment: PipAlignment = "bottom-right";
+  // undefined: the column has not been measured yet. null: measured, and the
+  // conversation column is not on screen.
+  private screenLayout: BrowserPiPScreenLayout | null | undefined = undefined;
+  private hostParent: { isDestroyed(): boolean } | null = null;
+  private dragging = false;
+  private grab: PipPoint = { x: 0, y: 0 };
+  private snapTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly deps: BrowserPiPSurfaceDeps) {
     this.activity = deps.activity;
@@ -146,7 +173,14 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     overlay.webContents.on("will-navigate", (event: unknown, rawURL: string) => {
       if (typeof rawURL === "string" && rawURL.startsWith("wuu-pip://")) {
         (event as { preventDefault?: () => void }).preventDefault?.();
+        const drag = browserPiPDragCommand(rawURL);
+        if (drag) {
+          this.handleDrag(drag);
+          this.execute("window.wuuPipDragAck?.()");
+          return;
+        }
         if (rawURL === "wuu-pip://close") this.deps.sink.onEvent({ event: "user_close" });
+        if (rawURL === "wuu-pip://expand") this.deps.sink.onEvent({ event: "expand" });
       }
     });
     const initialLabel = pipHostname(
@@ -214,15 +248,24 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   setVisible(visible: boolean): void {
     this.visible = visible;
+    this.applyVisibility();
+  }
+
+  private applyVisibility(): void {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
-    if (visible) {
+    // Unknown layout (no report yet) still shows, so a card can appear before
+    // the first measurement. An explicit empty layout means the column is gone.
+    const columnGone = this.screenLayout === null;
+    if (this.visible && !columnGone) {
       this.mount();
       if (this.win !== win || win.isDestroyed()) return;
-      win.showInactive();
-    } else {
+      if (!win.isVisible()) win.showInactive();
+    } else if (!this.visible) {
       this.unmount();
       if (this.win !== win || win.isDestroyed()) return;
+      win.hide();
+    } else {
       win.hide();
     }
   }
@@ -231,6 +274,29 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   // leaves its (static) page on screen — the same observation semantics as
   // the CUA PiP's frozen last frame, at zero capture cost.
   setLive(): void {}
+
+  // Screen geometry of the conversation column. A null host means that column
+  // is not on screen, so the card hides until it returns. Column changes while
+  // the card is resting retarget the committed corner immediately; a drag in
+  // progress keeps following the pointer and snaps on release.
+  setHostLayout(layout: BrowserPiPScreenLayout | null): void {
+    if (!layout) {
+      this.screenLayout = null;
+      this.applyVisibility();
+      return;
+    }
+    this.screenLayout = layout;
+    if (!this.dragging) this.placeCommitted();
+    this.applyVisibility();
+  }
+
+  setHostParent(parent: { isDestroyed(): boolean } | null): void {
+    const win = this.win;
+    if (!win || win.isDestroyed() || !win.setParentWindow || this.hostParent === parent) return;
+    this.hostParent = parent;
+    if (!parent || parent.isDestroyed()) return;
+    win.setParentWindow(parent);
+  }
 
   updateActivity(activity: ActivitySession): void {
     this.activity = activity;
@@ -254,6 +320,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    this.cancelSnap();
     for (const unsub of this.unsubs.splice(0)) unsub();
     this.unmount();
     const win = this.win;
@@ -347,6 +414,105 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     return pipContainRect(this.viewport.width, this.viewport.height, b.width, b.height);
   }
 
+  private placeCommitted(): void {
+    const layout = this.screenLayout;
+    const win = this.win;
+    if (!layout || !win || win.isDestroyed()) return;
+    this.cancelSnap();
+    const card = browserPiPCardSize(layout.host);
+    const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
+      .find((item) => item.alignment === this.alignment);
+    if (!anchor) return;
+    const origin = browserPiPOrigin(anchor, card);
+    this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
+  }
+
+  private handleDrag(command: { phase: "start" | "move" | "end"; x: number; y: number; vx: number; vy: number }): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    const bounds = win.getBounds();
+    if (command.phase === "start") {
+      this.cancelSnap();
+      this.dragging = true;
+      this.grab = { x: command.x - bounds.x, y: command.y - bounds.y };
+      return;
+    }
+    if (!this.dragging) return;
+    const dragged = this.screenLayout
+      ? browserPiPClampOrigin(
+        { x: command.x - this.grab.x, y: command.y - this.grab.y },
+        bounds,
+        this.screenLayout.visibleFrame,
+      )
+      : { x: command.x - this.grab.x, y: command.y - this.grab.y };
+    if (command.phase === "move") {
+      this.applyBounds({ x: dragged.x, y: dragged.y, width: bounds.width, height: bounds.height });
+      return;
+    }
+    this.dragging = false;
+    this.applyBounds({ x: dragged.x, y: dragged.y, width: bounds.width, height: bounds.height });
+    const layout = this.screenLayout;
+    if (!layout) return;
+    const settled = win.getBounds();
+    const card = { width: settled.width, height: settled.height };
+    const origin = { x: settled.x, y: settled.y };
+    const nearest = browserPiPNearestAnchor(
+      browserPiPAnchors(layout.host, layout.obstacles, card),
+      origin,
+      card,
+      { x: command.vx, y: command.vy },
+    );
+    if (!nearest) return;
+    this.alignment = nearest.alignment;
+    this.animateTo(browserPiPOrigin(nearest, card), card, { x: command.vx, y: command.vy });
+  }
+
+  private animateTo(origin: PipPoint, card: { width: number; height: number }, velocity: PipPoint): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    this.cancelSnap();
+    const start = win.getBounds();
+    const from = { x: start.x, y: start.y };
+    const startedAt = Date.now();
+    const frame = (): void => {
+      this.snapTimer = undefined;
+      const current = this.win;
+      if (!current || current.isDestroyed() || this.dragging) return;
+      const t = browserPiPSnapEase((Date.now() - startedAt) / PIP_SNAP_MS);
+      const point = browserPiPSnapPoint(from, origin, velocity, t);
+      this.applyBounds({ x: point.x, y: point.y, width: card.width, height: card.height });
+      if (t < 1) this.scheduleSnap(frame);
+    };
+    frame();
+  }
+
+  private scheduleSnap(frame: () => void): void {
+    const timer = setTimeout(frame, 16);
+    timer.unref?.();
+    this.snapTimer = timer;
+  }
+
+  private cancelSnap(): void {
+    if (this.snapTimer === undefined) return;
+    clearTimeout(this.snapTimer);
+    this.snapTimer = undefined;
+  }
+
+  private applyBounds(bounds: Rectangle): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    const next = {
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.max(1, Math.round(bounds.width)),
+      height: Math.max(1, Math.round(bounds.height)),
+    };
+    const current = win.getBounds();
+    if (current.x === next.x && current.y === next.y && current.width === next.width && current.height === next.height) return;
+    win.setBounds(next);
+    if (current.width !== next.width || current.height !== next.height) this.refit();
+  }
+
   private matches(workdir: string, tabID: string): boolean {
     return workdir === this.deps.workdir && tabID === this.deps.tabID;
   }
@@ -400,20 +566,20 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       x: bounds.x,
       y: bounds.y,
       frame: false,
-      transparent: true,
-      backgroundColor: "#00000000",
-      hasShadow: false,
-      alwaysOnTop: true,
+      transparent: false,
+      backgroundColor: "#f4f4f5",
+      hasShadow: true,
+      roundedCorners: true,
       skipTaskbar: true,
-      resizable: true,
+      resizable: false,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
       acceptFirstMouse: true,
       show: false,
       type: "panel",
-      minWidth: 220,
-      minHeight: 140,
+      minWidth: 120,
+      minHeight: 120,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -421,8 +587,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         ...appShellWebPreferences(this.deps.isPackaged),
       },
     }) as unknown as BrowserPiPWindowHandle;
-    win.setAlwaysOnTop(true, "floating");
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    const parent = this.deps.parent?.();
+    if (parent && !parent.isDestroyed()) win.setParentWindow?.(parent);
     return win;
   }
 
@@ -446,6 +612,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 export function createObservationPiPFactory(deps: {
   browserHost: BrowserHostCoordinator;
   isPackaged: boolean;
+  parent?: () => { isDestroyed(): boolean } | null | undefined;
 }): ObservationPiPFactory {
   return (activity, _key, sink, bounds) => {
     if (activity.kind === "browser") {
@@ -459,6 +626,7 @@ export function createObservationPiPFactory(deps: {
         workdir: activity.workdir,
         tabID,
         isPackaged: deps.isPackaged,
+        parent: deps.parent,
       });
     }
     const helper = resolveCUAFrameHelper();
@@ -492,25 +660,21 @@ export function browserPiPOverlayHTML(initialLabel: string): string {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;overflow:hidden;background:transparent;
-  font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif}
-#root{position:relative;width:100%;height:100%;-webkit-app-region:drag}
+  font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
+  color:#fff;user-select:none}
+#root{position:relative;width:100%;height:100%;cursor:grab;touch-action:none}
+#root.dragging{cursor:grabbing}
 #ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:rgba(28,28,32,.92);
-  border-radius:12px;transition:opacity .25s ease;color:rgba(255,255,255,.55)}
+  background:#f4f4f5;color:rgba(28,28,30,.45);transition:opacity .2s ease}
 #ph.gone{opacity:0;pointer-events:none}
-#strip{position:absolute;top:0;left:0;right:0;height:26px;display:flex;align-items:center;
-  gap:6px;padding:0 8px;background:linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,0));
-  opacity:0;transition:opacity .15s ease}
-#root:hover #strip{opacity:1}
-#dot{width:7px;height:7px;border-radius:50%;background:#34c759;flex:none}
-#dot.waiting{background:#ff9f0a}
-#dot.frozen{background:#8e8e93}
-#host{flex:1;min-width:0;font-size:11px;line-height:1;color:rgba(255,255,255,.85);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#close{flex:none;width:16px;height:16px;border:none;border-radius:50%;
-  background:rgba(255,255,255,.22);color:#fff;font-size:11px;line-height:16px;
-  text-align:center;cursor:pointer;-webkit-app-region:no-drag;padding:0}
-#close:hover{background:rgba(255,90,80,.9)}
+#actions{position:absolute;top:8px;right:8px;display:flex;gap:6px;opacity:0;
+  transition:opacity .12s ease}
+#root:hover #actions,#root:focus-within #actions,#root.dragging #actions{opacity:1}
+#expand,#close{width:26px;height:26px;border:none;border-radius:13px;padding:0;
+  display:grid;place-items:center;cursor:pointer;color:#fff;
+  background:rgba(28,28,30,.55);backdrop-filter:blur(10px)}
+#expand:hover,#close:hover{background:rgba(28,28,30,.72)}
+#close:hover{background:rgba(215,0,21,.82)}
 #ptr{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
   background:rgba(255,255,255,.95);box-shadow:0 0 0 2px rgba(0,0,0,.45);
   opacity:0;pointer-events:none;transition:transform .14s ease-out,opacity .2s ease}
@@ -528,35 +692,89 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
     stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
     <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.7 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.7-3.9-9S9.4 5.6 12 3z"/>
   </svg></div>
-  <div id="strip"><span id="dot"></span><span id="host"></span>
-    <button id="close" title="Close" aria-label="Close">✕</button></div>
+  <div id="actions">
+    <button id="expand" title="Open in the side panel" aria-label="Open in the side panel">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h4v4"/><path d="M12 2 7.5 6.5"/><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v6A1.5 1.5 0 0 0 3.5 12h6A1.5 1.5 0 0 0 11 10.5V8"/></svg>
+    </button>
+    <button id="close" title="Close" aria-label="Close">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2 2 10"/></svg>
+    </button>
+  </div>
   <div id="ring"></div><div id="ptr"></div><div id="caret"></div><div id="scroll"></div>
 </div>
 <script>
 (function(){
-  var host=document.getElementById("host");
   var ph=document.getElementById("ph");
-  var dot=document.getElementById("dot");
   var ptr=document.getElementById("ptr");
   var ring=document.getElementById("ring");
   var caret=document.getElementById("caret");
   var scrollEl=document.getElementById("scroll");
+  var root=document.getElementById("root");
   var hideTimer=0;
-  host.textContent=${label};
-  document.getElementById("close").addEventListener("click",function(){
+  var label=${label};
+  var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,last=null,velocity={x:0,y:0};
+  document.getElementById("close").addEventListener("click",function(e){
+    e.stopPropagation();
     window.location.href="wuu-pip://close";
   });
+  document.getElementById("expand").addEventListener("click",function(e){
+    e.stopPropagation();
+    window.location.href="wuu-pip://expand";
+  });
   function place(el,x,y){el.style.transform="translate("+x+"px,"+y+"px)";}
+  function postDrag(phase,x,y,vx,vy){
+    var url="wuu-pip://drag?phase="+phase+"&x="+x+"&y="+y+"&vx="+vx+"&vy="+vy;
+    if(!dragAck){dragQueued=url;return;}
+    dragAck=false;
+    clearTimeout(ackTimer);
+    ackTimer=setTimeout(function(){window.wuuPipDragAck&&window.wuuPipDragAck();},80);
+    window.location.href=url;
+  }
+  window.wuuPipDragAck=function(){
+    dragAck=true;
+    clearTimeout(ackTimer);
+    if(!dragQueued)return;
+    var url=dragQueued;dragQueued=null;
+    postDragUrl(url);
+  };
+  function postDragUrl(url){
+    if(!dragAck){dragQueued=url;return;}
+    dragAck=false;
+    clearTimeout(ackTimer);
+    ackTimer=setTimeout(function(){window.wuuPipDragAck&&window.wuuPipDragAck();},80);
+    window.location.href=url;
+  }
+  root.addEventListener("pointerdown",function(e){
+    if(e.button!==0||(e.target&&e.target.closest&&e.target.closest("button")))return;
+    grabbing=true;
+    root.classList.add("dragging");
+    root.setPointerCapture(e.pointerId);
+    last={x:e.screenX,y:e.screenY,t:performance.now()};
+    velocity={x:0,y:0};
+    postDrag("start",e.screenX,e.screenY,0,0);
+  });
+  root.addEventListener("pointermove",function(e){
+    if(!grabbing||!last)return;
+    var now=performance.now(),dt=Math.max(1,now-last.t);
+    velocity={x:(e.screenX-last.x)/dt*1000,y:(e.screenY-last.y)/dt*1000};
+    last={x:e.screenX,y:e.screenY,t:now};
+    postDrag("move",e.screenX,e.screenY,velocity.x,velocity.y);
+  });
+  function endDrag(e){
+    if(!grabbing)return;
+    grabbing=false;
+    root.classList.remove("dragging");
+    postDrag("end",e.screenX,e.screenY,velocity.x,velocity.y);
+  }
+  root.addEventListener("pointerup",endDrag);
+  root.addEventListener("pointercancel",endDrag);
   window.wuuPipMount=function(m){
     ph.classList.toggle("gone",!!(m&&m.mounted));
   };
   window.wuuPipHost=function(h){
-    host.textContent=(h&&h.label)||"";
+    label=(h&&h.label)||label;
   };
-  window.wuuPipState=function(s){
-    dot.className=s.state==="waiting_confirmation"?"waiting":
-      (s.state==="stopped"||s.controller==="none"?"frozen":"");
-  };
+  window.wuuPipState=function(){};
   window.wuuPipInteract=function(it){
     var x=it.x||0,y=it.y||0;
     ptr.style.transition="transform .14s ease-out,opacity .2s ease";
