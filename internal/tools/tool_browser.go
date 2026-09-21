@@ -85,6 +85,28 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 					"type":        "boolean",
 					"description": "Used by action=set_visibility. true overlays the tab in the current session's right-side browser; false returns it to the hidden host.",
 				},
+				"node_id": map[string]any{
+					"type":        "integer",
+					"description": "Node from the latest observe. Used by click, type, and scroll. Ids are invalid after the next observe.",
+				},
+				"x": map[string]any{"type": "number", "description": "CSS pixel x. Used by click or scroll when node_id is omitted."},
+				"y": map[string]any{"type": "number", "description": "CSS pixel y. Used by click or scroll when node_id is omitted."},
+				"text": map[string]any{"type": "string", "description": "Used by action=type. Inserted into the focused node or the node_id target."},
+				"keys": map[string]any{
+					"description": "Used by action=key. One key name, such as Enter, or a list of key names.",
+					"oneOf": []any{
+						map[string]any{"type": "string"},
+						map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+				"dx": map[string]any{"type": "number", "description": "Horizontal wheel delta for action=scroll. Omit both dx and dy to scroll down one viewport."},
+				"dy": map[string]any{"type": "number", "description": "Vertical wheel delta for action=scroll. Positive scrolls down."},
+				"timeout_ms": map[string]any{"type": "integer", "description": "Used by action=wait_for. Bounded to 60000 milliseconds."},
+				"steps": map[string]any{
+					"type":        "array",
+					"description": "Used by action=sequence. One to 64 actions on this tab. Each step must set risk to safe, external_side_effect, or destructive; a non-safe step also requires confirmed=true.",
+					"items":       map[string]any{"type": "object"},
+				},
 			},
 			"required": []string{"action"},
 		},

@@ -755,6 +755,7 @@ export class BrowserHostCoordinator {
   private async observe(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
     const snapshot = await entry.view.webContents.debugger.sendCommand("DOMSnapshot.captureSnapshot", {
       computedStyles: [],
+      includeText: true,
     });
     const raw = interactableNodesFromSnapshot(snapshot);
     // Rebuild the node map from scratch: node_ids are only valid until the next
@@ -832,8 +833,11 @@ export class BrowserHostCoordinator {
       const point = await this.pointForNode(entry, params.node_id);
       [x, y] = point;
     }
-    const dx = typeof params.dx === "number" ? params.dx : 0;
-    const dy = typeof params.dy === "number" ? params.dy : 0;
+    if (typeof params.x === "number" && typeof params.y === "number") {
+      x = params.x;
+      y = params.y;
+    }
+    const wheel = wheelDeltas(params.dx, params.dy);
     const aimed = typeof params.node_id === "number" || (typeof params.x === "number" && typeof params.y === "number");
     if (aimed && !(await this.glideCursor(entry, x, y, false))) return { ok: true };
     await this.withAgentInput(entry, () =>
@@ -841,21 +845,27 @@ export class BrowserHostCoordinator {
         type: "mouseWheel",
         x,
         y,
-        deltaX: dx,
-        deltaY: dy,
+        deltaX: wheel.dx,
+        deltaY: wheel.dy,
       }),
     );
-    this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(dx, dy) });
+    this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(wheel.dx, wheel.dy) });
     return { ok: true };
   }
 
   private async key(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
-    const keys = String(params.keys ?? "");
-    if (!keys) throw new Error("key requires keys");
+    const chord = keyChord(params.keys);
+    if (!chord) throw new Error("key requires keys");
     const dbg = entry.view.webContents.debugger;
     await this.withAgentInput(entry, async () => {
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: keys });
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: keys });
+      for (const stroke of chord) {
+        const event = keyDispatch(stroke);
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...event });
+        if (event.text) {
+          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", text: event.text, key: event.key });
+        }
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...event });
+      }
     });
     return { ok: true };
   }
@@ -1058,7 +1068,13 @@ export class BrowserHostCoordinator {
     // CDP on a non-visible view returns a blank/stale image.
     const image = await entry.view.webContents.capturePage(undefined, { stayHidden: true });
     const size = image.getSize();
-    this.deps.writePng(destPath, image.toPNG());
+    const png = image.toPNG();
+    // A hidden view can report a successful capture before it has a frame.
+    // Writing that result would replace a real preview with an empty file.
+    if (size.width <= 0 || size.height <= 0 || png.length === 0) {
+      throw new Error("screenshot captured an empty frame");
+    }
+    this.deps.writePng(destPath, png);
     return { width: size.width, height: size.height, path: destPath };
   }
 
@@ -1260,6 +1276,7 @@ export function interactableNodesFromSnapshot(snapshot: unknown): RawInteractabl
     const nodeName = numberArray(nodes.nodeName);
     const backendNodeId = numberArray(nodes.backendNodeId);
     const attributes = Array.isArray(nodes.attributes) ? nodes.attributes : [];
+    const textByNode = snapshotTextByNode(document, str);
     const inputValueByNode = new Map<number, string>();
     const iv = nodes.inputValue;
     if (isRecord(iv)) {
@@ -1283,7 +1300,7 @@ export function interactableNodesFromSnapshot(snapshot: unknown): RawInteractabl
       out.push({
         backendNodeId: backend,
         role: roleFor(tag, attrs),
-        name: nameFor(tag, attrs, inputValueByNode.get(idx) ?? ""),
+        name: nameFor(tag, attrs, inputValueByNode.get(idx) ?? "", textByNode.get(idx) ?? ""),
         value: valueFor(attrs, inputValueByNode.get(idx) ?? ""),
         bounds: [Math.round(x), Math.round(y), Math.round(w), Math.round(h)],
       });
@@ -1386,7 +1403,45 @@ function roleFor(tag: string, attrs: Record<string, string>): string {
   }
 }
 
-function nameFor(tag: string, attrs: Record<string, string>, inputValue: string): string {
+function snapshotTextByNode(document: Record<string, unknown>, str: (index: unknown) => string): Map<number, string> {
+  const nodes = isRecord(document.nodes) ? document.nodes : {};
+  const layout = isRecord(document.layout) ? document.layout : {};
+  const nodeIndex = numberArray(layout.nodeIndex);
+  const parentIndex = numberArray(nodes.parentIndex);
+  const textIds = Array.isArray(nodes.textIds) ? nodes.textIds : [];
+  const textValues = isRecord(document.textBoxes) ? document.textBoxes : {};
+  const layoutIndex = numberArray(textValues.layoutIndex);
+  const start = numberArray(textValues.start);
+  const length = numberArray(textValues.length);
+  const own = new Map<number, string>();
+  for (let box = 0; box < layoutIndex.length; box++) {
+    const nodeSlot = nodeIndex[layoutIndex[box]];
+    if (typeof nodeSlot !== "number") continue;
+    const from = start[box] ?? 0;
+    const piece = str(textIds[nodeSlot]).slice(from, from + (length[box] ?? 0)).trim();
+    if (!piece) continue;
+    const current = own.get(nodeSlot);
+    own.set(nodeSlot, current ? `${current} ${piece}` : piece);
+  }
+  // Text lives on the text node, while the clickable element is its ancestor.
+  const textByNode = new Map<number, string>();
+  for (const [nodeSlot, piece] of own) {
+    const seen = new Set<number>();
+    let current = nodeSlot;
+    while (current >= 0 && !seen.has(current)) {
+      seen.add(current);
+      const currentText = textByNode.get(current);
+      if (!currentText) textByNode.set(current, piece);
+      else if (!currentText.includes(piece)) textByNode.set(current, `${currentText} ${piece}`);
+      const parent = parentIndex[current];
+      if (typeof parent !== "number" || parent === current) break;
+      current = parent;
+    }
+  }
+  return textByNode;
+}
+
+function nameFor(tag: string, attrs: Record<string, string>, inputValue: string, text: string): string {
   return (
     attrs["aria-label"] ||
     attrs.placeholder ||
@@ -1394,8 +1449,73 @@ function nameFor(tag: string, attrs: Record<string, string>, inputValue: string)
     attrs.title ||
     attrs.name ||
     (tag === "input" && attrs.type === "submit" ? inputValue : "") ||
+    text.trim() ||
     ""
   );
+}
+
+// A bare scroll means "down one viewport", not a zero-length wheel event.
+export function wheelDeltas(dx: unknown, dy: unknown): { dx: number; dy: number } {
+  const x = typeof dx === "number" ? dx : 0;
+  const y = typeof dy === "number" ? dy : 0;
+  if (x === 0 && y === 0) return { dx: 0, dy: 600 };
+  return { dx: x, dy: y };
+}
+
+const NAMED_KEYS: Record<string, { code: string; keyCode: number; text?: string }> = {
+  Enter: { code: "Enter", keyCode: 13, text: "\r" },
+  Tab: { code: "Tab", keyCode: 9 },
+  Escape: { code: "Escape", keyCode: 27 },
+  Backspace: { code: "Backspace", keyCode: 8 },
+  Delete: { code: "Delete", keyCode: 46 },
+  ArrowUp: { code: "ArrowUp", keyCode: 38 },
+  ArrowDown: { code: "ArrowDown", keyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
+  ArrowRight: { code: "ArrowRight", keyCode: 39 },
+  Home: { code: "Home", keyCode: 36 },
+  End: { code: "End", keyCode: 35 },
+  PageUp: { code: "PageUp", keyCode: 33 },
+  PageDown: { code: "PageDown", keyCode: 34 },
+  " ": { code: "Space", keyCode: 32, text: " " },
+};
+
+// Accept one key or a list. Stringifying an array would send its characters
+// instead of the named key.
+export function keyChord(raw: unknown): string[] | undefined {
+  const values = Array.isArray(raw) ? raw : [raw];
+  const keys = values.filter((value): value is string => typeof value === "string" && value.length > 0);
+  return keys.length > 0 ? keys : undefined;
+}
+
+export function keyDispatch(key: string): {
+  key: string;
+  code: string;
+  windowsVirtualKeyCode: number;
+  nativeVirtualKeyCode: number;
+  text?: string;
+} {
+  const named = NAMED_KEYS[key];
+  if (named) {
+    return {
+      key,
+      code: named.code,
+      windowsVirtualKeyCode: named.keyCode,
+      nativeVirtualKeyCode: named.keyCode,
+      ...(named.text ? { text: named.text } : {}),
+    };
+  }
+  if (key.length === 1) {
+    const upper = key.toUpperCase();
+    const letter = upper >= "A" && upper <= "Z" ? upper.charCodeAt(0) : key.charCodeAt(0);
+    return {
+      key,
+      code: upper >= "A" && upper <= "Z" ? `Key${upper}` : "",
+      windowsVirtualKeyCode: letter,
+      nativeVirtualKeyCode: letter,
+      text: key,
+    };
+  }
+  return { key, code: "", windowsVirtualKeyCode: 0, nativeVirtualKeyCode: 0 };
 }
 
 export function valueFor(attrs: Record<string, string>, inputValue: string): string {

@@ -16,8 +16,11 @@ import {
   browserPermissionDecision,
   configureBrowserProxy,
   interactableNodesFromSnapshot,
+  keyChord,
+  keyDispatch,
   tabKey,
   valueFor,
+  wheelDeltas,
 } from "./browserHostWindows";
 
 let nextWebContentsID = 1;
@@ -49,6 +52,7 @@ class FakeView implements BrowserViewHandle {
   readonly responders = new Map<string, (params?: Record<string, unknown>) => Record<string, unknown>>();
   readonly loadedURLs: string[] = [];
   captureCount = 0;
+  captureEmpty = false;
   boundsSet: Rectangle | undefined;
   visibleState: boolean | undefined;
   backgroundThrottling = true;
@@ -137,8 +141,8 @@ class FakeView implements BrowserViewHandle {
     capturePage: async (): Promise<BrowserNativeImageHandle> => {
       this.captureCount += 1;
       return {
-        toPNG: () => Buffer.from("fake-png"),
-        getSize: () => ({ width: 800, height: 600 }),
+        toPNG: () => (this.captureEmpty ? Buffer.alloc(0) : Buffer.from("fake-png")),
+        getSize: () => (this.captureEmpty ? { width: 0, height: 0 } : { width: 800, height: 600 }),
       };
     },
     close: () => {
@@ -268,24 +272,31 @@ function twoNodeSnapshot(): Record<string, unknown> {
       "Submit", // 3
       "href", // 4
       "https://x.test/", // 5
+      "#text", // 6 nodeName for the link's text node
+      "Release notes", // 7 text content
     ],
     documents: [
       {
         nodes: {
-          nodeName: [0, 1],
-          backendNodeId: [100, 200],
+          nodeName: [0, 1, 6],
+          parentIndex: [-1, -1, 1],
+          backendNodeId: [100, 200, 201],
           attributes: [
             [2, 3], // node 0: aria-label=Submit
             [4, 5], // node 1: href=https://x.test/
+            [],
           ],
+          textIds: [-1, -1, 7],
         },
         layout: {
-          nodeIndex: [0, 1],
+          nodeIndex: [0, 1, 2],
           bounds: [
             [5, 6, 50, 20],
             [7, 8, 60, 18],
+            [7, 8, 60, 18],
           ],
         },
+        textBoxes: { layoutIndex: [2], start: [0], length: [13] },
       },
     ],
   };
@@ -511,6 +522,19 @@ describe("BrowserHostCoordinator screenshot", () => {
       height: 600,
       path: "/artifacts/shot.png",
     });
+  });
+
+  it("rejects an empty capture instead of writing it", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    harness.views[0].captureEmpty = true;
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/screenshot", { workdir: "/repo", tab_id: "t1", dest_path: "/artifacts/shot.png" }, "shot-empty"),
+    );
+
+    expect(harness.writtenPng.has("/artifacts/shot.png")).toBe(false);
+    expect(harness.reply.reject).toHaveBeenLastCalledWith("shot-empty", expect.stringContaining("empty frame"));
   });
 });
 
@@ -788,7 +812,17 @@ describe("pure helpers", () => {
     const nodes = interactableNodesFromSnapshot(twoNodeSnapshot());
     expect(nodes).toHaveLength(2);
     expect(nodes[0]).toMatchObject({ backendNodeId: 100, role: "button", name: "Submit", bounds: [5, 6, 50, 20] });
-    expect(nodes[1]).toMatchObject({ backendNodeId: 200, role: "link" });
+    expect(nodes[1]).toMatchObject({ backendNodeId: 200, role: "link", name: "Release notes" });
+  });
+
+  it("scrolls down one viewport when no wheel delta is given", () => {
+    expect(wheelDeltas(undefined, undefined)).toEqual({ dx: 0, dy: 600 });
+    expect(wheelDeltas(0, -120)).toEqual({ dx: 0, dy: -120 });
+  });
+
+  it("dispatches Enter as a real key, including when passed as a list", () => {
+    expect(keyChord(["Enter"])).toEqual(["Enter"]);
+    expect(keyDispatch("Enter")).toMatchObject({ key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   });
 
   it("drops zero-area and non-interactable nodes", () => {
@@ -971,8 +1005,6 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/cdp", { workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 } }, "click-1"),
     );
-    // scroll without a node_id dispatches at 0,0 (existing behavior), and the
-    // hint must mirror the point the event was actually dispatched at.
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/cdp", { workdir: "/repo", tab_id: "t1", method: "scroll", params: { x: 10, y: 10, dx: 0, dy: 240 } }, "scroll-1"),
     );
@@ -989,7 +1021,7 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
 
     expect(hints).toEqual([
       { workdir: "/repo", tabID: "t1", hint: { kind: "click", x: 40, y: 60 } },
-      { workdir: "/repo", tabID: "t1", hint: { kind: "scroll", x: 0, y: 0, direction: "down" } },
+      { workdir: "/repo", tabID: "t1", hint: { kind: "scroll", x: 10, y: 10, direction: "down" } },
       { workdir: "/repo", tabID: "t1", hint: { kind: "type", x: 20, y: 30 } },
     ]);
   });

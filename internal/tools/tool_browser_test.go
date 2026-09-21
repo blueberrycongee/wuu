@@ -160,6 +160,16 @@ func browserCall(action string, fields map[string]any) providers.ToolCall {
 	return providers.ToolCall{ID: action + "-1", Name: browserToolName, Arguments: string(args)}
 }
 
+func TestBrowserDefinitionPublishesInputFields(t *testing.T) {
+	tool := NewBrowserTool(&Env{})
+	props, _ := tool.Definition().InputSchema["properties"].(map[string]any)
+	for _, name := range []string{"node_id", "text", "keys", "dx", "dy", "steps"} {
+		if _, ok := props[name]; !ok {
+			t.Fatalf("browser schema omits %s", name)
+		}
+	}
+}
+
 func TestBrowserToolIsDirectOnDefaultSurface(t *testing.T) {
 	kit, err := New(t.TempDir())
 	if err != nil {
