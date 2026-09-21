@@ -272,12 +272,10 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
     await settle();
 
-    // viewport 1000×500 contained in the 260×170 card: scale 0.26, letterboxed.
+    // The page lays out at the card size, not a scaled-down desktop viewport.
     expect(host.mounts).toHaveLength(1);
-    expect(host.mounts[0].zoom).toBeCloseTo(0.26);
-    expect(host.mounts[0].rect.width).toBeCloseTo(260);
-    expect(host.mounts[0].rect.height).toBeCloseTo(130);
-    expect(host.mounts[0].rect.y).toBeCloseTo(20);
+    expect(host.mounts[0].zoom).toBe(1);
+    expect(host.mounts[0].rect).toEqual({ x: 0, y: 0, width: 260, height: 170 });
     expect(win.visible).toBe(true);
     expect(sink.events.some((e) => e.event === "ready")).toBe(true);
     expect(overlay.executed.some((code) => code.includes('"mounted":true'))).toBe(true);
@@ -362,7 +360,8 @@ describe("BrowserPiPSurface", () => {
     win.emit("resized");
     expect(overlay.boundsSet.at(-1)).toEqual({ x: 0, y: 0, width: 520, height: 340 });
     expect(host.relayouts).toHaveLength(1);
-    expect(host.relayouts[0].zoom).toBeCloseTo(0.52);
+    expect(host.relayouts[0].zoom).toBe(1);
+    expect(host.relayouts[0].rect).toEqual({ x: 0, y: 0, width: 520, height: 340 });
     surface.stop();
   });
 
@@ -376,9 +375,8 @@ describe("BrowserPiPSurface", () => {
     host.emitInteraction({ kind: "click", x: 500, y: 250 });
     const push = overlay.executed.find((code) => code.includes("wuuPipInteract"));
     expect(push).toBeDefined();
-    // contain rect: scale 0.26, offset (0,20) → (130, 85).
-    expect(push).toContain('"x":130');
-    expect(push).toContain('"y":85');
+    expect(push).toContain('"x":500');
+    expect(push).toContain('"y":250');
     surface.stop();
   });
 
@@ -432,6 +430,30 @@ describe("BrowserPiPSurface", () => {
     const html = browserPiPOverlayHTML("example.com");
     expect(html).not.toMatch(/chatgpt|openai|claude|anthropic/i);
     expect(html).not.toContain("-webkit-app-region:drag");
+    expect(html).toContain('data-resize="se"');
+  });
+
+  it("grows the card from a corner and lays the page out at the new size", () => {
+    const { surface, win, overlay, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    surface.setHostLayout({
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    });
+    host.relayouts.length = 0;
+    overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=0&y=0");
+    overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=-40&y=-30");
+    expect(win.bounds).toMatchObject({ x: 486, y: 296, width: 290, height: 280 });
+    expect(host.relayouts.at(-1)).toMatchObject({ zoom: 1, rect: { x: 0, y: 0, width: 290, height: 280 } });
+    surface.setHostLayout({
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    });
+    expect(win.bounds).toMatchObject({ width: 290, height: 280 });
+    surface.stop();
   });
 
   it("snaps a drag to the nearest corner of the conversation column", () => {

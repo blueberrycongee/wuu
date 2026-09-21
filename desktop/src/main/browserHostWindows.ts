@@ -394,6 +394,9 @@ export class BrowserHostCoordinator {
     const wasPanel = entry.inPanel;
     entry.inPanel = false;
     entry.presented = false;
+    // The card lays the page out at its own size. Handing the view back
+    // must not leave that zoom on the hidden host.
+    entry.view.webContents.setZoomFactor(1);
     entry.view.setBounds(restore);
     this.applyEntryActivity(entry);
     if (wasPanel) this.rendererSink?.presented();

@@ -3,17 +3,24 @@ import type { ActivitySession } from "../shared/protocol";
 import { appShellWebPreferences } from "./appShellGuards";
 import {
   browserPiPAnchors,
-  browserPiPCardSize,
   browserPiPClampOrigin,
   browserPiPDragCommand,
+  browserPiPFitCard,
   browserPiPNearestAnchor,
   browserPiPOrigin,
+  browserPiPResizeCommand,
+  browserPiPResizeRect,
   browserPiPSnapEase,
   browserPiPSnapPoint,
+  PIP_ANCHOR_MARGIN,
+  PIP_CARD_SIZE,
+  PIP_MIN_SIZE,
   PIP_SNAP_MS,
   type BrowserPiPScreenLayout,
   type PipAlignment,
   type PipPoint,
+  type PipRect,
+  type PipResizeEdge,
 } from "./browserPiPPlacement";
 import type {
   BrowserHostCoordinator,
@@ -55,10 +62,8 @@ export function pipHostname(url: string): string {
   return match?.[1] ?? (url.trim() || "about:blank");
 }
 
-// Contain-fit geometry: shrink the tab's layout viewport into the PiP content
-// box without changing it. scale doubles as the UI zoom factor — view DIP
-// size = viewport × scale, so CSS layout stays at viewport size and every
-// CDP coordinate the agent uses keeps its meaning.
+// Letterbox a fixed viewport into a box. The live card does not use this:
+// the page lays out at the card's own size so it reflows when the card resizes.
 export function pipContainRect(
   contentW: number,
   contentH: number,
@@ -74,14 +79,10 @@ export function pipContainRect(
   return { x: (boxW - width) / 2, y: (boxH - height) / 2, width, height, scale };
 }
 
-// A tab whose real bounds were never established (hidden host, zero-size
-// view) still gets a deterministic viewport for contain math.
-const PIP_FALLBACK_VIEWPORT = { width: 1280, height: 800 };
-
 // ---------------------------------------------------------------------------
 // The browser PiP surface: an Electron panel window presenting the REAL tab
-// view, reparented off the hidden host and zoom-fitted into the window —
-// the same surface the agent acts on, never a re-encoded frame stream. A
+// view, reparented off the hidden host. The view fills the card at zoom 1,
+// so the page's layout viewport is the card and agent coordinates match it. A
 // transparent overlay view above it draws the chrome strip, the interaction
 // effects, and the frosted placeholder, and swallows pointer input so the
 // preview can never steal focus or become an input target.
@@ -137,7 +138,6 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private mounted = false;
   private announced = false;
   private restoreBounds: Rectangle | undefined;
-  private viewport: { width: number; height: number } = PIP_FALLBACK_VIEWPORT;
   private visible = false;
   private stopped = false;
   private activity: ActivitySession;
@@ -151,7 +151,10 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private screenLayout: BrowserPiPScreenLayout | null | undefined = undefined;
   private hostParent: { isDestroyed(): boolean } | null = null;
   private dragging = false;
+  private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
+  private userSize: { width: number; height: number } | undefined;
+  private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint } | undefined;
   private snapTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly deps: BrowserPiPSurfaceDeps) {
@@ -176,6 +179,12 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         const drag = browserPiPDragCommand(rawURL);
         if (drag) {
           this.handleDrag(drag);
+          this.execute("window.wuuPipDragAck?.()");
+          return;
+        }
+        const resize = browserPiPResizeCommand(rawURL);
+        if (resize) {
+          this.handleResize(resize);
           this.execute("window.wuuPipDragAck?.()");
           return;
         }
@@ -286,7 +295,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.screenLayout = layout;
-    if (!this.dragging) this.placeCommitted();
+    if (!this.dragging && !this.resizing) this.placeCommitted();
     this.applyVisibility();
   }
 
@@ -348,11 +357,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.reportTabGoneUnlessStarting();
       return;
     }
-    this.viewport = {
-      width: bounds.width > 0 ? bounds.width : PIP_FALLBACK_VIEWPORT.width,
-      height: bounds.height > 0 ? bounds.height : PIP_FALLBACK_VIEWPORT.height,
-    };
-    const fit = this.containRect();
+    const fit = this.contentRect();
     const restore = host.mountTabOnWindow(
       workdir,
       tabID,
@@ -399,7 +404,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const b = win.getBounds();
     this.overlay?.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
     if (!this.mounted) return;
-    const fit = this.containRect();
+    const fit = this.contentRect();
     this.deps.host.relayoutMountedTab(
       this.deps.workdir,
       this.deps.tabID,
@@ -409,9 +414,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     );
   }
 
-  private containRect(): { x: number; y: number; width: number; height: number; scale: number } {
+  private contentRect(): { x: number; y: number; width: number; height: number; scale: number } {
     const b = this.win?.getBounds() ?? this.deps.bounds;
-    return pipContainRect(this.viewport.width, this.viewport.height, b.width, b.height);
+    return { x: 0, y: 0, width: Math.max(0, b.width), height: Math.max(0, b.height), scale: 1 };
   }
 
   private placeCommitted(): void {
@@ -419,7 +424,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const win = this.win;
     if (!layout || !win || win.isDestroyed()) return;
     this.cancelSnap();
-    const card = browserPiPCardSize(layout.host);
+    const card = browserPiPFitCard(layout.host, this.userSize ?? PIP_CARD_SIZE);
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
@@ -433,6 +438,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const bounds = win.getBounds();
     if (command.phase === "start") {
       this.cancelSnap();
+      this.resizing = false;
+      this.resizeGesture = undefined;
       this.dragging = true;
       this.grab = { x: command.x - bounds.x, y: command.y - bounds.y };
       return;
@@ -467,6 +474,63 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     this.animateTo(browserPiPOrigin(nearest, card), card, { x: command.vx, y: command.vy });
   }
 
+  private handleResize(command: { phase: "start" | "move" | "end"; edge: PipResizeEdge; x: number; y: number }): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    if (command.phase === "start") {
+      this.cancelSnap();
+      this.dragging = false;
+      this.resizing = true;
+      const bounds = win.getBounds();
+      this.resizeGesture = {
+        edge: command.edge,
+        start: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+        pointer: { x: command.x, y: command.y },
+      };
+      return;
+    }
+    const gesture = this.resizeGesture;
+    if (!this.resizing || !gesture) return;
+    const frame = this.resizeFrame();
+    const next = frame
+      ? browserPiPResizeRect(
+        gesture.start,
+        gesture.edge,
+        { x: command.x - gesture.pointer.x, y: command.y - gesture.pointer.y },
+        { min: PIP_MIN_SIZE, frame },
+      )
+      : gesture.start;
+    this.applyBounds(next);
+    if (command.phase === "move") return;
+    this.resizing = false;
+    this.resizeGesture = undefined;
+    const settled = win.getBounds();
+    this.userSize = { width: settled.width, height: settled.height };
+    const layout = this.screenLayout;
+    if (!layout) return;
+    const nearest = browserPiPNearestAnchor(
+      browserPiPAnchors(layout.host, layout.obstacles, this.userSize),
+      { x: settled.x, y: settled.y },
+      this.userSize,
+      { x: 0, y: 0 },
+    );
+    if (nearest) this.alignment = nearest.alignment;
+  }
+
+  // The card may occupy the column inside the same margin the corners use.
+  private resizeFrame(): PipRect | undefined {
+    const layout = this.screenLayout;
+    if (!layout) return undefined;
+    const innerW = Math.max(1, layout.host.width - PIP_ANCHOR_MARGIN * 2);
+    const innerH = Math.max(1, layout.host.height - PIP_ANCHOR_MARGIN * 2);
+    return {
+      x: layout.host.x + PIP_ANCHOR_MARGIN,
+      y: layout.host.y + PIP_ANCHOR_MARGIN,
+      width: innerW,
+      height: innerH,
+    };
+  }
+
   private animateTo(origin: PipPoint, card: { width: number; height: number }, velocity: PipPoint): void {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
@@ -477,7 +541,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const frame = (): void => {
       this.snapTimer = undefined;
       const current = this.win;
-      if (!current || current.isDestroyed() || this.dragging) return;
+      if (!current || current.isDestroyed() || this.dragging || this.resizing) return;
       const t = browserPiPSnapEase((Date.now() - startedAt) / PIP_SNAP_MS);
       const point = browserPiPSnapPoint(from, origin, velocity, t);
       this.applyBounds({ x: point.x, y: point.y, width: card.width, height: card.height });
@@ -541,12 +605,12 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   private forwardInteraction(hint: BrowserInteractionHint): void {
     if (!this.mounted) return;
-    const fit = this.containRect();
+    // The view fills the card at zoom 1, so page CSS pixels are window pixels.
     this.execute(
       `window.wuuPipInteract?.(${JSON.stringify({
         kind: hint.kind,
-        x: fit.x + hint.x * fit.scale,
-        y: fit.y + hint.y * fit.scale,
+        x: hint.x,
+        y: hint.y,
         direction: hint.direction ?? "",
       })})`,
     );
@@ -578,8 +642,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       acceptFirstMouse: true,
       show: false,
       type: "panel",
-      minWidth: 120,
-      minHeight: 120,
+      minWidth: 80,
+      minHeight: 64,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -667,7 +731,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
 #ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   background:#f4f4f5;color:rgba(28,28,30,.45);transition:opacity .2s ease}
 #ph.gone{opacity:0;pointer-events:none}
-#actions{position:absolute;top:8px;right:8px;display:flex;gap:6px;opacity:0;
+#actions{position:absolute;top:8px;right:8px;z-index:6;display:flex;gap:6px;opacity:0;
   transition:opacity .12s ease}
 #root:hover #actions,#root:focus-within #actions,#root.dragging #actions{opacity:1}
 #expand,#close{width:26px;height:26px;border:none;border-radius:13px;padding:0;
@@ -685,6 +749,16 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
   box-shadow:0 0 0 1px rgba(0,0,0,.4);opacity:0;pointer-events:none}
 #scroll{position:absolute;font-size:14px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6);
   opacity:0;pointer-events:none;transform:translate(-50%,-50%)}
+[data-resize]{position:absolute;z-index:4;touch-action:none}
+[data-resize="n"],[data-resize="s"]{left:14px;right:14px;height:8px;cursor:ns-resize}
+[data-resize="n"]{top:0}[data-resize="s"]{bottom:0}
+[data-resize="e"],[data-resize="w"]{top:14px;bottom:14px;width:8px;cursor:ew-resize}
+[data-resize="e"]{right:0}[data-resize="w"]{left:0}
+[data-resize="nw"],[data-resize="ne"],[data-resize="sw"],[data-resize="se"]{width:14px;height:14px}
+[data-resize="nw"]{top:0;left:0;cursor:nwse-resize}
+[data-resize="se"]{bottom:0;right:0;cursor:nwse-resize}
+[data-resize="ne"]{top:0;right:0;cursor:nesw-resize}
+[data-resize="sw"]{bottom:0;left:0;cursor:nesw-resize}
 </style></head>
 <body>
 <div id="root">
@@ -701,6 +775,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
     </button>
   </div>
   <div id="ring"></div><div id="ptr"></div><div id="caret"></div><div id="scroll"></div>
+  <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
+  <div data-resize="w"></div><div data-resize="e"></div>
+  <div data-resize="sw"></div><div data-resize="s"></div><div data-resize="se"></div>
 </div>
 <script>
 (function(){
@@ -712,7 +789,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
   var root=document.getElementById("root");
   var hideTimer=0;
   var label=${label};
-  var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,last=null,velocity={x:0,y:0};
+  var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,resizing=false,resizeEdge="",last=null,velocity={x:0,y:0};
   document.getElementById("close").addEventListener("click",function(e){
     e.stopPropagation();
     window.location.href="wuu-pip://close";
@@ -723,7 +800,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
   });
   function place(el,x,y){el.style.transform="translate("+x+"px,"+y+"px)";}
   function postDrag(phase,x,y,vx,vy){
-    var url="wuu-pip://drag?phase="+phase+"&x="+x+"&y="+y+"&vx="+vx+"&vy="+vy;
+    postUrl("wuu-pip://drag?phase="+phase+"&x="+x+"&y="+y+"&vx="+vx+"&vy="+vy);
+  }
+  function postResize(phase,edge,x,y){
+    postUrl("wuu-pip://resize?phase="+phase+"&edge="+edge+"&x="+x+"&y="+y);
+  }
+  function postUrl(url){
     if(!dragAck){dragQueued=url;return;}
     dragAck=false;
     clearTimeout(ackTimer);
@@ -737,15 +819,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
     var url=dragQueued;dragQueued=null;
     postDragUrl(url);
   };
-  function postDragUrl(url){
-    if(!dragAck){dragQueued=url;return;}
-    dragAck=false;
-    clearTimeout(ackTimer);
-    ackTimer=setTimeout(function(){window.wuuPipDragAck&&window.wuuPipDragAck();},80);
-    window.location.href=url;
-  }
+  function postDragUrl(url){postUrl(url);}
   root.addEventListener("pointerdown",function(e){
-    if(e.button!==0||(e.target&&e.target.closest&&e.target.closest("button")))return;
+    if(e.button!==0||(e.target&&e.target.closest&&(e.target.closest("button")||e.target.closest("[data-resize]"))))return;
     grabbing=true;
     root.classList.add("dragging");
     root.setPointerCapture(e.pointerId);
@@ -753,7 +829,20 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
     velocity={x:0,y:0};
     postDrag("start",e.screenX,e.screenY,0,0);
   });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-resize]"),function(el){
+    el.addEventListener("pointerdown",function(e){
+      if(e.button!==0)return;
+      e.stopPropagation();
+      resizing=true;
+      grabbing=false;
+      resizeEdge=el.getAttribute("data-resize")||"";
+      root.classList.add("resizing");
+      el.setPointerCapture(e.pointerId);
+      postResize("start",resizeEdge,e.screenX,e.screenY);
+    });
+  });
   root.addEventListener("pointermove",function(e){
+    if(resizing){postResize("move",resizeEdge,e.screenX,e.screenY);return;}
     if(!grabbing||!last)return;
     var now=performance.now(),dt=Math.max(1,now-last.t);
     velocity={x:(e.screenX-last.x)/dt*1000,y:(e.screenY-last.y)/dt*1000};
@@ -761,6 +850,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
     postDrag("move",e.screenX,e.screenY,velocity.x,velocity.y);
   });
   function endDrag(e){
+    if(resizing){
+      resizing=false;
+      root.classList.remove("resizing");
+      postResize("end",resizeEdge,e.screenX,e.screenY);
+      return;
+    }
     if(!grabbing)return;
     grabbing=false;
     root.classList.remove("dragging");

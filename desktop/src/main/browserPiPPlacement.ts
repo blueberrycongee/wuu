@@ -11,8 +11,11 @@
 export const PIP_ANCHOR_MARGIN = 24;
 export const PIP_OBSTACLE_PAD = 12;
 export const PIP_CARD_SIZE = { width: 250, height: 250 };
+export const PIP_MIN_SIZE = { width: 160, height: 120 };
 export const PIP_SNAP_LOOKAHEAD_S = 0.12;
 export const PIP_SNAP_MS = 280;
+export const PIP_RESIZE_EDGES = ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const;
+export type PipResizeEdge = (typeof PIP_RESIZE_EDGES)[number];
 
 const OBSTACLE_ITERATIONS = 6;
 const OVERLAP_BIAS = 1e9;
@@ -57,6 +60,17 @@ interface LocalRect {
   bottom: number;
   width: number;
   height: number;
+}
+
+// Keep a chosen card size, shrinking each axis only when the column cannot
+// hold it. A later wider column grows back up to the chosen size.
+export function browserPiPFitCard(host: PipRect, preferred: PipSize, min: PipSize = PIP_MIN_SIZE): PipSize {
+  const maxW = Math.max(1, host.width - PIP_ANCHOR_MARGIN * 2);
+  const maxH = Math.max(1, host.height - PIP_ANCHOR_MARGIN * 2);
+  return {
+    width: Math.round(clamp(preferred.width, Math.min(min.width, maxW), maxW)),
+    height: Math.round(clamp(preferred.height, Math.min(min.height, maxH), maxH)),
+  };
 }
 
 export function browserPiPCardSize(host: PipRect, preferred: PipSize = PIP_CARD_SIZE): PipSize {
@@ -117,6 +131,48 @@ export function browserPiPNearestAnchor(
   return best;
 }
 
+// The edge under the pointer moves. The opposite edges stay put, then the
+// result is pushed back inside `frame` (the conversation column, or the
+// screen when the column is not known yet).
+export function browserPiPResizeRect(
+  start: PipRect,
+  edge: PipResizeEdge,
+  pointerDelta: PipPoint,
+  limits: { min: PipSize; frame: PipRect },
+): PipRect {
+  const right = start.x + start.width;
+  const bottom = start.y + start.height;
+  const maxW = Math.max(1, limits.frame.width);
+  const maxH = Math.max(1, limits.frame.height);
+  const minW = Math.min(limits.min.width, maxW);
+  const minH = Math.min(limits.min.height, maxH);
+  let width = start.width;
+  let height = start.height;
+  if (edge.includes("e")) width = start.width + pointerDelta.x;
+  if (edge.includes("s")) height = start.height + pointerDelta.y;
+  if (edge.includes("w")) width = start.width - pointerDelta.x;
+  if (edge.includes("n")) height = start.height - pointerDelta.y;
+  width = clamp(width, minW, maxW);
+  height = clamp(height, minH, maxH);
+  return browserPiPClampRect({
+    x: edge.includes("w") ? right - width : start.x,
+    y: edge.includes("n") ? bottom - height : start.y,
+    width,
+    height,
+  }, limits.frame);
+}
+
+export function browserPiPClampRect(rect: PipRect, frame: PipRect): PipRect {
+  const width = Math.min(rect.width, Math.max(1, frame.width));
+  const height = Math.min(rect.height, Math.max(1, frame.height));
+  return {
+    width,
+    height,
+    x: clamp(rect.x, frame.x, frame.x + frame.width - width),
+    y: clamp(rect.y, frame.y, frame.y + frame.height - height),
+  };
+}
+
 export function browserPiPClampOrigin(origin: PipPoint, size: PipSize, frame: PipRect): PipPoint {
   return {
     x: clamp(origin.x, frame.x, Math.max(frame.x, frame.x + frame.width - size.width)),
@@ -166,6 +222,29 @@ export function browserPiPHostClient(payload: unknown): { host: PipRect; obstacl
     })
     : [];
   return { host, obstacles };
+}
+
+export function browserPiPResizeCommand(url: string): {
+  phase: "start" | "move" | "end";
+  edge: PipResizeEdge;
+  x: number;
+  y: number;
+} | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "wuu-pip:" || parsed.hostname !== "resize") return null;
+  const phase = parsed.searchParams.get("phase");
+  const edge = parsed.searchParams.get("edge");
+  if (phase !== "start" && phase !== "move" && phase !== "end") return null;
+  if (!edge || !(PIP_RESIZE_EDGES as readonly string[]).includes(edge)) return null;
+  const x = Number(parsed.searchParams.get("x"));
+  const y = Number(parsed.searchParams.get("y"));
+  if (![x, y].every(Number.isFinite)) return null;
+  return { phase, edge: edge as PipResizeEdge, x, y };
 }
 
 export function browserPiPDragCommand(url: string): {
