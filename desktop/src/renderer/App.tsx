@@ -84,7 +84,10 @@ import {
 import { QueryHistoryRail } from "./QueryHistoryRail";
 import { UserQuestionCard } from "./UserQuestionCard";
 import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
-import { useConversationScrollState } from "./ConversationScrollState";
+import {
+  useConversationScrollState,
+  type ConversationScrollSnapshot,
+} from "./ConversationScrollState";
 import { PullToNewSession } from "./PullToNewSession";
 import { useConversationSearch } from "./ConversationSearchState";
 import {
@@ -2495,13 +2498,9 @@ export function App(): JSX.Element {
   // Captures the user's scroll position when they open the inline edit on a
   // historical message so cancel can put them back exactly where they were
   // instead of dropping them at the latest content via the resize observer.
-  const preEditScrollSnapshotRef = useRef<
-    | {
-        scrollTop: number;
-        autoFollow: boolean;
-      }
-    | undefined
-  >(undefined);
+  const preEditScrollSnapshotRef = useRef<ConversationScrollSnapshot | undefined>(
+    undefined,
+  );
   const rememberConversationScrollForEdit = useCallback((): void => {
     preEditScrollSnapshotRef.current = captureConversationScrollPosition();
   }, [captureConversationScrollPosition]);

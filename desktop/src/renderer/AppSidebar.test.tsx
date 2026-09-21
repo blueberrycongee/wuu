@@ -271,7 +271,7 @@ describe("AppSidebar layout", () => {
       title: "Unread session",
       cwd: "/repo/wuu",
       workspace_id: "project-1",
-      status: "completed",
+      status: "idle",
       pinned: false,
       archived: false,
       created_at: "2026-09-17T00:00:00Z",
@@ -318,7 +318,7 @@ describe("AppSidebar layout", () => {
     expect(container.querySelector("#sidebar-recent-heading")?.nextElementSibling?.textContent).toContain(unread.title);
     expect(container.querySelector('[aria-current="page"] .thread-row-title')?.textContent).toBe(unread.title);
     expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(idle.title);
-    expect(container.querySelector(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
+    expect(container.querySelector<HTMLElement>(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
   });
 
   it("lets a navigation presenter replace the complete production sidebar root", async () => {

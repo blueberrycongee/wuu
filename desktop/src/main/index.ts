@@ -407,7 +407,9 @@ observationCoordinator.setBrowserInPanel((activity) =>
   activity.kind === "browser" &&
   browserHostCoordinator.isInPanel(activity.workdir, activity.target || activity.id),
 );
-observationCoordinator.setBrowserExpandHandler(() => broadcastToAll("wuu:browser-dock"));
+observationCoordinator.setBrowserExpandHandler(() =>
+  broadcastToAll("wuu:browser-dock", {}),
+);
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden or minimized. Its
 // right-click menu disables the setting, which also tears the window down.

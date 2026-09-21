@@ -592,7 +592,7 @@ function AgentTerminalPane({
         // Fitting the terminal measures the host and rewrites the pty size.
         // Do that once, when the window drag ends, not on every width change.
         if (isWindowResizing()) {
-          settleResize.schedule();
+          settleResize?.schedule();
           return;
         }
         if (resizeFrame !== undefined) {

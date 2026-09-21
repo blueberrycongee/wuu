@@ -528,16 +528,15 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
       if (!display) throw new Error("expected a display");
       act(() => {
         root.render(
-          createElement(
-            ConversationRenderActivityProvider,
-            { active },
-            createElement(AssistantTurnShell, {
+          createElement(ConversationRenderActivityProvider, {
+            active,
+            children: createElement(AssistantTurnShell, {
               turn,
               display,
               onStreamFrame: () => {},
               onCollapseComplete,
             }),
-          ),
+          }),
         );
       });
     };
