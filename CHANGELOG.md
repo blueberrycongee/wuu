@@ -51,6 +51,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   classified `input_too_large` overflow, instead of surfacing the 400 when
   local usage still sits under the compact threshold.
 
+- Sessions whose provider omits token usage reconcile assistant text,
+  tool-call arguments, and tool schemas into the local context estimate
+  before the next request. Proactive compact or a fresh context window runs
+  when that estimate reaches the threshold, including after a length
+  truncation. A context size saved without provider usage is not reused as
+  ground truth after a restart.
+
 - Collaboration-created ordinary workspace sessions now keep their project id
   on `thread/started`, so they stay in the workspace sidebar instead of
   vanishing until a later list or reload.

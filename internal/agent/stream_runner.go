@@ -1166,14 +1166,15 @@ func (r *StreamRunner) SynchronizeConversationUsage(history []providers.ChatMess
 }
 
 // SeedConversationUsageBaseline primes the cross-turn usage baseline from a
-// persisted retained-context value (the ContextTokens of the thread's last
-// completed turn) when a runtime is rebuilt over existing history — process
-// restart, session resume, thread reopen. That persisted value derives from
-// real provider usage, so it beats re-estimating the whole history with the
-// pessimistic byte heuristic, which over-counts JSON-heavy histories enough
-// to risk an immediate premature compaction on the first resumed turn. No-op
-// when the tracker already holds live state (fresher than the persisted row)
-// or when total is zero.
+// persisted provider-reported context total when a runtime is rebuilt over
+// existing history — process restart, session resume, thread reopen. Callers
+// must pass a total that includes provider input, output, or cache counts.
+// A local context estimate can omit assistant and tool-call tokens; seeding
+// it would block the pre-send reconcile and can keep a full prompt under the
+// compact threshold. A real provider total still beats re-estimating the
+// whole history, which can over-count JSON-heavy transcripts enough to
+// compact on the first resumed turn. No-op when the tracker already holds
+// live state (fresher than the persisted row) or when total is zero.
 func (r *StreamRunner) SeedConversationUsageBaseline(total, historyLen int) {
 	if r == nil || total <= 0 {
 		return

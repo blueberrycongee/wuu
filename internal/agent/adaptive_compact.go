@@ -115,6 +115,17 @@ func reactiveCompactTarget(threshold, lastSuccessful int) int {
 	return target
 }
 
+// localRequestEstimate is the pre-send size used when the provider has not
+// reported usage. It counts durable messages and the tool schema surface the
+// provider will see with them.
+func localRequestEstimate(messages []providers.ChatMessage, cfg LoopConfig) int {
+	req := providers.ChatRequest{Messages: messages}
+	if cfg.Tools != nil {
+		req.Tools = cfg.Tools.Definitions()
+	}
+	return estimateOutboundRequestTokens(req)
+}
+
 func estimateOutboundRequestTokens(req providers.ChatRequest) int {
 	tokens := estimateMessages(req.Messages)
 	for _, message := range req.Messages {

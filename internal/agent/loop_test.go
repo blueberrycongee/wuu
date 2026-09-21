@@ -1743,6 +1743,181 @@ func TestRunToolLoop_OverflowCompactIgnoresIdleToolRuntime(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_UndercountedLocalUsageShrinksBeforeRequest(t *testing.T) {
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "review the change"},
+	}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("c%d", i)
+		history = append(history,
+			providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{
+				ID: id, Name: "bash", Arguments: `{"command":"` + strings.Repeat("x", 4000) + `"}`,
+			}}},
+			providers.ChatMessage{Role: "tool", Name: "bash", ToolCallID: id, Content: strings.Repeat("y", 4000)},
+		)
+	}
+	history = append(history, userMsg("合并了吗"))
+	tools := &fakeLoopTools{defs: []providers.ToolDefinition{{
+		Name:        "bash",
+		Description: strings.Repeat("schema ", 800),
+	}}}
+	messagesOnly := localRequestEstimate(history, LoopConfig{})
+	withSchema := localRequestEstimate(history, LoopConfig{Tools: tools})
+	if withSchema <= messagesOnly {
+		t.Fatalf("tool schemas should increase the outbound estimate: messages=%d withSchema=%d", messagesOnly, withSchema)
+	}
+	tracker := NewUsageTracker()
+	tracker.RecordPendingMessages([]providers.ChatMessage{{Role: "user", Content: "short"}})
+	if tracker.EstimateCurrent() >= messagesOnly {
+		t.Fatalf("fixture is not an undercount: tracker=%d messages=%d", tracker.EstimateCurrent(), messagesOnly)
+	}
+	step := &fakeStep{results: []StepResult{{Content: "merged"}}}
+	cfg := LoopConfig{
+		Model:                  "grok-4.6",
+		Tools:                  tools,
+		UsageTracker:           tracker,
+		CompactThresholdTokens: messagesOnly + 1,
+		FreshContextTokens:     200_000,
+		ArchiveHistory: func(context.Context, []providers.ChatMessage) (HistoryArchive, error) {
+			return HistoryArchive{HeadSeq: 40}, nil
+		},
+		FreshContext: func(_ context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
+			return buildFreshContext(messages, head, fixed, target)
+		},
+	}
+	res, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.HistoryRewritten {
+		t.Fatal("expected a fresh window before the provider request")
+	}
+	if len(step.calls) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(step.calls))
+	}
+	if got := len(step.calls[0].Messages); got >= len(history) {
+		t.Fatalf("provider saw %d messages from a %d-message history", got, len(history))
+	}
+}
+
+func TestRunToolLoop_UndercountedLocalUsageCompactsBeforeRequest(t *testing.T) {
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "system"},
+		userMsg("review the change"),
+	}
+	for i := 0; i < 4; i++ {
+		id := fmt.Sprintf("c%d", i)
+		history = append(history,
+			providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{
+				ID: id, Name: "bash", Arguments: `{"command":"` + strings.Repeat("x", 4000) + `"}`,
+			}}},
+			providers.ChatMessage{Role: "tool", Name: "bash", ToolCallID: id, Content: strings.Repeat("y", 4000)},
+		)
+	}
+	history = append(history, userMsg("合并了吗"))
+	tracker := NewUsageTracker()
+	tracker.RecordPendingMessages([]providers.ChatMessage{{Role: "user", Content: "short"}})
+	step := &fakeStep{results: []StepResult{{Content: "merged"}}}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model:        "grok-4.6",
+		UsageTracker: tracker,
+		Compact: func(context.Context, []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return []providers.ChatMessage{{Role: "user", Content: "summary"}}, nil
+		},
+		MaxContextTokens: 1000,
+		DefaultMaxTokens: 100,
+	}
+	cfg.CompactThresholdTokens = localRequestEstimate(history, cfg)
+	if tracker.EstimateCurrent() >= cfg.CompactThresholdTokens {
+		t.Fatalf("fixture is not an undercount: tracker=%d threshold=%d", tracker.EstimateCurrent(), cfg.CompactThresholdTokens)
+	}
+	res, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compactCalled != 1 || !res.HistoryRewritten {
+		t.Fatalf("compact=%d rewritten=%v", compactCalled, res.HistoryRewritten)
+	}
+	if len(step.calls) != 1 || len(step.calls[0].Messages) >= len(history) {
+		t.Fatalf("provider saw the unrepaired history: calls=%d", len(step.calls))
+	}
+}
+
+func TestRunToolLoop_ProviderUsageIsNotReplacedByLocalEstimate(t *testing.T) {
+	history := []providers.ChatMessage{{Role: "system", Content: "system"}, userMsg("review")}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("c%d", i)
+		history = append(history,
+			providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{
+				ID: id, Name: "bash", Arguments: `{"command":"` + strings.Repeat("x", 4000) + `"}`,
+			}}},
+			providers.ChatMessage{Role: "tool", Name: "bash", ToolCallID: id, Content: strings.Repeat("y", 4000)},
+		)
+	}
+	tracker := NewUsageTracker()
+	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 100, OutputTokens: 20})
+	full := localRequestEstimate(history, LoopConfig{})
+	if tracker.EstimateCurrent() >= full {
+		t.Fatalf("fixture does not separate provider usage from the local estimate: provider=%d local=%d", tracker.EstimateCurrent(), full)
+	}
+	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model: "grok-4.6",
+		Compact: func(context.Context, []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return history[:1], nil
+		},
+		UsageTracker:           tracker,
+		CompactThresholdTokens: full,
+		MaxContextTokens:       full + 20_000,
+	}
+	res, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compactCalled != 0 || res.HistoryRewritten {
+		t.Fatalf("provider baseline was replaced: compact=%d rewritten=%v", compactCalled, res.HistoryRewritten)
+	}
+	if len(step.calls) != 1 || len(step.calls[0].Messages) != len(history) {
+		t.Fatalf("request = %d calls / %d messages, want 1 call and %d messages", len(step.calls), len(step.calls[0].Messages), len(history))
+	}
+}
+
+func TestRunToolLoop_UnreportedAssistantCountsTowardNextEstimate(t *testing.T) {
+	history := []providers.ChatMessage{userMsg("hi")}
+	tracker := NewUsageTracker()
+	payload := strings.Repeat("token ", 300)
+	step := &fakeStep{results: []StepResult{{Content: payload}}}
+	cfg := LoopConfig{Model: "m", UsageTracker: tracker, MaxSteps: 1}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err != nil {
+		t.Fatal(err)
+	}
+	base := localRequestEstimate(history, cfg)
+	if got := tracker.EstimateCurrent(); got <= base {
+		t.Fatalf("estimate = %d, want it to include the assistant message above %d", got, base)
+	}
+}
+
+func TestRunToolLoop_ReportedUsageDoesNotDoubleCountAssistant(t *testing.T) {
+	history := []providers.ChatMessage{userMsg("hi")}
+	tracker := NewUsageTracker()
+	step := &fakeStep{results: []StepResult{{
+		Content: strings.Repeat("token ", 300),
+		Usage:   &providers.TokenUsage{InputTokens: 40, OutputTokens: 10},
+	}}}
+	cfg := LoopConfig{Model: "m", UsageTracker: tracker, MaxSteps: 1}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err != nil {
+		t.Fatal(err)
+	}
+	if got := tracker.EstimateCurrent(); got != 50 {
+		t.Fatalf("estimate = %d, want provider total 50", got)
+	}
+}
+
 func TestRunToolLoop_OverflowCompactFiresOnCompactCallback(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}
@@ -2053,11 +2228,15 @@ func TestRunToolLoop_RequestOnlyContextNotTrackedOnRequestError(t *testing.T) {
 		},
 	}
 
-	if _, err := RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "system", Content: "sys"}}, cfg, step); err == nil {
+	history := []providers.ChatMessage{{Role: "system", Content: "sys"}}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err == nil {
 		t.Fatal("expected request error")
 	}
-	if got := tracker.PendingDelta(); got != 0 {
-		t.Fatalf("request-only context should not be committed on error, got pending delta %d", got)
+	// The durable transcript is reconciled before the send. Request-only
+	// context is not part of that total and must not be committed when the
+	// request fails.
+	if got, want := tracker.PendingDelta(), localRequestEstimate(history, cfg); got != want {
+		t.Fatalf("pending delta = %d, want durable estimate %d", got, want)
 	}
 	if got := tracker.LastResponseTotal(); got != 0 {
 		t.Fatalf("request-only context should not create a response baseline on error, got %d", got)

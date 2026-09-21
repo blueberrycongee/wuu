@@ -283,7 +283,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	threadID := th.ID
 	th.mu.Unlock()
 	if threadRuntime.StreamRunner != nil {
-		threadRuntime.StreamRunner.SynchronizeConversationUsage(history, s.latestRetainedContextTokens(threadID))
+		threadRuntime.StreamRunner.SynchronizeConversationUsage(history, s.latestProviderRetainedContextTokens(threadID))
 	}
 	return threadRuntime, nil
 }
@@ -1192,11 +1192,11 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		})
 	}
 	// A rebuilt runtime over existing history (resume/reopen) starts with an
-	// empty usage tracker; seed it from the last persisted ContextTokens so
-	// the pre-first-response occupancy reads real ground truth instead of a
-	// pessimistic full-history re-estimate.
+	// empty usage tracker. Seed it only from provider-reported usage. A local
+	// context_tokens marker can omit assistant and tool-call tokens; seeding
+	// that partial total would block the pre-send reconcile.
 	if threadRuntime.StreamRunner != nil && len(history) > 0 {
-		if retained := s.latestRetainedContextTokens(th.ID); retained > 0 {
+		if retained := s.latestProviderRetainedContextTokens(th.ID); retained > 0 {
 			threadRuntime.StreamRunner.SeedConversationUsageBaseline(retained, len(history))
 		}
 	}

@@ -78,6 +78,13 @@ type ToolSurfaceFreezer interface {
 //   - Output truncation is treated as a completed model response with
 //     FinishReason=length. The caller/UI can surface that reason without
 //     classifying the turn as a user interruption or transport failure.
+//     The next model request still reconciles local usage first, so a length
+//     finish is not the last chance to shrink history that has reached the
+//     compact threshold.
+//   - When the provider has not reported usage, the running total is raised
+//     to the outbound estimate before the send. That count includes assistant
+//     text, tool-call arguments, and tool schemas that the tracked length
+//     would otherwise skip. A provider-reported total is not replaced.
 //   - Executes any tool calls the model requested, recording results
 //     as tool messages and (if configured) emitting them through
 //     OnToolResult so callers can render them live.
@@ -405,6 +412,12 @@ func RunToolLoop(
 				appendMessage(msg)
 			}
 			usage.RecordPendingMessages(injected)
+		}
+		// No provider baseline means earlier assistant and tool-call tokens may
+		// be missing from the running total. Raise it to the outbound estimate
+		// before this send so compact or a fresh window can run first.
+		if !usage.HasGroundTruth() {
+			usage.RaiseLocalEstimate(localRequestEstimate(messages, cfg))
 		}
 		hardContextRollover := freshContextEnabled && threshold > 0 && usage.EstimateCurrent() >= threshold
 		attemptFreshContext := newContextRequested || hardContextRollover
@@ -947,6 +960,12 @@ func RunToolLoop(
 		}
 		if shouldPersistAssistantMessage(assistant) {
 			appendMessage(assistant)
+			// Provider usage already includes this assistant message. Without
+			// it, the next request would omit the message from the running total
+			// once the tracked history length moves past it.
+			if result.Usage == nil {
+				usage.RecordPendingMessages([]providers.ChatMessage{assistant})
+			}
 		}
 
 		// Only an explicit, normalized continuation signal admits another

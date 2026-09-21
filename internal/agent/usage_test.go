@@ -146,6 +146,38 @@ func TestUsageTracker_CacheCreationCountsTowardContext(t *testing.T) {
 	}
 }
 
+func TestUsageTracker_RaiseLocalEstimateReplacesPartialTotal(t *testing.T) {
+	tr := NewUsageTracker()
+	tr.RecordPendingMessages([]providers.ChatMessage{{Role: "user", Content: "short"}})
+	before := tr.EstimateCurrent()
+	if !tr.RaiseLocalEstimate(before + 5000) {
+		t.Fatal("expected partial local total to rise")
+	}
+	if got := tr.EstimateCurrent(); got != before+5000 {
+		t.Fatalf("estimate = %d, want %d", got, before+5000)
+	}
+	if got := tr.Breakdown().Adjustment; got != UsageAdjustmentLocalHistoryReconcile {
+		t.Fatalf("adjustment = %q", got)
+	}
+	if tr.RaiseLocalEstimate(before + 1000) {
+		t.Fatal("reconcile must not lower the running total")
+	}
+	if got := tr.EstimateCurrent(); got != before+5000 {
+		t.Fatalf("estimate dropped to %d", got)
+	}
+}
+
+func TestUsageTracker_RaiseLocalEstimateKeepsProviderBaseline(t *testing.T) {
+	tr := NewUsageTracker()
+	tr.RecordResponse(&providers.TokenUsage{InputTokens: 1000, OutputTokens: 50})
+	if tr.RaiseLocalEstimate(50_000) {
+		t.Fatal("provider baseline must not be replaced by a local estimate")
+	}
+	if got := tr.EstimateCurrent(); got != 1050 {
+		t.Fatalf("estimate = %d, want 1050", got)
+	}
+}
+
 func TestUsageTracker_Reset(t *testing.T) {
 	tr := NewUsageTracker()
 	tr.RecordResponse(&providers.TokenUsage{InputTokens: 1000})

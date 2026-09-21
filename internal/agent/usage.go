@@ -61,6 +61,11 @@ const (
 	UsageAdjustmentExternalRewriteEstimate   UsageAdjustment = "external_rewrite_estimate"
 	UsageAdjustmentCompactionRewriteEstimate UsageAdjustment = "compaction_rewrite_estimate"
 	UsageAdjustmentRuntimeRebuildSeed        UsageAdjustment = "runtime_rebuild_seed"
+	// UsageAdjustmentLocalHistoryReconcile means the running total had no
+	// provider-reported baseline, so it was raised to a full outbound estimate.
+	// Assistant and tool-call tokens are otherwise skipped once the tracked
+	// history length moves past them.
+	UsageAdjustmentLocalHistoryReconcile UsageAdjustment = "local_history_reconcile"
 )
 
 // UsageBreakdown is an atomic snapshot of the values behind EstimateCurrent.
@@ -182,6 +187,28 @@ func (t *UsageTracker) LastSuccessfulRequestTokensForContract(contract string) i
 // baseline instead of pure local estimates.
 func (t *UsageTracker) HasGroundTruth() bool {
 	return t.LastResponseTotal() > 0
+}
+
+// RaiseLocalEstimate raises a total that has never been anchored to
+// provider-reported usage. The running total can sit under the real prompt
+// once assistant and tool-call messages are committed without an estimate.
+// Callers pass the outbound request estimate; a provider baseline is left
+// unchanged so a pessimistic local count cannot discard a measured one.
+func (t *UsageTracker) RaiseLocalEstimate(total int) bool {
+	if t == nil || total <= 0 {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.lastResponseTotal > 0 {
+		return false
+	}
+	if total <= t.pendingDelta {
+		return false
+	}
+	t.pendingDelta = total
+	t.adjustment = UsageAdjustmentLocalHistoryReconcile
+	return true
 }
 
 // PendingDelta returns the current estimate for messages added since
