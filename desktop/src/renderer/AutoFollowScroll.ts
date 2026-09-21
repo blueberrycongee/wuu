@@ -10,9 +10,9 @@ import {
 import { isWindowResizing } from "./WindowResizeState";
 import { createScrollGlide } from "./ScrollGlide";
 import { prefersReducedMotion } from "./motion";
+import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 
 export const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 16;
-export const AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS = 700;
 export const USER_SCROLL_AWAY_INTENT_WINDOW_MS = 300;
 export const AUTO_FOLLOW_NESTED_SCROLL_ATTR = "data-wuu-nested-scroll";
 export const AUTO_FOLLOW_NESTED_SCROLL_SELECTOR = `[${AUTO_FOLLOW_NESTED_SCROLL_ATTR}]`;
@@ -150,7 +150,6 @@ export function useAutoFollowScrollContainer({
   const userScrollAwayIntentTimerRef = useRef<number | undefined>(undefined);
   const touchLastYRef = useRef<number | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
-  const scrollbarHideTimerRef = useRef<number | undefined>(undefined);
   const motionFrameRef = useRef<number | undefined>(undefined);
   const cancelMotion = useCallback(() => {
     if (motionFrameRef.current !== undefined) window.cancelAnimationFrame(motionFrameRef.current);
@@ -201,20 +200,6 @@ export function useAutoFollowScrollContainer({
     }, USER_SCROLL_AWAY_INTENT_WINDOW_MS);
   }, []);
 
-  const showScrollbar = useCallback((node: HTMLElement): void => {
-    if (node.scrollHeight <= node.clientHeight) {
-      return;
-    }
-    node.classList.add("scrollbar-visible");
-    if (scrollbarHideTimerRef.current !== undefined) {
-      window.clearTimeout(scrollbarHideTimerRef.current);
-    }
-    scrollbarHideTimerRef.current = window.setTimeout(() => {
-      scrollbarHideTimerRef.current = undefined;
-      node.classList.remove("scrollbar-visible");
-    }, AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS);
-  }, []);
-
   const scrollToBottom = useCallback(
     (options: { force?: boolean; revealScrollbar?: boolean; animate?: boolean } = {}): void => {
       const node = scrollRef.current;
@@ -257,10 +242,10 @@ export function useAutoFollowScrollContainer({
       programmaticScrollTopRef.current = node.scrollTop;
       lastScrollTopRef.current = node.scrollTop;
       if (moved && options.revealScrollbar) {
-        showScrollbar(node);
+        revealScrollbar(node);
       }
     },
-    [cancelMotion, clearUserScrollAwayIntent, setAutoFollow, showScrollbar],
+    [cancelMotion, clearUserScrollAwayIntent, setAutoFollow],
   );
 
   const scheduleScrollToBottom = useCallback((): void => {
@@ -307,7 +292,7 @@ export function useAutoFollowScrollContainer({
     const layoutClamp = scrolledUp && !userScrollAwayIntent &&
       node.scrollTop >= maxScrollTop(node) - 1;
     if ((scrolledUp || scrolledDown) && !layoutClamp) {
-      showScrollbar(node);
+      revealScrollbar(node);
     }
 
     if (scrolledUp && userScrollAwayIntent) {
@@ -342,7 +327,6 @@ export function useAutoFollowScrollContainer({
     bottomThreshold,
     scheduleScrollToBottom,
     setAutoFollow,
-    showScrollbar,
   ]);
 
   useLayoutEffect(() => {
@@ -350,6 +334,10 @@ export function useAutoFollowScrollContainer({
     if (!node) {
       return undefined;
     }
+    // This controller decides for itself when a reveal is warranted: it can
+    // tell a layout clamp from content movement, which the global listener
+    // cannot.
+    markScrollbarRevealSelfManaged(node);
     setAutoFollowOverflowAnchor(node, autoFollowRef.current);
     const interruptMotion = (): void => {
       if (motionFrameRef.current !== undefined) setAutoFollow(false);
@@ -524,9 +512,6 @@ export function useAutoFollowScrollContainer({
     return () => {
       if (rafRef.current !== undefined) {
         window.cancelAnimationFrame(rafRef.current);
-      }
-      if (scrollbarHideTimerRef.current !== undefined) {
-        window.clearTimeout(scrollbarHideTimerRef.current);
       }
       clearUserScrollAwayIntent();
     };

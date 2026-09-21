@@ -1,94 +1,89 @@
 /*
- * Unified scrollbar styles — single source of truth for every scrollbar
- * in the renderer. The global rules below apply to every element:
+ * Unified scrollbar styles — single source of truth for every scrollbar in the
+ * renderer. The visibility policy lives here; the class that starts a reveal is
+ * owned by ScrollbarReveal.ts (design note: docs/en/project/desktop-ui.md).
  *
- *   - default state: thumb is transparent (invisible but still occupying
- *     its gutter via scrollbar-gutter: stable on individual containers,
- *     or naturally via the UA). The user does not see a scrollbar until
- *     they scroll or hover the scroll area.
- *   - .scrollbar-visible (added by JS in AppSidebar / ConversationScrollState
- *     while the user is actively scrolling, removed 700ms after the last
- *     scroll event) OR :hover on the scroll region paints the thumb at
- *     the --scrollbar-thumb tier.
- *   - :hover on the thumb itself bumps to --scrollbar-thumb-hover.
- *   - :active on the thumb bumps to --scrollbar-thumb-active.
+ *   - At rest the thumb is transparent, but the gutter stays reserved:
+ *     `scrollbar-width: thin` keeps the platform scrollbar classic and thin, so
+ *     content never shifts when a thumb appears.
+ *   - The thumb appears only while its container is actually being scrolled —
+ *     wheel, keyboard, touch, or a scrollbar drag — and fades out after the last
+ *     scroll event. Hovering a region reveals nothing: a pointer resting inside
+ *     a bounded tool/reasoning strip while reading must not paint a thumb across
+ *     that text, and a scroll area never lights up its ancestors' scrollbars.
+ *   - A registered <color> property, `--scrollbar-ink`, drives the reveal
+ *     transition explicitly so the thumb fades in and out rather than relying
+ *     on the engine's interpolation of `scrollbar-color`.
+ *   - Controllers that own their reveal (the conversation viewport and every
+ *     auto-follow container) register with
+ *     markScrollbarRevealSelfManaged() and are skipped by the global listener.
+ *   - `.scrollbar-hidden` removes the scrollbar entirely where the fade mask
+ *     already communicates overflow (session tabs, workspace panel tabs, …).
  *
- * .scrollbar-hidden is a utility class for elements that should never
- * show a scrollbar at all (the session-tab / workspace-panel-tabs row).
- *
- * Components that need a narrower scrollbar (xterm viewport) override
- * --scrollbar-width / --scrollbar-thumb on the local scope.
+ * Engines without the standard `scrollbar-color` property (WebKit before Safari
+ * 26.2, e.g. a mobile web shell) get the same policy from the fallback block at
+ * the end of this file.
  */
 
-/* Firefox + Chromium 121+: declarative scrollbar width + color. */
+@property --scrollbar-ink {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: transparent var(--scrollbar-track-bg);
+  scrollbar-color: var(--scrollbar-ink) var(--scrollbar-track-bg);
+  /* The shorthand also supplies the fade-out; .scrollbar-visible shortens the
+   * duration so the thumb arrives promptly and leaves slowly. A component that
+   * declares its own `transition` opts out of the fade and gets the thumb
+   * instantly, which is the pre-existing behaviour for that element. */
+  transition: --scrollbar-ink var(--motion-slower) var(--ease-out);
 }
 
-*:hover {
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track-bg);
+.scrollbar-visible {
+  --scrollbar-ink: var(--scrollbar-thumb);
+  transition-duration: var(--motion-base);
 }
 
-.scrollbar-visible,
-.scrollbar-visible * {
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track-bg);
-}
-
-/* WebKit / Chromium <121: pseudo-elements. */
-*::-webkit-scrollbar {
-  width: var(--scrollbar-width);
-  height: var(--scrollbar-width);
-  background: var(--scrollbar-track-bg);
-}
-
-*::-webkit-scrollbar-track,
-*::-webkit-scrollbar-track-piece {
-  background: var(--scrollbar-track-bg);
-  border: 0;
-}
-
-*::-webkit-scrollbar-thumb {
-  min-height: 42px;
-  border: 1px solid transparent;
-  border-radius: var(--scrollbar-radius);
-  background-color: transparent;
-  background-clip: padding-box;
-  transition: background-color var(--motion-base) var(--ease-out);
-}
-
-*::-webkit-scrollbar-corner {
-  background: var(--scrollbar-track-bg);
-}
-
-/* Three-tier thumb paint — :hover on the scroll container OR the
- * .scrollbar-visible JS class lifts the thumb into view; :hover on the
- * thumb itself bumps it to the hover tier; :active bumps it further. */
-*:hover::-webkit-scrollbar-thumb,
-.scrollbar-visible::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
-}
-
-*::-webkit-scrollbar-thumb:hover,
-*:hover::-webkit-scrollbar-thumb:hover,
-.scrollbar-visible::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-thumb-hover);
-}
-
-*::-webkit-scrollbar-thumb:active,
-*:hover::-webkit-scrollbar-thumb:active,
-.scrollbar-visible::-webkit-scrollbar-thumb:active {
-  background-color: var(--scrollbar-thumb-active);
-}
-
-/* "Always hidden" utility — used for horizontal-only scroll rows where
- * the native scrollbar would just be visual noise. */
+/* "Always hidden" utility — used for horizontal-only scroll rows where the
+ * native scrollbar would just be visual noise. */
 .scrollbar-hidden {
   scrollbar-width: none;
 }
 
-.scrollbar-hidden::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
+/* Fallback for engines without the standard scrollbar properties: the same
+ * transparent-until-scrolled thumb through the legacy pseudo-elements. */
+@supports not (scrollbar-color: auto) {
+  *::-webkit-scrollbar {
+    width: var(--scrollbar-width);
+    height: var(--scrollbar-width);
+    background: var(--scrollbar-track-bg);
+  }
+
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-track-piece,
+  *::-webkit-scrollbar-corner {
+    background: var(--scrollbar-track-bg);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    min-height: 42px;
+    border: 1px solid transparent;
+    border-radius: var(--scrollbar-radius);
+    background-color: transparent;
+    background-clip: padding-box;
+    transition: background-color var(--motion-slower) var(--ease-out);
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    transition-duration: var(--motion-base);
+  }
+
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
 }

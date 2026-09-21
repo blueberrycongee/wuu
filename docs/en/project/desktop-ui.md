@@ -67,6 +67,14 @@ Sending a query reserves reading space below the bubble. Expanded details may te
 
 Earlier-history paging inserts rows above the viewport. A paused reader's offset belongs to native scroll anchoring, so the manual prepend correction applies only while the offset still sits where the page was requested; adding the inserted height on top of anchoring moves the whole stream down by that height the moment the page arrives, which reads as a jump.
 
+## Scrollbar visibility
+
+A scrollbar appears only while its container is actually scrolling and fades out after the last scroll event. Hovering a region reveals nothing: the pointer rests inside bounded tool/reasoning strips while they are being read, so a thumb painted across that text is noise — and the strip's edge fade already says that more content lies below. Scrolling an inner strip never lights up its ancestors' scrollbars either.
+
+[`ScrollbarReveal.ts`](../../../desktop/src/renderer/ScrollbarReveal.ts) owns the `.scrollbar-visible` class and installs one capture-phase scroll listener for the document, so every scroll container — including ones mounted later — is covered without per-component wiring. [`scrollbars.css`](../../../desktop/src/renderer/styles/scrollbars.css) paints the thumb from `--scrollbar-ink`, a registered `<color>` property that drives the fade explicitly rather than relying on the engine's interpolation of `scrollbar-color`. The gutter stays reserved, so the message flow never shifts when a thumb arrives.
+
+A controller that manages its own scroll node registers it with `markScrollbarRevealSelfManaged()`. The conversation viewport and every auto-follow container also scroll programmatically — following streamed content, adopting a resized viewport — and the global listener cannot tell those frames from a user gesture; without the exemption a follow would keep the thumb painted for the whole response. Terminals and editors keep a permanently visible thumb, because scroll position is part of what those surfaces show. `.scrollbar-hidden` removes the scrollbar entirely where the edge fade already carries the overflow signal.
+
 ## Scroll-edge fading
 
 [`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css) provides opt-in fading for bounded tool/reasoning inspection strips and navigation lists. Add the attribute to the existing vertical scroll owner:

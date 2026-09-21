@@ -10,6 +10,7 @@ import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxW
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
 import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
+import { startScrollbarReveal } from "./ScrollbarReveal";
 import { applyThemePreference, startThemePreferenceSync } from "./Theme";
 import "./styles.css";
 import { I18nProvider } from "./i18n";
@@ -39,6 +40,11 @@ applyMeasuredScrollbarWidth();
 // Re-sync on focus for rare mid-session OS scrollbar-mode changes. Not on
 // resize: the gutter is constant during a live resize.
 startScrollbarWidthSync();
+
+// Paint a scroll container's thumb only while it actually scrolls, then let it
+// fade (styles/scrollbars.css). One capture-phase listener covers every surface,
+// including ones mounted later; hover never reveals a scrollbar.
+startScrollbarReveal();
 
 // Pause ambient infinite animations while the native window is hidden or
 // minimized. Finite UI transitions remain untouched so their lifecycle events

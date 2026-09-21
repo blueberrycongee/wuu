@@ -11,7 +11,6 @@ import type { Turn } from "../shared/protocol";
 import type { ConversationPaneID } from "./AppState";
 import {
   AUTO_FOLLOW_BOTTOM_THRESHOLD_PX,
-  AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS,
   SCROLL_AWAY_KEYS,
   SCROLL_TOWARD_LATEST_KEYS,
   USER_SCROLL_AWAY_INTENT_WINDOW_MS,
@@ -25,6 +24,7 @@ import {
   sessionTailSpacePx,
   setAutoFollowOverflowAnchor,
 } from "./AutoFollowScroll";
+import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 import { isWindowResizing } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, cubicBezier } from "./motion";
@@ -38,7 +38,6 @@ import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
 // mouse-wheel notch land inside the band and silently re-arm auto-follow,
 // which made slow scroll-up get yanked back to the bottom mid-gesture.
 const CONVERSATION_AUTO_SCROLL_THRESHOLD_PX = AUTO_FOLLOW_BOTTOM_THRESHOLD_PX;
-const CONVERSATION_SCROLLBAR_HIDE_DELAY_MS = AUTO_FOLLOW_SCROLLBAR_HIDE_DELAY_MS;
 const CONVERSATION_USER_SCROLL_INTENT_WINDOW_MS =
   USER_SCROLL_AWAY_INTENT_WINDOW_MS;
 export function wheelDeltaPixels(
@@ -306,7 +305,6 @@ export function useConversationScrollState({
     new Map<string, ConversationScrollSnapshot>()
   );
   const streamScrollFrameRef = useRef<number | undefined>(undefined);
-  const conversationScrollbarHideTimerRef = useRef<number | undefined>(undefined);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   const bottomOverscrollFromAwayRef = useRef(false);
 
@@ -320,10 +318,16 @@ export function useConversationScrollState({
   }, []);
 
   function conversationViewport(): HTMLElement | undefined {
-    if (splitConversation) {
-      return splitPaneRefs.current[activePane] ?? undefined;
+    const node = splitConversation
+      ? splitPaneRefs.current[activePane] ?? undefined
+      : conversationScrollRef.current ?? undefined;
+    if (node) {
+      // The controller owns this node's reveal — it can tell a layout clamp
+      // from content movement, which the global scroll listener cannot — so
+      // the listener must leave the node alone.
+      markScrollbarRevealSelfManaged(node);
     }
-    return conversationScrollRef.current ?? undefined;
+    return node;
   }
 
   function setNativeBottomOverscrollEnabled(
@@ -344,21 +348,15 @@ export function useConversationScrollState({
   }
 
   function showConversationScrollbar(node: HTMLElement): void {
+    // Empty and workspace panes have no conversation to scroll; their gutter is
+    // layout compensation, not overflow.
     if (
       node.classList.contains("empty-scroll-region") ||
-      node.classList.contains("workspace-scroll-region") ||
-      node.scrollHeight <= node.clientHeight
+      node.classList.contains("workspace-scroll-region")
     ) {
       return;
     }
-    node.classList.add("scrollbar-visible");
-    if (conversationScrollbarHideTimerRef.current !== undefined) {
-      window.clearTimeout(conversationScrollbarHideTimerRef.current);
-    }
-    conversationScrollbarHideTimerRef.current = window.setTimeout(() => {
-      conversationScrollbarHideTimerRef.current = undefined;
-      node.classList.remove("scrollbar-visible");
-    }, CONVERSATION_SCROLLBAR_HIDE_DELAY_MS);
+    revealScrollbar(node);
   }
 
   function rememberThreadScrollSnapshot(
@@ -1567,9 +1565,6 @@ export function useConversationScrollState({
       if (streamScrollFrameRef.current !== undefined) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
         streamScrollFrameRef.current = undefined;
-      }
-      if (conversationScrollbarHideTimerRef.current !== undefined) {
-        window.clearTimeout(conversationScrollbarHideTimerRef.current);
       }
       cancelBottomOverscroll();
       clearUserScrollIntent();

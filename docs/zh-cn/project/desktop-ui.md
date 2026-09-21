@@ -67,6 +67,14 @@ npm --prefix desktop run dev:onboarding
 
 向前分页历史会在视口上方插入内容。已暂停阅读的偏移归浏览器原生 scroll anchoring 负责，因此手动补偿只在偏移仍停在发起分页时的位置才生效；在锚定之上再加一次补偿，会让消息流整体下移所插入的高度，分页一到就表现为跳变。
 
+## 滚动条可见性
+
+滚动条只在其容器确实发生滚动时出现，停止滚动后淡出。悬停不会显示滚动条：阅读有限高度的工具/推理检查区时，指针本就落在区域内，把 thumb 画在文字上只是噪音——而该区域的边缘渐隐已经在提示下面还有内容。滚动内层区域也不会点亮外层祖先的滚动条。
+
+[`ScrollbarReveal.ts`](../../../desktop/src/renderer/ScrollbarReveal.ts) 独占 `.scrollbar-visible` 这个 class，并为整个文档安装一个捕获阶段的 scroll 监听：所有滚动容器（包括之后才挂载的）都由它覆盖，不需要各组件自行接线。[`scrollbars.css`](../../../desktop/src/renderer/styles/scrollbars.css) 用 `--scrollbar-ink` 绘制 thumb，通过这个注册过的 `<color>` 自定义属性显式驱动淡入淡出，不依赖引擎对 `scrollbar-color` 的插值实现。滚动条槽位始终保留，因此 thumb 出现时消息流不会位移。
+
+自行管理滚动节点的控制器需要调用 `markScrollbarRevealSelfManaged()` 登记：会话视口和所有自动跟随容器在流式输出、视口尺寸变化时也会程序化滚动，全局监听无法区分这些帧和用户手势；不登记的话，一次跟随就会让整个回复期间 thumb 一直亮着。终端和编辑器保留常显 thumb，因为滚动位置本身就是这些界面要展示的内容。已经用边缘渐隐表达溢出的地方，用 `.scrollbar-hidden` 直接去掉滚动条。
+
 ## 滚动边缘渐隐
 
 [`scroll-fade.css`](../../../desktop/src/renderer/styles/scroll-fade.css)为有限高度的工具/推理检查区和导航列表提供按需启用的渐隐。将属性加在已有的垂直滚动节点上：

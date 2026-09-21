@@ -325,13 +325,20 @@
   --sidebar-glass-hover: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   /* Scrollbar tokens — unify every scrollbar in the renderer.
-   * The default state hides the thumb (transparent + track transparent) but
-   * still claims its gutter (scrollbar-gutter: stable) so layout never
-   * shifts. .scrollbar-visible (added by JS on scroll) or :hover paints
-   * the thumb at the three opacity tiers. Alpha tuned low so the thumb
-   * reads as a quiet hint rather than a chrome element.
+   * The default state hides the thumb (transparent, over a transparent track)
+   * while still claiming its gutter — `scrollbar-width: thin` keeps the
+   * platform scrollbar classic, and the conversation panes add
+   * `scrollbar-gutter: stable` on both edges — so layout never shifts.
+   * ScrollbarReveal.ts adds `.scrollbar-visible` while a container scrolls, and
+   * styles/scrollbars.css paints the thumb for that window only; hovering the
+   * region paints nothing. Alpha tuned low so the thumb reads as a quiet hint
+   * rather than a chrome element.
    *
-   * --scrollbar-width below is only the pre-measurement fallback (legacy
+   * The hover/active tiers survive for surfaces that draw their own slate —
+   * Monaco's editor scrollbar and native-thumb fallback — since the standard
+   * `scrollbar-color` property has no per-thumb hover state.
+   *
+   * --scrollbar-width below is only the pre-measurement fallback (fallback
    * ::-webkit-scrollbar sizing and Monaco's editor-scrollbar sizing).
    * ScrollbarMetrics.ts replaces it on the document root with the
    * platform's real scrollbar gutter width before first paint so the dock
@@ -342,7 +349,6 @@
   --scrollbar-thumb: rgba(82, 88, 94, 0.18);
   --scrollbar-thumb-hover: rgba(56, 88, 118, 0.30);
   --scrollbar-thumb-active: rgba(38, 70, 98, 0.45);
-  --scrollbar-thin-width: 6px;
   --scrollbar-thin-thumb: rgba(32, 36, 39, 0.14);
 
   --turn-warning-border: var(--warning-border);

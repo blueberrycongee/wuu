@@ -44,6 +44,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reveal desktop scrollbars only while scrolling, then fade them out; hovering
+  tool and reasoning details no longer reveals their scrollbars.
+
 - Animate the Automations editor split open and closed, instead of snapping
   the form pane in and out.
 
