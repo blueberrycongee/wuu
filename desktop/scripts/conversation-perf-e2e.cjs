@@ -1,15 +1,18 @@
 // Synthetic conversations only: never connects to an app-server or user profile.
 // Run after `npm run build`: electron scripts/conversation-perf-e2e.cjs
 // Timings are diagnostic, not hardware-dependent CI thresholds.
+// WUU_PERF_VARIANT=large-narrow exercises dark mode and 20px UI text at 820px.
+// WUU_PERF_VARIANT=reduced exercises the system reduced-motion preference.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, nativeTheme } = require("electron");
 
 const root = path.resolve(__dirname, "..");
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-conversation-perf-"));
 app.setPath("userData", profile);
+setTimeout(() => { console.error("Conversation profiling exceeded 45 seconds"); app.exit(1); }, 45000).unref();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = (win, fn) => win.webContents.executeJavaScript(`(${fn})()`);
 const emit = (win, method, params) => win.webContents.send("test:server-event", {
@@ -94,16 +97,30 @@ async function send(win) {
 }
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width: 1380, height: 860, show: true, webPreferences: {
+  const largeNarrow = process.env.WUU_PERF_VARIANT === "large-narrow";
+  nativeTheme.themeSource = largeNarrow ? "dark" : "light";
+  const win = new BrowserWindow({ width: largeNarrow ? 820 : 1380, height: 860, show: true, webPreferences: {
     preload: path.join(__dirname, "streaming-e2e-preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false,
   } });
   win.webContents.debugger.attach("1.3");
   if (process.env.WUU_PERF_URL) await win.loadURL(process.env.WUU_PERF_URL);
   else await win.loadFile(path.join(root, "out/renderer/index.html"));
+  if (process.env.WUU_PERF_VARIANT === "reduced") {
+    await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  }
   await waitFor(win, () => !!document.querySelector(".composer textarea"));
+  if (largeNarrow) await evaluate(win, () => {
+    document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+    document.documentElement.style.setProperty("--appearance-scale", String(20 / 14));
+  });
   await delay(500);
   await measure(win, "first-send", () => send(win));
   assert.ok(await evaluate(win, () => !!document.querySelector(".turn")), "Send must render a turn");
+  assert.ok(await evaluate(win, () => {
+    const viewport = document.querySelector(".conversation-pane > .scroll-region").getBoundingClientRect();
+    const query = document.querySelector("[data-user-message-id]").getBoundingClientRect();
+    return query.top >= viewport.top - 1 && query.bottom <= viewport.bottom + 1;
+  }), "The submitted first message must remain inside the reading viewport");
   const now = new Date().toISOString();
   emit(win, "turn/completed", { thread_id: "thread-immediate-title-e2e", turn: { id: "turn-thread-immediate-title-e2e", status: "completed", items_view: "full", items: [], completed_at: now } });
   const thread = { id: "thread-immediate-title-e2e", preview: "Performance fixture", model_provider: "e2e", model: "mock-stream", cwd: process.cwd(), status: "idle", created_at: now, updated_at: now,
