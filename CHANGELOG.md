@@ -112,7 +112,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Unify named-agent and group-chat navigation with the desktop session sidebar,
   nesting managed sessions beneath their named agent instead of their workspace.
 
-- Narrow outgoing desktop conversation bubbles to 560px or 80% of the message
+- Narrow outgoing desktop conversation bubbles to 516px or 80% of the message
   area and use a mist-blue palette in light and dark themes.
 
 - Temporarily hide the Collaboration sidebar's Agent management shortcut while

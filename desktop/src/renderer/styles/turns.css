@@ -4,7 +4,7 @@
   --turn-collapsed-focus-ring: var(--focus-ring);
   --user-message-bg-color: var(--wuu-message-user-background, #EAF1FA);
   --user-message-radius: var(--wuu-message-user-radius, 16px);
-  --user-message-max-width: min(560px, 80%);
+  --user-message-max-width: min(516px, 80%);
   --user-message-fg-color: var(--ink);
   --user-message-jump-flash-bg: var(--surface-3);
   /* Link colors follow the bubble surface in each theme. */
