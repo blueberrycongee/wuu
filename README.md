@@ -10,7 +10,7 @@ You can return to a conversation to continue the work, or bring several agents i
 
 ## Get started
 
-The desktop preview supports Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it. The preview is self-signed, without Apple Developer ID or notarization; if macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
+The desktop preview supports Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it. This is an unsigned preview (ad-hoc signatures only), without Apple Developer ID or notarization; if macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
 
 Connect your model provider in Settings, then add a local project folder as a workspace. Try a small task and check the changes and test results. The [quick start](docs/en/getting-started/index.md) walks through an example.
 

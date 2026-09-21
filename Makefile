@@ -133,6 +133,7 @@ clean:
 release-check: version-check check-go test-go-uncached test-desktop test-native
 
 version-check:
+	node --test scripts/release-version.test.mjs
 	node scripts/release-version.mjs check
 
 version-sync:

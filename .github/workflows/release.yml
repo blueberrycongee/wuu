@@ -45,7 +45,9 @@ jobs:
           fi
 
       - name: Check release version
-        run: node ../scripts/release-version.mjs check "$GITHUB_REF_NAME"
+        run: |
+          node --test ../scripts/release-version.test.mjs
+          node ../scripts/release-version.mjs check "$GITHUB_REF_NAME"
 
       - name: Check and test Go packages
         run: make -C .. check-go test-go-uncached
@@ -63,13 +65,6 @@ jobs:
           npm test
           npm run test:release-signing
 
-      - name: Import persistent release signing identity
-        run: node scripts/import-release-signing.cjs
-        env:
-          WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
-          WUU_RELEASE_CERTIFICATE_PASSWORD: ${{ secrets.WUU_RELEASE_CERTIFICATE_PASSWORD }}
-          WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
-
       - name: Build desktop release
         run: npm run release:desktop
         env:
@@ -81,7 +76,7 @@ jobs:
       - name: Verify packaged app
         run: |
           node scripts/verify-mac-release.cjs
-          echo "::notice::macOS preview uses a persistent self-signed identity, excludes CUA, and is not notarized."
+          echo "::notice::macOS preview uses ad-hoc signing without a certificate, excludes CUA, and is not notarized."
 
           core="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-core"
           version_output="$("$core" --version)"
@@ -98,17 +93,6 @@ jobs:
 
           hdiutil verify release/wuu-*-mac-arm64.dmg
           unzip -t release/wuu-*-mac-arm64.zip >/tmp/wuu-desktop-zip-test.txt
-
-      - name: Remove release signing keychain
-        if: always()
-        run: |
-          if [ -f "$RUNNER_TEMP/wuu-release-signing.pem" ]; then
-            sudo -n security remove-trusted-cert -d "$RUNNER_TEMP/wuu-release-signing.pem"
-            rm "$RUNNER_TEMP/wuu-release-signing.pem"
-          fi
-          if [ -f "$RUNNER_TEMP/wuu-release.keychain-db" ]; then
-            security delete-keychain "$RUNNER_TEMP/wuu-release.keychain-db"
-          fi
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
@@ -151,7 +135,9 @@ jobs:
 
           The app includes its own private wuu core. Standalone CLI archives are not published.
 
-          The app uses a persistent self-signed identity, without Apple Developer ID or notarization. After moving `wuu.app` to `/Applications`, macOS may block it. For the official asset you trust, try opening it, then use System Settings → Privacy & Security → Open Anyway.
+          This is an unsigned preview (ad-hoc code signatures only), without Apple Developer ID or notarization. After moving `wuu.app` to `/Applications`, macOS may block it. For the official asset you trust, try opening it, then use System Settings → Privacy & Security → Open Anyway.
+
+          If macOS still blocks this trusted official download, remove quarantine only from the installed app: `xattr -dr com.apple.quarantine /Applications/wuu.app`. Do not disable Gatekeeper globally. Ad-hoc signatures do not establish publisher identity or guarantee permission retention across updates.
 
           To update, quit Wuu with Cmd+Q, wait for it to exit, then replace `/Applications/wuu.app` with the new app. Open that copy, not the copy inside the DMG. No separate CUA helper installation or certificate import is needed.
 

@@ -4,9 +4,12 @@ const { join, resolve } = require("node:path");
 const { releaseSigningIdentity } = require("./check-release-signing.cjs");
 
 const app = resolve(process.argv[2] || "release/mac-arm64/wuu.app");
-const identity = releaseSigningIdentity();
-const requirement = `certificate leaf = H"${identity}"`;
-execFileSync("codesign", ["--verify", "--deep", "--strict", "-R", `=${requirement}`, app]);
+// Certificate-backed local builds still verify their pinned identity. Public
+// previews use ad-hoc signatures, which seal code without asserting a publisher.
+const requirementArgs = process.env.WUU_RELEASE_SIGN_ID
+  ? ["-R", `=certificate leaf = H"${releaseSigningIdentity()}"`]
+  : [];
+execFileSync("codesign", ["--verify", "--deep", "--strict", ...requirementArgs, app]);
 const bin = join(app, "Contents", "Resources", "bin");
 const skipCua = process.env.WUU_SKIP_CUA_MAC === "1";
 const requiredBinaries = skipCua
@@ -15,7 +18,7 @@ const requiredBinaries = skipCua
 for (const name of requiredBinaries) {
   const path = join(bin, name);
   if (!(statSync(path).mode & 0o111)) throw new Error(`${name} is not executable`);
-  execFileSync("codesign", ["--verify", "--strict", "-R", `=${requirement}`, path]);
+  execFileSync("codesign", ["--verify", "--strict", ...requirementArgs, path]);
 }
 if (skipCua) {
   for (const name of ["wuu-cua-mac", "wuu-cua-mac-pip"]) {

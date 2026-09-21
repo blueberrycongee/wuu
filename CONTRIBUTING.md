@@ -88,7 +88,7 @@ snapshot generated theme matrices, or quote prompt phrasing.
 - Add user-visible changes to the `[Unreleased]` section of `CHANGELOG.md`.
 - Do not edit product package versions by hand; `VERSION` is synchronized with
   `make release-prepare RELEASE_VERSION=<version>`.
-- Product releases use UTC CalVer `YYYY.M.N`, with `N` starting at 1 each month.
+- Product releases use UTC CalVer `YYYY.M.D`, without leading zeros for month or day.
   Check API, protocol, configuration, and storage compatibility separately; product
   version increments do not express compatibility.
 - Only maintainers create release tags. See [the release guide](docs/en/project/release.md).

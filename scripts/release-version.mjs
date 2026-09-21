@@ -118,14 +118,14 @@ function versionFiles(version) {
 
 function nativeBuildNumber(version) {
   const [base, modifier] = version.split("-", 2);
-  const [year, month, sequence] = base.split(".").map(Number);
-  // Android limits versionCode to 2,100,000,000. Two-digit year + month + sequence
-  // keeps the value monotonic for this product while leaving room for many releases.
+  const [year, month, day] = base.split(".").map(Number);
+  // Android limits versionCode to 2,100,000,000. Preserve the existing numeric
+  // layout while using the calendar day as the third component.
   // Candidate builds use their numeric prerelease suffix; the final build uses 99,
   // so promoting a candidate never reuses a store build number.
   const candidateNumber = modifier?.match(/(?:^|\.)(\d+)$/)?.[1];
   const buildIteration = modifier ? Math.min(Number(candidateNumber || 1), 98) : 99;
-  const value = (year % 100) * 10000000 + month * 100000 + sequence * 100 + buildIteration;
+  const value = (year % 100) * 10000000 + month * 100000 + day * 100 + buildIteration;
   if (!Number.isSafeInteger(value) || value < 1 || value > 2100000000) {
     fail(`version ${version} cannot be represented as an Android build number`);
   }
@@ -134,17 +134,10 @@ function nativeBuildNumber(version) {
 
 function nextVersion(rawCurrent, now) {
   const current = requireCalver(rawCurrent);
-  const [year, month, sequence] = current.split("-")[0].split(".").map(Number);
-  const isPrerelease = current.includes("-");
-  const nextYear = now.getUTCFullYear();
-  const nextMonth = now.getUTCMonth() + 1;
-  if (year > nextYear || (year === nextYear && month > nextMonth)) {
-    fail(`current version ${current} is ahead of the UTC release month`);
-  }
-  if (year === nextYear && month === nextMonth) {
-    return `${year}.${month}.${isPrerelease ? sequence : sequence + 1}`;
-  }
-  return `${nextYear}.${nextMonth}.1`;
+  const next = requireCalver(`${now.getUTCFullYear()}.${now.getUTCMonth() + 1}.${now.getUTCDate()}`);
+  if (compareVersions(current, next) > 0) fail(`current version ${current} is ahead of the UTC release date`);
+  if (current === next) fail(`version ${next} already exists; only one final release is allowed per UTC day`);
+  return next;
 }
 
 function currentVersion() {
@@ -159,7 +152,11 @@ function requireSemver(rawVersion) {
 
 function requireCalver(rawVersion) {
   const version = requireSemver(rawVersion);
-  if (!calverPattern.test(version)) fail(`invalid product version: ${version}; expected YYYY.M.N`);
+  if (!calverPattern.test(version)) fail(`invalid product version: ${version}; expected YYYY.M.D`);
+  const [year, month, day] = version.split("-")[0].split(".").map(Number);
+  if (day > new Date(Date.UTC(year, month, 0)).getUTCDate()) {
+    fail(`invalid product version date: ${version}`);
+  }
   return version;
 }
 

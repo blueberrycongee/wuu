@@ -4,7 +4,7 @@
 
 ## 完成设置
 
-1. [安装 Wuu](installation.md)，打开 `/Applications` 中的应用。预览版使用自签身份，尚未公证；如果 macOS 拦截了官方安装包，按安装指南处理。
+1. [安装 Wuu](installation.md)，打开 `/Applications` 中的应用。预览版没有发布者证书，尚未公证；如果 macOS 拦截了官方安装包，按安装指南处理。
 2. 在首次设置中选择需要的插件。推荐组合为 TODO 和 Automation，之后可以在插件设置中调整。
 3. 选择执行引擎。Wuu 无需额外安装；Codex 和 Claude Code 需要本机已有可用的 CLI。
 4. 使用 Wuu 引擎时，[配置模型服务](model-services.md)，或复用支持的本机订阅登录。

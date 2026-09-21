@@ -4,7 +4,7 @@ You need an Apple silicon Mac for the desktop preview and a model connection. Ch
 
 ## Set up the app
 
-1. [Install Wuu](installation.md) and open the copy in `/Applications`. The preview is self-signed and not notarized; the installation guide explains how to open an official download that macOS blocks.
+1. [Install Wuu](installation.md) and open the copy in `/Applications`. The preview has no publisher certificate or notarization; the installation guide explains how to open an official download that macOS blocks.
 2. Choose your optional plugins in the first-run setup. The recommended selection is TODO and Automation; you can change it later in the plugin settings.
 3. Select an agent engine. Wuu is built in; Codex and Claude Code depend on a working local CLI installation.
 4. For the Wuu engine, [configure a model service](model-services.md) or reuse a supported local subscription login.

@@ -8,6 +8,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+## [2026.9.21] - 2026-09-21
+
 ### Added
 
 - Added Cursor, Devin, Grok, Hermes, Pi, OpenCode, and Antigravity external
@@ -43,6 +45,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   source navigation, and expandable existing chat bubbles on Desktop and native mobile.
 
 ### Changed
+
+- Publish the macOS preview from GitHub Actions without a release certificate,
+  retaining ad-hoc integrity signatures and documenting Gatekeeper limitations.
+- Use the UTC release date (`YYYY.M.D`) for product versions.
 
 - Reveal desktop scrollbars only while scrolling, then fade them out; hovering
   tool and reasoning details no longer reveals their scrollbars.

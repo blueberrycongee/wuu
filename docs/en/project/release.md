@@ -15,7 +15,7 @@ The [release workflow](../../../.github/workflows/release.yml) publishes the mac
 
 ## Product versions and compatibility
 
-Product releases use `YYYY.M.N`: the UTC year and month, followed by the release sequence within that month. Start at `1` each month and increment for later releases. A prerelease can use a suffix such as `2026.9.3-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
+Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
 
 Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. Preparing a final release from its matching prerelease carries forward the candidate's notes together with new unreleased notes.
 
@@ -33,17 +33,9 @@ Before publication, the workflow verifies the app's signature and bundle identit
 
 ## Signing configuration
 
-The macOS preview uses a persistent self-signed identity. Configure these GitHub Actions secrets using the [maintainer signing guide](../../../desktop/scripts/RELEASE-SIGNING.md):
+The macOS preview uses certificate-free ad-hoc signatures. No Apple Developer membership, signing certificate, or repository signing secrets are required. GitHub supplies `GITHUB_TOKEN` for publication. With `CSC_IDENTITY_AUTO_DISCOVERY=false`, the custom signer seals nested code and the outer app without selecting a local certificate. See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md) for optional certificate-backed local builds.
 
-| Secret | Purpose |
-| --- | --- |
-| `WUU_RELEASE_CERTIFICATE_P12` | Exported signing identity |
-| `WUU_RELEASE_CERTIFICATE_PASSWORD` | Password for that export |
-| `WUU_RELEASE_SIGN_ID` | Expected signing identity |
-
-GitHub supplies `GITHUB_TOKEN` for the release job. The custom signer uses the configured identity with `CSC_IDENTITY_AUTO_DISCOVERY=false`; missing signing configuration fails the build rather than selecting an arbitrary local certificate or silently using ad-hoc signing. The workflow removes its temporary signing material in an always-run cleanup step.
-
-This is not Apple Developer ID signing or notarization. Users may still need **System Settings → Privacy & Security → Open Anyway** after verifying the official download and trying to launch it. Users do not need to import the maintainer's certificate or disable system security globally.
+This is an unsigned preview, not Apple Developer ID signing or notarization. Ad-hoc signatures do not establish publisher identity or guarantee permission retention across updates. Users may need **System Settings → Privacy & Security → Open Anyway**, or the app-specific quarantine workaround in the [installation guide](../getting-started/installation.md), after verifying the official download. Users do not need to import a certificate or disable system security globally.
 
 ## Published artifacts
 

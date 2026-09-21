@@ -108,13 +108,14 @@ machine-specific setup in user-level configuration.
 
 ## Product versioning
 
-- Product releases use UTC CalVer `YYYY.M.N`. Start `N` at 1 each month and increment
-  it for later releases that month. Prereleases append a suffix such as `-rc.1`.
+- Product releases use UTC CalVer `YYYY.M.D`, where `YYYY`, `M`, and `D` are the
+  release year, month, and day in UTC, without leading zeros for month or day.
+  Prereleases append a suffix such as `-rc.1`.
 - `VERSION` is the product version source. Use `make version-sync` to synchronize
   desktop and active native iOS/Android metadata; do not edit generated versions.
 - Use `make release-prepare` for the next UTC CalVer, or pass
-  `RELEASE_VERSION=YYYY.M.N`. Run `make version-check` before tagging.
-  Release tags are `vYYYY.M.N`; product releases do not use SemVer bump rules.
+  `RELEASE_VERSION=YYYY.M.D`. Run `make version-check` before tagging.
+  Release tags are `vYYYY.M.D`; product releases do not use SemVer bump rules.
 - Product versions express release recency. Check and document Extension API,
   protocol, storage, and migration compatibility separately. `minimum_wuu_version`
   accepts the same CalVer values as the product version.

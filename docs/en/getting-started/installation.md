@@ -10,7 +10,15 @@ The current release workflow builds an Apple silicon app. Check the assets and n
 2. Move `wuu.app` to `/Applications` and open it there.
 3. Complete the [first-run setup](index.md) to choose an engine and connect a model service.
 
-The release workflow uses a persistent self-signed identity rather than Apple Developer ID signing and notarization. If macOS blocks the app, verify that it came from the official release, then use **System Settings → Privacy & Security → Open Anyway**. Do not disable system security globally or install a certificate to bypass this warning.
+This is an unsigned preview: it uses ad-hoc code signatures without a publisher certificate, Apple Developer ID, or notarization. If macOS blocks the app, verify that it came from the official release, then use **System Settings → Privacy & Security → Open Anyway**. Do not disable system security globally or install a certificate to bypass this warning.
+
+If macOS still blocks the trusted official download after you move it to `/Applications`, remove quarantine only from that app, then reopen it:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/wuu.app
+```
+
+Ad-hoc signatures do not establish publisher identity or guarantee that macOS permissions persist across updates.
 
 ## Update the app
 
