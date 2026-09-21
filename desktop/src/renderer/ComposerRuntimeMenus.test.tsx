@@ -99,6 +99,8 @@ describe("RuntimePicker", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(trigger?.textContent).toContain("Claude Sonnet");
     expect(trigger?.textContent).toContain("Medium");
+    expect(trigger?.textContent).not.toContain("Wuu");
+    expect(trigger?.getAttribute("aria-label")).toContain("Wuu");
 
     act(() => trigger?.click());
 
@@ -316,8 +318,10 @@ describe("RuntimePicker", () => {
     const triggerButton = document.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
     const trigger = triggerButton?.textContent ?? "";
     expect(trigger).toContain("Grok 4.6");
+    expect(trigger).not.toMatch(/Grok\s·/);
     expect(trigger).not.toContain("Agent 默认模型");
     expect(triggerButton?.querySelector("svg.engine-icon")).not.toBeNull();
+    expect(triggerButton?.getAttribute("aria-label")).toContain("Grok");
     act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")?.click());
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item")).map((item) =>
       item.querySelector(".codex-model-item-name")?.textContent

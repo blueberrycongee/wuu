@@ -451,6 +451,7 @@ export function RuntimePicker({
   const selectedEngine = handoff ? "wuu" : externalEngine || "wuu";
   const externalEngineInfo = engines?.find((engine) => engine.id === externalEngine);
   const externalModelInfo = externalEngineInfo?.models?.find((model) => model.id === engineModel);
+  const triggerEngineName = engineLabel(selectedEngine, externalEngineInfo);
   const triggerLabel = handoff
     ? handoff.model
       ? runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, handoff.model)
@@ -458,13 +459,14 @@ export function RuntimePicker({
         ? `${handoff.provider} · ${t("runtime.selectModel")}`
         : t("runtime.selectModel")
     : externalEngine
-      ? `${engineLabel(externalEngine, externalEngineInfo)} · ${externalModelInfo?.display_name || engineModel || t("runtime.engineDefaultModel")}`
-      : `${engineLabel("wuu")} · ${runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, targetModel)}`;
+      ? externalModelInfo?.display_name || engineModel || t("runtime.engineDefaultModel")
+      : runtimeTriggerLabel(initialized, currentProviderModel, currentCodexModel, targetModel);
   const effortLabelText = handoff
     ? handoff.model
       ? variantLabel(handoff.variant)
       : ""
     : variantLabel(externalEngine ? engineEffort ?? "" : currentVariant);
+  const triggerAccessibleName = [triggerEngineName, triggerLabel, effortLabelText].filter(Boolean).join(" · ");
   return (
     <div className="codex-runtime-anchor" ref={anchorRef}>
       <Tooltip content={running ? t("runtime.modelSwitchWhileRunning") : undefined}>
@@ -474,6 +476,7 @@ export function RuntimePicker({
           disabled={running}
           aria-haspopup="menu"
           aria-expanded={openMenu === "model"}
+          aria-label={triggerAccessibleName}
           onPointerDown={(event) => { if (isTouchWebShell()) event.preventDefault(); }}
           onClick={() => onToggleMenu("model")}
         >

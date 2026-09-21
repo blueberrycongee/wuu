@@ -45,8 +45,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Changed
 
 - Show each engine's existing SVG brand mark on the desktop composer model
-  picker, engine choices, and first-run runtime cards. The composer chip
-  keeps the mark and model name without repeating the engine name.
+  picker, engine choices, and first-run runtime cards.
+
+- Drop the engine name from the composer model chip, leaving the SVG mark
+  with the model name.
 
 - Keep collaboration rooms still while the desktop window is being resized, so
   the message stream and inspector do not flicker with the frame.
