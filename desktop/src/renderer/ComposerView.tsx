@@ -967,7 +967,7 @@ export function Composer({
       return;
     }
     if (slashMenuOpen) {
-      if (event.key === "Enter" && !event.shiftKey && slashDraft && exactRunnableSlashCommand(slashCommands, slashDraft)) {
+      if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && slashDraft && exactRunnableSlashCommand(slashCommands, slashDraft)) {
         event.preventDefault();
         submitComposer();
         return;
@@ -982,7 +982,7 @@ export function Composer({
         setSelectedSlashIndex((current) => nextEnabledSlashCommandIndex(visibleSlashCommands, current, -1));
         return;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && visibleSlashCommands.length > 0) {
+      if ((event.key === "Enter" || event.key === "Tab") && !event.metaKey && !event.ctrlKey && visibleSlashCommands.length > 0) {
         event.preventDefault();
         const fallbackCommand = visibleSlashCommands[firstEnabledSlashCommandIndex(visibleSlashCommands)];
         applySlashCommand(selectedSlashCommand?.disabledReason ? fallbackCommand : (selectedSlashCommand ?? fallbackCommand), slashDraft);
@@ -1006,11 +1006,11 @@ export function Composer({
       ? `${collapsedPromptPrefix}${event.currentTarget.value}`
       : event.currentTarget.value;
     const currentHasDraft = currentPrompt.trim().length > 0 || hasAttachments;
+    const primaryModifier = event.metaKey || event.ctrlKey;
     if (
-      event.key === "Tab" &&
+      event.key === "Enter" &&
+      primaryModifier &&
       !event.shiftKey &&
-      !event.metaKey &&
-      !event.ctrlKey &&
       !event.altKey &&
       running &&
       currentHasDraft &&
@@ -1020,7 +1020,7 @@ export function Composer({
       submitComposerWith(onQueue, currentPrompt);
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !primaryModifier) {
       event.preventDefault();
       submitDraft(currentPrompt);
     }

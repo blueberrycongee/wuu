@@ -1027,7 +1027,7 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenCalledOnce();
   });
 
-  it("steers with Enter and queues with Tab while a turn is running", () => {
+  it("steers with Enter and queues with Cmd/Ctrl+Enter while a turn is running", () => {
     const onSend = vi.fn();
     const onSteer = vi.fn();
     const onQueue = vi.fn();
@@ -1053,18 +1053,80 @@ describe("Composer send control", () => {
       }
     });
     act(() => {
-      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }));
     });
     expect(onQueue).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
+
+    act(() => {
+      if (textarea) {
+        setTextareaValue(textarea, "queue with ctrl");
+      }
+    });
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(onQueue).toHaveBeenCalledTimes(2);
+    expect(onSteer).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("keeps Tab available for focus navigation when there is no running draft", () => {
+  it("queues with Cmd/Ctrl+Enter even while slash suggestions are open", () => {
+    const onSend = vi.fn();
+    const onSteer = vi.fn();
+    const onQueue = vi.fn();
+    renderComposer({
+      prompt: "/debug later",
+      running: true,
+      onSend,
+      onSteer,
+      onQueue,
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    expect(document.body.querySelector('[data-floating-menu-owner="composer-slash"]')).not.toBeNull();
+
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(onSteer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps Tab available for focus navigation while a turn is running", () => {
+    const onQueue = vi.fn();
+    const onSteer = vi.fn();
+    renderComposer({ prompt: "keep this follow-up", running: true, onQueue, onSteer });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      textarea?.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onQueue).not.toHaveBeenCalled();
+    expect(onSteer).not.toHaveBeenCalled();
+  });
+
+  it("does not queue with Cmd/Ctrl+Enter when there is no running draft", () => {
     const onQueue = vi.fn();
     renderComposer({ prompt: "", running: true, onQueue });
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
     const event = new KeyboardEvent("keydown", {
-      key: "Tab",
+      key: "Enter",
+      metaKey: true,
       bubbles: true,
       cancelable: true,
     });

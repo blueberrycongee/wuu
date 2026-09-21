@@ -15,11 +15,11 @@ The composer supports these keyboard actions:
 | Key | Action |
 |---|---|
 | Enter | Send the draft; when the engine supports steering a running task, add it to that task |
-| Tab | Queue a non-empty draft for after the current turn, when queuing is available |
+| Command + Enter (Ctrl + Enter on Windows and Linux) | Queue a non-empty draft for after the current turn, when queuing is available |
 | Shift + Enter | Insert a new line |
 | Escape | Interrupt a running task when the composer can do so |
 
-The `/` menu handles Enter and Tab as command selection while it is open. With no running task or no draft, Tab moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
+The `/` menu handles Enter and Tab as command selection while it is open. Tab otherwise moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
 
 Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
 

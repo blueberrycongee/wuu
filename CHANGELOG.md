@@ -48,6 +48,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Queue a running-turn follow-up with Command+Enter (Ctrl+Enter on Windows
+  and Linux). Tab now only moves focus, including while a draft is waiting.
+
 - Room conversations publish only through `chat_send` or a room-targeted
   `collaboration_send`. Assistant text stays private after the turn ends, so
   waiting copy no longer becomes a public bubble.
