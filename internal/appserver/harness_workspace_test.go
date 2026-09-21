@@ -120,7 +120,25 @@ func TestHarnessWorkspaceDispatchUsesTargetRuntimeAndRecoversOnTargetOnly(t *tes
 	th := target.thread(id)
 	th.mu.Lock()
 	kit := th.execRuntime.Toolkit
+	liveID := th.WorkspaceID
 	th.mu.Unlock()
+	if liveID != "target" {
+		t.Fatalf("target live thread lost workspace id: %q", liveID)
+	}
+	started := false
+	for _, notification := range notificationsByMethod(parseOutput(t, targetOut.String()), NotificationThreadStarted) {
+		thread := remarshal[ThreadStartedNotification](t, notification["params"]).Thread
+		if thread.ID != id {
+			continue
+		}
+		started = true
+		if thread.WorkspaceID != "target" || thread.CWD != targetRT.RootDir {
+			t.Fatalf("thread/started lost target workspace identity: %+v", thread)
+		}
+	}
+	if !started {
+		t.Fatal("target create did not emit thread/started")
+	}
 	canonicalRoot, _ := filepath.EvalSymlinks(targetRT.RootDir)
 	if kit.RootDir() != canonicalRoot || kit.SessionDir() != statepath.SessionArtifactDir(targetRT.StateDir, id) {
 		t.Fatalf("wrong execution scope: cwd=%s artifacts=%s", kit.RootDir(), kit.SessionDir())

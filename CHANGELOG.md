@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Collaboration-created ordinary workspace sessions now keep their project id
+  on `thread/started`, so they stay in the workspace sidebar instead of
+  vanishing until a later list or reload.
+
 - Ignore stale ACP JSON-RPC results whose id does not match the in-flight
   request, so a Grok prompt that is already waiting on the model is not
   aborted as an internal Wuu error.

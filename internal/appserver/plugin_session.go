@@ -978,6 +978,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params plugin
 		th.WorktreeBaseHEAD = created.WorktreeBaseHEAD
 		th.WorktreeBaseRepo = created.WorktreeBaseRepo
 	}
+	th.WorkspaceID = workspaceID
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	if workspaceID != "" {
 		th.WorkspaceKind = WorkspaceKindProject
