@@ -465,7 +465,10 @@ export function useSidebarProjectState({
     const requestedProjects = projectThreadsByProjectID;
     const requestedScratch = cachedScratchThreads;
     void window.wuu.listAllThreads().then((listed) => {
-      if (!cancelled) cacheSidebarThreads(listed.threads, { projects: requestedProjects, scratch: requestedScratch });
+      if (cancelled) return;
+      // Snapshot `requested*` at request start so in-flight thread/started rows
+      // survive a stale catalog. Reconcile against the live cache on arrival.
+      cacheSidebarThreads(listed.threads, { projects: requestedProjects, scratch: requestedScratch });
     }).catch((error) => {
       if (!cancelled) {
         setStatus(desktopApiErrorMessage(error, translateCurrent("project.threadsLoadFailed")));
@@ -523,7 +526,7 @@ export function useSidebarProjectState({
     requested?: { projects: Record<string, Thread[]>; scratch: Thread[] },
   ): void {
     const scratchThreads = incoming.filter((thread) => isScratchThread(thread, projects));
-    if (scratchThreads.length > 0) {
+    if (scratchThreads.length > 0 || requested) {
       setCachedScratchThreads((current) =>
         mergeSidebarThreadSnapshots(current, requested
           ? reconcileSidebarThreadList(requested.scratch, current, scratchThreads)
@@ -534,7 +537,13 @@ export function useSidebarProjectState({
       let next = current;
       for (const project of projects) {
         const projectThreads = threadsForDesktopProject(incoming, project);
-        if (projectThreads.length === 0) {
+        if (projectThreads.length === 0 && !requested) {
+          continue;
+        }
+        const reconciled = requested
+          ? reconcileSidebarThreadList(requested.projects[project.id], current[project.id], projectThreads)
+          : projectThreads;
+        if (projectThreads.length === 0 && reconciled.length === 0 && current[project.id] === undefined) {
           continue;
         }
         if (next === current) {
@@ -542,9 +551,7 @@ export function useSidebarProjectState({
         }
         next[project.id] = mergeSidebarThreadSnapshots(
           current[project.id],
-          requested
-            ? reconcileSidebarThreadList(requested.projects[project.id], current[project.id], projectThreads)
-            : projectThreads,
+          reconciled,
         );
       }
       return next;

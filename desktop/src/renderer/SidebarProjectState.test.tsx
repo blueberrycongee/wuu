@@ -223,6 +223,39 @@ describe("useSidebarProjectState", () => {
     expect(hook.get().projectThreadsByProjectID.alpha[0]?.title).toBe(alphaThread.title);
   });
 
+  it("keeps a collaboration session that started while the global catalog was still empty", async () => {
+    const beta = project("beta");
+    const created = {
+      ...thread("new-collaboration-session", beta.path),
+      source: "collaboration",
+      workspace_id: beta.id,
+      workspace_kind: "project" as const,
+    };
+    let resolveList!: (result: { threads: Thread[] }) => void;
+    const listAllThreads = vi.fn(() => new Promise<{ threads: Thread[] }>((resolve) => { resolveList = resolve; }));
+    Object.defineProperty(window, "wuu", {
+      configurable: true,
+      value: { listAllThreads },
+    });
+    const hook = await renderSidebarProjectState({
+      projects: [beta], backgroundLoadingEnabled: false,
+    });
+    await hook.rerender({ backgroundLoadingEnabled: true });
+    expect(listAllThreads).toHaveBeenCalledOnce();
+
+    act(() => {
+      hook.get().syncSidebarServerEvent({
+        kind: "notification",
+        workdir: beta.path,
+        message: { method: "thread/started", params: { thread: created } },
+      });
+    });
+    expect(hook.get().projectThreadsByProjectID.beta.map((item) => item.id)).toEqual([created.id]);
+
+    await act(async () => { resolveList({ threads: [] }); });
+    expect(hook.get().projectThreadsByProjectID.beta.map((item) => item.id)).toEqual([created.id]);
+  });
+
   it("refreshes unchanged rows without resurrecting a session removed during the request", async () => {
     const beta = project("beta");
     const removed = thread("removed", beta.path);
