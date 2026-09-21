@@ -564,7 +564,7 @@ export function ComposerQueueStrip({
                 ? t("composer.heldNotice")
                 : t("composer.pendingMessages")
               : latestMessage
-                ? queuedMessagePreview(latestMessage)
+                ? <span key={latestMessage.id} className="composer-pending-arrival">{queuedMessagePreview(latestMessage)}</span>
                 : ""}
           </span>
         </Tooltip>

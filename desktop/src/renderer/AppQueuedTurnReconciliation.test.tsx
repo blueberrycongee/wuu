@@ -326,7 +326,7 @@ describe("queued turn reconciliation", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["queue", "steer"])("positions a locally sent %s message when it enters the conversation", async mode => {
+  it.each(["queue", "steer"])("respects %s scroll intent when its message enters the conversation", async mode => {
     const { queuedClientIDs } = installWuuApi();
     await act(async () => {
       root = createRoot(container);
@@ -376,8 +376,13 @@ describe("queued turn reconciliation", () => {
       });
     });
     expect(container.querySelector('[data-user-message-id="accepted-input"]')).not.toBeNull();
-    expect(tail()).toBeGreaterThan(0);
-    expect(top).toBeCloseTo(1650);
+    if (mode === "queue") {
+      expect(tail()).toBe(0);
+      expect(top).toBe(1400);
+    } else {
+      expect(tail()).toBeGreaterThan(0);
+      expect(top).toBeCloseTo(1650);
+    }
   });
 
   it("positions a drawer-steered queued message when it enters the conversation", async () => {

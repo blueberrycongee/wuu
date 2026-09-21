@@ -411,7 +411,36 @@ it.each(["following", "holding", "paused"])("reserves trailing status space with
   expect(scrollTop()).toBe(mode === "paused" ? readingTop : naturalHeight - viewportHeight);
 });
 
-it("positions a materialized running input without freezing the preceding output", () => {
+it.each([false, true])("keeps automatic dequeues in the current reading flow (paused: %s)", paused => {
+  render({ messageID: "old", running: true });
+  if (paused) scrollUp(200);
+  const readingTop = scrollTop();
+  act(() => api.requestDeferredQueryScroll("local-input", "queue"));
+  grow(100);
+  messageBottom += 100;
+  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
+  tick(0); settle(360);
+  expect(tailSpace()).toBe(0);
+  expect(leadSpace()).toBe(0);
+  expect(animations).toHaveLength(0);
+  expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
+  grow(100);
+  expect(scrollTop()).toBe(paused ? readingTop : naturalHeight - viewportHeight);
+});
+
+it("revokes a steer's placement when it returns to the queue", () => {
+  render({ messageID: "old", running: true });
+  act(() => {
+    api.requestDeferredQueryScroll("local-input", "steer");
+    api.requestDeferredQueryScroll("local-input", "queue");
+  });
+  render({ messageID: "accepted", item: { text: "Follow up", source_id: "local-input" } });
+  tick(0); settle(360);
+  expect(tailSpace()).toBe(0);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it("positions a materialized steer without freezing the preceding output", () => {
   render({ messageID: "old", running: true });
   act(() => api.requestDeferredQueryScroll("local-input"));
   grow(100);
@@ -429,7 +458,7 @@ it("positions a materialized running input without freezing the preceding output
   expect(scrollTop()).toBe(naturalHeight - viewportHeight);
 });
 
-it.each([false, true])("preserves earlier queued placement when another input is queued (later fails: %s)", fails => {
+it.each([false, true])("preserves earlier steer placement when another steer is sent (later fails: %s)", fails => {
   render({ messageID: "old", running: true });
   act(() => {
     api.requestDeferredQueryScroll("first-input");
@@ -460,7 +489,7 @@ it.each(["scroll", "switch", "failure"])("does not reposition a delayed input af
   expect(tailSpace()).toBe(0);
 });
 
-it("does not mistake another client's message for a local queued input", () => {
+it("does not mistake another client's message for a local steer", () => {
   render({ messageID: "old", running: true });
   act(() => api.requestDeferredQueryScroll("local-input"));
   render({ messageID: "remote", item: { text: "Other client", source_id: "remote-input" } });

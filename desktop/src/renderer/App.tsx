@@ -1046,7 +1046,7 @@ export function App(): JSX.Element {
   // The conversation scroll state is created later in the component, but the
   // composer pending state needs to register deferred placement intent from
   // drawer actions. Route it through a ref assigned after that hook mounts.
-  const requestDeferredQueryScrollRef = useRef<(sourceID: string) => void>(() => {});
+  const requestDeferredQueryScrollRef = useRef<(sourceID: string, origin?: "queue" | "steer") => void>(() => {});
   const {
     pendingComposerMessagesByThread,
     pendingComposerMessagesByThreadRef,
@@ -1092,8 +1092,8 @@ export function App(): JSX.Element {
         status,
       })),
     sendComposerMessageToThread,
-    requestDeferredQueryScroll: (sourceID) =>
-      requestDeferredQueryScrollRef.current(sourceID),
+    requestDeferredQueryScroll: (sourceID, origin) =>
+      requestDeferredQueryScrollRef.current(sourceID, origin),
   });
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
@@ -4154,7 +4154,7 @@ export function App(): JSX.Element {
       ...message,
       operationState: "preparing",
     });
-    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id);
+    if (activeThreadIDForState(currentState) === targetThread.id) requestDeferredQueryScroll(message.id, "queue");
     try {
       const encodedImages = await awaitComposerImages(message.images);
       if (

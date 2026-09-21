@@ -188,6 +188,19 @@ describe("ConversationTurnList", () => {
     expect(container.querySelector(".conversation-turn-history-loader")).not.toBeNull();
   });
 
+  it.each([TURN_LIST_COLLAPSE_THRESHOLD, TURN_LIST_COLLAPSE_THRESHOLD + 10])(
+    "retains mounted replies when a queued turn appends to %s turns", count => {
+      const turns = Array.from({ length: count }, (_, index) => makeTurn(index));
+      render(turnList(turns));
+      const before = [...container.querySelectorAll('[data-testid="full-turn"]')];
+      render(turnList([...turns, makeTurn(count)]));
+      for (const node of before) {
+        expect(container.querySelector(`[data-testid="full-turn"][data-turn-id="${node.getAttribute("data-turn-id")}"]`)).toBe(node);
+      }
+      expect(container.querySelectorAll('[data-testid="full-turn"]')).toHaveLength(before.length + 1);
+    },
+  );
+
   it("loads earlier turns in bounded batches and expands a loaded turn", () => {
     const turns = Array.from(
       { length: TURN_LIST_COLLAPSE_THRESHOLD + 10 },

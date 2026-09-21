@@ -7,7 +7,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { app, BrowserWindow, nativeTheme } = require("electron");
+const { app, BrowserWindow, nativeTheme, ipcMain } = require("electron");
+const { once } = require("node:events");
 
 const root = path.resolve(__dirname, "..");
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-conversation-perf-"));
@@ -155,7 +156,59 @@ app.whenReady().then(async () => {
     }
   });
   await waitFor(win, () => [...document.querySelectorAll(".streaming-markdown")].some(node => node.textContent.includes("Streaming paragraph 59")));
-  emit(win, "turn/completed", { thread_id: thread.id, turn: { id: stream.turn_id, status: "completed", completed_at: now } });
+  const completedAnswer = { id: stream.item_id, type: "agent_message", status: "completed", text: Array.from({ length: 60 }, (_, i) => `Streaming paragraph ${i} with **formatted text** and a little more content.\n\n`).join("") };
+  // Pause in history before enqueueing. Receiving the queued turn must not
+  // create a submission reservation or move the reader to the new bubble.
+  await evaluate(win, () => {
+    const node = document.querySelector(".conversation-pane > .scroll-region");
+    node.dispatchEvent(new WheelEvent("wheel", { deltaY: -1200, bubbles: true }));
+    node.scrollTop = Math.max(0, node.scrollTop - 1200);
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  const queuedEvent = once(ipcMain, "test:queued-input");
+  await evaluate(win, () => {
+    const textarea = document.querySelector(".composer textarea");
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, "Queued follow-up.");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await evaluate(win, () => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", code: "Tab", bubbles: true, cancelable: true })));
+  const [, queued] = await queuedEvent;
+  await waitFor(win, () => !!document.querySelector(".composer-pending-preview"));
+  await delay(250);
+  emit(win, "turn/completed", { thread_id: thread.id, turn: { id: stream.turn_id, status: "completed", items_view: "full", items: [
+    { id: `user-${thread.id}`, type: "user_message", status: "completed", text: "Measure submitted message motion." }, completedAnswer,
+  ], completed_at: now } });
+  await delay(500);
+  const readingTop = await evaluate(win, () => document.querySelector(".conversation-pane > .scroll-region").scrollTop);
+  const readingAnchor = await evaluate(win, () => {
+    const viewport = document.querySelector(".conversation-pane > .scroll-region").getBoundingClientRect();
+    // Do not measure every offscreen paragraph: that forces content-visibility
+    // subtrees to lay out and changes the very scroll extent being observed.
+    let anchor;
+    for (let y = viewport.top + 40; y < viewport.bottom - 40 && !anchor; y += 20) {
+      for (let x = viewport.left + 80; x < viewport.right - 80 && !anchor; x += 60) {
+        anchor = document.elementFromPoint(x, y)?.closest(".cached-conversation-pane[data-active=true] p");
+      }
+    }
+    if (!anchor) throw new Error("No visible reading anchor");
+    window.__queueReadingAnchor = anchor;
+    return anchor.getBoundingClientRect().top;
+  });
+  emit(win, "turn/started", { thread_id: thread.id, turn: { id: "dequeued-turn", status: "in_progress", items_view: "full", started_at: now, items: [
+    { id: "dequeued-user", type: "user_message", status: "completed", text: queued.text, source_id: queued.id },
+  ] } });
+  await waitFor(win, () => !!document.querySelector('[data-user-message-id="dequeued-user"]') && !document.querySelector(".composer-pending-preview"));
+  await delay(750);
+  const afterDequeue = await evaluate(win, () => ({
+    top: document.querySelector(".conversation-pane > .scroll-region").scrollTop,
+    tail: parseFloat(document.querySelector(".conversation-pane").style.getPropertyValue("--session-tail-space")) || 0,
+    anchor: window.__queueReadingAnchor.getBoundingClientRect().top,
+    connected: window.__queueReadingAnchor.isConnected,
+  }));
+  assert.ok(afterDequeue.connected && Math.abs(afterDequeue.anchor - readingAnchor) <= 1, `Dequeue must preserve the visible reading anchor: ${readingAnchor} -> ${afterDequeue.anchor}, scroll ${readingTop} -> ${afterDequeue.top}`);
+  assert.equal(afterDequeue.tail, 0, "Dequeue must not reserve blank response space");
+  console.log(JSON.stringify({ name: "queued-reading-position", before: { top: readingTop, anchor: readingAnchor }, after: afterDequeue }));
+  emit(win, "turn/completed", { thread_id: thread.id, turn: { id: "dequeued-turn", status: "completed", completed_at: now } });
   await delay(300);
   await measure(win, "settled-idle", async () => {});
   win.destroy();

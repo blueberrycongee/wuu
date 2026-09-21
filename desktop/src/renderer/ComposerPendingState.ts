@@ -227,11 +227,10 @@ type ComposerPendingStateOptions = {
     targetThread: Thread,
   ) => Promise<boolean>;
   /**
-   * Register placement intent for a pending input whose client id will
-   * materialize as a user message `source_id`. The conversation scrolls to the
-   * message and reserves space for its streamed response once it appears.
+   * Steers may request placement when their source_id materializes. Queued
+   * inputs preserve the reader's current policy and revoke any prior steer intent.
    */
-  requestDeferredQueryScroll: (sourceID: string) => void;
+  requestDeferredQueryScroll: (sourceID: string, origin?: "queue" | "steer") => void;
 };
 
 export function useComposerPendingState({
@@ -631,12 +630,10 @@ export function useComposerPendingState({
       setStatus(localizedText("composer.noActiveTurnToGuide"));
       return;
     }
-    // The steered input materializes under the same client id later. Register
-    // placement intent now so the conversation scrolls to it and reserves
-    // space for the response, matching the composer queue/steer paths. On a
-    // rejected steer the entry stays queued and still materializes.
+    // Explicit intervention can request placement, unlike an automatic dequeue.
+    // Register before IPC since the user message can arrive before its response.
     if (activeThreadIDForState(currentState) === target.threadID) {
-      requestDeferredQueryScroll(target.message.id);
+      requestDeferredQueryScroll(target.message.id, "steer");
     }
     updateThreadPendingComposerMessages(target.threadID, (previous) => ({
       ...previous,
@@ -675,6 +672,7 @@ export function useComposerPendingState({
             });
       });
     } catch (error) {
+      if (activeThreadIDForState(getAppState()) === target.threadID) requestDeferredQueryScroll(id, "queue");
       updateThreadPendingComposerMessages(target.threadID, (previous) => ({
         ...previous,
         queued: previous.queued.map((message) =>
@@ -712,10 +710,9 @@ export function useComposerPendingState({
         setStatus(localizedText("composer.guideAlreadyHandled"));
         return;
       }
-      // The requeued input materializes as a queued user message; the
-      // conversation should scroll to it and reserve response space.
+      // Returning to the queue cancels the earlier intervention's scroll intent.
       if (activeThreadIDForState(getAppState()) === target.threadID) {
-        requestDeferredQueryScroll(id);
+        requestDeferredQueryScroll(id, "queue");
       }
       updateThreadPendingComposerMessages(target.threadID, (previous) => {
         const withoutGuide = {

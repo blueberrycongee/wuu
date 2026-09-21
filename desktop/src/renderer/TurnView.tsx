@@ -114,6 +114,23 @@ function TurnContent({
   streamStatus,
   isLatestTurn,
 }: TurnViewProps): JSX.Element {
+  const turnElementRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const node = turnElementRef.current;
+    if (!node || typeof ResizeObserver === "undefined" || !node.checkVisibility) return;
+    // Recent turns render eagerly, so Chromium has no remembered auto size
+    // when they leave the recent band. Retain their real height instead of
+    // falling back to 260px and shifting the reader on the next queued turn.
+    const observer = new ResizeObserver(entries => {
+      if (!node.checkVisibility({ contentVisibilityAuto: true })) return;
+      const height = entries[0]?.contentRect.height;
+      if (!height) return;
+      const value = `auto ${height}px`;
+      if (node.style.containIntrinsicBlockSize !== value) node.style.containIntrinsicBlockSize = value;
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   // Remember live submissions so completion actions can animate without
   // replaying their entrance when a finished conversation is opened.
   const startedAsLiveSubmissionRef = useRef(
@@ -238,6 +255,7 @@ function TurnContent({
   return (
     <section
       className="turn"
+      ref={turnElementRef}
       data-wuu-component="turn"
       id={turnAnchorID(turn.id)}
       data-turn-id={turn.id}

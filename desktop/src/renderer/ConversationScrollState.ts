@@ -220,8 +220,8 @@ export function useConversationScrollState({
   enableConversationAutoFollow: () => void;
   /** Position this submission once its optimistic bubble has mounted. */
   requestSubmittedQueryScroll: (messageID: string) => void;
-  /** Queue/steer inputs are positioned only when their exact source materializes. */
-  requestDeferredQueryScroll: (sourceID: string) => void;
+  /** Steers request placement on materialization; queueing revokes that intent. */
+  requestDeferredQueryScroll: (sourceID: string, origin?: "queue" | "steer") => void;
   acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
   discardSubmittedMessage: (messageID: string) => void;
   /**
@@ -744,8 +744,8 @@ export function useConversationScrollState({
 
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 
-  const requestSubmittedQueryScroll = useCallback((messageID: string, fromQueue = false): void => {
-    if (!fromQueue) deferredSubmissionRef.current.clear();
+  const requestSubmittedQueryScroll = useCallback((messageID: string, fromDeferred = false): void => {
+    if (!fromDeferred) deferredSubmissionRef.current.clear();
     // Collaboration keeps its existing bottom-follow behavior. Ordinary
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
@@ -821,7 +821,13 @@ export function useConversationScrollState({
     splitConversation,
   ]);
 
-  const requestDeferredQueryScroll = useCallback((sourceID: string): void => {
+  const requestDeferredQueryScroll = useCallback((sourceID: string, origin: "queue" | "steer" = "steer"): void => {
+    // A queued turn starts on the server's schedule, not a fresh send gesture.
+    // Requeueing a steer also revokes its previous placement intent.
+    if (origin === "queue") {
+      deferredSubmissionRef.current.delete(sourceID);
+      return;
+    }
     if (!activeThreadID || splitConversation) return;
     // Pending composer entries are not conversation bubbles. Keep the current
     // reading policy until the server publishes the matching user message.
@@ -1226,7 +1232,7 @@ export function useConversationScrollState({
     return undefined;
   }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry]);
 
-  // Runs after restoration and every commit, including deferred queue/steer
+  // Runs after restoration and every commit, including deferred steer
   // materialization. Never infer ownership from an arbitrary arriving message.
   useLayoutEffect(() => {
     const deferred = deferredSubmissionRef.current;
@@ -1240,7 +1246,7 @@ export function useConversationScrollState({
         }
       }
     }
-    // A batched server update has one visible destination; later queued inputs
+    // A batched server update has one visible destination; later steered inputs
     // retain their own intent until they materialize or the reader takes over.
     if (latestMessageID) requestSubmittedQueryScroll(latestMessageID, true);
     positionSubmittedMessage(true);

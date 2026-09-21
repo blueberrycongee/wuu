@@ -216,6 +216,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep queued messages in the normal reading flow instead of replaying the send
+  glide when they start. Queue receipt fades locally, and appending turns no
+  longer collapses mounted history or replaces measured heights with estimates.
+
 - Reduce send-animation style recalculation by keeping the first-message spacer
   local to the content wrapper and ignoring subpixel reservation feedback.
 

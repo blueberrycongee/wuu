@@ -98,6 +98,31 @@ export function ConversationTurnList({
   const [turnWindow, setTurnWindow] = useState<TurnWindowState>(() =>
     initialTurnWindowState(threadID, turns.length),
   );
+  const tailID = turns.at(-1)?.id;
+  const [previousTail, setPreviousTail] = useState({ threadID, id: tailID });
+  if (previousTail.threadID !== threadID || previousTail.id !== tailID) {
+    setPreviousTail({ threadID, id: tailID });
+    const previousIndex = previousTail.threadID === threadID
+      ? turns.findIndex(turn => turn.id === previousTail.id) : -1;
+    if (previousIndex >= 0 && previousIndex < turns.length - 1) {
+      // Appending output must not evict mounted history or collapse a reply
+      // above the reader. Cold mounts and explicit history loads remain bounded;
+      // retain already revealed content for this mounted conversation.
+      const previousCount = previousIndex + 1;
+      const added = turns.length - previousCount;
+      setTurnWindow(current => ({
+        ...current,
+        visibleCount: Math.max(current.visibleCount, initialTurnWindowCount(previousCount)) + added,
+      }));
+      const firstFull = previousCount <= TURN_LIST_COLLAPSE_THRESHOLD
+        ? 0 : Math.max(0, previousCount - TURN_LIST_RECENT_FULL_TURNS);
+      const nextFull = Math.max(0, turns.length - TURN_LIST_RECENT_FULL_TURNS);
+      setExpandedTurnIDs(current => new Set([
+        ...current,
+        ...turns.slice(firstFull, Math.min(nextFull, previousCount)).map(turn => turn.id),
+      ]));
+    }
+  }
   const historyLoaderRef = useRef<HTMLButtonElement | null>(null);
   const prependScrollSnapshotRef = useRef<PrependScrollSnapshot | null>(null);
   const forcedFull = useMemo(

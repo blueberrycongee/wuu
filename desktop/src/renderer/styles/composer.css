@@ -926,6 +926,17 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
+/* A queue acknowledges receipt locally; it never launches the conversation. */
+.composer-pending-arrival,
+.composer-queue-row {
+  animation: composer-pending-received var(--motion-fast) var(--ease-out);
+}
+
+@keyframes composer-pending-received {
+  from { opacity: 0.75; }
+  to { opacity: 1; }
+}
+
 .composer-queue-row:hover .composer-queue-preview,
 .composer-queue-row:focus-within .composer-queue-preview {
   background: var(--ink-overlay-4);
@@ -983,7 +994,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .composer-pending-arrival,
   .composer-queue-row {
+    animation: none;
     transition: none;
   }
 }

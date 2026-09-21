@@ -93,6 +93,10 @@ contextBridge.exposeInMainWorld("wuu", {
   forkThread: async () => ({ thread: null }),
   listThreads: async () => ({ threads: [] }),
   listArchivedThreads: async () => ({ threads: [] }),
+  queueTurn: async (threadId, text, _images, id) => {
+    ipcRenderer.send("test:queued-input", { threadId, text, id });
+    return { queued: { id, thread_id: threadId } };
+  },
   startTurn: async (threadId, text, images = []) => {
     const now = new Date().toISOString();
     return {
