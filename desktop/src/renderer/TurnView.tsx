@@ -22,6 +22,10 @@ import { turnEventForTurn } from "./TurnEvents";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { turnIsAnswerReady, type TurnStreamStatus } from "./AppState";
 import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
+import {
   latestAgentMessageItemID,
   messageFlowAgentMessageItemID,
   scrollToUserMessage,
@@ -123,15 +127,32 @@ function TurnContent({
     // Recent turns render eagerly, so Chromium has no remembered auto size
     // when they leave the recent band. Retain their real height instead of
     // falling back to 260px and shifting the reader on the next queued turn.
-    const observer = new ResizeObserver(entries => {
-      if (!node.checkVisibility({ contentVisibilityAuto: true })) return;
-      const height = entries[0]?.contentRect.height;
+    const recordHeight = (height: number): void => {
       if (!height) return;
       const value = `auto ${height}px`;
-      if (node.style.containIntrinsicBlockSize !== value) node.style.containIntrinsicBlockSize = value;
+      if (node.style.containIntrinsicBlockSize !== value) {
+        node.style.containIntrinsicBlockSize = value;
+      }
+    };
+    const settle = createWindowResizeSettleScheduler(() => {
+      if (!node.checkVisibility({ contentVisibilityAuto: true })) return;
+      recordHeight(node.getBoundingClientRect().height);
+    });
+    const observer = new ResizeObserver(entries => {
+      // A window drag changes every visible turn's wrapped height. Writing
+      // the intrinsic size on each of those notifications dirties layout again.
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
+      if (!node.checkVisibility({ contentVisibilityAuto: true })) return;
+      recordHeight(entries[0]?.contentRect.height ?? 0);
     });
     observer.observe(node);
-    return () => observer.disconnect();
+    return () => {
+      settle.cancel();
+      observer.disconnect();
+    };
   }, []);
   // Remember live submissions so completion actions can animate without
   // replaying their entrance when a finished conversation is opened.

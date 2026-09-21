@@ -52,6 +52,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - The conversation titlebar no longer draws a line along its bottom edge.
 
+- Resizing the window no longer remeasures every folded block, turn, and
+  truncated label on each size change. The open conversation still stays
+  pinned to its latest line while the frame moves.
+
 - Dragging the macOS window frame no longer resamples the under-window
   blur on every resize frame. The frame uses an opaque fill while it moves
   and restores the material when the drag ends.

@@ -646,6 +646,37 @@ export function useConversationScrollState({
     reconcileSubmittedArrival,
   ]);
 
+  const pinConversationDuringWindowResize = useCallback((): void => {
+    if (previousThreadRef.current !== activeThreadID) {
+      return;
+    }
+    // Placement and the submit glide still own the viewport. A plain follow
+    // only needs the new bottom; measuring every disclosure forces layout
+    // again on each live resize frame.
+    if (
+      scrollModeRef.current === "placing" ||
+      scrollModeRef.current === "holding" ||
+      smoothAutoFollowRef.current
+    ) {
+      scrollConversationToBottom();
+      return;
+    }
+    const node = conversationViewport();
+    if (!node || !isFollowing()) {
+      return;
+    }
+    const top = latestFollowScrollTop(
+      node,
+      sessionTailSpacePx(conversationPaneRef.current ?? node),
+    );
+    if (node.scrollTop !== top) {
+      node.scrollTop = top;
+    }
+    programmaticScrollTopRef.current = node.scrollTop;
+    lastConversationScrollTopRef.current = node.scrollTop;
+    rememberActiveThreadScrollSnapshot(node, true, node.scrollTop, 0);
+  }, [activePane, activeThreadID, scrollConversationToBottom, splitConversation]);
+
   // A draft can be remounted into a real thread during the same animation.
   // Frame callbacks keep their deadline but must use the current scope's
   // layout/snapshot callbacks, not closures belonging to the outgoing draft.
@@ -1610,10 +1641,13 @@ export function useConversationScrollState({
       return undefined;
     }
     const resizeObserver = new ResizeObserver(() => {
+      if (isWindowResizing()) {
+        pinConversationDuringWindowResize();
+        return;
+      }
       refreshPointerScrollGestureLayout(node);
       // Observer delivery is already after layout and before paint. Deferring
       // to rAF here paints the new line wrapping with the previous scrollTop.
-      // Use the same tail/placement/paused policy during and after a resize.
       scrollConversationToBottom();
     });
     observeAutoFollowResizeTargets(node, resizeObserver);
@@ -1626,6 +1660,7 @@ export function useConversationScrollState({
     emptyConversation,
     initialized,
     primaryTurns,
+    pinConversationDuringWindowResize,
     refreshPointerScrollGestureLayout,
     secondaryTurns,
     scrollConversationToBottom,
@@ -1644,6 +1679,10 @@ export function useConversationScrollState({
       const value = `${height > 0 ? Math.ceil(height + gap) : 0}px`;
       if (pane.style.getPropertyValue("--conversation-status-space") === value) return;
       pane.style.setProperty("--conversation-status-space", value);
+      if (isWindowResizing()) {
+        pinConversationDuringWindowResize();
+        return;
+      }
       scrollConversationToBottom();
     };
     update();
@@ -1657,12 +1696,16 @@ export function useConversationScrollState({
       observer.disconnect();
       window.cancelAnimationFrame(frame);
     };
-  }, [statusClusterNode, scrollConversationToBottom]);
+  }, [pinConversationDuringWindowResize, statusClusterNode, scrollConversationToBottom]);
 
   useLayoutEffect(() => {
     const node = dockComposerNode;
     const updateHeight = (): void => {
       syncDockComposerGeometry();
+      if (isWindowResizing()) {
+        pinConversationDuringWindowResize();
+        return;
+      }
       scrollConversationToBottom();
     };
     updateHeight();
@@ -1687,6 +1730,7 @@ export function useConversationScrollState({
     dockComposerNode,
     emptyConversation,
     initialized,
+    pinConversationDuringWindowResize,
     scrollConversationToBottom,
     syncDockComposerGeometry
   ]);

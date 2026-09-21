@@ -14,6 +14,10 @@
  */
 import { type ElementType, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
 
 export function TruncatedText({
   text,
@@ -34,19 +38,30 @@ export function TruncatedText({
     if (!element) {
       return;
     }
+    const readTruncation = (): boolean => (
+      element.scrollWidth > element.clientWidth + 1 ||
+      element.scrollHeight > element.clientHeight + 1
+    );
     const measure = (): void => {
-      setTruncated(
-        element.scrollWidth > element.clientWidth + 1 ||
-          element.scrollHeight > element.clientHeight + 1,
-      );
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
+      setTruncated(readTruncation());
     };
+    const settle = createWindowResizeSettleScheduler(() => {
+      setTruncated(readTruncation());
+    });
     measure();
     if (typeof ResizeObserver === "undefined") {
       return;
     }
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      settle.cancel();
+      observer.disconnect();
+    };
   }, [text]);
 
   const Tag = as as ElementType;

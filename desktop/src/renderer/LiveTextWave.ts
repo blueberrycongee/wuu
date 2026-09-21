@@ -1,4 +1,8 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
 
 const WAVE_SPEED_PX_PER_SECOND = 90;
 const WAVE_GAP_MS = 4000;
@@ -29,14 +33,24 @@ export function useLiveTextWave<T extends HTMLElement>(
     updateWaveTiming(element);
     if (typeof ResizeObserver === "undefined") return undefined;
 
+    const settle = createWindowResizeSettleScheduler(() => {
+      updateWaveTiming(element);
+    });
     const observer = new ResizeObserver(() => {
       // Follow mode is already changing this line's box every chunk.
       // Measuring it again here feeds the resize loop the stream is in.
       if (document.documentElement.hasAttribute("data-stream-following")) return;
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
       updateWaveTiming(element);
     });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      settle.cancel();
+      observer.disconnect();
+    };
   }, [active]);
 
   return ref;
