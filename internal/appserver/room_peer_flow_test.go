@@ -15,6 +15,17 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+// publishedRoomMessage answers a turn the way the room now requires: assistant
+// text stays private until the member posts it with chat_send.
+func publishedRoomMessage(t *testing.T, roomID string, basisSeq int64, body string) providers.ChatResponse {
+	t.Helper()
+	args, err := json.Marshal(map[string]any{"room_id": roomID, "kind": "text", "body": body, "basis_seq": basisSeq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "send-observation", Name: "chat_send", Arguments: string(args)}}}
+}
+
 func createPeerRoom(t *testing.T, fixture *collaborationRPCFixture, name string, identities ...channels.NamedAgent) channels.Room {
 	t.Helper()
 	members := make([]channels.RoomMember, 0, len(identities))
@@ -55,7 +66,9 @@ func TestRoomMembersTakeTurnsWithoutACoordinatorModel(t *testing.T) {
 		t.Fatal("second member started before first completed")
 	default:
 	}
-	first.response <- providers.ChatResponse{Content: "First independent observation"}
+	first.response <- publishedRoomMessage(t, room.ID, sent.Message.Seq, "First independent observation")
+	firstContinuation := provider.next(t)
+	firstContinuation.response <- providers.ChatResponse{StopReason: "completed"}
 	next := provider.next(t)
 	if !strings.Contains(collaborationRequestText(next.request), "First independent observation") {
 		t.Fatal("next member cannot see the earlier answer")

@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,15 @@ func TestRoomFollowupReachesIdlePeerWhileFirstMemberKeepsWorking(t *testing.T) {
 		t.Fatalf("follow-up interrupted or replaced the original work: %+v %v", current, err)
 	}
 	const reply = "I will simplify the README while the review continues."
-	available.response <- providers.ChatResponse{Content: reply}
+	// Assistant text stays private after a turn ends, so the peer publishes the
+	// answer to the room with chat_send, its own versioned bubble.
+	args, err := json.Marshal(map[string]any{"room_id": room.ID, "kind": "text", "body": reply, "basis_seq": followup.Message.Seq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	available.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "send-followup", Name: "chat_send", Arguments: string(args)}}}
+	continuation := provider.next(t)
+	continuation.response <- providers.ChatResponse{StopReason: "completed"}
 	select {
 	case id := <-fixture.completed:
 		if id != peer.Agent.ID {
