@@ -1615,6 +1615,8 @@ export const enUS = {
   "rich.copyCode": "Copy code",
   "rich.codeCopied": "Code copied",
   "rich.copyFailed": "Copy failed",
+  "rich.highlightCode": "Highlight",
+  "rich.codePlainOnly": "Too large to highlight",
   "rich.openFile": "Open file: {reference}",
   "rich.openLink": "Open in workspace browser: {url}",
   "rich.openLinkExternal": "Open in system browser",

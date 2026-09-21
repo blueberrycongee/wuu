@@ -153,11 +153,25 @@ describe("streaming paint integration", () => {
     const readColor = vi.spyOn(window, "getComputedStyle");
     const walk = vi.spyOn(document, "createTreeWalker");
     showBlocks(blocks, "tail next");
-    expect(readColor).toHaveBeenCalledTimes(1);
+    expect(readColor).not.toHaveBeenCalled();
     expect(walk).toHaveBeenCalledTimes(1);
     expect(walk.mock.calls[0][0]).toBe(host.querySelector("div")!.lastElementChild);
     readColor.mockRestore();
     walk.mockRestore();
+  });
+  it("measures a text color again after the theme changes", async () => {
+    setup();
+    showBlocks(["history"], "tail");
+    const readColor = vi.spyOn(window, "getComputedStyle");
+    showBlocks(["history"], "tail next");
+    expect(readColor).not.toHaveBeenCalled();
+    await act(async () => {
+      document.documentElement.setAttribute("data-theme", "night");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(readColor).toHaveBeenCalled();
+    document.documentElement.removeAttribute("data-theme");
+    readColor.mockRestore();
   });
   it("drops stale paint on source replacement and seeds the new message", () => {
     setup();

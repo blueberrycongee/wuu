@@ -450,6 +450,30 @@ describe("RichContent code block", () => {
     expect(copyButton?.getAttribute("aria-label")).toBe("复制代码");
   });
 
+  it("keeps an oversized code block as one text node until highlight is requested", () => {
+    const body = `const ${"value".repeat(2_000)} = 1;`;
+    render(<RichContent text={"```javascript\n" + body + "\n```"} />);
+
+    const code = container.querySelector(".rich-code code");
+    expect(code?.querySelector("span")).toBeNull();
+    expect(code?.textContent).toContain("const");
+    const button = container.querySelector<HTMLButtonElement>(".rich-code-highlight");
+    expect(button?.textContent).toBe("高亮");
+
+    act(() => { button?.click(); });
+
+    expect(container.querySelector(".rich-code code span")).not.toBeNull();
+  });
+
+  it("does not offer highlighting for a code block past the hard limit", () => {
+    const body = "x".repeat(100_001);
+    render(<RichContent text={"```\n" + body + "\n```"} />);
+
+    expect(container.querySelector(".rich-code-highlight")).toBeNull();
+    expect(container.querySelector(".rich-code-plain-note")?.textContent).toBe("代码过长，保持纯文本");
+    expect(container.querySelector(".rich-code code span")).toBeNull();
+  });
+
   it("omits the language label when the fenced code has no language", () => {
     render(<RichContent text={"```\nnaked code\n```"} />);
 

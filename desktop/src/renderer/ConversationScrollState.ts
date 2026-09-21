@@ -262,6 +262,28 @@ export function useConversationScrollState({
   // Exactly one owner can write scrollTop. Geometry alone cannot transfer
   // ownership: a submission's padded bottom is not the bottom of its output.
   const scrollModeRef = useRef<ConversationScrollMode>("following");
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  function syncStreamFollowing(): void {
+    // Scroll-linked fades and the live text wave repaint on every chunk
+    // while the viewport is pinned to a running turn. The attribute lets
+    // CSS drop those layers without a React render.
+    const degrade = runningRef.current && scrollModeRef.current !== "paused";
+    const root = document.documentElement;
+    if (root.hasAttribute("data-stream-following") === degrade) return;
+    if (degrade) root.setAttribute("data-stream-following", "");
+    else root.removeAttribute("data-stream-following");
+  }
+  function writeScrollMode(mode: ConversationScrollMode): void {
+    scrollModeRef.current = mode;
+    syncStreamFollowing();
+  }
+  useEffect(() => {
+    syncStreamFollowing();
+    return () => {
+      document.documentElement.removeAttribute("data-stream-following");
+    };
+  }, [running]);
   function isFollowing(): boolean { return scrollModeRef.current === "following"; }
   function submissionPhase(): SubmissionScrollPhase | undefined {
     const mode = scrollModeRef.current;
@@ -293,7 +315,7 @@ export function useConversationScrollState({
   const setAutoFollow = useCallback((next: boolean): void => {
     // A later ownership change supersedes a pending click's restoration.
     if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
-    scrollModeRef.current = next ? "following" : "paused";
+    writeScrollMode(next ? "following" : "paused");
   }, []);
   const lastConversationScrollTopRef = useRef(0);
   const lastDisclosureHeightRef = useRef(0);
@@ -440,7 +462,7 @@ export function useConversationScrollState({
       window.cancelAnimationFrame(submittedScrollFrameRef.current);
       submittedScrollFrameRef.current = undefined;
     }
-    if (scrollModeRef.current === "placing") scrollModeRef.current = "holding";
+    if (scrollModeRef.current === "placing") writeScrollMode("holding");
   }, [applyLeadSpace]);
 
   const markUserScrollIntent = useCallback((direction: "away" | "latest", startTop?: number): void => {
@@ -635,7 +657,7 @@ export function useConversationScrollState({
     if (!viewport) return false;
     const message = submittedMessage();
     if (!message) return false;
-    scrollModeRef.current = "placing";
+    writeScrollMode("placing");
     setAutoFollowOverflowAnchor(viewport, true);
     const placement = submittedMessagePlacement(viewport, message);
     if (submissionRef.current) submissionRef.current.documentTop = placement.documentTop;
@@ -651,7 +673,7 @@ export function useConversationScrollState({
       viewport.scrollTop = targetTop;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      scrollModeRef.current = "holding";
+      writeScrollMode("holding");
       rememberActiveThreadScrollSnapshot(viewport, false);
       return true;
     }
@@ -659,7 +681,7 @@ export function useConversationScrollState({
     const glide = createScrollGlide();
     let lastFrameTime: number | undefined;
     const finishHold = (viewport: HTMLElement, placed: number): void => {
-      scrollModeRef.current = "holding";
+      writeScrollMode("holding");
       reflowSubmittedMotionRef.current = undefined;
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
     };
@@ -688,7 +710,7 @@ export function useConversationScrollState({
         if (scrollModeRef.current !== "placing") return;
         const viewport = conversationViewport();
         if (!viewport) {
-          scrollModeRef.current = "pending";
+          writeScrollMode("pending");
           applyLeadSpace(0);
           return;
         }
@@ -720,7 +742,7 @@ export function useConversationScrollState({
       if (scrollModeRef.current !== "placing") return;
       const viewport = conversationViewport();
       if (!viewport) {
-        scrollModeRef.current = "pending";
+        writeScrollMode("pending");
         return;
       }
       // Animate the bubble's position in the reading viewport, not scrollTop.
@@ -730,7 +752,7 @@ export function useConversationScrollState({
       if (animatedMessage.dataset.userMessageId !== submissionRef.current?.messageID || !viewport.contains(animatedMessage)) {
         const replacement = submittedMessage();
         if (!replacement) {
-          scrollModeRef.current = "pending";
+          writeScrollMode("pending");
           return;
         }
         animatedMessage = replacement;
@@ -786,7 +808,7 @@ export function useConversationScrollState({
     clearUserScrollIntent();
     cancelBottomOverscroll(conversationViewport());
     selectionPausedAutoFollowRef.current = false;
-    scrollModeRef.current = splitConversation ? "following" : "pending";
+    writeScrollMode(splitConversation ? "following" : "pending");
     const node = conversationViewport();
     if (!node) {
       return;
@@ -941,8 +963,8 @@ export function useConversationScrollState({
         return;
       }
       cancelSubmittedQueryScroll();
-      scrollModeRef.current = snapshot.submissionPhase === "placing" ? "pending" :
-        snapshot.submissionPhase ?? (snapshot.autoFollow ? "following" : "paused");
+      writeScrollMode(snapshot.submissionPhase === "placing" ? "pending" :
+        snapshot.submissionPhase ?? (snapshot.autoFollow ? "following" : "paused"));
       submissionRef.current = snapshot.submittedMessageID
         ? { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false }
         : undefined;
@@ -1241,8 +1263,8 @@ export function useConversationScrollState({
       submissionRef.current = undefined;
       snapshot = undefined;
     }
-    scrollModeRef.current = snapshot?.submissionPhase === "placing" ? "pending" :
-      snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following");
+    writeScrollMode(snapshot?.submissionPhase === "placing" ? "pending" :
+      snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following"));
     if (snapshot?.submittedMessageID) {
       submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
     }

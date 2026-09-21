@@ -1612,6 +1612,8 @@ export const zhCN = {
   "rich.copyCode": "复制代码",
   "rich.codeCopied": "已复制代码",
   "rich.copyFailed": "复制失败",
+  "rich.highlightCode": "高亮",
+  "rich.codePlainOnly": "代码过长，保持纯文本",
   "rich.openFile": "打开文件：{reference}",
   "rich.openLink": "在工作区浏览器打开：{url}",
   "rich.openLinkExternal": "在系统浏览器打开",

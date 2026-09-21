@@ -29,7 +29,12 @@ export function useLiveTextWave<T extends HTMLElement>(
     updateWaveTiming(element);
     if (typeof ResizeObserver === "undefined") return undefined;
 
-    const observer = new ResizeObserver(() => updateWaveTiming(element));
+    const observer = new ResizeObserver(() => {
+      // Follow mode is already changing this line's box every chunk.
+      // Measuring it again here feeds the resize loop the stream is in.
+      if (document.documentElement.hasAttribute("data-stream-following")) return;
+      updateWaveTiming(element);
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, [active]);

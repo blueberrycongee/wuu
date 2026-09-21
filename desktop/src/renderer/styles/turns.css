@@ -2697,6 +2697,11 @@
   animation-play-state: paused;
 }
 
+:root[data-stream-following] .process-surface-summary-text.wuu-live-text-wave {
+  animation: none;
+  mask-image: none;
+}
+
 .cached-conversation-pane[data-active="false"] .process-surface-summary-text.wuu-live-text-wave {
   animation: none;
   mask-image: none;
@@ -3496,6 +3501,35 @@
   letter-spacing: 0.05em;
   color: var(--ink-muted);
   pointer-events: none;
+  user-select: none;
+}
+
+.rich-code-highlight {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rich-code-highlight:hover,
+.rich-code-highlight:focus-visible {
+  color: var(--ink);
+}
+
+.rich-code-highlight + .rich-code-copy,
+.rich-code-plain-note + .rich-code-copy {
+  margin-left: 0;
+}
+
+.rich-code-plain-note {
+  margin-left: auto;
+  margin-right: 8px;
+  color: var(--ink-muted);
+  font-size: inherit;
   user-select: none;
 }
 

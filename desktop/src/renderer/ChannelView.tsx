@@ -25,6 +25,7 @@ import { ChannelMemberPicker } from "./ChannelMemberPicker";
 import { ChannelRecipientPicker } from "./ChannelRecipientPicker";
 import { buildComposerAttachments } from "./ComposerDraftState";
 import { ComposerAttachmentStrip } from "./ComposerInputSections";
+import { DIRECTORY_POLL_BASE_MS, nextDirectoryPollDelay } from "./ChannelDirectoryPoll";
 import {
   sameChannelMessages,
   sameChannelRooms,
@@ -1042,36 +1043,65 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     if (directoryIsControlled) return;
     if (!window.wuu) return;
     let active = true;
-    const refresh = (): void => {
-      if (directoryRefreshInFlightRef.current) return;
+    let delay = DIRECTORY_POLL_BASE_MS;
+    let timer = 0;
+    const refresh = async (): Promise<boolean | undefined> => {
+      if (directoryRefreshInFlightRef.current) return undefined;
       directoryRefreshInFlightRef.current = true;
-      void Promise.all([
-        window.wuu!.listNamedAgents(),
-        window.wuu!.listChannelRooms(),
-      ]).then(([agentResult, roomResult]) => {
-        if (!active) return;
+      let changed = false;
+      try {
+        const [agentResult, roomResult] = await Promise.all([
+          window.wuu!.listNamedAgents(),
+          window.wuu!.listChannelRooms(),
+        ]);
+        if (!active) return changed;
         setLoadError("");
         const nextAgents = agentResult.agents ?? [];
         const nextRooms = roomResult.rooms ?? [];
-        setAgents((current) =>
-          sameNamedAgents(current, nextAgents) ? current : nextAgents,
-        );
-        setRooms((current) =>
-          sameChannelRooms(current, nextRooms) ? current : nextRooms,
-        );
-      }).catch((reason: unknown) => {
+        setAgents((current) => {
+          if (sameNamedAgents(current, nextAgents)) return current;
+          changed = true;
+          return nextAgents;
+        });
+        setRooms((current) => {
+          if (sameChannelRooms(current, nextRooms)) return current;
+          changed = true;
+          return nextRooms;
+        });
+        return changed;
+      } catch (reason: unknown) {
         if (active) setLoadError(toastErrorMessage(reason));
-      }).finally(() => {
+        return changed;
+      } finally {
         directoryRefreshInFlightRef.current = false;
-      });
+      }
     };
-    refresh();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 1_000);
+    const schedule = (ms: number): void => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { void tick(); }, ms);
+    };
+    const tick = async (): Promise<void> => {
+      if (!active || document.visibilityState !== "visible") return;
+      const changed = await refresh();
+      if (!active || document.visibilityState !== "visible") return;
+      if (changed !== undefined) delay = nextDirectoryPollDelay(delay, changed);
+      schedule(delay);
+    };
+    const onVisibility = (): void => {
+      if (!active) return;
+      if (document.visibilityState !== "visible") {
+        window.clearTimeout(timer);
+        return;
+      }
+      delay = DIRECTORY_POLL_BASE_MS;
+      void tick();
+    };
+    void tick();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [directoryIsControlled, setAgents, setRooms]);
 

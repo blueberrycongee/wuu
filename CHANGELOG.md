@@ -28,6 +28,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Streaming turns spend less time on decorative paint. While a running
+  conversation stays pinned to the latest line, the live text wave and
+  scroll-edge fades pause, and stream colors are reused until the theme
+  changes. Code blocks over 8,000 characters stay plain text until
+  highlighted, and blocks over 100,000 characters are not highlighted.
+  The collaboration directory slows its refresh when the room list is
+  unchanged or the window is hidden.
+
 - Narrow windows no longer place a close button on the session drawer.
   Dismiss it from the dimmed backdrop, the titlebar sidebar button, or by
   moving the pointer off the drawer. While the drawer is open that button

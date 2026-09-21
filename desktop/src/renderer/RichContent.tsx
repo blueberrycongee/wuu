@@ -26,7 +26,12 @@ import {
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
-import { highlightCode } from "./WorkspaceCodeHighlight";
+import {
+  CODE_HIGHLIGHT_CHAR_LIMIT,
+  CODE_HIGHLIGHT_HARD_LIMIT,
+  highlightCode,
+  shouldHighlightCode,
+} from "./WorkspaceCodeHighlight";
 
 type RichContentProps = {
   text?: string;
@@ -364,16 +369,35 @@ function RichCodeBlock({
   language: string;
 }): JSX.Element {
   const { t } = useI18n();
+  // Reveal is pinned to one snapshot. A growing stream must not re-run
+  // highlight.js on every token after the reader opts in.
+  const [revealedText, setRevealedText] = useState<string | null>(null);
+  const highlight = shouldHighlightCode(displayedCode, revealedText);
   const highlighted = useMemo(
-    () => highlightCode(language, displayedCode),
-    [displayedCode, language]
+    () => highlight ? highlightCode(language, displayedCode) : null,
+    [displayedCode, highlight, language]
   );
-  const highlightedCode = (
+  const highlightedCode = highlighted ? (
     <code
       className={`hljs language-${highlighted.language}`}
       dangerouslySetInnerHTML={{ __html: highlighted.html }}
     />
+  ) : (
+    <code className="hljs">{displayedCode}</code>
   );
+  const oversized = displayedCode.length > CODE_HIGHLIGHT_CHAR_LIMIT;
+  const canReveal = oversized && displayedCode.length <= CODE_HIGHLIGHT_HARD_LIMIT && !highlight;
+  const highlightControl = canReveal ? (
+    <button
+      type="button"
+      className="rich-code-highlight"
+      onClick={() => setRevealedText(displayedCode)}
+    >
+      {t("rich.highlightCode")}
+    </button>
+  ) : oversized && !highlight ? (
+    <span className="rich-code-plain-note">{t("rich.codePlainOnly")}</span>
+  ) : null;
   // Two layouts:
   //   - With a language tag, the header row carries the language label
   //     and the copy button on the same baseline. Keeps the chrome
@@ -390,6 +414,7 @@ function RichCodeBlock({
       <div className="rich-code-block">
         <div className="rich-code-header">
           <span className="rich-code-language">{language}</span>
+          {highlightControl}
           <MessageCopyButton
             getText={() => code}
             className="rich-code-copy"
@@ -406,18 +431,33 @@ function RichCodeBlock({
     );
   }
   return (
-    <div className="rich-code-block rich-code-block--no-header">
+    <div className={`rich-code-block${highlightControl ? "" : " rich-code-block--no-header"}`}>
+      {highlightControl ? (
+        <div className="rich-code-header">
+          {highlightControl}
+          <MessageCopyButton
+            getText={() => code}
+            className="rich-code-copy"
+            iconSize={13}
+            idleLabel={t("rich.copyCode")}
+            copiedLabel={t("rich.codeCopied")}
+            failedLabel={t("rich.copyFailed")}
+          />
+        </div>
+      ) : null}
       <pre className="rich-code">
         {highlightedCode}
       </pre>
-      <MessageCopyButton
-        getText={() => code}
-        className="rich-code-copy"
-        iconSize={13}
-        idleLabel={t("rich.copyCode")}
-        copiedLabel={t("rich.codeCopied")}
-        failedLabel={t("rich.copyFailed")}
-      />
+      {highlightControl ? null : (
+        <MessageCopyButton
+          getText={() => code}
+          className="rich-code-copy"
+          iconSize={13}
+          idleLabel={t("rich.copyCode")}
+          copiedLabel={t("rich.codeCopied")}
+          failedLabel={t("rich.copyFailed")}
+        />
+      )}
     </div>
   );
 }

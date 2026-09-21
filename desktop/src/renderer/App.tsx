@@ -182,6 +182,7 @@ import {
   writeChannelRoomPreferences,
   type ChannelRoomPreferences,
 } from "./ChannelRoomPreferences";
+import { DIRECTORY_POLL_BASE_MS, nextDirectoryPollDelay } from "./ChannelDirectoryPoll";
 import { sameChannelRooms, sameNamedAgents } from "./ChannelRoomState";
 import {
   RIGHT_PANEL_MOTION_MS,
@@ -710,26 +711,33 @@ export function App(): JSX.Element {
       return;
     }
     let active = true;
-    const refresh = async (): Promise<void> => {
-      if (directoryRefreshInFlightRef.current) return;
+    let delay = DIRECTORY_POLL_BASE_MS;
+    let timer = 0;
+    const refresh = async (): Promise<boolean | undefined> => {
+      if (directoryRefreshInFlightRef.current) return undefined;
       directoryRefreshInFlightRef.current = true;
       const generation = ++channelDirectoryGenerationRef.current;
+      let changed = false;
       try {
         const result = await window.wuu!.listChannelRooms();
         if (active && generation === channelDirectoryGenerationRef.current) {
           const rooms = result.rooms ?? [];
-          setChannelRooms((current) =>
-            sameChannelRooms(current, rooms) ? current : rooms,
-          );
+          setChannelRooms((current) => {
+            if (sameChannelRooms(current, rooms)) return current;
+            changed = true;
+            return rooms;
+          });
           setChannelDirectoryLoaded(true);
         }
         if (typeof window.wuu!.listNamedAgents === "function") {
           const agentResult = await window.wuu!.listNamedAgents();
           if (active && generation === channelDirectoryGenerationRef.current) {
             const agents = agentResult.agents ?? [];
-            setNamedAgents((current) =>
-              sameNamedAgents(current, agents) ? current : agents,
-            );
+            setNamedAgents((current) => {
+              if (sameNamedAgents(current, agents)) return current;
+              changed = true;
+              return agents;
+            });
           }
         }
       } catch (reason) {
@@ -737,14 +745,34 @@ export function App(): JSX.Element {
       } finally {
         directoryRefreshInFlightRef.current = false;
       }
+      return changed;
     };
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 2_000);
+    const schedule = (ms: number): void => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { void tick(); }, ms);
+    };
+    const tick = async (): Promise<void> => {
+      if (!active || document.visibilityState !== "visible") return;
+      const changed = await refresh();
+      if (!active || document.visibilityState !== "visible") return;
+      if (changed !== undefined) delay = nextDirectoryPollDelay(delay, changed);
+      schedule(delay);
+    };
+    const onVisibility = (): void => {
+      if (!active) return;
+      if (document.visibilityState !== "visible") {
+        window.clearTimeout(timer);
+        return;
+      }
+      delay = DIRECTORY_POLL_BASE_MS;
+      void tick();
+    };
+    void tick();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [state.initialized]);
   const [projectFilter, setProjectFilter] = useState("");

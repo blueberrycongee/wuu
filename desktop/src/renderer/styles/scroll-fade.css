@@ -57,6 +57,14 @@
   }
 }
 
+/* A live turn pinned to the latest line changes these scrollports every
+ * chunk. The scroll timeline then recomputes the mask on that cadence.
+ * Drop it until the reader leaves the live edge or the turn settles. */
+:root[data-stream-following] [data-scroll-fade] {
+  animation: none;
+  mask-image: none;
+}
+
 /* Keep high-contrast/print output fully legible. Reduced motion and older
  * engines degrade to ordinary clipping rather than a permanent fade. */
 :root[data-appearance-motion="reduce"] [data-scroll-fade] {

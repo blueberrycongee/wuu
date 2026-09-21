@@ -61,7 +61,7 @@ type HighlightRegistry = Map<string, Set<Range>>;
 type HighlightConstructor = new (...ranges: Range[]) => Set<Range>;
 type TextEntry = { node: Text; start: number; end: number; color: string };
 type PaintGroup = { name: string; highlight: Set<Range>; rule: CSSStyleRule; color: string };
-type PaintedSpan = { end: number; entries: TextEntry[]; groups: Map<string, PaintGroup> };
+type PaintedSpan = { end: number; entries: TextEntry[]; groups: Map<string, PaintGroup>; step: number };
 let nextPainter = 0;
 
 /**
@@ -102,13 +102,24 @@ export function useStreamVeil(
     let offset = 0;
     let veil = new StreamVeil();
     let needsBaseline = true;
+    // Computed color changes with the theme, not with each streamed token.
+    // Keep it until that attribute changes so a live tail does not force
+    // style resolution on every chunk.
+    let colorEpoch = 0;
+    const colorCache = new WeakMap<Element, { epoch: number; color: string }>();
+    const colorFor = (parent: Element): string => {
+      const hit = colorCache.get(parent);
+      if (hit !== undefined && hit.epoch === colorEpoch) return hit.color;
+      const color = getComputedStyle(parent).color;
+      colorCache.set(parent, { epoch: colorEpoch, color });
+      return color;
+    };
     const disabled = (): boolean => motion.matches ||
       document.documentElement.dataset.appearanceMotion === "reduce" || document.hidden;
     const read = (): { nodes: TextEntry[]; flat: string; committed: number } => {
       const nodes: TextEntry[] = [];
       let flat = "";
       let committed = 0;
-      const colors = new Map<Element, string>();
       let index = knownStableBlocks;
       for (let child = element.children.item(index); child; child = child.nextElementSibling, index++) {
         const walker = document.createTreeWalker(child, NodeFilter.SHOW_TEXT);
@@ -117,8 +128,7 @@ export function useStreamVeil(
           const parent = node.parentElement!;
           if (!parent.closest("p, li, td, th, code, blockquote") ||
               parent.closest('button, svg, [aria-hidden="true"], .rich-mermaid')) continue;
-          const color = colors.get(parent) ?? getComputedStyle(parent).color;
-          colors.set(parent, color);
+          const color = colorFor(parent);
           nodes.push({ node, start: offset + flat.length, end: offset + flat.length + node.length, color });
           flat += node.data;
         }
@@ -153,9 +163,15 @@ export function useStreamVeil(
         active.add(key);
         const state = painted.get(key);
         if (!state) continue;
+        // Eight opacity steps keep the fade, but a live highlight does not
+        // invalidate style on every animation frame.
+        const step = span.opacity >= 1 ? 8 : Math.round(span.opacity * 8);
+        if (state.step === step) continue;
+        state.step = step;
+        const mixed = step / 8;
         for (const group of state.groups.values()) {
           // Mutate the existing declaration, not the stylesheet or its rules.
-          group.rule.style.color = `color-mix(in srgb, ${group.color} ${span.opacity * 100}%, transparent)`;
+          group.rule.style.color = `color-mix(in srgb, ${group.color} ${mixed * 100}%, transparent)`;
         }
       }
       for (const [key, state] of painted) {
@@ -203,7 +219,7 @@ export function useStreamVeil(
         const key = String(span.start);
         let state = painted.get(key);
         if (state && state.end === span.end && span.end <= offset) continue;
-        if (!state) { state = { end: span.end, entries: [], groups: new Map() }; painted.set(key, state); }
+        if (!state) { state = { end: span.end, entries: [], groups: new Map(), step: -1 }; painted.set(key, state); }
         state.end = span.end;
         // React can replace text nodes or reset Range offsets while updating
         // characterData. Rebind the live part, retaining promoted stable ranges.
@@ -237,6 +253,9 @@ export function useStreamVeil(
           removeGroup(group);
           state.groups.delete(color);
         }
+        // New ranges start transparent. The next paint must write the
+        // current step even when opacity has not crossed another eighth.
+        state.step = -1;
       }
       veil.discardPrefix(committed);
       offset += committed;
@@ -244,7 +263,7 @@ export function useStreamVeil(
       paint(now);
     };
     painter.current = { update };
-    const reset = (): void => { needsBaseline = true; update(); };
+    const reset = (): void => { colorEpoch += 1; needsBaseline = true; update(); };
     const preferenceObserver = new MutationObserver(reset);
     preferenceObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-appearance-motion", "data-theme"] });
     motion.addEventListener("change", reset);

@@ -472,6 +472,13 @@
   animation-play-state: paused;
 }
 
+/* The clipped highlight is a second text paint. While follow is chasing
+ * a growing line, that layer is dropped; the source text stays put. */
+:root[data-stream-following] .wuu-live-text-wave::after {
+  content: none;
+  animation: none;
+}
+
 .cached-conversation-pane[data-active="false"] .wuu-live-text-wave::after {
   content: none;
   animation: none;
