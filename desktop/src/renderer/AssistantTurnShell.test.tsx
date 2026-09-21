@@ -156,6 +156,7 @@ type RenderOptions = {
   itemRenderer?: (item: ThreadItem, streaming: boolean) => JSX.Element;
   onCollapseComplete?: () => void;
   onOpenAgent?: (agentID: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
 };
 
 function defaultItemRenderer(
@@ -194,6 +195,7 @@ function renderShell(
         onStreamFrame: () => {},
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
+        onOpenURL: options.onOpenURL,
       }),
     );
   });
@@ -222,6 +224,7 @@ function rerenderShell(
         onStreamFrame: () => {},
         onCollapseComplete: options.onCollapseComplete,
         onOpenAgent: options.onOpenAgent,
+        onOpenURL: options.onOpenURL,
       }),
     );
   });
@@ -1518,21 +1521,13 @@ describe("AssistantTurnShell — turn sources pill end-to-end", () => {
     expect(container.querySelector(".turn-sources-pill")).toBeNull();
   });
 
-  it("clicking the sources pill hands the URL to window.wuu.openExternal", () => {
-    // End-to-end: shell mounts → pill renders → user clicks → handleOpenSource
-    // fires → window.wuu.openExternal called with the exact URL. This is the
-    // path Electron takes when the user actually taps a source. Single-source
-    // case: the click target is the pill itself, not a nested icon button.
-    const openExternal = vi.fn().mockResolvedValue(undefined);
-    (
-      window as unknown as { wuu: { openExternal: typeof openExternal } }
-    ).wuu = { openExternal };
-
+  it("clicking the sources pill hands the URL to onOpenURL", () => {
+    const onOpenURL = vi.fn();
     const turn = makeTurn("completed", [
       makeFinalAnswer(""),
       makeWebFetch("https://docs.anthropic.com/api"),
     ]);
-    const { container } = renderShell(turn);
+    const { container } = renderShell(turn, { onOpenURL });
 
     const button = container.querySelector<HTMLButtonElement>(
       "button.turn-sources-pill",
@@ -1540,8 +1535,6 @@ describe("AssistantTurnShell — turn sources pill end-to-end", () => {
     act(() => {
       button?.click();
     });
-    expect(openExternal).toHaveBeenCalledWith(
-      "https://docs.anthropic.com/api",
-    );
+    expect(onOpenURL).toHaveBeenCalledWith("https://docs.anthropic.com/api");
   });
 });

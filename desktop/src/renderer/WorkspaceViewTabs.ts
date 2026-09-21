@@ -190,7 +190,12 @@ export function workspaceFileBasename(path: string): string {
  * a new one. Opening the first file replaces the temporary Files browser
  * entry; closing the final file restores that entry.
  */
-export function openViewTab(state: WorkspaceViewTabsState, tab: WorkspaceViewTab): WorkspaceViewTabsState {
+export function openViewTab(
+  state: WorkspaceViewTabsState,
+  tab: WorkspaceViewTab,
+  options: { activate?: boolean } = {},
+): WorkspaceViewTabsState {
+  const activate = options.activate !== false;
   if (tab.kind === "file") {
     const existingFileIndex = state.tabs.findIndex((candidate) => candidate.id === tab.id);
     const tabsWithoutBrowser = state.tabs.filter((candidate) => candidate.kind !== "files");
@@ -198,12 +203,12 @@ export function openViewTab(state: WorkspaceViewTabsState, tab: WorkspaceViewTab
     const tabs = existingFileIndex < 0
       ? [...tabsWithoutBrowser, tab]
       : tabsWithoutBrowser.map((candidate, index) => (index === adjustedFileIndex ? tab : candidate));
-    return focusViewTab({ ...state, tabs }, tab.id);
+    return activate ? focusViewTab({ ...state, tabs }, tab.id) : { ...state, tabs };
   }
   const index = state.tabs.findIndex((candidate) => candidate.id === tab.id);
   const tabs =
     index < 0 ? [...state.tabs, tab] : state.tabs.map((candidate, i) => (i === index ? tab : candidate));
-  return focusViewTab({ ...state, tabs }, tab.id);
+  return activate ? focusViewTab({ ...state, tabs }, tab.id) : { ...state, tabs };
 }
 
 /** Focuses the tab with the given id (or the tool picker, when `id` is undefined). */
@@ -314,7 +319,7 @@ export function useWorkspaceViewTabs(): {
   tabs: WorkspaceViewTab[];
   activeTabID: string | undefined;
   activeFileTabID: string | undefined;
-  openTab: (tab: WorkspaceViewTab) => void;
+  openTab: (tab: WorkspaceViewTab, options?: { activate?: boolean }) => void;
   focusTab: (id: string | undefined) => void;
   closeTab: (id: string) => void;
   closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
@@ -322,8 +327,8 @@ export function useWorkspaceViewTabs(): {
 } {
   const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
 
-  const openTab = useCallback((tab: WorkspaceViewTab) => {
-    setState((current) => openViewTab(current, tab));
+  const openTab = useCallback((tab: WorkspaceViewTab, options?: { activate?: boolean }) => {
+    setState((current) => openViewTab(current, tab, options));
   }, []);
   const focusTab = useCallback((id: string | undefined) => {
     setState((current) => focusViewTab(current, id));

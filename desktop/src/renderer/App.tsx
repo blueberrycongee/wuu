@@ -238,7 +238,7 @@ import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { externalAgentActivityStore } from "./ExternalAgentActivityStore";
 import { SkillsCatalog } from "./SkillsCatalog";
 import { userVisibleThreads } from "./SkillsAssistant";
-import { useBrowserVisibility } from "./BrowserVisibility";
+import { isForegroundControlled, useBrowserVisibility } from "./BrowserVisibility";
 import { useSideThreadController } from "./SideThreadController";
 import {
   isCancellationMessage,
@@ -256,6 +256,13 @@ import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
 import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
+import {
+  openWorkspaceBrowserOrExternal,
+  workspaceBrowserFocusDecision,
+  WorkspaceBrowserOpenContext,
+  type WorkspaceBrowserOpenTarget,
+} from "./WorkspaceBrowserOpen";
+import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
 import {
   desktopPluginHost,
   desktopWorkbenchController,
@@ -745,6 +752,7 @@ export function App(): JSX.Element {
     workspaceViewTabs,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
+    ensureWorkspaceToolTab,
     openWorkspaceTool,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
@@ -2516,6 +2524,25 @@ export function App(): JSX.Element {
       openTurnFileDiffPanel(thread.id, selection);
     },
   );
+  const openWorkspaceBrowser = useStableCallback((target: WorkspaceBrowserOpenTarget): void => {
+    requestWorkspaceBrowserNavigation(target);
+    const focus = workspaceBrowserFocusDecision({
+      rightPanelOpen,
+      activeTabID: workspaceActiveViewTabID,
+      browserForegroundOccupied: isForegroundControlled(activeBrowserActivity),
+    });
+    if (!focus.stealFocus) {
+      ensureWorkspaceToolTab("browser");
+      return;
+    }
+    openWorkspaceTool("browser");
+  });
+  const openWorkspaceBrowserURL = useStableCallback((
+    url: string,
+    modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number },
+  ): void => {
+    openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
+  });
   const openWorkspaceFile = useStableCallback((path: string): void => {
     // Stamp the same derived context the workspace panel's file tree/preview
     // are rooted at (workspacePanelContext), not the raw activeContext — for
@@ -5094,6 +5121,7 @@ export function App(): JSX.Element {
       {archiveTipNode}
       {modelCatalogTipNode}
       <ImagePreviewProvider>
+      <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
           ref={appShellRef}
@@ -5688,6 +5716,7 @@ export function App(): JSX.Element {
                       void forkThreadFromMessage(thread, turnID, itemID)
                     }
                     onOpenFile={openWorkspaceFileForThread}
+                    onOpenURL={openWorkspaceBrowserURL}
                     onOpenAgent={(agent) => void selectChildAgent(agent)}
                     canEditThreadMessage={canShowHistoryEditButton}
                     onEditMessage={startEditingThreadMessageFromHistory}
@@ -5756,6 +5785,7 @@ export function App(): JSX.Element {
                 canEditThreadMessage={canEditCachedThreadMessage}
                 onForkMessage={handleCachedPaneForkMessage}
                 onOpenFile={openWorkspaceFileForThread}
+                onOpenURL={openWorkspaceBrowserURL}
                 onOpenAgent={handleCachedPaneOpenAgent}
                 onEditMessage={handleCachedPaneEditMessage}
                 onCancelEditMessage={handleCachedPaneCancelEditMessage}
@@ -5980,6 +6010,7 @@ export function App(): JSX.Element {
       />
       </div>
     </ArtifactPreviewContext.Provider>
+    </WorkspaceBrowserOpenContext.Provider>
     </ImagePreviewProvider>
     </WuuMascotRuntimeProvider>
   );

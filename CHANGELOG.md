@@ -8,6 +8,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Desktop conversations can open the workspace browser from `/browser`, the
+  workspace tool list, message links, turn sources, and compact browser
+  activity rows. Modifier-clicks still use the system browser, and the panel
+  does not steal focus from another workspace tool or a foreground Agent
+  browser.
+
 ### Fixed
 
 - Collaboration-created ordinary workspace sessions now keep their project id

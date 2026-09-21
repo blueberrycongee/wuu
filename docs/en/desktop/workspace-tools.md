@@ -46,12 +46,14 @@ Agent commands also have activity entries and results in the conversation. Long 
 
 ## Browser
 
-The browser panel shows a page beside your work. When browser automation is available, **Take control of browser** switches to manual control, **Return browser control to Agent** gives it back, and **Stop browser activity** stops that activity. Available tools depend on the build and engine.
+Open **Browser** or enter `/browser` to view a page in the workspace panel beside the conversation. Clicking a web link in a message, a turn source capsule, or a compact browser activity row also opens or focuses that panel and navigates to the page. Hold Command (Ctrl on Windows) or middle-click to open it in the system browser instead. If you are already using another workspace tool, or Agent already occupies the foreground browser, the page still navigates in the existing browser tab and does not steal the panel.
+
+When browser automation is available, **Take control of browser** switches to manual control, **Return browser control to Agent** gives it back, and **Stop browser activity** stops that activity. Background agent browsing does not open the panel just because a URL appeared in chat.
 
 To route only the embedded browser through a proxy, set `WUU_BROWSER_PROXY` before launching the desktop. For a source build:
 
 ```bash
-WUU_BROWSER_PROXY=http://127.0.0.1:7897 npm run dev --prefix desktop
+WUU_BROWSER_PROXY=http://proxy.example:7897 npm run dev --prefix desktop
 ```
 
 Use the address and port of your own proxy. This setting does not configure model API or app-server traffic. If browser requests fail after enabling it, check the proxy and restart Wuu with the corrected setting.

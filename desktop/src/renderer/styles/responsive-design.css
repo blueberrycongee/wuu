@@ -236,7 +236,8 @@
     transform: none;
   }
 
-  .workspace-browser-loading-dot {
+  .workspace-browser-loading-dot,
+  .workspace-browser-loading-bar[data-active="true"] {
     animation: none;
   }
 

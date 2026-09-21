@@ -39,6 +39,7 @@ export type ProcessSurfaceFoldProps = {
   disabled?: boolean;
   open: boolean;
   onToggle: (event: SyntheticEvent<HTMLDetailsElement>) => void;
+  onSummaryClick?: (event: SyntheticEvent<HTMLElement>) => void;
   className?: string;
   /** Extra classes for the clickable summary row (live/streaming states). */
   rowClassName?: string;
@@ -54,6 +55,7 @@ export function ProcessSurfaceFold({
   disabled = false,
   open,
   onToggle,
+  onSummaryClick,
   className = "",
   rowClassName = "",
   bodyRef,
@@ -70,6 +72,7 @@ export function ProcessSurfaceFold({
   const handleSummaryClick = (event: SyntheticEvent<HTMLElement>): void => {
     if (!hasDetails) {
       event.preventDefault();
+      onSummaryClick?.(event);
     }
   };
   return (

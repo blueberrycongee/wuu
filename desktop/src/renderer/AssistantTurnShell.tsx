@@ -80,6 +80,7 @@ export function AssistantTurnShell({
   display,
   cwd,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   actionableAgentMessageID,
   latestAgentMessageID,
@@ -94,6 +95,7 @@ export function AssistantTurnShell({
   display: AssistantTurnDisplay;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   actionableAgentMessageID?: string;
   latestAgentMessageID?: string;
@@ -130,7 +132,7 @@ export function AssistantTurnShell({
   // in the process region, but the source affordance belongs beside the
   // process header so it reads as turn metadata instead of extra answer
   // content. Dedupe by host is handled inside collectTurnSources so a
-  // burst of hits on docs.anthropic.com still produces a single icon.
+  // burst of hits on the same domain still produces a single icon.
   // process_group entries wrap several raw items under one .items array,
   // so we flatten entries.items ?? [entry.item] before feeding the helper.
   const turnSources = useMemo(
@@ -140,11 +142,13 @@ export function AssistantTurnShell({
       ),
     [display.entries],
   );
-  const handleOpenSource = useCallback((url: string): void => {
-    if (typeof window !== "undefined") {
-      void window.wuu?.openExternal?.(url);
-    }
-  }, []);
+  const handleOpenSource = useCallback((
+    url: string,
+    modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number },
+  ): void => {
+    if (modifiers) onOpenURL?.(url, modifiers);
+    else onOpenURL?.(url);
+  }, [onOpenURL]);
 
   // An in_progress turn always shows the process header, even before the
   // first server item arrives (the optimistic placeholder right after
@@ -245,7 +249,7 @@ function TurnProcessFold({
   collapseRequested: boolean;
   latestPreview?: TurnProcessPreview;
   sources: ReturnType<typeof collectTurnSources>;
-  onOpenSource?: (url: string) => void;
+  onOpenSource?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onOpenAgent?: (agentID: string) => void;

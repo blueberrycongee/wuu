@@ -73,7 +73,7 @@ import { PluginIcon } from "./PublicIcon";
 import { PluginSlot } from "./plugins/PluginSlot";
 import type { WorkbenchController } from "./plugins/Workbench";
 import { PluginViewContent } from "./plugins/Workbench";
-import { ENABLE_EMBEDDED_BROWSER } from "./FeatureFlags";
+import { useWorkspaceBrowserNavigationRequest } from "./WorkspaceBrowserNavigation";
 
 const WorkspaceTerminalPanel = lazy(() => import("./WorkspaceTerminalPanel").then((module) => ({
   default: module.WorkspaceTerminalPanel,
@@ -89,9 +89,7 @@ const WORKSPACE_TOOL_ITEMS: Array<{
   { id: "files", titleKey: "workspace.tool.files", subtitleKey: "workspace.tool.filesDescription" },
   { id: "review", titleKey: "workspace.tool.review", subtitleKey: "workspace.tool.reviewDescription" },
   { id: "terminal", titleKey: "workspace.tool.terminal", subtitleKey: "workspace.tool.terminalDescription" },
-  ...(ENABLE_EMBEDDED_BROWSER
-    ? [{ id: "browser" as const, titleKey: "workspace.tool.browser" as const, subtitleKey: "workspace.tool.browserDescription" as const }]
-    : []),
+  { id: "browser", titleKey: "workspace.tool.browser", subtitleKey: "workspace.tool.browserDescription" },
 ];
 
 export const WORKSPACE_FILE_TREE_DEFAULT_WIDTH = 320;
@@ -236,6 +234,7 @@ export function WorkspaceRightPanel({
   workbenchController?: WorkbenchController;
 }): JSX.Element {
   const { t } = useI18n();
+  const browserNavigation = useWorkspaceBrowserNavigationRequest();
   const effectivePluginHost = pluginHost ?? desktopPluginHost;
   const pluginTools = useSyncExternalStore(
     (listener) => effectivePluginHost.subscribe(listener),
@@ -880,7 +879,24 @@ export function WorkspaceRightPanel({
               </div>,
               document.body,
             )}
-            {activeTab?.kind === "files" || activeTab?.kind === "file" ? null : (
+            {tabs.some((tab) => tab.kind === "browser") ? (
+              <div
+                className="workspace-panel-content-swap"
+                hidden={activeTab?.kind !== "browser"}
+                aria-hidden={activeTab?.kind !== "browser"}
+              >
+                <WorkspaceBrowserPanel
+                  mounted={open}
+                  activeContext={activeContext}
+                  activity={browserActivity}
+                  requestedURL={browserNavigation}
+                  onActivityTakeover={onBrowserActivityTakeover}
+                  onActivityRelease={onBrowserActivityRelease}
+                  onActivityStop={onBrowserActivityStop}
+                />
+              </div>
+            ) : null}
+            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" ? null : (
               <div
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
@@ -916,15 +932,6 @@ export function WorkspaceRightPanel({
                       thread={terminalThread}
                     />
                   </Suspense>
-                ) : activeTab.kind === "browser" ? (
-                  <WorkspaceBrowserPanel
-                    open={open}
-                    activeContext={activeContext}
-                    activity={browserActivity}
-                    onActivityTakeover={onBrowserActivityTakeover}
-                    onActivityRelease={onBrowserActivityRelease}
-                    onActivityStop={onBrowserActivityStop}
-                  />
                 ) : activeTab.kind === "plugin" && workbenchController ? (
                   <PluginViewContent
                     controller={workbenchController}
@@ -1124,7 +1131,7 @@ function WorkspaceToolPicker({
       data-wuu-component="workspace-tool-picker"
     >
       <div className="workspace-tool-menu-list">
-        {WORKSPACE_TOOL_ITEMS.filter((item) => item.id !== "browser" || typeof window.wuu?.reportBrowserBounds === "function").map((item) => (
+        {WORKSPACE_TOOL_ITEMS.map((item) => (
           <button
             key={item.id}
             className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
@@ -1197,7 +1204,7 @@ export function WorkspaceBottomPanel({
           className="workspace-tool-grid"
           aria-label={t("workspace.tools")}
         >
-          {WORKSPACE_TOOL_ITEMS.filter((item) => item.id !== "browser" || typeof window.wuu?.reportBrowserBounds === "function").map((item) => (
+          {WORKSPACE_TOOL_ITEMS.map((item) => (
             <button
               key={item.id}
               className={`workspace-tool-card${item.id === selectedView ? " active" : ""}`}

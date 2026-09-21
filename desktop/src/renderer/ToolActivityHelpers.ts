@@ -1323,8 +1323,7 @@ export function summarizeToolActivity(items: ThreadItem[]): ToolActivitySummary 
 /**
  * One external page the agent consulted in a turn via web_search or
  * web_fetch. The renderer uses this list to draw the favicon pill at the
- * bottom of an assistant message (mirroring the ChatGPT / Claude
- * "来源" treatment).
+ * bottom of an assistant message.
  *
  * `host` is the canonical domain used both for favicon lookup and for
  * dedupe: multiple pages on the same domain collapse to a single icon.
@@ -1343,10 +1342,27 @@ export type TurnSource = {
  * web_search contributes one source per hit (each result has its own
  * page). web_fetch contributes one source per call (the URL the agent
  * asked to read). Both are deduped by host so multiple pages from the
- * same domain collapse to a single icon — that matches what users
- * expect from the ChatGPT / Claude sources row and keeps the pill
- * readable when the agent makes many hits on docs.anthropic.com.
+ * same domain collapse to a single icon and keep the pill readable.
  */
+export function browserActivityOpenURL(items: ThreadItem[]): string | undefined {
+  for (const item of items) {
+    if (item.type !== "tool_call") {
+      continue;
+    }
+    const name = canonicalToolName((item.name ?? "").trim());
+    if (name !== "browser") {
+      continue;
+    }
+    const args = parseJSONRecord(item.arguments);
+    const result = parseJSONRecord(item.result);
+    const url = stringValue(args, "url") ?? stringValue(result, "url");
+    if (url) {
+      return url;
+    }
+  }
+  return undefined;
+}
+
 export function collectTurnSources(items: ThreadItem[]): TurnSource[] {
   const byHost = new Map<string, TurnSource>();
   for (const item of items) {

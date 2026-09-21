@@ -1,12 +1,11 @@
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
   Bot,
   Globe,
   Hand,
   RotateCw,
-  Search,
-  ShieldAlert,
   Square,
   X
 } from "lucide-react";
@@ -19,6 +18,11 @@ import {
 } from "react";
 import type { ActivitySession, RuntimeContext } from "../shared/protocol";
 import { translateCurrent, useI18n } from "./i18n";
+import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
+import {
+  useWorkspaceBrowserNavigationConsumer,
+  type WorkspaceBrowserNavigationRequest,
+} from "./WorkspaceBrowserNavigation";
 import { WorkspacePanelEmpty } from "./WorkspaceFiles";
 
 const HOME_PAGE_URL = "wuu://new-tab";
@@ -41,11 +45,11 @@ function looksLikeUrl(input: string): boolean {
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
     return true;
   }
-  // localhost with port
+  // loopback host with optional port
   if (/^localhost(:\d+)?(\/.*)?$/i.test(value)) {
     return true;
   }
-  // 127.0.0.1 / 0.0.0.0 with optional port
+  // IPv4 loopback / unspecified address with optional port
   if (/^(?:127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:\/.*)?$/.test(value)) {
     return true;
   }
@@ -89,16 +93,18 @@ function safeWebview<T>(fn: () => T): T | undefined {
 }
 
 export function WorkspaceBrowserPanel({
-  open = true,
+  mounted = true,
   activeContext,
   activity,
+  requestedURL,
   onActivityTakeover,
   onActivityRelease,
   onActivityStop,
 }: {
-  open?: boolean;
+  mounted?: boolean;
   activeContext?: RuntimeContext;
   activity?: ActivitySession;
+  requestedURL?: WorkspaceBrowserNavigationRequest;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
   onActivityStop?: () => void;
@@ -118,6 +124,8 @@ export function WorkspaceBrowserPanel({
   const [canGoForward, setCanGoForward] = useState(false);
   const [hostHint, setHostHint] = useState<string | undefined>(undefined);
   const [isWebviewReady, setIsWebviewReady] = useState(false);
+  const consumeNavigation = useWorkspaceBrowserNavigationConsumer();
+  const consumedRequestIDRef = useRef<number | undefined>(undefined);
 
   const updateCurrentURL = useCallback((url: string) => {
     setCurrentURL(url);
@@ -277,6 +285,21 @@ export function WorkspaceBrowserPanel({
     safeWebview(() => webview.loadURL(target));
   }, []);
 
+  useEffect(() => {
+    if (!mounted || !requestedURL) {
+      return;
+    }
+    if (consumedRequestIDRef.current === requestedURL.requestID) {
+      return;
+    }
+    const currentKey = workspaceBrowserOpenTarget(currentURL)?.reuseKey;
+    if (currentKey !== requestedURL.reuseKey) {
+      navigate(requestedURL.url);
+    }
+    consumedRequestIDRef.current = requestedURL.requestID;
+    consumeNavigation(requestedURL.requestID);
+  }, [consumeNavigation, currentURL, mounted, navigate, requestedURL]);
+
   const goBack = useCallback(() => {
     const webview = webviewRef.current;
     if (!webview || !canGoBack) {
@@ -306,7 +329,7 @@ export function WorkspaceBrowserPanel({
   }, [status]);
 
   useEffect(() => {
-    if (open) {
+    if (mounted) {
       return;
     }
     const webview = webviewRef.current;
@@ -324,7 +347,7 @@ export function WorkspaceBrowserPanel({
     setErrorMessage(undefined);
     setCanGoBack(false);
     setCanGoForward(false);
-  }, [open]);
+  }, [mounted]);
 
   useEffect(() => {
     if (currentURL === HOME_PAGE_URL) {
@@ -348,44 +371,44 @@ export function WorkspaceBrowserPanel({
       data-wuu-state={status}
     >
       <div className="workspace-browser-toolbar" data-wuu-component="workspace-browser-toolbar">
-        <button
-          className="icon-button workspace-browser-nav"
-          type="button"
-          aria-label={t("workspace.browser.back")}
-          title={t("workspace.browser.back")}
-          disabled={!canGoBack}
-          onClick={goBack}
-        >
-          <ArrowLeft className="icon" />
-        </button>
-        <button
-          className="icon-button workspace-browser-nav"
-          type="button"
-          aria-label={t("workspace.browser.forward")}
-          title={t("workspace.browser.forward")}
-          disabled={!canGoForward}
-          onClick={goForward}
-        >
-          <ArrowRight className="icon" />
-        </button>
-        <button
-          className="icon-button workspace-browser-nav"
-          type="button"
-          aria-label={isLoading ? t("workspace.browser.stop") : t("workspace.browser.refresh")}
-          title={isLoading ? t("workspace.browser.stop") : t("workspace.browser.refresh")}
-          onClick={reload}
-        >
-          {isLoading ? <X className="icon" /> : <RotateCw className="icon" />}
-        </button>
+        <div className="workspace-browser-nav-cluster">
+          <button
+            className="icon-button workspace-browser-nav"
+            type="button"
+            aria-label={t("workspace.browser.back")}
+            title={t("workspace.browser.back")}
+            disabled={!canGoBack}
+            onClick={goBack}
+          >
+            <ArrowLeft className="icon" />
+          </button>
+          <button
+            className="icon-button workspace-browser-nav"
+            type="button"
+            aria-label={t("workspace.browser.forward")}
+            title={t("workspace.browser.forward")}
+            disabled={!canGoForward}
+            onClick={goForward}
+          >
+            <ArrowRight className="icon" />
+          </button>
+          <button
+            className="icon-button workspace-browser-nav"
+            type="button"
+            aria-label={isLoading ? t("workspace.browser.stop") : t("workspace.browser.refresh")}
+            title={isLoading ? t("workspace.browser.stop") : t("workspace.browser.refresh")}
+            disabled={!showWebview && !isLoading}
+            onClick={reload}
+          >
+            {isLoading ? <X className="icon" /> : <RotateCw className="icon" />}
+          </button>
+        </div>
         <form
           className="workspace-browser-url-form"
           data-wuu-component="workspace-browser-address"
           role="search"
           onSubmit={handleSubmit}
         >
-          <span className="workspace-browser-url-icon" aria-hidden="true">
-            {status === "error" ? <ShieldAlert className="icon-sm" /> : <Globe className="icon-sm" />}
-          </span>
           <input
             ref={inputRef}
             className={`workspace-browser-url-input${status === "error" ? " has-error" : ""}`}
@@ -400,16 +423,26 @@ export function WorkspaceBrowserPanel({
             onFocus={(event) => event.currentTarget.select()}
             aria-label={t("workspace.browser.address")}
           />
+          <button
+            className="icon-button workspace-browser-open-external"
+            type="button"
+            aria-label={t("workspace.browser.openExternal")}
+            title={t("workspace.browser.openExternal")}
+            disabled={!showWebview}
+            onClick={() => {
+              if (showWebview) {
+                openExternalURL(currentURL);
+              }
+            }}
+          >
+            <ArrowUpRight className="icon-sm" />
+          </button>
         </form>
-        <button
-          className="icon-button workspace-browser-nav"
-          type="button"
-          aria-label={t("workspace.browser.home")}
-          title={t("workspace.browser.newTab")}
-          onClick={() => navigate(HOME_PAGE_URL)}
-        >
-          <Search className="icon" />
-        </button>
+        <div
+          className="workspace-browser-loading-bar"
+          data-active={isLoading ? "true" : "false"}
+          aria-hidden="true"
+        />
       </div>
       <div className="workspace-browser-frame" data-wuu-component="workspace-browser-content">
         <div
@@ -420,13 +453,9 @@ export function WorkspaceBrowserPanel({
         {!showWebview ? (
           <WorkspacePanelEmpty
             className="workspace-browser-home"
-            title={t("workspace.browser.newTab")}
-            hint={
-              activeContext?.cwd
-                ? t("workspace.browser.homeWorkspaceDescription")
-                : t("workspace.browser.homeDescription")
-            }
-            icon={<Globe size={24} />}
+            title={t("workspace.browser.startBrowsing")}
+            hint={t("workspace.browser.startBrowsingHint")}
+            icon={<Globe size={28} strokeWidth={1.6} />}
           />
         ) : null}
         {status === "error" && errorMessage ? (

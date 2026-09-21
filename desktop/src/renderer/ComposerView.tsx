@@ -901,6 +901,9 @@ export function Composer({
       case "open-terminal":
         onOpenWorkspaceTool("terminal");
         break;
+      case "open-browser":
+        onOpenWorkspaceTool("browser");
+        break;
       case "open-project":
         onOpenProject();
         break;

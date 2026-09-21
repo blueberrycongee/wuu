@@ -28,9 +28,9 @@ export const ENABLE_ACCOUNT =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
 /**
- * The embedded browser remains an internal development capability. Production
- * builds do not expose its workspace surface even if the build environment
- * happens to contain the opt-in variable.
+ * Agent-driven browser overlay (WebContentsView takeover, bounds reporting,
+ * and server-request routing) stays opt-in. The workspace browser panel itself
+ * is a regular workspace tool and no longer depends on this flag.
  */
 export const ENABLE_EMBEDDED_BROWSER =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_BROWSER === "true";

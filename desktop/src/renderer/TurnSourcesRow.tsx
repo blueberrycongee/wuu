@@ -7,6 +7,12 @@ import {
 import type { TurnSource } from "./ToolActivityHelpers";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
+import {
+  openExternalURL,
+  useWorkspaceBrowserOpen,
+  workspaceBrowserClickModifiers,
+  type WorkspaceBrowserOpenModifiers,
+} from "./WorkspaceBrowserOpen";
 
 /**
  * How many host icons we render inside the pill before collapsing the
@@ -22,17 +28,14 @@ const VISIBLE_SOURCE_LIMIT = 6;
 /**
  * "来源 N" pill rendered beside an assistant turn's process header.
  * It stacks one favicon per unique host the turn consulted through
- * `web_search` or `web_fetch` and hands the chosen URL to the OS default
- * browser on click. One slot per host (not per URL), only after at least
+ * `web_search` or `web_fetch` and opens the chosen URL on click. One slot
+ * per host (not per URL), only after at least
  * one web tool resolved, with a first-letter avatar as a fallback for
  * hosts whose favicon can't be fetched.
  *
  * The accessible name + native tooltip carry the full URL, not just the
- * host. The favicon lookup dedupes on host, but the host alone is
- * ambiguous (docs.anthropic.com vs www.anthropic.com vs status.anthropic.com
- * are all "anthropic.com" to the favicon lookup while each is a different
- * page) — the user wants to see which page on the host was actually
- * consulted before opening it.
+ * host. The favicon lookup dedupes on host, but the host alone can still
+ * cover several pages, so the tooltip shows the consulted URL.
  *
  * Single-source shortcut: when the turn only consulted one URL, the
  * whole pill becomes a `<button>` so hovering or clicking the "来源"
@@ -48,18 +51,26 @@ const VISIBLE_SOURCE_LIMIT = 6;
  * and squeeze the "查看思考过程" toggle to zero width.
  *
  * The component never decides policy on its own. `sources` is fed by
- * `collectTurnSources` and the open-URL responsibility belongs to the
- * main process via `window.wuu.openExternal`; the `onOpen` prop lets
- * tests inject a spy without touching globals.
+ * `collectTurnSources`. Clicks open the workspace browser when the host
+ * provides that path; modifier clicks and missing hosts still use
+ * `window.wuu.openExternal`. The `onOpen` prop lets tests inject a spy.
  */
 export function TurnSourcesRow({
   sources,
   onOpen,
 }: {
   sources: TurnSource[];
-  onOpen?: (url: string) => void;
+  onOpen?: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
+  const openWorkspaceURL = useWorkspaceBrowserOpen((url, modifiers) => {
+    if (onOpen) {
+      if (modifiers) onOpen(url, modifiers);
+      else onOpen(url);
+      return;
+    }
+    openExternalURL(url);
+  });
   if (sources.length === 0) return null;
   // "来源" alone reads better for a single hit. With more, the count
   // helps users decide whether to expand the pill in the future.
@@ -75,7 +86,7 @@ export function TurnSourcesRow({
     const tooltip = sourceTooltip(source);
     const handleClick = (event: ReactMouseEvent<HTMLButtonElement>): void => {
       event.preventDefault();
-      openSource(source, onOpen);
+      openWorkspaceURL(source.url, workspaceBrowserClickModifiers(event));
     };
     return (
       <Tooltip content={tooltip}>
@@ -105,13 +116,13 @@ export function TurnSourcesRow({
     <div className="turn-sources-pill" role="group" aria-label={label}>
       <div className="turn-sources-icons">
         {visibleSources.map((source) => (
-          <SourceIcon key={source.host} source={source} onOpen={onOpen} />
+          <SourceIcon key={source.host} source={source} onOpen={openWorkspaceURL} />
         ))}
         {overflowSources.length > 0 ? (
           <OverflowBadge
             count={overflowSources.length}
             sources={overflowSources}
-            onOpen={onOpen}
+            onOpen={openWorkspaceURL}
           />
         ) : null}
       </div>
@@ -128,31 +139,18 @@ function sourceTooltip(source: TurnSource): string {
   return source.title ? `${source.title} — ${source.url}` : source.url;
 }
 
-function openSource(
-  source: TurnSource,
-  onOpen: ((url: string) => void) | undefined,
-): void {
-  if (onOpen) {
-    onOpen(source.url);
-    return;
-  }
-  if (typeof window !== "undefined") {
-    void window.wuu?.openExternal?.(source.url);
-  }
-}
-
 function SourceIcon({
   source,
   onOpen,
 }: {
   source: TurnSource;
-  onOpen?: (url: string) => void;
+  onOpen: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const tooltip = sourceTooltip(source);
   const handleClick = (event: ReactMouseEvent<HTMLButtonElement>): void => {
     event.preventDefault();
-    openSource(source, onOpen);
+    onOpen(source.url, workspaceBrowserClickModifiers(event));
   };
   return (
     <Tooltip content={tooltip}>
@@ -172,9 +170,7 @@ function SourceAvatar({ source }: { source: TurnSource }): JSX.Element {
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "failed">(
     "loading",
   );
-  // Google Favicon Service is the de-facto favicon source for chat-
-  // style "sources" rows (ChatGPT, Claude web search). It resolves a
-  // 32x32 PNG for any host with no API key. If the host has no
+  // Resolve a 32x32 PNG for any host with no API key. If the host has no
   // favicon, the request 404s and `onError` flips us into the
   // first-letter avatar fallback so the stack still reads as one.
   const faviconURL = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(source.host)}&sz=32`;
@@ -207,7 +203,7 @@ function OverflowBadge({
 }: {
   count: number;
   sources: TurnSource[];
-  onOpen?: (url: string) => void;
+  onOpen: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -273,7 +269,7 @@ function OverflowList({
   onClose,
 }: {
   sources: TurnSource[];
-  onOpen?: (url: string) => void;
+  onOpen: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
   onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -285,7 +281,9 @@ function OverflowList({
           event: ReactMouseEvent<HTMLButtonElement>,
         ): void => {
           event.preventDefault();
-          openSource(source, onOpen);
+          const modifiers = workspaceBrowserClickModifiers(event);
+          if (modifiers) onOpen(source.url, modifiers);
+          else onOpen(source.url);
           onClose();
         };
         return (
@@ -312,3 +310,5 @@ function OverflowList({
     </ul>
   );
 }
+
+

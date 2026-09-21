@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import type { ActivitySession } from "../shared/protocol";
+import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
 
 type FakeWebviewMethods = {
   loadURL: ReturnType<typeof vi.fn>;
@@ -74,7 +75,7 @@ afterEach(() => {
 });
 
 function render(props: {
-  open?: boolean;
+  mounted?: boolean;
   activity?: ActivitySession;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
@@ -84,7 +85,7 @@ function render(props: {
     root = createRoot(container);
     root!.render(
       <WorkspaceBrowserPanel
-        open={props.open}
+        mounted={props.mounted}
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
         onActivityTakeover={props.onActivityTakeover}
@@ -99,7 +100,7 @@ function render(props: {
 }
 
 function rerender(props: {
-  open?: boolean;
+  mounted?: boolean;
   activity?: ActivitySession;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
@@ -108,7 +109,7 @@ function rerender(props: {
   act(() => {
     root!.render(
       <WorkspaceBrowserPanel
-        open={props.open}
+        mounted={props.mounted}
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
         onActivityTakeover={props.onActivityTakeover}
@@ -132,7 +133,7 @@ describe("WorkspaceBrowserPanel", () => {
           HTMLInputElement.prototype,
           "value",
         )?.set;
-        valueSetter?.call(input, "http://localhost:3000");
+        valueSetter?.call(input, "http://app.local:3000");
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }
     });
@@ -140,13 +141,79 @@ describe("WorkspaceBrowserPanel", () => {
       form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
 
-    expect(fakeWebview.loadURL).toHaveBeenCalledWith("http://localhost:3000");
+    expect(fakeWebview.loadURL).toHaveBeenCalledWith("http://app.local:3000");
+  });
+
+  it("shows the empty browsing surface before a URL is submitted", () => {
+    render({});
+    expect(container.querySelector(".workspace-browser-home")?.textContent).toContain("开始浏览");
+    expect(container.querySelector(".workspace-browser-home")?.textContent).toContain("输入 URL 以打开页面");
+    expect(
+      container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")?.disabled,
+    ).toBe(true);
+  });
+
+  it("navigates when the conversation requests a URL", () => {
+    render({ mounted: true });
+    fakeWebview.loadURL.mockClear();
+    const request = requestWorkspaceBrowserNavigation({
+      url: "https://docs.example.com/api",
+      reuseKey: "https://docs.example.com/api",
+    });
+    act(() => {
+      root!.render(
+        <WorkspaceBrowserPanel
+          mounted
+          activeContext={{ kind: "no_project", cwd: "/repo" }}
+          requestedURL={request}
+        />,
+      );
+    });
+    expect(fakeWebview.loadURL).toHaveBeenCalledWith("https://docs.example.com/api");
+  });
+
+  it("navigates while hidden so background tabs can reuse the same page", () => {
+    render({ mounted: true });
+    fakeWebview.loadURL.mockClear();
+    const request = requestWorkspaceBrowserNavigation({
+      url: "https://docs.example.com/api",
+      reuseKey: "https://docs.example.com/api",
+    });
+    act(() => {
+      root!.render(
+        <WorkspaceBrowserPanel
+          mounted
+          activeContext={{ kind: "no_project", cwd: "/repo" }}
+          requestedURL={request}
+        />,
+      );
+    });
+    expect(fakeWebview.loadURL).toHaveBeenCalledWith("https://docs.example.com/api");
+  });
+
+  it("does not consume a navigation request after the browser tab is discarded", () => {
+    render({ mounted: true });
+    fakeWebview.loadURL.mockClear();
+    const request = requestWorkspaceBrowserNavigation({
+      url: "https://docs.example.com/api",
+      reuseKey: "https://docs.example.com/api",
+    });
+    act(() => {
+      root!.render(
+        <WorkspaceBrowserPanel
+          mounted={false}
+          activeContext={{ kind: "no_project", cwd: "/repo" }}
+          requestedURL={request}
+        />,
+      );
+    });
+    expect(fakeWebview.loadURL).not.toHaveBeenCalledWith("https://docs.example.com/api");
   });
 
   it("clears the webview when the browser panel closes", () => {
-    render({ open: true });
+    render({ mounted: true });
     fakeWebview.loadURL.mockClear();
-    rerender({ open: false });
+    rerender({ mounted: false });
     expect(fakeWebview.stop).toHaveBeenCalledTimes(1);
     expect(fakeWebview.loadURL).toHaveBeenCalledWith("about:blank");
   });

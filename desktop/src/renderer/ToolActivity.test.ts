@@ -5,6 +5,7 @@ import {
   activitySummaryText,
   buildToolActivityProcessSegments,
   buildToolActivitySections,
+  browserActivityOpenURL,
   collectTurnSources,
   summarizeToolActivity,
   readableToolActivityName,
@@ -772,6 +773,20 @@ describe("collectTurnSources", () => {
         origin: "web_search",
       },
     ]);
+  });
+
+  it("extracts the first browser navigation URL from process items", () => {
+    expect(
+      browserActivityOpenURL([
+        {
+          id: "browser-1",
+          type: "tool_call",
+          name: "browser",
+          status: "completed",
+          arguments: JSON.stringify({ action: "navigate", url: "http://app.local:3000" }),
+        } satisfies ThreadItem,
+      ]),
+    ).toBe("http://app.local:3000");
   });
 
 });

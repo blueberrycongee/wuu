@@ -67,6 +67,20 @@ describe("composer slash commands", () => {
       tag: "Side chat",
     });
   });
+
+  it("offers /browser as a workspace action", () => {
+    const commands = buildComposerSlashCommands({
+      activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
+      initialized: initialized("gpt-5.5", ["gpt-5.5"]),
+      running: false,
+    });
+    const browser = commands.find((command) => command.name === "browser");
+    expect(browser).toMatchObject({
+      kind: "action",
+      action: "open-browser",
+      title: "打开浏览器",
+    });
+  });
   it("shows /fast only when the current provider exposes a fast model", () => {
     const commands = buildComposerSlashCommands({
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },

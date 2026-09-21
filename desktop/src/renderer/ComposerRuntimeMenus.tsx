@@ -20,6 +20,7 @@ import {
   GitCommitHorizontal,
   GitCompare,
   GitPullRequest,
+  Globe,
   Hammer,
   Lock,
   MessageSquarePlus,
@@ -1463,6 +1464,8 @@ export function SlashCommandIcon({ command }: { command: ComposerSlashCommand })
       return <Terminal className="icon" />;
     case "open-files":
       return <FileText className="icon" />;
+    case "open-browser":
+      return <Globe className="icon" />;
     case "open-project":
       return <FolderOpen className="icon" />;
     case "no-project":

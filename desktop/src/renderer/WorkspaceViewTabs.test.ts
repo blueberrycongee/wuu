@@ -324,6 +324,13 @@ describe("closeViewTab", () => {
     expect(state.activeTabID).toBeUndefined();
   });
 
+  it("can open a background tab without stealing the active tool", () => {
+    let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("files"));
+    state = openViewTab(state, workspaceToolViewTab("browser"), { activate: false });
+    expect(state.tabs.map((tab) => tab.id)).toEqual(["files", "browser"]);
+    expect(state.activeTabID).toBe("files");
+  });
+
   it("closing an inactive tab leaves the active tab untouched", () => {
     let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("files"));
     state = openViewTab(state, workspaceToolViewTab("terminal"));

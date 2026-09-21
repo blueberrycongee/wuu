@@ -57,6 +57,7 @@ export type CachedConversationPanesProps = {
   canEditThreadMessage: (thread: Thread) => boolean;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent: (agent: Agent) => void;
   onEditMessage: (thread: Thread, turnID: string, item: ThreadItem) => void;
   onCancelEditMessage: () => void;
@@ -91,6 +92,7 @@ export const CachedConversationPanes = memo(function CachedConversationPanes({
   canEditThreadMessage,
   onForkMessage,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onEditMessage,
   onCancelEditMessage,
@@ -127,6 +129,7 @@ export const CachedConversationPanes = memo(function CachedConversationPanes({
             canEditThreadMessage={canEditThreadMessage}
             onForkMessage={onForkMessage}
             onOpenFile={onOpenFile}
+            onOpenURL={onOpenURL}
             onOpenAgent={onOpenAgent}
             onEditMessage={onEditMessage}
             onCancelEditMessage={onCancelEditMessage}
@@ -165,6 +168,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
   canEditThreadMessage,
   onForkMessage,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onEditMessage,
   onCancelEditMessage,
@@ -378,6 +382,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
                   onOpenFile={onOpenFile ? handleOpenFile : undefined}
+                  onOpenURL={onOpenURL}
                   onOpenAgent={handleOpenAgentByID}
                   latestAgentMessageID={
                     latestAgentLocation?.turnID === turn.id
@@ -466,6 +471,7 @@ type PaneTurnViewProps = {
   editingMessage?: HistoryMessageEditState;
   streamStatus?: TurnStreamStatus;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent: (agentID: string) => void;
   onStreamFrame: () => void;
   onCollapseComplete: () => void;
@@ -499,6 +505,7 @@ const PaneTurnView = memo(function PaneTurnView({
   editingMessage,
   streamStatus,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   onStreamFrame,
   onCollapseComplete,
@@ -513,6 +520,7 @@ const PaneTurnView = memo(function PaneTurnView({
       turn={turn}
       cwd={cwd}
       onOpenFile={onOpenFile}
+      onOpenURL={onOpenURL}
       onOpenAgent={onOpenAgent}
       latestAgentMessageID={latestAgentMessageID}
       isLatestTurn={isLatestTurn}

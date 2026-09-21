@@ -397,6 +397,21 @@ describe("RichContent code block", () => {
     expect(openExternalMock).toHaveBeenCalledWith("https://github.com/blueberrycongee/wuu");
   });
 
+  it("hands a web link to onOpenURL when the workspace browser is available", () => {
+    const onOpenURL = vi.fn();
+    render(
+      <RichContent
+        text={"Open https://github.com/blueberrycongee/wuu"}
+        onOpenURL={onOpenURL}
+      />,
+    );
+
+    const link = container.querySelector("a.rich-web-link") as HTMLAnchorElement | null;
+    act(() => link?.click());
+    expect(onOpenURL).toHaveBeenCalledWith("https://github.com/blueberrycongee/wuu");
+    expect(openExternalMock).not.toHaveBeenCalled();
+  });
+
   it("does not turn inline code file names into file links", () => {
     render(<RichContent text={"Keep `README_zh.md` literal here."} cwd="/repo/wuu" />);
 

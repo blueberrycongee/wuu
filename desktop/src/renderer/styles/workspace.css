@@ -1767,12 +1767,20 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-browser-toolbar {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
+  column-gap: 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--hairline-soft);
   background: transparent;
+}
+
+.workspace-browser-nav-cluster {
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
 
 .workspace-browser-nav {
@@ -1793,18 +1801,24 @@ html.resizing-workspace-file-split * {
 }
 
 .workspace-browser-url-form {
-  flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-self: center;
+  gap: 4px;
+  width: min(100%, 770px);
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 10px 0 12px;
   height: 28px;
-  border-radius: var(--radius-pill);
-  background: var(--paper);
-  border: 1px solid var(--browser-url-border);
+  border-radius: 10px;
+  background: transparent;
+  border: 0;
   color: var(--ink-soft);
-  transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.workspace-browser-url-form:hover,
+.workspace-browser-url-form:focus-within {
+  background: var(--surface-3);
 }
 
 html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
@@ -1813,19 +1827,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) {
-  border-color: var(--danger-border);
-  box-shadow: 0 0 0 3px var(--browser-url-error-ring);
-}
-
-.workspace-browser-url-icon {
-  display: grid;
-  place-items: center;
-  color: var(--browser-url-icon);
-  flex: 0 0 auto;
-}
-
-.workspace-browser-url-form:has(.workspace-browser-url-input.has-error) .workspace-browser-url-icon {
-  color: var(--browser-url-error-icon);
+  box-shadow: inset 0 0 0 1px var(--danger-border);
 }
 
 .workspace-browser-url-input {
@@ -1835,10 +1837,11 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   outline: none;
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-sm, 12.5px);
+  font-size: var(--font-ui);
   font-family: inherit;
   padding: 0;
   line-height: 1.4;
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent);
 }
 
 .workspace-browser-url-input::placeholder {
@@ -1877,10 +1880,61 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-height: 0;
 }
 
+.workspace-browser-open-external {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  opacity: 0;
+  color: var(--ink-tertiary);
+}
+
+.workspace-browser-url-form:hover .workspace-browser-open-external,
+.workspace-browser-url-form:focus-within .workspace-browser-open-external {
+  opacity: 1;
+}
+
+.workspace-browser-open-external:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-browser-loading-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--browser-loading-dot-bg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-browser-loading-bar[data-active="true"] {
+  opacity: 1;
+  animation: workspace-browser-pulse 1s ease-in-out infinite;
+}
+
 .workspace-browser-home {
   flex: 1 1 auto;
-  background: var(--browser-home-bg);
+  background: var(--paper);
   padding: 24px 12px;
+}
+
+.workspace-browser-home .workspace-panel-empty-icon {
+  width: auto;
+  height: auto;
+  background: transparent;
+  color: var(--ink-muted);
+}
+
+.workspace-browser-home strong {
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.workspace-browser-home span {
+  max-width: none;
+  font-size: var(--font-ui);
 }
 
 .workspace-browser-status {

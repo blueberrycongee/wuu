@@ -92,6 +92,7 @@ export type ConversationSplitPaneRendererProps = {
   onInterrupt: (pane: ConversationPaneID) => void;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent: (agent: Agent) => void;
   canEditThreadMessage: (thread: Thread) => boolean;
   onEditMessage: (
@@ -137,6 +138,7 @@ export function ConversationSplitPaneRenderer({
   onInterrupt,
   onForkMessage,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   canEditThreadMessage,
   onEditMessage,
@@ -179,6 +181,7 @@ export function ConversationSplitPaneRenderer({
       onInterrupt={() => onInterrupt(pane)}
       onForkMessage={(turnID, itemID) => onForkMessage(thread, turnID, itemID)}
       onOpenFile={(path) => onOpenFile?.(thread, path)}
+      onOpenURL={onOpenURL}
       onOpenAgent={(agentID) => {
         const agent = thread.child_agents?.find(
           (candidate) => candidate.id === agentID,

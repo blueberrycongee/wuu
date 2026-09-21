@@ -41,6 +41,20 @@ beforeAll(() => {
   };
 });
 
+function makeBrowserNavigate(
+  id: string,
+  url: string,
+  status: ThreadItem["status"] = "completed",
+): ThreadItem {
+  return {
+    id,
+    type: "tool_call",
+    status,
+    name: "browser",
+    arguments: JSON.stringify({ action: "navigate", url }),
+  };
+}
+
 function makeReadFile(
   id: string,
   path: string,
@@ -147,6 +161,21 @@ afterEach(() => {
 });
 
 describe("ProcessSurface", () => {
+  it("opens a compact browser activity from the process summary", () => {
+    const onOpenURL = vi.fn();
+    const { container } = render({
+      processItems: [makeBrowserNavigate("browser-1", "http://app.local:3000")],
+      streaming: false,
+      onOpenURL,
+    });
+    const summary = container.querySelector(".process-surface-row") as HTMLElement | null;
+    expect(summary).not.toBeNull();
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onOpenURL).toHaveBeenCalledWith("http://app.local:3000", undefined);
+  });
+
   it("nests the single-tool presenter inside the complete process boundary", async () => {
     await desktopPluginHost.activateGeneration({
       pluginId: "test:tool-activity-presenter",

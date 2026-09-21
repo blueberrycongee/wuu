@@ -37,6 +37,7 @@ export type TurnViewProps = {
   threadID?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
   onOpenAgent?: (agentID: string) => void;
   latestAgentMessageID?: string;
   onStreamFrame: () => void;
@@ -101,6 +102,7 @@ function TurnContent({
   turn,
   cwd,
   onOpenFile,
+  onOpenURL,
   onOpenAgent,
   latestAgentMessageID,
   onStreamFrame,
@@ -269,6 +271,7 @@ function TurnContent({
           display={assistantDisplay}
           cwd={cwd}
           onOpenFile={onOpenFile}
+          onOpenURL={onOpenURL}
           actionableAgentMessageID={actionableAgentMessageID}
           latestAgentMessageID={latestAgentMessageID}
           animateCompletionActions={animateCompletionActions}

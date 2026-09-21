@@ -52,7 +52,7 @@ export function useWorkspaceToolState({
 
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
     if (!workspaceViewTabs.some((tab) => tab.id === view)) {
-      openTab(workspaceToolViewTab(view));
+      openTab(workspaceToolViewTab(view), { activate: false });
     }
   }
 

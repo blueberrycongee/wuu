@@ -15,6 +15,7 @@ export type ComposerSlashCommandAction =
   | "open-skills"
   | "open-files"
   | "open-terminal"
+  | "open-browser"
   | "open-project"
   | "no-project"
   | "context"
@@ -294,6 +295,18 @@ export function buildComposerSlashCommands({
       action: "open-files",
       aliases: ["file", "tree"],
       keywords: ["文件", "浏览", "explorer"],
+      disabledReason: needsWorkspace
+    },
+    {
+      id: "browser",
+      name: "browser",
+      title: t("slash.browser.title"),
+      description: t("slash.browser.description"),
+      tag: t("slash.tag.workspace"),
+      kind: "action",
+      action: "open-browser",
+      aliases: ["web"],
+      keywords: ["浏览器", "browser", "webpage", "url"],
       disabledReason: needsWorkspace
     },
     {
