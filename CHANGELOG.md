@@ -45,7 +45,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Changed
 
 - Show each engine's existing SVG brand mark on the desktop composer model
-  picker, engine choices, and first-run runtime cards.
+  picker, engine choices, and first-run runtime cards. The composer chip
+  keeps the mark and model name without repeating the engine name.
 
 - Keep collaboration rooms still while the desktop window is being resized, so
   the message stream and inspector do not flicker with the frame.
@@ -203,6 +204,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   tracked artifacts.
 
 ### Fixed
+
+- Keep Agent editor identity mascots unclipped so hats and other accessories
+  are not cut by the circular preview, and sit the appearance badge outside
+  the face.
 
 - Park a first query and its in-progress timer on the composer with one lead
   spacer, then consume that spacer on the submit glide, so the bubble and timer

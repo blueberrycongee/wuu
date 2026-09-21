@@ -1884,6 +1884,7 @@
 
 .agent-avatar-mark > .agent-avatar-image {
   object-fit: cover;
+  border-radius: var(--radius-circle);
 }
 
 .channel-agent-graph-status.idle { fill: var(--success); }
@@ -2312,7 +2313,9 @@
   height: 56px;
   flex: 0 0 auto;
   border: 0;
-  border-radius: var(--radius-circle);
+  /* Transparent control: a circular radius would still clip overflowing hats
+   * on Chromium <button> paint, even with overflow: visible. */
+  border-radius: 0;
   padding: 0;
   overflow: visible;
   background: transparent;
@@ -2326,8 +2329,20 @@
   width: 56px;
   height: 56px;
   display: block;
+}
+
+/* Photos and mosaics stay circular. Mascot hats sit in the square above the
+ * blob, so the identity preview must not circular-clip the mark. */
+.channel-identity-avatar-button .channel-group-avatar-grid,
+.channel-identity-avatar-button .channel-group-avatar-image,
+.channel-identity-avatar-button .default-avatar {
   border-radius: var(--radius-circle);
   overflow: hidden;
+}
+
+.channel-identity-avatar-button .agent-avatar-mark {
+  overflow: visible;
+  border-radius: 0;
 }
 
 .channel-identity-avatar-badge {
