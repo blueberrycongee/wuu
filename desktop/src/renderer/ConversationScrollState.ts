@@ -68,8 +68,12 @@ function clampFraction(value: number, minimum: number, maximum: number): number 
 
 function restoredScrollTop(
   node: HTMLElement,
-  snapshot: { scrollTop: number; distanceFromLatest?: number },
+  snapshot: { scrollTop: number; distanceFromLatest?: number; submittedMessageID?: string },
 ): number {
+  // A submission owns the reading frame: its tail reservation is rebased to the
+  // incoming history window, so the saved offset already lives in that
+  // coordinate system. Distance-from-latest only serves frozen snapshots.
+  if (snapshot.submittedMessageID !== undefined) return snapshot.scrollTop;
   return snapshot.distanceFromLatest === undefined
     ? snapshot.scrollTop
     : scrollTopForDistanceFromLatest(node, snapshot.distanceFromLatest);
