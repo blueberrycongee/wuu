@@ -1703,7 +1703,7 @@
 
 .sidebar-functional-heading-label {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--ink-muted);
   font-size: var(--sidebar-heading-size, var(--font-sm));
@@ -1720,6 +1720,7 @@
   min-height: 24px;
   flex: 1;
   align-items: center;
+  gap: var(--sidebar-tree-column-gap);
   border: 0;
   border-radius: var(--radius-xs);
   padding: 0;
@@ -1740,12 +1741,9 @@
 }
 
 .sidebar-content .sidebar-functional-heading-toggle > .sidebar-functional-heading-chevron {
-  order: 2;
-  /* Center the disclosure glyph in the same slot as the adjacent actions. */
   box-sizing: border-box;
-  width: var(--sidebar-row-action-size);
-  height: var(--sidebar-row-action-size);
-  padding: calc((var(--sidebar-row-action-size) - var(--icon-size-xs)) / 2);
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   margin: 0;
   flex: 0 0 auto;
   color: var(--ink-muted);
@@ -1758,17 +1756,6 @@
 
 .sidebar-functional-heading-action {
   display: contents;
-}
-
-/* A collapsible group without an action still reserves that slot. Otherwise
- * the pinned group (no add button) pulls its disclosure chevron into the
- * action column, so the section chevrons stop reading as one column while the
- * header toggle, the section actions, the row actions, and the account
- * chevron all sit on the trailing one. */
-.sidebar-functional-heading:has(> .sidebar-functional-heading-toggle):not(:has(> .sidebar-functional-heading-action)) {
-  padding-right: calc(
-    var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap)
-  );
 }
 
 .sidebar-functional-group-sortable[data-dragging="true"] {

@@ -47,6 +47,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep collaboration rooms still while the desktop window is being resized, so
   the message stream and inspector do not flicker with the frame.
 
+- Place desktop sidebar group disclosure chevrons immediately after the Pinned,
+  Folders, Workspace, and Collaboration headings instead of in the trailing
+  action column.
+
 - Size desktop sidebar row marks — navigation, plugins, collaboration avatars,
   folders, and heading plus buttons — to one glyph column and the UI type scale.
 

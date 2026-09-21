@@ -30,6 +30,12 @@ const measure = () => {
         stroke: s.strokeWidth, color: s.color, row: el.closest(".thread-row")?.className };
     });
   }
+  out.headingGaps = [...document.querySelectorAll(".sidebar-functional-heading-toggle")].map(toggle => {
+    const label = toggle.querySelector(".sidebar-functional-heading-label");
+    const chevron = toggle.querySelector(".sidebar-functional-heading-chevron");
+    if (!label || !chevron) return null;
+    return chevron.getBoundingClientRect().left - label.getBoundingClientRect().right;
+  });
   out.readingGaps = [...document.querySelectorAll(".thread-row:has(.thread-row-fork-icon)")].map(row => {
     const title = row.querySelector(".thread-row-title");
     const rect = title.getBoundingClientRect();
@@ -86,10 +92,17 @@ app.whenReady().then(async () => {
     // Trailing column: header toggle, group actions, row actions, account chevron.
     const trailing = [idle.collapse[0], ...idle.add, ...idle.newThread, idle.fork[0], ...idle.spinner, ...idle.archive, ...idle.account];
     if (trailing.some(icon => Math.abs(icon.x - axis) > 0.1)) throw new Error(`${name}: trailing column drift`);
-    // Every disclosure chevron keeps the column beside the actions, including
-    // the pinned group, which has no action of its own.
-    const second = [...idle.heading, ...idle.pin, ...idle.fork.slice(1)];
+    // Row disclosure marks stay in the column beside the actions. Group
+    // heading chevrons sit immediately after their labels instead.
+    const second = [...idle.pin, ...idle.fork.slice(1)];
     if (second.some(icon => Math.abs(icon.x - idle.pin[0].x) > 0.1)) throw new Error(`${name}: disclosure column drift`);
+    if (idle.heading.length === 0) throw new Error(`${name}: missing heading chevrons`);
+    if (idle.headingGaps.some(gap => gap == null || gap < 0 || gap > 12)) {
+      throw new Error(`${name}: heading chevron not beside label (${idle.headingGaps.join(", ")})`);
+    }
+    if (idle.add.length && idle.heading.some(icon => icon.x >= idle.add[0].x - 8)) {
+      throw new Error(`${name}: heading chevron drifted into the action column`);
+    }
     for (const [state, measurement] of Object.entries(states)) {
       if (measurement.readingGaps.some(gap => gap <= 0)) throw new Error(`${name}/${state}: title overlaps accessories`);
       if (state !== "idle" && measurement.fork[0].x >= measurement.pin[1].x) throw new Error(`${name}/${state}: fork overlaps actions`);

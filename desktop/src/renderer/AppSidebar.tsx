@@ -2410,16 +2410,16 @@ function SortableFunctionalGroup({
             if (!isDragging) onToggleCollapsed();
           }}
         >
-          <ChevronRight
-            className="sidebar-functional-heading-chevron"
-            data-expanded={!collapsed || undefined}
-            aria-hidden="true"
-          />
           <span
             className={`sidebar-functional-heading-label ${headingLabelClassName}`.trim()}
           >
             {headingLabel}
           </span>
+          <ChevronRight
+            className="sidebar-functional-heading-chevron"
+            data-expanded={!collapsed || undefined}
+            aria-hidden="true"
+          />
         </button>
         {action ? (
           <div

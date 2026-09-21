@@ -76,8 +76,8 @@ export function CollaborationSidebar({
           <button type="button" className="sidebar-functional-heading-toggle" aria-expanded={!sectionCollapsed}
             onPointerDown={dragHandle?.dragHandleProps.onPointerDown}
             onClick={() => { if (!dragHandle?.isDragging) setSectionCollapsed((value) => !value); }}>
-            <ChevronRight className="sidebar-functional-heading-chevron" data-expanded={!sectionCollapsed || undefined} aria-hidden="true" />
             <span className="sidebar-functional-heading-label">{t("sidebar.collaboration")}</span>
+            <ChevronRight className="sidebar-functional-heading-chevron" data-expanded={!sectionCollapsed || undefined} aria-hidden="true" />
           </button>
           <div className="sidebar-functional-heading-action">{newConversationButton("sidebar-functional-action")}</div>
         </div> : <div className="collaboration-sidebar-topbar">
