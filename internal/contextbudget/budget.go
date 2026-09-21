@@ -21,6 +21,14 @@ const (
 	// later calibration does not leave byte-length estimates on /3.
 	JSONNonCJKTokenNumerator   = 10
 	JSONNonCJKTokenDenominator = 28
+	// AssistantNonCJKTokenNumerator/AssistantNonCJKTokenDenominator estimate
+	// assistant and reasoning ASCII denser than ordinary prose. grok-4.6 counted
+	// long coding transcripts about 9% higher than the 4 chars/token heuristic,
+	// which kept local usage under the compact threshold until the provider
+	// rejected the prompt. 10/36 (~3.6 chars/token) covers that undercount
+	// without treating assistant text as JSON.
+	AssistantNonCJKTokenNumerator   = 10
+	AssistantNonCJKTokenDenominator = 36
 )
 
 // EstimateTokens provides a rough token count estimate.
@@ -47,6 +55,27 @@ func EstimateTokens(text string) int {
 
 	nonCJK := totalChars - cjkCount
 	return (nonCJK / 4) + (cjkCount*7)/10 + 1
+}
+
+// EstimateAssistantTokens estimates assistant and reasoning text. grok-4.6
+// counted long coding transcripts denser than the prose heuristic, including
+// reasoning that still used EstimateTokens. Keep CJK at 0.7 so mixed payloads
+// are not undercounted.
+func EstimateAssistantTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+
+	var cjkCount, totalChars int
+	for _, r := range text {
+		totalChars++
+		if isCJK(r) {
+			cjkCount++
+		}
+	}
+
+	nonCJK := totalChars - cjkCount
+	return (nonCJK*AssistantNonCJKTokenNumerator)/AssistantNonCJKTokenDenominator + (cjkCount*7)/10 + 1
 }
 
 // EstimateJSONTokens estimates tokens for JSON and other punctuation-heavy
@@ -80,7 +109,9 @@ func EstimateMessagesTokens(messages []providers.ChatMessage) int {
 	hasTools := false
 	for _, msg := range messages {
 		total += estimateMessageBodyTokens(msg)
-		total += EstimateTokens(msg.ReasoningContent)
+		if msg.ReasoningContent != "" {
+			total += EstimateAssistantTokens(msg.ReasoningContent)
+		}
 		total += 4
 		for _, tc := range msg.ToolCalls {
 			hasTools = true
@@ -165,7 +196,11 @@ func ceilDivUint32(n, d uint32) int {
 
 func estimateMessageBodyTokens(msg providers.ChatMessage) int {
 	body := msg.Content
-	if !strings.EqualFold(strings.TrimSpace(msg.Role), "tool") {
+	role := strings.TrimSpace(msg.Role)
+	if strings.EqualFold(role, "assistant") {
+		return EstimateAssistantTokens(body)
+	}
+	if !strings.EqualFold(role, "tool") {
 		return EstimateTokens(body)
 	}
 	if msg.ToolResult != nil {

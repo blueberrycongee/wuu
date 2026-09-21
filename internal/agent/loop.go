@@ -66,7 +66,9 @@ type ToolSurfaceFreezer interface {
 //   - Allows at most eight consecutive tool-free continuation requests before
 //     returning an error, even with an unlimited step budget.
 //   - On context-overflow errors from the step, calls cfg.Compact
-//     once and re-issues the step. If that compact does not shrink
+//     once and re-issues the step. An allocated but unused tool runtime
+//     is not treated as partial output, so ledger-backed streams can still
+//     recover before the first token. If that compact does not shrink
 //     history, the loop force-trims older turns onto a valid tool-call
 //     boundary and retries once more only when the replacement is
 //     smaller. Consecutive overflows after that recovery propagate;
@@ -755,6 +757,7 @@ func RunToolLoop(
 			// request would erase that partial answer from durable history (and can
 			// duplicate what the user already saw). Preserve it through the normal
 			// error path below; reactive compaction is safe only before output.
+			// A ledger-allocated runtime with no tool starts is not output.
 			if freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
 				overflowCompacted = true
 				cfg.FreshContextTokens = reactiveFreshContextTarget(cfg.FreshContextTokens,
@@ -1320,7 +1323,16 @@ func stepResultHasNoPartialOutput(result StepResult) bool {
 		strings.TrimSpace(result.ProviderItemID) == "" &&
 		len(result.ReasoningBlocks) == 0 &&
 		len(result.ToolCalls) == 0 &&
-		result.ToolRuntime == nil
+		!toolRuntimeHasStartedWork(result.ToolRuntime)
+}
+
+func toolRuntimeHasStartedWork(runtime *TurnToolRuntime) bool {
+	if runtime == nil {
+		return false
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return len(runtime.runs) > 0
 }
 
 func compactChanged(before, after []providers.ChatMessage) bool {

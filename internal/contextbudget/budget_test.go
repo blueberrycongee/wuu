@@ -101,6 +101,38 @@ func TestEstimateTokensCalibratedCoefficients(t *testing.T) {
 	if got, want := EstimateJSONTokens(jsonPayload), 210*JSONNonCJKTokenNumerator/JSONNonCJKTokenDenominator+1; got != want {
 		t.Fatalf("JSON estimate = %d, want %d", got, want)
 	}
+	if got, want := EstimateAssistantTokens(ascii), 100*AssistantNonCJKTokenNumerator/AssistantNonCJKTokenDenominator+1; got != want {
+		t.Fatalf("assistant ASCII estimate = %d, want %d", got, want)
+	}
+	if got := EstimateAssistantTokens(cjk); got != (90*7)/10+1 {
+		t.Fatalf("assistant CJK estimate = %d, want %d", got, (90*7)/10+1)
+	}
+}
+
+func TestEstimateMessagesTokensCountsAssistantTextDenserThanProse(t *testing.T) {
+	payload := strings.Repeat("The helper keeps the conversation still after the window frame settles. ", 80)
+	prose := EstimateTokens(payload)
+	assistant := EstimateAssistantTokens(payload)
+	if assistant <= prose {
+		t.Fatalf("assistant estimator should be denser than prose, assistant=%d prose=%d", assistant, prose)
+	}
+
+	got := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:             "assistant",
+		Content:          payload,
+		ReasoningContent: payload,
+	}})
+	if got != assistant*2+4 {
+		t.Fatalf("assistant message estimate = %d, want denser estimator %d plus overhead", got, assistant*2)
+	}
+
+	user := EstimateMessagesTokens([]providers.ChatMessage{{
+		Role:    "user",
+		Content: payload,
+	}})
+	if user != prose+4 {
+		t.Fatalf("user message estimate = %d, want prose estimator %d", user, prose+4)
+	}
 }
 
 func TestEstimateMessagesTokensCountsToolResultsAsJSON(t *testing.T) {

@@ -1418,6 +1418,12 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		if partialToolRuntime != nil {
 			partialToolRuntime.Cancel()
 		}
+		if len(partialToolCalls) == 0 {
+			// Ledger-backed runs allocate a runtime before the first token.
+			// An empty runtime is not user-visible output and must not block
+			// overflow compact / fresh-window recovery.
+			partialToolRuntime = nil
+		}
 		partial := StepResult{
 			Content:          contentBuf.String(),
 			Phase:            messagePhase,

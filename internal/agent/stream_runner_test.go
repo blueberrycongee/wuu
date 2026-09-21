@@ -1734,6 +1734,74 @@ func TestStreamRunner_CompactedHistoryDoesNotTriggerImmediateSecondCompact(t *te
 	}
 }
 
+func TestStreamRunner_ContextOverflowRecoversWithIdleToolLedger(t *testing.T) {
+	overflow := &providers.HTTPError{
+		StatusCode:      400,
+		Body:            "400 Bad Request: Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500855 tokens > 500000 tokens)",
+		ContextOverflow: true,
+	}
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{events: []providers.StreamEvent{
+				{Type: providers.EventError, Error: overflow},
+			}},
+			{events: []providers.StreamEvent{
+				{Type: providers.EventContentDelta, Content: "WUU_LEDGER_OVERFLOW_OK"},
+				{Type: providers.EventDone},
+			}},
+		},
+		chatResponses: []providers.ChatResponse{
+			{Content: "summarized ledger overflow"},
+		},
+	}
+	ledger, err := toolledger.New(t.TempDir(), "thread-overflow-ledger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := StreamRunner{
+		Client:                  client,
+		Model:                   "test-model",
+		ToolLedger:              ledger,
+		ContextWindowOverride:   16000,
+		CompactKeepRecentTokens: 1000,
+	}
+	history := []providers.ChatMessage{
+		{Role: "user", Content: "debug the issue"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{
+			{ID: "call_1", Name: "run_shell", Arguments: `{"command":"rg ContextOverflow"}`},
+		}},
+		{Role: "tool", Name: "run_shell", ToolCallID: "call_1", Content: strings.Repeat("result ", 1000)},
+		{Role: "assistant", Content: "I found the first clue."},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{
+			{ID: "call_2", Name: "run_shell", Arguments: `{"command":"sed -n 1,220p internal/agent/loop.go"}`},
+		}},
+		{Role: "tool", Name: "run_shell", ToolCallID: "call_2", Content: strings.Repeat("result ", 1000)},
+		{Role: "assistant", Content: "I will continue from the runtime path."},
+	}
+
+	var compactSeen bool
+	res, err := runner.RunWithCallback(context.Background(), history, func(ev providers.StreamEvent) {
+		if ev.Type == providers.EventCompact {
+			compactSeen = true
+		}
+	})
+	if err != nil {
+		t.Fatalf("RunWithCallback: %v", err)
+	}
+	if res.Content != "WUU_LEDGER_OVERFLOW_OK" {
+		t.Fatalf("unexpected content %q", res.Content)
+	}
+	if !res.HistoryRewritten {
+		t.Fatal("expected rewritten history after overflow compact")
+	}
+	if !compactSeen {
+		t.Fatal("expected compact stream event")
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected stream, compact, stream requests, got %d", len(client.requests))
+	}
+}
+
 func TestStreamRunner_ContextOverflowStreamErrorCompactsSingleUserTurn(t *testing.T) {
 	overflow := providers.NewProviderStreamError(
 		"context_length_exceeded",

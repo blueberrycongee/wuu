@@ -1700,6 +1700,49 @@ func TestRunToolLoop_ProactiveCompactDoesNotLoopOnNoOpCompact(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_OverflowCompactIgnoresIdleToolRuntime(t *testing.T) {
+	cause := &providers.HTTPError{
+		StatusCode:      400,
+		Body:            "400 Bad Request: Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500855 tokens > 500000 tokens)",
+		ContextOverflow: true,
+	}
+	overflow := &providers.StreamRecoveryError{
+		Cause: cause,
+		Recovery: providers.StreamRecoveryInfo{
+			AttemptCount:    1,
+			RetryCount:      0,
+			MaxAttempts:     11,
+			SubmissionCount: 1,
+			StopReason:      "non_retryable",
+			FailureCategory: providers.FailureContextOverflow,
+		},
+	}
+	idleRuntime := NewTurnToolRuntime(ToolRuntimeConfig{})
+	step := &fakeStep{
+		results: []StepResult{{ToolRuntime: idleRuntime}, {Content: "ok"}},
+		errs:    []error{overflow, nil},
+	}
+	var infos []CompactInfo
+	cfg := LoopConfig{Model: "m", Compact: func(_ context.Context, m []providers.ChatMessage) ([]providers.ChatMessage, error) {
+		return m[len(m)-1:], nil
+	}, OnCompact: func(info CompactInfo) { infos = append(infos, info) }}
+	history := []providers.ChatMessage{
+		userMsg("old"),
+		{Role: "assistant", Content: "old answer"},
+		userMsg("big"),
+	}
+	_, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].Reason != CompactReasonOverflow {
+		t.Fatalf("expected overflow compact despite idle tool runtime, got %+v", infos)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("expected overflow plus recovered retry, got %d calls", len(step.calls))
+	}
+}
+
 func TestRunToolLoop_OverflowCompactFiresOnCompactCallback(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}

@@ -18,6 +18,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Long grok-4.6 sessions compact or install a smaller context window after a
+  classified `input_too_large` overflow, instead of surfacing the 400 when
+  local usage still sits under the compact threshold.
+
 - Collaboration-created ordinary workspace sessions now keep their project id
   on `thread/started`, so they stay in the workspace sidebar instead of
   vanishing until a later list or reload.
@@ -25,6 +29,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep desktop process rows still when switching sessions: publish the
   frozen aggregated tool-call layout on the first visible frame, and keep
   the status ball from shoving the summary with its enter/exit motion.
+
+- Restore a desktop conversation from its distance to the latest content
+  after a session switch, instead of a raw scroll offset that jumps when
+  estimated turn heights settle.
 
 - Ignore stale ACP JSON-RPC results whose id does not match the in-flight
   request, so a Grok prompt that is already waiting on the model is not
