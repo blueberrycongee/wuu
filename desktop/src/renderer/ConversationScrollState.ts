@@ -19,7 +19,9 @@ import {
   eventTargetsNestedAutoFollowScroll,
   latestFollowScrollTop,
   maxScrollTop,
+  measureLatestConversationTurns,
   observeAutoFollowResizeTargets,
+  scrollTopForDistanceFromLatest,
   selectionIntersectsNode,
   sessionTailSpacePx,
   setAutoFollowOverflowAnchor,
@@ -61,6 +63,15 @@ const SUBMITTED_MESSAGE_MAX_FRACTION = 0.35;
 
 function clampFraction(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function restoredScrollTop(
+  node: HTMLElement,
+  snapshot: { scrollTop: number; distanceFromLatest?: number },
+): number {
+  return snapshot.distanceFromLatest === undefined
+    ? snapshot.scrollTop
+    : scrollTopForDistanceFromLatest(node, snapshot.distanceFromLatest);
 }
 
 /**
@@ -174,6 +185,7 @@ type ConversationScrollMode = "following" | "paused" | SubmissionScrollPhase;
 
 export type ConversationScrollSnapshot = {
   scrollTop: number;
+  distanceFromLatest: number;
   autoFollow: boolean;
   submissionPhase?: SubmissionScrollPhase;
   submittedMessageID?: string;
@@ -371,10 +383,14 @@ export function useConversationScrollState({
       const message = submittedMessage();
       if (message) submission.documentTop = submittedMessagePlacement(node, message).documentTop;
     }
+    const nextTop = scrollTop ?? clampScrollTop(node, node.scrollTop);
     threadScrollSnapshotsRef.current.set(threadID, {
       // Callers already scrolling inside a frame pass the offset they reached,
       // so this never re-measures the scroller while motion is in flight.
-      scrollTop: scrollTop ?? clampScrollTop(node, node.scrollTop),
+      // Distance-from-latest survives a later height settle; raw scrollTop does
+      // not, which is the remaining session-switch jump.
+      scrollTop: nextTop,
+      distanceFromLatest: Math.max(0, latestFollowScrollTop(node) - nextTop),
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
@@ -906,8 +922,10 @@ export function useConversationScrollState({
       if (!node) {
         return undefined;
       }
+      const scrollTop = clampScrollTop(node, node.scrollTop);
       return {
-        scrollTop: clampScrollTop(node, node.scrollTop),
+        scrollTop,
+        distanceFromLatest: Math.max(0, latestFollowScrollTop(node) - scrollTop),
         autoFollow: isFollowing(),
         submissionPhase: submissionPhase(),
         submittedMessageID: submissionRef.current?.messageID,
@@ -928,9 +946,14 @@ export function useConversationScrollState({
       submissionRef.current = snapshot.submittedMessageID
         ? { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false }
         : undefined;
-      applyProgrammaticScroll(node, snapshot.scrollTop, snapshot.autoFollow, {
-        revealScrollbar: true,
-      });
+      applyProgrammaticScroll(
+        node,
+        restoredScrollTop(node, snapshot),
+        snapshot.autoFollow,
+        {
+          revealScrollbar: true,
+        },
+      );
     },
     [activePane, activeThreadID, setAutoFollow, splitConversation],
   );
@@ -1207,6 +1230,7 @@ export function useConversationScrollState({
       return;
     }
     markSessionSwitch(activeThreadID, "scroll-restore-start");
+    measureLatestConversationTurns(node);
     let snapshot = threadScrollSnapshotsRef.current.get(activeThreadID);
     const restorationOffset = restoredOffset.current;
     restoredOffset.current = 0;
@@ -1223,9 +1247,14 @@ export function useConversationScrollState({
       submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
     }
     if (snapshot && !snapshot.autoFollow) {
-      // The tail reservation has already been rebased to the incoming history
-      // window. Restore its reading offset in that same coordinate system.
-      applyProgrammaticScroll(node, snapshot.scrollTop + restorationOffset, false);
+      // Restore from distance-from-latest so a later height settle does not
+      // jump the reading point. The tail reservation is already in that
+      // coordinate system.
+      applyProgrammaticScroll(
+        node,
+        restoredScrollTop(node, snapshot) + restorationOffset,
+        false,
+      );
       bottomOverscrollFromAwayRef.current = true;
       setNativeBottomOverscrollEnabled(node, true);
     } else {

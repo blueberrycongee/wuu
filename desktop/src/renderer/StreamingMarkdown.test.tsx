@@ -18,6 +18,7 @@ import {
   streamTextKey,
   streamTextStore,
 } from "./StreamText";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 // jsdom doesn't implement layout. Stub getBoundingClientRect so React
 // doesn't crash on layout queries.
@@ -585,5 +586,47 @@ describe("splitIntoStableBlocks", () => {
     const result = splitIntoStableBlocks(text);
     expect(result.blocks).toEqual(["```ts\ncode\n```\n\n"]);
     expect(result.tail).toBe("after");
+  });
+});
+
+describe("StreamingMarkdown session reveal", () => {
+  it("does not fire a stream frame just because a cached conversation became visible", () => {
+    const key = streamTextKey("turn", "s-words", "text");
+    streamTextStore.seed(key, "partial");
+    const onFrame = vi.fn();
+    if (container) unmount();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <StreamingMarkdown
+            streamKey={key}
+            initialText="partial"
+            isLive
+            phase="final_answer"
+            onFrame={onFrame}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    streamTextStore.set(key, "partial and more");
+    onFrame.mockClear();
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active>
+          <StreamingMarkdown
+            streamKey={key}
+            initialText="partial"
+            isLive
+            phase="final_answer"
+            onFrame={onFrame}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    expect(container?.textContent).toContain("partial and more");
+    expect(onFrame).not.toHaveBeenCalled();
   });
 });

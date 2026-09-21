@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   atLatestScrollView,
   latestFollowScrollTop,
+  measureLatestConversationTurns,
+  scrollTopForDistanceFromLatest,
   sessionTailSpacePx,
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
@@ -421,5 +423,52 @@ describe("latest follow position", () => {
       get: () => 400,
     });
     expect(atLatestScrollView(node, 16)).toBe(false);
+  });
+
+  it("maps a distance from latest content back to the same reading point after height growth", () => {
+    const node = document.createElement("div");
+    const layout = {
+      scrollHeight: 2000,
+      clientHeight: 600,
+      scrollTop: 800,
+    };
+    Object.defineProperties(node, {
+      scrollHeight: { configurable: true, get: () => layout.scrollHeight },
+      clientHeight: { configurable: true, get: () => layout.clientHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => layout.scrollTop,
+        set: (value: number) => {
+          layout.scrollTop = value;
+        },
+      },
+    });
+
+    const distance = latestFollowScrollTop(node) - layout.scrollTop;
+    layout.scrollHeight = 2600;
+    expect(scrollTopForDistanceFromLatest(node, distance)).toBe(1400);
+  });
+
+  it("forces the last conversation turns to layout before a restore", () => {
+    const node = document.createElement("div");
+    const turns = Array.from({ length: 7 }, () => {
+      const turn = document.createElement("article");
+      turn.className = "turn";
+      node.append(turn);
+      return turn;
+    });
+    const measured: HTMLElement[] = [];
+    for (const turn of turns) {
+      Object.defineProperty(turn, "offsetHeight", {
+        configurable: true,
+        get() {
+          measured.push(turn);
+          return 40;
+        },
+      });
+    }
+
+    measureLatestConversationTurns(node);
+    expect(measured).toEqual(turns.slice(-5));
   });
 });

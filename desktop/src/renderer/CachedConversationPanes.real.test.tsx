@@ -123,4 +123,134 @@ describe("CachedConversationPanes real message tree", () => {
       sourcePane?.querySelector(`[data-turn-id="${source.id}-turn-199"]`),
     ).toBe(sourceLastTurn);
   });
+
+  it("reveals a running conversation's latest process row on the first visible frame", () => {
+    const idle = longThread("idle-session", 6);
+    const running: Thread = {
+      ...longThread("running-session", 2),
+      status: "in_progress",
+      turns: [
+        {
+          id: "running-session-turn-0",
+          status: "completed",
+          items_view: "full",
+          items: [
+            {
+              id: "running-session-user-0",
+              type: "user_message",
+              text: "start",
+            },
+          ],
+        },
+        {
+          id: "running-session-turn-1",
+          status: "in_progress",
+          items_view: "full",
+          items: [
+            {
+              id: "running-session-user-1",
+              type: "user_message",
+              text: "keep going",
+            },
+            {
+              id: "running-session-tool-1",
+              type: "tool_call",
+              name: "read_file",
+              status: "in_progress",
+              arguments: JSON.stringify({ path: "a.ts" }),
+            },
+          ],
+        },
+      ],
+    } as Thread;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const stableProps = {
+      contextCompositionEntries: [],
+      instructionFilesEntries: [],
+      onStreamFrame: () => {},
+      onCollapseComplete: () => {},
+      onDismissContextComposition: () => {},
+      onDismissInstructions: () => {},
+      canEditThreadMessage: () => false,
+      onForkMessage: () => {},
+      onOpenAgent: () => {},
+      onEditMessage: () => {},
+      onCancelEditMessage: () => {},
+      onSubmitEditMessage: () => {},
+      onOpenFileDiff: () => {},
+      turnStreamStatus: {},
+    } satisfies Omit<
+      ComponentProps<typeof CachedConversationPanes>,
+      "activeThreadID" | "threadIDs" | "threadsByID"
+    >;
+    let paneThreads = retainCachedConversationPaneThreads({
+      threadIDs: [running.id, idle.id],
+      currentThreadsByID: new Map([
+        [running.id, running],
+        [idle.id, idle],
+      ]),
+      previousThreadsByID: new Map(),
+    });
+    const renderActive = (activeThreadID: string, threadsByID = paneThreads): void => {
+      act(() => {
+        root.render(
+          <ImagePreviewProvider>
+            <CachedConversationPanes
+              {...stableProps}
+              activeThreadID={activeThreadID}
+              threadIDs={[running.id, idle.id]}
+              threadsByID={threadsByID}
+            />
+          </ImagePreviewProvider>,
+        );
+      });
+    };
+
+    renderActive(running.id);
+    const runningPane = container.querySelector<HTMLElement>(
+      `[data-thread-id="${running.id}"]`,
+    );
+    expect(runningPane?.textContent).toContain("a.ts");
+
+    renderActive(idle.id);
+    const grown: Thread = {
+      ...running,
+      turns: running.turns.map((turn) =>
+        turn.id === "running-session-turn-1"
+          ? {
+              ...turn,
+              items: [
+                ...turn.items,
+                {
+                  id: "running-session-tool-2",
+                  type: "tool_call",
+                  name: "grep",
+                  status: "in_progress",
+                  arguments: JSON.stringify({ pattern: "switch" }),
+                },
+              ],
+            }
+          : turn,
+      ),
+    } as Thread;
+    paneThreads = retainCachedConversationPaneThreads({
+      threadIDs: [running.id, idle.id],
+      currentThreadsByID: new Map([
+        [running.id, grown],
+        [idle.id, idle],
+      ]),
+      previousThreadsByID: paneThreads,
+    });
+    renderActive(idle.id, paneThreads);
+    expect(runningPane?.getAttribute("data-active")).toBe("false");
+    expect(runningPane?.textContent).not.toContain("switch");
+
+    renderActive(running.id, paneThreads);
+    expect(runningPane?.getAttribute("data-active")).toBe("true");
+    expect(runningPane?.textContent).toContain("switch");
+    expect(runningPane?.querySelector(".process-text-motion-enter")).toBeNull();
+  });
 });

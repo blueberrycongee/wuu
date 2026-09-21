@@ -67,6 +67,35 @@ export function atLatestScrollView(
   );
 }
 
+/** Distance from the latest content, excluding unconsumed submission tail. */
+export function distanceFromLatestContent(
+  node: HTMLElement,
+  tailSpace = sessionTailSpacePx(node),
+): number {
+  return Math.max(0, latestFollowScrollTop(node, tailSpace) - node.scrollTop);
+}
+
+export function scrollTopForDistanceFromLatest(
+  node: HTMLElement,
+  distance: number,
+  tailSpace = sessionTailSpacePx(node),
+): number {
+  return clampScrollTop(node, latestFollowScrollTop(node, tailSpace) - Math.max(0, distance));
+}
+
+/**
+ * Hidden cached panes skip layout, so estimated `content-visibility` heights
+ * can still be live on the first in-flow pass. Force the last few turns to
+ * their real size before restoring scroll.
+ */
+export function measureLatestConversationTurns(node: HTMLElement, count = 5): void {
+  const turns = node.querySelectorAll<HTMLElement>(".turn");
+  const start = Math.max(0, turns.length - count);
+  for (let index = start; index < turns.length; index += 1) {
+    void turns[index].offsetHeight;
+  }
+}
+
 export function eventTargetsNestedAutoFollowScroll(
   target: EventTarget | null,
   root: HTMLElement,

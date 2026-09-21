@@ -34,6 +34,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   after a session switch, instead of a raw scroll offset that jumps when
   estimated turn heights settle.
 
+- Keep a running desktop conversation from re-anchoring when it becomes
+  visible again. Catch-up stream text lands without firing a new stream
+  frame.
+
 - Ignore stale ACP JSON-RPC results whose id does not match the in-flight
   request, so a Grok prompt that is already waiting on the model is not
   aborted as an internal Wuu error.

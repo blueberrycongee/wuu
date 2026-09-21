@@ -71,15 +71,17 @@ function controlAnimationFrames(): (now: number) => void {
 function Probe({
   activeThreadID,
   nativeScrollBounce,
+  primaryTurns,
 }: {
   activeThreadID?: string;
   nativeScrollBounce?: boolean;
+  primaryTurns?: Turn[];
 }): ReactNode {
   const h = useConversationScrollState({
     activeThreadID,
     activePane: "primary",
     splitConversation: false,
-    primaryTurns: makeLongTurns(),
+    primaryTurns: primaryTurns ?? makeLongTurns(),
     secondaryTurns: undefined,
     emptyConversation: false,
     initialized: true,
@@ -164,10 +166,10 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     return node;
   }
 
-  function switchThread(activeThreadID?: string): void {
+  function switchThread(activeThreadID?: string, primaryTurns?: Turn[]): void {
     if (!root) throw new Error("not mounted");
     act(() => {
-      root!.render(createElement(Probe, { activeThreadID }));
+      root!.render(createElement(Probe, { activeThreadID, primaryTurns }));
     });
   }
 
@@ -243,6 +245,55 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     layout.scrollHeight = 2400;
     switchThread("thread-a");
     expect(layout.scrollTop).toBe(520);
+    fireScroll();
+  });
+
+  it("keeps the same distance from latest content when estimated heights settle after a switch", () => {
+    mount({
+      activeThreadID: "thread-a",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 2400 - 600,
+    });
+    fireScroll();
+
+    setScrollTop(520);
+    fireUserScroll();
+
+    if (!layout) throw new Error("not mounted");
+    layout.scrollHeight = 1200;
+    switchThread("thread-b");
+    fireScroll();
+
+    layout.scrollHeight = 2800;
+    switchThread("thread-a");
+    expect(layout.scrollTop).toBe(920);
+    fireScroll();
+  });
+
+  it("does not jump a running session when its frozen snapshot lands on reveal", () => {
+    const running: Turn[] = [
+      {
+        id: "turn-running",
+        items: [],
+        items_view: "full",
+        status: "in_progress",
+      },
+    ];
+    mount({
+      activeThreadID: "thread-running",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 1800,
+    });
+    fireScroll();
+    switchThread("thread-idle");
+    fireScroll();
+
+    if (!layout) throw new Error("not mounted");
+    layout.scrollHeight = 2700;
+    switchThread("thread-running", running);
+    expect(layout.scrollTop).toBe(2100);
     fireScroll();
   });
 
