@@ -741,7 +741,12 @@ code,
 .window-resizing .jump-to-latest-cluster,
 .window-resizing .jump-to-latest-pill,
 .window-resizing .jump-to-latest-progress,
-.window-resizing .conversation-status-capsule {
+.window-resizing .conversation-status-capsule,
+.window-resizing .channel-view,
+.window-resizing .channel-conversation,
+.window-resizing .channel-room-main,
+.window-resizing .channel-message-stream,
+.window-resizing .channel-conversation-footer {
   transition: none !important;
   animation-play-state: paused !important;
 }

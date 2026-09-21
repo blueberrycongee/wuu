@@ -464,7 +464,8 @@
 
 .channel-conversation.inspector-closing { transition-duration: var(--environment-panel-exit-duration); }
 
-.channel-conversation[data-resizing-inspector] { transition: none; }
+.channel-conversation[data-resizing-inspector],
+.window-resizing .channel-conversation { transition: none; }
 
 .channel-inspector-resizer {
   right: calc(var(--channel-inspector-width) - 5px);

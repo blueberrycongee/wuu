@@ -9,6 +9,10 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ManagedAgentWork } from "./ManagedAgentWork";
@@ -601,20 +605,37 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     setComposerAnchor(composerFooterNode.querySelector<HTMLElement>(".channel-composer"));
     // The stream extends behind the floating footer. Reserve its actual height
     // at the end so the latest message stays visible as the input grows.
+    const applyFooterHeight = (): boolean => {
+      const value = `${Math.max(0, Math.ceil(composerFooterNode.getBoundingClientRect().height))}px`;
+      if (stream.style.getPropertyValue("--channel-footer-height") === value) {
+        return false;
+      }
+      stream.style.setProperty("--channel-footer-height", value);
+      return true;
+    };
     const measure = (): void => {
-      stream.style.setProperty("--channel-footer-height", `${composerFooterNode.getBoundingClientRect().height}px`);
-      messageScroll.scrollToBottom();
+      if (applyFooterHeight()) {
+        messageScroll.scrollToBottom();
+      }
     };
     measure();
+    const windowResizeHeight = createWindowResizeSettleScheduler(measure);
     let frame: number | undefined;
     // Updating the stream padding during resize delivery can resize the shared
-    // grid again. Apply footer changes in the next frame, outside that delivery.
+    // grid again. Apply footer changes in the next frame, outside that delivery,
+    // and wait until a live window drag settles — the same rule as the session
+    // dock composer — so padding and auto-follow do not fight the frame.
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      if (isWindowResizing()) {
+        windowResizeHeight.schedule();
+        return;
+      }
       if (frame !== undefined) return;
       frame = requestAnimationFrame(() => { frame = undefined; measure(); });
     }) : undefined;
     observer?.observe(composerFooterNode);
     return () => {
+      windowResizeHeight.cancel();
       if (frame !== undefined) cancelAnimationFrame(frame);
       observer?.disconnect();
       stream.style.removeProperty("--channel-footer-height");

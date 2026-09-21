@@ -6,6 +6,7 @@ import type { ChannelMessage, ChannelResponse, ChannelRoom, CollaborationSession
 import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
 import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
+import { WINDOW_RESIZE_SETTLE_DELAY_MS, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
@@ -2718,6 +2719,67 @@ describe("ChannelView", () => {
     expect(answer?.querySelector("pre")?.textContent).toContain("func main");
     expect(answer?.textContent).toContain("Final recommendation");
     expect(answer?.querySelector(".channel-message-expand-toggle")).toBeNull();
+  });
+
+  it("does not rewrite collaboration stream padding during a live window resize", async () => {
+    type Observed = {
+      callback: ResizeObserverCallback;
+      targets: Set<Element>;
+    };
+    const observers: Observed[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      targets = new Set<Element>();
+      callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
+      observe(target: Element) { this.targets.add(target); }
+      unobserve(target: Element) { this.targets.delete(target); }
+      disconnect() { this.targets.clear(); }
+    });
+    Object.defineProperty(window, "wuu", { configurable: true, value: createApi() });
+    root = createRoot(container);
+    try {
+      act(() => root?.render(<ChannelView selectedRoomID="room-1" />));
+      await settle();
+      const footer = container.querySelector<HTMLElement>(".channel-conversation-footer");
+      const stream = container.querySelector<HTMLElement>(".channel-message-stream");
+      expect(footer).not.toBeNull();
+      expect(stream).not.toBeNull();
+
+      let footerHeight = 120;
+      footer!.getBoundingClientRect = () => ({
+        x: 0, y: 0, top: 0, right: 0, bottom: footerHeight, left: 0,
+        width: 800, height: footerHeight, toJSON: () => ({}),
+      }) as DOMRect;
+      const notifyFooter = (): void => {
+        for (const observer of observers) {
+          if (observer.targets.has(footer!)) {
+            observer.callback([], observer as unknown as ResizeObserver);
+          }
+        }
+      };
+
+      act(() => notifyFooter());
+      await act(async () => { await new Promise<number>(requestAnimationFrame); });
+      expect(stream!.style.getPropertyValue("--channel-footer-height")).toBe("120px");
+
+      document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+      footerHeight = 180;
+      act(() => notifyFooter());
+      await act(async () => { await new Promise<number>(requestAnimationFrame); });
+      expect(stream!.style.getPropertyValue("--channel-footer-height")).toBe("120px");
+
+      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, WINDOW_RESIZE_SETTLE_DELAY_MS + 30));
+      });
+      expect(stream!.style.getPropertyValue("--channel-footer-height")).toBe("180px");
+    } finally {
+      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+      vi.unstubAllGlobals();
+    }
   });
 
 });

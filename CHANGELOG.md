@@ -44,6 +44,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep collaboration rooms still while the desktop window is being resized, so
+  the message stream and inspector do not flicker with the frame.
+
 - Size desktop sidebar row marks — navigation, plugins, collaboration avatars,
   folders, and heading plus buttons — to one glyph column and the UI type scale.
 
