@@ -1897,7 +1897,14 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   font-family: inherit;
   padding: 0;
   line-height: 1.4;
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent);
+  /* This is alpha, not a surface color: it works on glass and all themes. */
+  --browser-url-fade-ink: #000;
+  mask-image: linear-gradient(
+    to right,
+    var(--browser-url-fade-ink) 0,
+    var(--browser-url-fade-ink) calc(100% - 16px),
+    transparent
+  );
 }
 
 .workspace-browser-url-input::placeholder {
