@@ -1386,7 +1386,7 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
   text-align: left;
   cursor: pointer;
@@ -1454,7 +1454,7 @@
   display: block;
   padding: 9px 8px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-xs);
 }
 
 .channel-composer .dock-composer-wrap {

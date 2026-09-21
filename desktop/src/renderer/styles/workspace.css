@@ -1509,32 +1509,35 @@ html.resizing-workspace-file-split * {
   position: fixed;
   z-index: 1000;
   min-width: 168px;
-  padding: 4px;
+  padding: var(--menu-inset);
   background: var(--menu-bg);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
   box-shadow: var(--menu-shadow);
-  font-family: var(--font-ui, var(--font-body));
   animation: workspace-tree-context-menu-in var(--motion-fast) var(--ease-out);
 }
 
 .workspace-tree-context-menu-item {
-  display: block;
+  display: flex;
   width: 100%;
+  height: auto;
+  min-height: var(--control-row-height);
+  align-items: center;
   text-align: left;
-  padding: 7px 12px;
-  font-family: inherit;
-  font-size: var(--font-sm);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   color: var(--ink);
   background: transparent;
   border: 0;
+  border-radius: var(--radius-xs);
   cursor: default;
 }
 
 .workspace-tree-context-menu-item:hover,
 .workspace-tree-context-menu-item:focus-visible {
-  background: var(--ink-overlay-4);
+  background: var(--menu-hover);
   outline: none;
 }
 
@@ -4448,8 +4451,8 @@ html.resizing-workspace-file-split * {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: inherit;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
 }
 
 .runtime-engine-option > svg {
@@ -4592,7 +4595,7 @@ html.resizing-workspace-file-split * {
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
   padding: 0 9px;
   text-align: left;
@@ -4726,7 +4729,7 @@ html.resizing-workspace-file-split * {
   gap: 4px;
   padding: 0 4px;
   color: var(--ink-tertiary);
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: var(--weight-medium);
 }
 
@@ -4748,7 +4751,7 @@ html.resizing-workspace-file-split * {
   gap: 8px;
   padding: 0 4px;
   border-radius: var(--radius-xs);
-  font-size: 14px;
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
 
@@ -4759,7 +4762,7 @@ html.resizing-workspace-file-split * {
 .runtime-panel-effort-value {
   flex: 0 0 auto !important;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: var(--weight-medium);
 }
 
@@ -4785,7 +4788,7 @@ html.resizing-workspace-file-split * {
   align-items: center;
   justify-content: center;
   padding: 0 40px;
-  font-size: 13px;
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
 
@@ -4833,7 +4836,7 @@ html.resizing-workspace-file-split * {
   flex: 0 0 auto;
   padding: 0 10px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
 }
 

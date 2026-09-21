@@ -9,6 +9,7 @@
   --font-ui: var(--conversation-message-font-size, 14.5px);
   --font-xs: max(12px, calc(var(--font-ui) * 12 / 14));
   --font-sm: calc(var(--font-ui) * 13 / 14);
+  --font-menu: var(--font-sm);
   --font-body: var(--font-ui);
   --font-content: var(--font-ui);
   --font-title: calc(var(--font-ui) * 16 / 14);
@@ -23,6 +24,30 @@
   --icon-size-xs: clamp(12px, calc(var(--font-ui) * 12 / 14), 16px);
   --icon-size-lg: clamp(18px, calc(var(--font-ui) * 18 / 14), 22px);
   --icon-size-xl: clamp(20px, calc(var(--font-ui) * 20 / 14), 24px);
+}
+/* Click-open overlay cards sit one step below reading text: short labels
+ * in a small panel, not body copy. Composer chips use the same step, so
+ * a closed trigger and its open card match. Question cards above the
+ * composer stay on --font-ui; they are reading surfaces. */
+[data-wuu-layer="menu"],
+.project-add-menu,
+.environment-side-menu,
+.sidebar-account-menu,
+.composer-context-menu,
+.composer-project-menu,
+.composer-textarea-context-menu,
+.thread-row-context-menu,
+.workspace-tree-context-menu,
+.select-menu-panel,
+.codex-runtime-menu,
+.channel-mention-menu,
+.turn-source-overflow-list {
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+}
+[data-wuu-layer="menu"] :where(button, [role="menuitem"]) > :is(svg.lucide, svg[data-icon]) {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
 }
 .sidebar, .settings-sidebar, .sidebar-content {
   --sidebar-primary-icon-size: calc(var(--font-ui) * 16 / 14);

@@ -231,6 +231,7 @@
   --font-xs: 11px;
   --font-sm: 12px;
   --font-ui: var(--wuu-font-size-ui, var(--wuu-font-size-body, 13px));
+  --font-menu: var(--font-sm);
   --font-body: var(--wuu-font-size-body, 14px);
   --font-mono: var(
     --wuu-font-family-mono,
@@ -240,6 +241,7 @@
   --font-title: 15px;
   --font-heading: 18px;
   --font-display: 24px;
+  --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-bold: 700;

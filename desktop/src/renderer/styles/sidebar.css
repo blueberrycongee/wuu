@@ -2077,8 +2077,9 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
 }
@@ -3026,8 +3027,9 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
   cursor: pointer;

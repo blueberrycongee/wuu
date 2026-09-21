@@ -123,6 +123,7 @@
 
 .user-question-option-label {
   font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
   line-height: 1.45;
 }
 
@@ -2095,8 +2096,8 @@
 
 .slash-command-empty {
   color: var(--ink-muted);
-  font-size: var(--font-ui);
-  line-height: 18px;
+  font-size: var(--font-menu);
+  line-height: var(--line-ui);
   padding: 14px 12px 15px;
   text-align: center;
 }
@@ -2171,7 +2172,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  font-size: var(--font-content);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   text-overflow: ellipsis;
@@ -2201,8 +2202,8 @@
 }
 
 .access-menu {
-  gap: 2px;
-  background: var(--paper);
+  gap: 1px;
+  background: var(--menu-bg);
   padding: var(--menu-inset);
   width: 176px;
 }
@@ -2227,8 +2228,8 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: 400;
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
@@ -2246,8 +2247,8 @@
   height: auto;
   min-height: var(--control-row-height);
   justify-content: flex-start;
-  gap: 8px;
-  border: 1px solid transparent;
+  gap: var(--menu-item-gap);
+  border: 0;
   border-radius: var(--radius-xs);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
@@ -2264,9 +2265,9 @@
 .permission-mode-option strong {
   color: var(--ink);
   flex: 1;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 16px;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2283,8 +2284,8 @@
 }
 
 .composer-context-menu button svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   flex: 0 0 auto;
 }
 
@@ -2303,9 +2304,9 @@
 .composer-plus-menu-section {
   padding: 6px 8px 4px;
   color: var(--ink-muted);
-  font-size: var(--font-ui);
-  font-weight: 400;
-  line-height: 18px;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   user-select: none;
 }
 
@@ -2318,10 +2319,10 @@
   min-height: var(--control-row-height);
   gap: 8px;
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  line-height: 1.4;
+  line-height: var(--line-ui);
   border-radius: var(--radius-xs);
   color: var(--ink-soft);
-  font-weight: 400;
+  font-weight: var(--weight-medium);
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {
@@ -2330,18 +2331,19 @@
   overflow-wrap: anywhere;
   overflow: visible;
   color: inherit;
-  font-weight: 400;
+  font-weight: inherit;
 }
 
 .composer-plus-menu button .composer-plus-menu-item-desc {
   flex: 1 1 0%;
   color: color-mix(in srgb, var(--ink-soft) 55%, var(--paper));
-  font-weight: 400;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-regular);
 }
 
 .composer-plus-menu button svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   stroke-width: 1.75;
 }
 
@@ -2367,7 +2369,7 @@
 
 .composer-menu-note strong {
   color: var(--ink);
-  font-size: var(--font-ui);
+  font-size: var(--font-menu);
 }
 
 .composer-menu-note.warning strong {
@@ -2398,8 +2400,8 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-ui);
-  font-weight: 400;
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
@@ -2418,8 +2420,8 @@
 }
 
 .composer-project-menu button svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   color: var(--composer-project-menu-icon);
   flex: 0 0 auto;
 }
@@ -2455,22 +2457,22 @@
    access/branch menu shell above.
 
    The visual language follows .thread-row-context-menu (the
-   conversation row's right-click panel) — token surface, menu-enter
-   animation — but a step more compact: this menu is five short verbs,
-   not a list of titled rows. It is always fully visible (the component
-   flips above the cursor when the bottom of the viewport is close, and
-   clamps as a last resort) and therefore never scrolls internally.
-   data-origin names the corner anchored to the cursor so the enter
-   animation scales out of it. */
+   conversation row's right-click panel) — UI type size, token surface,
+   menu-enter animation. This menu is five short verbs, not a list of
+   titled rows. It is always fully visible (the component flips above
+   the cursor when the bottom of the viewport is close, and clamps as a
+   last resort) and therefore never scrolls internally. data-origin names
+   the corner anchored to the cursor so the enter animation scales out
+   of it. */
 .composer-textarea-context-menu {
   position: fixed;
   z-index: 2147482000;
   min-width: 116px;
   border: 1px solid var(--menu-border);
-  border-radius: calc(var(--radius-xs) + 4px);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 4px;
+  padding: var(--menu-inset);
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 
@@ -2501,15 +2503,17 @@
 .composer-textarea-context-menu-item {
   display: flex;
   width: 100%;
-  height: 26px;
+  height: auto;
+  min-height: var(--control-row-height);
   align-items: center;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-sm);
+  font-size: var(--font-menu);
   font-weight: var(--weight-medium);
-  padding: 0 10px;
+  line-height: var(--line-ui);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
   cursor: pointer;
 }

@@ -460,10 +460,10 @@
   max-height: min(420px, calc(100vh - 112px));
   overflow: hidden;
   border: 1px solid var(--menu-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: 8px;
+  padding: var(--menu-inset);
   transform-origin: top right;
   --menu-enter-x: 6px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -476,23 +476,24 @@
 
 .environment-side-label {
   color: var(--ink-tertiary);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
   padding: 6px 8px 8px;
 }
 
 .environment-side-menu button {
   display: grid;
   min-width: 0;
-  min-height: 36px;
+  min-height: var(--control-row-height);
   grid-template-columns: 22px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 9px;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   padding: 0 9px;
   text-align: left;
 }

@@ -51,6 +51,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Folders, Workspace, and Collaboration headings instead of in the trailing
   action column.
 
+- Size click-open desktop overlay cards — sidebar context menus, the composer
+  permission picker, and other dropdowns — one step below reading text, with
+  medium weight, instead of mixing compact and reading sizes.
+
 - Size desktop sidebar row marks — navigation, plugins, collaboration avatars,
   folders, and heading plus buttons — to one glyph column and the UI type scale.
 
