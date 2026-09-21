@@ -101,14 +101,14 @@ func TestOpenCodeStreamingReconciliationAndResume(t *testing.T) {
 }
 
 func TestOpenCodeFailuresAndCancellationNeverReportSuccess(t *testing.T) {
-	for _, scenario := range []string{"version", "resume", "persist", "http", "eof", "malformed", "provider", "limit", "missing-finish", "wrong-parent", "unfinished-tool", "question", "cancel"} {
+	// "resume" is absent on purpose: a reference the agent no longer has
+	// continues in a fresh session with a notice (see
+	// TestOpenCodeUnresumableSessionStartsFreshAndSaysSo).
+	for _, scenario := range []string{"version", "persist", "http", "eof", "malformed", "provider", "limit", "missing-finish", "wrong-parent", "unfinished-tool", "question", "cancel"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			binding := testBinding()
-			if scenario == "resume" {
-				binding.ExternalRef = "ses_missing"
-			}
 			if scenario == "persist" {
 				binding.PersistRef = func(string) error { return errors.New("disk full") }
 			}
@@ -127,6 +127,29 @@ func TestOpenCodeFailuresAndCancellationNeverReportSuccess(t *testing.T) {
 				t.Fatalf("cancel error=%v", err)
 			}
 		})
+	}
+}
+
+func TestOpenCodeUnresumableSessionStartsFreshAndSaysSo(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.ExternalRef = "ses_missing"
+	var persisted string
+	binding.PersistRef = func(value string) error { persisted = value; return nil }
+	done := false
+	result, err := openCodeTestSession(t, "resume", binding).RunTurn(ctx, testInput(), func(event providers.StreamEvent) {
+		done = done || event.Type == providers.EventDone
+	})
+	if err != nil || !done {
+		t.Fatalf("turn did not recover: %+v %v done=%v", result, err, done)
+	}
+	content := result.Result.Content
+	if !strings.Contains(content, "could not resume") || !strings.HasSuffix(content, "Hello world") {
+		t.Fatalf("fallback was not disclosed ahead of the answer: %q", content)
+	}
+	if persisted != "ses_native" {
+		t.Fatalf("persisted ref = %q", persisted)
 	}
 }
 
@@ -220,7 +243,9 @@ func TestOpenCodeHelper(t *testing.T) {
 			}
 			writeJSON(w, map[string]any{"healthy": true, "version": version})
 		case r.URL.Path == "/session" || r.Method == "PATCH":
-			if scenario == "resume" {
+			// "resume" is a reference the agent no longer has: the resume PATCH
+			// 404s while creating a session still works, which is the fallback.
+			if scenario == "resume" && r.Method == "PATCH" {
 				http.Error(w, "missing session", 404)
 				return
 			}

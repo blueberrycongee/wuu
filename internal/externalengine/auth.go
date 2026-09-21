@@ -80,11 +80,11 @@ func (e *Engine) Authenticate(ctx context.Context, methodID string) (AuthResult,
 		}
 		return nil, nil
 	}}
-	setupCtx, cancelSetup := context.WithTimeout(ctx, 30*time.Second)
+	setupCtx, cancelSetup := context.WithTimeout(ctx, acpInitializeTimeout)
 	init, err := initializeACP(setupCtx, r)
 	cancelSetup()
 	if err != nil {
-		return result, err
+		return result, acpEngineError(e.entry, p, err)
 	}
 	for _, method := range init.AuthMethods {
 		if method.ID != "" && (method.Type == "" || method.Type == "agent") {
@@ -96,9 +96,13 @@ func (e *Engine) Authenticate(ctx context.Context, methodID string) (AuthResult,
 	}
 	for _, method := range result.Methods {
 		if method.ID == methodID {
-			err := r.call(ctx, "authenticate", map[string]string{"methodId": methodID}, nil)
-			result.Authenticated = err == nil
-			return result, err
+			if err := r.call(ctx, "authenticate", map[string]string{"methodId": methodID}, nil); err != nil {
+				// A sign-in flow that fails reports why on stderr (a missing
+				// key, a refused redirect) rather than in the RPC error.
+				return result, acpEngineError(e.entry, p, err)
+			}
+			result.Authenticated = true
+			return result, nil
 		}
 	}
 	return result, fmt.Errorf("authentication method %q is not advertised or requires terminal login", methodID)

@@ -211,21 +211,33 @@ func (s *Session) openCodeTurn(ctx context.Context, c *openCodeClient, message p
 	var native struct {
 		ID string `json:"id"`
 	}
+	notice := ""
 	if ref == "" {
 		if err := c.call(setup, "POST", "/session", permission, &native); err != nil {
 			return err
 		}
 		ref = native.ID
+	} else if err := c.call(setup, "PATCH", "/session/"+url.PathEscape(ref), permission, &native); err != nil {
+		// A session the agent no longer has — deleted in its own TUI, or a
+		// reference from another machine — must not strand the thread: Wuu has
+		// no reset entry point for the reference, so every later turn would
+		// fail the same way. Start a fresh session and say so, because the
+		// agent's earlier context is gone.
+		notice = engineResumeNotice(s.engine.entry.Name, truncateUTF8(err.Error(), 200))
+		if retryErr := c.call(setup, "POST", "/session", permission, &native); retryErr != nil {
+			return fmt.Errorf("resume OpenCode session: %w; create session: %w", err, retryErr)
+		}
+		ref = native.ID
+	} else if native.ID != ref {
+		return errors.New("OpenCode resumed a different session")
+	}
+	if ref != strings.TrimSpace(s.binding.ExternalRef) {
 		if err := s.persist(ref); err != nil {
 			return err
 		}
-	} else {
-		if err := c.call(setup, "PATCH", "/session/"+url.PathEscape(ref), permission, &native); err != nil {
-			return fmt.Errorf("resume OpenCode session (history was not reset): %w", err)
-		}
-		if native.ID != ref {
-			return errors.New("OpenCode resumed a different session")
-		}
+	}
+	if notice != "" {
+		t.content(notice, false)
 	}
 	path := "/session/" + url.PathEscape(ref)
 	random := make([]byte, 7)

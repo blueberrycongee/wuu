@@ -186,6 +186,29 @@ func (s acpSession) modelConfigOption() *acpConfigOption {
 	return nil
 }
 
+// unattendedModeChoices are the agent-specific ids for "never ask the user".
+// Devin advertises `bypass`; the rest cover the ids other ACP agents publish
+// for the same policy.
+var unattendedModeChoices = []string{
+	"bypassPermissions",
+	"bypass_permissions",
+	"bypass",
+	"yolo",
+	"agent-full-access",
+	"danger-full-access",
+	"full-access",
+}
+
+func (s acpSession) modeOption() *acpConfigOption {
+	for i := range s.ConfigOptions {
+		option := &s.ConfigOptions[i]
+		if option.Type == "select" && option.Category == "mode" {
+			return option
+		}
+	}
+	return nil
+}
+
 func (s acpSession) thoughtLevelOption() *acpConfigOption {
 	for i := range s.ConfigOptions {
 		option := &s.ConfigOptions[i]

@@ -10,10 +10,20 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 var grokPromptStall = 30 * time.Second
+
+// Handshake budgets. initialize is local process startup, so 30s of silence is
+// a wedged binary. Opening the session is different work: session/load replays
+// the agent's own history from disk, and a long conversation legitimately takes
+// longer. A too-tight budget here reads as a broken engine.
+var (
+	acpInitializeTimeout = 30 * time.Second
+	acpSessionTimeout    = 120 * time.Second
+)
 
 // ACP v1's prompt response owns completion for standard agents. Grok also
 // emits a session prompt-complete extension that can arrive first when the
@@ -67,7 +77,7 @@ func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) 
 		return nil, nil
 	}}
 	if _, err := initializeACP(ctx, r); err != nil {
-		return nil, err
+		return nil, acpEngineError(e.entry, p, err)
 	}
 	cwd := e.root
 	if cwd == "" {
@@ -75,7 +85,9 @@ func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) 
 	}
 	var session acpSession
 	if err := r.call(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
-		return nil, fmt.Errorf("session/new: %w", err)
+		// Settings surfaces this as the engine's model error, which is where a
+		// user discovers that the agent needs configuration of its own.
+		return nil, acpEngineError(e.entry, p, fmt.Errorf("session/new: %w", err))
 	}
 	return modelsFromACPSession(session), nil
 }
@@ -127,11 +139,13 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		}
 		return nil, nil
 	}
-	setupCtx, cancelSetup := context.WithTimeout(ctx, 30*time.Second)
+	setupCtx, cancelSetup := context.WithTimeout(ctx, acpSessionTimeout)
 	defer cancelSetup()
-	init, err := initializeACP(setupCtx, r)
+	initCtx, cancelInit := context.WithTimeout(ctx, acpInitializeTimeout)
+	init, err := initializeACP(initCtx, r)
+	cancelInit()
 	if err != nil {
-		return err
+		return acpEngineError(s.engine.entry, p, err)
 	}
 	if len(message.Images) > 0 && !init.Capabilities.Prompt.Image {
 		return errors.New("this engine does not advertise image input support")
@@ -144,23 +158,41 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		mcp = append(mcp, map[string]any{"type": "http", "name": server.Name, "url": server.URL, "headers": []any{}})
 	}
 	params := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp}
-	method := "session/new"
-	if ref != "" {
-		if !init.Capabilities.Load {
-			return errors.New("this engine cannot load the saved session; history was not reset")
-		}
-		method = "session/load"
-		params["sessionId"] = ref
-	}
 	var session acpSession
-	if err := r.call(setupCtx, method, params, &session); err != nil {
-		return fmt.Errorf("%s: %w", method, err)
+	notice := ""
+	switch {
+	case ref == "":
+		if err := r.call(setupCtx, "session/new", params, &session); err != nil {
+			return acpEngineError(s.engine.entry, p, fmt.Errorf("session/new: %w", err))
+		}
+	case !init.Capabilities.Load:
+		// Refusing the turn would strand the thread: the saved reference can
+		// never be cleared from the UI, so every later turn would fail the same
+		// way. Start fresh and say so instead.
+		notice = engineResumeNotice(s.engine.entry.Name, "the agent does not support loading a saved session")
+		if err := r.call(setupCtx, "session/new", params, &session); err != nil {
+			return acpEngineError(s.engine.entry, p, fmt.Errorf("session/new: %w", err))
+		}
+	default:
+		loadParams := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp, "sessionId": ref}
+		if err := r.call(setupCtx, "session/load", loadParams, &session); err != nil {
+			notice = engineResumeNotice(s.engine.entry.Name, acpRecoverableReason(err))
+			if retryErr := r.call(setupCtx, "session/new", params, &session); retryErr != nil {
+				return acpEngineError(s.engine.entry, p, fmt.Errorf("session/load: %w; session/new: %w", err, retryErr))
+			}
+		}
 	}
-	if method == "session/new" {
+	if ref == "" || notice != "" {
+		// A replacement session — the first one, or a load fallback — must
+		// become the thread's reference, or every later turn repeats the
+		// fallback.
 		ref = session.ID
 		if err := s.persist(ref); err != nil {
 			return err
 		}
+	}
+	if notice != "" {
+		t.content(notice, false)
 	}
 	if err := s.applyACPSelection(setupCtx, r, session, ref); err != nil {
 		return err
@@ -206,7 +238,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			_ = r.notify(cancelCtx, "session/cancel", map[string]string{"sessionId": ref})
 			return fmt.Errorf("%s did not acknowledge the prompt within %s; %s", s.engine.entry.Name, profile.promptStall, profile.stallHint)
 		}
-		return err
+		return acpEngineError(s.engine.entry, p, err)
 	}
 	return finishACPTurn(t, response.StopReason)
 }
@@ -309,6 +341,37 @@ func isACPSessionBoilerplate(raw json.RawMessage) bool {
 	}
 }
 
+// acpEngineError appends the engine's stderr tail to a failure. The protocol
+// stream carries only a generic error, while the cause the user can act on — an
+// unconfigured provider, a refused login — is written to stderr.
+func acpEngineError(entry enginecatalog.Entry, p *child, err error) error {
+	if err == nil {
+		return nil
+	}
+	tail := p.stderrSummary()
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n%s stderr:\n%s", err, entry.Name, tail)
+}
+
+// engineResumeNotice explains a fresh-session fallback in the transcript. The
+// agent's own context is gone, so the fallback is never silent.
+func engineResumeNotice(name, reason string) string {
+	return fmt.Sprintf("%s could not resume the saved agent session (%s). This turn started a new agent session, so the agent no longer has this conversation's earlier context.\n\n", name, reason)
+}
+
+// acpRecoverableReason turns a failed session/load into a short reason for the
+// notice: the agent's own error message is the useful part, and it is bounded
+// because it is quoted into the transcript.
+func acpRecoverableReason(err error) string {
+	reason := strings.TrimSpace(err.Error())
+	if reason == "" {
+		return "the agent did not load it"
+	}
+	return truncateUTF8(reason, 200)
+}
+
 func finishACPTurn(t *turn, stopReason string) error {
 	t.stopReason = stopReason
 	switch stopReason {
@@ -365,21 +428,48 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSess
 		}
 	}
 	effort := strings.TrimSpace(s.binding.Effort)
-	if effort == "" {
+	if effort != "" {
+		option := session.thoughtLevelOption()
+		if option == nil || !option.hasChoice(effort) {
+			return fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", s.engine.entry.Name)
+		}
+		if strings.TrimSpace(option.Current) != effort {
+			configID := strings.TrimSpace(option.ID)
+			if configID == "" {
+				configID = "reasoning_effort"
+			}
+			if err := r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": configID, "value": effort}, nil); err != nil {
+				return err
+			}
+		}
+	}
+	if s.binding.PermissionMode == "unconfined" {
+		return session.selectUnattendedMode(ctx, r, ref)
+	}
+	return nil
+}
+
+// selectUnattendedMode applies the agent's own no-prompts mode when it offers
+// one. Wuu's unconfined mode has to reach the agent's policy: otherwise the
+// agent keeps the mode it started in — devin defaults to accept-edits — and the
+// edits it decides to make never reach Wuu's approval path. An agent without
+// such a mode keeps its default; the prompts it does send still reach Wuu,
+// which answers them under the same policy.
+func (s acpSession) selectUnattendedMode(ctx context.Context, r *rpc, ref string) error {
+	option := s.modeOption()
+	if option == nil {
 		return nil
 	}
-	option := session.thoughtLevelOption()
-	if option == nil || !option.hasChoice(effort) {
-		return fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", s.engine.entry.Name)
+	for _, choice := range unattendedModeChoices {
+		if !option.hasChoice(choice) {
+			continue
+		}
+		if strings.TrimSpace(option.Current) == choice {
+			return nil
+		}
+		return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": choice}, nil)
 	}
-	if strings.TrimSpace(option.Current) == effort {
-		return nil
-	}
-	configID := strings.TrimSpace(option.ID)
-	if configID == "" {
-		configID = "reasoning_effort"
-	}
-	return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": configID, "value": effort}, nil)
+	return nil
 }
 
 func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMessage) (any, error) {

@@ -92,12 +92,16 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 }
 
 func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
-	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-error", "load-malformed", "no-load", "no-images", "unknown-id"} {
+	// load-error and no-load are absent on purpose: an agent that cannot resume
+	// the saved session continues in a fresh one with a notice (see
+	// TestACPUnresumableSessionStartsFreshAndSaysSo). A stream that desyncs
+	// (load-malformed) stays a failure — the fallback cannot trust it.
+	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-malformed", "no-images", "unknown-id"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			binding := testBinding()
-			if scenario == "load-error" || scenario == "load-malformed" || scenario == "no-load" {
+			if scenario == "load-malformed" {
 				binding.ExternalRef = "old-session"
 			}
 			input := testInput()
@@ -118,6 +122,123 @@ func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 				t.Fatalf("false success: %+v %v done=%v", result, err, done)
 			}
 		})
+	}
+}
+
+func TestACPUnresumableSessionStartsFreshAndSaysSo(t *testing.T) {
+	for _, scenario := range []string{"load-error", "no-load"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			binding := testBinding()
+			binding.ExternalRef = "old-session"
+			var persisted string
+			binding.PersistRef = func(value string) error { persisted = value; return nil }
+			session, err := testEngine(t, scenario).SessionForThread(ctx, binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := false
+			result, err := session.RunTurn(ctx, testInput(), func(event providers.StreamEvent) {
+				if event.Type == providers.EventDone {
+					done = true
+				}
+			})
+			if err != nil || !done {
+				t.Fatalf("turn did not recover: %+v %v done=%v", result, err, done)
+			}
+			content := result.Result.Content
+			if !strings.Contains(content, "could not resume") || !strings.HasSuffix(content, "Hello world") {
+				t.Fatalf("fallback was not disclosed ahead of the answer: %q", content)
+			}
+			// The unreachable reference has to be replaced, or every later turn
+			// repeats the fallback.
+			if persisted != "native-session" {
+				t.Fatalf("persisted ref = %q", persisted)
+			}
+		})
+	}
+}
+
+func TestACPFailureQuotesEngineStderrWithoutSecrets(t *testing.T) {
+	previous := acpSessionTimeout
+	acpSessionTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { acpSessionTimeout = previous })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngine(t, "stderr-stall").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.RunTurn(ctx, testInput(), nil)
+	if err == nil {
+		t.Fatal("wedged session reported success")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "provider not configured") {
+		t.Fatalf("engine stderr missing from the failure: %v", err)
+	}
+	for _, secret := range []string{"SECRET-CODE-123456", "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEF"} {
+		if strings.Contains(message, secret) {
+			t.Fatalf("credential reached the transcript: %v", err)
+		}
+	}
+	if !strings.Contains(message, "<redacted>") {
+		t.Fatalf("redaction did not run: %v", err)
+	}
+}
+
+func TestACPUnconfinedSelectsAgentUnattendedMode(t *testing.T) {
+	for _, testCase := range []struct {
+		mode string
+		want string
+	}{
+		{mode: "unconfined", want: "mode=bypass"},
+		// Any other mode leaves the agent's own policy alone rather than
+		// guessing a stricter one it may not implement.
+		{mode: "workspace", want: "mode="},
+	} {
+		t.Run(testCase.mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			binding := testBinding()
+			binding.PermissionMode = testCase.mode
+			session, err := testEngine(t, "unattended-mode").SessionForThread(ctx, binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := session.RunTurn(ctx, testInput(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Result.Content != testCase.want {
+				t.Fatalf("agent mode = %q, want %q", result.Result.Content, testCase.want)
+			}
+		})
+	}
+}
+
+func TestACPStderrTailKeepsRecentLinesOnly(t *testing.T) {
+	var tail stderrTail
+	for i := 0; i < stderrTailLines+4; i++ {
+		if _, err := tail.Write([]byte(fmt.Sprintf("line-%d\n", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A partial line must not be reported until it is terminated.
+	if _, err := tail.Write([]byte("half")); err != nil {
+		t.Fatal(err)
+	}
+	summary := tail.Summary()
+	if strings.Contains(summary, "line-3") || strings.Contains(summary, "half") {
+		t.Fatalf("tail kept too much: %q", summary)
+	}
+	if !strings.HasSuffix(summary, fmt.Sprintf("line-%d", stderrTailLines+3)) {
+		t.Fatalf("tail dropped the newest line: %q", summary)
+	}
+	if lines := strings.Count(summary, "\n") + 1; lines != stderrTailLines {
+		t.Fatalf("lines = %d, want %d", lines, stderrTailLines)
 	}
 }
 
@@ -234,7 +355,7 @@ func TestACPHelper(t *testing.T) {
 		update("agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": value}})
 	}
 	var promptID json.RawMessage
-	selectedModel, selectedEffort := "", ""
+	selectedModel, selectedEffort, selectedMode := "", "", ""
 	for scanner.Scan() {
 		var msg rpcMessage
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
@@ -252,6 +373,30 @@ func TestACPHelper(t *testing.T) {
 			if scenario == "grok" {
 				result = grokACPSessionResult()
 				break
+			}
+			if scenario == "unattended-mode" {
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{
+							"id": "mode", "category": "mode", "type": "select", "currentValue": "accept-edits",
+							"options": []any{
+								map[string]any{"value": "accept-edits", "name": "Code"},
+								map[string]any{"value": "ask", "name": "Ask"},
+								map[string]any{"value": "bypass", "name": "Bypass Permissions"},
+							},
+						},
+					},
+				}
+				break
+			}
+			if scenario == "stderr-stall" {
+				// The engine explains itself on stderr and then never answers,
+				// which is what an unconfigured agent looks like from the wire.
+				fmt.Fprintln(os.Stderr, "provider not configured: run `agent model`")
+				fmt.Fprintln(os.Stderr, "login: https://agent.example/auth?code=SECRET-CODE-123456\u0026state=xyz")
+				fmt.Fprintln(os.Stderr, "token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEF")
+				continue
 			}
 			result = map[string]any{"sessionId": "native-session"}
 		case "session/set_model":
@@ -272,6 +417,8 @@ func TestACPHelper(t *testing.T) {
 				selectedModel = params.Value
 			case "reasoning_effort":
 				selectedEffort = params.Value
+			case "mode":
+				selectedMode = params.Value
 			}
 		case "session/load":
 			if scenario == "load-error" {
@@ -307,6 +454,11 @@ func TestACPHelper(t *testing.T) {
 			}
 			if scenario == "grok" {
 				text(strings.TrimSpace(selectedModel + " " + selectedEffort))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
+			if scenario == "unattended-mode" {
+				text("mode=" + selectedMode)
 				result = map[string]string{"stopReason": "end_turn"}
 				break
 			}

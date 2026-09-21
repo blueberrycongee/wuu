@@ -2,17 +2,39 @@ package externalengine
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const maxFrameBytes = 16 * 1024 * 1024
+
+// An engine reports its real failures on stderr — an unconfigured provider, a
+// refused login, a crash — while the ACP stream carries only a generic error.
+// The tail is bounded and redacted because it is quoted back into the
+// transcript, where an agent's startup logging could otherwise copy a login
+// code or an API key.
+const (
+	stderrTailLines     = 6
+	stderrTailLineBytes = 700
+)
+
+var (
+	// Query strings carry the OAuth codes a login flow logs.
+	stderrURLQuery = regexp.MustCompile(`\?[^\s"']+`)
+	// Long opaque runs are credentials. 40+ characters keeps ordinary
+	// diagnoses readable: UUIDs (36) and paths (slashes are not matched) stay.
+	stderrOpaqueRun = regexp.MustCompile(`[A-Za-z0-9_\-.]{40,}`)
+)
 
 // child owns exactly one subprocess and its pipes. Stdout is drained before
 // Wait; cancellation closes pipes and kills the process tree to unblock both
@@ -26,6 +48,71 @@ type child struct {
 	readDone chan struct{}
 	writeMu  sync.Mutex
 	once     sync.Once
+	stderr   stderrTail
+}
+
+// stderrTail records the last stderr lines of one engine process. Writes are
+// accepted for the lifetime of the process and never block the engine.
+type stderrTail struct {
+	mu      sync.Mutex
+	lines   []string
+	partial []byte
+}
+
+func (s *stderrTail) Write(data []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.partial = append(s.partial, data...)
+	for {
+		index := bytes.IndexByte(s.partial, '\n')
+		if index < 0 {
+			break
+		}
+		s.pushLocked(string(s.partial[:index]))
+		s.partial = append(s.partial[:0], s.partial[index+1:]...)
+	}
+	// An engine that streams progress without newlines must not grow this
+	// buffer without bound; the newest bytes of the line are the useful ones.
+	if len(s.partial) > stderrTailLineBytes {
+		s.partial = append(s.partial[:0], s.partial[len(s.partial)-stderrTailLineBytes:]...)
+	}
+	return len(data), nil
+}
+
+func (s *stderrTail) pushLocked(line string) {
+	line = strings.TrimSpace(redactStderr(line))
+	if line == "" {
+		return
+	}
+	line = truncateUTF8(line, stderrTailLineBytes)
+	s.lines = append(s.lines, line)
+	if len(s.lines) > stderrTailLines {
+		s.lines = append(s.lines[:0], s.lines[len(s.lines)-stderrTailLines:]...)
+	}
+}
+
+// Summary returns the captured tail, oldest line first, or "" when the engine
+// wrote nothing to stderr.
+func (s *stderrTail) Summary() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Join(append([]string(nil), s.lines...), "\n")
+}
+
+func redactStderr(line string) string {
+	line = stderrURLQuery.ReplaceAllString(line, "?<redacted>")
+	return stderrOpaqueRun.ReplaceAllString(line, "<redacted>")
+}
+
+func truncateUTF8(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	text = text[:limit]
+	for len(text) > 0 && !utf8.ValidString(text) {
+		text = text[:len(text)-1]
+	}
+	return text
 }
 
 type frame struct {
@@ -34,8 +121,12 @@ type frame struct {
 }
 
 func startChild(binary string, args []string, cwd string, env []string) (*child, error) {
+	p := &child{frames: make(chan frame, 16), stop: make(chan struct{}), readDone: make(chan struct{})}
 	cmd := exec.Command(binary, args...)
-	cmd.Dir, cmd.Stderr = cwd, io.Discard
+	cmd.Dir = cwd
+	// Engines are verbose on stderr and silent about it on the protocol; keep a
+	// bounded tail so a turn failure can explain itself.
+	cmd.Stderr = &p.stderr
 	if env != nil {
 		cmd.Env = env
 	}
@@ -55,7 +146,7 @@ func startChild(binary string, args []string, cwd string, env []string) (*child,
 		_ = stdout.Close()
 		return nil, fmt.Errorf("start engine: %w", err)
 	}
-	p := &child{cmd: cmd, stdin: stdin, stdout: stdout, frames: make(chan frame, 16), stop: make(chan struct{}), readDone: make(chan struct{})}
+	p.cmd, p.stdin, p.stdout = cmd, stdin, stdout
 	go func() {
 		defer close(p.readDone)
 		defer close(p.frames)
@@ -107,6 +198,15 @@ func (p *child) write(ctx context.Context, value any) error {
 		<-done
 		return errors.New("engine process closed")
 	}
+}
+
+// stderrSummary reports the engine's buffered stderr tail, empty when the
+// engine wrote nothing. It is safe to call while the process still runs.
+func (p *child) stderrSummary() string {
+	if p == nil {
+		return ""
+	}
+	return p.stderr.Summary()
 }
 
 func (p *child) close() {
