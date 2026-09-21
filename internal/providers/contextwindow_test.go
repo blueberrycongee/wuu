@@ -125,6 +125,12 @@ func TestMaxOutputTokensFor_MiniMaxM3(t *testing.T) {
 	}
 }
 
+func TestMaxOutputTokensFor_Grok47(t *testing.T) {
+	if got := MaxOutputTokensFor("grok-4.7"); got != 128_000 {
+		t.Fatalf("MaxOutputTokensFor(grok-4.7) = %d, want 128000", got)
+	}
+}
+
 func TestContextWindowFor_EmptyString(t *testing.T) {
 	if got := ContextWindowFor(""); got != defaultContextWindow {
 		t.Fatalf("expected default for empty string, got %d", got)

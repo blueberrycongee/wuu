@@ -168,6 +168,23 @@ func TestGrok46FallbackReasoningEfforts(t *testing.T) {
 	}
 }
 
+func TestGrok47FallbackReasoningEfforts(t *testing.T) {
+	reasoning := true
+	provider := config.ProviderConfig{
+		Type:  "openai-compatible",
+		NPM:   "@ai-sdk/xai",
+		Model: "grok-4.7",
+		Models: map[string]config.ProviderModelConfig{
+			"grok-4.7": {Reasoning: &reasoning},
+		},
+	}
+
+	variants := SummariesForProvider("xai", provider, "grok-4.7")
+	if got := strings.Join(variantIDs(variants), ","); got != "low,medium,high,xhigh" {
+		t.Fatalf("variants = %q, want low,medium,high,xhigh", got)
+	}
+}
+
 func TestSummariesMatchProviderCompatForGenericOpenAICompatible(t *testing.T) {
 	provider := config.ProviderConfig{
 		Type:  "openai-compatible",

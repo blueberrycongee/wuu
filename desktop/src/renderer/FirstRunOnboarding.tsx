@@ -556,7 +556,7 @@ export function FirstRunOnboarding({
                       setProviderType(next);
                       if (next === "xai-subscription") {
                         if (!providerName.trim()) setProviderName("xai-subscription");
-                        if (!model.trim()) setModel("grok-4.6");
+                        if (!model.trim()) setModel("grok-4.7");
                       } else if (next === "grok-build") {
                         setProviderName("grok-build");
                         setModel("grok-4.5");

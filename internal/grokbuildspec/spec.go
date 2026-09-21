@@ -39,4 +39,10 @@ var Models = []Model{
 		Efforts:       []string{"low", "medium", "high", "xhigh"},
 		DefaultEffort: "high",
 	},
+	{
+		ID:            "grok-4.7",
+		DisplayName:   "Grok 4.7",
+		Efforts:       []string{"low", "medium", "high", "xhigh"},
+		DefaultEffort: "high",
+	},
 }

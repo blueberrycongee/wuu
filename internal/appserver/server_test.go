@@ -1149,6 +1149,7 @@ func TestProviderSummariesExposeGrokBuildLoginAndModelDefaults(t *testing.T) {
 	for id, wantEfforts := range map[string]string{
 		"grok-4.5": "low,medium,high",
 		"grok-4.6": "low,medium,high,xhigh",
+		"grok-4.7": "low,medium,high,xhigh",
 	} {
 		model := providerModelByID(t, summaries[0], id)
 		if got := strings.Join(model.SupportedEfforts, ","); got != wantEfforts {

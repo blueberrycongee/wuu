@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
+  documented 500k context window and low/medium/high/xhigh reasoning efforts.
+  New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and
+  4.6.
+
 - Desktop conversations can open the workspace browser from `/browser`, the
   workspace tool list, message links, turn sources, and compact browser
   activity rows. Modifier-clicks still use the system browser, and the panel

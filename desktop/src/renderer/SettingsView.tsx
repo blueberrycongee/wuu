@@ -434,7 +434,7 @@ export function SettingsView({
       setProviderDraft(providers.some((item) => item.name === "xai-subscription") ? nextCustomProviderName(providers) : "xai-subscription");
     }
     if (!modelDraft.trim()) {
-      setModelDraft("grok-4.6");
+      setModelDraft("grok-4.7");
     }
     setBaseURLDraft("https://api.x.ai/v1");
     setAPIKeyDraft("");
@@ -472,7 +472,7 @@ export function SettingsView({
             type: "xai-subscription",
             create_provider: true
           };
-          await onSave(providerDraft.trim() || "xai-subscription", modelDraft.trim() || "grok-4.6", undefined, connection, variantDraft);
+          await onSave(providerDraft.trim() || "xai-subscription", modelDraft.trim() || "grok-4.7", undefined, connection, variantDraft);
           setAddingProvider(false);
         } else {
           await onSave(providerDraft, modelDraft, undefined, undefined, variantDraft);

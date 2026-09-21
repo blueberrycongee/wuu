@@ -970,7 +970,7 @@ func Default() Config {
 				Type:    "xai-subscription",
 				BaseURL: "https://api.x.ai/v1",
 				WireAPI: "responses",
-				Model:   "grok-4.6",
+				Model:   "grok-4.7",
 			},
 			"grok-build": grokBuild,
 			"anthropic": {

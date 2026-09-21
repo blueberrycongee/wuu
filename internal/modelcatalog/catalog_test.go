@@ -254,8 +254,8 @@ func TestCatalogSnapshotMatchesOpenCodeDefaultVisibleCounts(t *testing.T) {
 			}
 		}
 	}
-	if modelCount != 7713 {
-		t.Fatalf("model count = %d, want 7713", modelCount)
+	if modelCount != 7714 {
+		t.Fatalf("model count = %d, want 7714", modelCount)
 	}
 }
 
@@ -455,6 +455,32 @@ func TestKimiK3UsesUpstreamCatalogAndProviderCompatibility(t *testing.T) {
 	}
 	if enriched.Headers["User-Agent"] != "KimiCLI/1.5" {
 		t.Fatalf("unexpected K3 headers: %+v", enriched.Headers)
+	}
+}
+
+func TestOfficialCatalogAddsGrok47(t *testing.T) {
+	provider, ok := ProviderByID("xai")
+	if !ok {
+		t.Fatal("expected xAI provider")
+	}
+	var model Model
+	for _, candidate := range provider.Models {
+		if candidate.ID == "grok-4.7" {
+			model = candidate
+			break
+		}
+	}
+	if model.ID != "grok-4.7" || model.Name != "Grok 4.7" {
+		t.Fatalf("missing grok-4.7 catalog entry: %+v", model)
+	}
+	if !model.Reasoning || model.Limit == nil || model.Limit.Context != 500_000 {
+		t.Fatalf("unexpected grok-4.7 metadata: %+v", model)
+	}
+	if got := reasoningEfforts(model); !equalStrings(got, []string{"low", "medium", "high", "xhigh"}) {
+		t.Fatalf("grok-4.7 efforts = %v", got)
+	}
+	if model.DefaultVariant != "high" {
+		t.Fatalf("grok-4.7 default variant = %q", model.DefaultVariant)
 	}
 }
 

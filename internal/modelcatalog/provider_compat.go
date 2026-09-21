@@ -76,7 +76,7 @@ func applyProviderCompatibilityDefaults(providerID string, provider config.Provi
 		if strings.TrimSpace(provider.BaseURL) == "" {
 			provider.BaseURL = "https://api.x.ai/v1"
 		}
-		if providerUsesModel(provider, "grok-4.6", modelIDs...) && strings.TrimSpace(provider.WireAPI) == "" {
+		if providerUsesLatestGrokResponsesModel(provider, modelIDs...) && strings.TrimSpace(provider.WireAPI) == "" {
 			provider.WireAPI = "responses"
 		}
 	}
@@ -116,6 +116,10 @@ func providerUsesModel(provider config.ProviderConfig, target string, modelIDs .
 		return true
 	}
 	return false
+}
+
+func providerUsesLatestGrokResponsesModel(provider config.ProviderConfig, modelIDs ...string) bool {
+	return providerUsesModel(provider, "grok-4.6", modelIDs...) || providerUsesModel(provider, "grok-4.7", modelIDs...)
 }
 
 func usesDeepSeekResponsesModel(provider config.ProviderConfig, modelIDs ...string) bool {
@@ -201,7 +205,22 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 			})
 			upsertOfficialModel(provider, Model{
 				ID:               "grok-4.6",
-				Name:             "Grok 4.6 (Early Access)",
+				Name:             "Grok 4.6",
+				Family:           "grok",
+				Reasoning:        true,
+				ReasoningOptions: officialEffortOptions(false, "low", "medium", "high", "xhigh"),
+				Attachment:       officialBool(true),
+				ToolCall:         officialBool(true),
+				StructuredOutput: officialBool(true),
+				Temperature:      officialBool(true),
+				Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+				Limit:            &Limit{Context: 500_000},
+				SupportedEfforts: []string{"low", "medium", "high", "xhigh"},
+				DefaultVariant:   "high",
+			})
+			upsertOfficialModel(provider, Model{
+				ID:               "grok-4.7",
+				Name:             "Grok 4.7",
 				Family:           "grok",
 				Reasoning:        true,
 				ReasoningOptions: officialEffortOptions(false, "low", "medium", "high", "xhigh"),

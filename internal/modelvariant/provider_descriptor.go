@@ -127,6 +127,7 @@ func compatReasoningEnabled(desc compatModelDescriptor, configured *bool) bool {
 		return true
 	}
 	if strings.Contains(id, "grok-4.6") || strings.Contains(apiID, "grok-4.6") ||
+		strings.Contains(id, "grok-4.7") || strings.Contains(apiID, "grok-4.7") ||
 		strings.Contains(id, "glm-5.3") || strings.Contains(apiID, "glm-5.3") {
 		return true
 	}
