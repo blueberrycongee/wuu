@@ -2989,6 +2989,13 @@
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
+}
+
+/* Enter only after viewport placement. Starting menu-enter while the
+ * first layout is still `visibility: hidden` lets Chromium finish or
+ * skip the animation off-screen, then replay it on the first visible
+ * frame — a full-opacity flash, then a fade. */
+.thread-row-context-menu[data-placed="true"] {
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
 }
 

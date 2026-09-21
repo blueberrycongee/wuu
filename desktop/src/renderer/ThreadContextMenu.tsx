@@ -10,7 +10,14 @@ import { UILayerPortal } from "./ui/layers/UILayerHost";
  * The menu is positioned via fixed coordinates so callers can pass raw
  * clientX/clientY from a contextmenu event without computing offsets against
  * any parent container.
+ *
+ * Callers such as collaboration rows each own their own open state, so a
+ * second right-click would otherwise mount another copy on top of the first.
+ * Enter animations on those stacked copies read as ghosted cards. Opening a
+ * menu therefore dismisses any other instance before the browser paints.
  */
+const openThreadContextMenus = new Set<() => void>();
+
 export type ThreadContextMenuItem =
   | {
       /** Display label. */
@@ -43,27 +50,56 @@ export function ThreadContextMenu({
   onClose: () => void;
 }): JSX.Element {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [layout, setLayout] = useState<ContextMenuLayout | null>(null);
+
+  useLayoutEffect(() => {
+    const close = (): void => {
+      onCloseRef.current();
+    };
+    const others = [...openThreadContextMenus];
+    openThreadContextMenus.clear();
+    openThreadContextMenus.add(close);
+    for (const other of others) {
+      other();
+    }
+    return () => {
+      openThreadContextMenus.delete(close);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const menuElement = menuRef.current;
     if (!menuElement) {
       return;
     }
-    setLayout(
-      placeContextMenu(
-        x,
-        y,
-        menuElement.offsetWidth,
-        menuElement.offsetHeight,
-        window.innerWidth,
-        window.innerHeight,
-      ),
+    const next = placeContextMenu(
+      x,
+      y,
+      menuElement.offsetWidth,
+      menuElement.offsetHeight,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    setLayout((current) =>
+      current &&
+      current.left === next.left &&
+      current.top === next.top &&
+      current.origin === next.origin
+        ? current
+        : next,
     );
   }, [x, y, items]);
 
   useEffect(() => {
-    function handleMouseDown(event: MouseEvent): void {
+    function handlePointerDown(event: PointerEvent): void {
+      // Right-click is the opening gesture (and the leftover pointer burst
+      // after contextmenu). Dismissing on it races the opener. A new
+      // instance dismisses this one via openThreadContextMenus instead.
+      if (event.button !== 0) {
+        return;
+      }
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         onClose();
       }
@@ -73,10 +109,21 @@ export function ThreadContextMenu({
         onClose();
       }
     }
-    document.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("keydown", handleKeyDown);
+    // Defer pointer listeners so the opening contextmenu's pointer burst
+    // cannot dismiss the menu on the same gesture. Same rule as
+    // ComposerContextMenu and WorkspaceTreeContextMenu.
+    let active = true;
+    const id = window.setTimeout(() => {
+      if (!active) {
+        return;
+      }
+      document.addEventListener("pointerdown", handlePointerDown);
+    }, 0);
     return () => {
-      document.removeEventListener("mousedown", handleMouseDown);
+      active = false;
+      window.clearTimeout(id);
+      document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
@@ -91,12 +138,14 @@ export function ThreadContextMenu({
         data-wuu-layer="menu"
         data-wuu-state="open"
         data-origin={layout?.origin ?? "top-left"}
+        data-placed={layout ? "true" : undefined}
         style={
           layout
             ? { left: layout.left, top: layout.top }
             : { left: x, top: y, visibility: "hidden" }
         }
         data-testid="thread-row-context-menu"
+        onContextMenu={(event) => event.preventDefault()}
       >
         {items.map((item, idx) => {
           if ("separator" in item) {

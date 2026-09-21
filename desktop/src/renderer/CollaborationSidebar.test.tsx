@@ -88,13 +88,29 @@ it.each([false, true])("manages groups, DM agents, and agents without a DM from 
   }
 });
 
-it("dismisses management without taking action and drops menus for removed targets", () => {
+it("keeps a single context menu when another conversation is right-clicked", () => {
+  render();
+  rightClick(rows()[0]);
+  expect(document.querySelector('[role="menu"]')?.textContent).toContain(t("channels.deleteRoom"));
+  rightClick(rows()[1]);
+  const menus = document.querySelectorAll(".thread-row-context-menu");
+  expect(menus).toHaveLength(1);
+  expect(menus[0]?.textContent).toContain(t("channels.editAgent"));
+  expect(menus[0]?.textContent).not.toContain(t("channels.deleteRoom"));
+});
+
+it("dismisses management without taking action and drops menus for removed targets", async () => {
   render();
   rightClick(rows()[0]);
   act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   expect(document.querySelector('[role="menu"]')).toBeNull();
   rightClick(rows()[0]);
-  act(() => document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+  act(() => document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 })));
   expect(document.querySelector('[role="menu"]')).toBeNull();
   rightClick(rows()[0]);
   render([dm]);
