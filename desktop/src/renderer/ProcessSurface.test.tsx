@@ -912,9 +912,11 @@ describe("ProcessSurface", () => {
       };
       mount(false, 2);
       mount(false, 4);
-      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+      // A hidden conversation keeps the frozen count it last published.
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("2");
 
       mount(true, 4);
+      // The first visible frame snaps the frozen count to the live aggregation.
       expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
       expect(container.querySelector(".process-text-motion-enter")).toBeNull();
     } finally {
