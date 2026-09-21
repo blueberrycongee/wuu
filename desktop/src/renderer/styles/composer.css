@@ -461,16 +461,18 @@
   /* Keep the bottom inset stable across viewport widths and composer states. */
   padding-block: clamp(12px, calc(0.833333vw + 8.666667px), 16px)
     var(--composer-dock-bottom-space);
-  /* Match the scroll region's stable scrollbar gutter so the dock composer
-     and message flow are centered inside the same visible content box.
-     --scrollbar-width is stamped from a runtime measurement (see
-     ScrollbarMetrics.ts): 0 on overlay-scrollbar platforms such as macOS,
-     and the platform's real thin-scrollbar width where scrollbars are
-     classic, so this stays correct on every machine. */
-  padding-right: var(--scrollbar-width);
+  /* Mirror the scroll region's reserved gutter. That region keeps its stable
+     gutter on BOTH edges (see .scroll-region) so the message flow is centered
+     on the pane's own centerline; matching it with an equal inset on each side
+     keeps the dock composer on the same centerline instead of half a gutter to
+     the left of it. --scrollbar-width is stamped from a runtime measurement
+     (see ScrollbarMetrics.ts): 0 on overlay-scrollbar platforms such as macOS,
+     and the platform's real thin-scrollbar width where scrollbars are classic,
+     so this stays correct on every machine. */
+  padding-inline: var(--scrollbar-width);
   background: transparent;
   pointer-events: none;
-  transition: padding-right var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
+  transition: padding-inline var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
   transition-delay: 0ms;
 }
 
@@ -580,11 +582,17 @@
   margin: 0 14px -10px;
   padding: 4px 8px 12px;
   border-radius: calc(var(--radius-md) - 4px) calc(var(--radius-md) - 4px) 0 0;
-  background: var(--surface-1);
+  background: var(--surface-2);
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
   max-width: 100%;
+}
+
+/* Pills otherwise hover with --surface-2; step up so the wash still reads. */
+.composer-workspace-bar .hero-project-pill:hover::before,
+.composer-workspace-bar .hero-project-pill[aria-expanded="true"]::before {
+  background: var(--surface-3);
 }
 
 .composer .codex-runtime-trigger {

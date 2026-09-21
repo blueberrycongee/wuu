@@ -26,9 +26,8 @@
   --control-icon-size: var(--sidebar-primary-icon-size);
 }
 
-/* Section heading + sits beside the disclosure chevron, which is xs.
- * Matching that mark keeps the trailing accessory column from reading
- * larger than the heading it belongs to. */
+/* Section heading + is a heading accessory, not a navigation glyph.
+ * Keep it at xs so it does not read larger than the heading it belongs to. */
 .sidebar-functional-action {
   --control-icon-size: var(--icon-size-xs);
 }

@@ -280,9 +280,6 @@ workspace.css .workspace-monaco-editor:hover .monaco-scrollable-element > .scrol
 workspace.css .workspace-review-overlay background --review-overlay-bg
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before box-shadow --ink-overlay-4
 workspace.css .workspace-review-resizer:hover::before, .workspace-review-resizer:focus-visible::before, .workspace-review-panel.resizing-split .workspace-review-resizer::before background --review-resizer-hover-bg
-workspace.css .workspace-terminal-host .xterm-viewport::-webkit-scrollbar-thumb background-color --scrollbar-thin-thumb
-workspace.css .workspace-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:active background-color --scrollbar-thumb-active
-workspace.css .workspace-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover background-color --scrollbar-thumb-hover
 workspace.css .workspace-terminal-restart:hover background --workspace-terminal-restart-hover-bg
 workspace.css .workspace-tool-menu-item:focus-visible background --workspace-menu-item-hover-bg
 workspace.css .workspace-tool-menu-item:hover, .workspace-tool-menu-item.active background --workspace-menu-item-hover-bg

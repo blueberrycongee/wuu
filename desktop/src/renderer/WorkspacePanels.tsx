@@ -1123,43 +1123,45 @@ function WorkspaceToolPicker({
       aria-label={t("workspace.tools")}
       data-wuu-component="workspace-tool-picker"
     >
-      {WORKSPACE_TOOL_ITEMS.filter((item) => item.id !== "browser" || typeof window.wuu?.reportBrowserBounds === "function").map((item) => (
-        <button
-          key={item.id}
-          className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
-          data-wuu-component="workspace-tool"
-          type="button"
-          onClick={() => onSelectTool(item.id)}
-        >
-          <span className="workspace-tool-menu-icon" aria-hidden="true">
-            <WorkspaceToolIcon view={item.id} className="icon-xl" />
-          </span>
-          <span className="workspace-tool-menu-copy">
-            <strong>{t(item.titleKey)}</strong>
-          </span>
-        </button>
-      ))}
-      {pluginTools.map((item) => {
-        const tabID = `plugin:${item.pluginId}:${item.id}`;
-        return (
+      <div className="workspace-tool-menu-list">
+        {WORKSPACE_TOOL_ITEMS.filter((item) => item.id !== "browser" || typeof window.wuu?.reportBrowserBounds === "function").map((item) => (
           <button
-            key={tabID}
-            className={`workspace-tool-menu-item${tabs.some((tab) => tab.id === tabID) ? " active" : ""}`}
+            key={item.id}
+            className={`workspace-tool-menu-item${tabs.some((tab) => tab.kind === item.id) ? " active" : ""}`}
             data-wuu-component="workspace-tool"
-            data-wuu-plugin={item.pluginId}
             type="button"
-            onClick={() => onSelectPluginTool(item)}
+            onClick={() => onSelectTool(item.id)}
           >
             <span className="workspace-tool-menu-icon" aria-hidden="true">
-              <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon-xl" />
+              <WorkspaceToolIcon view={item.id} className="icon" />
             </span>
             <span className="workspace-tool-menu-copy">
-              <strong>{item.title}</strong>
-              {item.description ? <span>{item.description}</span> : null}
+              <strong>{t(item.titleKey)}</strong>
             </span>
           </button>
-        );
-      })}
+        ))}
+        {pluginTools.map((item) => {
+          const tabID = `plugin:${item.pluginId}:${item.id}`;
+          return (
+            <button
+              key={tabID}
+              className={`workspace-tool-menu-item${tabs.some((tab) => tab.id === tabID) ? " active" : ""}`}
+              data-wuu-component="workspace-tool"
+              data-wuu-plugin={item.pluginId}
+              type="button"
+              onClick={() => onSelectPluginTool(item)}
+            >
+              <span className="workspace-tool-menu-icon" aria-hidden="true">
+                <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon" />
+              </span>
+              <span className="workspace-tool-menu-copy">
+                <strong>{item.title}</strong>
+                {item.description ? <span>{item.description}</span> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

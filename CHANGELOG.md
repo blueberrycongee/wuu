@@ -47,8 +47,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Reveal desktop scrollbars only while scrolling, then fade them out; hovering
   tool and reasoning details no longer reveals their scrollbars.
 
+- Keep the desktop conversation's input box and message column on the pane's
+  centerline with the sidebar open or collapsed, instead of leaving a wider
+  margin on the right where the scrollbar gutter is reserved.
+
 - Animate the Automations editor split open and closed, instead of snapping
   the form pane in and out.
+
+- Lay out the empty desktop workspace panel as a left-aligned icon-and-label
+  list instead of a centered icon stack.
 
 - Show each engine's existing SVG brand mark on the desktop composer model
   picker, engine choices, and first-run runtime cards.

@@ -1190,13 +1190,11 @@
   position: absolute;
   bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
   left: var(--conversation-visible-inset-left);
-  /* The pill is positioned in the pane box, but the message flow centers
-     inside .scroll-region's content box, which excludes the scrollbar
-     gutter. Add the measured gutter (0 on overlay-scrollbar platforms) so
-     the pill shares the flow's centerline everywhere. */
-  right: calc(
-    var(--conversation-visible-inset-right) + var(--scrollbar-width)
-  );
+  /* The message flow centers inside .scroll-region's content box, which
+     reserves the stable scrollbar gutter on both edges (see .scroll-region),
+     so the flow's centerline is the pane's own centerline. The pill shares it
+     by centering in the same inset box, with no gutter term. */
+  right: var(--conversation-visible-inset-right);
   --jump-to-latest-max-width: min(
     var(--session-composer-width),
     calc(
