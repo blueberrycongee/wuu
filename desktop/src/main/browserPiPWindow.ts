@@ -10,11 +10,10 @@ import {
   browserPiPOrigin,
   browserPiPResizeCommand,
   browserPiPResizeRect,
+  browserPiPSizeForAspect,
   browserPiPSnapEase,
   browserPiPSnapPoint,
   PIP_ANCHOR_MARGIN,
-  PIP_CARD_SIZE,
-  PIP_MIN_SIZE,
   PIP_SNAP_MS,
   type BrowserPiPScreenLayout,
   type PipAlignment,
@@ -154,6 +153,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
   private userSize: { width: number; height: number } | undefined;
+  // width / height of the page viewport before the card adopts it.
+  private contentAspect = 4 / 3;
   private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint } | undefined;
   private snapTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -357,6 +358,14 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.reportTabGoneUnlessStarting();
       return;
     }
+    if (bounds.width > 0 && bounds.height > 0) {
+      const aspect = bounds.width / bounds.height;
+      const changed = Math.abs(aspect - this.contentAspect) > 0.02;
+      this.contentAspect = aspect;
+      if (changed && !this.userSize && this.screenLayout && !this.dragging && !this.resizing) {
+        this.placeCommitted();
+      }
+    }
     const fit = this.contentRect();
     const restore = host.mountTabOnWindow(
       workdir,
@@ -377,6 +386,10 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.announced = true;
       this.deps.sink.onEvent({ event: "ready" });
     }
+    // The page view is added after the overlay, which would put it on top and
+    // let clicks reach the page. The overlay has to stay above it: the card
+    // is moved and resized from that layer, and the page is not a click target.
+    this.raiseOverlay();
   }
 
   private reportTabGoneUnlessStarting(): void {
@@ -403,6 +416,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     if (!win || win.isDestroyed()) return;
     const b = win.getBounds();
     this.overlay?.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
+    this.raiseOverlay();
     if (!this.mounted) return;
     const fit = this.contentRect();
     this.deps.host.relayoutMountedTab(
@@ -424,7 +438,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const win = this.win;
     if (!layout || !win || win.isDestroyed()) return;
     this.cancelSnap();
-    const card = browserPiPFitCard(layout.host, this.userSize ?? PIP_CARD_SIZE);
+    const card = browserPiPFitCard(layout.host, this.userSize ?? browserPiPSizeForAspect(this.contentAspect));
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
@@ -497,7 +511,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         gesture.start,
         gesture.edge,
         { x: command.x - gesture.pointer.x, y: command.y - gesture.pointer.y },
-        { min: PIP_MIN_SIZE, frame },
+        { aspect: gesture.start.height > 0 ? gesture.start.width / gesture.start.height : this.contentAspect, frame },
       )
       : gesture.start;
     this.applyBounds(next);
@@ -575,6 +589,21 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     if (current.x === next.x && current.y === next.y && current.width === next.width && current.height === next.height) return;
     win.setBounds(next);
     if (current.width !== next.width || current.height !== next.height) this.refit();
+  }
+
+  private raiseOverlay(): void {
+    const win = this.win;
+    const overlay = this.overlay;
+    if (!win || win.isDestroyed() || !overlay) return;
+    const view = overlay as unknown as BrowserViewHandle;
+    try {
+      win.contentView.removeChildView(view);
+    } catch {
+      // The overlay is not attached yet.
+    }
+    win.contentView.addChildView(view);
+    const b = win.getBounds();
+    overlay.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
   }
 
   private matches(workdir: string, tabID: string): boolean {
@@ -723,10 +752,12 @@ export function browserPiPOverlayHTML(initialLabel: string): string {
 <html><head><meta charset="utf-8" />
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;overflow:hidden;background:transparent;
+html,body{width:100%;height:100%;overflow:hidden;
+  background:rgba(0,0,0,0.004);
   font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
   color:#fff;user-select:none}
-#root{position:relative;width:100%;height:100%;cursor:grab;touch-action:none}
+#root{position:relative;width:100%;height:100%;cursor:grab;touch-action:none;
+  background:rgba(0,0,0,0.004)}
 #root.dragging{cursor:grabbing}
 #ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   background:#f4f4f5;color:rgba(28,28,30,.45);transition:opacity .2s ease}
@@ -749,12 +780,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;
   box-shadow:0 0 0 1px rgba(0,0,0,.4);opacity:0;pointer-events:none}
 #scroll{position:absolute;font-size:14px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6);
   opacity:0;pointer-events:none;transform:translate(-50%,-50%)}
-[data-resize]{position:absolute;z-index:4;touch-action:none}
-[data-resize="n"],[data-resize="s"]{left:14px;right:14px;height:8px;cursor:ns-resize}
+[data-resize]{position:absolute;z-index:4;touch-action:none;background:rgba(0,0,0,0.004)}
+[data-resize="n"],[data-resize="s"]{left:18px;right:18px;height:12px;cursor:ns-resize}
 [data-resize="n"]{top:0}[data-resize="s"]{bottom:0}
-[data-resize="e"],[data-resize="w"]{top:14px;bottom:14px;width:8px;cursor:ew-resize}
+[data-resize="e"],[data-resize="w"]{top:18px;bottom:18px;width:12px;cursor:ew-resize}
 [data-resize="e"]{right:0}[data-resize="w"]{left:0}
-[data-resize="nw"],[data-resize="ne"],[data-resize="sw"],[data-resize="se"]{width:14px;height:14px}
+[data-resize="nw"],[data-resize="ne"],[data-resize="sw"],[data-resize="se"]{width:18px;height:18px}
 [data-resize="nw"]{top:0;left:0;cursor:nwse-resize}
 [data-resize="se"]{bottom:0;right:0;cursor:nwse-resize}
 [data-resize="ne"]{top:0;right:0;cursor:nesw-resize}

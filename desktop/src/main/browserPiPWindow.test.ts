@@ -445,14 +445,15 @@ describe("BrowserPiPSurface", () => {
     host.relayouts.length = 0;
     overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=0&y=0");
     overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=-40&y=-30");
-    expect(win.bounds).toMatchObject({ x: 486, y: 296, width: 290, height: 280 });
-    expect(host.relayouts.at(-1)).toMatchObject({ zoom: 1, rect: { x: 0, y: 0, width: 290, height: 280 } });
+    expect(win.bounds).toMatchObject({ x: 406, y: 391, width: 370, height: 185 });
+    expect(host.relayouts.at(-1)).toMatchObject({ zoom: 1, rect: { x: 0, y: 0, width: 370, height: 185 } });
+    expect(win.added.at(-1)).toBe(overlay);
     surface.setHostLayout({
       host: { x: 0, y: 0, width: 800, height: 600 },
       obstacles: [],
       visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
     });
-    expect(win.bounds).toMatchObject({ width: 290, height: 280 });
+    expect(win.bounds).toMatchObject({ width: 370, height: 185 });
     surface.stop();
   });
 
@@ -466,12 +467,12 @@ describe("BrowserPiPSurface", () => {
         obstacles: [],
         visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
       });
-      expect(win.bounds).toMatchObject({ x: 526, y: 326, width: 250, height: 250 });
+      expect(win.bounds).toMatchObject({ x: 456, y: 336, width: 320, height: 240 });
 
-      overlay.navigate("wuu-pip://drag?phase=start&x=546&y=346&vx=0&vy=0");
-      overlay.navigate("wuu-pip://drag?phase=end&x=64&y=64&vx=0&vy=0");
+      overlay.navigate("wuu-pip://drag?phase=start&x=476&y=356&vx=0&vy=0");
+      overlay.navigate("wuu-pip://drag?phase=end&x=44&y=44&vx=0&vy=0");
       vi.advanceTimersByTime(300);
-      expect(win.bounds).toMatchObject({ x: 24, y: 24, width: 250, height: 250 });
+      expect(win.bounds).toMatchObject({ x: 24, y: 24, width: 320, height: 240 });
       surface.stop();
     } finally {
       vi.useRealTimers();

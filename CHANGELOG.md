@@ -24,8 +24,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Embedded browser automation is available by default. While an agent is
   browsing, the page stays in a floating card inside the conversation column.
   Dragging the card snaps it to a corner of that column, clear of the composer.
-  Dragging an edge or corner resizes the card, and the page lays out at that
-  size. The workspace panel opens when the user opens the browser or expands the
+  The card keeps the page's proportions. Dragging an edge or corner resizes
+  it without changing that ratio, and the page lays out at the new size.
+  Pointer events on the card move or resize it; they do not click the page.
+  The workspace panel opens when the user opens the browser or expands the
   card, and does not open or close on its own. Set `WUU_ENABLE_BROWSER=0` to
   hide the tool.
 
