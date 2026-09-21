@@ -88,7 +88,6 @@ app.whenReady().then(async () => {
   const headerTargets = await evaluate(() => {
     const drawer = document.querySelector(".sidebar").getBoundingClientRect();
     return [
-      document.querySelector(".compact-session-switcher-close"),
       ...document.querySelectorAll(".sidebar-brand button"),
     ].map((button) => {
       const rect = button.getBoundingClientRect();

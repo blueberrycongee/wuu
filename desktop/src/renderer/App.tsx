@@ -228,7 +228,7 @@ import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert, RefreshCw, X } from "lucide-react";
+import { CircleAlert, RefreshCw } from "lucide-react";
 import type {
 } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
@@ -5400,24 +5400,12 @@ export function App(): JSX.Element {
           />
 
           {compactNavigation ? (
-            <>
-              <button
-                className="compact-session-switcher-backdrop"
-                type="button"
-                aria-label={t("app.collapseLeftSidebar")}
-                onClick={closeSidebarDrawer}
-              />
-              {sidebarDrawerVisible ? (
-                <button
-                  className="icon-button compact-session-switcher-close"
-                  type="button"
-                  aria-label={t("app.collapseLeftSidebar")}
-                  onClick={closeSidebarDrawer}
-                >
-                  <X className="icon-lg" />
-                </button>
-              ) : null}
-            </>
+            <button
+              className="compact-session-switcher-backdrop"
+              type="button"
+              aria-label={t("app.collapseLeftSidebar")}
+              onClick={closeSidebarDrawer}
+            />
           ) : null}
 
           {sidebarDrawerMode ? null : (

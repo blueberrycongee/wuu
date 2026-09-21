@@ -250,9 +250,15 @@ export function useSidebarDrawerState({
     // us where the pointer is actually going, which avoids the boundary
     // rounding problem where the pointer's reported position is still inside
     // the sidebar rect even though the user has moved outside the floating
-    // layer.
+    // layer. When the drawer first covers the titlebar toggle, the browser
+    // can report relatedTarget as the rail even though the pointer is still
+    // over the toggle's rectangle; keep the drawer open in that case too.
     sidebarDrawerPointerLeaveTimerRef.current = window.setTimeout(() => {
       sidebarDrawerPointerLeaveTimerRef.current = undefined;
+
+      if (sidebarDrawerPointerHovered() === true) {
+        return;
+      }
 
       const relatedTarget = event instanceof MouseEvent ? event.relatedTarget : null;
       if (relatedTarget && relatedTarget instanceof Element) {

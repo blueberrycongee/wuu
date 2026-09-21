@@ -32,9 +32,8 @@ export function useSidebarTouchGesture(
     const sidebar = shell.querySelector<HTMLElement>(".sidebar");
     if (!sidebar) return;
     const backdrop = shell.querySelector<HTMLElement>(".compact-session-switcher-backdrop");
-    const closeButton = shell.querySelector<HTMLElement>(".compact-session-switcher-close");
     const conversation = shell.querySelector<HTMLElement>(".conversation-pane");
-    const surfaces = [sidebar, backdrop, closeButton, conversation].filter((node): node is HTMLElement => !!node);
+    const surfaces = [sidebar, backdrop, conversation].filter((node): node is HTMLElement => !!node);
     const wasOpen = phase === "open";
     let gesture: {
       id: number; x: number; y: number; horizontal: boolean;
@@ -64,7 +63,6 @@ export function useSidebarTouchGesture(
       // Only compositor properties on the moving surfaces change per frame.
       // Inherited variables on the shell invalidate the entire conversation.
       sidebar.style.transform = `translate3d(${position - width}px, 0, 0)`;
-      if (closeButton) closeButton.style.transform = sidebar.style.transform;
       if (conversation) conversation.style.transform = `translate3d(${position}px, 0, 0)`;
       if (backdrop) {
         backdrop.style.transform = `translate3d(${position}px, 0, 0)`;

@@ -156,6 +156,48 @@ describe("useSidebarDrawerState", () => {
     expect(hook.get().sidebarDrawerPhase).toBe("closing");
   });
 
+  it("keeps the drawer open when the titlebar toggle is covered by the rail but still under the pointer", async () => {
+    const hook = await renderSidebarDrawerState();
+    const toggle = document.createElement("button");
+    toggle.className = "sidebar-toggle-button";
+    hook.hoverZone.parentElement?.appendChild(toggle);
+    vi.spyOn(toggle, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(90, 8, 30, 30),
+    );
+    vi.spyOn(hook.sidebar, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 296, 820),
+    );
+    vi.spyOn(hook.hoverZone, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 14, 820),
+    );
+
+    await act(async () => {
+      hook.get().openSidebarDrawerNow();
+    });
+    expect(hook.get().sidebarDrawerPhase).toBe("open");
+
+    elementFromPointTarget = hook.sidebar;
+    await act(async () => {
+      window.dispatchEvent(
+        new MouseEvent("pointermove", {
+          bubbles: true,
+          clientX: 104,
+          clientY: 24,
+        }),
+      );
+      hook.get().scheduleSidebarDrawerCloseFromPointerLeave(
+        new MouseEvent("pointerout", {
+          clientX: 104,
+          clientY: 24,
+          relatedTarget: hook.sidebar,
+        }),
+      );
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(hook.get().sidebarDrawerPhase).toBe("open");
+  });
+
   it("uses the leave event's relatedTarget to decide close before re-checking coordinates", async () => {
     const hook = await renderSidebarDrawerState();
 

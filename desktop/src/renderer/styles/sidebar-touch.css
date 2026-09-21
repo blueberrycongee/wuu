@@ -86,19 +86,10 @@
   :root[data-host-kind="web"] .app-shell.compact-navigation[data-sidebar-touch="dragging"] :is(.sidebar, .compact-session-switcher-backdrop, .conversation-pane) {
     transition: none;
   }
-
-  :root[data-host-kind="web"] .app-shell.compact-navigation[data-sidebar-touch] .compact-session-switcher-close {
-    transform: translate3d(var(--sidebar-touch-offset), 0, 0);
-    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  :root[data-host-kind="web"] .app-shell.compact-navigation[data-sidebar-touch="dragging"] .compact-session-switcher-close {
-    transition: none;
-  }
 }
 
 @media (pointer: coarse) and (prefers-reduced-motion: reduce) {
-  :root[data-host-kind="web"] .app-shell.compact-navigation :is(.sidebar, .compact-session-switcher-backdrop, .compact-session-switcher-close, .conversation-pane) {
+  :root[data-host-kind="web"] .app-shell.compact-navigation :is(.sidebar, .compact-session-switcher-backdrop, .conversation-pane) {
     transition: none;
   }
 }

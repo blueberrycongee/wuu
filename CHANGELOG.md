@@ -23,6 +23,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Narrow windows no longer place a close button on the session drawer.
+  Dismiss it from the dimmed backdrop, the titlebar sidebar button, or by
+  moving the pointer off the drawer. While the drawer is open that button
+  stays above the sliding rail, so hovering it does not flicker the drawer
+  shut, and the title keeps its place.
+
 - Long grok-4.6 sessions compact or install a smaller context window after a
   classified `input_too_large` overflow, instead of surfacing the 400 when
   local usage still sits under the compact threshold.

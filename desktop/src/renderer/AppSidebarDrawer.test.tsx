@@ -594,6 +594,68 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
   });
 
+  it("does not render a floating close control over the compact drawer", async () => {
+    window.innerWidth = 674;
+    await renderCollapsedApp();
+    await openDrawerViaSidebarToggle();
+    expect(container.querySelector(".compact-session-switcher-close")).toBeNull();
+    expect(container.querySelector(".compact-session-switcher-backdrop")).not.toBeNull();
+  });
+
+  it("keeps the drawer open when the titlebar toggle is covered by the sliding rail", async () => {
+    window.innerWidth = 820;
+    await renderCollapsedApp();
+    const toggle = container.querySelector<HTMLElement>(".sidebar-toggle-button");
+    const sidebar = container.querySelector<HTMLElement>(".sidebar");
+    expect(toggle).not.toBeNull();
+    expect(sidebar).not.toBeNull();
+    vi.spyOn(toggle!, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(96, 9, 30, 30),
+    );
+    vi.spyOn(sidebar!, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 296, 820),
+    );
+
+    elementFromPointTarget = toggle;
+    await act(async () => {
+      toggle?.dispatchEvent(
+        new MouseEvent("pointerover", {
+          bubbles: true,
+          clientX: 110,
+          clientY: 24,
+          relatedTarget: null,
+        }),
+      );
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS);
+    });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+
+    elementFromPointTarget = sidebar;
+    await act(async () => {
+      window.dispatchEvent(
+        new MouseEvent("pointermove", {
+          bubbles: true,
+          clientX: 110,
+          clientY: 24,
+        }),
+      );
+      toggle?.dispatchEvent(
+        new MouseEvent("pointerout", {
+          bubbles: true,
+          clientX: 110,
+          clientY: 24,
+          relatedTarget: sidebar,
+        }),
+      );
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+    expect(appShell()?.classList.contains("sidebar-drawer-closing")).toBe(false);
+  });
+
   it("pins the collapsed sidebar open when its toggle is clicked after hover preview", async () => {
     await renderCollapsedApp();
     await openDrawerViaSidebarToggle();

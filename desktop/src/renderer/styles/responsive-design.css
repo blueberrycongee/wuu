@@ -529,14 +529,9 @@
 @media (pointer: coarse) and (max-width: 760px) {
   .app-shell.compact-navigation .titlebar :is(
     .sidebar-toggle-button, .environment-toggle-button, .side-panel-toggle-button
-  ),
-  .app-shell.compact-navigation .compact-session-switcher-close {
+  ) {
     width: 44px;
     height: 44px;
-  }
-
-  .app-shell.compact-navigation .compact-session-switcher-close {
-    top: env(safe-area-inset-top, 0px);
   }
 
   .app-shell.compact-navigation .composer-bar {

@@ -1029,8 +1029,7 @@ export function SettingsView({
            * belongs to it — as a shell-level sibling positioned over the
            * strip it kept its DOM hit target but real clicks were swallowed
            * as window drags. The hover-drawer lift is shared with the
-           * conversation titlebar via sidebar.css (z-index 150 over the
-           * drawer's 140). */}
+           * conversation titlebar via sidebar.css. */}
           <button
             type="button"
             className="icon-button side-panel-toggle-button sidebar-toggle-button settings-sidebar-toggle"

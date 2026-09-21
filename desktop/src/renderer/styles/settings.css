@@ -211,12 +211,10 @@
 /* The toggle lives inside the titlebar drag strip as its first flex item;
  * the strip's 24px left padding (window-controls inset when collapsed) keeps
  * it clear of the macOS traffic lights, and its own no-drag carves the click
- * target out of the drag region. The hover-drawer lift (z-index 150 over the
- * drawer's 140) and the drawer-open background come from the shared
- * `.sidebar-collapsed :is(.titlebar, .settings-titlebar) .sidebar-toggle-button`
- * rules in sidebar.css — do not re-add a shell-level absolutely positioned
- * variant: as a sibling over the drag strip its no-drag is not honored and
- * real clicks turn into window drags. */
+ * target out of the drag region. While the hover drawer is showing, the
+ * shared sidebar.css rule pins this same descendant above the drawer —
+ * do not re-add a shell-level sibling over the drag strip: its no-drag is
+ * not honored and real clicks turn into window drags. */
 .settings-sidebar-toggle {
   -webkit-app-region: no-drag;
 }

@@ -778,6 +778,14 @@
   -webkit-app-region: no-drag;
 }
 
+.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  .titlebar .sidebar-toggle-button,
+.app-shell.compact-navigation.sidebar-drawer-docking .titlebar .sidebar-toggle-button {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + (48px - 44px) / 2);
+  left: max(10px, calc(var(--window-controls-inset-left) + 10px));
+}
+
 .compact-conversation-actions > .icon-button:disabled {
   color: var(--ink-tertiary);
   cursor: default;

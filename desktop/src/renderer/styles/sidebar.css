@@ -412,7 +412,12 @@
    The drawer slides underneath this stationary control island instead of
    replacing its hit target, so the pointer can remain on the toggle and click
    it to pin the sidebar open after the preview has appeared. This applies to
-   both the conversation and settings titlebars. */
+   both the conversation and settings titlebars.
+   Titlebars live under conversation/settings overflow and a z-index:2
+   stacking context, so a relative 150 cannot escape those ancestors. While
+   the drawer is showing, pin the toggle to the window like the globalized
+   sidebar control so it stays above the 140 drawer without lifting the
+   whole titlebar over the rail. */
 .sidebar-collapsed :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   position: relative;
   z-index: 150;
@@ -420,6 +425,37 @@
     background-color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
     box-shadow var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
     color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing);
+}
+
+.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  :is(.titlebar, .settings-titlebar)
+  .sidebar-toggle-button,
+.sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
+  position: fixed;
+  top: calc((48px - var(--control-size-toolbar)) / 2);
+  left: max(24px, calc(var(--window-controls-inset-left) + 10px));
+  z-index: 150;
+}
+
+.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  .title-block::before,
+.sidebar-drawer-docking .title-block::before,
+.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  .settings-titlebar::before,
+.sidebar-drawer-docking .settings-titlebar::before {
+  content: "";
+  flex: 0 0 var(--control-size-toolbar);
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
+.app-shell.compact-navigation.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  .title-block::before,
+.app-shell.compact-navigation.sidebar-drawer-docking .title-block::before {
+  flex-basis: 44px;
+  width: 44px;
+  height: 44px;
+  margin-right: 6px;
 }
 
 .sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
@@ -606,8 +642,7 @@
   min-width: 0;
 }
 
-.compact-session-switcher-backdrop,
-.compact-session-switcher-close {
+.compact-session-switcher-backdrop {
   display: none;
 }
 
@@ -619,17 +654,6 @@
   border: 0;
   padding: 0;
   background: var(--modal-backdrop-bg);
-}
-
-.app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-close {
-  display: grid;
-  position: absolute;
-  z-index: 142;
-  top: calc(env(safe-area-inset-top, 0px) + 9px);
-  left: calc(var(--compact-session-switcher-width) - 46px);
-  width: 36px;
-  height: 36px;
-  color: var(--ink);
 }
 
 .sidebar-resizer,
@@ -813,13 +837,6 @@
   height: 12px;
 }
 
-/* Match the close target to the reserved slot in the compact web header. */
-:root[data-host-kind="web"] .app-shell.compact-navigation.sidebar-drawer-open .compact-session-switcher-close {
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  left: calc(var(--compact-session-switcher-width) - 56px);
-  width: 44px;
-  height: 44px;
-}
 
 .sidebar-brand {
   /* Two tracks so the wordmark stays put when the bell mounts or unmounts.
