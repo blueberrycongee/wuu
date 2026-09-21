@@ -72,17 +72,10 @@ func TestIdentityConversationKeepsRoomRepliesScopedWhileReusingHistory(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		found := false
 		for _, m := range messages {
-			if m.Body == r.other {
-				t.Fatal("reply leaked into another room")
+			if m.Body == r.own || m.Body == r.other {
+				t.Fatalf("assistant text was posted without chat_send: %+v", m)
 			}
-			if m.Body == r.own {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("reply missing from %s", r.room)
 		}
 	}
 }

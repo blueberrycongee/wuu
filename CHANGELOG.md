@@ -28,6 +28,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Room conversations publish only through `chat_send` or a room-targeted
+  `collaboration_send`. Assistant text stays private after the turn ends, so
+  waiting copy no longer becomes a public bubble.
+
 - Plugins can be enabled or disabled while a conversation is running. Later
   conversations use the new generation; a conversation that already started
   keeps the generation it pinned until it rebuilds. Removing a plugin still

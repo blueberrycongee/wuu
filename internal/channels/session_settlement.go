@@ -17,8 +17,8 @@ type CollaborationSessionSettleParams struct {
 	Result        string
 	TurnID        string
 	FailureReason string
-	// PublicReply projects a room conversation's final answer into its public
-	// timeline. Omitting it preserves settlement fingerprints from older hosts.
+	// PublicReply is retained for settlement compatibility. Room conversations
+	// publish through chat_send rather than this projection.
 	PublicReply      string       `json:",omitempty"`
 	Provider         string       `json:",omitempty"`
 	Model            string       `json:",omitempty"`

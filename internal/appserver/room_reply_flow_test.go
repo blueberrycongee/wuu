@@ -89,7 +89,7 @@ func sendRoomReplyObjective(t *testing.T, fixture *collaborationRPCFixture, body
 	}
 }
 
-func TestRoomReplyStreamsThenPersistsWithoutSendTool(t *testing.T) {
+func TestRoomReplyLivePreviewDoesNotPersistWithoutSendTool(t *testing.T) {
 	fixture, _ := newCollaborationFlowFixture(t)
 	fixture.room = createPeerRoom(t, fixture, "Natural replies", fixture.identity)
 	provider := &roomReplyStreamProvider{calls: make(chan *roomReplyStreamCall, 4)}
@@ -126,11 +126,11 @@ func TestRoomReplyStreamsThenPersistsWithoutSendTool(t *testing.T) {
 	close(call.events)
 	fixture.waitForCompletion(t)
 	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 2 || result.Messages[1].Body != final || result.Messages[1].AuthorID != fixture.identity.ID || result.Messages[1].ID != preview.ID {
-		t.Fatalf("normal final was not committed to its existing bubble: %+v", result)
+	if len(result.Messages) != 1 || result.Messages[0].AuthorType != channels.MemberHuman {
+		t.Fatalf("assistant text was posted without chat_send: %+v", result)
 	}
 	if len(result.Responses) != 0 {
-		t.Fatalf("finished bubble still has an active preview: %+v", result.Responses)
+		t.Fatalf("finished turn still has an active preview: %+v", result.Responses)
 	}
 	encoded, _ := json.Marshal(result)
 	if strings.Contains(string(encoded), privateReasoning) {
@@ -168,8 +168,8 @@ func TestRoomReplyConcurrentMembersBothPublish(t *testing.T) {
 			authors[message.AuthorID] = true
 		}
 	}
-	if len(result.Messages) != 4 || len(authors) != 2 || !completed[fixture.identity.ID] || !completed[peer.Agent.ID] || !bodies["The callback retains a stale socket."] || !bodies["The subscription also needs to be replaced."] {
-		t.Fatalf("concurrent replies were held, duplicated, or misattributed: %+v", result)
+	if len(result.Messages) != 2 || len(authors) != 0 || !completed[fixture.identity.ID] || !completed[peer.Agent.ID] || bodies["The callback retains a stale socket."] || bodies["The subscription also needs to be replaced."] {
+		t.Fatalf("assistant text was posted without chat_send: %+v", result)
 	}
 	select {
 	case extra := <-provider.calls:
@@ -209,8 +209,15 @@ func TestRoomReplyExplicitSendSuppressesOnlyDuplicateFinal(t *testing.T) {
 				t.Fatalf("duplicate answer was not recognized as delivered=%t: %+v", delivered, turn)
 			}
 			result := readRoomReplies(t, fixture, fixture.room.ID)
-			if len(result.Messages) != 2 || result.Messages[1].Body != final || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
+			wantMessages := 1
+			if delivered {
+				wantMessages = 2
+			}
+			if len(result.Messages) != wantMessages || len(result.Responses) != 0 {
 				t.Fatalf("send result did not govern final publication: delivered=%t result=%+v", delivered, result)
+			}
+			if delivered && (result.Messages[1].Body != final || result.Messages[1].AuthorID != fixture.identity.ID) {
+				t.Fatalf("committed send was lost: %+v", result)
 			}
 		})
 	}
@@ -229,8 +236,8 @@ func TestRoomReplyPublishesFinalAfterExplicitProgress(t *testing.T) {
 	continuation.response <- providers.ChatResponse{Content: final}
 	fixture.waitForCompletion(t)
 	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 3 || result.Messages[1].Body != progress || result.Messages[2].Body != final || result.Messages[2].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
-		t.Fatalf("public progress swallowed the final answer: %+v", result)
+	if len(result.Messages) != 2 || result.Messages[1].Body != progress || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
+		t.Fatalf("assistant text was posted after explicit progress: %+v", result)
 	}
 }
 
@@ -279,8 +286,15 @@ func TestRoomReplyMultipleBubblesStayInOneTurn(t *testing.T) {
 			}
 			switch ending {
 			case "final bubble":
-				bubbles = append(bubbles, "我建议在连接变化时重新绑定回调。")
-				call.response <- providers.ChatResponse{Content: bubbles[len(bubbles)-1]}
+				body := "我建议在连接变化时重新绑定回调。"
+				bubbles = append(bubbles, body)
+				args, err := json.Marshal(map[string]any{"room_id": fixture.room.ID, "kind": "text", "body": body, "basis_seq": basis})
+				if err != nil {
+					t.Fatal(err)
+				}
+				call.response <- providers.ChatResponse{ToolCalls: []providers.ToolCall{{ID: "bubble-final", Name: "chat_send", Arguments: string(args)}}}
+				call = provider.next(t)
+				call.response <- providers.ChatResponse{StopReason: "completed"}
 			case "already answered":
 				call.response <- providers.ChatResponse{StopReason: "completed"}
 			case "duplicate final":
@@ -347,9 +361,13 @@ func TestRoomReplyFailureIsVisibleAndRecoverable(t *testing.T) {
 			// replaces it with an empty array; an omitted field leaves it visible.
 			result := ChannelMessageListResult{Responses: []ChannelResponse{failed}}
 			fixture.rpc(t, MethodChannelMessageList, ChannelMessageListParams{RoomID: fixture.room.ID, Limit: 100}, &result)
-			last := result.Messages[len(result.Messages)-1]
-			if last.AuthorID != fixture.identity.ID || !strings.HasPrefix(last.Body, "Recovered:") || result.Responses == nil || len(result.Responses) != 0 {
-				t.Fatalf("recovered final did not replace the failed response: %+v", result)
+			if result.Responses == nil || len(result.Responses) != 0 {
+				t.Fatalf("recovered turn did not clear the failed response: %+v", result)
+			}
+			for _, message := range result.Messages {
+				if message.AuthorID == fixture.identity.ID {
+					t.Fatalf("recovered assistant text was posted without chat_send: %+v", result)
+				}
 			}
 		})
 	}
@@ -373,7 +391,7 @@ func TestRoomReplyInterruptionRemainsVisibleUntilResumed(t *testing.T) {
 	provider.next(t).response <- providers.ChatResponse{Content: "The resumed investigation confirms the stale callback."}
 	fixture.waitForCompletion(t)
 	result := readRoomReplies(t, fixture, fixture.room.ID)
-	if len(result.Messages) != 2 || result.Messages[1].AuthorID != fixture.identity.ID || len(result.Responses) != 0 {
-		t.Fatalf("resumed reply did not replace the interrupted state: %+v", result)
+	if len(result.Messages) != 1 || result.Messages[0].AuthorType != channels.MemberHuman || len(result.Responses) != 0 {
+		t.Fatalf("resumed assistant text was posted without chat_send: %+v", result)
 	}
 }

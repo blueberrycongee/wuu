@@ -14,9 +14,9 @@ func ConversationReplyID(sessionRef, turnID string) string {
 	return fmt.Sprintf("msg-reply-%x", digest[:16])
 }
 
-// A reply is a projection of an already generated answer. The explicit send
-// tool's length and draft-basis limits do not apply: splitting or truncating
-// here would corrupt Markdown and discard part of the user's answer.
+// A reply is a host-settlement projection used by tests and compatibility
+// callers. Room conversations publish through chat_send; splitting or
+// truncating a stored body would still corrupt Markdown.
 func insertConversationReplyTx(ctx context.Context, tx *sql.Tx, binding CollaborationSessionBinding, turnID, body string, now int64) ([]string, error) {
 	if binding.Purpose != CollaborationSessionConversation || binding.ParentSessionRef != "" || binding.WorkID != "" && !binding.Primary ||
 		binding.RoomID == "" || binding.NamedAgentID == "" || binding.NamedAgentID != binding.PrincipalID {

@@ -427,13 +427,9 @@ func (s *Server) settleCollaborationTurn(ctx context.Context, ref, turnID string
 	if outcome.Error != nil {
 		failure = outcome.Error.Message
 	}
+	// Room posts come from chat_send or a room-targeted collaboration_send.
+	// Assistant text stays private, including live activity that never committed.
 	publicReply := ""
-	if outcome.Status == TurnStatusCompleted {
-		agent, agentErr := s.channelService.GetAgentRuntime(ctx, binding.PrincipalID)
-		if agentErr == nil && isRoomConversation(binding, agent) && !roomReplySent(*outcome, binding.RoomID) {
-			publicReply = roomReplyText(*outcome, false)
-		}
-	}
 	result = strings.TrimSpace(result)
 	if result == "" {
 		result = fmt.Sprintf("Session %s ended with status %s. %s", ref, outcome.Status, failure)

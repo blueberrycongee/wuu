@@ -29,8 +29,8 @@ func TestRoomNativeCompletionDoesNotFabricateReplies(t *testing.T) {
 			room := readRoomReplies(t, fixture, fixture.room.ID)
 			switch resolution {
 			case "reply":
-				if len(room.Messages) != 2 || room.Messages[1].Body != response.Content || len(room.Responses) != 0 {
-					t.Fatalf("reply = %+v", room)
+				if len(room.Messages) != 1 || len(room.Responses) != 0 {
+					t.Fatalf("assistant text was posted without chat_send: %+v", room)
 				}
 			case "empty":
 				if len(room.Messages) != 1 || len(room.Responses) != 0 {
