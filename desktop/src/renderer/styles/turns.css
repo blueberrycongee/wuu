@@ -3009,7 +3009,10 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--conversation-prose-block-gap, 10px);
-  padding: 4px 0 2px 20px;
+  /* Expanded details are the fold's own content, not a nested column: every
+   * row starts on the summary row's left edge, so the leading glyphs line up
+   * as one list instead of stepping inward under the summary text. */
+  padding: 4px 0 2px;
   color: var(--wuu-ink-soft);
   /* One shared height bound for the whole expanded fold: the tool trail
    * and the reasoning block both live here, and either can outgrow a
@@ -3020,12 +3023,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-}
-
-/* Start expanded detail icons at the summary text, not under its mascot.
- * Match the layout slot rather than the mascot's animated painted outline. */
-.process-surface-fold:has(> .process-surface-row > .process-surface-summary-line > .process-surface-blobatar) > .process-surface-body {
-  padding-left: calc(var(--process-summary-icon-size) + var(--process-summary-icon-gap));
 }
 
 .tool-result-data-json {
