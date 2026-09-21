@@ -96,7 +96,7 @@ func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 	// the saved session continues in a fresh one with a notice (see
 	// TestACPUnresumableSessionStartsFreshAndSaysSo). A stream that desyncs
 	// (load-malformed) stays a failure — the fallback cannot trust it.
-	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-malformed", "unknown-id"} {
+	for _, scenario := range []string{"eof", "malformed", "version", "missing-stop", "limit", "load-malformed"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -119,6 +119,19 @@ func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 				t.Fatalf("false success: %+v %v done=%v", result, err, done)
 			}
 		})
+	}
+}
+
+func TestACPIgnoresStaleRPCResponse(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngine(t, "stale-id").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil || result.Result.Content != "Hello world" {
+		t.Fatalf("stale RPC result aborted the turn: %+v %v", result, err)
 	}
 }
 
@@ -684,9 +697,8 @@ func TestACPHelper(t *testing.T) {
 				fmt.Println("not JSON")
 				continue
 			}
-			if scenario == "unknown-id" {
+			if scenario == "stale-id" {
 				write(map[string]any{"jsonrpc": "2.0", "id": "unrelated", "result": map[string]string{"stopReason": "end_turn"}})
-				continue
 			}
 			if scenario == "permission" {
 				write(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "session/request_permission", "params": map[string]any{"sessionId": "native-session", "toolCall": map[string]string{"toolCallId": "exec-1", "title": "Run command", "kind": "execute"}, "options": []any{map[string]string{"optionId": "forever", "kind": "allow_always"}, map[string]string{"optionId": "once", "kind": "allow_once"}, map[string]string{"optionId": "deny", "kind": "reject_once"}}}})

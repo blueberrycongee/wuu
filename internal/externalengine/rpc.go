@@ -85,8 +85,13 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 				}
 				continue
 			}
-			var responseID string
-			if json.Unmarshal(msg.ID, &responseID) != nil || responseID != id {
+			if !rpcResponseIDMatches(msg.ID, id) {
+				// A prompt can still be running when a stale or unsolicited
+				// result arrives. Handshake calls must keep failing on a
+				// desynced stream; the prompt wait must not.
+				if method == "session/prompt" {
+					continue
+				}
 				return errors.New("engine replied with an unexpected request ID")
 			}
 			if msg.Error != nil {
@@ -104,4 +109,15 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 			return nil
 		}
 	}
+}
+
+func rpcResponseIDMatches(raw json.RawMessage, want string) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var responseID string
+	if json.Unmarshal(raw, &responseID) != nil {
+		return false
+	}
+	return responseID == want
 }

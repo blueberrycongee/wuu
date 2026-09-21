@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Ignore stale ACP JSON-RPC results whose id does not match the in-flight
+  request, so a Grok prompt that is already waiting on the model is not
+  aborted as an internal Wuu error.
+
 - Packaged macOS builds re-apply the traffic-light position after the window
   is shown, so the lights stay aligned with the 48px titlebar instead of
   remaining at AppKit's default inset.
