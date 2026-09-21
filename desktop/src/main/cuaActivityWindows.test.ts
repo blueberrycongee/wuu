@@ -5,6 +5,7 @@ import type { WindowRegistry } from "./windowRegistry";
 import {
   ObservationCoordinator,
   activityControlMethod,
+  pipVisibleForActivity,
   activityVisibleForThread,
   frameStreamRetryDelay,
   nativePiPInitialBounds,
@@ -242,6 +243,19 @@ describe("browser observation surface", () => {
     expect(surfaces).toHaveLength(1); // same surface, not replaced
 
     coordinator.update(browserActivity({ state: "background_controlled", controller: "agent", updated_at: "2026-07-10T10:00:03Z" }));
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  it("hides the mirror while the same page is in the workspace panel", () => {
+    expect(pipVisibleForActivity(browserActivity(), false)).toBe(true);
+    expect(pipVisibleForActivity(browserActivity(), true)).toBe(false);
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.setBrowserInPanel(() => true);
+    coordinator.update(browserActivity());
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
 

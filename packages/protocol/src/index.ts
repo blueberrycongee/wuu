@@ -1331,16 +1331,45 @@ export type ActivityReleaseResult = {
   lease_token: string;
 };
 
-// Embedded-browser visibility takeover (M3). When an agent-owned browser
-// activity is promoted to a foreground (visible) state the renderer streams
-// the on-screen position + size of the browser panel so the main process can
-// keep its (main-owned) WebContentsView aligned over it. Values are CSS
-// pixels relative to the window's top-left corner.
+// The workspace browser panel and the agent's page are one tab. The renderer
+// reports where that tab should be painted. A null rect means the panel is
+// not showing the page: the main process must park the view and drop the
+// previous rectangle so it cannot linger over the conversation. Values are
+// CSS pixels relative to the window's top-left corner.
 export type BrowserBoundsRect = {
   x: number;
   y: number;
   width: number;
   height: number;
+};
+
+// Live chrome for the tab the panel is showing. The address bar, back,
+// forward, and reload controls bind to this snapshot.
+export type BrowserSurfaceSnapshot = {
+  workdir: string;
+  tabID: string;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  loading: boolean;
+  error?: string;
+};
+
+export type BrowserCommandName = "navigate" | "back" | "forward" | "reload" | "stop";
+
+export type BrowserCommandParams = {
+  workdir: string;
+  tabID: string;
+  command: BrowserCommandName;
+  url?: string;
+};
+
+export type BrowserTabAdopted = {
+  workdir: string;
+  openerTabID: string;
+  tabID: string;
+  url: string;
 };
 
 export type RuntimeConnectionUpdate = {
@@ -3263,13 +3292,35 @@ export type WuuDesktopApi = {
   // Electron desktop preload; non-Electron hosts omit them, so the renderer
   // guards each call with `typeof window.wuu.x === "function"`.
   //
-  // Renderer→main: report where the browser panel sits on screen so the main
-  // process can overlay the agent's WebContentsView on it (polled via rAF).
+  // Renderer→main: paint the tab over the panel, or pass null to park it.
+  // `force` is the first rectangle after the panel opens, so a hide cannot
+  // swallow the user's next look at the page.
   reportBrowserBounds?: (
     workdir: string,
     tabID: string,
-    rect: BrowserBoundsRect,
+    rect: BrowserBoundsRect | null,
+    force?: boolean,
   ) => void;
+  // Renderer→main: address bar, back, forward, reload, and stop for the
+  // same tab the agent drives.
+  browserCommand?: (
+    params: BrowserCommandParams,
+  ) => Promise<BrowserSurfaceSnapshot | null>;
+  browserSurface?: (
+    workdir: string,
+    tabID: string,
+  ) => Promise<BrowserSurfaceSnapshot | null>;
+  onBrowserSurface?: (
+    handler: (snapshot: BrowserSurfaceSnapshot) => void,
+  ) => () => void;
+  // Main→renderer: the user clicked or typed in the presented page.
+  onBrowserUserInput?: (
+    handler: (payload: { workdir: string; tabID: string }) => void,
+  ) => () => void;
+  // Main→renderer: a page-opened tab should replace the opener in the panel.
+  onBrowserTabAdopted?: (
+    handler: (payload: BrowserTabAdopted) => void,
+  ) => () => void;
   // Renderer→main: hide the agent view while a full-window overlay (settings,
   // dialogs, search) is open so it can't occlude the modal; false restores it.
   suppressBrowserOverlay?: (

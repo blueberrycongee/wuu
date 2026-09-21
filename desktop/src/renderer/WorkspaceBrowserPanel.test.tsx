@@ -1,63 +1,44 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
-import type { ActivitySession } from "../shared/protocol";
-import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
-
-type FakeWebviewMethods = {
-  loadURL: ReturnType<typeof vi.fn>;
-  getURL: ReturnType<typeof vi.fn>;
-  getTitle: ReturnType<typeof vi.fn>;
-  canGoBack: ReturnType<typeof vi.fn>;
-  canGoForward: ReturnType<typeof vi.fn>;
-  goBack: ReturnType<typeof vi.fn>;
-  goForward: ReturnType<typeof vi.fn>;
-  reload: ReturnType<typeof vi.fn>;
-  stop: ReturnType<typeof vi.fn>;
-};
-
-type FakeWebview = HTMLElement & FakeWebviewMethods;
-
-function makeFakeWebview(): FakeWebview {
-  // jsdom does not know the Electron <webview> custom element. We
-  // create a plain div and bolt the webview-only API on top so the
-  // component's imperative mount path keeps working under jsdom.
-  const el = document.createElement("div");
-  const methods: FakeWebviewMethods = {
-    loadURL: vi.fn(),
-    getURL: vi.fn(() => ""),
-    getTitle: vi.fn(() => ""),
-    canGoBack: vi.fn(() => false),
-    canGoForward: vi.fn(() => false),
-    goBack: vi.fn(),
-    goForward: vi.fn(),
-    reload: vi.fn(),
-    stop: vi.fn()
-  };
-  return Object.assign(el, methods);
-}
+import type { ActivitySession, BrowserCommandParams, BrowserSurfaceSnapshot } from "../shared/protocol";
+import {
+  requestWorkspaceBrowserNavigation,
+  resetWorkspaceBrowserNavigationForTests,
+} from "./WorkspaceBrowserNavigation";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
-let fakeWebview: FakeWebview;
-let originalCreateElement: typeof document.createElement;
-
-beforeAll(() => {
-  (globalThis as { Electron?: unknown }).Electron = {
-    WebviewTag: class WebviewTag {}
-  };
-});
+const browserCommand = vi.fn(async (params: BrowserCommandParams): Promise<BrowserSurfaceSnapshot> => ({
+  workdir: params.workdir,
+  tabID: params.tabID,
+  url: params.url ?? "https://example.com/current",
+  title: "Example",
+  canGoBack: false,
+  canGoForward: false,
+  loading: false,
+}));
+const reportBrowserBounds = vi.fn();
+const surfaceHandlers: Array<(snapshot: BrowserSurfaceSnapshot) => void> = [];
 
 beforeEach(() => {
-  fakeWebview = makeFakeWebview();
-  originalCreateElement = document.createElement.bind(document);
-  document.createElement = ((tag: string, options?: ElementCreationOptions) => {
-    if (String(tag).toLowerCase() === "webview") {
-      return fakeWebview as unknown as HTMLElement;
-    }
-    return originalCreateElement(tag, options);
-  }) as typeof document.createElement;
+  browserCommand.mockClear();
+  reportBrowserBounds.mockClear();
+  surfaceHandlers.length = 0;
+  (window as unknown as { wuu: unknown }).wuu = {
+    browserCommand,
+    browserSurface: vi.fn(async () => null),
+    reportBrowserBounds,
+    suppressBrowserOverlay: vi.fn(),
+    onBrowserSurface: (handler: (snapshot: BrowserSurfaceSnapshot) => void) => {
+      surfaceHandlers.push(handler);
+      return () => undefined;
+    },
+    onBrowserUserInput: vi.fn(() => () => undefined),
+    onBrowserTabAdopted: vi.fn(() => () => undefined),
+    openExternal: vi.fn(),
+  };
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -67,15 +48,13 @@ afterEach(() => {
     root?.unmount();
   });
   root = null;
-  if (container.parentNode) {
-    container.remove();
-  }
-  document.createElement = originalCreateElement;
+  if (container.parentNode) container.remove();
+  resetWorkspaceBrowserNavigationForTests();
   vi.restoreAllMocks();
 });
 
 function render(props: {
-  mounted?: boolean;
+  visible?: boolean;
   activity?: ActivitySession;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
@@ -85,7 +64,8 @@ function render(props: {
     root = createRoot(container);
     root!.render(
       <WorkspaceBrowserPanel
-        mounted={props.mounted}
+        visible={props.visible ?? true}
+        threadID="thread-1"
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
         onActivityTakeover={props.onActivityTakeover}
@@ -100,7 +80,7 @@ function render(props: {
 }
 
 function rerender(props: {
-  mounted?: boolean;
+  visible?: boolean;
   activity?: ActivitySession;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
@@ -109,7 +89,8 @@ function rerender(props: {
   act(() => {
     root!.render(
       <WorkspaceBrowserPanel
-        mounted={props.mounted}
+        visible={props.visible ?? true}
+        threadID="thread-1"
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
         onActivityTakeover={props.onActivityTakeover}
@@ -121,7 +102,7 @@ function rerender(props: {
 }
 
 describe("WorkspaceBrowserPanel", () => {
-  it("navigates only after the user submits an address", () => {
+  it("navigates only after the user submits an address", async () => {
     const { input } = render({});
     const form = container.querySelector<HTMLFormElement>(".workspace-browser-url-form");
     expect(input).not.toBeNull();
@@ -137,11 +118,16 @@ describe("WorkspaceBrowserPanel", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }
     });
-    act(() => {
+    await act(async () => {
       form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
 
-    expect(fakeWebview.loadURL).toHaveBeenCalledWith("http://app.local:3000");
+    expect(browserCommand).toHaveBeenCalledWith({
+      workdir: "/repo",
+      tabID: "user:thread-1",
+      command: "navigate",
+      url: "http://app.local:3000",
+    });
   });
 
   it("shows the empty browsing surface before a URL is submitted", () => {
@@ -153,9 +139,34 @@ describe("WorkspaceBrowserPanel", () => {
     ).toBe(true);
   });
 
-  it("navigates when the conversation requests a URL", () => {
-    render({ mounted: true });
-    fakeWebview.loadURL.mockClear();
+  it("navigates when the conversation requests a URL", async () => {
+    render({ visible: true });
+    browserCommand.mockClear();
+    const request = requestWorkspaceBrowserNavigation({
+      url: "https://docs.example.com/api",
+      reuseKey: "https://docs.example.com/api",
+    });
+    await act(async () => {
+      root!.render(
+        <WorkspaceBrowserPanel
+          visible
+          threadID="thread-1"
+          activeContext={{ kind: "no_project", cwd: "/repo" }}
+          requestedURL={request}
+        />,
+      );
+    });
+    expect(browserCommand).toHaveBeenCalledWith({
+      workdir: "/repo",
+      tabID: "user:thread-1",
+      command: "navigate",
+      url: "https://docs.example.com/api",
+    });
+  });
+
+  it("keeps a navigation request until the panel is visible", async () => {
+    render({ visible: true });
+    browserCommand.mockClear();
     const request = requestWorkspaceBrowserNavigation({
       url: "https://docs.example.com/api",
       reuseKey: "https://docs.example.com/api",
@@ -163,59 +174,62 @@ describe("WorkspaceBrowserPanel", () => {
     act(() => {
       root!.render(
         <WorkspaceBrowserPanel
-          mounted
+          visible={false}
+          threadID="thread-1"
           activeContext={{ kind: "no_project", cwd: "/repo" }}
           requestedURL={request}
         />,
       );
     });
-    expect(fakeWebview.loadURL).toHaveBeenCalledWith("https://docs.example.com/api");
-  });
-
-  it("navigates while hidden so background tabs can reuse the same page", () => {
-    render({ mounted: true });
-    fakeWebview.loadURL.mockClear();
-    const request = requestWorkspaceBrowserNavigation({
-      url: "https://docs.example.com/api",
-      reuseKey: "https://docs.example.com/api",
-    });
-    act(() => {
+    expect(browserCommand).not.toHaveBeenCalled();
+    await act(async () => {
       root!.render(
         <WorkspaceBrowserPanel
-          mounted
+          visible
+          threadID="thread-1"
           activeContext={{ kind: "no_project", cwd: "/repo" }}
           requestedURL={request}
         />,
       );
     });
-    expect(fakeWebview.loadURL).toHaveBeenCalledWith("https://docs.example.com/api");
-  });
-
-  it("does not consume a navigation request after the browser tab is discarded", () => {
-    render({ mounted: true });
-    fakeWebview.loadURL.mockClear();
-    const request = requestWorkspaceBrowserNavigation({
+    expect(browserCommand).toHaveBeenCalledWith(expect.objectContaining({
+      command: "navigate",
       url: "https://docs.example.com/api",
-      reuseKey: "https://docs.example.com/api",
-    });
-    act(() => {
-      root!.render(
-        <WorkspaceBrowserPanel
-          mounted={false}
-          activeContext={{ kind: "no_project", cwd: "/repo" }}
-          requestedURL={request}
-        />,
-      );
-    });
-    expect(fakeWebview.loadURL).not.toHaveBeenCalledWith("https://docs.example.com/api");
+    }));
   });
 
-  it("clears the webview when the browser panel closes", () => {
-    render({ mounted: true });
-    fakeWebview.loadURL.mockClear();
-    rerender({ mounted: false });
-    expect(fakeWebview.stop).toHaveBeenCalledTimes(1);
-    expect(fakeWebview.loadURL).toHaveBeenCalledWith("about:blank");
+  it("shows the agent tab in the address bar and parks it when the panel closes", () => {
+    const takeover = vi.fn();
+    const activity: ActivitySession = {
+      id: "activity-1",
+      kind: "browser",
+      thread_id: "thread-1",
+      workdir: "/repo",
+      target: "tab-live",
+      state: "background_controlled",
+      controller: "agent",
+      created_at: "2026-07-10T10:00:00Z",
+      updated_at: "2026-07-10T10:00:01Z",
+    };
+    const { input } = render({ visible: true, activity, onActivityTakeover: takeover });
+    act(() => {
+      surfaceHandlers[0]?.({
+        workdir: "/repo",
+        tabID: "tab-live",
+        url: "https://example.com/pelican",
+        title: "Pelican",
+        canGoBack: true,
+        canGoForward: false,
+        loading: false,
+      });
+    });
+    expect(input?.value).toBe("https://example.com/pelican");
+    expect(container.querySelector(".workspace-browser-home")).toBeNull();
+    expect(container.textContent).toContain("Agent 控制");
+    reportBrowserBounds.mockClear();
+    rerender({ visible: false, activity, onActivityTakeover: takeover });
+    expect(browserCommand).not.toHaveBeenCalled();
+    expect(reportBrowserBounds).toHaveBeenCalledWith("/repo", "tab-live", null);
   });
 
   it("renders Activity control and takeover, release, and stop commands", () => {

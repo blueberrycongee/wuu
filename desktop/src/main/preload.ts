@@ -21,6 +21,9 @@ import {
   type ChannelTaskUpdateParams,
   type MessageFlowFontSize,
   type PopOutInitResult,
+  type BrowserCommandParams,
+  type BrowserSurfaceSnapshot,
+  type BrowserTabAdopted,
   type RemoteControlEvent,
   type RunningThreadSnapshot,
   type ServerEvent,
@@ -611,24 +614,65 @@ const api: WuuDesktopApi = {
 // frozen WuuDesktopApi) so the renderer can position/hide an agent's
 // WebContentsView and drop ghost activity UI on core teardown. The invoke
 // channels are paired with ipcMain.handle in index.ts (IpcChannelParity).
-type BrowserBoundsRect = { x: number; y: number; width: number; height: number };
+type BrowserBoundsRect = { x: number; y: number; width: number; height: number } | null;
 type BrowserTakeoverApi = {
-  reportBrowserBounds: (workdir: string, tabID: string, rect: BrowserBoundsRect) => void;
+  reportBrowserBounds: (
+    workdir: string,
+    tabID: string,
+    rect: BrowserBoundsRect,
+    force?: boolean,
+  ) => void;
   suppressBrowserOverlay: (workdir: string, tabID: string, suppressed: boolean) => void;
   onBrowserInvalidate: (handler: (payload: { workdir: string }) => void) => () => void;
+  browserCommand: (params: BrowserCommandParams) => Promise<BrowserSurfaceSnapshot | null>;
+  browserSurface: (workdir: string, tabID: string) => Promise<BrowserSurfaceSnapshot | null>;
+  onBrowserSurface: (handler: (snapshot: BrowserSurfaceSnapshot) => void) => () => void;
+  onBrowserUserInput: (
+    handler: (payload: { workdir: string; tabID: string }) => void,
+  ) => () => void;
+  onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
 };
 const browserApi = api as WuuDesktopApi & BrowserTakeoverApi;
-browserApi.reportBrowserBounds = (workdir, tabID, rect) => {
-  void ipcRenderer.invoke("wuu:browser-report-bounds", { workdir, tabID, rect });
+browserApi.reportBrowserBounds = (workdir, tabID, rect, force) => {
+  void ipcRenderer.invoke("wuu:browser-report-bounds", {
+    workdir,
+    tabID,
+    rect,
+    force: force === true,
+  });
 };
 browserApi.suppressBrowserOverlay = (workdir, tabID, suppressed) => {
   void ipcRenderer.invoke("wuu:browser-overlay-suppress", { workdir, tabID, suppressed });
 };
+browserApi.browserCommand = (params) =>
+  ipcRenderer.invoke("wuu:browser-command", params) as Promise<BrowserSurfaceSnapshot | null>;
+browserApi.browserSurface = (workdir, tabID) =>
+  ipcRenderer.invoke("wuu:browser-surface", { workdir, tabID }) as Promise<BrowserSurfaceSnapshot | null>;
 browserApi.onBrowserInvalidate = (handler) => {
   const listener = (_event: Electron.IpcRendererEvent, payload: { workdir: string }) =>
     handler(payload);
   ipcRenderer.on("wuu:browser-invalidate", listener);
   return () => ipcRenderer.removeListener("wuu:browser-invalidate", listener);
+};
+browserApi.onBrowserSurface = (handler) => {
+  const listener = (_event: Electron.IpcRendererEvent, snapshot: BrowserSurfaceSnapshot) =>
+    handler(snapshot);
+  ipcRenderer.on("wuu:browser-surface", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-surface", listener);
+};
+browserApi.onBrowserUserInput = (handler) => {
+  const listener = (
+    _event: Electron.IpcRendererEvent,
+    payload: { workdir: string; tabID: string },
+  ) => handler(payload);
+  ipcRenderer.on("wuu:browser-user-input", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-user-input", listener);
+};
+browserApi.onBrowserTabAdopted = (handler) => {
+  const listener = (_event: Electron.IpcRendererEvent, payload: BrowserTabAdopted) =>
+    handler(payload);
+  ipcRenderer.on("wuu:browser-tab-adopted", listener);
+  return () => ipcRenderer.removeListener("wuu:browser-tab-adopted", listener);
 };
 
 contextBridge.exposeInMainWorld("wuu", api);

@@ -28,10 +28,9 @@ export const ENABLE_ACCOUNT =
   import.meta.env.DEV && import.meta.env.VITE_ENABLE_ACCOUNT !== "false";
 
 /**
- * Agent-driven browser overlay (WebContentsView takeover, bounds reporting,
- * and server-request routing). Visiting a page still happens in a hidden host;
- * the overlay only appears after an explicit foreground promotion. Set
- * VITE_ENABLE_BROWSER=false to hide the overlay during development.
+ * Embedded browser. The workspace panel and the agent's page are one tab.
+ * The page stays in a hidden host until that panel is showing it. Set
+ * VITE_ENABLE_BROWSER=false to hide it during development.
  */
 export const ENABLE_EMBEDDED_BROWSER =
   import.meta.env.VITE_ENABLE_BROWSER !== "false";

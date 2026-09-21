@@ -1,13 +1,13 @@
 import type { Rectangle, Session } from "electron";
-import type { JsonValue, ServerEvent } from "../shared/protocol";
+import type { BrowserSurfaceSnapshot, JsonValue, ServerEvent } from "../shared/protocol";
+import { agentCursorCommandScript, clearAgentCursorScript } from "./agentCursor";
 import { writeBufferFileAtomicSync, writeTextFileAtomicSync } from "./atomicFile";
 import type { WindowRegistry } from "./windowRegistry";
 
-// The shared partition every agent tab and the user-facing <webview> live on,
-// so a login the agent performs is visible to the user's manual browsing and
-// vice-versa. Also the reason the session permission handler must sort by
-// webContents ownership: a blanket deny on this partition would regress the
-// user's own browsing surface.
+// One partition for every embedded browser tab. A login performed while the
+// agent drives a tab is still there when the user drives that same tab.
+// Permission decisions stay per webContents so a deny for these tabs does
+// not blanket every other contents on the partition.
 export const BROWSER_PARTITION = "persist:wuu-browser";
 
 // Conservative overflow gate. The core stdin scanner enforces a 4MB line
@@ -17,8 +17,8 @@ export const BROWSER_PARTITION = "persist:wuu-browser";
 // never wedge the whole protocol by overrunning the line limit.
 export const MAX_INLINE_RESULT_BYTES = 1024 * 1024;
 
-// Sensitive capabilities we refuse for agent-driven tabs. The user's own
-// <webview> on the same partition is never touched (see browserPermissionDecision).
+// Sensitive capabilities refused for tabs this coordinator owns. Contents it
+// does not own are left to the default permission path.
 export const BROWSER_AGENT_DENIED_PERMISSIONS = new Set<string>([
   "media", // camera + microphone
   "geolocation",
@@ -61,7 +61,15 @@ export interface BrowserWebContentsHandle {
   readonly id: number;
   readonly debugger: BrowserDebuggerHandle;
   setBackgroundThrottling(allowed: boolean): void;
-  setWindowOpenHandler(handler: () => { action: "deny" } | { action: "allow" }): void;
+  setWindowOpenHandler(handler: (details: { url?: string }) => { action: "deny" } | { action: "allow" }): void;
+  canGoBack(): boolean;
+  canGoForward(): boolean;
+  goBack(): void;
+  goForward(): void;
+  reload(): void;
+  stop(): void;
+  isLoading(): boolean;
+  executeJavaScript(code: string): Promise<unknown>;
   // UI zoom scales rendering only. CDP input coordinates and the layout
   // viewport are CSS-px based and unaffected, so the PiP can shrink the view
   // for display without disturbing the agent's coordinate space.
@@ -145,10 +153,28 @@ type TabEntry = {
   // visibility. setVisibility must respect it so an agent promotion cannot paint
   // over a modal; cleared back to visible when the overlay goes away.
   suppressed: boolean;
-  // A tab is presented while a takeover panel or PiP owns it. Hidden tabs are
-  // only kept fully active for the duration of an agent operation.
+  // A tab is presented while the workspace panel or a picture-in-picture
+  // window owns it. Hidden tabs stay fully active only during an operation.
   presented: boolean;
+  // Painted in the workspace panel. Picture-in-picture sets `presented`
+  // without setting this, so the mirror can stay up while the panel is closed.
+  inPanel: boolean;
+  // An explicit hide ignores in-flight rectangles until the panel asks again
+  // with force. Otherwise a late bounds report puts the page back on screen.
+  blockPresent: boolean;
+  agentInputDepth: number;
+  ignoreUserInputUntil: number;
+  userInterrupted: boolean;
+  loading: boolean;
+  loadError?: string;
   activeOperations: number;
+};
+
+type BrowserRendererSink = {
+  surface: (snapshot: BrowserSurfaceSnapshot) => void;
+  userInput: (payload: { workdir: string; tabID: string }) => void;
+  adopted: (payload: { workdir: string; openerTabID: string; tabID: string; url: string }) => void;
+  presented: () => void;
 };
 
 type BoundsReport = {
@@ -200,6 +226,8 @@ export class BrowserHostCoordinator {
   // keep its chrome label fresh and notice when a visibility takeover adopts
   // the tab it is presenting.
   private readonly navigateListeners = new Set<(workdir: string, tabID: string, url: string) => void>();
+  private rendererSink: BrowserRendererSink | undefined;
+  private popupSerial = 0;
   private readonly tabReparentedListeners = new Set<
     (workdir: string, tabID: string, parent: BrowserParentWindowHandle["contentView"] | undefined) => void
   >();
@@ -323,10 +351,13 @@ export class BrowserHostCoordinator {
     if (!entry || entry.view.webContents.isDestroyed()) return undefined;
     const previous = entry.view.getBounds();
     this.reparent(entry, parent);
+    const wasPanel = entry.inPanel;
+    entry.inPanel = false;
     entry.presented = true;
     entry.view.webContents.setZoomFactor(zoom);
     entry.view.setBounds(rect);
     this.applyEntryActivity(entry);
+    if (wasPanel) this.rendererSink?.presented();
     return previous;
   }
 
@@ -360,9 +391,12 @@ export class BrowserHostCoordinator {
     if (!entry || entry.view.webContents.isDestroyed()) return;
     if (entry.currentParent !== owner) return;
     this.reparent(entry, this.ensureHostWindow());
+    const wasPanel = entry.inPanel;
+    entry.inPanel = false;
     entry.presented = false;
     entry.view.setBounds(restore);
     this.applyEntryActivity(entry);
+    if (wasPanel) this.rendererSink?.presented();
   }
 
   tabSurfaceMeta(workdir: string, tabID: string): BrowserTabSurfaceMeta | undefined {
@@ -418,25 +452,96 @@ export class BrowserHostCoordinator {
     workdir: string,
     tabID: string,
     window: BrowserParentWindowHandle,
-    cssRect: Rectangle,
+    cssRect: Rectangle | null,
     zoomFactor: number,
+    force = false,
   ): void {
+    const target = this.windowForBounds(window);
+    if (!target) return;
+    const key = tabKey(workdir, tabID);
+    // A missing or empty rectangle means the panel is not showing this tab.
+    // Drop the cached rect so a later show cannot reuse a stale conversation-
+    // covering position. Do not clear blockPresent here: the hide that set it
+    // must keep ignoring in-flight rectangles until the panel asks with force.
+    if (!cssRect || cssRect.width <= 0 || cssRect.height <= 0) {
+      this.lastBounds.delete(key);
+      const entry = this.tabs.get(key);
+      if (entry && entry.currentParent === target.contentView) {
+        this.parkHidden(entry);
+      }
+      return;
+    }
     // Native views use DIP, not the reporting renderer's zoomed CSS pixels.
-    // Convert before caching too, so a later visibility takeover stays aligned.
     const rect = {
       x: Math.round(cssRect.x * zoomFactor),
       y: Math.round(cssRect.y * zoomFactor),
       width: Math.round(cssRect.width * zoomFactor),
       height: Math.round(cssRect.height * zoomFactor),
     };
-    const key = tabKey(workdir, tabID);
-    this.lastBounds.set(key, { window, rect });
+    this.lastBounds.set(key, { window: target, rect });
     const entry = this.tabs.get(key);
-    // Only re-position while this tab is actually parented under the reporting
-    // window; otherwise the bounds are stashed for the next set_visibility.
-    if (entry && entry.currentParent === window.contentView) {
-      entry.view.setBounds(rect);
+    if (!entry || entry.view.webContents.isDestroyed()) return;
+    if (entry.blockPresent && !force) return;
+    entry.blockPresent = false;
+    this.presentInPanel(entry, target, rect);
+  }
+
+  setRendererSink(sink: BrowserRendererSink): void {
+    this.rendererSink = sink;
+  }
+
+  isInPanel(workdir: string, tabID: string): boolean {
+    return this.tabs.get(tabKey(workdir, tabID))?.inPanel === true;
+  }
+
+  surface(workdir: string, tabID: string): BrowserSurfaceSnapshot | undefined {
+    const entry = this.tabs.get(tabKey(workdir, tabID));
+    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    return this.snapshotOf(entry);
+  }
+
+  async runCommand(
+    workdir: string,
+    tabID: string,
+    command: string,
+    url?: string,
+  ): Promise<BrowserSurfaceSnapshot | undefined> {
+    if (!tabID) return undefined;
+    if (command === "navigate") {
+      const target = url?.trim() ?? "";
+      if (!target) return this.surface(workdir, tabID);
+      let entry = this.tabs.get(tabKey(workdir, tabID));
+      if (!entry) {
+        await this.openTab(workdir, { tab_id: tabID, initial_url: target });
+        entry = this.tabs.get(tabKey(workdir, tabID));
+      } else if (!entry.view.webContents.isDestroyed()) {
+        const current = entry;
+        await this.withActiveEntry(current, () => current.view.webContents.loadURL(target));
+      }
+      if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+      this.presentIfCached(entry);
+      return this.snapshotOf(entry);
     }
+    const entry = this.tabs.get(tabKey(workdir, tabID));
+    if (!entry || entry.view.webContents.isDestroyed()) return undefined;
+    const contents = entry.view.webContents;
+    switch (command) {
+      case "back":
+        if (contents.canGoBack()) contents.goBack();
+        break;
+      case "forward":
+        if (contents.canGoForward()) contents.goForward();
+        break;
+      case "reload":
+        contents.reload();
+        break;
+      case "stop":
+        contents.stop();
+        break;
+      default:
+        return undefined;
+    }
+    return this.snapshotOf(entry);
   }
 
   setOverlaySuppressed(workdir: string, tabID: string, suppressed: boolean): void {
@@ -490,9 +595,6 @@ export class BrowserHostCoordinator {
     let entry = this.tabs.get(key);
     if (!entry) {
       const view = this.deps.createView();
-      // Agent tabs never spawn popups; deny window.open. (A future revision may
-      // adopt them as hidden tabs instead of denying.)
-      view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       this.ensureHostWindow().contentView.addChildView(view);
       if (!view.webContents.debugger.isAttached()) {
         view.webContents.debugger.attach("1.3");
@@ -506,22 +608,24 @@ export class BrowserHostCoordinator {
         currentParent: this.ensureHostWindow().contentView,
         suppressed: false,
         presented: false,
+        inPanel: false,
+        blockPresent: false,
+        agentInputDepth: 0,
+        ignoreUserInputUntil: 0,
+        userInterrupted: false,
+        loading: false,
         activeOperations: 0,
       };
       this.applyEntryActivity(entry);
       this.tabs.set(key, entry);
       this.agentWebContentsIds.add(view.webContents.id);
-      const onNavigate = (...args: unknown[]): void => {
-        const url = typeof args[1] === "string" ? args[1] : view.webContents.getURL();
-        this.emitNavigate(workdir, tabID, url);
-      };
-      view.webContents.on("did-navigate", onNavigate);
-      view.webContents.on("did-navigate-in-page", onNavigate);
+      this.wireEntry(entry);
     }
     const initialURL = typeof params.initial_url === "string" ? params.initial_url : "";
     if (initialURL) {
       await this.withActiveEntry(entry, () => entry.view.webContents.loadURL(initialURL));
     }
+    this.presentIfCached(entry);
     return { ok: true, tab_id: tabID };
   }
 
@@ -549,21 +653,26 @@ export class BrowserHostCoordinator {
     const entry = this.requireTab(workdir, tabID);
     const visible = params.visible === true;
     if (visible) {
-      // Reparent onto the takeover window and overlay it. Bounds come from the
-      // renderer's last report; if none yet, it lands at 0,0 and the first
-      // report repositions it.
-      const target = this.resolveTargetWindow(workdir, tabID) ?? this.ensureHostWindow();
-      this.reparent(entry, target);
-      entry.presented = true;
-      this.applyEntryActivity(entry);
-      const rect = this.lastBounds.get(tabKey(workdir, tabID))?.rect;
-      if (rect) entry.view.setBounds(rect);
+      // Take the view off any mirror immediately so that mirror cannot keep
+      // a shrunk zoom, but do not paint it until a panel rectangle arrives.
+      // A view with no rectangle would sit at the window origin.
+      entry.blockPresent = false;
+      const cached = this.lastBounds.get(tabKey(workdir, tabID));
+      if (cached && !cached.window.isDestroyed()) {
+        this.presentInPanel(entry, cached.window, cached.rect);
+      } else {
+        const main = this.registry.mainWindow();
+        if (main && !main.isDestroyed()) {
+          this.reparent(entry, main as unknown as BrowserParentWindowHandle);
+        }
+        entry.inPanel = false;
+        entry.presented = false;
+        this.applyEntryActivity(entry);
+      }
     } else {
-      // Park back on the hidden host. Agent operations temporarily reactivate
-      // the view when they need timers, layout, input, or a fresh frame.
-      this.reparent(entry, this.ensureHostWindow());
-      entry.presented = false;
-      this.applyEntryActivity(entry);
+      entry.blockPresent = true;
+      this.lastBounds.delete(tabKey(workdir, tabID));
+      this.parkHidden(entry);
     }
     return { ok: true };
   }
@@ -674,22 +783,25 @@ export class BrowserHostCoordinator {
 
   private async click(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
     const point = await this.resolvePoint(entry, params);
-    const dbg = entry.view.webContents.debugger;
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: point[0],
-      y: point[1],
-      button: "left",
-      buttons: 1,
-      clickCount: 1,
-    });
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: point[0],
-      y: point[1],
-      button: "left",
-      buttons: 1,
-      clickCount: 1,
+    if (!(await this.glideCursor(entry, point[0], point[1], true))) return { ok: true };
+    await this.withAgentInput(entry, async () => {
+      const dbg = entry.view.webContents.debugger;
+      await dbg.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: point[0],
+        y: point[1],
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      await dbg.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: point[0],
+        y: point[1],
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
     });
     this.emitInteraction(entry, { kind: "click", x: point[0], y: point[1] });
     return { ok: true };
@@ -704,7 +816,8 @@ export class BrowserHostCoordinator {
       point = await this.pointForNode(entry, params.node_id).catch(() => undefined);
     }
     const text = String(params.text ?? "");
-    await dbg.sendCommand("Input.insertText", { text });
+    if (point && !(await this.glideCursor(entry, point[0], point[1], false))) return { ok: true };
+    await this.withAgentInput(entry, () => dbg.sendCommand("Input.insertText", { text }));
     if (point) this.emitInteraction(entry, { kind: "type", x: point[0], y: point[1] });
     return { ok: true };
   }
@@ -718,13 +831,17 @@ export class BrowserHostCoordinator {
     }
     const dx = typeof params.dx === "number" ? params.dx : 0;
     const dy = typeof params.dy === "number" ? params.dy : 0;
-    await entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseWheel",
-      x,
-      y,
-      deltaX: dx,
-      deltaY: dy,
-    });
+    const aimed = typeof params.node_id === "number" || (typeof params.x === "number" && typeof params.y === "number");
+    if (aimed && !(await this.glideCursor(entry, x, y, false))) return { ok: true };
+    await this.withAgentInput(entry, () =>
+      entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x,
+        y,
+        deltaX: dx,
+        deltaY: dy,
+      }),
+    );
     this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(dx, dy) });
     return { ok: true };
   }
@@ -733,8 +850,10 @@ export class BrowserHostCoordinator {
     const keys = String(params.keys ?? "");
     if (!keys) throw new Error("key requires keys");
     const dbg = entry.view.webContents.debugger;
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: keys });
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: keys });
+    await this.withAgentInput(entry, async () => {
+      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: keys });
+      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: keys });
+    });
     return { ok: true };
   }
 
@@ -751,6 +870,152 @@ export class BrowserHostCoordinator {
       });
     }
     return { ok: true, changed: false };
+  }
+
+  private wireEntry(entry: TabEntry): void {
+    const contents = entry.view.webContents;
+    const publish = (): void => this.publishSurface(entry);
+    const onNavigate = (...args: unknown[]): void => {
+      const url = typeof args[1] === "string" ? args[1] : contents.getURL();
+      this.emitNavigate(entry.workdir, entry.tabID, url);
+      publish();
+    };
+    contents.on("did-navigate", onNavigate);
+    contents.on("did-navigate-in-page", onNavigate);
+    contents.on("did-start-loading", () => {
+      entry.loading = true;
+      entry.loadError = undefined;
+      publish();
+    });
+    contents.on("did-stop-loading", () => {
+      entry.loading = false;
+      publish();
+    });
+    contents.on("page-title-updated", publish);
+    contents.on("did-fail-load", (...args: unknown[]) => {
+      const errorCode = typeof args[1] === "number" ? args[1] : 0;
+      const isMainFrame = args[4] !== false;
+      if (!isMainFrame || errorCode === -3) return;
+      entry.loading = false;
+      entry.loadError = typeof args[2] === "string" && args[2].length > 0 ? args[2] : "load failed";
+      publish();
+    });
+    contents.on("before-mouse-event", () => this.noteUserInput(entry));
+    contents.on("before-input-event", (...args: unknown[]) => {
+      const input = args[1] as { type?: string } | undefined;
+      if (input?.type === "keyDown") this.noteUserInput(entry);
+    });
+    // A page-requested window stays inside this tab set. The native window is
+    // refused so the new page keeps the same session and panel.
+    contents.setWindowOpenHandler((details) => {
+      this.adoptPopup(entry, typeof details?.url === "string" ? details.url : "");
+      return { action: "deny" };
+    });
+  }
+
+  private adoptPopup(opener: TabEntry, url: string): void {
+    const target = url.trim();
+    if (!target || target === "about:blank") return;
+    const tabID = `popup-${opener.tabID}-${this.popupSerial++}`;
+    void this.openTab(opener.workdir, { tab_id: tabID, initial_url: target })
+      .then(() => {
+        this.rendererSink?.adopted({
+          workdir: opener.workdir,
+          openerTabID: opener.tabID,
+          tabID,
+          url: target,
+        });
+      })
+      .catch(() => {
+        // The opener stays where it is when the new tab cannot be created.
+      });
+  }
+
+  private presentInPanel(entry: TabEntry, window: BrowserParentWindowHandle, rect: Rectangle): void {
+    this.reparent(entry, window);
+    entry.presented = true;
+    entry.inPanel = true;
+    entry.view.webContents.setZoomFactor(1);
+    entry.view.setBounds(rect);
+    this.applyEntryActivity(entry);
+    this.rendererSink?.presented();
+  }
+
+  private presentIfCached(entry: TabEntry): void {
+    if (entry.blockPresent || entry.view.webContents.isDestroyed()) return;
+    const cached = this.lastBounds.get(tabKey(entry.workdir, entry.tabID));
+    if (!cached) return;
+    this.presentInPanel(entry, cached.window, cached.rect);
+  }
+
+  private parkHidden(entry: TabEntry): void {
+    const wasPanel = entry.inPanel;
+    this.clearCursor(entry);
+    this.reparent(entry, this.ensureHostWindow());
+    entry.inPanel = false;
+    entry.presented = false;
+    this.applyEntryActivity(entry);
+    if (wasPanel) this.rendererSink?.presented();
+  }
+
+  private async withAgentInput<T>(entry: TabEntry, run: () => Promise<T>): Promise<T> {
+    entry.agentInputDepth += 1;
+    entry.ignoreUserInputUntil = Date.now() + 200;
+    try {
+      return await run();
+    } finally {
+      entry.agentInputDepth = Math.max(0, entry.agentInputDepth - 1);
+      entry.ignoreUserInputUntil = Date.now() + 200;
+    }
+  }
+
+  private noteUserInput(entry: TabEntry): void {
+    if (!entry.inPanel || entry.suppressed) return;
+    if (entry.agentInputDepth > 0) return;
+    if (Date.now() < entry.ignoreUserInputUntil) return;
+    entry.ignoreUserInputUntil = Date.now() + 300;
+    entry.userInterrupted = true;
+    this.clearCursor(entry);
+    this.rendererSink?.userInput({ workdir: entry.workdir, tabID: entry.tabID });
+  }
+
+  // Move the pointer to the action, then let the caller send the input.
+  // Hidden pages skip the travel so background work is not delayed. A real
+  // user click during the travel cancels the action.
+  private async glideCursor(entry: TabEntry, x: number, y: number, press: boolean): Promise<boolean> {
+    if (!entry.inPanel || entry.view.webContents.isDestroyed()) return true;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+    entry.userInterrupted = false;
+    try {
+      await entry.view.webContents.executeJavaScript(agentCursorCommandScript(x, y, press));
+    } catch {
+      // The document can be mid-navigation. The action still proceeds.
+    }
+    return !entry.userInterrupted;
+  }
+
+  private clearCursor(entry: TabEntry): void {
+    if (entry.view.webContents.isDestroyed()) return;
+    void entry.view.webContents.executeJavaScript(clearAgentCursorScript()).catch(() => undefined);
+  }
+
+  private publishSurface(entry: TabEntry): void {
+    if (entry.view.webContents.isDestroyed()) return;
+    this.rendererSink?.surface(this.snapshotOf(entry));
+  }
+
+  private snapshotOf(entry: TabEntry): BrowserSurfaceSnapshot {
+    const contents = entry.view.webContents;
+    return {
+      workdir: entry.workdir,
+      tabID: entry.tabID,
+      url: contents.getURL(),
+      title: contents.getTitle(),
+      canGoBack: contents.canGoBack(),
+      canGoForward: contents.canGoForward(),
+      loading: entry.loading || contents.isLoading(),
+      ...(entry.loadError ? { error: entry.loadError } : {}),
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -827,13 +1092,11 @@ export class BrowserHostCoordinator {
     return this.hostWindow;
   }
 
-  private resolveTargetWindow(workdir: string, tabID: string): BrowserParentWindowHandle | undefined {
-    const reported = this.lastBounds.get(tabKey(workdir, tabID))?.window;
-    if (reported && !reported.isDestroyed()) return reported;
+  private windowForBounds(window: BrowserParentWindowHandle): BrowserParentWindowHandle | undefined {
+    if (!window.isDestroyed()) return window;
     const main = this.registry.mainWindow();
-    return main && !main.isDestroyed()
-      ? (main as unknown as BrowserParentWindowHandle)
-      : undefined;
+    if (main && !main.isDestroyed()) return main as unknown as BrowserParentWindowHandle;
+    return undefined;
   }
 
   private reparent(entry: TabEntry, target: BrowserParentWindowHandle): void {
@@ -1029,8 +1292,8 @@ export function browserPermissionDecision(isAgentOwned: boolean, permission: str
 }
 
 // Wire the persist:wuu-browser session handlers. Called once from
-// app.whenReady with the real partition session; the ownership sort keeps the
-// user's <webview> untouched.
+// app.whenReady with the real partition session. Contents this coordinator
+// does not own keep the default permission and download path.
 export function installBrowserSessionHandlers(session: Session, coordinator: BrowserHostCoordinator): void {
   session.setPermissionRequestHandler((webContents, permission, callback) => {
     const owned = webContents ? coordinator.ownsWebContents(webContents.id) : false;
@@ -1041,8 +1304,7 @@ export function installBrowserSessionHandlers(session: Session, coordinator: Bro
     return browserPermissionDecision(owned, permission);
   });
   session.on("will-download", (event, _item, webContents) => {
-    // Agent tabs never trigger silent downloads to disk; the user's own webview
-    // downloads flow through untouched.
+    // Owned tabs do not write silent downloads to disk.
     if (webContents && coordinator.ownsWebContents(webContents.id)) {
       event.preventDefault();
     }

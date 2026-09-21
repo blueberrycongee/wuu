@@ -16,8 +16,9 @@ import {
   useState,
   type FormEvent
 } from "react";
-import type { ActivitySession, RuntimeContext } from "../shared/protocol";
+import type { ActivitySession, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
 import { translateCurrent, useI18n } from "./i18n";
+import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
 import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
 import {
   useWorkspaceBrowserNavigationConsumer,
@@ -27,8 +28,6 @@ import { WorkspacePanelEmpty } from "./WorkspaceFiles";
 
 const HOME_PAGE_URL = "wuu://new-tab";
 const SEARCH_FALLBACK_URL = "https://www.google.com/search?igu=1&q=";
-
-type WebviewElement = Electron.WebviewTag;
 
 type BrowserStatus = "idle" | "loading" | "error";
 
@@ -76,284 +75,200 @@ function resolveNavigationInput(input: string): string {
   return `${SEARCH_FALLBACK_URL}${encodeURIComponent(value)}`;
 }
 
-function isInternalUrl(url: string): boolean {
-  return url === HOME_PAGE_URL;
+function hasPageURL(url: string | undefined): boolean {
+  const value = url?.trim() ?? "";
+  return value.length > 0 && value !== "about:blank" && value !== HOME_PAGE_URL;
 }
 
-// Electron's <webview> element rejects most method calls with a synchronous
-// "WebView must be attached and dom-ready" error when invoked before its
-// initial dom-ready event has fired. Wrap any call we make through the
-// element so a misordered lifecycle can't leak an unhandled exception.
-function safeWebview<T>(fn: () => T): T | undefined {
-  try {
-    return fn();
-  } catch {
-    return undefined;
-  }
-}
-
+// Chrome for one browser tab. The page is a main-process view positioned over
+// the host element. The agent and the address bar drive that same tab: an
+// empty state is shown only while the tab has no page.
 export function WorkspaceBrowserPanel({
-  mounted = true,
+  visible = true,
+  threadID,
   activeContext,
   activity,
   requestedURL,
+  overlaySuppressed = false,
   onActivityTakeover,
   onActivityRelease,
   onActivityStop,
 }: {
-  mounted?: boolean;
+  visible?: boolean;
+  threadID?: string;
   activeContext?: RuntimeContext;
   activity?: ActivitySession;
   requestedURL?: WorkspaceBrowserNavigationRequest;
+  overlaySuppressed?: boolean;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
   onActivityStop?: () => void;
 }): JSX.Element {
-  const { locale, t } = useI18n();
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const webviewRef = useRef<WebviewElement | null>(null);
+  const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const isWebviewReadyRef = useRef(false);
+  const workdir = activeContext?.cwd;
+  const agentTabID =
+    activity && activity.kind === "browser" && activity.state !== "stopped"
+      ? browserTabIDForActivity(activity)
+      : undefined;
+  const [adoptedTabID, setAdoptedTabID] = useState<string | undefined>(undefined);
+  const selectedTabID = adoptedTabID ?? displayedBrowserTabID(activity, threadID);
+  const selectedTabIDRef = useRef(selectedTabID);
+  selectedTabIDRef.current = selectedTabID;
+  const showingAgentTab = Boolean(agentTabID && selectedTabID === agentTabID);
 
-  const [currentURL, setCurrentURL] = useState<string>(HOME_PAGE_URL);
-  const [pageTitle, setPageTitle] = useState<string>(() => t("workspace.browser.newTab"));
-  const [draftURL, setDraftURL] = useState<string>("");
+  const [currentURL, setCurrentURL] = useState("");
+  const [pageTitle, setPageTitle] = useState("");
+  const [draftURL, setDraftURL] = useState("");
   const [status, setStatus] = useState<BrowserStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [hostHint, setHostHint] = useState<string | undefined>(undefined);
-  const [isWebviewReady, setIsWebviewReady] = useState(false);
+  const [pendingURL, setPendingURL] = useState<string | undefined>(undefined);
   const consumeNavigation = useWorkspaceBrowserNavigationConsumer();
   const consumedRequestIDRef = useRef<number | undefined>(undefined);
 
-  const updateCurrentURL = useCallback((url: string) => {
-    setCurrentURL(url);
-    setDraftURL(url === HOME_PAGE_URL ? "" : url);
-    setHostHint(extractHostname(url));
-  }, []);
-
-  // Mount the <webview> element once. The element is a custom Electron tag and
-  // is not part of the standard JSX intrinsic set, so we create it imperatively
-  // and append it to a dedicated container.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) {
-      return undefined;
-    }
-
-    const webview = document.createElement("webview") as WebviewElement;
-    webview.setAttribute("partition", "persist:wuu-browser");
-    webview.setAttribute("allowpopups", "");
-    webview.style.flex = "1 1 auto";
-    webview.style.width = "100%";
-    webview.style.height = "100%";
-    webview.style.border = "0";
-    webview.style.display = "flex";
-
-    container.appendChild(webview);
-    webviewRef.current = webview;
-
-    return () => {
-      if (webview.parentNode === container) {
-        container.removeChild(webview);
-      }
-      webviewRef.current = null;
-    };
-  }, []);
-
-  // Wire up the <webview> event listeners exactly once. State updates use the
-  // setter functions directly so the effect does not need to re-run on every
-  // navigation.
-  useEffect(() => {
-    const webview = webviewRef.current;
-    if (!webview) {
-      return undefined;
-    }
-
-    const syncNavigationState = (): void => {
-      if (!isWebviewReadyRef.current) {
-        return;
-      }
-      setCanGoBack(Boolean(safeWebview(() => webview.canGoBack())));
-      setCanGoForward(Boolean(safeWebview(() => webview.canGoForward())));
-    };
-
-    const handleDomReady = (): void => {
-      const url = safeWebview(() => webview.getURL());
-      if (typeof url !== "string") {
-        return;
-      }
-      isWebviewReadyRef.current = true;
-      updateCurrentURL(url);
-      const title = safeWebview(() => webview.getTitle());
-      if (typeof title === "string" && title.length > 0) {
-        setPageTitle(title);
-      }
-      setStatus("idle");
-      setErrorMessage(undefined);
-      setIsWebviewReady(true);
-      syncNavigationState();
-    };
-
-    const handleDidStartLoading = (): void => {
-      setStatus("loading");
-      setErrorMessage(undefined);
-    };
-
-    const handleDidStopLoading = (): void => {
-      setStatus("idle");
-      syncNavigationState();
-    };
-
-    const handleDidNavigate = (event: { url: string }): void => {
-      updateCurrentURL(event.url);
-    };
-
-    const handleDidNavigateInPage = (event: { url: string }): void => {
-      updateCurrentURL(event.url);
-    };
-
-    const handlePageTitleUpdated = (event: { title: string }): void => {
-      if (event.title) {
-        setPageTitle(event.title);
-      }
-    };
-
-    const handleDidFailLoad = (event: {
-      errorCode?: number;
-      errorDescription?: string;
-      validatedURL?: string;
-    }): void => {
-      // -3 is "ERR_ABORTED" which fires on programmatic reloads, not a real error.
-      if (event.errorCode === -3) {
-        return;
-      }
-      const target = event.validatedURL ?? "";
-      setHostHint(extractHostname(target));
+  const applySurface = useCallback((snapshot: BrowserSurfaceSnapshot) => {
+    setCurrentURL(snapshot.url);
+    setPendingURL(undefined);
+    setHostHint(extractHostname(snapshot.url));
+    setPageTitle(snapshot.title);
+    setCanGoBack(snapshot.canGoBack);
+    setCanGoForward(snapshot.canGoForward);
+    if (snapshot.error) {
       setStatus("error");
-      setErrorMessage(
-        event.errorDescription ||
-          translateCurrent("workspace.browser.loadFailed", {
-            code: event.errorCode ?? translateCurrent("workspace.browser.unknownError"),
-            target,
-          })
-      );
-    };
+      setErrorMessage(snapshot.error);
+    } else {
+      setStatus(snapshot.loading ? "loading" : "idle");
+      setErrorMessage(undefined);
+    }
+    if (inputRef.current !== document.activeElement) {
+      setDraftURL(hasPageURL(snapshot.url) ? snapshot.url : "");
+    }
+  }, []);
 
-    webview.addEventListener("dom-ready", handleDomReady);
-    webview.addEventListener("did-start-loading", handleDidStartLoading);
-    webview.addEventListener("did-stop-loading", handleDidStopLoading);
-    webview.addEventListener("did-navigate", handleDidNavigate);
-    webview.addEventListener("did-navigate-in-page", handleDidNavigateInPage);
-    webview.addEventListener("page-title-updated", handlePageTitleUpdated);
-    webview.addEventListener("did-fail-load", handleDidFailLoad);
+  useEffect(() => {
+    setAdoptedTabID(undefined);
+  }, [agentTabID]);
 
+  useEffect(() => {
+    if (!workdir || !selectedTabID) return undefined;
+    const read = window.wuu?.browserSurface;
+    if (typeof read !== "function") return undefined;
+    let cancelled = false;
+    void read(workdir, selectedTabID).then((snapshot) => {
+      if (!cancelled && snapshot && snapshot.tabID === selectedTabID) applySurface(snapshot);
+    }).catch(() => undefined);
     return () => {
-      webview.removeEventListener("dom-ready", handleDomReady);
-      webview.removeEventListener("did-start-loading", handleDidStartLoading);
-      webview.removeEventListener("did-stop-loading", handleDidStopLoading);
-      webview.removeEventListener("did-navigate", handleDidNavigate);
-      webview.removeEventListener("did-navigate-in-page", handleDidNavigateInPage);
-      webview.removeEventListener("page-title-updated", handlePageTitleUpdated);
-      webview.removeEventListener("did-fail-load", handleDidFailLoad);
+      cancelled = true;
     };
-  }, [updateCurrentURL]);
+  }, [applySurface, selectedTabID, workdir]);
+
+  useEffect(() => {
+    const subscribe = window.wuu?.onBrowserSurface;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((snapshot) => {
+      if (snapshot.workdir !== workdir || snapshot.tabID !== selectedTabIDRef.current) return;
+      applySurface(snapshot);
+    });
+  }, [applySurface, workdir]);
+
+  useEffect(() => {
+    const subscribe = window.wuu?.onBrowserTabAdopted;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((payload) => {
+      if (!workdir || payload.workdir !== workdir) return;
+      if (payload.openerTabID !== selectedTabIDRef.current) return;
+      setAdoptedTabID(payload.tabID);
+    });
+  }, [workdir]);
+
+  useEffect(() => {
+    const subscribe = window.wuu?.onBrowserUserInput;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((payload) => {
+      if (!workdir || payload.workdir !== workdir) return;
+      if (payload.tabID !== selectedTabIDRef.current) return;
+      if (!activity || activity.controller !== "agent" || activity.state === "stopped") return;
+      onActivityTakeover?.();
+    });
+  }, [activity, onActivityTakeover, workdir]);
+
+  const runCommand = useCallback(async (command: "navigate" | "back" | "forward" | "reload" | "stop", url?: string) => {
+    const tabID = selectedTabIDRef.current;
+    const send = window.wuu?.browserCommand;
+    if (!workdir || !tabID || typeof send !== "function") return;
+    if (activity && activity.controller === "agent" && activity.state !== "stopped") {
+      onActivityTakeover?.();
+    }
+    const snapshot = await send({ workdir, tabID, command, url });
+    if (snapshot && snapshot.tabID === selectedTabIDRef.current) applySurface(snapshot);
+  }, [activity, applySurface, onActivityTakeover, workdir]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);
-    const webview = webviewRef.current;
-    if (!webview) {
-      return;
-    }
-    if (target === HOME_PAGE_URL) {
-      setCurrentURL(HOME_PAGE_URL);
-      setDraftURL("");
-      setPageTitle(translateCurrent("workspace.browser.newTab"));
-      setHostHint(undefined);
-      setStatus("idle");
-      setErrorMessage(undefined);
-      setCanGoBack(false);
-      setCanGoForward(false);
-      // Loading a blank page clears the visible page in the same webview.
-      safeWebview(() => webview.loadURL("about:blank"));
-      return;
-    }
+    if (!hasPageURL(target)) return;
     setStatus("loading");
     setErrorMessage(undefined);
     setDraftURL(target);
-    safeWebview(() => webview.loadURL(target));
-  }, []);
+    setPendingURL(target);
+    void runCommand("navigate", target);
+  }, [runCommand]);
 
   useEffect(() => {
-    if (!mounted || !requestedURL) {
-      return;
-    }
-    if (consumedRequestIDRef.current === requestedURL.requestID) {
-      return;
-    }
+    if (!visible || !requestedURL) return;
+    if (consumedRequestIDRef.current === requestedURL.requestID) return;
     const currentKey = workspaceBrowserOpenTarget(currentURL)?.reuseKey;
-    if (currentKey !== requestedURL.reuseKey) {
-      navigate(requestedURL.url);
-    }
+    if (currentKey !== requestedURL.reuseKey) navigate(requestedURL.url);
     consumedRequestIDRef.current = requestedURL.requestID;
     consumeNavigation(requestedURL.requestID);
-  }, [consumeNavigation, currentURL, mounted, navigate, requestedURL]);
+  }, [consumeNavigation, currentURL, navigate, requestedURL, visible]);
 
   const goBack = useCallback(() => {
-    const webview = webviewRef.current;
-    if (!webview || !canGoBack) {
-      return;
-    }
-    safeWebview(() => webview.goBack());
-  }, [canGoBack]);
+    if (!canGoBack) return;
+    void runCommand("back");
+  }, [canGoBack, runCommand]);
 
   const goForward = useCallback(() => {
-    const webview = webviewRef.current;
-    if (!webview || !canGoForward) {
-      return;
-    }
-    safeWebview(() => webview.goForward());
-  }, [canGoForward]);
+    if (!canGoForward) return;
+    void runCommand("forward");
+  }, [canGoForward, runCommand]);
 
   const reload = useCallback(() => {
-    const webview = webviewRef.current;
-    if (!webview) {
-      return;
-    }
-    if (status === "loading") {
-      safeWebview(() => webview.stop());
-    } else {
-      safeWebview(() => webview.reload());
-    }
-  }, [status]);
+    void runCommand(status === "loading" ? "stop" : "reload");
+  }, [runCommand, status]);
+
+  const showPage = hasPageURL(currentURL) || hasPageURL(pendingURL);
+  const paintPage = visible && showPage && status !== "error";
 
   useEffect(() => {
-    if (mounted) {
-      return;
+    const report = window.wuu?.reportBrowserBounds;
+    if (typeof report !== "function" || !workdir || !selectedTabID) return undefined;
+    if (!paintPage) {
+      report(workdir, selectedTabID, null);
+      return undefined;
     }
-    const webview = webviewRef.current;
-    if (webview) {
-      safeWebview(() => webview.stop());
-      safeWebview(() => webview.loadURL("about:blank"));
-    }
-    isWebviewReadyRef.current = false;
-    setIsWebviewReady(false);
-    setCurrentURL(HOME_PAGE_URL);
-    setDraftURL("");
-    setPageTitle(translateCurrent("workspace.browser.newTab"));
-    setHostHint(undefined);
-    setStatus("idle");
-    setErrorMessage(undefined);
-    setCanGoBack(false);
-    setCanGoForward(false);
-  }, [mounted]);
+    let first = true;
+    const stop = observeBrowserPanelBounds((rect) => {
+      if (rect.width <= 0 || rect.height <= 0) return;
+      report(workdir, selectedTabID, rect, first);
+      first = false;
+    });
+    return () => {
+      stop();
+      report(workdir, selectedTabID, null);
+    };
+  }, [paintPage, selectedTabID, workdir]);
 
   useEffect(() => {
-    if (currentURL === HOME_PAGE_URL) {
-      setPageTitle(t("workspace.browser.newTab"));
-    }
-  }, [currentURL, locale]);
+    const suppress = window.wuu?.suppressBrowserOverlay;
+    if (typeof suppress !== "function" || !workdir || !selectedTabID || !paintPage) return undefined;
+    suppress(workdir, selectedTabID, overlaySuppressed);
+    return () => {
+      suppress(workdir, selectedTabID, false);
+    };
+  }, [overlaySuppressed, paintPage, selectedTabID, workdir]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -361,7 +276,7 @@ export function WorkspaceBrowserPanel({
     inputRef.current?.blur();
   };
 
-  const showWebview = !isInternalUrl(currentURL);
+  const showChromePage = showPage && status !== "error";
   const isLoading = status === "loading";
 
   return (
@@ -397,7 +312,7 @@ export function WorkspaceBrowserPanel({
             type="button"
             aria-label={isLoading ? t("workspace.browser.stop") : t("workspace.browser.refresh")}
             title={isLoading ? t("workspace.browser.stop") : t("workspace.browser.refresh")}
-            disabled={!showWebview && !isLoading}
+            disabled={!showChromePage && !isLoading}
             onClick={reload}
           >
             {isLoading ? <X className="icon" /> : <RotateCw className="icon" />}
@@ -428,9 +343,9 @@ export function WorkspaceBrowserPanel({
             type="button"
             aria-label={t("workspace.browser.openExternal")}
             title={t("workspace.browser.openExternal")}
-            disabled={!showWebview}
+            disabled={!showChromePage}
             onClick={() => {
-              if (showWebview) {
+              if (showChromePage) {
                 openExternalURL(currentURL);
               }
             }}
@@ -445,12 +360,8 @@ export function WorkspaceBrowserPanel({
         />
       </div>
       <div className="workspace-browser-frame" data-wuu-component="workspace-browser-content">
-        <div
-          ref={containerRef}
-          className="workspace-browser-host"
-          hidden={!showWebview}
-        />
-        {!showWebview ? (
+        <div className="workspace-browser-host" />
+        {!showChromePage ? (
           <WorkspacePanelEmpty
             className="workspace-browser-home"
             title={t("workspace.browser.startBrowsing")}
@@ -471,7 +382,7 @@ export function WorkspaceBrowserPanel({
             </button>
           </div>
         ) : null}
-        {!isWebviewReady && showWebview ? (
+        {isLoading && !showChromePage ? (
           <div className="workspace-browser-status" role="status">
             {t("workspace.browser.preparing")}
           </div>
@@ -482,13 +393,13 @@ export function WorkspaceBrowserPanel({
         data-wuu-component="workspace-browser-statusbar"
         aria-live="polite"
       >
-        {showWebview && hostHint ? (
+        {showChromePage && hostHint ? (
           <span className="workspace-browser-host-hint">{hostHint}</span>
         ) : null}
-        {showWebview && pageTitle ? (
+        {showChromePage && pageTitle ? (
           <span className="workspace-browser-title-hint">{pageTitle}</span>
         ) : null}
-        {activity && activity.state !== "stopped" ? (
+        {showingAgentTab && activity && activity.state !== "stopped" ? (
           <span className="workspace-browser-activity">
             <span className={`workspace-browser-activity-state ${activity.controller}`}>
               {browserActivityLabel(activity)}

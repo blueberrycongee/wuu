@@ -394,6 +394,16 @@ const observationCoordinator = new ObservationCoordinator(
   },
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
+browserHostCoordinator.setRendererSink({
+  surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
+  userInput: (payload) => broadcastToAll("wuu:browser-user-input", payload),
+  adopted: (payload) => broadcastToAll("wuu:browser-tab-adopted", payload),
+  presented: () => observationCoordinator.refreshBrowserPresentation(),
+});
+observationCoordinator.setBrowserInPanel((activity) =>
+  activity.kind === "browser" &&
+  browserHostCoordinator.isInPanel(activity.workdir, activity.target || activity.id),
+);
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden or minimized. Its
 // right-click menu disables the setting, which also tears the window down.
@@ -2537,7 +2547,8 @@ app.whenReady().then(async () => {
       payload: {
         workdir: string;
         tabID: string;
-        rect: { x: number; y: number; width: number; height: number };
+        rect: { x: number; y: number; width: number; height: number } | null;
+        force?: boolean;
       },
     ) => {
       if (!ENABLE_EMBEDDED_BROWSER) return { ok: false };
@@ -2549,8 +2560,32 @@ app.whenReady().then(async () => {
         senderWindow as unknown as BrowserParentWindowHandle,
         payload.rect,
         event.sender.getZoomFactor(),
+        payload.force === true,
       );
       return { ok: true };
+    },
+  );
+  ipcMain.handle(
+    "wuu:browser-command",
+    async (
+      _event,
+      payload: { workdir: string; tabID: string; command: string; url?: string },
+    ) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return null;
+      const snapshot = await browserHostCoordinator.runCommand(
+        payload.workdir,
+        payload.tabID,
+        payload.command,
+        payload.url,
+      );
+      return snapshot ?? null;
+    },
+  );
+  ipcMain.handle(
+    "wuu:browser-surface",
+    (_event, payload: { workdir: string; tabID: string }) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return null;
+      return browserHostCoordinator.surface(payload.workdir, payload.tabID) ?? null;
     },
   );
   // Renderer full-window overlay/modal appeared over the agent view — hide the

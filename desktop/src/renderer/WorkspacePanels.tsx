@@ -184,6 +184,7 @@ export function WorkspaceRightPanel({
   onToggleGlobalize,
   canExitGlobalized = true,
   browserActivity,
+  browserOverlaySuppressed = false,
   onBrowserActivityTakeover,
   onBrowserActivityRelease,
   onBrowserActivityStop,
@@ -225,6 +226,7 @@ export function WorkspaceRightPanel({
   onToggleGlobalize: () => void;
   canExitGlobalized?: boolean;
   browserActivity?: ActivitySession;
+  browserOverlaySuppressed?: boolean;
   onBrowserActivityTakeover?: () => void;
   onBrowserActivityRelease?: () => void;
   onBrowserActivityStop?: () => void;
@@ -886,10 +888,12 @@ export function WorkspaceRightPanel({
                 aria-hidden={activeTab?.kind !== "browser"}
               >
                 <WorkspaceBrowserPanel
-                  mounted={open}
+                  visible={open && activeTab?.kind === "browser"}
+                  threadID={terminalThread?.id}
                   activeContext={activeContext}
                   activity={browserActivity}
                   requestedURL={browserNavigation}
+                  overlaySuppressed={browserOverlaySuppressed}
                   onActivityTakeover={onBrowserActivityTakeover}
                   onActivityRelease={onBrowserActivityRelease}
                   onActivityStop={onBrowserActivityStop}

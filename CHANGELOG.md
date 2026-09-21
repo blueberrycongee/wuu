@@ -26,6 +26,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   an explicit `set_visibility(true)`. Background browsing still does not open
   the panel from a chat URL. Set `WUU_ENABLE_BROWSER=0` to hide the tool.
 
+### Changed
+
+- The workspace browser and the agent page are the same tab. Opening the
+  browser shows that page, and the address bar, back, forward, and reload
+  drive it. A pointer travels to the target before a click or scroll is
+  sent. Closing the panel keeps the page in the hidden host.
+
 ### Fixed
 
 - Switching sessions no longer jumps the message stream or replays catch-up

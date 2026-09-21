@@ -1854,18 +1854,14 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 .workspace-browser-frame {
   position: relative;
-  display: flex;
   min-width: 0;
   min-height: 0;
   background: var(--paper);
 }
 
 .workspace-browser-host {
-  position: relative;
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   background: var(--paper);
 }
 
@@ -1915,7 +1911,9 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 }
 
 .workspace-browser-home {
-  flex: 1 1 auto;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   background: var(--paper);
   padding: 24px 12px;
 }

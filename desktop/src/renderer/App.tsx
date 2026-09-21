@@ -1686,8 +1686,10 @@ export function App(): JSX.Element {
   useBrowserVisibility({
     activeThreadID,
     activeBrowserActivity,
-    overlaySuppressed: browserOverlaySuppressed,
     onOpenBrowser: () => openWorkspaceTool("browser"),
+    onCloseBrowser: () => {
+      if (workspaceActiveViewTabID === "browser") setRightPanelOpenWithMotion(false);
+    },
     onInvalidateWorkdir: (workdir) =>
       setActivitySessions((current) =>
         clearActivitiesForWorkdir(current, workdir),
@@ -5911,6 +5913,7 @@ export function App(): JSX.Element {
             workspaceRightPanelDockableWithoutSidebar
           }
           browserActivity={activeBrowserActivity}
+          browserOverlaySuppressed={browserOverlaySuppressed}
           onBrowserActivityTakeover={() => void takeoverBrowserActivity()}
           onBrowserActivityRelease={() => void releaseBrowserActivity()}
           onBrowserActivityStop={() => void stopBrowserActivity()}

@@ -56,7 +56,11 @@ export function isObservableActivity(activity: ActivitySession): boolean {
 // hide the surface but keep the observation so agent control restores it.
 // CUA surfaces stay up: there the user controls the target app itself, not a
 // Wuu panel showing the same pixels.
-export function pipVisibleForActivity(activity: ActivitySession): boolean {
+export function pipVisibleForActivity(activity: ActivitySession, inPanel = false): boolean {
+  // The panel is already showing this page, so the floating mirror would
+  // duplicate it. Foreground and user control also mean the page is meant
+  // to be watched in the panel rather than in the mirror.
+  if (inPanel) return false;
   if (activity.kind !== "browser") return true;
   return activity.state !== "foreground_controlled" && activity.state !== "user_controlled";
 }
@@ -124,6 +128,7 @@ export class ObservationCoordinator {
   private reconcileInFlight = false;
   private activeThreadID: string | undefined;
   private darkAppearance: boolean | undefined;
+  private browserInPanel: ((activity: ActivitySession) => boolean) | undefined;
 
   constructor(
     private readonly registry: WindowRegistry,
@@ -144,6 +149,19 @@ export class ObservationCoordinator {
   setAppearance(dark: boolean): void {
     this.darkAppearance = dark;
     this.current?.pip.setAppearance?.(dark);
+  }
+
+  setBrowserInPanel(check: (activity: ActivitySession) => boolean): void {
+    this.browserInPanel = check;
+  }
+
+  refreshBrowserPresentation(): void {
+    if (!this.current) return;
+    this.current.pip.setVisible(this.pipVisibility(this.current.activity));
+  }
+
+  private pipVisibility(activity: ActivitySession): boolean {
+    return pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
   }
 
   setActiveThread(threadID?: string): void {
@@ -210,7 +228,7 @@ export class ObservationCoordinator {
     const key = observationKey(activity);
     if (this.current?.key === key) {
       this.current.activity = activity;
-      this.current.pip.setVisible(pipVisibleForActivity(activity));
+      this.current.pip.setVisible(this.pipVisibility(activity));
       this.current.pip.setLive?.(activity.state !== "stopped");
       this.current.pip.updateActivity?.(activity);
       this.animateInteractionIfNew(activity, this.current.pip);
@@ -234,7 +252,7 @@ export class ObservationCoordinator {
     this.current = { key, threadID: activity.thread_id, activity, pip, phase: "preparing" };
     pip.start();
     if (this.darkAppearance !== undefined) pip.setAppearance?.(this.darkAppearance);
-    pip.setVisible(pipVisibleForActivity(activity));
+    pip.setVisible(this.pipVisibility(activity));
     pip.setLive?.(activity.state !== "stopped");
     pip.updateActivity?.(activity);
     this.animateInteractionIfNew(activity, pip);

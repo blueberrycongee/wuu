@@ -4,6 +4,8 @@ import {
   boundsChanged,
   browserTabIDForActivity,
   computeForegroundPromotion,
+  computeForegroundRetreat,
+  displayedBrowserTabID,
   isForegroundControlled,
   isMeasurableRect,
   observeBrowserPanelBounds,
@@ -240,6 +242,29 @@ describe("computeForegroundPromotion", () => {
     const result = computeForegroundPromotion(prev, thread, activity({ state: "user_controlled" }));
     expect(result.open).toBe(false);
     expect(result.snapshot.state).toBe("user_controlled");
+  });
+
+  it("uses the agent tab while the activity is alive, otherwise a per-thread tab", () => {
+    expect(displayedBrowserTabID(activity({ state: "background_controlled", target: "tab-1" }), "thread-1")).toBe("tab-1");
+    expect(displayedBrowserTabID(activity({ state: "stopped" }), "thread-1")).toBe("user:thread-1");
+    expect(displayedBrowserTabID(undefined, "thread-1")).toBe("user:thread-1");
+    expect(displayedBrowserTabID(undefined, undefined)).toBeUndefined();
+  });
+
+  it("closes the panel only when the agent hides the page it was showing", () => {
+    const showing = {
+      threadID: "thread-1",
+      activityID: "activity-1",
+      state: "foreground_controlled",
+    };
+    expect(computeForegroundRetreat(showing, "thread-1", activity({ state: "background_controlled" }))).toBe(true);
+    expect(computeForegroundRetreat(showing, "thread-1", activity({ state: "user_controlled" }))).toBe(false);
+    expect(computeForegroundRetreat(showing, "thread-2", activity({ state: "background_controlled" }))).toBe(false);
+    expect(computeForegroundRetreat(
+      { threadID: "thread-1", activityID: "activity-1", state: "user_controlled" },
+      "thread-1",
+      activity({ state: "background_controlled" }),
+    )).toBe(false);
   });
 
   it("does not open when there is no activity", () => {

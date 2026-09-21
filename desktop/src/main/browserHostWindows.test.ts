@@ -55,6 +55,15 @@ class FakeView implements BrowserViewHandle {
   readonly backgroundThrottlingChanges: boolean[] = [];
   zoomFactor = 1;
   readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+  readonly scripts: string[] = [];
+  back = false;
+  forward = false;
+  loading = false;
+  goBackCount = 0;
+  goForwardCount = 0;
+  reloadCount = 0;
+  stopCount = 0;
+  windowOpenHandler: ((details: { url?: string }) => { action: "deny" } | { action: "allow" }) | undefined;
   closed = false;
 
   readonly debuggerHandle: BrowserDebuggerHandle = {
@@ -67,6 +76,9 @@ class FakeView implements BrowserViewHandle {
     isAttached: () => this.attached,
     sendCommand: async (method, params) => {
       this.sentCommands.push({ method, params });
+      if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchKeyEvent") {
+        for (const listener of this.listeners.get("before-mouse-event") ?? []) listener();
+      }
       const responder = this.responders.get(method);
       return responder ? responder(params) : {};
     },
@@ -79,7 +91,27 @@ class FakeView implements BrowserViewHandle {
       this.backgroundThrottling = allowed;
       this.backgroundThrottlingChanges.push(allowed);
     },
-    setWindowOpenHandler: () => undefined,
+    setWindowOpenHandler: (handler: (details: { url?: string }) => { action: "deny" } | { action: "allow" }) => {
+      this.windowOpenHandler = handler;
+    },
+    canGoBack: () => this.back,
+    canGoForward: () => this.forward,
+    goBack: () => {
+      this.goBackCount += 1;
+    },
+    goForward: () => {
+      this.goForwardCount += 1;
+    },
+    reload: () => {
+      this.reloadCount += 1;
+    },
+    stop: () => {
+      this.stopCount += 1;
+    },
+    isLoading: () => this.loading,
+    executeJavaScript: async (code: string) => {
+      this.scripts.push(code);
+    },
     setZoomFactor: (factor: number) => {
       this.zoomFactor = factor;
     },
@@ -587,6 +619,109 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     harness.coordinator.reportBounds("/repo", "t1", window, rect, 1.25);
     expect(view.boundsSet).toEqual({ x: 126, y: 64, width: 1001, height: 751 });
     expect(view.zoomFactor).toBe(1);
+  });
+
+  it("does not paint a tab until the panel reports a rectangle", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-early"),
+    );
+    expect(harness.mainWindow.added).toContain(view);
+    expect(view.visibleState).toBe(false);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(false);
+  });
+
+  it("parks the tab when the panel reports an empty rectangle", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    harness.coordinator.reportBounds("/repo", "t1", window, { x: 8, y: 9, width: 200, height: 100 }, 1);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(true);
+
+    harness.coordinator.reportBounds("/repo", "t1", window, null, 1);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(false);
+    expect(harness.mainWindow.removed).toContain(view);
+  });
+
+  it("ignores a late rectangle after hide until the panel asks again", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    const rect = { x: 4, y: 6, width: 300, height: 180 };
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1);
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: false }, "vis-hide"),
+    );
+    const addedAfterHide = harness.mainWindow.added.length;
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1);
+    expect(harness.mainWindow.added).toHaveLength(addedAfterHide);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(false);
+
+    harness.coordinator.reportBounds("/repo", "t1", window, rect, 1, true);
+    expect(harness.coordinator.isInPanel("/repo", "t1")).toBe(true);
+    expect(view.boundsSet).toEqual(rect);
+  });
+
+  it("reports a click in the panel and ignores one dispatched for the agent", async () => {
+    const harness = makeHarness();
+    const userInput: string[] = [];
+    harness.coordinator.setRendererSink({
+      surface: () => undefined,
+      userInput: (payload) => userInput.push(payload.tabID),
+      adopted: () => undefined,
+      presented: () => undefined,
+    });
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
+    harness.coordinator.reportBounds("/repo", "t1", window, { x: 1, y: 2, width: 80, height: 60 }, 1);
+
+    view.listeners.get("before-mouse-event")?.[0]?.();
+    expect(userInput).toEqual(["t1"]);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest(
+        "browser/cdp",
+        { workdir: "/repo", tab_id: "t1", method: "click", params: { x: 3, y: 4 } },
+        "click-1",
+      ),
+    );
+    expect(userInput).toEqual(["t1"]);
+  });
+
+  it("adopts a page-opened window as another tab", async () => {
+    const harness = makeHarness();
+    const adopted: string[] = [];
+    harness.coordinator.setRendererSink({
+      surface: () => undefined,
+      userInput: () => undefined,
+      adopted: (payload) => adopted.push(payload.tabID),
+      presented: () => undefined,
+    });
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.windowOpenHandler?.({ url: "https://example.com/next" });
+    await vi.waitFor(() => expect(adopted).toHaveLength(1));
+    expect(harness.views).toHaveLength(2);
+    expect(harness.views[1].loadedURLs).toContain("https://example.com/next");
+    expect(adopted[0].startsWith("popup-t1-")).toBe(true);
+  });
+
+  it("navigates through the same tab the panel is showing", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.back = true;
+    const snapshot = await harness.coordinator.runCommand("/repo", "t1", "navigate", "https://example.com/page");
+    expect(view.loadedURLs).toContain("https://example.com/page");
+    expect(snapshot?.url).toBe("https://example.com/page");
+    expect(snapshot?.tabID).toBe("t1");
+    await harness.coordinator.runCommand("/repo", "t1", "back");
+    expect(view.goBackCount).toBe(1);
   });
 });
 
