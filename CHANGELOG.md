@@ -388,6 +388,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   original identifiers or numeric precision.
 - Positioned Collaboration message history before paint to avoid a visible scroll
   jump on entry, while preserving the reading position during message updates.
+- Recovered external-engine conversations whose saved agent session can no longer
+  be loaded, instead of failing every later turn: the turn continues in a new
+  agent session and says so in the transcript. Applied to the ACP engines and
+  OpenCode, and the agent's stderr tail now accompanies a failed turn so the
+  cause (an unconfigured provider, a refused sign-in) is visible.
+- Applied the unconfined permission mode to an ACP engine's own no-prompts mode
+  when it advertises one, so an agent such as Devin no longer keeps a default
+  that auto-accepts edits behind Wuu's approval path.
 
 ## [2026.9.2] - 2026-09-15
 
