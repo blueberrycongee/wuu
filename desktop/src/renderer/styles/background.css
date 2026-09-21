@@ -27,6 +27,14 @@ html[data-app-background] :is(
   background: transparent;
 }
 
+/* The rule above punches through the primary plugin page so artwork can
+   continue under it. That also reveals the empty-session greeting and the
+   dock composer, which share the pane. Restore an opaque canvas here; the
+   later rule wins on equal specificity. */
+html[data-app-background] .plugin-workbench-view-primary {
+  background: var(--wuu-color-canvas, var(--paper));
+}
+
 /* :is() cannot wrap pseudo-elements. The dock covers paint the strip below the
  * rounded composer, so they keep a paper fill that would cut the image short
  * at the bottom of the conversation. */

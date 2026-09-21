@@ -270,6 +270,7 @@ import {
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
+import { usePrimaryPluginViewCover } from "./PrimaryPluginViewCover";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
@@ -2260,11 +2261,13 @@ export function App(): JSX.Element {
     }
     return entries;
   }, [turns]);
+  const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const mainConversationDockVisible =
     Boolean(state.initialized) &&
     !splitConversation &&
     !showingManagementCatalog &&
-    !rightPanelGlobalized;
+    !rightPanelGlobalized &&
+    !showingPrimaryPluginView;
 
   // The account-based phone app keeps visible session navigation alongside swipes.
   const composerNavigation = !phoneNavigation && compactNavigation && isTouchWebShell() &&
@@ -5477,6 +5480,7 @@ export function App(): JSX.Element {
       <main
         inert={rightPanelOpen && rightPanelGlobalized}
         data-wuu-component="conversation-pane"
+        data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
         data-composer-navigation={composerNavigation || undefined}
         className={`conversation-pane${ENABLE_GROUP_CHAT && appMode === "collaboration" && collaborationSection === "rooms" ? " collaboration-room-pane" : ""}${environmentPanelVisible ? " environment-panel-visible" : ""}${
           appMode === "harness" && environmentPanelReserved ? " environment-panel-reserved" : ""
@@ -5676,6 +5680,7 @@ export function App(): JSX.Element {
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}
+            inert={showingPrimaryPluginView}
             onScroll={(event) => handleConversationScroll(event.currentTarget)}
             ref={conversationScrollRef}
           >
@@ -5774,6 +5779,7 @@ export function App(): JSX.Element {
                     />
                   </div>
                 ) : emptyConversation ? (
+              showingPrimaryPluginView ? null : (
               <EmptyConversationHome
                 title={emptyThreadTitle}
                 // A draft lowers the greeting mascot’s gaze toward the composer.
@@ -5783,6 +5789,7 @@ export function App(): JSX.Element {
                     : "idle"
                 }
               />
+              )
             ) : (
               <CachedConversationPanes
                 threadIDs={cachedThreadPaneIDs}

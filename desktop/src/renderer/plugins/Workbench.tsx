@@ -484,27 +484,19 @@ export function DesktopWorkbench({
   }, [controller, inventory]);
 
   const portals = viewRegions.flatMap((region) => {
+    const visible = visibleWorkbenchView(snapshot, region);
+    if (!visible) return [];
     const views = snapshot.views.filter((view) => view.region === region);
-    if (views.length === 0) return [];
-    const activeId = snapshot.activeViewByRegion[region] ?? views[views.length - 1]?.id;
-    if (activeId === HIDDEN_REGION_VIEW_ID) return [];
-    const active = views.find((view) => view.id === activeId) ?? views[views.length - 1];
-    if (!active) return [];
-    const definition = snapshot.viewTypes.find((view) =>
-      view.pluginId === active.pluginId
-      && view.id === active.viewTypeId
-      && view.generation === active.generation);
-    if (!definition) return [];
     return [
       <WorkbenchRegionPortal
-        key={`${region}:${active.id}:${active.generation}`}
+        key={`${region}:${visible.view.id}:${visible.view.generation}`}
         region={region}
       >
         <WorkbenchView
-          key={`${active.id}:${active.generation}`}
+          key={`${visible.view.id}:${visible.view.generation}`}
           controller={controller}
-          definition={definition}
-          view={active}
+          definition={visible.definition}
+          view={visible.view}
           siblingViews={views}
         />
       </WorkbenchRegionPortal>,
@@ -816,6 +808,25 @@ export class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProp
 
 const viewRegions: readonly ViewPlacementRegion[] = ["navigation", "primary", "auxiliary", "inspector", "settings", "overlay"];
 const HIDDEN_REGION_VIEW_ID = "__wuu_hidden_region__";
+
+/** The view DesktopWorkbench actually portals, or undefined when that region is closed. */
+export function visibleWorkbenchView(
+  snapshot: WorkbenchSnapshot,
+  region: ViewPlacementRegion,
+): { view: WorkbenchViewState; definition: RegisteredViewType } | undefined {
+  const views = snapshot.views.filter((view) => view.region === region);
+  if (views.length === 0) return undefined;
+  const activeId = snapshot.activeViewByRegion[region] ?? views[views.length - 1]?.id;
+  if (activeId === HIDDEN_REGION_VIEW_ID) return undefined;
+  const view = views.find((item) => item.id === activeId) ?? views[views.length - 1];
+  if (!view) return undefined;
+  const definition = snapshot.viewTypes.find((item) =>
+    item.pluginId === view.pluginId
+    && item.id === view.viewTypeId
+    && item.generation === view.generation);
+  if (!definition) return undefined;
+  return { view, definition };
+}
 
 function resolveRegionTarget(region: ViewPlacementRegion): Element | null {
   if (region === "overlay") return document.body;

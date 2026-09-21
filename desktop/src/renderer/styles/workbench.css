@@ -40,6 +40,19 @@
   height: 100%;
 }
 
+/* Conversation layers share this pane with the primary plugin page. Hide them
+   so the empty-session greeting and dock composer cannot show through or take
+   focus while that page is open. */
+.conversation-pane[data-primary-plugin-view] > :is(
+  .scroll-region,
+  .dock-composer-wrap,
+  .jump-to-latest-cluster,
+  .conversation-turn-rail
+) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .plugin-workbench-view-header {
   display: flex;
   min-height: 38px;

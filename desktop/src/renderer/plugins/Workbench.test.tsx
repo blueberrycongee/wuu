@@ -11,7 +11,7 @@ import {
 } from "../../shared/workbench";
 import { RichContent } from "../RichContent";
 import { desktopPluginHost } from "./DesktopPluginRuntime";
-import { DesktopWorkbench, WorkbenchController } from "./Workbench";
+import { DesktopWorkbench, visibleWorkbenchView, WorkbenchController } from "./Workbench";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 describe("WorkbenchController", () => {
@@ -123,13 +123,16 @@ describe("WorkbenchController", () => {
     const revealed = await controller.openPluginView("product", "dashboard", { region: "primary" });
     expect(revealed).toBe(first);
     expect(controller.getSnapshot().views).toHaveLength(1);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")?.view.id).toBe(first);
 
     controller.deactivateRegion("primary");
     expect(controller.getSnapshot().views).toHaveLength(1);
     expect(controller.getSnapshot().activeViewByRegion.primary).not.toBe(first);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
 
     expect(await controller.openPluginView("product", "dashboard", { region: "primary" })).toBe(first);
     expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")?.view.id).toBe(first);
     controller.dispose();
   });
 

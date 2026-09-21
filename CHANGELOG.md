@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Opening Automations, or another primary plugin page, no longer lets the
+  empty-session wallpaper, greeting, or composer show through that page.
+
 - The conversation titlebar no longer draws a line along its bottom edge.
 
 - Dragging the macOS window frame no longer resamples the under-window
