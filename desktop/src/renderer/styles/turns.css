@@ -306,6 +306,10 @@
 }
 
 .user-message {
+  /* Grow with the text until --user-message-max-width, then wrap. */
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   align-self: flex-end;
   --wuu-inline-code-background: color-mix(
     in srgb,
@@ -433,6 +437,11 @@
 
 .user-message-block .user-message {
   max-width: 100%;
+}
+
+.user-message.user-message-long-card,
+.user-message.long-card {
+  width: 100%;
 }
 
 .user-message-long-card {
