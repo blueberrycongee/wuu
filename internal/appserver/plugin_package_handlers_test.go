@@ -393,7 +393,7 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	active := &threadState{ID: "active", admissionReserved: true}
 	srv := &Server{rt: rt, threads: map[string]*threadState{"active": active}}
 
-	if _, err := srv.beginPluginGenerationMutation("change", pluginGenerationMutationActivation); err == nil {
+	if _, err := srv.beginPluginGenerationMutation("change", pluginGenerationMutationExclusive); err == nil {
 		t.Fatal("mutation unexpectedly admitted while a thread reservation was active")
 	}
 	if srv.pluginGenerationMutation.Load() {
@@ -401,7 +401,7 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	}
 
 	active.admissionReserved = false
-	release, err := srv.beginPluginGenerationMutation("change", pluginGenerationMutationActivation)
+	release, err := srv.beginPluginGenerationMutation("change", pluginGenerationMutationExclusive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,6 +430,21 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	}
 }
 
+func TestLivePluginPolicyMutationIsAllowedWhileTurnRuns(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	active := &threadState{ID: "active", admissionReserved: true, running: true}
+	srv := &Server{rt: rt, threads: map[string]*threadState{"active": active}}
+	release, err := srv.beginPluginGenerationMutation("change", pluginGenerationMutationLive)
+	if err != nil {
+		t.Fatalf("live policy change blocked by a running turn: %v", err)
+	}
+	release()
+	if _, err := srv.beginPluginGenerationMutation("remove", pluginGenerationMutationExclusive); err == nil {
+		t.Fatal("exclusive removal unexpectedly admitted while a turn was running")
+	}
+}
+
 func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
@@ -447,7 +462,7 @@ func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing
 	thread.running = true
 	thread.releaseThreadExecutionLeaseLocked()
 	thread.mu.Unlock()
-	if _, err := mutatingServer.beginPluginGenerationMutation("change", pluginGenerationMutationActivation); err == nil {
+	if _, err := mutatingServer.beginPluginGenerationMutation("change", pluginGenerationMutationExclusive); err == nil {
 		t.Fatal("mutation unexpectedly crossed another app-server's active turn generation")
 	}
 
@@ -455,7 +470,7 @@ func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing
 	thread.running = false
 	thread.maybeReleasePluginGenerationExecutionLeaseLocked()
 	thread.mu.Unlock()
-	release, err := mutatingServer.beginPluginGenerationMutation("change", pluginGenerationMutationActivation)
+	release, err := mutatingServer.beginPluginGenerationMutation("change", pluginGenerationMutationExclusive)
 	if err != nil {
 		t.Fatalf("mutation remained blocked after execution release: %v", err)
 	}

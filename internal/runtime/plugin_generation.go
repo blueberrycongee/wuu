@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -24,10 +25,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-// PluginGeneration is a complete, inactive replacement for the plugin-owned
-// surfaces of a Session. It owns every process and private package snapshot.
-// Its resources form an ordered ledger that close retires in reverse,
-// recording a structured revocation report.
+// PluginGeneration is a complete replacement for the plugin-owned surfaces of a
+// Session. It owns every process and private package snapshot. Live policy
+// changes publish a new generation for later conversations; already-started
+// conversations keep a reference until they rebuild. Close retires resources
+// in reverse ownership order and records a structured revocation report.
 type PluginGeneration struct {
 	id                string
 	settings          config.Config
@@ -47,6 +49,10 @@ type PluginGeneration struct {
 	// table; executions registered here route only to this generation's
 	// kernel services.
 	driverGateways *driverGatewayTable
+	// refs counts the live Session plus any ThreadRuntime still bound to this
+	// generation. A retired generation stays open until the last conversation
+	// that started against it is released.
+	refs atomic.Int32
 }
 
 // PreflightExtensions discovers and builds a replacement without changing the
@@ -229,15 +235,18 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		s.persistRevocationReport(generation)
 		return nil, err
 	}
+	generation.retain()
 	return generation, nil
 }
 
 // ActivatePluginGeneration swaps a prebuilt candidate into the Session as a
 // transaction: runtime activation is validated first, then live bindings are
 // applied, then commit persists policy, and only then is the candidate
-// published and the old generation retired. Any failure before publication
-// restores the old bindings, closes the candidate, and returns the error; a
-// failed candidate never touches the current generation.
+// published. Conversations that already pinned the previous generation keep
+// using it until they rebuild; the old generation is retired after those
+// references are released. Any failure before publication restores the old
+// live bindings, closes the candidate, and returns the error; a failed
+// candidate never touches the current generation.
 func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit func() error) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
@@ -266,11 +275,80 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGeneration = candidate
-	if err := old.close(); err != nil {
+	candidate.retain()
+	// Conversations that already pinned the previous generation keep using it
+	// until they rebuild. The Session reference is released here; remaining
+	// thread runtimes keep the processes and tools alive.
+	s.releasePluginGenerationLocked(old)
+	return nil
+}
+
+func (g *PluginGeneration) retain() {
+	if g == nil {
+		return
+	}
+	g.refs.Add(1)
+}
+
+// Release drops one conversation or Session reference. It returns true when
+// this call retired the generation. Revocation persistence belongs to the
+// Session helper when a live Session is available.
+func (g *PluginGeneration) Release() bool {
+	if g == nil {
+		return false
+	}
+	remaining := g.refs.Add(-1)
+	if remaining > 0 {
+		return false
+	}
+	if remaining < 0 {
+		g.refs.Store(0)
+	}
+	if err := g.close(); err != nil {
 		providers.DebugLogf("plugin generation cleanup: %v", err)
 	}
-	s.persistRevocationReport(old)
-	return nil
+	return true
+}
+
+func (s *Session) RetainPluginGeneration() *PluginGeneration {
+	return s.retainPluginGeneration()
+}
+
+func (s *Session) retainPluginGeneration() *PluginGeneration {
+	if s == nil {
+		return nil
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	generation := s.pluginGeneration
+	if generation == nil {
+		return nil
+	}
+	generation.retain()
+	return generation
+}
+
+func (s *Session) ReleasePluginGeneration(generation *PluginGeneration) {
+	s.releasePluginGeneration(generation)
+}
+
+func (s *Session) releasePluginGeneration(generation *PluginGeneration) {
+	if s == nil || generation == nil {
+		return
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	s.releasePluginGenerationLocked(generation)
+}
+
+func (s *Session) releasePluginGenerationLocked(generation *PluginGeneration) {
+	if generation == nil {
+		return
+	}
+	closed := generation.Release()
+	if closed {
+		s.persistRevocationReport(generation)
+	}
 }
 
 func (s *Session) capturePluginGeneration() *PluginGeneration {
@@ -296,6 +374,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	if s.StreamRunner != nil {
 		generation.compactions = s.StreamRunner.CompactionRegistry
 	}
+	generation.retain()
 	return generation
 }
 
@@ -314,11 +393,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.CompactionRegistry = generation.compactions
 	}
-	if s.HookDispatcher == nil {
-		s.HookDispatcher = generation.hooks
-	} else if s.HookDispatcher != generation.hooks {
-		s.HookDispatcher.Replace(generation.hooks)
-	}
+	s.HookDispatcher = generation.hooks
 	s.Skills = append([]skills.Skill(nil), generation.skills...)
 	if s.Toolkit != nil {
 		s.Toolkit.SetSkills(s.Skills)

@@ -1059,9 +1059,8 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	var detached detachedThreadRuntime
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
-		pluginGenerationMismatch := !s.threadRuntimePluginGenerationMatches(th)
 		profileMismatch := th.NamedAgentID != "" && existing.ExecutionProfile != runtime.CollaborationRuntimeVersion
-		if th.pendingRuntimeReset || selectionMismatch || pluginGenerationMismatch || profileMismatch {
+		if th.pendingRuntimeReset || selectionMismatch || profileMismatch {
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
@@ -1089,7 +1088,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	collaborationSessionRef := strings.TrimSpace(th.CollaborationSessionRef)
 	th.mu.Unlock()
 	if detached.runtime != nil || detached.subscription != nil {
-		releaseDetachedThreadRuntime(detached)
+		s.releaseDetachedThreadRuntime(detached)
 	}
 	if existing != nil {
 		return existing, nil
@@ -1404,6 +1403,17 @@ func (s *Server) subscribeThreadRuntime(threadID string, threadRuntime *runtime.
 	return sub
 }
 
+func (s *Server) releaseThreadRuntime(th *threadState) {
+	if th == nil {
+		return
+	}
+	th.mu.Lock()
+	detached := detachThreadRuntimeLocked(th)
+	th.maybeReleasePluginGenerationExecutionLeaseLocked()
+	th.mu.Unlock()
+	s.releaseDetachedThreadRuntime(detached)
+}
+
 func releaseThreadRuntime(th *threadState) {
 	if th == nil {
 		return
@@ -1436,7 +1446,23 @@ func detachThreadRuntimeLocked(th *threadState) detachedThreadRuntime {
 	return detached
 }
 
+func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
+	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
+		generation := detached.runtime.PluginGeneration
+		detached.runtime.PluginGeneration = nil
+		if s != nil && s.rt != nil {
+			s.rt.ReleasePluginGeneration(generation)
+		}
+	}
+	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+}
+
 func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
+	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
+		generation := detached.runtime.PluginGeneration
+		detached.runtime.PluginGeneration = nil
+		generation.Release()
+	}
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
 }
 

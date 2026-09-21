@@ -892,7 +892,7 @@ func (s *Server) Close() {
 		s.waitForOwnedShutdown(threads, controls)
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
-			releaseThreadRuntime(th)
+			s.releaseThreadRuntime(th)
 		}
 		s.closeNamedAgentMCP()
 		if s.channelService != nil {

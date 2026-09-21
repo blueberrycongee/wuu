@@ -314,7 +314,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 			return nil, fmt.Errorf("session execution runtime %q is unavailable", binding.RuntimeVersion)
 		}
 		if binding.Primary && binding.Purpose == channels.CollaborationSessionConversation {
-			orientation += fmt.Sprintf("\n\nYour continuing session_ref is %s. Each wake identifies the active room for this turn. You can send several public bubbles in this same turn with chat_send and continue working between them. Your normal final answer becomes an additional bubble in that room unless its text was already sent. If your public messages have fully answered the user and no work remains, end without another reply. Keep internal coordination private.", binding.SessionRef)
+			orientation += fmt.Sprintf("\n\nYour continuing session_ref is %s. Each wake identifies the active room for this turn. Publish with chat_send; assistant text stays private. You can send several public bubbles in this same turn and continue working between them. If the room already has the complete answer, end without another reply. Keep internal coordination private.", binding.SessionRef)
 		} else {
 			orientation += fmt.Sprintf("\n\nYour session_ref is %s, your room_id is %s, and your session purpose is %s. Use the current request and relevant task state to determine your objective.", binding.SessionRef, binding.RoomID, binding.Purpose)
 		}
@@ -329,7 +329,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 			}
 		}
 		if !binding.Primary && isRoomConversation(binding, agent) {
-			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Your normal final answer is automatically delivered to this room under your identity. For a conversational reply with several thoughts, send short bubbles as they are ready with sequential chat_send calls in this same turn. Your final answer can be the last bubble. If the complete answer was already sent, end without another reply. Each successful send is already visible; continue with new content. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
+			orientation += fmt.Sprintf("\n\nThis session is your public conversation in room %s. Only chat_send publishes there; assistant text stays private. For several complete thoughts, send short bubbles sequentially in this same turn. If the complete answer was already sent, end without another reply. Each successful send is already visible; continue with new content. Reasoning, tool details and independent worker-session results remain private. When waiting for delegated work, briefly tell the room what is underway, then finish the turn to release capacity.", binding.RoomID)
 		}
 	}
 
@@ -342,11 +342,11 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 	}
 	chatAgent, err := s.bindCollaborationPrincipal(context.Background(), agent, strings.TrimSpace(collaborationSessionRef))
 	if err != nil {
-		releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
+		s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, err
 	}
 	if threadRuntime.Toolkit == nil {
-		releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
+		s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, errors.New("named agent toolkit is unavailable")
 	}
 	threadRuntime.Toolkit.SetChatAgent(chatAgent)
@@ -354,7 +354,7 @@ func (s *Server) newAgentExecutionRuntimeForSession(threadID, collaborationSessi
 		threadRuntime, agentHome, agent.MemoryDir,
 		orientation,
 	); err != nil {
-		releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
+		s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, err
 	}
 	s.attachNamedAgentRoomContext(threadRuntime, agent.ID)
@@ -743,5 +743,5 @@ Durable deliveries may be included in the wake input. They identify the actual s
 
 For substantial or continuing work, use chat_task and chat_work to retain the goal, authorization, evidence, decisions and unfinished items. When a recorded task has execution sessions, pass its ID as session work_id so its cancellation, goal revision and budget apply to that work. Session management retains links and return addresses; your memory keeps useful context across compaction. A casual exchange does not need bookkeeping. When the goal changes, update the responsibility and recheck earlier results. If an operation fails, inspect what actually happened before retrying, especially commits, publishing and other external effects. Repeated failure or exhausted limits requires a concrete blocker and saved progress, not an unbounded retry loop.
 
-Use chat_send to publish each conversational bubble immediately; it does not end your turn. Send bubbles sequentially and use each committed message.seq as the next basis_seq. Obtain the initial current room sequence through chat_check or chat_read when needed. The final answer is another public bubble, so use it for remaining new content rather than repeating earlier bubbles; when everything has been delivered, end without another reply. Public replies through chat_send (or collaboration_send target_kind=room) require a fresh basis_seq. If a send is held because someone spoke meanwhile, read the delta and revise or discard that draft before composing the next bubble; a held draft was not delivered. Avoid repeated agreement and preserve useful disagreement with evidence. Never post through human-only APIs or impersonate another identity.`, identity, filepath.Dir(agent.MemoryDir), agent.MemoryDir)
+Use chat_send to publish each conversational bubble immediately; it does not end your turn. Assistant text is private and is not posted. Send bubbles sequentially and use each committed message.seq as the next basis_seq. Obtain the initial current room sequence through chat_check or chat_read when needed. When everything useful has been sent, end without another reply. Public replies through chat_send (or collaboration_send target_kind=room) require a fresh basis_seq. If a send is held because someone spoke meanwhile, read the delta and revise or discard that draft before composing the next bubble; a held draft was not delivered. Avoid repeated agreement and preserve useful disagreement with evidence. Never post through human-only APIs or impersonate another identity.`, identity, filepath.Dir(agent.MemoryDir), agent.MemoryDir)
 }

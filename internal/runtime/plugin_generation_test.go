@@ -270,6 +270,34 @@ func TestSuccessfulCandidateSwapsThenClosesOldGeneration(t *testing.T) {
 	}
 }
 
+func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T) {
+	oldClient := &generationClient{id: "old"}
+	old := testPluginGeneration("old", oldClient)
+	session := testGenerationSession(old)
+	pinned := session.RetainPluginGeneration()
+	if pinned != old {
+		t.Fatal("session did not pin the current generation")
+	}
+	candidateClient := &generationClient{id: "candidate"}
+	candidate := testPluginGeneration("candidate", candidateClient)
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if session.PluginHost != candidate.host {
+		t.Fatal("candidate was not published as the live generation")
+	}
+	if oldClient.closed {
+		t.Fatal("pinned conversation generation was closed during the swap")
+	}
+	if candidateClient.closed {
+		t.Fatal("live candidate was closed")
+	}
+	session.ReleasePluginGeneration(pinned)
+	if !oldClient.closed {
+		t.Fatal("pinned generation survived after the last conversation released it")
+	}
+}
+
 func TestPluginGenerationNeedsRecoveryOnlyAfterActiveRuntimeFails(t *testing.T) {
 	started := time.Now().UTC()
 	for _, test := range []struct {
@@ -430,6 +458,9 @@ func TestNewSessionDoesNotDiscoverPluginsDuringMutation(t *testing.T) {
 }
 
 func testGenerationSession(generation *PluginGeneration) *Session {
+	if generation != nil && generation.refs.Load() == 0 {
+		generation.retain()
+	}
 	return &Session{
 		PluginHost:       generation.host,
 		HookDispatcher:   hooks.NewDispatcher(nil),

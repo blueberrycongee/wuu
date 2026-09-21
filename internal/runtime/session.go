@@ -296,6 +296,11 @@ type ThreadRuntime struct {
 	// ExecutionProfile identifies the execution contract used to construct the
 	// runtime. A profile change requires a new runtime rather than hook mutation.
 	ExecutionProfile string
+	// PluginGeneration is the plugin host, hooks, MCP, and capabilities this
+	// conversation started against. Enable/disable publishes a new generation for
+	// later conversations; this pointer keeps the previous one alive until the
+	// runtime is released.
+	PluginGeneration *PluginGeneration
 }
 
 // ThreadModelSelection is the model choice persisted with one conversation.
@@ -887,6 +892,7 @@ func NewSession(opts Options) (*Session, error) {
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
+	runtimeSession.pluginGeneration.retain()
 	// The legacy/root control remains dormant until SetSessionID binds its real
 	// artifact directories. Per-thread controls created by NewThreadRuntime are
 	// likewise started only after app-server installs their terminal finalizer.
@@ -1302,6 +1308,13 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	if s.StreamRunner == nil {
 		return nil, fmt.Errorf("stream runner is required")
 	}
+	generation := s.retainPluginGeneration()
+	releasedGeneration := false
+	defer func() {
+		if !releasedGeneration {
+			s.releasePluginGeneration(generation)
+		}
+	}()
 	threadRoot := strings.TrimSpace(rootDir)
 	if threadRoot == "" {
 		threadRoot = s.RootDir
@@ -1361,7 +1374,11 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetStateDir(stateDir)
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetProcessManager(threadProcessManager)
-		kit.SetSkills(s.Skills)
+		skills := s.Skills
+		if generation != nil {
+			skills = generation.skills
+		}
+		kit.SetSkills(skills)
 		ConfigureToolkitPermissions(kit, s.Permissions)
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
@@ -1441,7 +1458,11 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				HarnessDir:                     filepath.Join(artifactDir, "harness"),
 				WorkerSysPrompt:                workerBaseSystemPrompt,
 				WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, s.Skills), nil
+					skills := s.Skills
+					if generation != nil {
+						skills = generation.skills
+					}
+					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, skills), nil
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
 					workerKit, err := kit.CloneForRoot(workerRoot)
@@ -1462,7 +1483,11 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					}
 					workerKit.SetStateDir(workerStateDir)
 					workerKit.SetProcessManager(threadProcessManager)
-					workerKit.SetSkills(s.Skills)
+					skills := s.Skills
+					if generation != nil {
+						skills = generation.skills
+					}
+					workerKit.SetSkills(skills)
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
 					workerKit.SetSessionDir(artifactDir)
@@ -1474,11 +1499,19 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				},
 				WorkerWakeAuthority: workerWakeAuthority(kit),
 				OnSubagentStart: func(ctx context.Context, agentID string) error {
-					_, err := s.HookDispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
+					dispatcher := s.HookDispatcher
+					if generation != nil && generation.hooks != nil {
+						dispatcher = generation.hooks
+					}
+					_, err := dispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
 					return err
 				},
 				OnSubagentStop: func(ctx context.Context, agentID string) error {
-					_, err := s.HookDispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
+					dispatcher := s.HookDispatcher
+					if generation != nil && generation.hooks != nil {
+						dispatcher = generation.hooks
+					}
+					_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
 					return err
 				},
 				ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
@@ -1494,7 +1527,13 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			agentControl = control
 		}
 		kit.SetAgentControl(agentControl)
-		toolExecutor = newPluginAwareToolExecutor(kit, s.PluginHost, s.HookDispatcher, id, "", threadRoot)
+		pluginHost := s.PluginHost
+		pluginHooks := s.HookDispatcher
+		if generation != nil {
+			pluginHost = generation.host
+			pluginHooks = generation.hooks
+		}
+		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, pluginHooks, id, "", threadRoot)
 	}
 
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
@@ -1511,8 +1550,21 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	// cumulative conversation on every step. Keep the optional runner contract
 	// available for explicit diagnostics, but do not persist receipts by default.
 	runner.BeforeRequestContext = RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(kit))
-	runner.BeforeModelStep = pluginPreStepInjector(s.PluginHost, s.ProviderName, s.Model, id, threadRoot)
-	runner.BeforeRequest = pluginRequestInterceptor(s.PluginHost, s.ProviderName, id, threadRoot)
+	pluginHost := s.PluginHost
+	if generation != nil {
+		pluginHost = generation.host
+		if runner.CompactionRegistry == nil {
+			runner.CompactionRegistry = generation.compactions
+		}
+		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
+			runner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
+				return generation.driverGateways
+			})
+		}
+	}
+	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
+	runner.BeforeRequest = pluginRequestInterceptor(pluginHost, s.ProviderName, id, threadRoot)
+	releasedGeneration = true
 	return &ThreadRuntime{
 		StreamRunner:      runner,
 		Toolkit:           kit,
@@ -1521,6 +1573,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		ActivityRegistry:  s.ActivityRegistry,
 		ModelBudget:       s.ModelBudget,
 		WorkerModelBudget: s.WorkerModelBudget,
+		PluginGeneration:  generation,
 		// Direct callers get the session's own identity as the stamp;
 		// NewThreadRuntimeForRootModel overwrites it with the thread's
 		// requested selection so reuse comparisons stay in thread terms.
@@ -1980,9 +2033,10 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	}
 	s.pluginGenerationMu.Lock()
 	if s.pluginGeneration != nil {
-		cleanupErr = errors.Join(cleanupErr, s.pluginGeneration.close())
+		generation := s.pluginGeneration
 		s.pluginGeneration = nil
 		s.PluginHost = nil
+		s.releasePluginGenerationLocked(generation)
 	} else if s.Toolkit != nil {
 		if manager := s.Toolkit.MCPManager(); manager != nil {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())

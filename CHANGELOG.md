@@ -28,6 +28,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Plugins can be enabled or disabled while a conversation is running. Later
+  conversations use the new generation; a conversation that already started
+  keeps the generation it pinned until it rebuilds. Removing a plugin still
+  waits until running work finishes.
+
 - Clicking a field or control no longer paints an extra outline. A focus ring
   appears only when moving focus with the keyboard.
 

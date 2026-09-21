@@ -102,7 +102,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 	removed := s.threads[id]
 	delete(s.threads, id)
 	s.mu.Unlock()
-	releaseThreadRuntime(removed)
+	s.releaseThreadRuntime(removed)
 
 	// Everything past this point is best-effort cleanup: the session row
 	// (and its cascaded history) is already gone, so a failing worktree or

@@ -852,7 +852,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	releaseMutation, err := s.beginPluginGenerationMutation("change", pluginGenerationMutationActivation)
+	releaseMutation, err := s.beginPluginGenerationMutation("change", pluginGenerationMutationLive)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -911,7 +911,6 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	}
 	s.rt.SetExtensionSettings(&persistedSettings)
 	s.schedulePluginTurnLifecycleReplay()
-	s.resetThreadRuntimesForGeneralSettings("")
 	return s.writeResponse(req.ID, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, nil)
 }
 
@@ -953,7 +952,7 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	releaseMutation, err := s.beginPluginGenerationMutation("refresh", pluginGenerationMutationActivation)
+	releaseMutation, err := s.beginPluginGenerationMutation("refresh", pluginGenerationMutationLive)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -961,7 +960,6 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.resetThreadRuntimesForGeneralSettings("")
 	return s.writeResponse(req.ID, ExtensionCatalogRefreshResult{
 		ExtensionInventory: s.currentExtensionInventory(),
 		Skills:             skillSummaries(s.rt.Skills),
@@ -1995,7 +1993,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 	thread := th.snapshotLocked()
 	th.mu.Unlock()
 	if detached.runtime != nil || detached.subscription != nil {
-		releaseDetachedThreadRuntime(detached)
+		s.releaseDetachedThreadRuntime(detached)
 	}
 	return s.notifyThreadUpdated(thread)
 }
@@ -2038,7 +2036,7 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	}
 	s.mu.Unlock()
 	for _, detached := range releases {
-		releaseDetachedThreadRuntime(detached)
+		s.releaseDetachedThreadRuntime(detached)
 	}
 }
 

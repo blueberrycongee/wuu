@@ -27,7 +27,7 @@ wuu plugin approve my-plugin
 
 The current local updater stages a replacement fingerprint and leaves the installed generation in place until it is accepted. Check the pending update in the detail page. A package whose content changed can require a refreshed trust decision; do not assume that copying new files has activated them.
 
-Disable a package to stop its contributions without removing its files. Remove it when it is no longer needed:
+Disable a package to stop its contributions for later conversations without removing its files. A conversation that is already running keeps the generation it started with. Remove it when it is no longer needed:
 
 ```bash
 wuu plugin disable my-plugin

@@ -192,7 +192,7 @@ func TestPluginMutationDoesNotInterruptCollaborationSessions(t *testing.T) {
 		thread.mu.Unlock()
 	}()
 	for _, mutating := range []*Server{executing, {rt: rt, threads: map[string]*threadState{}}} {
-		release, err := mutating.beginPluginGenerationMutation("change", pluginGenerationMutationActivation)
+		release, err := mutating.beginPluginGenerationMutation("change", pluginGenerationMutationLive)
 		if err != nil {
 			t.Fatalf("ordinary plugin change was blocked by collaboration: %v", err)
 		}

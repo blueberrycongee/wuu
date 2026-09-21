@@ -245,8 +245,12 @@ func (s *Session) ConfigureCollaborationTools(thread *ThreadRuntime, id string) 
 		return
 	}
 	thread.StreamRunner.Tools = thread.Toolkit
-	if s.PluginHost != nil && !thread.Toolkit.IsRoomAgent() {
-		thread.StreamRunner.Tools = &pluginToolExecutor{inner: thread.Toolkit, host: s.PluginHost, threadID: id, cwd: thread.Toolkit.RootDir(), scope: "collaboration"}
+	host := s.PluginHost
+	if thread.PluginGeneration != nil && thread.PluginGeneration.host != nil {
+		host = thread.PluginGeneration.host
+	}
+	if host != nil && !thread.Toolkit.IsRoomAgent() {
+		thread.StreamRunner.Tools = &pluginToolExecutor{inner: thread.Toolkit, host: host, threadID: id, cwd: thread.Toolkit.RootDir(), scope: "collaboration"}
 	}
 }
 
