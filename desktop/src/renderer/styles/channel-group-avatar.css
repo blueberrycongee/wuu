@@ -41,10 +41,46 @@
 
 .channel-group-avatar-cell .agent-avatar-mark,
 .channel-group-avatar-cell .default-avatar,
-.channel-group-avatar-cell .default-avatar svg {
+.channel-group-avatar-cell .default-avatar svg,
+.channel-group-avatar-stack-cell .agent-avatar-mark,
+.channel-group-avatar-stack-cell .default-avatar,
+.channel-group-avatar-stack-cell .default-avatar svg {
   width: 100%;
   height: 100%;
   display: block;
   border-radius: 0;
   object-fit: cover;
+}
+
+/* Sidebar-sized group marks overlap two faces in the same slot as a
+ * single mascot. The mosaic grid stays for room headers. */
+.channel-group-avatar-stack {
+  display: grid;
+  width: 100%;
+  height: 100%;
+}
+
+.channel-group-avatar-stack-cell {
+  box-sizing: border-box;
+  grid-area: 1 / 1;
+  width: 72%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-circle);
+  box-shadow: 0 0 0 1px var(--surface-1);
+}
+
+.channel-group-avatar-stack-cell:first-child {
+  justify-self: start;
+  align-self: start;
+}
+
+.channel-group-avatar-stack-cell:last-child {
+  justify-self: end;
+  align-self: end;
+}
+
+.channel-group-avatar-stack[data-stack-count="1"] .channel-group-avatar-stack-cell {
+  width: 100%;
+  box-shadow: none;
 }

@@ -43,6 +43,7 @@ afterEach(() => { act(() => root.unmount()); host.remove(); });
 it("mixes recent groups and DMs, keeps new agents reachable, and opens each target exactly once", () => {
   render();
   expect(rows().map((row) => row.querySelector("strong")?.textContent)).toEqual(["Design", "Alpha", "Beta"]);
+  expect(host.querySelector(".channel-group-avatar-stack")).not.toBeNull();
   expect(rows()[0].textContent).toContain("3");
   expect(rows()[1].getAttribute("aria-current")).toBe("page");
   act(() => rows()[1].click());

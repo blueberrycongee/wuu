@@ -30,11 +30,7 @@ function MemberAvatar({ member, agent }: { member: ChannelRoomMember; agent?: Na
   return <HumanAvatarMark />;
 }
 
-export function ChannelGroupAvatar({ room, agents }: { room: ChannelRoom; agents: NamedAgent[] }): JSX.Element {
-  if (room.avatar_image) {
-    return <img className="channel-group-avatar-image" src={room.avatar_image} alt="" aria-hidden="true" />;
-  }
-
+function visibleGroupMembers(room: ChannelRoom): ChannelRoomMember[] {
   const visibleMembers = [...room.members]
     .sort((left, right) => {
       const joinedOrder = left.joined_at.localeCompare(right.joined_at);
@@ -43,10 +39,40 @@ export function ChannelGroupAvatar({ room, agents }: { room: ChannelRoom; agents
       return left.member_id.localeCompare(right.member_id);
     })
     .slice(0, MAX_GROUP_AVATAR_MEMBERS);
-  const members = visibleMembers.length > 0
+  return visibleMembers.length > 0
     ? visibleMembers
     : [{ room_id: room.id, member_type: "human" as const, member_id: "local-user", joined_at: room.created_at }];
+}
+
+export function ChannelGroupAvatar({
+  room,
+  agents,
+  layout = "grid",
+}: {
+  room: ChannelRoom;
+  agents: NamedAgent[];
+  /** Sidebar rows overlap two faces in the shared glyph slot. Room headers keep the mosaic grid. */
+  layout?: "grid" | "stack";
+}): JSX.Element {
+  if (room.avatar_image) {
+    return <img className="channel-group-avatar-image" src={room.avatar_image} alt="" aria-hidden="true" />;
+  }
+
+  const members = visibleGroupMembers(room);
   const agentByID = new Map(agents.map((agent) => [agent.id, agent]));
+  if (layout === "stack") {
+    const stacked = members.slice(0, 2);
+    return (
+      <span className="channel-group-avatar-stack" data-stack-count={stacked.length} aria-hidden="true">
+        {stacked.map((member) => (
+          <span className="channel-group-avatar-stack-cell" key={`${member.member_type}:${member.member_id}`}>
+            <MemberAvatar member={member} agent={agentByID.get(member.member_id)} />
+          </span>
+        ))}
+      </span>
+    );
+  }
+
   const rowSizes = groupAvatarRowSizes(members.length);
   const style = {
     "--channel-group-columns": Math.max(...rowSizes),

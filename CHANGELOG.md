@@ -44,6 +44,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Size desktop sidebar row marks — navigation, plugins, collaboration avatars,
+  folders, and heading plus buttons — to one glyph column and the UI type scale.
+
 - Show pasted text in a user message as one attachment row — file icon, the first
   line of the paste as its title, and the collapse control — instead of repeating
   a "pasted text" label and a character count under it.

@@ -69,7 +69,7 @@ export function CollaborationConversationRow({
         onClick={onSelect}>
         <span className="collaboration-contact-avatar" aria-hidden="true">
           {agent ? <AgentAvatarMark seed={agent.id} avatarKey={agent.avatar_key} avatarImage={agent.avatar_image} status={avatarThinking ? "thinking" : "idle"} motion="expressive" />
-            : room ? <ChannelGroupAvatar room={room} agents={agents} /> : null}
+            : room ? <ChannelGroupAvatar room={room} agents={agents} layout="stack" /> : null}
         </span>
         {collapsed && unread > 0 ? <span className="collaboration-rail-unread" aria-hidden="true">{unread > 99 ? "99+" : unread}</span> : null}
         <span className="collaboration-contact-copy">

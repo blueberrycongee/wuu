@@ -48,9 +48,11 @@
   height: var(--icon-size);
   flex-shrink: 0;
 }
-.sidebar :where(button, a) > svg.lucide, .settings-sidebar :where(button, a) > svg.lucide {
+.sidebar :where(button:not(.sidebar-functional-action), a) > :is(svg.lucide, svg[data-icon], .plugin-icon-themed, .plugin-icon-asset),
+.settings-sidebar :where(button:not(.sidebar-functional-action), a) > :is(svg.lucide, svg[data-icon], .plugin-icon-themed, .plugin-icon-asset) {
   width: var(--sidebar-primary-icon-size);
   height: var(--sidebar-primary-icon-size);
+  flex-shrink: 0;
 }
 pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-content pre.rich-code,

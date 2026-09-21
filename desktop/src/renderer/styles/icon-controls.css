@@ -20,10 +20,17 @@
   --control-icon-size: var(--icon-size-sm);
 }
 
-/* Sidebar actions share the navigation glyph scale, including nested project
- * actions. Utility classes must not make pin/archive smaller than new-thread. */
-:is(.sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button) {
+/* Row actions share the navigation glyph scale. Utility classes must not
+ * make pin/archive smaller than new-thread. */
+:is(.sidebar-row-icon-button, .sidebar-notifications-button) {
   --control-icon-size: var(--sidebar-primary-icon-size);
+}
+
+/* Section heading + sits beside the disclosure chevron, which is xs.
+ * Matching that mark keeps the trailing accessory column from reading
+ * larger than the heading it belongs to. */
+.sidebar-functional-action {
+  --control-icon-size: var(--icon-size-xs);
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
@@ -39,7 +46,7 @@
 /* Increase sparse glyphs' span, inversely scaling their stroke so the rendered
  * line weight stays equal to enclosed glyphs at every appearance scale. */
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button, .sidebar-functional-action) > svg.lucide-plus {
+    .sidebar-row-icon-button) > svg.lucide-plus {
   width: calc(var(--control-icon-size) * 10 / 9);
   height: calc(var(--control-icon-size) * 10 / 9);
   stroke-width: calc(var(--control-icon-stroke) * 0.9);

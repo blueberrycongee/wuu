@@ -334,10 +334,11 @@
   --sidebar-row-pad-x: var(--control-padding-inline);
   --sidebar-label-weight: 400;
   --sidebar-selected-weight: 500;
-  --sidebar-label-size: var(--conversation-message-font-size, 13px);
+  --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, calc(var(--sidebar-label-size) - 2px));
   --sidebar-row-height: max(32px, calc(var(--sidebar-label-size) * 2.25));
-  /* One icon and text axis for navigation, projects, and account controls. */
+  /* One icon and text axis for navigation, plugins, collaboration, projects,
+   * and account controls. Avatars occupy this same glyph slot. */
   --sidebar-primary-icon-size: 16px;
   --sidebar-nav-icon-col: 18px;
   --sidebar-nav-column-gap: 10px;
@@ -899,8 +900,8 @@
 .sidebar-notifications-button svg {
   position: relative;
   z-index: 1;
-  width: 19px;
-  height: 19px;
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
   stroke-width: var(--icon-stroke);
   transform-origin: 50% 15%;
 }
@@ -1271,24 +1272,25 @@
 
 .collaboration-sidebar-section,
 .sidebar-functional-group[data-functional-group-id="pinned"] {
-  --collaboration-contact-avatar-size: 24px;
+  --collaboration-contact-avatar-size: var(--sidebar-primary-icon-size);
 }
 
 .collaboration-sidebar-section .collaboration-contact-row,
 .sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-row {
   width: 100%;
   min-height: var(--sidebar-row-height);
+  height: auto;
+  grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
   column-gap: var(--sidebar-nav-column-gap);
-  padding: 4px var(--sidebar-row-pad-x);
+  padding: 0.35em var(--sidebar-row-pad-x);
 }
 
-/* Shared rows keep a 24px slot so names stay put. Round mascots only
- * paint 78 of their 100-unit canvas, so the silhouette sat right of the
- * 16px nav glyphs. Hang that painted edge from the glyph's left edge. */
+/* Identity marks share the nav glyph column so names sit on the same
+ * axis as folders, plugins, and primary navigation. */
 .collaboration-sidebar-section .collaboration-contact-avatar,
 .sidebar-functional-group[data-functional-group-id="pinned"] .collaboration-contact-avatar {
-  justify-self: start;
-  margin-inline-start: calc(var(--collaboration-contact-avatar-size) * ((78 / 100) - 1) / 2);
+  justify-self: center;
+  margin-inline-start: 0;
 }
 
 .collaboration-contact-row {
@@ -1538,9 +1540,12 @@
   grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
 }
 
-.nav-item > svg {
+.nav-item > :is(svg, .plugin-icon-themed, .plugin-icon-asset) {
   grid-column: 1;
   justify-self: center;
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+  flex-shrink: 0;
 }
 
 .nav-item > span {
@@ -2009,8 +2014,8 @@
 }
 
 .sidebar-functional-action > svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
 }
 
 .project-list {
