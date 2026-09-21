@@ -1,4 +1,4 @@
-import { act, createRef, useState, type ReactNode } from "react";
+import { act, createRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,9 +17,13 @@ import {
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let unreadViewOpen = false;
+let attentionStickyIDs = new Set<string>();
 
 beforeEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
+  unreadViewOpen = false;
+  attentionStickyIDs = new Set();
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -94,7 +98,6 @@ interface RenderOptions {
 // replace the whole workbench, such as settings), so the harness owns the flag
 // here and hands AppSidebar the same controlled props it gets in production.
 function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
-  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
   const {
     expandedSidebarSectionIDs = new Set(),
     projectThreadsByProjectID = {},
@@ -158,7 +161,16 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onOpenChannels={() => {}}
       onMarkThreadsViewed={() => {}}
       unreadViewOpen={unreadViewOpen}
-      onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
+      onToggleUnreadView={() => {
+        unreadViewOpen = !unreadViewOpen;
+        renderSidebar(options);
+      }}
+      attentionStickyIDs={attentionStickyIDs}
+      onAttentionStickyIDsChange={(ids) => {
+        if (ids === attentionStickyIDs) return;
+        attentionStickyIDs = ids;
+        renderSidebar(options);
+      }}
       onToggleConversationSearch={() => {}}
       onSelectThread={onSelectThread}
       onTogglePinned={() => {}}
@@ -251,6 +263,62 @@ describe("AppSidebar layout", () => {
     expect(target.getAttribute("aria-busy")).toBe("true");
     act(() => bell.click());
     expect(currentTitles()).toEqual([threads[1].title]);
+  });
+
+  it("keeps an opened unread session in the attention view after it is marked read", () => {
+    const unread: ThreadSummary = {
+      id: "unread-session",
+      title: "Unread session",
+      cwd: "/repo/wuu",
+      workspace_id: "project-1",
+      status: "completed",
+      pinned: false,
+      archived: false,
+      created_at: "2026-09-17T00:00:00Z",
+      updated_at: "2026-09-17T00:00:00Z",
+      preview: "",
+      model_provider: "test",
+      model: "test",
+      turns: [{ id: "turn-1", status: "completed" }],
+      turn_count: 1,
+    };
+    const idle: ThreadSummary = {
+      ...unread,
+      id: "idle-session",
+      title: "Idle session",
+      status: "idle",
+      updated_at: "2026-09-18T00:00:00Z",
+      turns: [],
+      turn_count: 0,
+    };
+    const options: RenderOptions = {
+      expandedSidebarSectionIDs: new Set(["project-1"]),
+      projectThreadsByProjectID: { "project-1": [unread, idle] },
+    };
+    renderSidebar(options);
+    act(() => container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!.click());
+    expect(container.querySelector("#sidebar-unread-heading")?.nextElementSibling?.textContent).toContain(unread.title);
+    expect(container.querySelector("#sidebar-recent-heading")).toBeNull();
+
+    renderSidebar({
+      ...options,
+      activeThreadID: unread.id,
+      state: {
+        ...initialState,
+        initialized: initialized(),
+        activeContext: {
+          kind: "project",
+          project_id: "project-1",
+          cwd: "/repo/wuu",
+        },
+        lastViewedTurnByThreadID: { [unread.id]: "turn-1" },
+      },
+    });
+    expect(container.querySelector("#sidebar-unread-heading")).toBeNull();
+    expect(container.querySelector("#sidebar-recent-heading")?.nextElementSibling?.textContent).toContain(unread.title);
+    expect(container.querySelector('[aria-current="page"] .thread-row-title')?.textContent).toBe(unread.title);
+    expect(container.querySelector(".sidebar-unread-view")?.textContent).not.toContain(idle.title);
+    expect(container.querySelector(".sidebar-notifications-button")?.dataset.hasUnread).toBeUndefined();
   });
 
   it("lets a navigation presenter replace the complete production sidebar root", async () => {

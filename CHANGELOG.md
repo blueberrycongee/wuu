@@ -20,6 +20,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The desktop sidebar bell keeps recently opened conversations visible while
+  the attention view stays open, instead of dropping them as soon as they are
+  marked read. The bell badge still counts only running and unread sessions.
+
 - The composer access menu maps Standard, Read only, and Unconfined onto ACP
   agents' advertised permission modes, and hides Read only when the agent
   does not publish a distinct plan or read-only setting.

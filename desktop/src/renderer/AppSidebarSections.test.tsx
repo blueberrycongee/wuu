@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attentionStickyThreadIDs,
   partitionAttentionThreads,
   reconcileSidebarSectionOrder,
   reorderSidebarSections,
@@ -39,6 +40,7 @@ describe("partitionAttentionThreads", () => {
 
     expect(attention.running.map(({ id }) => id)).toEqual(["running"]);
     expect(attention.unread.map(({ id }) => id)).toEqual(["unread"]);
+    expect(attention.recent).toEqual([]);
   });
 
   it("includes the active running session without treating an active settled session as unread", () => {
@@ -64,6 +66,7 @@ describe("partitionAttentionThreads", () => {
       "background-running",
     ]);
     expect(settledAttention.unread).toEqual([]);
+    expect(settledAttention.recent).toEqual([]);
   });
 
   it("keeps running sessions in place while their stream advances updated_at", () => {
@@ -113,6 +116,35 @@ describe("partitionAttentionThreads", () => {
       "newer",
       "older",
     ]);
+  });
+
+  it("keeps opened sessions in recent without treating them as unread", () => {
+    const unread = thread({ id: "unread", updated_at: "2026-01-03T00:00:00Z" });
+    const opened = thread({ id: "opened", updated_at: "2026-01-02T00:00:00Z" });
+    const idle = thread({
+      id: "idle",
+      updated_at: "2026-01-04T00:00:00Z",
+      turns: [],
+      turn_count: 0,
+    });
+    const sticky = attentionStickyThreadIDs(
+      [unread, opened, idle],
+      opened.id,
+      undefined,
+      { opened: "turn-1" },
+    );
+
+    const attention = partitionAttentionThreads(
+      [unread, opened, idle],
+      opened.id,
+      undefined,
+      { opened: "turn-1" },
+      sticky,
+    );
+
+    expect([...sticky].sort()).toEqual(["opened", "unread"]);
+    expect(attention.unread.map(({ id }) => id)).toEqual(["unread"]);
+    expect(attention.recent.map(({ id }) => id)).toEqual(["opened"]);
   });
 });
 

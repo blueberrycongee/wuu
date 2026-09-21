@@ -553,6 +553,7 @@ export function App(): JSX.Element {
   // state: settings and account replace the whole workbench tree, so the flag
   // has to live above it for the user to come back to the view they left.
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
+  const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
   const sidebarDrawerMode = compactNavigation || sidebarCollapsed;
   const {
     sidebarDrawerPhase,
@@ -5291,6 +5292,8 @@ export function App(): JSX.Element {
             }}
             unreadViewOpen={unreadViewOpen}
             onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
+            attentionStickyIDs={attentionStickyIDs}
+            onAttentionStickyIDsChange={setAttentionStickyIDs}
             onToggleConversationSearch={toggleConversationSearch}
             onSelectThread={(id) => {
               openHarnessView();
