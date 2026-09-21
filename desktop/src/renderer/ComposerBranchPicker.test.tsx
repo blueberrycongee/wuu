@@ -46,7 +46,8 @@ describe("composer branch picker", () => {
     render({ onSelect });
     expect(branchButton("main").getAttribute("aria-checked")).toBe("true");
     expect(branchButton("main").disabled).toBe(true);
-    expect(branchButton("main").textContent).toContain(t("composer.branchDirtyFiles", { count: 3 }));
+    expect(branchButton("main").title).toBe("main");
+    expect(branchButton("main").textContent).toContain("main");
     input(t("environment.searchBranches"), "FEATURE/ONE");
     expect(document.querySelectorAll('[role="menuitemradio"]')).toHaveLength(1);
     act(() => { branchButton("feature/one").click(); branchButton("feature/one").click(); });

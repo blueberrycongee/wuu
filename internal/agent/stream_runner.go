@@ -1417,6 +1417,9 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		partialToolRuntime := currentToolRuntime()
 		if partialToolRuntime != nil {
 			partialToolRuntime.Cancel()
+			if !partialToolRuntime.HasStartedWork() {
+				partialToolRuntime = nil
+			}
 		}
 		partial := StepResult{
 			Content:          contentBuf.String(),

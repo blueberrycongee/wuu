@@ -141,6 +141,17 @@ func (r *TurnToolRuntime) ObserveStreamEvent(ctx context.Context, event provider
 	return r.ledgerErr
 }
 
+// HasStartedWork reports whether this runtime has observed or started any tool
+// calls. An idle ledger-backed runtime is not partial model output.
+func (r *TurnToolRuntime) HasStartedWork() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.runs) > 0 || r.batchID != ""
+}
+
 // Cancel stops any in-flight streaming-started work and prevents additional
 // stream-prefix starts for this runtime.
 func (r *TurnToolRuntime) Cancel() {

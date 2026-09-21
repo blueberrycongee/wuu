@@ -76,6 +76,8 @@ type ToolSurfaceFreezer interface {
 //   - Output truncation is treated as a completed model response with
 //     FinishReason=length. The caller/UI can surface that reason without
 //     classifying the turn as a user interruption or transport failure.
+//     The usage tracker is raised to the hard window so the next request
+//     preflights a smaller payload instead of waiting for another 400.
 //   - Executes any tool calls the model requested, recording results
 //     as tool messages and (if configured) emitting them through
 //     OnToolResult so callers can render them live.
@@ -176,6 +178,7 @@ func RunToolLoop(
 		overflowCompacted     bool
 		overflowTrimmed       bool
 		overflowTrimRequested bool
+		preflightCompacted    bool
 		proactiveSuppressed   bool
 		historyRewritten      bool
 		// Tracks current context fill so we can decide whether to
@@ -404,7 +407,9 @@ func RunToolLoop(
 			}
 			usage.RecordPendingMessages(injected)
 		}
-		hardContextRollover := freshContextEnabled && threshold > 0 && usage.EstimateCurrent() >= threshold
+		hardWindow := hardContextWindowTokens(cfg)
+		hardContextRollover := freshContextEnabled && ((threshold > 0 && usage.EstimateCurrent() >= threshold) ||
+			(hardWindow > 0 && usage.EstimateCurrent() >= hardWindow))
 		attemptFreshContext := newContextRequested || hardContextRollover
 		if !attemptFreshContext {
 			tryProactiveCompact()
@@ -743,9 +748,38 @@ func RunToolLoop(
 			}
 		}
 
+		if !preflightCompacted && !overflowCompacted {
+			if window := hardContextWindowTokens(cfg); window > 0 && pessimisticOutboundRequestTokens(req) >= window {
+				preflightCompacted = true
+				if freshContextEnabled {
+					cfg.FreshContextTokens = reactiveFreshContextTarget(cfg.FreshContextTokens,
+						usage.LastSuccessfulRequestTokensForContract(requestUsageContract), estimateOutboundRequestTokens(req))
+					postToolContextSegments = consumedPostToolSegments
+					newContextRequested = true
+					continue
+				}
+				if effectiveCompact != nil && !proactiveSuppressed && canProactivelyCompact(messages, cfg) {
+					runCompactPass(CompactReasonProactive, false)
+					if historyRewritten {
+						postToolContextSegments = consumedPostToolSegments
+						continue
+					}
+				}
+				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
+					resetTranscript(trimmed)
+					postToolContextSegments = consumedPostToolSegments
+					continue
+				}
+			}
+		}
+
 		result, err := step.Execute(ctx, req)
 		lastAgentOperationID = req.Operation.ID
 		if err != nil {
+			if promptTokens, windowTokens := providers.ContextOverflowCounts(err); promptTokens > 0 {
+				usage.ObserveProviderOverflow(promptTokens, windowTokens)
+			}
+			canRecoverOverflow := providers.IsContextOverflow(err) && stepResultHasNoPartialOutput(result)
 			// Context window exceeded — try a one-shot compaction of
 			// older history and re-issue. Provider-agnostic; the
 			// CompactFn carries whatever client/model knowledge it
@@ -755,15 +789,19 @@ func RunToolLoop(
 			// request would erase that partial answer from durable history (and can
 			// duplicate what the user already saw). Preserve it through the normal
 			// error path below; reactive compaction is safe only before output.
-			if freshContextEnabled && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			if freshContextEnabled && canRecoverOverflow && !overflowCompacted {
 				overflowCompacted = true
+				failedRequestTokens := estimateOutboundRequestTokens(req)
+				if promptTokens, _ := providers.ContextOverflowCounts(err); promptTokens > failedRequestTokens {
+					failedRequestTokens = promptTokens
+				}
 				cfg.FreshContextTokens = reactiveFreshContextTarget(cfg.FreshContextTokens,
-					usage.LastSuccessfulRequestTokensForContract(requestUsageContract), estimateOutboundRequestTokens(req))
+					usage.LastSuccessfulRequestTokensForContract(requestUsageContract), failedRequestTokens)
 				postToolContextSegments = consumedPostToolSegments
 				newContextRequested = true
 				continue
 			}
-			if freshContextEnabled && providers.IsContextOverflow(err) && overflowCompacted && !overflowTrimmed && stepResultHasNoPartialOutput(result) {
+			if freshContextEnabled && canRecoverOverflow && overflowCompacted && !overflowTrimmed {
 				if _, ok := forceTrimOverflowHistory(messages); ok {
 					// Use the normal window transaction so archival, request
 					// validation, checkpoint commit, and rollback still apply.
@@ -776,13 +814,16 @@ func RunToolLoop(
 				// Fresh-context already consumed the one overflow retry.
 				// If trim cannot shrink the request, surface the overflow
 				// instead of sending the same overflowing payload again.
-			} else if effectiveCompact != nil && providers.IsContextOverflow(err) && !overflowCompacted && stepResultHasNoPartialOutput(result) {
+			} else if effectiveCompact != nil && canRecoverOverflow && !overflowCompacted {
 				overflowCompacted = true // gate first; never retry twice
 				usageBefore := usage.Breakdown()
 				before := usageBefore.Total()
 				msgsBefore := len(messages)
 				lastSuccessfulTokens := usage.LastSuccessfulRequestTokensForContract(requestUsageContract)
 				failedRequestTokens := estimateOutboundRequestTokens(req)
+				if promptTokens, _ := providers.ContextOverflowCounts(err); promptTokens > failedRequestTokens {
+					failedRequestTokens = promptTokens
+				}
 				targetTotalTokens := reactiveCompactTarget(threshold, lastSuccessfulTokens)
 				if cfg.OnCompactStart != nil {
 					cfg.OnCompactStart(CompactReasonOverflow)
@@ -911,6 +952,11 @@ func RunToolLoop(
 			// occupies the context window like any other message and must
 			// count toward the compaction estimate.
 			usage.RecordResponseForContract(requestUsageContract, result.Usage)
+		}
+		if result.Truncated || result.FinishReason == providers.FinishReasonLength {
+			if window := hardContextWindowTokens(cfg); window > 0 {
+				usage.ObserveProviderOverflow(window, window)
+			}
 		}
 		if err := providers.ValidateAssistantToolCalls(result.ToolCalls); err != nil {
 			return LoopResult{
@@ -1320,7 +1366,7 @@ func stepResultHasNoPartialOutput(result StepResult) bool {
 		strings.TrimSpace(result.ProviderItemID) == "" &&
 		len(result.ReasoningBlocks) == 0 &&
 		len(result.ToolCalls) == 0 &&
-		result.ToolRuntime == nil
+		!result.ToolRuntime.HasStartedWork()
 }
 
 func compactChanged(before, after []providers.ChatMessage) bool {

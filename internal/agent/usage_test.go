@@ -158,3 +158,18 @@ func TestUsageTracker_Reset(t *testing.T) {
 		t.Fatalf("expected last 0 after Reset, got %d", got)
 	}
 }
+
+func TestUsageTracker_ObserveProviderOverflowRaisesBaseline(t *testing.T) {
+	tr := NewUsageTracker()
+	tr.RecordResponse(&providers.TokenUsage{InputTokens: 452352})
+	tr.ObserveProviderOverflow(500056, 500000)
+	if got := tr.LastResponseTotal(); got != 500056 {
+		t.Fatalf("last response = %d, want provider overflow count", got)
+	}
+	if got := tr.EstimateCurrent(); got < 500056 {
+		t.Fatalf("estimate = %d, want at least the provider overflow count", got)
+	}
+	if tr.Breakdown().Adjustment != UsageAdjustmentProviderOverflow {
+		t.Fatalf("adjustment = %q, want %q", tr.Breakdown().Adjustment, UsageAdjustmentProviderOverflow)
+	}
+}

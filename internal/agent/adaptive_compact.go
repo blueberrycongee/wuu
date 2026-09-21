@@ -16,6 +16,13 @@ import (
 const (
 	observedCompactSafetyDivisor = 5
 	observedCompactMinMargin     = 4_000
+	// outboundRequestSafetyNumerator/Denominator inflate local request
+	// estimates before comparing them to a hard provider window. Grok-4.6
+	// counted a long JSON-heavy history about 10% denser than the local
+	// estimator; 23/20 (15%) keeps a buffer without waiting for another
+	// tokenizer calibration.
+	outboundRequestSafetyNumerator   = 23
+	outboundRequestSafetyDenominator = 20
 )
 
 type compactBudgetHint struct {
@@ -113,6 +120,19 @@ func reactiveCompactTarget(threshold, lastSuccessful int) int {
 		target = observedTarget
 	}
 	return target
+}
+
+func hardContextWindowTokens(cfg LoopConfig) int {
+	window := cfg.MaxContextTokens
+	if cfg.MaxInputTokens > 0 && (window <= 0 || cfg.MaxInputTokens < window) {
+		window = cfg.MaxInputTokens
+	}
+	return window
+}
+
+func pessimisticOutboundRequestTokens(req providers.ChatRequest) int {
+	tokens := estimateOutboundRequestTokens(req)
+	return tokens*outboundRequestSafetyNumerator/outboundRequestSafetyDenominator + 1
 }
 
 func estimateOutboundRequestTokens(req providers.ChatRequest) int {

@@ -51,6 +51,12 @@ import type {
   RuntimeContext
 } from "../shared/protocol";
 import { FloatingMenuPortal, isInsideFloatingMenu } from "./ComposerFloatingMenu";
+import {
+  ComposerPickerCard,
+  ComposerPickerList,
+  ComposerPickerRow,
+  ComposerPickerSearch
+} from "./ComposerPickerCard";
 import type { ComposerSlashCommand } from "./ComposerSlashCommands";
 import type {
   CodexModelLoadState,
@@ -1538,7 +1544,8 @@ export function ProjectPickerMenu({
   onSelectProject,
   onSelectNoProject,
   onCreateProject,
-  onOpenProject
+  onOpenProject,
+  onDismiss
 }: {
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -1548,6 +1555,7 @@ export function ProjectPickerMenu({
   onSelectNoProject: () => void;
   onCreateProject: () => void;
   onOpenProject: () => void;
+  onDismiss: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -1556,38 +1564,25 @@ export function ProjectPickerMenu({
     : projects;
 
   return (
-    <div className="composer-project-menu" role="menu">
-      <label className="menu-search project-search">
-        <Search className="icon-lg" />
-        <input value={query} placeholder={t("runtime.searchProjects")} onChange={(event) => setQuery(event.target.value)} />
-      </label>
-      <div className="project-picker-list">
-        {filteredProjects.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingProjects")}</div> : null}
-        {filteredProjects.map((project) => {
-          const selected = activeContext?.kind === "project" && activeContext.project_id === project.id;
-          return (
-            <button key={project.id} type="button" role="menuitem" onClick={() => onSelectProject(project.id)}>
-              <Folder className="icon-lg" />
-              <span>{project.name}</span>
-              {selected ? <Check className="icon-lg" /> : null}
-            </button>
-          );
-        })}
-      </div>
+    <ComposerPickerCard label={t("composer.projectMenu")} onDismiss={onDismiss}>
+      <ComposerPickerSearch label={t("runtime.searchProjects")} value={query} onChange={setQuery} />
+      <ComposerPickerList empty={filteredProjects.length === 0} emptyMessage={t("runtime.noMatchingProjects")}>
+        {filteredProjects.map((project) => (
+          // The checked project row stays actionable: picking the current
+          // project returns to a fresh draft in it, unlike the checked branch
+          // row, whose checkout would repeat the current branch.
+          <ComposerPickerRow key={project.id} icon={<Folder />} label={project.name}
+            selected={activeContext?.kind === "project" && activeContext.project_id === project.id}
+            onSelect={() => onSelectProject(project.id)} />
+        ))}
+      </ComposerPickerList>
       <div className="project-picker-divider" />
-      <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenProject}>
-        <FolderOpen className="icon-lg" />
-        <span>{t("runtime.useExistingFolder")}</span>
-      </button>
-      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateProject}>
-        <FolderPlus className="icon-lg" />
-        <span>{t("runtime.createBlankProject")}</span>
-      </button>
-      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onSelectNoProject}>
-        <FolderX className="icon-lg" />
-        <span>{t("runtime.noProject")}</span>
-        {activeContext?.kind === "no_project" ? <Check className="icon-lg" /> : null}
-      </button>
-    </div>
+      <ComposerPickerRow icon={<FolderOpen />} label={t("runtime.useExistingFolder")}
+        disabled={!hostSupports("chooseProjectFolder")} onSelect={onOpenProject} />
+      <ComposerPickerRow icon={<FolderPlus />} label={t("runtime.createBlankProject")}
+        disabled={!hostSupports("createBlankProject")} onSelect={onCreateProject} />
+      <ComposerPickerRow icon={<FolderX />} label={t("runtime.noProject")}
+        selected={activeContext?.kind === "no_project"} onSelect={onSelectNoProject} />
+    </ComposerPickerCard>
   );
 }

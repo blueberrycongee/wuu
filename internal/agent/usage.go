@@ -61,6 +61,7 @@ const (
 	UsageAdjustmentExternalRewriteEstimate   UsageAdjustment = "external_rewrite_estimate"
 	UsageAdjustmentCompactionRewriteEstimate UsageAdjustment = "compaction_rewrite_estimate"
 	UsageAdjustmentRuntimeRebuildSeed        UsageAdjustment = "runtime_rebuild_seed"
+	UsageAdjustmentProviderOverflow          UsageAdjustment = "provider_overflow"
 )
 
 // UsageBreakdown is an atomic snapshot of the values behind EstimateCurrent.
@@ -193,6 +194,26 @@ func (t *UsageTracker) PendingDelta() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.pendingDelta
+}
+
+// ObserveProviderOverflow raises the tracker to a provider-reported overflow
+// count so the next request does not keep trusting an undercount.
+func (t *UsageTracker) ObserveProviderOverflow(promptTokens, windowTokens int) {
+	if t == nil || promptTokens <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if promptTokens > t.lastResponseTotal {
+		t.lastResponseTotal = promptTokens
+	}
+	if promptTokens > t.lastSuccessfulRequestTokens {
+		t.lastSuccessfulRequestTokens = promptTokens
+	}
+	if windowTokens > 0 && promptTokens > windowTokens && t.pendingDelta < promptTokens-windowTokens {
+		t.pendingDelta = promptTokens - windowTokens
+	}
+	t.adjustment = UsageAdjustmentProviderOverflow
 }
 
 // SeedGroundTruth primes the tracker with a persisted retained-context total

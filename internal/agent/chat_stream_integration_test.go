@@ -96,6 +96,10 @@ func runChatStream(t *testing.T, body string, failAfterExecution bool) chatStrea
 	tool := &chatMemoryTool{executed: make(chan struct{})}
 	var requests, toolResults atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		var req struct {
 			Stream   bool `json:"stream"`
 			Messages []struct {

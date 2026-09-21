@@ -39,7 +39,8 @@ function Fixture() {
           {open && <ProjectPickerMenu projects={projects}
             activeContext={{ kind: "project", project_id: project, cwd: `/projects/${project}` }}
             query={query} setQuery={setQuery} onSelectProject={setProject}
-            onSelectNoProject={() => setProject("")} onCreateProject={() => {}} onOpenProject={() => {}} />}
+            onSelectNoProject={() => setProject("")} onCreateProject={() => {}} onOpenProject={() => {}}
+            onDismiss={() => setOpen(false)} />}
         </div>
         <div className="composer-workspace-bar">
           <button className="hero-project-pill" onClick={() => setOpen(!open)}><Folder size={16} />{project || "无项目"}<ChevronDown size={14} /></button>

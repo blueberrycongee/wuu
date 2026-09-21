@@ -168,6 +168,22 @@ func TestDetectContextOverflow_OpenAIResponsesMessage(t *testing.T) {
 	}
 }
 
+func TestParseContextOverflowCounts_GrokBuild(t *testing.T) {
+	body := `400 Bad Request: {"code":"invalid-argument","error":"Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500056 tokens > 500000 tokens)"}`
+	prompt, window := ParseContextOverflowCounts(body)
+	if prompt != 500056 || window != 500000 {
+		t.Fatalf("ParseContextOverflowCounts = %d/%d, want 500056/500000", prompt, window)
+	}
+	err := fmt.Errorf("stream request failed: %w", &HTTPError{StatusCode: 400, Body: body, ContextOverflow: true})
+	if !IsContextOverflow(err) {
+		t.Fatal("wrapped Grok overflow should still classify")
+	}
+	gotPrompt, gotWindow := ContextOverflowCounts(err)
+	if gotPrompt != 500056 || gotWindow != 500000 {
+		t.Fatalf("ContextOverflowCounts = %d/%d, want 500056/500000", gotPrompt, gotWindow)
+	}
+}
+
 func TestDetectContextOverflow_DoesNotGuessFromGatewayBufferLimit(t *testing.T) {
 	msg := "HTTP 507: 507 Insufficient Storage: exceeded request buffer limit while retrying upstream"
 	if DetectContextOverflow(msg) {

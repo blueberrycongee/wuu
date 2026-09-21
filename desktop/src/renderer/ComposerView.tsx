@@ -445,6 +445,7 @@ export function Composer({
       : t("composer.send");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
+  const projectPillRef = useRef<HTMLButtonElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
@@ -1141,6 +1142,7 @@ export function Composer({
                     aria-haspopup="menu"
                     aria-expanded={menuOpen}
                     aria-label={t("composer.switchProject", { project: projectPillLabel })}
+                    ref={projectPillRef}
                     onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
                     onClick={onToggleMenu}
                   >
@@ -1169,6 +1171,10 @@ export function Composer({
                       onSelectNoProject={onSelectNoProject}
                       onCreateProject={onCreateProject}
                       onOpenProject={onOpenProject}
+                      onDismiss={() => {
+                        onToggleMenu();
+                        projectPillRef.current?.focus();
+                      }}
                     />
                   </FloatingMenuPortal>
                 ) : null}

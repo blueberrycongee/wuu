@@ -2038,7 +2038,9 @@
   z-index: 30;
   display: grid;
   width: 280px;
-  max-height: min(360px, calc(100vh - 180px));
+  /* The portal publishes the room left on the chosen side. Without it the
+   * card could grow past the window top edge in a short window. */
+  max-height: min(360px, var(--floating-menu-available-height, calc(100vh - 180px)));
   overflow: hidden;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
@@ -2389,6 +2391,12 @@
   gap: 1px;
 }
 
+/* Every row in a picker card leads with this icon column, so it is the measure
+ * the card aligns to: row labels and the new-branch field start after it. */
+.composer-project-menu {
+  --composer-project-menu-icon-size: 16px;
+}
+
 .composer-project-menu button {
   display: flex;
   height: auto;
@@ -2409,6 +2417,13 @@
   background: var(--menu-hover);
 }
 
+/* The checked row is the current project or the current branch. It is not a
+ * useful target, so it is disabled, but the global disabled dimming would make
+ * the selection read as unavailable instead of chosen. */
+.composer-project-menu button[aria-checked="true"] {
+  opacity: 1;
+}
+
 .composer-project-menu button span {
   min-width: 0;
   flex: 1;
@@ -2418,8 +2433,8 @@
 }
 
 .composer-project-menu button svg {
-  width: 16px;
-  height: 16px;
+  width: var(--composer-project-menu-icon-size);
+  height: var(--composer-project-menu-icon-size);
   color: var(--composer-project-menu-icon);
   flex: 0 0 auto;
 }
@@ -2749,48 +2764,62 @@
   max-width: 100%;
 }
 
-.composer-branch-menu {
-  width: 280px;
-  max-height: min(280px, calc(100vh - 120px));
-}
-
-.composer-branch-menu .project-picker-list button {
-  width: 100%;
-  height: auto;
+/* Naming a new branch replaces the "new branch…" row in place. It keeps the
+ * row geometry — icon column, inline padding, row height — and drops the field
+ * box, because a boxed input here is the only framed control inside cards that
+ * are otherwise unboxed (see the menu-search rule in fields.css). */
+.composer-project-menu .composer-picker-create {
+  display: flex;
   min-height: var(--control-row-height);
+  align-items: center;
+  gap: var(--menu-item-gap);
+  border-radius: var(--radius-xs);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
 }
 
-.composer-branch-menu small {
-  display: block;
-  margin-top: 3px;
-  color: var(--ink-muted);
-  font-size: var(--font-sm);
-  font-weight: 400;
-}
-
-.composer-branch-menu button:disabled {
-  cursor: default;
-}
-
-.composer-branch-create {
-  display: flex;
-  gap: 6px;
-  padding: 4px;
-}
-
-.composer-branch-create input {
+/* The field reserves the row's icon column so the name starts where row labels
+ * do instead of jumping left when the row turns into an input. */
+.composer-project-menu .composer-picker-create input {
   min-width: 0;
   flex: 1;
-  border: 1px solid var(--menu-border);
-  border-radius: var(--radius-xs);
+  border: 0;
   background: transparent;
   color: var(--ink);
-  padding: 6px 8px;
+  font: inherit;
+  font-size: var(--font-ui);
+  outline: 0;
+  padding: 0 0 0 calc(var(--composer-project-menu-icon-size) + var(--menu-item-gap));
 }
 
-.composer-branch-menu button[aria-checked="true"] {
-  opacity: 1;
+.composer-project-menu .composer-picker-create input::placeholder {
+  color: var(--ink-tertiary);
+}
+
+.composer-project-menu .composer-picker-create input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.composer-project-menu .composer-picker-create button {
+  display: grid;
+  width: var(--control-size-inline);
+  height: var(--control-size-inline);
+  min-height: 0;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--composer-project-menu-icon);
+  padding: 0;
+}
+
+.composer-project-menu .composer-picker-create button:hover:not(:disabled) {
+  background: var(--menu-hover);
+}
+
+.composer-project-menu .composer-picker-create button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 @media (pointer: fine) {

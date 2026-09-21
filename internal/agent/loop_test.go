@@ -1135,6 +1135,73 @@ func TestRunToolLoop_ContextOverflowStopsWhenCompactUnchanged(t *testing.T) {
 	}
 }
 
+func TestRunToolLoop_IdleToolRuntimeDoesNotBlockOverflowRecovery(t *testing.T) {
+	body := `400 Bad Request: {"code":"invalid-argument","error":"Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500056 tokens > 500000 tokens)"}`
+	overflow := fmt.Errorf("stream request failed: %w", &providers.HTTPError{
+		StatusCode: 400, Body: body, ContextOverflow: providers.DetectContextOverflow(body),
+	})
+	idleRuntime := NewTurnToolRuntime(ToolRuntimeConfig{})
+	step := &fakeStep{
+		results: []StepResult{{ToolRuntime: idleRuntime}, {Content: "ok"}},
+		errs:    []error{overflow, nil},
+	}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "sys"},
+		userMsg("old"),
+		{Role: "assistant", Content: "old answer"},
+		userMsg("latest"),
+	}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model: "m",
+		Compact: func(_ context.Context, msgs []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return msgs[len(msgs)-1:], nil
+		},
+	}
+
+	result, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatalf("idle runtime blocked overflow recovery: %v", err)
+	}
+	if compactCalled != 1 || len(step.calls) != 2 || !result.HistoryRewritten {
+		t.Fatalf("compact=%d calls=%d rewritten=%v", compactCalled, len(step.calls), result.HistoryRewritten)
+	}
+}
+
+func TestRunToolLoop_HardWindowPreflightCompactsBeforeSend(t *testing.T) {
+	step := &fakeStep{results: []StepResult{{Content: "ok"}}}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: "sys"},
+		userMsg(strings.Repeat("old context ", 2000)),
+		{Role: "assistant", Content: strings.Repeat("old answer ", 2000)},
+		userMsg("latest"),
+	}
+	compactCalled := 0
+	cfg := LoopConfig{
+		Model:            "m",
+		MaxContextTokens: 200,
+		Compact: func(_ context.Context, msgs []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			compactCalled++
+			return msgs[len(msgs)-1:], nil
+		},
+	}
+
+	result, err := RunToolLoop(context.Background(), history, cfg, step)
+	if err != nil {
+		t.Fatalf("hard-window preflight failed: %v", err)
+	}
+	if len(step.calls) != 1 || !result.HistoryRewritten {
+		t.Fatalf("calls=%d rewritten=%v compact=%d", len(step.calls), result.HistoryRewritten, compactCalled)
+	}
+	if estimateOutboundRequestTokens(step.calls[0]) >= 200 {
+		t.Fatalf("preflight still sent an oversized request: tokens=%d", estimateOutboundRequestTokens(step.calls[0]))
+	}
+	if compactCalled == 0 && len(step.calls[0].Messages) >= len(history) {
+		t.Fatal("preflight neither compacted nor trimmed history")
+	}
+}
+
 func TestRunToolLoop_ContextOverflowForceTrimsWhenCompactUnchanged(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}, {Content: "ok"}}, errs: []error{overflow, nil}}

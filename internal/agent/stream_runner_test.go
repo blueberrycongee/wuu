@@ -1823,6 +1823,58 @@ func TestStreamRunner_ContextOverflowStreamErrorCompactsSingleUserTurn(t *testin
 	}
 }
 
+func TestStreamRunner_GrokOverflowRecoversWithToolLedger(t *testing.T) {
+	overflow := &providers.HTTPError{
+		StatusCode:      400,
+		Body:            `400 Bad Request: {"code":"invalid-argument","error":"Failed to start sampling: [input_too_large] The prompt is too long for this model's context window (500056 tokens > 500000 tokens)"}`,
+		ContextOverflow: true,
+	}
+	client := &mockStreamClient{
+		attempts: []mockStreamAttempt{
+			{err: overflow},
+			{events: []providers.StreamEvent{
+				{Type: providers.EventContentDelta, Content: "recovered after overflow"},
+				{Type: providers.EventDone},
+			}},
+		},
+		chatResponses: []providers.ChatResponse{{Content: "summarized overflowing grok history"}},
+	}
+	ledger, err := toolledger.New(t.TempDir(), "grok-overflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := StreamRunner{
+		Client:                client,
+		Model:                 "grok-4.6",
+		ContextWindowOverride: 500000,
+		ToolLedger:            ledger,
+		Tools:                 &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "run_shell"}}},
+	}
+	history := []providers.ChatMessage{
+		{Role: "user", Content: "debug the issue"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{
+			{ID: "call_1", Name: "run_shell", Arguments: `{"command":"rg overflow"}`},
+		}},
+		{Role: "tool", Name: "run_shell", ToolCallID: "call_1", Content: strings.Repeat("result ", 1000)},
+		{Role: "assistant", Content: "I will continue from the runtime path."},
+		{Role: "user", Content: "合并了吗"},
+	}
+
+	result, err := runner.RunWithCallback(context.Background(), history, nil)
+	if err != nil {
+		t.Fatalf("RunWithCallback: %v", err)
+	}
+	if result.Content != "recovered after overflow" {
+		t.Fatalf("content = %q", result.Content)
+	}
+	if !result.HistoryRewritten {
+		t.Fatal("expected overflow recovery to rewrite history")
+	}
+	if len(client.requests) < 2 {
+		t.Fatalf("expected compact then retry, got %d requests", len(client.requests))
+	}
+}
+
 func TestStreamRunner_CancelledCtxStopsRetry(t *testing.T) {
 	client := &mockStreamClient{attempts: []mockStreamAttempt{
 		{err: context.DeadlineExceeded},

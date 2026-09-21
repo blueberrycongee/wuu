@@ -1,7 +1,13 @@
-import { Check, ChevronDown, GitBranch, Plus, Search } from "lucide-react";
+import { ChevronDown, GitBranch, Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import {
+  ComposerPickerCard,
+  ComposerPickerList,
+  ComposerPickerRow,
+  ComposerPickerSearch
+} from "./ComposerPickerCard";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
@@ -19,12 +25,20 @@ export function ComposerBranchPicker({
   const { t } = useI18n();
   const anchorRef = useRef<HTMLDivElement>(null);
   const branch = gitStatus.branch || "HEAD";
+
+  // One dismissal for both Escape paths: the card itself (React bubbles the
+  // key from the portaled card back through this component) and the trigger
+  // while the card is open.
+  function dismiss(): void {
+    onToggle();
+    anchorRef.current?.querySelector("button")?.focus();
+  }
+
   return (
     <div className="composer-branch-control" ref={anchorRef} onKeyDown={(event) => {
       if (event.key === "Escape" && open) {
         event.stopPropagation();
-        onToggle();
-        anchorRef.current?.querySelector("button")?.focus();
+        dismiss();
       }
     }}>
       <button type="button" className="hero-project-pill" aria-haspopup="menu"
@@ -38,17 +52,18 @@ export function ComposerBranchPicker({
       {open && !disabled ? (
         <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={280}
           mobileSheet={{ label: t("git.branch"), onClose: onToggle }}>
-          <ComposerBranchMenu gitStatus={gitStatus} onSelect={onSelect} onCreate={onCreate} />
+          <ComposerBranchMenu gitStatus={gitStatus} onSelect={onSelect} onCreate={onCreate} onDismiss={dismiss} />
         </FloatingMenuPortal>
       ) : null}
     </div>
   );
 }
 
-function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
+function ComposerBranchMenu({ gitStatus, onSelect, onCreate, onDismiss }: {
   gitStatus: GitStatusResult;
   onSelect: (branch: string) => void | Promise<void>;
   onCreate?: (branch: string) => Promise<void>;
+  onDismiss: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
@@ -74,44 +89,34 @@ function ComposerBranchMenu({ gitStatus, onSelect, onCreate }: {
   }
 
   return (
-    <div className="composer-project-menu composer-branch-menu" role="menu" aria-label={t("git.branch")} aria-busy={pending}>
-      <label className="menu-search">
-        <Search className="icon-sm" aria-hidden="true" />
-        <input autoFocus value={query} aria-label={t("environment.searchBranches")} placeholder={t("environment.searchBranches")}
-          onChange={(event) => setQuery(event.target.value)} />
-      </label>
-      <div className="project-picker-list">
-        {branches.length === 0 ? <div className="project-picker-empty">{t("environment.noMatchingBranches")}</div> : null}
+    <ComposerPickerCard label={t("git.branch")} busy={pending} onDismiss={onDismiss}>
+      <ComposerPickerSearch label={t("environment.searchBranches")} value={query} onChange={setQuery} />
+      <ComposerPickerList empty={branches.length === 0} emptyMessage={t("environment.noMatchingBranches")}>
         {branches.map((branch) => {
           const selected = branch === gitStatus.branch;
           return (
-            <button key={branch} type="button" role="menuitemradio" aria-checked={selected}
-              disabled={selected || pending || !hostSupports("checkoutGitBranch")} title={branch}
-              onClick={() => void run(() => onSelect(branch))}>
-              <GitBranch />
-              <span>{branch}{selected && gitStatus.dirty_count > 0 ? (
-                <small>{t("composer.branchDirtyFiles", { count: gitStatus.dirty_count })}</small>
-              ) : null}</span>
-              {selected ? <Check /> : null}
-            </button>
+            <ComposerPickerRow key={branch} icon={<GitBranch />} label={branch} title={branch} selected={selected}
+              disabled={selected || pending || !hostSupports("checkoutGitBranch")}
+              onSelect={() => void run(() => onSelect(branch))} />
           );
         })}
-      </div>
+      </ComposerPickerList>
       {onCreate && hostSupports("createCheckoutGitBranch") ? <>
         <div className="project-picker-divider" />
         {creating ? (
-          <form className="composer-branch-create" onSubmit={(event) => {
+          <form className="composer-picker-create" onSubmit={(event) => {
             event.preventDefault();
             if (name.trim()) void run(() => onCreate(name.trim()));
           }}>
             <input autoFocus aria-label={t("environment.newBranchName")} placeholder={t("environment.newBranchName")}
               value={name} disabled={pending} onChange={(event) => setName(event.target.value)} />
-            <button type="submit" disabled={pending || !name.trim()} aria-label={t("composer.createBranch")}><Plus /></button>
+            <button type="submit" aria-label={t("common.create")} disabled={pending || !name.trim()}><Plus /></button>
           </form>
-        ) : <button type="button" role="menuitem" disabled={pending} onClick={() => { setName(query.trim()); setCreating(true); }}>
-          <Plus /><span>{t("composer.createBranch")}</span>
-        </button>}
+        ) : (
+          <ComposerPickerRow icon={<Plus />} label={t("composer.createBranch")} disabled={pending}
+            onSelect={() => { setName(query.trim()); setCreating(true); }} />
+        )}
       </> : null}
-    </div>
+    </ComposerPickerCard>
   );
 }

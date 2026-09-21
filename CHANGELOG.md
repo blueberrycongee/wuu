@@ -48,6 +48,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   line of the paste as its title, and the collapse control — instead of repeating
   a "pasted text" label and a character count under it.
 
+- Unify the composer workspace bar's two picker cards. The project and branch
+  cards now share one row anatomy with a leading icon, radio semantics for the
+  checked row, a search field that opens focused, one card height, and Escape
+  dismissal that returns focus to the trigger.
+
 - Hide phone-connection and account entries in all production desktop builds,
   including local packages, while retaining them in development mode.
 

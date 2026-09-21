@@ -101,6 +101,7 @@ function handoffInitialized(): InitializeResult {
 
 function renderComposer(props: {
   accessMenuOpen?: boolean;
+  menuOpen?: boolean;
   activeEngine?: string;
   variant?: ComposerVariant;
   canSelectProject?: boolean;
@@ -184,7 +185,7 @@ function renderComposer(props: {
           codexModels={codexModels}
           codexRuntimeMenu={null}
           codexRuntimeRef={createRef<HTMLDivElement>()}
-          menuOpen={false}
+          menuOpen={props.menuOpen ?? false}
           accessMenuOpen={props.accessMenuOpen ?? false}
           branchMenuOpen={false}
           menuRef={createRef<HTMLDivElement>()}
@@ -1708,6 +1709,42 @@ describe("Composer send control", () => {
     expect(selector).not.toBeNull();
     act(() => selector?.click());
     expect(onToggleMenu).toHaveBeenCalledOnce();
+  });
+
+  it("opens the project card like the branch card and dismisses it with Escape", () => {
+    const onToggleMenu = vi.fn();
+    renderComposer({
+      variant: "hero",
+      canSelectProject: true,
+      menuOpen: true,
+      onToggleMenu,
+      activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/wuu" },
+      projects: [{
+        id: "project-1",
+        name: "wuu",
+        path: "/repo/wuu",
+        created_at: "2026-06-26T00:00:00.000Z",
+        updated_at: "2026-06-26T00:00:00.000Z",
+      }],
+    });
+
+    // Both cards open with their filter focused and expose their list as
+    // radio rows, so the checked row is announced the same way in each.
+    const search = document.body.querySelector<HTMLInputElement>(
+      `input[aria-label="${translateCurrent("runtime.searchProjects")}"]`,
+    );
+    expect(search).not.toBeNull();
+    expect(document.activeElement).toBe(search);
+    const row = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]'),
+    ).find((button) => button.textContent === "wuu")!;
+    expect(row.getAttribute("aria-checked")).toBe("true");
+
+    act(() => {
+      search?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onToggleMenu).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(container.querySelector(".hero-project-pill"));
   });
 
   it("hides the cwd control once a project conversation is sent (dock variant)", () => {

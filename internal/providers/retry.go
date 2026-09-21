@@ -60,6 +60,10 @@ type HTTPError struct {
 	// exceeded the model's context window. Callers can use this
 	// to trigger an auto-compact rather than a plain retry.
 	ContextOverflow bool
+	// PromptTokens and WindowTokens are parsed from overflow phrasing when
+	// the provider reports them. Zero means the body did not include counts.
+	PromptTokens int
+	WindowTokens int
 }
 
 func (e *HTTPError) Error() string {
@@ -75,6 +79,8 @@ type StreamError struct {
 	Retryable       bool
 	Auth            bool
 	ContextOverflow bool
+	PromptTokens    int
+	WindowTokens    int
 }
 
 func (e *StreamError) Error() string {
@@ -129,6 +135,7 @@ func NewProviderStreamError(code, message string) *StreamError {
 	}
 	if isContextOverflowCode(err.Code) || DetectContextOverflow(err.Message) {
 		err.ContextOverflow = true
+		err.PromptTokens, err.WindowTokens = ParseContextOverflowCounts(err.Message)
 		return err
 	}
 	if isStreamAuthError(err.Code, err.Message) {
@@ -306,6 +313,53 @@ func DetectContextOverflow(body string) bool {
 	return false
 }
 
+var contextOverflowCountPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\(([0-9][0-9,]*)\s+tokens?\s*>\s*([0-9][0-9,]*)\s+tokens?\)`),
+	regexp.MustCompile(`(?i)(?:prompt|input|requested(?: token count)?|contains)\s+(?:(?:is too long|length|token count(?: of)?)[:\s]*)?([0-9][0-9,]*)\s+tokens?\s*[>]\s*([0-9][0-9,]*)`),
+	regexp.MustCompile(`(?i)(?:prompt|input).*?([0-9][0-9,]*)\s+tokens?\s*[>]\s*([0-9][0-9,]*)\s+(?:maximum|limit|tokens)`),
+	regexp.MustCompile(`(?i)requested:\s*([0-9][0-9,]*)\).*limit:\s*([0-9][0-9,]*)`),
+	regexp.MustCompile(`(?i)exceeded model token limit:\s*([0-9][0-9,]*)\s*\(requested:\s*([0-9][0-9,]*)\)`),
+}
+
+// ParseContextOverflowCounts extracts provider-reported prompt and window sizes
+// from overflow error text. Missing or unparseable counts return zeros.
+func ParseContextOverflowCounts(body string) (promptTokens, windowTokens int) {
+	if !DetectContextOverflow(body) {
+		return 0, 0
+	}
+	for _, pattern := range contextOverflowCountPatterns {
+		match := pattern.FindStringSubmatch(body)
+		if len(match) < 3 {
+			continue
+		}
+		first := parseTokenCount(match[1])
+		second := parseTokenCount(match[2])
+		if first <= 0 || second <= 0 {
+			continue
+		}
+		if strings.Contains(strings.ToLower(match[0]), "limit:") && first < second {
+			return second, first
+		}
+		if first >= second {
+			return first, second
+		}
+		return second, first
+	}
+	return 0, 0
+}
+
+func parseTokenCount(raw string) int {
+	cleaned := strings.ReplaceAll(strings.TrimSpace(raw), ",", "")
+	if cleaned == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(cleaned)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
 func isContextOverflowCode(code string) bool {
 	switch strings.ToLower(strings.TrimSpace(code)) {
 	case "context_length_exceeded", "input_too_large":
@@ -315,18 +369,53 @@ func isContextOverflowCode(code string) bool {
 	}
 }
 
-// IsContextOverflow returns true if err is an HTTPError flagged as
-// context overflow.
+// IsContextOverflow reports whether err is a classified context-window overflow.
+// It prefers typed HTTP/stream flags, then the normalized failure category, then
+// overflow phrasing on the error text so wrapping cannot hide recovery.
 func IsContextOverflow(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) && httpErr.ContextOverflow {
+		return true
+	}
+	var streamErr *StreamError
+	if errors.As(err, &streamErr) && streamErr.ContextOverflow {
+		return true
+	}
+	failure := NormalizeFailure(err)
+	if failure.Category == FailureContextOverflow || failure.ContextOverflow {
+		return true
+	}
+	return DetectContextOverflow(err.Error())
+}
+
+// ContextOverflowCounts returns provider-reported prompt and window sizes when
+// the error text includes them. Zeros mean the counts were not parsed.
+func ContextOverflowCounts(err error) (promptTokens, windowTokens int) {
+	if err == nil {
+		return 0, 0
+	}
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
-		return httpErr.ContextOverflow
+		if httpErr.PromptTokens > 0 || httpErr.WindowTokens > 0 {
+			return httpErr.PromptTokens, httpErr.WindowTokens
+		}
+		if httpErr.Body != "" {
+			return ParseContextOverflowCounts(httpErr.Body)
+		}
 	}
 	var streamErr *StreamError
 	if errors.As(err, &streamErr) {
-		return streamErr.ContextOverflow
+		if streamErr.PromptTokens > 0 || streamErr.WindowTokens > 0 {
+			return streamErr.PromptTokens, streamErr.WindowTokens
+		}
+		if streamErr.Message != "" {
+			return ParseContextOverflowCounts(streamErr.Message)
+		}
 	}
-	return false
+	return ParseContextOverflowCounts(err.Error())
 }
 
 // IsRetryable returns true if the error is worth retrying.
