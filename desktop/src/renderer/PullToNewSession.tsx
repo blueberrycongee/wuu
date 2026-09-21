@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { isTouchWebShell } from "./ComposerFocus";
-import { eventTargetsNestedAutoFollowScroll, selectionIntersectsNode } from "./AutoFollowScroll";
+import { eventTargetsNestedAutoFollowScroll, selectionIntersectsNode, submitGlideActive } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import "./styles/pull-to-new-session.css";
@@ -141,7 +141,12 @@ export function PullToNewSession({
       const commit = gesture && gesture.distance >= THRESHOLD;
       settle(Boolean(commit));
     };
-    const scroll = () => { if (!atBottom(node)) reset(); };
+    const scroll = () => {
+      // The send glide is not a pull. atBottom reads scrollHeight and would
+      // lay the thread out on every frame of that motion.
+      if (submitGlideActive()) return;
+      if (!atBottom(node)) reset();
+    };
     node.addEventListener("touchstart", start, { passive: true });
     node.addEventListener("touchmove", move, { passive: false });
     node.addEventListener("touchend", end);

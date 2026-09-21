@@ -21,6 +21,7 @@ import {
   type ConversationTurnRevealDetail,
   userMessageAnchorID,
 } from "./TurnViewHelpers";
+import { submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
 
 export {
@@ -303,12 +304,19 @@ export function ConversationTurnList({
       return;
     }
     const loadIfNearTop = (): void => {
+      // Reading scrollTop on every glide frame forces a layout. Preload still
+      // runs once the glide settles.
+      if (submitGlideActive()) return;
       if (node.scrollTop <= TURN_LIST_PRELOAD_SCROLL_TOP_PX) {
         loadEarlierTurns(true);
       }
     };
+    const unsubscribeGlide = subscribeSubmitGlide(loadIfNearTop);
     node.addEventListener("scroll", loadIfNearTop, { passive: true });
-    return () => node.removeEventListener("scroll", loadIfNearTop);
+    return () => {
+      unsubscribeGlide();
+      node.removeEventListener("scroll", loadIfNearTop);
+    };
   }, [autoLoadEarlier, hasEarlierTurns, loadEarlierTurns, remoteBusy]);
 
   return (

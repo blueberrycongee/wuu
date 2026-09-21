@@ -25,6 +25,7 @@ import {
   selectionIntersectsNode,
   sessionTailSpacePx,
   setAutoFollowOverflowAnchor,
+  setSubmitGlideActive,
 } from "./AutoFollowScroll";
 import { markScrollbarRevealSelfManaged, revealScrollbar } from "./ScrollbarReveal";
 import { isWindowResizing } from "./WindowResizeState";
@@ -116,6 +117,25 @@ function submittedMessagePlacement(viewport: HTMLElement, message: HTMLElement) 
     documentTop: scrollTop + screenTop,
     screenTop,
     messageHeight,
+  };
+}
+
+type SubmitGlideAnchor = {
+  documentTop: number;
+  /** Screen position the glide approaches: documentTop minus the destination scroll. */
+  targetScreen: number;
+  viewportHeight: number;
+  /** Latest-content scroll captured with this anchor, so later frames do not remeasure. */
+  followTop: number;
+};
+
+function submitGlideAnchor(viewport: HTMLElement, message: HTMLElement): SubmitGlideAnchor {
+  const live = submittedMessagePlacement(viewport, message);
+  return {
+    documentTop: live.documentTop,
+    targetScreen: live.documentTop - live.targetTop,
+    viewportHeight: viewport.clientHeight,
+    followTop: latestFollowScrollTop(viewport),
   };
 }
 
@@ -277,6 +297,9 @@ export function useConversationScrollState({
   function writeScrollMode(mode: ConversationScrollMode): void {
     scrollModeRef.current = mode;
     syncStreamFollowing();
+    // Readers of the conversation scrollport skip geometry work for the
+    // duration and catch up when this clears.
+    setSubmitGlideActive(mode === "placing");
   }
   useEffect(() => {
     syncStreamFollowing();
@@ -396,7 +419,8 @@ export function useConversationScrollState({
     threadID: string,
     node: HTMLElement,
     autoFollow: boolean,
-    scrollTop?: number
+    scrollTop?: number,
+    distanceFromLatest?: number,
   ): void {
     const submission = submissionRef.current;
     // Animation frames already measured the anchor while placing the bubble.
@@ -412,7 +436,7 @@ export function useConversationScrollState({
       // Distance-from-latest survives a later height settle; raw scrollTop does
       // not, which is the remaining session-switch jump.
       scrollTop: nextTop,
-      distanceFromLatest: Math.max(0, latestFollowScrollTop(node) - nextTop),
+      distanceFromLatest: distanceFromLatest ?? Math.max(0, latestFollowScrollTop(node) - nextTop),
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
@@ -423,12 +447,13 @@ export function useConversationScrollState({
   function rememberActiveThreadScrollSnapshot(
     node: HTMLElement,
     autoFollow: boolean,
-    scrollTop?: number
+    scrollTop?: number,
+    distanceFromLatest?: number,
   ): void {
     if (!activeThreadID) {
       return;
     }
-    rememberThreadScrollSnapshot(activeThreadID, node, autoFollow, scrollTop);
+    rememberThreadScrollSnapshot(activeThreadID, node, autoFollow, scrollTop, distanceFromLatest);
   }
 
   const clearUserScrollIntent = useCallback((): void => {
@@ -685,8 +710,17 @@ export function useConversationScrollState({
       reflowSubmittedMotionRef.current = undefined;
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
     };
-    const armFrames = (paint: (now: number | undefined) => void, syncStart: boolean): void => {
-      reflowSubmittedMotionRef.current = () => paint(messageMotionTime() ?? lastFrameTime);
+    const armFrames = (
+      paint: (now: number | undefined) => void,
+      syncStart: boolean,
+      markDirty: () => void,
+    ): void => {
+      // A React commit or resize retargets the same glide. Steady frames do
+      // not: re-reading geometry there forces a layout of the whole thread.
+      reflowSubmittedMotionRef.current = () => {
+        markDirty();
+        paint(messageMotionTime() ?? lastFrameTime);
+      };
       if (syncStart) paint(undefined);
       const step = (now: number): void => {
         submittedScrollFrameRef.current = undefined;
@@ -706,6 +740,9 @@ export function useConversationScrollState({
       // stay in document flow, so they cannot drift apart or fight a scroll.
       glide.start(lift);
       applyLeadSpace(lift);
+      let liftViewportHeight = viewport.clientHeight;
+      let liftFollowTop = latestFollowScrollTop(viewport);
+      let liftDirty = false;
       const paint = (now: number | undefined): void => {
         if (scrollModeRef.current !== "placing") return;
         const viewport = conversationViewport();
@@ -714,22 +751,33 @@ export function useConversationScrollState({
           applyLeadSpace(0);
           return;
         }
+        if (liftDirty) {
+          liftViewportHeight = viewport.clientHeight;
+          liftFollowTop = latestFollowScrollTop(viewport);
+          liftDirty = false;
+        }
         const { position, done } = now === undefined
           ? { position: lift, done: false }
-          : glide.step(now, 0, viewport.clientHeight);
+          : glide.step(now, 0, liftViewportHeight);
+        // Padding is the motion. Do not read it back: the commanded spacer
+        // is the position, and a geometry read would lay the thread out twice.
         applyLeadSpace(position);
         viewport.scrollTop = targetTop;
-        const placed = viewport.scrollTop;
-        programmaticScrollTopRef.current = placed;
-        lastConversationScrollTopRef.current = placed;
+        programmaticScrollTopRef.current = targetTop;
+        lastConversationScrollTopRef.current = targetTop;
         if (done) {
           applyLeadSpace(0);
-          finishHold(viewport, placed);
+          finishHold(viewport, targetTop);
           return;
         }
-        submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
+        submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(
+          viewport,
+          false,
+          targetTop,
+          Math.max(0, liftFollowTop - targetTop),
+        );
       };
-      armFrames(paint, true);
+      armFrames(paint, true, () => { liftDirty = true; });
       return true;
     }
 
@@ -737,6 +785,13 @@ export function useConversationScrollState({
     const screenStart = placement.documentTop - startTop;
     glide.start(screenStart);
     let animatedMessage = message;
+    let anchor: SubmitGlideAnchor = {
+      documentTop: placement.documentTop,
+      targetScreen: placement.documentTop - placement.targetTop,
+      viewportHeight: viewport.clientHeight,
+      followTop: latestFollowScrollTop(viewport),
+    };
+    let anchorDirty = false;
     let reservedRange: { target: number; clientHeight: number } | undefined;
     const paint = (now: number | undefined): void => {
       if (scrollModeRef.current !== "placing") return;
@@ -745,10 +800,8 @@ export function useConversationScrollState({
         writeScrollMode("pending");
         return;
       }
-      // Animate the bubble's position in the reading viewport, not scrollTop.
-      // Only the target is re-read each frame, so a reflow that moves the
-      // document anchor is compensated by the scroll write below before paint
-      // instead of becoming a second, delayed correction.
+      // A remount keeps the trajectory. Geometry is refreshed only when the
+      // anchor is dirty, so a steady frame does not walk the thread.
       if (animatedMessage.dataset.userMessageId !== submissionRef.current?.messageID || !viewport.contains(animatedMessage)) {
         const replacement = submittedMessage();
         if (!replacement) {
@@ -756,42 +809,51 @@ export function useConversationScrollState({
           return;
         }
         animatedMessage = replacement;
+        anchorDirty = true;
       }
-      const live = submittedMessagePlacement(viewport, animatedMessage);
-      if (submissionRef.current) submissionRef.current.documentTop = live.documentTop;
+      if (anchorDirty) {
+        anchor = submitGlideAnchor(viewport, animatedMessage);
+        if (submissionRef.current) submissionRef.current.documentTop = anchor.documentTop;
+        anchorDirty = false;
+      }
       const { position, done } = now === undefined
         ? { position: screenStart, done: false }
-        : glide.step(now, live.documentTop - live.targetTop, viewport.clientHeight);
-      const top = live.documentTop - position;
+        : glide.step(now, anchor.targetScreen, anchor.viewportHeight);
+      const top = anchor.documentTop - position;
       // Command the full range first: the reservation is what makes the target
       // reachable, and the browser clamps against it in the same write. The
       // reservation only needs re-syncing when its inputs move, and re-syncing
       // it walks every disclosure in the thread — do that on change, not on
       // every frame of a glide.
-      const range = Math.max(top, live.targetTop);
+      const destinationTop = anchor.documentTop - anchor.targetScreen;
+      const range = Math.max(top, destinationTop);
       if (
         !reservedRange ||
-        reservedRange.clientHeight !== viewport.clientHeight ||
+        reservedRange.clientHeight !== anchor.viewportHeight ||
         range > reservedRange.target + 0.5 ||
         done
       ) {
-        reservedRange = { target: range, clientHeight: viewport.clientHeight };
+        reservedRange = { target: range, clientHeight: anchor.viewportHeight };
         submissionFrameCallbacks.current.ensureTailRange(range);
+        anchor.followTop = latestFollowScrollTop(viewport);
       }
       viewport.scrollTop = top;
-      // The reservation above makes this offset reachable, so the commanded
-      // value is the achieved one. Read it once and reuse it: re-measuring the
-      // scroller here costs a second synchronous layout every frame.
-      const placed = viewport.scrollTop;
-      programmaticScrollTopRef.current = placed;
-      lastConversationScrollTopRef.current = placed;
+      // The reservation makes this offset reachable, so the commanded value
+      // is the achieved one. Reading scrollTop back would force a second layout.
+      programmaticScrollTopRef.current = top;
+      lastConversationScrollTopRef.current = top;
       if (done) {
-        finishHold(viewport, placed);
+        finishHold(viewport, top);
         return;
       }
-      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
+      submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(
+        viewport,
+        false,
+        top,
+        Math.max(0, anchor.followTop - top),
+      );
     };
-    armFrames(paint, false);
+    armFrames(paint, false, () => { anchorDirty = true; });
     return true;
   }, [activePane, activeThreadID, applyLeadSpace, dockComposerNode, ensureTailRange, reserveTailSpace, scrollConversationToBottom, splitConversation, submittedMessage]);
 
@@ -985,7 +1047,13 @@ export function useConversationScrollState({
     if (!node) {
       return;
     }
-    const disclosureHeight = conversationDisclosureHeight(node);
+    // The glide's own scrollTop writes fire this. Input cancels the glide
+    // before the event, so measuring disclosures here laid the thread out
+    // again on every frame of the send.
+    if (scrollModeRef.current === "placing") return;
+    const disclosureHeight = smoothAutoFollowRef.current
+      ? lastDisclosureHeightRef.current
+      : conversationDisclosureHeight(node);
     const disclosureResized = Math.abs(disclosureHeight - lastDisclosureHeightRef.current) > 0.5;
     lastDisclosureHeightRef.current = disclosureHeight;
     if (submissionPhase()) {

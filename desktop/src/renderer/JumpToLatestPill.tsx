@@ -9,6 +9,8 @@ import {
   atLatestScrollView,
   latestFollowScrollTop,
   observeAutoFollowResizeTargets,
+  submitGlideActive,
+  subscribeSubmitGlide,
 } from "./AutoFollowScroll";
 import { dockComposerVisualHeight } from "./ConversationScrollState";
 import {
@@ -103,10 +105,14 @@ export function JumpToLatestPill({
     }
 
     const update = (): void => {
+      // Same skip as the turn rail: the glide already knows it is leaving the
+      // bottom, and a per-frame scrollHeight read forces a layout.
+      if (submitGlideActive()) return;
       setScrolledAway(!atLatestScrollView(node, threshold));
     };
     const resizeSettleUpdate = createWindowResizeSettleScheduler(update);
     const scheduleUpdate = (): void => {
+      if (submitGlideActive()) return;
       if (isWindowResizing()) {
         resizeSettleUpdate.schedule();
         return;
@@ -117,6 +123,7 @@ export function JumpToLatestPill({
     // Initial sync after mount (covers the case where the container is
     // already scrolled up at the time the pill mounts, e.g., when the
     // user navigated away and then re-entered the conversation).
+    const unsubscribeGlide = subscribeSubmitGlide(scheduleUpdate);
     scheduleUpdate();
     node.addEventListener("scroll", scheduleUpdate, { passive: true });
 
@@ -147,6 +154,7 @@ export function JumpToLatestPill({
 
     return () => {
       resizeSettleUpdate.cancel();
+      unsubscribeGlide();
       node.removeEventListener("scroll", scheduleUpdate);
       childObserver?.disconnect();
       resizeObserver?.disconnect();

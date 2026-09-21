@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ActivitySession, BrowserBoundsRect } from "../shared/protocol";
+import { submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 
 // Renderer-side visibility takeover for agent-owned browser activities (M3).
 //
@@ -226,6 +227,9 @@ export function observeBrowserPanelBounds(
   }
 
   function scheduleMeasure(): void {
+    // Conversation send scrolls this window every frame. The browser panel
+    // does not move with that glide; measuring it then walks the document.
+    if (submitGlideActive()) return;
     if (rafHandle === undefined) {
       rafHandle = window.requestAnimationFrame(flushMeasure);
     }
@@ -270,6 +274,7 @@ export function observeBrowserPanelBounds(
   }
   window.addEventListener("resize", scheduleMeasure);
   window.addEventListener("scroll", scheduleMeasure, true);
+  const unsubscribeGlide = subscribeSubmitGlide(scheduleMeasure);
   document.addEventListener("transitionrun", handleTransitionRun);
   document.addEventListener("transitionend", handleTransitionStop);
   document.addEventListener("transitioncancel", handleTransitionStop);
@@ -284,6 +289,7 @@ export function observeBrowserPanelBounds(
     }
     resizeObserver?.disconnect();
     mountObserver?.disconnect();
+    unsubscribeGlide();
     window.removeEventListener("resize", scheduleMeasure);
     window.removeEventListener("scroll", scheduleMeasure, true);
     document.removeEventListener("transitionrun", handleTransitionRun);

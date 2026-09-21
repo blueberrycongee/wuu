@@ -28,6 +28,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Sending a message keeps the same glide into the reading position. Steady
+  frames of that motion only move the viewport; the conversation is measured
+  again when layout actually changes, and the turn rail, jump control, and
+  history preload catch up when the glide lands.
+
 - Streaming turns spend less time on decorative paint. While a running
   conversation stays pinned to the latest line, the live text wave and
   scroll-edge fades pause, and stream colors are reused until the theme

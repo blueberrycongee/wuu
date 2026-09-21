@@ -1010,6 +1010,49 @@ it.each([400, 900])("keeps the beginning of a %ipx message visible instead of cl
   expect(scrollTop()).toBeLessThan(messageBottom - messageHeight);
 });
 
+it("glides a submitted query without remeasuring the thread on later frames", () => {
+  render({ messageID: "old" });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ messageID: "submitted", running: true });
+  tick(0);
+  const rect = HTMLElement.prototype.getBoundingClientRect as ReturnType<typeof vi.fn>;
+  const query = vi.spyOn(Element.prototype, "querySelectorAll");
+  rect.mockClear();
+  query.mockClear();
+  const before = scrollTop();
+  tick(60);
+  act(() => api.handleConversationScroll());
+  expect(scrollTop()).toBeGreaterThan(before);
+  expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(true);
+  expect(rect).not.toHaveBeenCalled();
+  expect(query.mock.calls.some(([selector]) => selector === "details")).toBe(false);
+  query.mockRestore();
+  settle(360);
+  expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(false);
+  expect(scrollTop()).toBeCloseTo(submittedMessageScrollTop(
+    api.conversationScrollRef.current!,
+    host.querySelector('[data-user-message-id="submitted"]')!,
+  ));
+});
+
+it("lifts a short first query without remeasuring on later frames", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0);
+  const rect = HTMLElement.prototype.getBoundingClientRect as ReturnType<typeof vi.fn>;
+  rect.mockClear();
+  const start = leadSpace();
+  tick(60);
+  expect(start - leadSpace()).toBeGreaterThan(0);
+  expect(rect).not.toHaveBeenCalled();
+  settle(360);
+  expect(leadSpace()).toBe(0);
+  expect(document.documentElement.hasAttribute("data-submit-glide")).toBe(false);
+});
+
 it("moves immediately and decelerates into the reading position", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));

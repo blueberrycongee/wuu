@@ -17,7 +17,7 @@ import {
   createWindowResizeSettleScheduler,
   isWindowResizing,
 } from "./WindowResizeState";
-import { atLatestScrollView } from "./AutoFollowScroll";
+import { atLatestScrollView, submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
 
 // Keep vertical capacity calculations aligned with the CSS bar height and gap.
@@ -278,6 +278,9 @@ export function ConversationTurnRail({
     > | undefined;
     const updateViewportTurn = () => {
       frameID = undefined;
+      // The send glide scrolls every frame. Measuring every turn then costs
+      // more than the motion; the settle event catches the landed turn.
+      if (submitGlideActive()) return;
       if (isWindowResizing()) {
         resizeSettleUpdate?.schedule();
         return;
@@ -288,6 +291,7 @@ export function ConversationTurnRail({
       );
     };
     const scheduleUpdate = () => {
+      if (submitGlideActive()) return;
       if (isWindowResizing()) {
         resizeSettleUpdate?.schedule();
         return;
@@ -299,6 +303,7 @@ export function ConversationTurnRail({
     };
 
     resizeSettleUpdate = createWindowResizeSettleScheduler(scheduleUpdate);
+    const unsubscribeGlide = subscribeSubmitGlide(scheduleUpdate);
     scheduleUpdate();
     scrollNode.addEventListener("scroll", scheduleUpdate, { passive: true });
     window.addEventListener("resize", scheduleUpdate);
@@ -308,6 +313,7 @@ export function ConversationTurnRail({
         window.cancelAnimationFrame(frameID);
       }
       resizeSettleUpdate?.cancel();
+      unsubscribeGlide();
       scrollNode.removeEventListener("scroll", scheduleUpdate);
       window.removeEventListener("resize", scheduleUpdate);
     };

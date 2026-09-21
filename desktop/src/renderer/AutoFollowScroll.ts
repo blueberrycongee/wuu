@@ -133,6 +133,37 @@ export function setAutoFollowOverflowAnchor(
   node.style.overflowAnchor = autoFollow ? "none" : "auto";
 }
 
+const SUBMIT_GLIDE_ATTR = "data-submit-glide";
+const SUBMIT_GLIDE_EVENT = "wuu-submit-glide";
+
+/** True while a submitted query is gliding into its reading position. */
+export function submitGlideActive(): boolean {
+  return document.documentElement.hasAttribute(SUBMIT_GLIDE_ATTR);
+}
+
+/**
+ * The glide writes scrollTop on every frame. Scroll-linked readers (the turn
+ * rail, the jump pill, history preload) must not measure the thread on those
+ * frames; they catch up from the event fired when the glide ends.
+ */
+export function setSubmitGlideActive(active: boolean): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (root.hasAttribute(SUBMIT_GLIDE_ATTR) === active) return;
+  if (active) root.setAttribute(SUBMIT_GLIDE_ATTR, "");
+  else root.removeAttribute(SUBMIT_GLIDE_ATTR);
+  document.dispatchEvent(new CustomEvent(SUBMIT_GLIDE_EVENT, { detail: active }));
+}
+
+export function subscribeSubmitGlide(onSettle: () => void): () => void {
+  const handle = (event: Event): void => {
+    if (!(event instanceof CustomEvent) || event.detail === true) return;
+    onSettle();
+  };
+  document.addEventListener(SUBMIT_GLIDE_EVENT, handle);
+  return () => document.removeEventListener(SUBMIT_GLIDE_EVENT, handle);
+}
+
 export function observeAutoFollowResizeTargets(
   node: HTMLElement,
   observer: ResizeObserver,
