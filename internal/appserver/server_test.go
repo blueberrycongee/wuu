@@ -8203,6 +8203,9 @@ func TestPersistFailedTurnResultRecordsUsageForNonPersistentThread(t *testing.T)
 func TestServerFailedTurnPersistsCompactedHistoryRewrite(t *testing.T) {
 	client := &fakeClient{
 		responses: []providers.ChatResponse{
+			// The pre-send estimate already exceeds the window, so the proactive
+			// compact runs before the turn's first request.
+			{Content: "compacted before provider failure"},
 			{
 				ToolCalls: []providers.ToolCall{{
 					ID:        "call_1",
@@ -8211,7 +8214,6 @@ func TestServerFailedTurnPersistsCompactedHistoryRewrite(t *testing.T) {
 				}},
 				Usage: &providers.TokenUsage{InputTokens: 4950, OutputTokens: 10},
 			},
-			{Content: "compacted before provider failure"},
 		},
 	}
 	client.onChat = func(call int, _ providers.ChatRequest) {
