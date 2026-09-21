@@ -1232,7 +1232,10 @@
   color: var(--ink-muted);
 }
 
-.collaboration-sidebar-search:focus-within { border-color: var(--ink-muted); }
+html[data-focus-modality="keyboard"] .collaboration-sidebar-search:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 .collaboration-sidebar-search svg {
   width: 16px;
@@ -1647,10 +1650,12 @@
   transform: none;
 }
 
-.nav-item:focus-visible,
-.project-row:focus-visible,
-.thread-row:focus-visible {
-  outline: 0;
+html[data-focus-modality="keyboard"] :is(
+  .nav-item,
+  .project-row,
+  .thread-row
+):focus-visible {
+  outline: none;
   box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
 }
 

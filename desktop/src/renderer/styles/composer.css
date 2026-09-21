@@ -292,18 +292,11 @@
   font-family: inherit;
   font-size: var(--font-ui);
   line-height: 28px;
-  outline: 0;
   box-shadow: none;
 }
 
 .user-question-offer-input::placeholder {
   color: var(--ink-tertiary);
-}
-
-.user-question-offer-input:focus {
-  outline: 0;
-  border: 0;
-  box-shadow: none;
 }
 
 .user-question-skip {
@@ -343,11 +336,6 @@
 
 .user-question-custom::placeholder {
   color: var(--ink-tertiary);
-}
-
-.user-question-custom:focus {
-  outline: 0;
-  border-color: var(--ink);
 }
 
 .user-question-actions {
@@ -636,8 +624,6 @@
   --composer-collapsed-min-height: 118px;
   width: 100%;
 }
-
-
 
 .composer-expand-button {
   position: absolute;
@@ -1618,7 +1604,6 @@
 .group-members-capsule:focus-visible {
   background: var(--ink-overlay-6);
   color: var(--ink);
-  outline: 0;
 }
 
 .group-members-capsule-avatars {

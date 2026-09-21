@@ -28,6 +28,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Clicking a field or control no longer paints an extra outline. A focus ring
+  appears only when moving focus with the keyboard.
+
 - The desktop sidebar bell keeps recently opened conversations visible while
   the attention view stays open, instead of dropping them as soon as they are
   marked read. The bell badge still counts only running and unread sessions.

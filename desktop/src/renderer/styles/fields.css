@@ -1,4 +1,4 @@
-/* The field surface stays stable; a shared outline identifies keyboard focus. */
+/* The field surface stays stable. Keyboard rings come from focus.css. */
 .catalog-search:hover {
   background: var(--field-hover-bg);
 }
@@ -39,7 +39,6 @@
   min-width: 0;
   flex: 1 1 auto;
   border: 0;
-  outline: 0;
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -50,31 +49,12 @@
   color: var(--ink-tertiary);
 }
 
-:is(.menu-search, .catalog-search, .settings-archive-search):has(input:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
-}
-
-:is(.sidebar-name-dialog-input, .environment-dialog-input,
-    .new-participant-field input, .onboarding-provider-form input,
-    .onboarding-provider-form select):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  box-shadow: none;
-}
-
 .menu-search svg {
   flex: 0 0 auto;
 }
 
 .menu-search.conversation-search-input-wrap {
   border-bottom: 0;
-}
-
-/* Autofocused conversation search uses the caret; the dialog already frames the field. */
-.menu-search.conversation-search-input-wrap:has(input:focus-visible) {
-  outline: none;
-  box-shadow: none;
 }
 
 .workspace-diff-search {
@@ -141,11 +121,6 @@
 
 :is(.settings-switch, .plugin-ui-checkbox input):hover:not(:disabled)::before {
   border-color: var(--ink);
-}
-
-:is(.settings-switch, .plugin-ui-checkbox input):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 :is(.settings-switch, .plugin-ui-checkbox input):disabled {

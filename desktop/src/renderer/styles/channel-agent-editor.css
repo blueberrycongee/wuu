@@ -42,20 +42,10 @@
 .channel-agent-editor-field textarea { min-height: calc(3lh + var(--space-4)); max-height: 12lh; padding-block: var(--space-2); resize: vertical; }
 .channel-agent-editor-field :is(input, textarea):hover,
 .channel-agent-editor-setting .select-menu-trigger:hover { background: var(--surface-2); border-color: transparent; }
-/* Typing focus is the caret. Keep a keyboard ring on the model menu, which has none. */
-.channel-agent-editor-field :is(input, textarea):focus { border-color: transparent; outline: none; box-shadow: none; }
-.channel-agent-editor-setting .select-menu-trigger:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  box-shadow: none;
-}
+.channel-agent-editor-field :is(input, textarea):focus { border-color: transparent; box-shadow: none; }
+
 .channel-agent-editor-setting .select-menu-trigger[aria-expanded="true"] { border-color: transparent; background: var(--surface-2); }
-.channel-agent-editor-dialog :is(button, summary):focus:not(:focus-visible) { outline: none; }
-.channel-agent-editor-dialog :is(button, summary):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  box-shadow: none;
-}
+
 .channel-agent-editor-runtime { display: grid; gap: var(--space-4); }
 /* Only the modal shell owns its footer inset; the floating panel owns its own. */
 .sidebar-name-dialog.channel-agent-editor-dialog > .sidebar-name-dialog-actions { padding: 0; }

@@ -5,10 +5,12 @@ import { createRoot } from "react-dom/client";
 import { SidebarCollapseBody, SidebarSection } from "../../src/renderer/SidebarSection";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
+import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") || "light";
+startFocusModality();
 applyMessageFlowFontSize(Number(params.get("size")) || 14);
 
 function Fixture(): JSX.Element {

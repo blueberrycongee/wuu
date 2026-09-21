@@ -22,7 +22,7 @@
 .account-panel button { border:1px solid var(--hairline); border-radius:var(--radius-sm); background:transparent; color:inherit; font-size:14px; }
 .account-panel button.account-primary { background:var(--ink); color:var(--paper); border-color:var(--ink); }
 .account-panel button.account-remove { border-color:transparent; color:var(--ink-soft); font-size:12px; }
-.account-panel button:focus-visible, .account-panel input:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+
 .account-panel button:disabled { opacity:.45; cursor:default; }
 
 .account-page-header { display:flex; align-items:center; gap:12px; margin-bottom:28px; min-height:44px; }

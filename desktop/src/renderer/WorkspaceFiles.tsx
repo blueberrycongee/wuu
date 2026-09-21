@@ -73,8 +73,8 @@ const WORKSPACE_TREE_CSS = `
     color: var(--wuu-workspace-file-tree-color, var(--ink));
   }
 
-  [data-file-tree-search-input]:focus-visible,
-  [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
+  :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input]:focus-visible,
+  :host-context(html[data-focus-modality="pointer"]) [data-file-tree-search-input][data-file-tree-search-input-fake-focus="true"] {
     outline: none;
   }
 `;

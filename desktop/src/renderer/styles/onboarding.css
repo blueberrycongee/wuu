@@ -756,11 +756,6 @@
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.onboarding-provider-form input:focus,
-.onboarding-provider-form select:focus {
-  border-color: var(--onboarding-border-focus);
-}
-
 .onboarding-error {
   margin: 16px 0 0;
   color: var(--onboarding-error);
@@ -827,12 +822,6 @@
     transition: none !important;
   }
 
-}
-
-/* Selection uses a quiet fill; outlines are reserved for keyboard focus. */
-.first-run-onboarding button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .onboarding-presets button:hover:not(:disabled) {

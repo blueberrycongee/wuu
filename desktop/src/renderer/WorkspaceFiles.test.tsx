@@ -238,7 +238,7 @@ describe("WorkspaceFileTree", () => {
       /\[data-file-tree-search-input\]\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-end:\s*40px;[^}]*border:\s*var\(--wuu-workspace-file-tree-search-border,\s*1px solid var\(--hairline-strong\)\);[^}]*border-radius:\s*var\(--wuu-workspace-file-tree-search-radius,\s*var\(--radius-sm\)\);/s,
     );
     expect(unsafeStyle?.textContent).toMatch(
-      /\[data-file-tree-search-input\]:focus-visible,[\s\S]*\[data-file-tree-search-input\]\[data-file-tree-search-input-fake-focus="true"\]\s*\{[^}]*outline:\s*none;/,
+      /:host-context\(html\[data-focus-modality="pointer"\]\) \[data-file-tree-search-input\]:focus-visible,[\s\S]*:host-context\(html\[data-focus-modality="pointer"\]\) \[data-file-tree-search-input\]\[data-file-tree-search-input-fake-focus="true"\]\s*\{[^}]*outline:\s*none;/,
     );
     const search = treeShadowRoot().querySelector<HTMLInputElement>(
       "[data-file-tree-search-input]",

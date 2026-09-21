@@ -2,8 +2,11 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Folder, ChevronDown, Plus } from "lucide-react";
 import { ProjectPickerMenu } from "../../src/renderer/ComposerRuntimeMenus";
+import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
+
+startFocusModality();
 
 const projects = ["soda", "PilotDeck", "wuu"].map((name) => ({
   id: name, name, path: `/projects/${name}`, created_at: "", updated_at: "",

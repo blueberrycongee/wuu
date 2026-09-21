@@ -8,11 +8,13 @@ import { desktopPluginHost, desktopWorkbenchController } from "../../src/rendere
 import { PluginInspectorSections } from "../../src/renderer/plugins/PluginInspector";
 // @ts-expect-error Bundled desktop extensions are plain JavaScript modules.
 import { activate } from "../../../internal/plugin/bundled/todo/desktop.js";
+import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";
 
 const query = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = query.get("theme") || "light";
 document.documentElement.dataset.platform = "darwin";
+startFocusModality();
 document.documentElement.style.setProperty("--conversation-message-font-size", `${query.get("size") || 14}px`);
 
 const todos: InspectorTodoItemSnapshotV1[] = [

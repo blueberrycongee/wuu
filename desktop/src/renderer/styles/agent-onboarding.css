@@ -52,7 +52,7 @@
 .agent-onboarding-submit { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: var(--radius-sm); min-height: 32px; min-width: 100px; padding: 5px 12px; font: inherit; font-size: var(--font-ui); background: var(--ink-strong); color: var(--paper); }
 .agent-onboarding-submit:hover:not(:disabled) { background: var(--ink); }
 .agent-onboarding button:disabled, .agent-onboarding input:disabled { opacity: .5; cursor: default; }
-.agent-onboarding button:focus-visible, .agent-onboarding input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
 .channel-recipient-action-icon { display: grid; place-items: center; color: var(--ink-soft); background: var(--surface-2); border-radius: var(--radius-circle); }
 @media (max-width: 600px) {
   .agent-onboarding-scroll { padding-top: 12px; }

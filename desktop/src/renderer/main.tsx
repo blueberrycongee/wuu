@@ -10,6 +10,7 @@ import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxW
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
 import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
+import { startFocusModality } from "./FocusModality";
 import { startScrollbarReveal } from "./ScrollbarReveal";
 import { applyThemePreference, startThemePreferenceSync } from "./Theme";
 import "./styles.css";
@@ -45,6 +46,9 @@ startScrollbarWidthSync();
 // fade (styles/scrollbars.css). One capture-phase listener covers every surface,
 // including ones mounted later; hover never reveals a scrollbar.
 startScrollbarReveal();
+// Stamp pointer vs keyboard focus so click-selected fields keep the caret
+// without a ring; Tab still paints the shared keyboard outline.
+startFocusModality();
 
 // Pause ambient infinite animations while the native window is hidden or
 // minimized. Finite UI transitions remain untouched so their lifecycle events

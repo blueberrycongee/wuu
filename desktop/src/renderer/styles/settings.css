@@ -459,15 +459,9 @@
   background: var(--field-hover-bg);
 }
 
-.settings-input:focus {
-  outline: 0;
-}
-
 .settings-select:focus,
 .settings-select:focus-visible {
-  outline: 0;
   background: var(--field-hover-bg);
-  box-shadow: none;
 }
 
 .settings-input:disabled,
@@ -622,11 +616,6 @@
 
 .settings-button:active:not(:disabled) {
   transform: scale(0.97);
-}
-
-.settings-button:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .settings-button:disabled {

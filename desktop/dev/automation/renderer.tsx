@@ -6,12 +6,14 @@ import { PluginHost, type PluginGenerationApi } from "../../src/renderer/plugins
 import { DesktopWorkbench, PluginViewContent, WorkbenchController } from "../../src/renderer/plugins/Workbench";
 import { AppBackground } from "../../src/renderer/background/AppBackground";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
+import { startFocusModality } from "../../src/renderer/FocusModality";
 import source from "../../../internal/plugin/bundled/automation/desktop.js?raw";
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 import "../../src/renderer/styles.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "dark" ? "dark" : "light";
+startFocusModality();
 applyMessageFlowFontSize(Number(params.get("font")) || 14);
 const workspace = { id: "wuu", name: "wuu", root: "/projects/wuu", available: true };
 let tasks = [

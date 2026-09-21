@@ -27,6 +27,8 @@ npm --prefix desktop run dev:onboarding
 
 [`base.css`](../../../desktop/src/renderer/styles/base.css)定义字体、颜色、圆角、焦点和层级等基础角色；[`spacing.css`](../../../desktop/src/renderer/styles/spacing.css)定义间距角色、密度边界和控件最小尺寸。优先使用已有角色，不为每个组件另设常量。
 
+鼠标点击不额外画外框。输入框只保留光标，其他控件保持静止和悬停表面。Tab，或在非文本控件上按方向键时，才显示 2px 的 `--focus-ring` 指示框。输入框和多行文本里的方向键不算键盘焦点切换。Chromium 在点击输入框时仍会匹配 `:focus-visible`，因此描边由 [`FocusModality.ts`](../../../desktop/src/renderer/FocusModality.ts) 写在 `html[data-focus-modality]` 上的状态决定，而不是单独依赖该伪类。不要为点击再写一层描边，也不要在已有边框外再套一圈。
+
 尊重用户分别设置的 UI 与代码字号。行高随内容增长，为末尾操作和状态标记预留空间，同级标签的对齐不应随运行或未读状态改变。密度调整留白，不移除最小点击尺寸；粗指针设备使用更大的控件尺寸下限。
 
 紧凑菜单使用 `--menu-inset`、`--menu-item-gap` 和 `--menu-shell-radius`。外层圆角由内层圆角加内缩距离得到，使嵌套圆角保持对应关系；面板和对话框使用各自的圆角角色。给每个有 padding 的层设置同一个圆角数值，并不能得到相同的几何关系。点击打开的浮层卡片（右键菜单、权限选择、下拉面板）的选项文字使用 `--font-menu`（比 `--font-ui` 小一档），字重 `--weight-medium`；分组标题和次要说明使用 `--font-xs`。输入栏芯片与浮层同档。输入框上方的提问卡仍用 `--font-ui`，那是阅读面，不是菜单。

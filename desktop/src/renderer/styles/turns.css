@@ -690,12 +690,7 @@
   caret-color: var(--wuu-message-user-color, var(--user-message-fg-color));
   font: inherit;
   line-height: var(--conversation-reading-line-height);
-  outline: none;
   padding: 6px 2px;
-}
-
-.user-message-edit-input:focus {
-  outline: none;
 }
 
 /*
@@ -785,11 +780,6 @@
 .user-message-edit-button.secondary:hover:not(:disabled) {
   background: var(--user-message-edit-hover-bg);
   opacity: 1;
-}
-
-.user-message-edit-button:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .user-message-edit-button.secondary:disabled {

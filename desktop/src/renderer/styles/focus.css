@@ -1,0 +1,54 @@
+/*
+ * Shared focus policy. Pointer selection uses the control's own surface and
+ * caret; a ring is reserved for keyboard focus movement.
+ *
+ * Chromium reports `:focus-visible` for a click into a text field, so rings
+ * cannot key off that pseudo-class alone. `FocusModality.ts` stamps
+ * `data-focus-modality` on <html>. Until that attribute exists, omit rings
+ * rather than flashing a frame on first paint.
+ */
+
+:where(:focus) {
+  outline: none;
+}
+
+html[data-focus-modality="pointer"] :is(:focus, :focus-visible),
+html[data-focus-modality="pointer"] :has(:focus-visible) {
+  outline: none !important;
+}
+
+html[data-focus-modality="keyboard"] :is(:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+html[data-focus-modality="keyboard"] :is(
+  .nav-item,
+  .project-row,
+  .thread-row,
+  .composer-textarea-context-menu-item
+):focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] :is(
+  .menu-search,
+  .catalog-search,
+  .settings-archive-search
+):has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+html[data-focus-modality="keyboard"] :is(
+  .menu-search,
+  .catalog-search,
+  .settings-archive-search
+):has(input:focus-visible) input {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] .menu-search.conversation-search-input-wrap:has(input:focus-visible),
+html[data-focus-modality="keyboard"] .menu-search.conversation-search-input-wrap input:focus-visible {
+  outline: none;
+}

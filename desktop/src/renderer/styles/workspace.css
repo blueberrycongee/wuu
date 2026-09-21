@@ -1807,9 +1807,9 @@ html.resizing-workspace-file-split * {
   transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
 }
 
-.workspace-browser-url-form:focus-within {
-  border-color: var(--browser-url-focus-border);
-  box-shadow: 0 0 0 3px var(--browser-url-focus-ring);
+html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .workspace-browser-url-form:has(.workspace-browser-url-input.has-error) {
@@ -3080,11 +3080,6 @@ html.resizing-workspace-file-split * {
 .skill-row-button:focus-visible .skill-row-chevron {
   opacity: 1;
   transform: translateX(0);
-}
-
-.skill-row-button:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .environment-modal-backdrop:has(.skill-preview-dialog) {
@@ -4550,9 +4545,13 @@ html.resizing-workspace-file-split * {
   margin: 0;
 }
 
-.codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
+html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
+}
+
+html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) input {
+  outline: none;
 }
 
 .codex-effort-slider.is-disabled {

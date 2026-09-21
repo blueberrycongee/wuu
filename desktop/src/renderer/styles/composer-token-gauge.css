@@ -22,15 +22,12 @@
   user-select: none;
   line-height: 1;
   cursor: default;
-  outline: none;
   transition:
     color 420ms var(--ease-out),
     opacity var(--motion-slow) var(--ease-out);
 }
 
 .composer-token-gauge:focus-visible {
-  outline: 2px solid var(--composer-token-gauge-focus-outline);
-  outline-offset: 2px;
   border-radius: var(--radius-pill);
 }
 

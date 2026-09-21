@@ -25,14 +25,9 @@
   flex: 0 0 auto;
   cursor: default;
   color: var(--context-meter-text);
-  /* Wrap focus visibility to the ring outline so the meter is keyboard
-     accessible for the hover-driven breakdown tooltip. */
-  outline: none;
 }
 
 .composer-context-meter:focus-visible {
-  outline: 2px solid var(--composer-context-meter-focus-outline);
-  outline-offset: 2px;
   border-radius: var(--radius-pill);
 }
 

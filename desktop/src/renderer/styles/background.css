@@ -56,8 +56,8 @@ html[data-app-background] :is(.sidebar-collapsed, .compact-navigation) :is(.side
   cursor: pointer;
 }
 
-.background-file-picker:focus-within {
-  outline: 2px solid var(--accent);
+html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

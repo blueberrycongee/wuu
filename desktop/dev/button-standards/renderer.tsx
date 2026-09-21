@@ -2,8 +2,11 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Plus, X, Info, Maximize2, Minimize2, RotateCw, Copy, Paperclip, Settings2, Trash2 } from "lucide-react";
 import { SidePanelToggleIcon } from "../../src/renderer/SidePanelToggleIcon";
+import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
+
+startFocusModality();
 
 function Fixture() {
   const [theme, setTheme] = useState("light");

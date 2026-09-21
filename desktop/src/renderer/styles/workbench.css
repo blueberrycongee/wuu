@@ -341,22 +341,6 @@
   opacity: 0.52;
 }
 
-.plugin-ui-button:focus-visible,
-.plugin-ui-toolbar-toggle:focus-visible,
-.plugin-ui-input:focus-visible,
-.plugin-ui-textarea:focus-visible,
-.plugin-ui-checkbox input:focus-visible {
-  outline: 0;
-}
-
-.plugin-ui-button:focus-visible,
-.plugin-ui-toolbar-toggle:focus-visible,
-.plugin-ui-input:focus-visible,
-.plugin-ui-textarea:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
 .plugin-ui-field {
   display: grid;
   min-width: 0;

@@ -95,9 +95,13 @@
   color: var(--ink);
 }
 
-:is(.icon-button, .composer-tool-button, .sidebar-row-icon-button,
-    .session-tab-close, .workspace-tool-tab-close):focus-visible {
-  outline: 2px solid var(--focus-ring);
+html[data-focus-modality="keyboard"] :is(
+  .icon-button,
+  .composer-tool-button,
+  .sidebar-row-icon-button,
+  .session-tab-close,
+  .workspace-tool-tab-close
+):focus-visible {
   outline-offset: -2px;
 }
 

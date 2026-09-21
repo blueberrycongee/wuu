@@ -2278,11 +2278,6 @@
   color: var(--ink-tertiary);
 }
 
-.channel-form-field input:focus {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 2px var(--focus-ring);
-}
-
 .channel-form-section {
   display: grid;
   gap: 14px;
@@ -2501,11 +2496,11 @@
   box-shadow: 0 0 0 1px var(--ink-soft), var(--shadow-soft);
 }
 
-.agent-avatar-color-control input[type="range"]:focus-visible {
+html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="range"]:focus-visible {
   outline: none;
 }
 
-.agent-avatar-color-control input[type="range"]:focus-visible::-webkit-slider-thumb {
+html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="range"]:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 1px var(--paper), 0 0 0 3px var(--focus-ring);
 }
 

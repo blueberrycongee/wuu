@@ -48,11 +48,7 @@
 .channel-settings-fields .channel-agent-editor-body { overflow: visible; padding: 0; }
 .channel-settings-panel .channel-settings-actions { flex: none; gap: var(--space-2); padding: var(--space-3) var(--panel-padding) var(--space-4); }
 .channel-settings-form > .channel-error { margin: 0; padding: 0 var(--panel-padding) var(--space-2); overflow-wrap: anywhere; }
-.channel-settings-panel :is(button, summary):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  box-shadow: none;
-}
+
 .channel-settings-members { min-height: 0; display: grid; gap: var(--space-1); padding: 0 var(--panel-padding) var(--space-4); overflow-y: auto; }
 .channel-settings-member { display: flex; align-items: center; width: 100%; gap: 12px; min-height: 48px; padding: 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink); text-align: left; font: inherit; line-height: var(--line-ui); cursor: pointer; }
 .channel-settings-member:hover { background: var(--surface-1); }

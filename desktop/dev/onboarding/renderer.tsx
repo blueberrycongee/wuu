@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { FirstRunOnboarding } from "../../src/renderer/FirstRunOnboarding";
 import { WuuMascotRuntimeProvider } from "../../src/renderer/WuuMascot";
 import { I18nProvider } from "../../src/renderer/i18n";
+import { startFocusModality } from "../../src/renderer/FocusModality";
 import { applyPlatformStamp } from "../../src/renderer/platform";
 import type { EngineListResult } from "../../src/shared/protocol";
 import "../../src/renderer/styles.css";
@@ -20,6 +21,7 @@ const engines: EngineListResult = {
 };
 
 applyPlatformStamp();
+startFocusModality();
 createRoot(document.getElementById("root")!).render(
   <I18nProvider>
     <WuuMascotRuntimeProvider>
