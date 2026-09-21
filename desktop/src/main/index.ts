@@ -255,7 +255,6 @@ import {
   loadMainWindowBounds,
   saveMainWindowBounds,
 } from "./windowState";
-import { macWindowMaterial } from "./windowMaterial";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEV_CACHE_CLEANUP_THRESHOLD_BYTES = 512 * 1024 * 1024;
 const DEV_CACHE_DIRECTORIES = ["Cache", "Code Cache", "GPUCache", "DawnCache"];
@@ -305,7 +304,6 @@ const DESKTOP_BUILD_INFO: DesktopBuildInfo = {
 let cachedCoreBuildInfo: CoreBuildInfo | undefined;
 let windowResizeEndTimer: NodeJS.Timeout | undefined;
 let windowResizeState = false;
-let macResizeMaterialSuspended = false;
 // Debounce timer for persisting the main window bounds on resize end. The
 // 200ms delay matches windowResizeEndTimer so the two callbacks fire
 // together — a single "user finished resizing" tick writes once.
@@ -705,24 +703,6 @@ function scheduleWindowResizeEnd(delay = 140): void {
   }, delay);
 }
 
-function opaqueWindowFill(): string {
-  return resolvedThemeIsDark() ? DARK_WINDOW_BACKGROUND : DEFAULT_WINDOW_BACKGROUND;
-}
-
-function syncMacResizeMaterial(win: BrowserWindow | undefined, resizing: boolean): void {
-  if (process.platform !== "darwin" || !win || win.isDestroyed()) return;
-  if (macResizeMaterialSuspended === resizing) return;
-  macResizeMaterialSuspended = resizing;
-  const material = macWindowMaterial(resizing, opaqueWindowFill());
-  if (material.backgroundBeforeVibrancy) {
-    win.setBackgroundColor(material.backgroundColor);
-    win.setVibrancy(material.vibrancy);
-    return;
-  }
-  win.setVibrancy(material.vibrancy);
-  win.setBackgroundColor(material.backgroundColor);
-}
-
 function handleNativeWindowResizePhase(
   phase: "live" | "end",
   win?: BrowserWindow,
@@ -735,11 +715,9 @@ function handleNativeWindowResizePhase(
       windowResizeEndTimer = undefined;
     }
     setWindowResizeState(false);
-    syncMacResizeMaterial(win, false);
     if (win) scheduleMainWindowBoundsSave(win);
     return;
   }
-  syncMacResizeMaterial(win, true);
   setWindowResizeState(true);
   scheduleWindowResizeEnd();
   if (win) scheduleMainWindowBoundsSave(win);
@@ -1187,7 +1165,6 @@ function createWindow(): void {
       mainWindowBoundsSaveTimer = undefined;
     }
     windowResizeState = false;
-    macResizeMaterialSuspended = false;
     observationCoordinator.setActiveThread(undefined);
     unregisterWindow(windowID);
     mainWindow = null;
