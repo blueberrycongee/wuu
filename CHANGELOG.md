@@ -64,6 +64,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   it no longer wrap again on every size change, and off-screen turns keep
   the height they already had.
 
+- A background session that keeps calling tools, including an ACP session
+  driving another harness, no longer re-sorts the whole sidebar on every
+  tool event. Those updates are applied together.
+
 - Dragging the macOS window frame no longer resamples the under-window
   blur on every resize frame. The frame uses an opaque fill while it moves
   and restores the material when the drag ends.

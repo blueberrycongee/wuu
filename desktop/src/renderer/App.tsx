@@ -126,6 +126,7 @@ import {
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
+  isCoalescedBackgroundThreadEvent,
   initialSplitComposerDrafts,
   initialState,
   isAnyThreadRunning,
@@ -1867,6 +1868,26 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  const pendingBackgroundThreadEventsRef = useRef<ServerEvent[]>([]);
+  const backgroundThreadEventTimerRef = useRef<number | undefined>(undefined);
+  const flushBackgroundThreadEventsRef = useRef<() => void>(() => {});
+  flushBackgroundThreadEventsRef.current = () => {
+    if (backgroundThreadEventTimerRef.current !== undefined) {
+      window.clearTimeout(backgroundThreadEventTimerRef.current);
+      backgroundThreadEventTimerRef.current = undefined;
+    }
+    const pending = pendingBackgroundThreadEventsRef.current;
+    if (pending.length === 0) {
+      return;
+    }
+    pendingBackgroundThreadEventsRef.current = [];
+    setState((current) => pending.reduce(reduceServerEvent, current));
+  };
+  useLayoutEffect(() => {
+    // Opening a session has to see the tool rows that were still queued.
+    flushBackgroundThreadEventsRef.current();
+  }, [activeThreadID, state.secondaryThread?.id]);
+
   useEffect(() => {
     let mounted = true;
     const off = subscribeServerEvents((event) => {
@@ -1960,6 +1981,20 @@ export function App(): JSX.Element {
       if (handling === "skip") {
         return;
       }
+      // A background ACP session emits a tool row for every harness call.
+      // Fold those into one update so the open conversation is not reconciled
+      // on each of them. The sort key of a running session does not change.
+      if (isCoalescedBackgroundThreadEvent(event, appStateRef.current)) {
+        pendingBackgroundThreadEventsRef.current.push(event);
+        if (backgroundThreadEventTimerRef.current === undefined) {
+          backgroundThreadEventTimerRef.current = window.setTimeout(() => {
+            backgroundThreadEventTimerRef.current = undefined;
+            flushBackgroundThreadEventsRef.current();
+          }, 150);
+        }
+        return;
+      }
+      flushBackgroundThreadEventsRef.current();
       if (serverEventShouldRefreshGit(event)) {
         scheduleGitStatusRefresh(600);
       }
@@ -2009,6 +2044,11 @@ export function App(): JSX.Element {
     return () => {
       mounted = false;
       off();
+      if (backgroundThreadEventTimerRef.current !== undefined) {
+        window.clearTimeout(backgroundThreadEventTimerRef.current);
+        backgroundThreadEventTimerRef.current = undefined;
+      }
+      pendingBackgroundThreadEventsRef.current = [];
       if (gitRefreshTimerRef.current !== undefined) {
         window.clearTimeout(gitRefreshTimerRef.current);
         gitRefreshTimerRef.current = undefined;

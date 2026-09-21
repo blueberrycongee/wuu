@@ -34,6 +34,7 @@ import {
   initialState,
   isScratchThread,
   isStateActiveThreadRunning,
+  isCoalescedBackgroundThreadEvent,
   isThreadExecuting,
   isThreadRunning,
   isThreadUnread,
@@ -2378,6 +2379,58 @@ describe("AppState sortThreads (sidebar order)", () => {
       "thread-newer",
       "thread-older",
     ]);
+
+    const withTool = reduceServerEvent(
+      {
+        ...initialState,
+        thread: sorted[0],
+        threads: sorted,
+      },
+      {
+        kind: "notification",
+        workdir: "/tmp",
+        message: {
+          method: "item/started",
+          params: {
+            thread_id: "thread-older",
+            turn_id: "turn-1",
+            item: {
+              id: "tool-1",
+              type: "tool_call",
+              status: "in_progress",
+              name: "bash",
+            },
+          },
+        },
+      },
+    );
+    expect(withTool.threads.map((thread) => thread.id)).toEqual([
+      "thread-newer",
+      "thread-older",
+    ]);
+    expect(withTool.threads[0]).toBe(sorted[0]);
+    expect(isCoalescedBackgroundThreadEvent(
+      {
+        kind: "notification",
+        workdir: "/tmp",
+        message: {
+          method: "item/started",
+          params: { thread_id: "thread-older", turn_id: "turn-1", item: { id: "tool-1" } },
+        },
+      },
+      { ...initialState, thread: sorted[0], threads: sorted },
+    )).toBe(true);
+    expect(isCoalescedBackgroundThreadEvent(
+      {
+        kind: "notification",
+        workdir: "/tmp",
+        message: {
+          method: "item/started",
+          params: { thread_id: "thread-newer", turn_id: "turn-1", item: { id: "tool-1" } },
+        },
+      },
+      { ...initialState, thread: sorted[0], threads: sorted },
+    )).toBe(false);
 
     // Even after flipping updated_at wildly, running order is unchanged.
     const flipped = sortThreads([

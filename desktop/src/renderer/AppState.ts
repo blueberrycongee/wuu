@@ -441,6 +441,25 @@ function handleStreamingNotification(
   }
 }
 
+const COALESCED_BACKGROUND_THREAD_METHODS = new Set([
+  "item/started",
+  "item/completed",
+  "item/removed",
+]);
+
+/** Tool rows for a session the user is not looking at. The visible tree does not need each one immediately. */
+export function isCoalescedBackgroundThreadEvent(event: ServerEvent, state: AppState): boolean {
+  if (event.kind !== "notification" || !COALESCED_BACKGROUND_THREAD_METHODS.has(event.message.method)) {
+    return false;
+  }
+  const params = event.message.params as Record<string, unknown> | undefined;
+  const threadID = threadIDFromParams(params);
+  if (!threadID || threadID === state.thread?.id || threadID === state.secondaryThread?.id) {
+    return false;
+  }
+  return state.threads.some((thread) => thread.id === threadID);
+}
+
 function streamHandlingForThread(
   active: boolean,
   hasVisibleText: boolean,
@@ -1279,24 +1298,22 @@ function updateThreadByID(
       sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, thread),
     };
   }
-  let updated = false;
-  const threads = state.threads.map((thread) => {
-    if (thread.id !== threadID) {
-      return thread;
-    }
-    updated = true;
-    return update(thread);
-  });
-  if (!updated) {
+  const index = state.threads.findIndex((thread) => thread.id === threadID);
+  if (index < 0) {
     return state;
   }
-  const updatedThread = threads.find((thread) => thread.id === threadID);
+  const updatedThread = update(state.threads[index]);
+  if (updatedThread === state.threads[index]) {
+    return state;
+  }
+  const preserved = replaceThreadPreservingOrder(state.threads, updatedThread);
+  const threads = preserved ?? sortThreads(
+    state.threads.map((thread, threadIndex) => threadIndex === index ? updatedThread : thread),
+  );
   return {
     ...state,
-    threads: sortThreads(threads),
-    sessionTabs: updatedThread
-      ? syncThreadSessionTabTitle(state.sessionTabs, updatedThread)
-      : state.sessionTabs,
+    threads,
+    sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, updatedThread),
   };
 }
 
@@ -1408,7 +1425,40 @@ function turnItemsArePrefix(resumed: Turn, local: Turn): boolean {
   return true;
 }
 
+function sameSidebarOrder(left: Thread, right: Thread): boolean {
+  const leftRunning = isThreadRunning(left);
+  const rightRunning = isThreadRunning(right);
+  return leftRunning === rightRunning
+    && sidebarThreadSortTime(left, leftRunning) === sidebarThreadSortTime(right, rightRunning);
+}
+
+// Tool events rewrite one session without moving its sidebar row. Re-sorting
+// the whole list on each of those events is what makes a background ACP
+// session expensive once the workspace has a long session list.
+function replaceThreadPreservingOrder(threads: Thread[], thread: Thread): Thread[] | undefined {
+  const index = threads.findIndex((item) => item.id === thread.id);
+  if (index < 0) {
+    return undefined;
+  }
+  const current = threads[index];
+  if (!sameSidebarOrder(current, thread)) {
+    return undefined;
+  }
+  if (current === thread) {
+    return threads;
+  }
+  const next = threads.slice();
+  next[index] = thread;
+  return next;
+}
+
 function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
+  if (thread && isThread(thread)) {
+    const preserved = replaceThreadPreservingOrder(threads, thread);
+    if (preserved) {
+      return preserved;
+    }
+  }
   const validThreads = sortThreads(threads);
   if (!isThread(thread)) {
     return validThreads;
