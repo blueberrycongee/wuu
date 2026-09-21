@@ -44,6 +44,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Animate the Automations editor split open and closed, instead of snapping
+  the form pane in and out.
+
 - Show each engine's existing SVG brand mark on the desktop composer model
   picker, engine choices, and first-run runtime cards.
 

@@ -70,8 +70,11 @@ export async function activate(api) {
     }
     .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
     .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; font-size:inherit; }
-    .plugin-automation-body { position:relative; display:flex; height:100%; min-height:0; }
-    .plugin-automation-main { flex:1; min-width:0; overflow:auto; padding:var(--automation-inset); }
+    .plugin-automation-body { position:relative; display:grid; grid-template-columns:minmax(0, 1fr) 0px; height:100%; min-height:0; overflow:hidden; transition:grid-template-columns var(--environment-panel-motion-duration, 260ms) var(--environment-panel-motion-easing, cubic-bezier(0.2, 0, 0, 1)); }
+    .plugin-automation-body[data-panel="true"]:not([data-closing="true"]) { grid-template-columns:minmax(0, 1fr) var(--automation-detail-width); }
+    .plugin-automation-body[data-closing="true"] { transition-duration:var(--environment-panel-exit-duration, 220ms); }
+    .plugin-automation-body[data-resizing="true"] { transition:none; }
+    .plugin-automation-main { min-width:0; overflow:auto; padding:var(--automation-inset); }
     .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
     .plugin-automation-head { display:flex; align-items:center; justify-content:space-between; gap:var(--automation-gap); margin-bottom:var(--automation-gap); }
     .plugin-automation-title { margin:0; font-size:var(--font-title); line-height:var(--line-ui); font-weight:var(--weight-semibold); color:var(--ink-strong); }
@@ -103,8 +106,11 @@ export async function activate(api) {
     .plugin-automation-empty { min-height:160px; }
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { padding:24px 0; color:var(--ink-soft); text-align:center; }
-    .plugin-automation-detail { flex:0 0 clamp(350px, var(--automation-detail-width, 48%), calc(100% - 280px)); min-width:0; overflow:auto; padding:var(--automation-inset); border-left:1px solid var(--hairline); }
-    .plugin-automation-resizer { position:absolute; top:0; bottom:0; left:calc(100% - var(--automation-detail-width)); transform:translateX(-50%); width:10px; padding:0; border:0; outline:0; background:transparent; z-index:2; cursor:col-resize; touch-action:none; -webkit-app-region:no-drag; }
+    .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration, 220ms) var(--ease-in, cubic-bezier(0.4, 0, 1, 1)); }
+    .plugin-automation-body[data-closing="true"] .plugin-automation-detail { opacity:0; pointer-events:none; }
+    .plugin-automation-detail-body { flex:1; min-width:0; min-height:0; overflow:auto; padding:var(--automation-inset); }
+    .plugin-automation-resizer { position:absolute; top:0; bottom:0; left:0; transform:translateX(-50%); width:10px; padding:0; border:0; outline:0; background:transparent; z-index:2; cursor:col-resize; touch-action:none; -webkit-app-region:no-drag; }
+    .plugin-automation-body[data-closing="true"] .plugin-automation-resizer { pointer-events:none; }
     .plugin-automation-resizer::before { content:""; position:absolute; top:0; bottom:0; left:0; width:10px; }
     .plugin-automation-resizer::after { content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; }
     .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
@@ -163,9 +169,11 @@ export async function activate(api) {
     .plugin-automation-picker-group { padding:6px 9px 3px; }
     .plugin-automation-picker-empty { padding:12px; text-align:center; color:var(--ink-tertiary); }
     @container (max-width: 760px) {
+      .plugin-automation-body { transition:none; }
       .plugin-automation-body[data-panel="true"] .plugin-automation-main { display:none; }
+      .plugin-automation-body[data-panel="true"]:not([data-closing="true"]) { grid-template-columns:minmax(0, 1fr); }
       .plugin-automation-resizer { display:none; }
-      .plugin-automation-detail { flex:1; width:100%; max-width:none; min-width:0; border:0; }
+      .plugin-automation-detail { width:100%; min-width:0; max-width:none; border:0; }
     }
     @container (max-width: 420px) {
       .plugin-automation { --automation-inset:16px; }
@@ -368,7 +376,17 @@ export async function activate(api) {
     return { title: task?.title || "", prompt: task?.prompt || "", schedule: task?.cron || "0 9 * * 1-5", timezone: task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", mode: task?.mode || "new_thread", heartbeat_thread_id: task?.heartbeat_thread_id || "", recurring: task ? task.recurring === true : true, workspace: task?.workspace_mode || "shared" };
   }
 
-  function Editor({ tr, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly }) {
+  function panelMotionMs(token, fallback) {
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
+    const raw = typeof window === "undefined" ? "" : window.getComputedStyle?.(document.documentElement)?.getPropertyValue(token)?.trim() || "";
+    if (!raw) return fallback;
+    const value = Number.parseFloat(raw);
+    if (!Number.isFinite(value) || value < 0) return fallback;
+    if (value === 0) return 0;
+    return raw.endsWith("ms") ? value : raw.endsWith("s") ? value * 1000 : value;
+  }
+
+  function Editor({ tr, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, separator }) {
     const [draft, setDraft] = React.useState(() => initial || draftFor(task));
     const [saved, setSaved] = React.useState(() => initial || draftFor(task));
     const [localError, setLocalError] = React.useState("");
@@ -389,36 +407,38 @@ export async function activate(api) {
       const normalized = { ...draft, title: draft.title.trim() || draft.prompt.trim() };
       if (await onSave(normalized)) { setSaved(normalized); setDraft(normalized); }
     };
-    return h("aside", { className: "plugin-automation-detail", ref: panelRef, "aria-label": task?.title || tr("automation.new"), onKeyDown: (event) => { if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); } } },
-      h("div", { className: "plugin-automation-detail-head" },
-        h("span", { className: "plugin-automation-detail-status" }, !task ? tr("automation.new") : readOnly ? tr("automation.run.completed") : tr(task.paused ? "automation.paused" : "automation.filter.active")),
-        task && !readOnly ? h(React.Fragment, null,
-          h(Button, { variant: "ghost", disabled: busy, onClick: onPause }, tr(task.paused ? "automation.resume" : "automation.pause")),
-          h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
-        h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
-      h("form", { className: "plugin-automation-form", onSubmit: save },
-        h("fieldset", { disabled: busy || readOnly, style: { border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" } },
-          h("div", { className: "plugin-automation-form-identity" },
-            h(TextInput, { className: "plugin-automation-form-name", "aria-label": tr("automation.name"), placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) }),
-            h(TextArea, { className: "plugin-automation-form-prompt", "aria-label": tr("automation.prompt"), required: true, rows: 3, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) })),
-          h("div", { className: "plugin-automation-form-card" },
-            h("div", { className: "plugin-automation-form-row" }, h("span", null, tr("automation.field.target")), h("span", { className: "plugin-automation-form-row-control" }, h(TargetPicker, {
-              tr, threads, disabled: busy || readOnly,
-              value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
-              onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
-            }))),
-            h(ScheduleFields, { tr, draft, onChange: setDraft })),
-          h("details", { className: "plugin-automation-advanced", open: advanced, onToggle: (event) => setAdvanced(event.currentTarget.open) },
-            h("summary", null, tr("automation.advanced")),
-            h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => setDraft({ ...draft, timezone: event.target.value }) })),
-            h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => setDraft({ ...draft, recurring: !event.target.checked }) })),
-            draft.mode !== "thread_heartbeat" ? h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
-        error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
-        !readOnly ? h("div", { className: "plugin-automation-form-actions" },
-          task && dirty ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr("automation.unsaved")) : null,
-          h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
-          h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
-      runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h("span", null, tr(`automation.run.${runStatus(run)}`)), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null);
+    return h("aside", { className: "plugin-automation-detail", ref: panelRef, inert: closing || undefined, "aria-label": task?.title || tr("automation.new"), onKeyDown: (event) => { if (event.key === "Escape" && !busy && !closing) { event.stopPropagation(); onClose(); } } },
+      separator ? h("div", { ...separator, className: "plugin-automation-resizer", "aria-label": tr("automation.resize") }) : null,
+      h("div", { className: "plugin-automation-detail-body" },
+        h("div", { className: "plugin-automation-detail-head" },
+          h("span", { className: "plugin-automation-detail-status" }, !task ? tr("automation.new") : readOnly ? tr("automation.run.completed") : tr(task.paused ? "automation.paused" : "automation.filter.active")),
+          task && !readOnly ? h(React.Fragment, null,
+            h(Button, { variant: "ghost", disabled: busy, onClick: onPause }, tr(task.paused ? "automation.resume" : "automation.pause")),
+            h("details", { className: "plugin-automation-more" }, h("summary", { "aria-label": tr("automation.more") }, "⋯"), h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))))) : null,
+          h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), onClick: onClose }, h(CloseIcon))),
+        h("form", { className: "plugin-automation-form", onSubmit: save },
+          h("fieldset", { disabled: busy || readOnly, style: { border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" } },
+            h("div", { className: "plugin-automation-form-identity" },
+              h(TextInput, { className: "plugin-automation-form-name", "aria-label": tr("automation.name"), placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) }),
+              h(TextArea, { className: "plugin-automation-form-prompt", "aria-label": tr("automation.prompt"), required: true, rows: 3, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) })),
+            h("div", { className: "plugin-automation-form-card" },
+              h("div", { className: "plugin-automation-form-row" }, h("span", null, tr("automation.field.target")), h("span", { className: "plugin-automation-form-row-control" }, h(TargetPicker, {
+                tr, threads, disabled: busy || readOnly,
+                value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
+                onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
+              }))),
+              h(ScheduleFields, { tr, draft, onChange: setDraft })),
+            h("details", { className: "plugin-automation-advanced", open: advanced, onToggle: (event) => setAdvanced(event.currentTarget.open) },
+              h("summary", null, tr("automation.advanced")),
+              h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => setDraft({ ...draft, timezone: event.target.value }) })),
+              h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.once"), checked: !draft.recurring, onChange: (event) => setDraft({ ...draft, recurring: !event.target.checked }) })),
+              draft.mode !== "thread_heartbeat" ? h("div", { className: "plugin-automation-form-row" }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
+          error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
+          !readOnly ? h("div", { className: "plugin-automation-form-actions" },
+            task && dirty ? h("span", { className: "plugin-automation-detail-status", role: "status" }, tr("automation.unsaved")) : null,
+            h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
+            h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null),
+        runs.length ? h("section", { className: "plugin-automation-history" }, h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")), runs.slice(0, 5).map((run) => h("div", { key: run.id }, h("div", { className: "plugin-automation-history-row" }, h("span", null, tr(`automation.run.${runStatus(run)}`)), h("time", null, formatDateTime(run.triggered_at, draft.timezone))), run.error ? h("p", { className: "plugin-automation-error" }, run.error) : null))) : null));
   }
 
   function useEditorResize() {
@@ -482,6 +502,7 @@ export async function activate(api) {
     const [workspaces, setWorkspaces] = React.useState([]);
     const [workspaceID, setWorkspaceID] = React.useState("");
     const [selection, setSelection] = React.useState(null);
+    const [panelClosing, setPanelClosing] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
@@ -540,9 +561,28 @@ export async function activate(api) {
     const visible = candidates.filter((task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase()));
     const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || completedTasks.find((task) => task.id === selection.id) : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
-    const create = (template) => { setError(""); setSelection({ kind: "new", key: String(Date.now()), draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: template === "review" ? "0 16 * * 5" : "0 9 * * 1-5" } : {}) } }); };
+    const closePanel = () => {
+      setError("");
+      if (!selection || panelClosing) return;
+      if (panelMotionMs("--environment-panel-exit-duration", 220) === 0) {
+        setSelection(null);
+        setPanelClosing(false);
+        return;
+      }
+      setPanelClosing(true);
+    };
+    React.useEffect(() => {
+      if (!panelClosing) return undefined;
+      const timer = window.setTimeout(() => {
+        setSelection(null);
+        setPanelClosing(false);
+        setError("");
+      }, panelMotionMs("--environment-panel-exit-duration", 220));
+      return () => window.clearTimeout(timer);
+    }, [panelClosing]);
+    const create = (template) => { setError(""); setPanelClosing(false); setSelection({ kind: "new", key: String(Date.now()), draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: template === "review" ? "0 16 * * 5" : "0 9 * * 1-5" } : {}) } }); };
     return h("main", { className: "plugin-automation" }, h(Page, null,
-      h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false" },
+      h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
         h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
           h("div", { className: "plugin-automation-head" }, h("h1", { className: "plugin-automation-title" }, tr("automation.title")),
             h(Button, { variant: "primary", disabled: busy || !workspace, onClick: () => create() }, tr("automation.create"))),
@@ -552,7 +592,7 @@ export async function activate(api) {
               label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
               placeholder: tr("automation.workspaceNone"),
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
-              onChange: (id) => { epoch.current++; setWorkspaceID(id); setSelection(null); setTasks([]); setRuns([]); setError(""); },
+              onChange: (id) => { epoch.current++; setWorkspaceID(id); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); },
             }))),
           h("div", { className: "plugin-automation-filters" }, ["all", "active", "paused", "completed"].map((value) => h("button", { key: value, className: "plugin-automation-filter", "aria-pressed": filter === value, onClick: () => setFilter(value) }, tr(value === "paused" ? "automation.paused" : value === "completed" ? "automation.run.completed" : `automation.filter.${value}`)))),
           error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
@@ -562,18 +602,18 @@ export async function activate(api) {
             const meta = done
               ? [tr("automation.run.completed"), formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone)].filter(Boolean).join(" · ")
               : [describeSchedule(task.cron, task.timezone, tr) || task.cron, task.paused ? tr("automation.paused") : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone) || "—"}`].join(" · ");
-            return h("button", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": task.paused, "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setSelection({ kind: "task", id: task.id }); } },
+            return h("button", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": task.paused, "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => { setError(""); setPanelClosing(false); setSelection({ kind: "task", id: task.id }); } },
               h("span", { className: "plugin-automation-item-icon", "data-run": runStatus(sortedRuns.find((run) => run.task_id === task.id)) }, done ? h(CheckIcon) : h(ClockIcon)),
               h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, task.title || task.prompt), h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, meta)));
           })),
           workspace ? h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), ["brief", "review", "check"].map((key) => h("button", { key, className: "plugin-automation-item", disabled: busy, onClick: () => create(key) }, h("span", { className: "plugin-automation-item-icon" }, h(ClockIcon)), h("span", { className: "plugin-automation-item-main" }, h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`)), h("span", { className: "plugin-automation-item-meta" }, tr(`automation.template.${key}.prompt`)))))) : null),
-        panelOpen ? h("div", { ...resize.separator, className: "plugin-automation-resizer", "aria-label": tr("automation.resize") }) : null,
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
           readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
-          runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: () => { setSelection(null); setError(""); },
+          closing: panelClosing, separator: resize.separator,
+          runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: closePanel,
           onPause: () => act("automation.update", { id: selectedTask.id, paused: !selectedTask.paused }),
-          onRemove: async () => { if (await act("automation.remove", { id: selectedTask.id })) setSelection(null); },
+          onRemove: async () => { if (await act("automation.remove", { id: selectedTask.id })) { setPanelClosing(false); setSelection(null); } },
           onSave: async (draft) => {
             const result = await act(selectedTask ? "automation.update" : "automation.create", { ...draft, ...(selectedTask ? { id: selectedTask.id } : { durable: true }) });
             if (!result) return false;

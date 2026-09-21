@@ -124,6 +124,47 @@ it("resizes the editor with pointer and keyboard, clamps bounds, and preserves w
   expect(ui.invoke.mock.calls.every(([request]) => !request.method.includes("create"))).toBe(true);
 });
 
+it("keeps the editor mounted through the close motion and cancels it when reopened", async () => {
+  const ui = await mount();
+  await ui.click("创建");
+  const body = () => ui.container.querySelector(".plugin-automation-body");
+  expect(body()?.getAttribute("data-panel")).toBe("true");
+  expect(body()?.getAttribute("data-closing")).toBeNull();
+  await ui.click("关闭");
+  expect(ui.container.querySelector("aside")).not.toBeNull();
+  expect(body()?.getAttribute("data-closing")).toBe("true");
+  expect(ui.container.querySelector("aside")?.hasAttribute("inert")).toBe(true);
+  await act(async () => { await vi.advanceTimersByTimeAsync(219); });
+  expect(ui.container.querySelector("aside")).not.toBeNull();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(ui.container.querySelector("aside")).toBeNull();
+  expect(body()?.getAttribute("data-panel")).toBe("false");
+  await ui.click("创建");
+  await ui.click("关闭");
+  await ui.click("创建");
+  expect(body()?.getAttribute("data-closing")).toBeNull();
+  expect(ui.container.querySelector("aside")?.hasAttribute("inert")).toBe(false);
+});
+
+it("closes the editor immediately when motion is reduced", async () => {
+  const matchMedia = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes("prefers-reduced-motion"),
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })) as typeof window.matchMedia;
+  cleanups.push(() => { window.matchMedia = matchMedia; });
+  const ui = await mount();
+  await ui.click("创建");
+  await ui.click("关闭");
+  expect(ui.container.querySelector("aside")).toBeNull();
+});
+
 it("reveals saved execution overrides and preserves them when the settings are collapsed", async () => {
   const ui = await mount({ tasks: [{ ...task, recurring: false, timezone: "Pacific/Honolulu" }] });
   await ui.open();
