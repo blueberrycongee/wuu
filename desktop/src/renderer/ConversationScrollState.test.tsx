@@ -246,6 +246,25 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     fireScroll();
   });
 
+  it("remembers a paused reader's reflowed position when switching after resize", () => {
+    mount({ activeThreadID: "thread-a", scrollHeight: 2400, clientHeight: 600, initialScrollTop: 1800 });
+    fireScroll();
+    setScrollTop(900);
+    fireUserScroll();
+    try {
+      document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+      // Native scroll anchoring moves the same reading point after wrapping.
+      setScrollTop(700);
+      fireScroll();
+      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+      switchThread("thread-b");
+      switchThread("thread-a");
+      expect(layout?.scrollTop).toBe(700);
+    } finally {
+      document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
+    }
+  });
+
   it("keeps a thread's scroll snapshot while a non-conversation tab is active", () => {
     mount({
       activeThreadID: "thread-a",
@@ -722,7 +741,7 @@ describe("useConversationScrollState — dock composer height", () => {
     expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("452px");
   });
 
-  it("does not rewrite dock composer height during a live window resize", async () => {
+  it("keeps the readable viewport in sync with the composer during live resize", async () => {
     const { pane, dockComposer } = mountDockComposerProbe();
     stubRectHeight(dockComposer, 168);
     flushResizeObserversFor(dockComposer);
@@ -733,7 +752,7 @@ describe("useConversationScrollState — dock composer height", () => {
     stubRectHeight(dockComposer, 220);
     flushResizeObserversFor(dockComposer);
     await act(async () => { await new Promise(requestAnimationFrame); });
-    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("168px");
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("220px");
 
     act(() => {
       flushWindowResizeSettle();

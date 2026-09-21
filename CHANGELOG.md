@@ -213,6 +213,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep conversation scrolling aligned with text reflow during window resizing,
+  update composer clearance while dragging, and restore session history against
+  the incoming composer's viewport rather than the previous session's height.
+
 - Apply deferred conversation layout before lifting the window-resize freeze, so
   dragging the desktop frame does not jump after the chrome is already still.
 

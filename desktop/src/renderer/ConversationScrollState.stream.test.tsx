@@ -1124,6 +1124,32 @@ describe("useConversationScrollState — high-frequency stream", () => {
     }
   });
 
+  it("settles reflow before paint without following into reserved tail space", () => {
+    mount({ scrollHeight: 2200, clientHeight: 600 });
+    if (!layout || !node || !handle) throw new Error("not mounted");
+    node.style.setProperty("--session-tail-space", "180px");
+    flushResizeObservers();
+    expect(layout.scrollTop).toBe(1420);
+
+    document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+    for (const [height, contentHeight] of [[400, 2400], [700, 2000], [500, 2300]]) {
+      layout.clientHeight = height;
+      layout.scrollHeight = contentHeight;
+      act(() => flushResizeObservers());
+      // ResizeObserver runs after rAF and layout, before paint. Waiting for
+      // another rAF would paint one frame with the previous scroll offset.
+      expect(layout.scrollTop).toBe(contentHeight - height - 180);
+      act(() => flushAnimationFrames());
+      expect(layout.scrollTop).toBe(contentHeight - height - 180);
+    }
+
+    act(() => handle!.disableConversationAutoFollow());
+    layout.scrollTop = 300;
+    layout.scrollHeight = 2600;
+    act(() => flushResizeObservers());
+    expect(layout.scrollTop).toBe(300);
+  });
+
   it("keeps latest content continuously pinned during live window resize", () => {
     // User parked at the bottom of a tall conversation. Reflow changes the
     // real bottom while the window is being dragged, so coalesce observer
@@ -1154,10 +1180,9 @@ describe("useConversationScrollState — high-frequency stream", () => {
       flushResizeObservers();
     });
 
-    // The message container stays in normal flow. The bottom update is
-    // deferred only to the next paint, not until the whole drag settles.
+    // The message container stays in normal flow and is pinned before paint.
     expect(contentNode.style.transform).toBe("");
-    expect(layout.scrollTop).toBe(1600);
+    expect(layout.scrollTop).toBe(2200 - 400);
     act(() => flushAnimationFrames());
     expect(layout.scrollTop).toBe(2200 - 400);
     // The user is still following, so the next stream tick sticks to the

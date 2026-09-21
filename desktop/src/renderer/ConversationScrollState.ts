@@ -25,10 +25,7 @@ import {
   sessionTailSpacePx,
   setAutoFollowOverflowAnchor,
 } from "./AutoFollowScroll";
-import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
+import { isWindowResizing } from "./WindowResizeState";
 import { markSessionSwitch } from "./SessionSwitchPerformance";
 import { messageMotionTime, motionDurationMs, motionEasing, prefersReducedMotion, cubicBezier } from "./motion";
 import { createScrollGlide } from "./ScrollGlide";
@@ -267,6 +264,22 @@ export function useConversationScrollState({
     setDockComposerNode(node);
   }, []);
   const dockComposerHeightRef = useRef(0);
+  const syncDockComposerGeometry = useCallback((): void => {
+    const pane = conversationPaneRef.current;
+    const nextHeight = dockComposerNode ? dockComposerVisualHeight(dockComposerNode) : 0;
+    const input = dockComposerNode?.querySelector<HTMLElement>(".composer-frame");
+    const inputInset = input && dockComposerNode
+      ? Math.max(0, Math.ceil(dockComposerNode.getBoundingClientRect().bottom - input.getBoundingClientRect().top))
+      : nextHeight;
+    const heightValue = `${nextHeight}px`;
+    const insetValue = `${inputInset}px`;
+    if (dockComposerHeightRef.current === nextHeight &&
+      pane?.style.getPropertyValue("--dock-composer-height") === heightValue &&
+      pane?.style.getPropertyValue("--conversation-input-inset") === insetValue) return;
+    dockComposerHeightRef.current = nextHeight;
+    pane?.style.setProperty("--dock-composer-height", heightValue);
+    pane?.style.setProperty("--conversation-input-inset", insetValue);
+  }, [dockComposerNode]);
   const setAutoFollow = useCallback((next: boolean): void => {
     // A later ownership change supersedes a pending click's restoration.
     if (pointerScrollGestureRef.current) pointerScrollGestureRef.current.resumeScrollTop = undefined;
@@ -293,10 +306,6 @@ export function useConversationScrollState({
     new Map<string, ConversationScrollSnapshot>()
   );
   const streamScrollFrameRef = useRef<number | undefined>(undefined);
-  const liveResizeScrollFrameRef = useRef<number | undefined>(undefined);
-  const resizeSettleStreamScrollRef = useRef<ReturnType<
-    typeof createWindowResizeSettleScheduler
-  > | null>(null);
   const conversationScrollbarHideTimerRef = useRef<number | undefined>(undefined);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   const bottomOverscrollFromAwayRef = useRef(false);
@@ -592,7 +601,7 @@ export function useConversationScrollState({
 
   const positionSubmittedMessage = useCallback((animate = false): boolean => {
     if (splitConversation || scrollModeRef.current !== "pending") return false;
-    let viewport = conversationViewport();
+    const viewport = conversationViewport();
     if (!viewport) return false;
     const message = submittedMessage();
     if (!message) return false;
@@ -618,7 +627,7 @@ export function useConversationScrollState({
 
     const glide = createScrollGlide();
     let lastFrameTime: number | undefined;
-    const finishHold = (placed: number): void => {
+    const finishHold = (viewport: HTMLElement, placed: number): void => {
       scrollModeRef.current = "holding";
       reflowSubmittedMotionRef.current = undefined;
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
@@ -646,7 +655,7 @@ export function useConversationScrollState({
       applyLeadSpace(lift);
       const paint = (now: number | undefined): void => {
         if (scrollModeRef.current !== "placing") return;
-        viewport = conversationViewport();
+        const viewport = conversationViewport();
         if (!viewport) {
           scrollModeRef.current = "pending";
           applyLeadSpace(0);
@@ -662,7 +671,7 @@ export function useConversationScrollState({
         lastConversationScrollTopRef.current = placed;
         if (done) {
           applyLeadSpace(0);
-          finishHold(placed);
+          finishHold(viewport, placed);
           return;
         }
         submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
@@ -678,7 +687,7 @@ export function useConversationScrollState({
     let reservedRange: { target: number; clientHeight: number } | undefined;
     const paint = (now: number | undefined): void => {
       if (scrollModeRef.current !== "placing") return;
-      viewport = conversationViewport();
+      const viewport = conversationViewport();
       if (!viewport) {
         scrollModeRef.current = "pending";
         return;
@@ -723,7 +732,7 @@ export function useConversationScrollState({
       programmaticScrollTopRef.current = placed;
       lastConversationScrollTopRef.current = placed;
       if (done) {
-        finishHold(placed);
+        finishHold(viewport, placed);
         return;
       }
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
@@ -833,31 +842,6 @@ export function useConversationScrollState({
     return () => { media?.removeEventListener("change", reduce); document.removeEventListener("visibilitychange", hide); };
   }, [cancelSubmittedQueryScroll]);
 
-  const scheduleLiveResizeScroll = useCallback((): void => {
-    if (
-      liveResizeScrollFrameRef.current !== undefined ||
-      !isFollowing()
-    ) {
-      return;
-    }
-    liveResizeScrollFrameRef.current = window.requestAnimationFrame(() => {
-      liveResizeScrollFrameRef.current = undefined;
-      const node = conversationViewport();
-      if (
-        !node ||
-        !isWindowResizing() ||
-        !isFollowing()
-      ) {
-        return;
-      }
-      // Chromium clamps oversized scroll targets to the real bottom. Using a
-      // sentinel avoids reading scrollHeight/clientHeight during live resize,
-      // and rAF coalescing caps the work at one scroll write per paint.
-      node.scrollTop = Number.MAX_SAFE_INTEGER;
-      lastConversationScrollTopRef.current = node.scrollTop;
-    });
-  }, [activePane, splitConversation]);
-
   const scheduleStreamScroll = useCallback((): void => {
     if (previousThreadRef.current !== activeThreadID) return;
     syncTailLayout();
@@ -865,15 +849,6 @@ export function useConversationScrollState({
       return;
     }
     if (!isFollowing() && !submissionPhase()) {
-      return;
-    }
-    if (isWindowResizing()) {
-      scheduleLiveResizeScroll();
-      if (!resizeSettleStreamScrollRef.current) {
-        resizeSettleStreamScrollRef.current =
-          createWindowResizeSettleScheduler(scrollConversationToBottom);
-      }
-      resizeSettleStreamScrollRef.current.schedule();
       return;
     }
     if (streamScrollFrameRef.current !== undefined) {
@@ -886,12 +861,7 @@ export function useConversationScrollState({
         scrollConversationToBottom();
       });
     });
-  }, [activeThreadID, scheduleLiveResizeScroll, scrollConversationToBottom, syncTailLayout]);
-
-  useEffect(() => {
-    resizeSettleStreamScrollRef.current?.cancel();
-    resizeSettleStreamScrollRef.current = null;
-  }, [scrollConversationToBottom]);
+  }, [activeThreadID, scrollConversationToBottom, syncTailLayout]);
 
   const enableConversationAutoFollow = useCallback((): void => {
     deferredSubmissionRef.current.clear();
@@ -995,6 +965,13 @@ export function useConversationScrollState({
     if (isWindowResizing()) {
       if (isFollowing()) {
         scheduleStreamScroll();
+      } else {
+        // Native anchoring may move a paused reader during reflow. Retain that
+        // new offset without re-arming follow or consuming submission space;
+        // otherwise a later session switch restores the pre-resize position.
+        programmaticScrollTopRef.current = undefined;
+        lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+        rememberActiveThreadScrollSnapshot(node, false, lastConversationScrollTopRef.current);
       }
       return;
     }
@@ -1198,6 +1175,10 @@ export function useConversationScrollState({
   useLayoutEffect(() => {
     const node = conversationViewport();
     const threadChanged = previousThreadRef.current !== activeThreadID;
+    // Restore against the incoming viewport, not the outgoing draft's height.
+    // Clamping first loses a paused reader's offset even if an observer later
+    // repairs the composer inset.
+    syncDockComposerGeometry();
     pointerScrollGestureRef.current = undefined;
     previousThreadRef.current = activeThreadID;
     if (threadChanged && !adoptingSubmission) {
@@ -1242,7 +1223,7 @@ export function useConversationScrollState({
     }
     markSessionSwitch(activeThreadID, "scroll-restore-end");
     return undefined;
-  }, [activePane, activeThreadID, setAutoFollow, splitConversation]);
+  }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry]);
 
   // Runs after restoration and every commit, including deferred queue/steer
   // materialization. Never infer ownership from an arbitrary arriving message.
@@ -1272,15 +1253,10 @@ export function useConversationScrollState({
     }
     // Turn snapshots can add non-token content (for example a gray process
     // row). Re-anchor before paint so the bottom never flashes at old scrollTop.
-    if (isWindowResizing()) {
-      scheduleStreamScroll();
-      return;
-    }
     scrollConversationToBottom();
   }, [
     activeThreadID,
     primaryTurns,
-    scheduleStreamScroll,
     scrollConversationToBottom,
     secondaryTurns,
   ]);
@@ -1501,28 +1477,16 @@ export function useConversationScrollState({
     if (!node || typeof ResizeObserver === "undefined") {
       return undefined;
     }
-    const windowResizeScroll = createWindowResizeSettleScheduler(() => {
-      // The resize has settled. Commit the real scrollTop so the scrollbar
-      // position, the "jump to latest" pill, and the turn-rail anchor line
-      // up with the new viewport without moving text during the live drag.
-      scrollConversationToBottom();
-    });
     const resizeObserver = new ResizeObserver(() => {
       refreshPointerScrollGestureLayout(node);
-      if (isWindowResizing()) {
-        cancelBottomOverscroll(node);
-        scheduleLiveResizeScroll();
-        windowResizeScroll.schedule();
-        return;
-      }
+      // Observer delivery is already after layout and before paint. Deferring
+      // to rAF here paints the new line wrapping with the previous scrollTop.
+      // Use the same tail/placement/paused policy during and after a resize.
       scrollConversationToBottom();
     });
     observeAutoFollowResizeTargets(node, resizeObserver);
-    window.addEventListener("resize", scheduleLiveResizeScroll);
     return () => {
-      windowResizeScroll.cancel();
       resizeObserver.disconnect();
-      window.removeEventListener("resize", scheduleLiveResizeScroll);
     };
   }, [
     activePane,
@@ -1533,7 +1497,6 @@ export function useConversationScrollState({
     refreshPointerScrollGestureLayout,
     secondaryTurns,
     scrollConversationToBottom,
-    scheduleLiveResizeScroll,
     splitConversation
   ]);
 
@@ -1566,49 +1529,12 @@ export function useConversationScrollState({
 
   useLayoutEffect(() => {
     const node = dockComposerNode;
-    const pane = conversationPaneRef.current;
-    let windowResizeHeight: ReturnType<
-      typeof createWindowResizeSettleScheduler
-    > | undefined;
-    const applyHeight = (nextHeight: number, inputInset = nextHeight): void => {
-      const nextValue = `${nextHeight}px`;
-      const insetValue = `${inputInset}px`;
-      if (
-        dockComposerHeightRef.current === nextHeight &&
-        pane?.style.getPropertyValue("--dock-composer-height") === nextValue &&
-        pane?.style.getPropertyValue("--conversation-input-inset") === insetValue
-      ) {
-        return;
-      }
-      dockComposerHeightRef.current = nextHeight;
-      pane?.style.setProperty("--dock-composer-height", nextValue);
-      pane?.style.setProperty("--conversation-input-inset", insetValue);
-      // The input edge changes the readable viewport. Settle its owned range
-      // in the same frame, before queue removal can clamp a held submission.
-      // The scroll policy leaves deliberate reading pauses untouched.
+    const updateHeight = (): void => {
+      syncDockComposerGeometry();
       scrollConversationToBottom();
     };
-
-    if (!node) {
-      applyHeight(0);
-      return;
-    }
-
-    const updateHeight = (): void => {
-      if (isWindowResizing()) {
-        windowResizeHeight?.schedule();
-        return;
-      }
-      const nextHeight = dockComposerVisualHeight(node);
-      const input = node.querySelector<HTMLElement>(".composer-frame");
-      const inputInset = input
-        ? Math.max(0, Math.ceil(node.getBoundingClientRect().bottom - input.getBoundingClientRect().top))
-        : nextHeight;
-      applyHeight(nextHeight, inputInset);
-    };
-
-    windowResizeHeight = createWindowResizeSettleScheduler(updateHeight);
     updateHeight();
+    if (!node) return;
     // The height token changes ancestor layout. Applying it inside observer
     // delivery can invalidate the growing composer's own resize notifications.
     let heightFrame = 0;
@@ -1622,7 +1548,6 @@ export function useConversationScrollState({
       resizeObserver.observe(frame);
     }
     return () => {
-      windowResizeHeight?.cancel();
       window.cancelAnimationFrame(heightFrame);
       resizeObserver.disconnect();
     };
@@ -1630,7 +1555,8 @@ export function useConversationScrollState({
     dockComposerNode,
     emptyConversation,
     initialized,
-    scrollConversationToBottom
+    scrollConversationToBottom,
+    syncDockComposerGeometry
   ]);
 
   useEffect(() => {
@@ -1639,12 +1565,6 @@ export function useConversationScrollState({
         window.cancelAnimationFrame(streamScrollFrameRef.current);
         streamScrollFrameRef.current = undefined;
       }
-      if (liveResizeScrollFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(liveResizeScrollFrameRef.current);
-        liveResizeScrollFrameRef.current = undefined;
-      }
-      resizeSettleStreamScrollRef.current?.cancel();
-      resizeSettleStreamScrollRef.current = null;
       if (conversationScrollbarHideTimerRef.current !== undefined) {
         window.clearTimeout(conversationScrollbarHideTimerRef.current);
       }

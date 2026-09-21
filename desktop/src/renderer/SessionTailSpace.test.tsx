@@ -209,6 +209,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("restores history against the incoming composer's viewport before clamping", () => {
+  naturalHeight = 2000;
+  composerHeight = 300;
+  render({ id: "a", messageID: "a-message", composer: true });
+  scrollUp(100);
+  const savedTop = scrollTop();
+  expect(savedTop).toBe(1600);
+
+  composerHeight = 100;
+  render({ id: "b", messageID: "b-message", composer: true });
+  composerHeight = 300;
+  render({ id: "a", messageID: "a-message", composer: true });
+  expect(scrollTop()).toBe(savedTop);
+  settle(0);
+  expect(scrollTop()).toBe(savedTop);
+});
+
 it("does not invent submission space when opening a running thread", () => {
   render({ messageID: "old", running: true });
   expect(tailSpace()).toBe(0);

@@ -9,10 +9,6 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
-import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ManagedAgentWork } from "./ManagedAgentWork";
@@ -619,23 +615,16 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       }
     };
     measure();
-    const windowResizeHeight = createWindowResizeSettleScheduler(measure);
     let frame: number | undefined;
     // Updating the stream padding during resize delivery can resize the shared
     // grid again. Apply footer changes in the next frame, outside that delivery,
-    // and wait until a live window drag settles — the same rule as the session
-    // dock composer — so padding and auto-follow do not fight the frame.
+    // including during a window drag so the latest message clears the input.
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
-      if (isWindowResizing()) {
-        windowResizeHeight.schedule();
-        return;
-      }
       if (frame !== undefined) return;
       frame = requestAnimationFrame(() => { frame = undefined; measure(); });
     }) : undefined;
     observer?.observe(composerFooterNode);
     return () => {
-      windowResizeHeight.cancel();
       if (frame !== undefined) cancelAnimationFrame(frame);
       observer?.disconnect();
       stream.style.removeProperty("--channel-footer-height");

@@ -116,6 +116,7 @@ describe("useAutoFollowScrollContainer", () => {
         window.dispatchEvent(new Event("resize"));
         notifyResize();
       });
+      expect(layout.scrollTop).toBe(contentHeight - height);
       paint();
       expect(layout.scrollTop).toBe(contentHeight - height);
       act(() => scrollNode!.dispatchEvent(new Event("scroll")));

@@ -6,7 +6,7 @@ import type { ChannelMessage, ChannelResponse, ChannelRoom, CollaborationSession
 import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
 import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
-import { WINDOW_RESIZE_SETTLE_DELAY_MS, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
@@ -2721,7 +2721,7 @@ describe("ChannelView", () => {
     expect(answer?.querySelector(".channel-message-expand-toggle")).toBeNull();
   });
 
-  it("does not rewrite collaboration stream padding during a live window resize", async () => {
+  it("keeps collaboration footer clearance current during a live window resize", async () => {
     type Observed = {
       callback: ResizeObserverCallback;
       targets: Set<Element>;
@@ -2769,12 +2769,11 @@ describe("ChannelView", () => {
       footerHeight = 180;
       act(() => notifyFooter());
       await act(async () => { await new Promise<number>(requestAnimationFrame); });
-      expect(stream!.style.getPropertyValue("--channel-footer-height")).toBe("120px");
+      expect(stream!.style.getPropertyValue("--channel-footer-height")).toBe("180px");
 
       document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, WINDOW_RESIZE_SETTLE_DELAY_MS + 30));
-      });
+      act(() => notifyFooter());
+      await act(async () => { await new Promise<number>(requestAnimationFrame); });
       expect(stream!.style.getPropertyValue("--channel-footer-height")).toBe("180px");
     } finally {
       document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);

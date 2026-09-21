@@ -7,10 +7,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
+import { isWindowResizing } from "./WindowResizeState";
 import { createScrollGlide } from "./ScrollGlide";
 import { prefersReducedMotion } from "./motion";
 
@@ -478,37 +475,15 @@ export function useAutoFollowScrollContainer({
     if (!node || typeof ResizeObserver === "undefined") {
       return undefined;
     }
-    const windowResizeScroll = createWindowResizeSettleScheduler(scrollToBottom);
-    let liveResizeFrame: number | undefined;
-    const scheduleLiveResizeScroll = (): void => {
-      if (!autoFollowRef.current || liveResizeFrame !== undefined) return;
-      liveResizeFrame = window.requestAnimationFrame(() => {
-        liveResizeFrame = undefined;
-        if (!isWindowResizing() || !autoFollowRef.current) return;
-        cancelMotion();
-        // Match the main conversation: keep the bottom anchored during the
-        // drag, not only after it settles. Chromium clamps this target without
-        // needing scrollHeight/clientHeight reads on every resize frame.
-        node.scrollTop = Number.MAX_SAFE_INTEGER;
-        programmaticScrollTopRef.current = node.scrollTop;
-        lastScrollTopRef.current = node.scrollTop;
-      });
-    };
     const resizeObserver = new ResizeObserver(() => {
       refreshPointerScrollGestureLayout(node);
-      if (isWindowResizing()) {
-        scheduleLiveResizeScroll();
-        windowResizeScroll.schedule();
-        return;
-      }
+      if (isWindowResizing()) cancelMotion();
+      // Layout has already resolved. Correct before this paint rather than
+      // scheduling a second frame that leaves the text trailing the viewport.
       scrollToBottom();
     });
     observeAutoFollowResizeTargets(node, resizeObserver);
-    window.addEventListener("resize", scheduleLiveResizeScroll);
     return () => {
-      window.removeEventListener("resize", scheduleLiveResizeScroll);
-      if (liveResizeFrame !== undefined) window.cancelAnimationFrame(liveResizeFrame);
-      windowResizeScroll.cancel();
       resizeObserver.disconnect();
     };
   }, [cancelMotion, observeKey, open, refreshPointerScrollGestureLayout, scrollToBottom]);
