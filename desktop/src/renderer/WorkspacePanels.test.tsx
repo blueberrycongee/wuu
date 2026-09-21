@@ -26,8 +26,19 @@ import { WorkbenchController } from "./plugins/Workbench";
 // (activeContext vs workspaceContext) actually reached the terminal panel,
 // without pulling in the real xterm/node-pty-backed component.
 vi.mock("./WorkspaceTerminalPanel", () => ({
-  WorkspaceTerminalPanel: ({ activeContext }: { activeContext?: RuntimeContext }) => (
-    <div data-testid="terminal-panel" data-cwd={activeContext?.cwd ?? ""} />
+  preloadWorkspaceTerminalRuntime: () => undefined,
+  WorkspaceTerminalPanel: ({
+    active = true,
+    activeContext,
+  }: {
+    active?: boolean;
+    activeContext?: RuntimeContext;
+  }) => (
+    <div
+      data-testid="terminal-panel"
+      data-active={active ? "true" : "false"}
+      data-cwd={activeContext?.cwd ?? ""}
+    />
   ),
 }));
 
@@ -1035,5 +1046,55 @@ describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)"
     expect(container?.querySelector(".workspace-right-panel.detail.terminal")).not.toBeNull();
     const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
     expect(terminalPanel?.getAttribute("data-cwd")).toBe(worktreeContext.cwd);
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
+  });
+
+  it("keeps the terminal inside the panel when another workspace tab is selected", async () => {
+    const terminalTab = workspaceToolViewTab("terminal");
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[terminalTab, filesTab]}
+        activeTabID={terminalTab.id}
+        workspaceContext={projectContext}
+      />,
+    );
+    await act(async () => {});
+    const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(terminalPanel?.getAttribute("data-active")).toBe("true");
+    expect(terminalPanel?.closest(".workspace-right-panel")).not.toBeNull();
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[terminalTab, filesTab]}
+          activeTabID={filesTab.id}
+          workspaceContext={projectContext}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const held = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(held).toBe(terminalPanel);
+    expect(held?.getAttribute("data-active")).toBe("false");
+    expect(held?.closest(".workspace-panel-content-swap")?.hasAttribute("hidden")).toBe(true);
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[filesTab]}
+          activeTabID={filesTab.id}
+          workspaceContext={projectContext}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container?.querySelector('[data-testid="terminal-panel"]')).toBeNull();
   });
 });

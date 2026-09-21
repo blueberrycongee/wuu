@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { ViewSwitchLoading } from "./LoadingViews";
+import { ViewSwitchLoading, WorkspacePanelLoading } from "./LoadingViews";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -39,5 +39,17 @@ describe("ViewSwitchLoading", () => {
     const view = render(<section><ViewSwitchLoading inline /><button>Reconnect</button></section>);
     expect(view.querySelector('[role="status"]')?.parentElement).toBe(view.querySelector("section"));
     expect(view.querySelector("button")).not.toBeNull();
+  });
+});
+
+describe("WorkspacePanelLoading", () => {
+  it("stays inside the calling pane", () => {
+    const view = render(<section><WorkspacePanelLoading /></section>);
+    const status = view.querySelector('[role="status"]');
+
+    expect(status?.classList.contains("workspace-panel-loading")).toBe(true);
+    expect(status?.parentElement).toBe(view.querySelector("section"));
+    expect(document.body.querySelector(":scope > .workspace-panel-loading")).toBeNull();
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
   });
 });

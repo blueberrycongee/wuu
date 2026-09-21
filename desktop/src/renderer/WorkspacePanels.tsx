@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -59,7 +57,7 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
-import { ViewSwitchLoading } from "./LoadingViews";
+import { WorkspacePanelLoading } from "./LoadingViews";
 import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
@@ -75,9 +73,28 @@ import type { WorkbenchController } from "./plugins/Workbench";
 import { PluginViewContent } from "./plugins/Workbench";
 import { useWorkspaceBrowserNavigationRequest } from "./WorkspaceBrowserNavigation";
 
-const WorkspaceTerminalPanel = lazy(() => import("./WorkspaceTerminalPanel").then((module) => ({
-  default: module.WorkspaceTerminalPanel,
-})));
+type WorkspaceTerminalPanelComponent = typeof import("./WorkspaceTerminalPanel").WorkspaceTerminalPanel;
+
+let cachedWorkspaceTerminalPanel: WorkspaceTerminalPanelComponent | undefined;
+let workspaceTerminalPanelPromise: Promise<WorkspaceTerminalPanelComponent> | undefined;
+
+function loadWorkspaceTerminalPanel(): Promise<WorkspaceTerminalPanelComponent> {
+  if (cachedWorkspaceTerminalPanel) {
+    return Promise.resolve(cachedWorkspaceTerminalPanel);
+  }
+  workspaceTerminalPanelPromise ??= import("./WorkspaceTerminalPanel").then(
+    (module) => {
+      cachedWorkspaceTerminalPanel = module.WorkspaceTerminalPanel;
+      module.preloadWorkspaceTerminalRuntime();
+      return module.WorkspaceTerminalPanel;
+    },
+    (error: unknown) => {
+      workspaceTerminalPanelPromise = undefined;
+      throw error;
+    },
+  );
+  return workspaceTerminalPanelPromise;
+}
 
 export type WorkspacePanelView = "files" | "review" | "terminal" | "browser";
 
@@ -244,6 +261,15 @@ export function WorkspaceRightPanel({
     () => effectivePluginHost.getWorkspaceTools(),
   );
   const activeTab = activeTabID ? tabs.find((tab) => tab.id === activeTabID) : undefined;
+  const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
+  // Latch after the terminal has been shown so a later tool tab does not
+  // tear the pty down. Closing the terminal tab releases it.
+  const [terminalMounted, setTerminalMounted] = useState(false);
+  if (activeTab?.kind === "terminal" && !terminalMounted) {
+    setTerminalMounted(true);
+  } else if (!terminalTabOpen && terminalMounted) {
+    setTerminalMounted(false);
+  }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
   const visibleTabs = tabs;
   const showingPicker = !activeTab;
@@ -274,6 +300,15 @@ export function WorkspaceRightPanel({
     visibleTabs.map((tab) => tab.id),
     addButtonRef,
   );
+
+  useEffect(() => {
+    if (!prewarm && !open) {
+      return undefined;
+    }
+    return scheduleIdleTask(() => {
+      void loadWorkspaceTerminalPanel().catch(() => undefined);
+    }, WORKSPACE_PANEL_PREWARM_TIMEOUT_MS);
+  }, [open, prewarm]);
 
   useEffect(() => {
     if (!prewarm || bodyPrewarmed || open) {
@@ -900,7 +935,20 @@ export function WorkspaceRightPanel({
                 />
               </div>
             ) : null}
-            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" ? null : (
+            {terminalMounted && terminalTabOpen ? (
+              <div
+                className="workspace-panel-content-swap"
+                hidden={activeTab?.kind !== "terminal"}
+                aria-hidden={activeTab?.kind !== "terminal"}
+              >
+                <WorkspaceTerminalHost
+                  active={activeTab?.kind === "terminal"}
+                  activeContext={workspaceContext}
+                  thread={terminalThread}
+                />
+              </div>
+            ) : null}
+            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" || activeTab?.kind === "terminal" ? null : (
               <div
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
@@ -929,13 +977,6 @@ export function WorkspaceRightPanel({
                     gitStatus={gitStatus}
                     workspaceRoot={workspaceContext?.cwd}
                   />
-                ) : activeTab.kind === "terminal" ? (
-                  <Suspense fallback={<ViewSwitchLoading />}>
-                    <WorkspaceTerminalPanel
-                      activeContext={workspaceContext}
-                      thread={terminalThread}
-                    />
-                  </Suspense>
                 ) : activeTab.kind === "plugin" && workbenchController ? (
                   <PluginViewContent
                     controller={workbenchController}
@@ -951,6 +992,41 @@ export function WorkspaceRightPanel({
       ) : null}
     </aside>
   );
+}
+
+function WorkspaceTerminalHost({
+  active,
+  activeContext,
+  thread,
+}: {
+  active: boolean;
+  activeContext?: RuntimeContext;
+  thread?: Thread;
+}): JSX.Element {
+  const [Panel, setPanel] = useState<WorkspaceTerminalPanelComponent | undefined>(
+    () => cachedWorkspaceTerminalPanel,
+  );
+  useEffect(() => {
+    if (Panel) {
+      return undefined;
+    }
+    let cancelled = false;
+    void loadWorkspaceTerminalPanel().then(
+      (loaded) => {
+        if (!cancelled) {
+          setPanel(() => loaded);
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [Panel]);
+  if (!Panel) {
+    return <WorkspacePanelLoading />;
+  }
+  return <Panel active={active} activeContext={activeContext} thread={thread} />;
 }
 
 function WorkspaceFileResource({

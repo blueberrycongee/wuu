@@ -27,6 +27,15 @@ export function RuntimeLoading({
   );
 }
 
+export function WorkspacePanelLoading(): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="workspace-panel-loading" role="status" aria-label={t("workspace.terminal.status.starting")}>
+      <div className="workspace-panel-loading-rail" aria-hidden="true" />
+    </div>
+  );
+}
+
 export function ViewSwitchLoading({ inline = false }: { inline?: boolean }): JSX.Element {
   const { t } = useI18n();
   const indicator = (

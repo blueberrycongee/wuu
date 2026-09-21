@@ -39,6 +39,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   motion. A paused reading position stays where it was, and a conversation
   that changed while hidden appears in its current layout.
 
+- Opening the workspace terminal no longer covers the app with the startup
+  animation. Progress stays inside the right panel, the terminal is prepared
+  while the app is idle, and switching to another workspace tab keeps the
+  session.
+
 - Opening Automations, or another primary plugin page, no longer lets the
   empty-session wallpaper, greeting, or composer show through that page.
 

@@ -28,6 +28,9 @@ const { terminalConstructorOptions, terminalDataHandlers, terminalInstances } = 
     options: { disableStdin?: boolean; fontSize?: number; fontFamily?: string; theme?: Record<string, string> };
     write: ReturnType<typeof vi.fn>;
     writeln: ReturnType<typeof vi.fn>;
+    blur: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
   }>,
 }));
 
@@ -45,6 +48,7 @@ vi.mock("@xterm/xterm", () => ({
       loadAddon: vi.fn(),
       open: vi.fn(),
       focus: vi.fn(),
+      blur: vi.fn(),
       write: vi.fn(),
       writeln: vi.fn(),
       dispose: vi.fn(),
@@ -59,6 +63,8 @@ vi.mock("@xterm/xterm", () => ({
     return terminal;
   }),
 }));
+
+vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: vi.fn().mockImplementation(() => ({
@@ -140,13 +146,37 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+async function withClientSize(width: number, height: number, body: () => Promise<void>): Promise<void> {
+  const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => width });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => height });
+  try {
+    await body();
+  } finally {
+    if (clientWidth) {
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", clientWidth);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    }
+    if (clientHeight) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    }
+  }
+}
+
 async function render(element: JSX.Element): Promise<void> {
   await act(async () => {
     root?.render(element);
-    await Promise.resolve();
   });
-  // Let the requestAnimationFrame-scheduled fit/resize and the
-  // startSession() microtask settle.
+  await vi.waitFor(() => {
+    const opening = container.querySelector(".workspace-terminal-host, .workspace-agent-terminal");
+    if (opening && terminalInstances.length === 0) {
+      throw new Error("xterm pending");
+    }
+  });
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
@@ -247,6 +277,23 @@ describe("WorkspaceTerminalPanel", () => {
     expect(container.querySelector(".workspace-terminal-navigation")).toBeNull();
     expect(container.querySelector('button[aria-label="新建终端"]')).toBeNull();
     expect(container.querySelectorAll(".workspace-terminal-panel")).toHaveLength(1);
+  });
+
+  it("keeps the pty when the terminal pane is hidden and shown again", async () => {
+    await render(<WorkspaceTerminalPanel activeContext={worktreeContext} />);
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    const opened = terminalInstances.length;
+
+    await render(<WorkspaceTerminalPanel active={false} activeContext={worktreeContext} />);
+    expect(stopTerminalSession).not.toHaveBeenCalled();
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".workspace-terminal-panel")?.hasAttribute("hidden")).toBe(true);
+    expect(terminalInstances.at(-1)?.dispose).not.toHaveBeenCalled();
+
+    await render(<WorkspaceTerminalPanel active activeContext={worktreeContext} />);
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(stopTerminalSession).not.toHaveBeenCalled();
+    expect(terminalInstances).toHaveLength(opened);
   });
 
   it("routes broadcast terminal events to the matching pty", async () => {
@@ -396,7 +443,7 @@ describe("WorkspaceTerminalPanel", () => {
       stopped_at: "2026-07-18T08:01:00Z",
     };
     stopManagedProcess.mockResolvedValue({ process: stoppedProcess });
-
+    await withClientSize(800, 600, async () => {
     await render(
       <WorkspaceTerminalPanel
         activeContext={worktreeContext}
@@ -440,6 +487,7 @@ describe("WorkspaceTerminalPanel", () => {
 
     expect(stopManagedProcess).toHaveBeenCalledWith("thread-1", "proc-live");
     expect(container.textContent).toContain("已停止");
+    });
   });
 
   it("continues managed output from the durable byte offset and keeps the settled terminal", async () => {
