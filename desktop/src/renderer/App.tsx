@@ -1513,23 +1513,26 @@ export function App(): JSX.Element {
   );
   availableConversationThreadsByIDRef.current = availableConversationThreadsByID;
   // Per-thread keep-alive for the main conversation pane. Recently visited
-  // tabs stay mounted within both a pane-count cap and an estimated rendered-
-  // turn budget. This avoids the old three-tab performance cliff without
-  // allowing many long conversations to retain unbounded DOM.
+  // conversations stay mounted within both a pane-count cap and an estimated
+  // rendered-turn budget. This avoids the old three-tab performance cliff
+  // without allowing many long conversations to retain unbounded DOM.
   //
-  // Crucially we derive the cache synchronously from state.sessionTabs
-  // and state.thread via useMemo, not via useState + useEffect. The
-  // async effect path rendered once with the new activeThreadID but
-  // the stale cache (no pane for the new thread) and then a second
-  // time with the cache updated — the "two flickers" the user saw.
-  // Computing the cache from state in the same render closes that
-  // empty frame.
+  // Crucially we derive the cache synchronously from the active thread
+  // via useMemo, not via useState + useEffect. The async effect path
+  // rendered once with the new activeThreadID but the stale cache (no
+  // pane for the new thread) and then a second time with the cache
+  // updated — the "two flickers" the user saw. Computing the cache from
+  // state in the same render closes that empty frame.
   const cachedThreadPaneIDs = useMemo(() => {
     const activeID = state.thread?.id;
-    // Conversation navigation lives in the sidebar. Keep only the active
-    // pane mounted so opening many sessions cannot retain their full DOM and
-    // markdown trees in the renderer.
-    const openThreadIDs = new Set(activeID ? [activeID] : []);
+    // Sidebar navigation does not keep a tab strip of open conversations, but
+    // recently visited panes still stay mounted within the existing count and
+    // render-weight caps. Unmounting the outgoing pane on every click rebuilt
+    // the markdown tree after paint and flashed the incoming session.
+    const openThreadIDs = new Set(cachedThreadPaneHistoryRef.current);
+    if (activeID) {
+      openThreadIDs.add(activeID);
+    }
     const next = selectCachedConversationPaneIDs({
       activeThreadID: activeID,
       previousThreadIDs: cachedThreadPaneHistoryRef.current,
@@ -1538,7 +1541,7 @@ export function App(): JSX.Element {
     });
     cachedThreadPaneHistoryRef.current = next;
     return next;
-  }, [state.thread?.id, state.sessionTabs]);
+  }, [state.thread?.id]);
   const cachedConversationThreadsByID = useMemo(
     () =>
       retainCachedConversationPaneThreads({
@@ -2775,7 +2778,7 @@ export function App(): JSX.Element {
     environmentPanelVisible ? "open" : "closing";
   // The sidebar is the single conversation switcher. Session state remains
   // available for recovery and drafts, but the titlebar no longer renders a
-  // growing tab strip or keeps background conversation panes mounted.
+  // growing tab strip.
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 

@@ -50,6 +50,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Drop the engine name from the composer model chip, leaving the SVG mark
   with the model name.
 
+- Keep recently visited desktop conversations mounted when switching sessions,
+  so the incoming thread does not rebuild and flash after the click.
+
 - Keep collaboration rooms still while the desktop window is being resized, so
   the message stream and inspector do not flicker with the frame.
 

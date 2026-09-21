@@ -767,6 +767,18 @@ it("clears an in-flight first-bubble lift when the user scrolls", () => {
   expect(leadSpace()).toBe(0);
 });
 
+it("clears an in-flight first-bubble lift when switching sessions", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0);
+  expect(leadSpace()).toBeGreaterThan(0);
+  render({ id: "b", messageID: "other" });
+  expect(leadSpace()).toBe(0);
+});
+
 it("lifts the in-progress timer with a short first bubble instead of a second transform", () => {
   naturalHeight = 220;
   messageBottom = 100;

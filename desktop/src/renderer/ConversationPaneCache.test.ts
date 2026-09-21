@@ -69,6 +69,23 @@ describe("conversation pane cache", () => {
     ]);
   });
 
+  it("keeps the previous pane when the open LRU still includes it", () => {
+    const active = thread("active", 1);
+    const previous = thread("previous", 1);
+
+    expect(
+      selectCachedConversationPaneIDs({
+        activeThreadID: active.id,
+        previousThreadIDs: [previous.id],
+        openThreadIDs: new Set([previous.id, active.id]),
+        threadsByID: new Map([
+          [active.id, active],
+          [previous.id, previous],
+        ]),
+      }),
+    ).toEqual([active.id, previous.id]);
+  });
+
   it("drops closed panes from the previous LRU history", () => {
     const active = thread("active", 1);
     const open = thread("open", 1);

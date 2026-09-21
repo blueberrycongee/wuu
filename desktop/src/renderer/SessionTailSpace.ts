@@ -105,6 +105,10 @@ export function useSessionTailSpace({
       extent.current = saved?.extent ?? 0;
       reservedNaturalHeight.current = saved?.natural ?? 0;
       reservedDisclosureHeight.current = saved?.disclosure ?? 0;
+      // First-query lead is in-flight motion on the outgoing thread, not a
+      // saved reservation. Drop it before measuring so the incoming pane does
+      // not inherit a composer-sized padding-top for one layout.
+      paneRef.current?.style.removeProperty("--session-lead-space");
     }
     if (!enabled) {
       extent.current = 0;
