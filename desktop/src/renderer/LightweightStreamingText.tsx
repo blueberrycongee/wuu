@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useConversationRevealSnap } from "./ConversationRenderActivity";
 
 type LightweightStreamingTextProps = {
   /**
@@ -82,6 +83,18 @@ export function LightweightStreamingText({
   const [visibleLength, setVisibleLength] = useState(text.length);
   const visibleRef = useRef(text.length);
   const rafRef = useRef<number | undefined>(undefined);
+  const revealSnap = useConversationRevealSnap();
+  // Text that arrived while this pane was hidden is already committed.
+  // Revealing it character by character moves the process row after the
+  // session is on screen.
+  if (revealSnap && visibleRef.current !== text.length) {
+    if (rafRef.current !== undefined) {
+      window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = undefined;
+    }
+    visibleRef.current = text.length;
+    setVisibleLength(text.length);
+  }
 
   // The RAF loop must always see the latest target. Holding the value
   // in a ref avoids re-running the effect just to update a closure.

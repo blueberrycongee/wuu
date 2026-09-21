@@ -8,6 +8,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -19,6 +20,7 @@ import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMasc
 import {
   useConversationBecameRenderActive,
   useConversationRenderActive,
+  useConversationRevealSnap,
 } from "./ConversationRenderActivity";
 import { useMascotCoalescence } from "./useMascotCoalescence";
 import { useMascotMorph, ACTIVITY_MORPHS, type MascotMorph } from "./useMascotMorph";
@@ -218,7 +220,18 @@ export function WuuMascot({
 }: WuuMascotProps): JSX.Element | null {
   const renderActive = useConversationRenderActive();
   const becameRenderActive = useConversationBecameRenderActive();
-  const presenceMotion = renderActive && !becameRenderActive;
+  const revealSnap = useConversationRevealSnap();
+  // The reveal frame keeps this false, and the frame that drops the snap
+  // class would otherwise turn it on and replay the entrance. Clear the
+  // suppression after that frame so a later show or hide can still move.
+  const suppressRevealEntrance = useRef(false);
+  if (revealSnap || becameRenderActive) suppressRevealEntrance.current = true;
+  const presenceMotion = renderActive && !suppressRevealEntrance.current;
+  useLayoutEffect(() => {
+    if (renderActive && !revealSnap && !becameRenderActive) {
+      suppressRevealEntrance.current = false;
+    }
+  }, [becameRenderActive, renderActive, revealSnap]);
   const present = useMascotPresence(visible ?? true, presenceMotion);
   const attention = useMascotAttention(activity, ambient && present && visible !== false);
   const runtime = useContext(WuuMascotRuntimeContext);

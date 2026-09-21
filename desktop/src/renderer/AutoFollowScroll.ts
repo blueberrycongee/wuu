@@ -96,6 +96,36 @@ export function measureLatestConversationTurns(node: HTMLElement, count = 5): vo
   }
 }
 
+/**
+ * Lay out the incoming conversation before scroll restore. Hidden panes keep
+ * `content-visibility: auto`, so the first in-flow pass still has 260px
+ * estimates for turns outside the forced tail. Record the real heights while
+ * they are forced visible; the later skip reuses those sizes instead of
+ * shifting the viewport.
+ */
+export function measureActiveConversationForRestore(node: HTMLElement): void {
+  const pane = node.querySelector<HTMLElement>(
+    '.cached-conversation-pane[data-active="true"]',
+  );
+  if (!pane) {
+    measureLatestConversationTurns(node);
+    return;
+  }
+  const turns = [...pane.querySelectorAll<HTMLElement>(".turn")];
+  if (turns.length === 0) return;
+  pane.classList.add("is-reveal-measure");
+  const heights = turns.map((turn) => turn.offsetHeight);
+  pane.classList.remove("is-reveal-measure");
+  turns.forEach((turn, index) => {
+    const height = heights[index];
+    if (!height) return;
+    const next = `auto ${height}px`;
+    if (turn.style.containIntrinsicBlockSize !== next) {
+      turn.style.containIntrinsicBlockSize = next;
+    }
+  });
+}
+
 export function eventTargetsNestedAutoFollowScroll(
   target: EventTarget | null,
   root: HTMLElement,

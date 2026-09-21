@@ -41,7 +41,10 @@ import {
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
 import { AnimatedProcessText } from "./ProcessTextMotion";
-import { useConversationRenderActive } from "./ConversationRenderActivity";
+import {
+  useConversationRenderActive,
+  useConversationRevealSnap,
+} from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import {
   collectTurnArtifacts,
@@ -269,6 +272,7 @@ function TurnProcessFold({
   editSummaryCard?: JSX.Element;
 }): JSX.Element {
   const renderActive = useConversationRenderActive();
+  const revealSnap = useConversationRevealSnap();
   const [expanded, setExpanded] = useState(!collapseRequested);
   const handoffHandledRef = useRef(collapseRequested);
   // Once the reader changes the fold manually, that preference owns the
@@ -276,6 +280,15 @@ function TurnProcessFold({
   const userToggledRef = useRef(false);
   const autoCollapsePendingRef = useRef(false);
   const previousExpanded = useRef(expanded);
+  // A hidden pane does not render, so an answer handoff that happened while
+  // it was cached is still pending. Apply it in this commit. The passive
+  // effect below would close the fold after paint and play the height
+  // transition across the message stream.
+  if (revealSnap && !userToggledRef.current && expanded !== !collapseRequested) {
+    handoffHandledRef.current = collapseRequested;
+    autoCollapsePendingRef.current = false;
+    setExpanded(!collapseRequested);
+  }
   const detailsID = `${turn.id}-process-fold`;
 
   const parsedStartedAt = parseTurnTimestampMs(turn.started_at);

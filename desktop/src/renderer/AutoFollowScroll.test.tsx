@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   atLatestScrollView,
   latestFollowScrollTop,
+  measureActiveConversationForRestore,
   measureLatestConversationTurns,
   scrollTopForDistanceFromLatest,
   sessionTailSpacePx,
@@ -470,5 +471,39 @@ describe("latest follow position", () => {
 
     measureLatestConversationTurns(node);
     expect(measured).toEqual(turns.slice(-5));
+  });
+
+  it("records real heights for every turn in the active pane before restore", () => {
+    const node = document.createElement("div");
+    const active = document.createElement("div");
+    active.className = "cached-conversation-pane";
+    active.dataset.active = "true";
+    const hidden = document.createElement("div");
+    hidden.className = "cached-conversation-pane";
+    hidden.dataset.active = "false";
+    const activeTurns = Array.from({ length: 8 }, () => {
+      const turn = document.createElement("article");
+      turn.className = "turn";
+      active.append(turn);
+      return turn;
+    });
+    const hiddenTurn = document.createElement("article");
+    hiddenTurn.className = "turn";
+    hidden.append(hiddenTurn);
+    node.append(active, hidden);
+    for (const turn of [...activeTurns, hiddenTurn]) {
+      Object.defineProperty(turn, "offsetHeight", {
+        configurable: true,
+        get: () => (turn.closest('[data-active="true"]') ? 80 : 260),
+      });
+    }
+
+    measureActiveConversationForRestore(node);
+
+    expect(active.classList.contains("is-reveal-measure")).toBe(false);
+    for (const turn of activeTurns) {
+      expect(turn.style.containIntrinsicBlockSize).toBe("auto 80px");
+    }
+    expect(hiddenTurn.style.containIntrinsicBlockSize).toBe("");
   });
 });

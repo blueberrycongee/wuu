@@ -2094,6 +2094,30 @@
   height: auto;
 }
 
+/* The reveal commit already has the conversation's current structure.
+   Suppress height transitions for that frame so a fold that caught up
+   while hidden does not slide the message stream after it is visible.
+   Do not set `animation: none` here: removing it on the next frame
+   restarts entrance animations that were already applied. */
+.conversation-render-activity.is-reveal-snap .collapsible-details,
+.conversation-render-activity.is-reveal-snap .process-surface-fold::details-content,
+.conversation-render-activity.is-reveal-snap .process-surface-chevron,
+.conversation-render-activity.is-reveal-snap .process-text-motion-current,
+.conversation-render-activity.is-reveal-snap .process-text-motion-exit,
+.conversation-render-activity.is-reveal-snap .process-surface-count,
+.conversation-render-activity.is-reveal-snap .agent-message-actions,
+.conversation-render-activity.is-reveal-snap [data-wuu-mascot-presence] {
+  transition: none;
+}
+
+/* Session restore measures the incoming pane before placing the viewport.
+   Skipped turns would otherwise report the 260px estimate and the scroll
+   position would jump once their real height lands. */
+.cached-conversation-pane.is-reveal-measure .turn {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 /* The inner holds the body content. The outer clips it during
    the height transition, so the inner just renders its content
    normally. min-height: 0 is no longer needed — the height is

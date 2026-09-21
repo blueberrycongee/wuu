@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type JSX } from "react";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { turnTelemetryStore } from "./TurnTelemetryStore";
 import {
   AssistantTurnShell,
@@ -512,6 +513,46 @@ describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", 
 
     const restored = renderShell(turn);
     expect(restored.container.querySelector(".turn-process-meta")?.textContent).toBe("5s");
+  });
+
+  it("closes a caught-up process fold on reveal without scheduling the collapse anchor", () => {
+    vi.useFakeTimers();
+    const commentary = makeCommentary("checking");
+    const onCollapseComplete = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const render = (active: boolean, turn: Turn): void => {
+      const display = buildAssistantTurnDisplay(turn, undefined, defaultItemRenderer);
+      if (!display) throw new Error("expected a display");
+      act(() => {
+        root.render(
+          createElement(
+            ConversationRenderActivityProvider,
+            { active },
+            createElement(AssistantTurnShell, {
+              turn,
+              display,
+              onStreamFrame: () => {},
+              onCollapseComplete,
+            }),
+          ),
+        );
+      });
+    };
+    try {
+      render(false, makeTurn("in_progress", [commentary]));
+      expect(processFoldOpen(container)).toBe(true);
+      render(true, makeTurn("in_progress", [commentary, makeStreamingFinalAnswer("done")]));
+      expect(processFoldOpen(container)).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(onCollapseComplete).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("collapses the process fold when a confirmed final_answer starts streaming", () => {

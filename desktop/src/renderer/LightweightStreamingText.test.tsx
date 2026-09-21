@@ -10,6 +10,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { LightweightStreamingText } from "./LightweightStreamingText";
 
 // jsdom doesn't implement layout. Stub getBoundingClientRect so React
@@ -236,6 +237,28 @@ describe("LightweightStreamingText", () => {
     advanceReveal(100);
     unmount();
     expect(document.querySelector(".lightweight-stream")).toBeNull();
+  });
+
+  it("snaps text that caught up while the conversation was hidden", () => {
+    const caughtUp = "Updated plan: read the configuration file and report back";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <LightweightStreamingText text="Hi" live className="lightweight-stream" />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active>
+          <LightweightStreamingText text={caughtUp} live className="lightweight-stream" />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    expect(surfaceText()).toBe(caughtUp);
   });
 
   it("preserves the live=false path even when text grew", () => {

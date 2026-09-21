@@ -19,7 +19,7 @@ import {
   eventTargetsNestedAutoFollowScroll,
   latestFollowScrollTop,
   maxScrollTop,
-  measureLatestConversationTurns,
+  measureActiveConversationForRestore,
   observeAutoFollowResizeTargets,
   scrollTopForDistanceFromLatest,
   selectionIntersectsNode,
@@ -314,6 +314,13 @@ export function useConversationScrollState({
   }
   const { reconcile: reconcileArrivals, acknowledge: acknowledgeArrival, cancel: cancelArrivals } = useMessageArrivalMotion();
   const previousThreadRef = useRef(activeThreadID);
+  // Layout from the pane swap clamps scrollTop and fires scroll before this
+  // hook can restore the incoming snapshot. Handling that event would save
+  // the clamp as the thread's reading position.
+  const restoreScrollLockRef = useRef(false);
+  if (previousThreadRef.current !== activeThreadID) {
+    restoreScrollLockRef.current = true;
+  }
   const [dockComposerNode, setDockComposerNode] = useState<HTMLElement | null>(null);
   const dockComposerRef = useCallback((node: HTMLElement | null) => {
     setDockComposerNode(node);
@@ -1044,7 +1051,7 @@ export function useConversationScrollState({
 
   function handleConversationScroll(scrolledNode?: HTMLElement): void {
     const node = scrolledNode ?? conversationViewport();
-    if (!node) {
+    if (!node || restoreScrollLockRef.current) {
       return;
     }
     // The glide's own scrollTop writes fire this. Input cancels the glide
@@ -1290,73 +1297,82 @@ export function useConversationScrollState({
   }
 
   useLayoutEffect(() => {
-    const node = conversationViewport();
-    const threadChanged = previousThreadRef.current !== activeThreadID;
-    // Restore against the incoming viewport, not the outgoing draft's height.
-    // Clamping first loses a paused reader's offset even if an observer later
-    // repairs the composer inset.
-    syncDockComposerGeometry();
-    pointerScrollGestureRef.current = undefined;
-    previousThreadRef.current = activeThreadID;
-    if (threadChanged && !adoptingSubmission) {
-      submissionRef.current = undefined;
-      setAutoFollow(true);
-    }
-    if (!activeThreadID || !node) {
-      programmaticScrollTopRef.current = undefined;
-      lastConversationScrollTopRef.current = 0;
-      if (!submissionPhase()) setAutoFollow(true);
-      return undefined;
-    }
+    try {
+      const node = conversationViewport();
+      const threadChanged = previousThreadRef.current !== activeThreadID;
+      // Read the saved position before any layout. The pane swap clamps
+      // scrollTop, and that scroll event would otherwise replace this snapshot.
+      const savedSnapshot = activeThreadID
+        ? threadScrollSnapshotsRef.current.get(activeThreadID)
+        : undefined;
+      // Restore against the incoming viewport, not the outgoing draft's height.
+      // Clamping first loses a paused reader's offset even if an observer later
+      // repairs the composer inset.
+      syncDockComposerGeometry();
+      pointerScrollGestureRef.current = undefined;
+      previousThreadRef.current = activeThreadID;
+      if (threadChanged && !adoptingSubmission) {
+        submissionRef.current = undefined;
+        setAutoFollow(true);
+      }
+      if (!activeThreadID || !node) {
+        programmaticScrollTopRef.current = undefined;
+        lastConversationScrollTopRef.current = 0;
+        if (!submissionPhase()) setAutoFollow(true);
+        return undefined;
+      }
 
-    if (adoptingSubmission && submissionRef.current) {
-      submissionRef.current.threadID = activeThreadID;
-      // The draft bubble moves into the thread pane without a bottom jump,
-      // even if this short first turn has no scroll range yet.
-      setAutoFollowOverflowAnchor(node, Boolean(submissionPhase()));
-      programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
-      lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
-      rememberActiveThreadScrollSnapshot(node, isFollowing());
-      return;
+      if (adoptingSubmission && submissionRef.current) {
+        submissionRef.current.threadID = activeThreadID;
+        // The draft bubble moves into the thread pane without a bottom jump,
+        // even if this short first turn has no scroll range yet.
+        setAutoFollowOverflowAnchor(node, Boolean(submissionPhase()));
+        programmaticScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+        lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
+        rememberActiveThreadScrollSnapshot(node, isFollowing());
+        return;
+      }
+      markSessionSwitch(activeThreadID, "scroll-restore-start");
+      measureActiveConversationForRestore(node);
+      let snapshot = savedSnapshot;
+      const restorationOffset = restoredOffset.current;
+      restoredOffset.current = 0;
+      if (snapshot?.submittedMessageTop !== undefined && !submittedMessage(snapshot.submittedMessageID)) {
+        // The saved anchor itself may have left the history window. Its absolute
+        // extent cannot describe this layout; open at the latest content instead.
+        discardTailSpace(activeThreadID);
+        submissionRef.current = undefined;
+        snapshot = undefined;
+      }
+      writeScrollMode(snapshot?.submissionPhase === "placing" ? "pending" :
+        snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following"));
+      if (snapshot?.submittedMessageID) {
+        submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
+      }
+      if (snapshot && !snapshot.autoFollow) {
+        // Restore from distance-from-latest so a later height settle does not
+        // jump the reading point. The tail reservation is already in that
+        // coordinate system.
+        applyProgrammaticScroll(
+          node,
+          restoredScrollTop(node, snapshot) + restorationOffset,
+          false,
+        );
+        bottomOverscrollFromAwayRef.current = true;
+        setNativeBottomOverscrollEnabled(node, true);
+      } else {
+        applyProgrammaticScroll(
+          node,
+          latestFollowScrollTop(node, sessionTailSpacePx(conversationPaneRef.current ?? node)),
+          true,
+        );
+        setNativeBottomOverscrollEnabled(node, false);
+      }
+      markSessionSwitch(activeThreadID, "scroll-restore-end");
+      return undefined;
+    } finally {
+      restoreScrollLockRef.current = false;
     }
-    markSessionSwitch(activeThreadID, "scroll-restore-start");
-    measureLatestConversationTurns(node);
-    let snapshot = threadScrollSnapshotsRef.current.get(activeThreadID);
-    const restorationOffset = restoredOffset.current;
-    restoredOffset.current = 0;
-    if (snapshot?.submittedMessageTop !== undefined && !submittedMessage(snapshot.submittedMessageID)) {
-      // The saved anchor itself may have left the history window. Its absolute
-      // extent cannot describe this layout; open at the latest content instead.
-      discardTailSpace(activeThreadID);
-      submissionRef.current = undefined;
-      snapshot = undefined;
-    }
-    writeScrollMode(snapshot?.submissionPhase === "placing" ? "pending" :
-      snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following"));
-    if (snapshot?.submittedMessageID) {
-      submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
-    }
-    if (snapshot && !snapshot.autoFollow) {
-      // Restore from distance-from-latest so a later height settle does not
-      // jump the reading point. The tail reservation is already in that
-      // coordinate system.
-      applyProgrammaticScroll(
-        node,
-        restoredScrollTop(node, snapshot) + restorationOffset,
-        false,
-      );
-      bottomOverscrollFromAwayRef.current = true;
-      setNativeBottomOverscrollEnabled(node, true);
-    } else {
-      applyProgrammaticScroll(
-        node,
-        latestFollowScrollTop(node, sessionTailSpacePx(conversationPaneRef.current ?? node)),
-        true,
-      );
-      setNativeBottomOverscrollEnabled(node, false);
-    }
-    markSessionSwitch(activeThreadID, "scroll-restore-end");
-    return undefined;
   }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry, restoredOffset, submittedMessage, discardTailSpace]);
 
   // Only a direct submission owns placement. Queue/steer materialization is

@@ -224,6 +224,54 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     expect(layout?.scrollTop).toBe(1300);
   });
 
+  it("keeps a saved reading position when the incoming thread clamps before restore", () => {
+    mount({
+      activeThreadID: "thread-tall",
+      scrollHeight: 2400,
+      clientHeight: 600,
+      initialScrollTop: 2400 - 600,
+    });
+    fireScroll();
+    if (!layout || !scrollNode) throw new Error("not mounted");
+    layout.scrollHeight = 900;
+    switchThread("thread-short");
+    expect(layout.scrollTop).toBe(300);
+    fireScroll();
+
+    setScrollTop(40);
+    fireUserScroll();
+
+    layout.scrollHeight = 2400;
+    switchThread("thread-tall");
+    expect(layout.scrollTop).toBe(1800);
+    fireScroll();
+
+    layout.scrollHeight = 900;
+    const node = scrollNode;
+    const heightDescriptor = Object.getOwnPropertyDescriptor(node, "scrollHeight");
+    let dispatched = false;
+    Object.defineProperty(node, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        const height = layout?.scrollHeight ?? 0;
+        if (!dispatched) {
+          dispatched = true;
+          const max = Math.max(0, height - (layout?.clientHeight ?? 0));
+          if ((layout?.scrollTop ?? 0) > max) layout!.scrollTop = max;
+          node.dispatchEvent(new Event("scroll", { bubbles: false }));
+        }
+        return height;
+      },
+    });
+    try {
+      switchThread("thread-short");
+      expect(dispatched).toBe(true);
+      expect(layout.scrollTop).toBe(40);
+    } finally {
+      if (heightDescriptor) Object.defineProperty(node, "scrollHeight", heightDescriptor);
+    }
+  });
+
   it("restores a thread's saved away-from-bottom position when switching back", () => {
     mount({
       activeThreadID: "thread-a",

@@ -28,6 +28,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Switching sessions no longer jumps the message stream or replays catch-up
+  motion. A paused reading position stays where it was, and a conversation
+  that changed while hidden appears in its current layout.
+
 - Opening Automations, or another primary plugin page, no longer lets the
   empty-session wallpaper, greeting, or composer show through that page.
 
