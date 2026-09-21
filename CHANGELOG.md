@@ -28,6 +28,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Session lists no longer run `git status` for every worktree. Summary
+  lists, which the desktop sidebar refreshes on a timer, keep the worktree
+  path and skip that checkout scan. Thread indexes are also reused until
+  the file changes, instead of being parsed twice per list.
+- Live tool output is joined once per visual update. Previously each output
+  chunk copied the whole result accumulated so far.
+- A running mascot keeps animating after its morph settles, at about 30
+  frames per second instead of every display frame.
+
 - Sending a message keeps the same glide into the reading position. Steady
   frames of that motion only move the viewport; the conversation is measured
   again when layout actually changes, and the turn rail, jump control, and

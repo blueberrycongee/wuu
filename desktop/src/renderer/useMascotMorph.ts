@@ -237,6 +237,16 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
     const draw = (now: number) => {
       frame = 0;
       const { mode: nextMode, paused: stopped, replay: nextReplay } = props.current;
+      // A settled activity morph used to rewrite the SVG on every display
+      // frame for the whole turn. Keep the blend at full rate, then paint
+      // the steady motion at about 30fps.
+      const steady = settledFor >= 1200 && !stopped && !STATIC_MORPHS.has(nextMode);
+      if (steady && now - previous < 32) {
+        if (!document.hidden && inView && paintable() && !reduced.matches) {
+          frame = requestAnimationFrame(draw);
+        }
+        return;
+      }
       // A frame's timestamp can precede the clock sampled while resuming it.
       const dt = Math.max(0, Math.min(40, now - previous)); previous = now;
       const changed = nextMode !== lastMode || nextReplay !== lastReplay;

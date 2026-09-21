@@ -6528,6 +6528,21 @@ func TestServerThreadForkToWorktree(t *testing.T) {
 	if dirtyInfo == nil || !dirtyInfo.Dirty || !containsTestString(dirtyInfo.ChangedFiles, "isolated.txt") {
 		t.Fatalf("thread/list should report dirty worktree, got %+v", dirtyInfo)
 	}
+
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"6","method":"thread/list","params":{"summary_only":true}}`)); err != nil {
+		t.Fatalf("summary thread/list: %v", err)
+	}
+	summary := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, out.String()), "6")["result"])
+	var summarized *WorktreeInfo
+	for i := range summary.Threads {
+		if summary.Threads[i].ID == fork.ID {
+			summarized = summary.Threads[i].Worktree
+			break
+		}
+	}
+	if summarized == nil || summarized.Path == "" || summarized.Dirty || len(summarized.ChangedFiles) != 0 {
+		t.Fatalf("summary thread/list should keep the worktree path without git status, got %+v", summarized)
+	}
 }
 
 // TestServerWorktreeBoundTurnExecutesInWorktree covers fork-to-worktree step

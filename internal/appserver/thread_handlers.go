@@ -1165,7 +1165,11 @@ func (s *Server) threadListResult(entries map[string]threadListEntry, summaryOnl
 	result := make([]Thread, 0, len(threads))
 	for _, entry := range threads {
 		entry.thread.SessionControl = s.threadSessionControl(controls[entry.thread.ID])
-		thread, err := s.threadWithChildAgents(entry.thread)
+		// Sidebar refreshes are summary lists. Dirty worktree state is a git
+		// status per checkout, and a workspace can store one for many
+		// sessions. Running those on every list blocks the app server.
+		// Full thread snapshots still report it.
+		thread, err := s.threadWithChildAgentsStatus(entry.thread, !summaryOnly)
 		if err != nil {
 			return ThreadListResult{}, err
 		}
@@ -1481,11 +1485,18 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 }
 
 func (s *Server) threadWithChildAgents(thread Thread) (Thread, error) {
+	return s.threadWithChildAgentsStatus(thread, true)
+}
+
+func (s *Server) threadWithChildAgentsStatus(thread Thread, worktreeStatus bool) (Thread, error) {
 	agents, err := s.childAgentsForThread(thread.ID)
 	if err != nil {
 		return thread, err
 	}
 	thread.ChildAgents = agents
+	if !worktreeStatus {
+		return thread, nil
+	}
 	return s.threadWithWorktreeStatus(thread), nil
 }
 

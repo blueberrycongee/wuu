@@ -21,6 +21,12 @@ export type StreamTextStats = {
 interface StreamEntry {
   /** The current accumulated text. */
   value: string;
+  /**
+   * Deltas received since `value` was last joined. Tool output can arrive as
+   * thousands of small chunks; concatenating onto the full string each time
+   * copies the whole result on every chunk.
+   */
+  pendingChunks: string[] | undefined;
   /** Visible text retained across an empty replace until fresh text arrives. */
   displayValue: string | undefined;
   /** The text at the time the stream was first seeded. */
@@ -65,7 +71,10 @@ class StreamTextStore {
 
   get(key: string): string {
     const entry = this.entries.get(key);
-    return entry?.hasValue ? entry.displayValue ?? entry.value : "";
+    if (!entry?.hasValue) {
+      return "";
+    }
+    return entry.displayValue ?? this.materialize(entry);
   }
 
   seedValue(key: string): string {
@@ -97,6 +106,7 @@ class StreamTextStore {
     }
     const entry: StreamEntry = {
       value,
+      pendingChunks: undefined,
       displayValue: undefined,
       seed: value,
       hasValue: true,
@@ -116,9 +126,13 @@ class StreamTextStore {
       return;
     }
     const valueChanged =
-      !entry.hasValue || entry.value !== value || entry.displayValue !== undefined;
+      !entry.hasValue ||
+      entry.pendingChunks !== undefined ||
+      entry.value !== value ||
+      entry.displayValue !== undefined;
     entry.hasValue = true;
     entry.displayValue = undefined;
+    entry.pendingChunks = undefined;
     if (!valueChanged) {
       return;
     }
@@ -142,9 +156,10 @@ class StreamTextStore {
     if (!entry) {
       return;
     }
-    const currentVisible = entry.displayValue ?? entry.value;
+    const currentVisible = entry.displayValue ?? this.materialize(entry);
     entry.hasValue = true;
     entry.value = "";
+    entry.pendingChunks = undefined;
     entry.seed = "";
     entry.replacementVersion = this.nextReplacementVersion++;
     if (currentVisible.length === 0) {
@@ -166,8 +181,15 @@ class StreamTextStore {
     }
     entry.hasValue = true;
     entry.displayValue = undefined;
-    entry.value = `${entry.value}${delta}`;
-    this.notifyValue(entry, entry.value);
+    (entry.pendingChunks ??= []).push(delta);
+    if (entry.valueListeners.size === 0) {
+      return;
+    }
+    // A replacement published earlier in this frame must not hide the chunks
+    // that arrived after it.
+    entry.pendingValue = undefined;
+    this.dirtyEntries.add(entry);
+    this.scheduleNotify();
   }
 
   clearItem(turnID: string, itemID: string): void {
@@ -197,13 +219,22 @@ class StreamTextStore {
     for (const entry of this.entries.values()) {
       if (entry.hasValue) {
         valueEntryCount += 1;
+        let chunkLength = 0;
+        if (entry.pendingChunks) {
+          for (const chunk of entry.pendingChunks) {
+            chunkLength += chunk.length;
+          }
+        }
         totalValueLength += Math.max(
-          entry.value.length,
+          entry.value.length + chunkLength,
           entry.displayValue?.length ?? 0,
         );
       }
       listenerCount += entry.valueListeners.size;
-      if (entry.pendingValue !== undefined) {
+      if (
+        entry.pendingValue !== undefined ||
+        (entry.pendingChunks !== undefined && entry.pendingChunks.length > 0)
+      ) {
         pendingEntryCount += 1;
       }
     }
@@ -241,6 +272,7 @@ class StreamTextStore {
     }
     this.entries.set(key, {
       value: "",
+      pendingChunks: undefined,
       displayValue: undefined,
       seed: "",
       hasValue,
@@ -248,6 +280,19 @@ class StreamTextStore {
       replacementVersion: 0,
       valueListeners: new Set()
     });
+  }
+
+  /** Join queued deltas once. Repeated reads return the same string. */
+  private materialize(entry: StreamEntry): string {
+    const chunks = entry.pendingChunks;
+    if (!chunks || chunks.length === 0) {
+      return entry.value;
+    }
+    entry.pendingChunks = undefined;
+    entry.value = chunks.length === 1 && entry.value.length === 0
+      ? chunks[0]
+      : entry.value + chunks.join("");
+    return entry.value;
   }
 
   private notifyValue(entry: StreamEntry, value: string): void {
@@ -288,7 +333,7 @@ class StreamTextStore {
     const entries = Array.from(this.dirtyEntries);
     this.dirtyEntries.clear();
     for (const entry of entries) {
-      const value = entry.pendingValue ?? entry.value;
+      const value = this.materialize(entry);
       entry.pendingValue = undefined;
       if (!entry.hasValue) {
         continue;
