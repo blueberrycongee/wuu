@@ -65,15 +65,32 @@ type acpSession struct {
 // DiscoverModels probes a short-lived ACP session for the agent's advertised
 // catalog. It never persists the probe session or sends a prompt.
 func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) {
+	catalog, err := e.DiscoverCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return catalog.Models, nil
+}
+
+// DiscoveredCatalog is the session/new probe result used by the composer:
+// models plus the host permission modes that can be applied to this agent.
+type DiscoveredCatalog struct {
+	Models []DiscoveredModel
+	Modes  []HostPermissionMode
+}
+
+// DiscoverCatalog probes a short-lived ACP session for advertised models and
+// permission modes. It never persists the probe session or sends a prompt.
+func (e *Engine) DiscoverCatalog(ctx context.Context) (DiscoveredCatalog, error) {
 	if e == nil || e.entry.Protocol != "acp" {
-		return nil, nil
+		return DiscoveredCatalog{}, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return DiscoveredCatalog{}, err
 	}
 	p, err := startChild(e.binary, e.entry.Args, e.root, nil)
 	if err != nil {
-		return nil, err
+		return DiscoveredCatalog{}, err
 	}
 	defer p.close()
 	r := &rpc{child: p, handle: func(_ context.Context, method string, _ json.RawMessage, request bool) (any, error) {
@@ -83,7 +100,7 @@ func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) 
 		return nil, nil
 	}}
 	if _, err := initializeACP(ctx, r); err != nil {
-		return nil, acpEngineError(e.entry, p, err)
+		return DiscoveredCatalog{}, acpEngineError(e.entry, p, err)
 	}
 	cwd := e.root
 	if cwd == "" {
@@ -93,9 +110,12 @@ func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) 
 	if err := r.call(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
 		// Settings surfaces this as the engine's model error, which is where a
 		// user discovers that the agent needs configuration of its own.
-		return nil, acpEngineError(e.entry, p, fmt.Errorf("session/new: %w", err))
+		return DiscoveredCatalog{}, acpEngineError(e.entry, p, fmt.Errorf("session/new: %w", err))
 	}
-	return modelsFromACPSession(session), nil
+	return DiscoveredCatalog{
+		Models: modelsFromACPSession(session),
+		Modes:  permissionModesFromACPSession(session),
+	}, nil
 }
 
 func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) error {
@@ -539,33 +559,35 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, session acpSess
 			}
 		}
 	}
-	if s.binding.PermissionMode == "unconfined" {
-		return session.selectUnattendedMode(ctx, r, ref)
-	}
-	return nil
+	return session.selectHostPermissionMode(ctx, r, ref, s.engine.entry.Name, s.binding.PermissionMode)
 }
 
-// selectUnattendedMode applies the agent's own no-prompts mode when it offers
-// one. Wuu's unconfined mode has to reach the agent's policy: otherwise the
-// agent keeps the mode it started in — devin defaults to accept-edits — and the
-// edits it decides to make never reach Wuu's approval path. An agent without
-// such a mode keeps its default; the prompts it does send still reach Wuu,
-// which answers them under the same policy.
-func (s acpSession) selectUnattendedMode(ctx context.Context, r *rpc, ref string) error {
+// selectHostPermissionMode applies the host's access selection to the agent's
+// advertised `category=mode` option. Standard, Read only, and Unconfined map
+// onto prompting, plan/read-only, and bypass ids when the agent publishes
+// them. Missing native ids leave the agent's default: Standard still answers
+// session/request_permission in the host, Unconfined auto-accepts, and Read
+// only is refused because Wuu cannot enforce that boundary itself.
+func (s acpSession) selectHostPermissionMode(ctx context.Context, r *rpc, ref, engineName, hostMode string) error {
+	hostMode = strings.TrimSpace(hostMode)
+	if hostMode == "" {
+		return nil
+	}
+	selected, ok := hostPermissionMode(s, hostMode)
+	if hostMode == "read_only" && (!ok || selected.ID == "") {
+		return readOnlyUnsupportedError(engineName)
+	}
+	if !ok || selected.ID == "" {
+		return nil
+	}
 	option := s.modeOption()
 	if option == nil {
 		return nil
 	}
-	for _, choice := range unattendedModeChoices {
-		if !option.hasChoice(choice) {
-			continue
-		}
-		if strings.TrimSpace(option.Current) == choice {
-			return nil
-		}
-		return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": choice}, nil)
+	if strings.TrimSpace(option.Current) == selected.ID {
+		return nil
 	}
-	return nil
+	return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": selected.ID}, nil)
 }
 
 func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMessage) (any, error) {

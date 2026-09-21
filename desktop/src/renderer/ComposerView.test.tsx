@@ -20,6 +20,7 @@ import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
 import type {
   DesktopProject,
+  EngineInfo,
   InitializeResult,
   MessageContentPart,
   PermissionSummary,
@@ -102,6 +103,7 @@ function handoffInitialized(): InitializeResult {
 function renderComposer(props: {
   accessMenuOpen?: boolean;
   activeEngine?: string;
+  engines?: EngineInfo[];
   variant?: ComposerVariant;
   canSelectProject?: boolean;
   gitStatus?: Parameters<typeof Composer>[0]["gitStatus"];
@@ -175,6 +177,7 @@ function renderComposer(props: {
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
+          engines={props.engines}
           gitStatus={props.gitStatus}
           branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
@@ -2748,6 +2751,51 @@ describe("Composer permission menu", () => {
     });
 
     expect(onSelectPermissionMode).toHaveBeenCalledWith("unconfined", false);
+  });
+
+  it("hides Read only for ACP engines until they advertise a distinct mode", () => {
+    renderComposer({
+      accessMenuOpen: true,
+      activeEngine: "grok",
+      permissions: { mode: "unconfined" },
+    });
+    const labels = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
+    ).map((label) => label.textContent?.trim());
+    expect(labels).toEqual(["工作区内完全信任", "无边界"]);
+  });
+
+  it("shows advertised ACP permission labels in the unified access menu", () => {
+    const onSelectPermissionMode = vi.fn();
+    renderComposer({
+      accessMenuOpen: true,
+      activeEngine: "devin",
+      permissions: { mode: "standard" },
+      onSelectPermissionMode,
+      engines: [
+        {
+          id: "devin",
+          enabled: true,
+          binary_ok: true,
+          permission_modes: [
+            { mode: "standard", id: "ask", label: "Ask" },
+            { mode: "read_only", id: "plan", label: "Plan" },
+            { mode: "unconfined", id: "bypass", label: "Bypass Permissions" },
+          ],
+        },
+      ],
+    });
+    const labels = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>(".access-menu button strong"),
+    ).map((label) => label.textContent?.trim());
+    expect(labels).toEqual(["Ask", "Plan", "Bypass Permissions"]);
+    const plan = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button[role=\"menuitemradio\"]"),
+    ).find((button) => button.textContent?.includes("Plan"));
+    act(() => {
+      plan?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onSelectPermissionMode).toHaveBeenCalledWith("read_only", undefined);
   });
 
   it("turns Approve for me off when Standard is selected", () => {

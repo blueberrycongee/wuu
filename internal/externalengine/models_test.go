@@ -78,6 +78,62 @@ func TestModelsFromACPSessionPrefersConfigOptionsAndDropsDefaultAlias(t *testing
 	}
 }
 
+func TestPermissionModesFromACPSessionMapHostSelections(t *testing.T) {
+	session := parseACPSession(t, `{
+		"configOptions": [{
+			"id": "mode",
+			"category": "mode",
+			"type": "select",
+			"currentValue": "agent",
+			"options": [
+				{"value": "read-only", "name": "Read Only"},
+				{"value": "agent", "name": "Agent"},
+				{"value": "agent-full-access", "name": "Agent (full access)"}
+			]
+		}]
+	}`)
+	modes := permissionModesFromACPSession(session)
+	if len(modes) != 3 {
+		t.Fatalf("modes = %+v", modes)
+	}
+	if modes[0] != (HostPermissionMode{Mode: "standard", ID: "agent", Label: "Agent"}) {
+		t.Fatalf("standard = %+v", modes[0])
+	}
+	if modes[1] != (HostPermissionMode{Mode: "read_only", ID: "read-only", Label: "Read Only"}) {
+		t.Fatalf("read_only = %+v", modes[1])
+	}
+	if modes[2] != (HostPermissionMode{Mode: "unconfined", ID: "agent-full-access", Label: "Agent (full access)"}) {
+		t.Fatalf("unconfined = %+v", modes[2])
+	}
+}
+
+func TestPermissionModesFromACPSessionOmitAskWhenItIsThePromptingDefault(t *testing.T) {
+	session := parseACPSession(t, `{
+		"configOptions": [{
+			"id": "mode",
+			"category": "mode",
+			"type": "select",
+			"currentValue": "accept-edits",
+			"options": [
+				{"value": "accept-edits", "name": "Code"},
+				{"value": "ask", "name": "Ask"},
+				{"value": "bypass", "name": "Bypass Permissions"}
+			]
+		}]
+	}`)
+	modes := permissionModesFromACPSession(session)
+	if len(modes) != 2 || modes[0].Mode != "standard" || modes[0].ID != "ask" || modes[1].ID != "bypass" {
+		t.Fatalf("modes = %+v", modes)
+	}
+}
+
+func TestPermissionModesFromACPSessionKeepHostSelectionsWithoutNativeIds(t *testing.T) {
+	modes := permissionModesFromACPSession(acpSession{ID: "s"})
+	if len(modes) != 2 || modes[0].Mode != "standard" || modes[0].ID != "" || modes[1].Mode != "unconfined" {
+		t.Fatalf("modes = %+v", modes)
+	}
+}
+
 func TestModelsFromACPSessionEmptyWhenAgentAdvertisesNothing(t *testing.T) {
 	if models := modelsFromACPSession(acpSession{ID: "s"}); len(models) != 0 {
 		t.Fatalf("models = %+v", models)

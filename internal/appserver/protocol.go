@@ -1301,6 +1301,17 @@ type EngineInfo struct {
 	// Models is the engine-owned model inventory used by the composer picker.
 	Models      []EngineModelInfo `json:"models,omitempty"`
 	ModelsError string            `json:"models_error,omitempty"`
+	// PermissionModes is the host access menu for this engine. ACP agents
+	// advertise native ids/labels; omitted modes are not offered in the
+	// composer. Empty native id still means the host can apply the selection
+	// through its approval bridge.
+	PermissionModes []EnginePermissionModeInfo `json:"permission_modes,omitempty"`
+}
+
+type EnginePermissionModeInfo struct {
+	Mode  string `json:"mode"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label,omitempty"`
 }
 
 type EngineModelInfo struct {

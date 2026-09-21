@@ -184,9 +184,13 @@ workspace default should be read during execution.
 `engine/list` returns `{ engines, settings }`, including missing and disabled
 engines. Each entry has an `id`, `enabled`, and `binary_ok`; optional metadata
 includes `display_name`, `protocol`, `install_url`, `binary_path`, `error`,
-`models`, and `models_error`. `enabled` describes runtime availability, while
-`settings.<id>.enabled` is the persisted opt-in/opt-out preference. Do not infer
-an installed program or authenticated account from the preference alone.
+`models`, `models_error`, and `permission_modes`. `permission_modes` is the
+composer access menu for that engine: host `standard` / `read_only` /
+`unconfined` rows, with optional native `id` and `label` from an ACP
+`category=mode` option. Omitted rows are not offered. `enabled` describes runtime
+availability, while `settings.<id>.enabled` is the persisted opt-in/opt-out
+preference. Do not infer an installed program or authenticated account from the
+preference alone.
 
 `engine/update` accepts `default_engine` and per-engine objects with `enabled`
 and `binary_path`. Omitted fields remain unchanged. It persists settings, updates

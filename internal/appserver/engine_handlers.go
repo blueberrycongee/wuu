@@ -27,14 +27,20 @@ const (
 type codexEngineModelCatalogCacheEntry struct {
 	binaryPath string
 	models     []EngineModelInfo
+	modes      []EnginePermissionModeInfo
 	expiresAt  time.Time
 }
 
 func (e *codexEngineModelCatalogCacheEntry) load(binaryPath string, now time.Time) ([]EngineModelInfo, bool) {
+	models, _, ok := e.loadCatalog(binaryPath, now)
+	return models, ok
+}
+
+func (e *codexEngineModelCatalogCacheEntry) loadCatalog(binaryPath string, now time.Time) ([]EngineModelInfo, []EnginePermissionModeInfo, bool) {
 	if e == nil || e.binaryPath != binaryPath || !now.Before(e.expiresAt) {
-		return nil, false
+		return nil, nil, false
 	}
-	return cloneEngineModels(e.models), true
+	return cloneEngineModels(e.models), cloneEnginePermissionModes(e.modes), true
 }
 
 // handleEngineList reports the engine inventory and the persisted engine
@@ -137,6 +143,7 @@ func (s *Server) engineInventory() []EngineInfo {
 			path, err := entry.Resolve(override)
 			info.BinaryPath = path
 			info.BinaryOK, info.Error = binaryStatus(path, err)
+			info.PermissionModes = hostPermissionModes(entry.Protocol)
 			if entry.Protocol == "acp" && info.Enabled && info.BinaryOK {
 				probes = append(probes, acpProbe{index: len(out), entry: entry, path: path})
 			}
@@ -152,12 +159,15 @@ func (s *Server) engineInventory() []EngineInfo {
 		go func(probe acpProbe) {
 			defer wg.Done()
 			engine := externalengine.New(probe.entry, probe.path, s.rt.RootDir)
-			models, err := s.cachedACPEngineModels(probe.entry.ID, probe.path, engine)
+			models, modes, err := s.cachedACPEngineCatalog(probe.entry.ID, probe.path, engine)
 			if err != nil {
 				out[probe.index].ModelsError = err.Error()
 				return
 			}
 			out[probe.index].Models = models
+			if len(modes) > 0 {
+				out[probe.index].PermissionModes = modes
+			}
 		}(probe)
 	}
 	wg.Wait()
@@ -192,22 +202,28 @@ func (s *Server) cachedCodexEngineModels(binaryPath string, host *codexengine.Ho
 }
 
 func (s *Server) cachedACPEngineModels(engineID, binaryPath string, engine *externalengine.Engine) ([]EngineModelInfo, error) {
+	models, _, err := s.cachedACPEngineCatalog(engineID, binaryPath, engine)
+	return models, err
+}
+
+func (s *Server) cachedACPEngineCatalog(engineID, binaryPath string, engine *externalengine.Engine) ([]EngineModelInfo, []EnginePermissionModeInfo, error) {
 	s.engineModelCatalogMu.Lock()
 	if entry := s.acpEngineModelCatalogCache[engineID]; entry != nil {
-		if models, ok := entry.load(binaryPath, time.Now()); ok {
+		if models, modes, ok := entry.loadCatalog(binaryPath, time.Now()); ok {
 			s.engineModelCatalogMu.Unlock()
-			return models, nil
+			return models, modes, nil
 		}
 	}
 	s.engineModelCatalogMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), acpEngineModelDiscoveryTimeout)
 	defer cancel()
-	discovered, err := engine.DiscoverModels(ctx)
+	discovered, err := engine.DiscoverCatalog(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	converted := acpEngineModels(discovered)
+	converted := acpEngineModels(discovered.Models)
+	modes := acpEnginePermissionModes(discovered.Modes)
 	s.engineModelCatalogMu.Lock()
 	defer s.engineModelCatalogMu.Unlock()
 	if s.acpEngineModelCatalogCache == nil {
@@ -216,15 +232,50 @@ func (s *Server) cachedACPEngineModels(engineID, binaryPath string, engine *exte
 	s.acpEngineModelCatalogCache[engineID] = &codexEngineModelCatalogCacheEntry{
 		binaryPath: binaryPath,
 		models:     cloneEngineModels(converted),
+		modes:      cloneEnginePermissionModes(modes),
 		expiresAt:  time.Now().Add(acpEngineModelCatalogTTL),
 	}
-	return converted, nil
+	return converted, modes, nil
 }
 
 func (s *Server) invalidateACPEngineModelCatalog(engineID string) {
 	s.engineModelCatalogMu.Lock()
 	defer s.engineModelCatalogMu.Unlock()
 	delete(s.acpEngineModelCatalogCache, engineID)
+}
+
+func hostPermissionModes(protocol string) []EnginePermissionModeInfo {
+	switch protocol {
+	case "acp", "opencode":
+		return []EnginePermissionModeInfo{{Mode: "standard"}, {Mode: "unconfined"}}
+	default:
+		return nil
+	}
+}
+
+func acpEnginePermissionModes(modes []externalengine.HostPermissionMode) []EnginePermissionModeInfo {
+	out := make([]EnginePermissionModeInfo, 0, len(modes))
+	for _, mode := range modes {
+		id := strings.TrimSpace(mode.Mode)
+		if id == "" {
+			continue
+		}
+		out = append(out, EnginePermissionModeInfo{
+			Mode:  id,
+			ID:    strings.TrimSpace(mode.ID),
+			Label: strings.TrimSpace(mode.Label),
+		})
+	}
+	return out
+}
+
+func cloneEnginePermissionModes(modes []EnginePermissionModeInfo) []EnginePermissionModeInfo {
+	if modes == nil {
+		return nil
+	}
+	cloned := make([]EnginePermissionModeInfo, len(modes))
+	copy(cloned, modes)
+	return cloned
 }
 
 func acpEngineModels(models []externalengine.DiscoveredModel) []EngineModelInfo {

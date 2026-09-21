@@ -44,13 +44,13 @@ Tool output redaction recognizes common secret patterns, but cannot recognize ev
 
 The adapters pass the selected mode to the external program:
 
-| Wuu selection | Codex | Claude Code |
-|---|---|---|
-| Standard | `workspace-write`, approvals `on-request` | `dontAsk` |
-| Read only | `read-only`, approvals `never` | `plan` |
-| Unconfined | `danger-full-access`, approvals `never` | `bypassPermissions` |
+| Wuu selection | Codex | Claude Code | ACP agents |
+|---|---|---|---|
+| Standard | `workspace-write`, approvals `on-request` | `dontAsk` | advertised prompting mode (`agent`, `ask`, `default`, …); otherwise the host approval bridge |
+| Read only | `read-only`, approvals `never` | `plan` | advertised `plan` / `read-only` when the agent publishes one; otherwise refused |
+| Unconfined | `danger-full-access`, approvals `never` | `bypassPermissions` | advertised no-prompts mode (`bypassPermissions`, `agent-full-access`, `bypass`, …); otherwise one-shot auto-accept |
 
-These are adapter settings, not a claim that the engines provide identical protection. Claude Code's headless transport has no permission-prompt bridge; Standard uses `dontAsk` so permission requests are denied rather than waiting indefinitely. External program versions and configuration determine their native behavior.
+These are adapter settings, not a claim that the engines provide identical protection. Claude Code's headless transport has no permission-prompt bridge; Standard uses `dontAsk` so permission requests are denied rather than waiting indefinitely. ACP engines advertise a `category=mode` config option; the composer shows those native labels and applies the matching id through `session/set_config_option`. External program versions and configuration determine their native behavior.
 
 ## CLI examples
 

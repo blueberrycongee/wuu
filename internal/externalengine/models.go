@@ -186,6 +186,35 @@ func (s acpSession) modelConfigOption() *acpConfigOption {
 	return nil
 }
 
+// HostPermissionMode is one Wuu access selection mapped onto an advertised
+// ACP `category=mode` choice. Empty ID means the host still offers the
+// selection (approval-bridge or auto-accept) without a native config option.
+type HostPermissionMode struct {
+	Mode  string
+	ID    string
+	Label string
+}
+
+// promptingModeChoices still send session/request_permission to the host.
+// accept-edits is intentionally absent: it applies writes without asking.
+var promptingModeChoices = []string{
+	"agent",
+	"default",
+	"ask",
+	"dontAsk",
+	"dont_ask",
+}
+
+// readOnlyModeChoices are mutation-restricted native modes. `ask` is not
+// included: several agents use it as their prompting default, which is
+// Standard, not a distinct read-only policy.
+var readOnlyModeChoices = []string{
+	"read-only",
+	"read_only",
+	"readonly",
+	"plan",
+}
+
 // unattendedModeChoices are the agent-specific ids for "never ask the user".
 // Devin advertises `bypass`; the rest cover the ids other ACP agents publish
 // for the same policy.
@@ -197,6 +226,59 @@ var unattendedModeChoices = []string{
 	"agent-full-access",
 	"danger-full-access",
 	"full-access",
+}
+
+func permissionModesFromACPSession(session acpSession) []HostPermissionMode {
+	option := session.modeOption()
+	standard := pickMode(option, promptingModeChoices)
+	readOnly := pickMode(option, readOnlyModeChoices)
+	unconfined := pickMode(option, unattendedModeChoices)
+	if readOnly.ID != "" && (readOnly.ID == standard.ID || readOnly.ID == unconfined.ID) {
+		readOnly = pickedMode{}
+	}
+	modes := []HostPermissionMode{{
+		Mode:  "standard",
+		ID:    standard.ID,
+		Label: standard.Label,
+	}}
+	if readOnly.ID != "" {
+		modes = append(modes, HostPermissionMode{
+			Mode:  "read_only",
+			ID:    readOnly.ID,
+			Label: readOnly.Label,
+		})
+	}
+	return append(modes, HostPermissionMode{
+		Mode:  "unconfined",
+		ID:    unconfined.ID,
+		Label: unconfined.Label,
+	})
+}
+
+type pickedMode struct {
+	ID, Label string
+}
+
+func pickMode(option *acpConfigOption, wanted []string) pickedMode {
+	if option == nil {
+		return pickedMode{}
+	}
+	for _, id := range wanted {
+		if option.hasChoice(id) {
+			return pickedMode{ID: id, Label: option.labelFor(id)}
+		}
+	}
+	return pickedMode{}
+}
+
+func hostPermissionMode(session acpSession, hostMode string) (HostPermissionMode, bool) {
+	hostMode = strings.TrimSpace(hostMode)
+	for _, mode := range permissionModesFromACPSession(session) {
+		if mode.Mode == hostMode {
+			return mode, true
+		}
+	}
+	return HostPermissionMode{}, false
 }
 
 func (s acpSession) modeOption() *acpConfigOption {
@@ -220,14 +302,25 @@ func (s acpSession) thoughtLevelOption() *acpConfigOption {
 }
 
 func (o *acpConfigOption) hasChoice(id string) bool {
+	return o.labelFor(id) != ""
+}
+
+func (o *acpConfigOption) labelFor(id string) string {
 	if o == nil {
-		return false
+		return ""
 	}
 	id = strings.TrimSpace(id)
-	for _, choice := range o.Options {
-		if strings.TrimSpace(choice.Value) == id {
-			return true
-		}
+	if id == "" {
+		return ""
 	}
-	return false
+	for _, choice := range o.Options {
+		if strings.TrimSpace(choice.Value) != id {
+			continue
+		}
+		if name := strings.TrimSpace(choice.Name); name != "" {
+			return name
+		}
+		return id
+	}
+	return ""
 }

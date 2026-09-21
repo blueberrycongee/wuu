@@ -77,8 +77,8 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 		err = ctx.Err()
 	case strings.TrimSpace(message.Content) == "" && len(message.Images) == 0:
 		err = errors.New("engine turn requires a user message")
-	case s.binding.PermissionMode == "read_only":
-		err = fmt.Errorf("%s does not enforce Wuu's read-only boundary; choose another engine or change the permission mode explicitly", s.engine.entry.Name)
+	case s.binding.PermissionMode == "read_only" && s.engine.entry.Protocol != "acp":
+		err = readOnlyUnsupportedError(s.engine.entry.Name)
 	case s.engine.entry.Protocol == "acp":
 		err = s.runACP(ctx, message, t)
 	case s.engine.entry.Protocol == "opencode":
@@ -127,6 +127,10 @@ func (s *Session) persist(ref string) error {
 	}
 	s.binding.ExternalRef = ref
 	return nil
+}
+
+func readOnlyUnsupportedError(name string) error {
+	return fmt.Errorf("%s does not enforce Wuu's read-only boundary; choose another engine or change the permission mode explicitly", name)
 }
 
 func latestUserMessage(history []providers.ChatMessage) providers.ChatMessage {

@@ -43,6 +43,7 @@ import type {
   DesktopProject,
   EngineInfo,
   EngineModelInfo,
+  EnginePermissionModeInfo,
   GitStatusResult,
   InitializeResult,
   PermissionSummary,
@@ -310,6 +311,21 @@ function permissionModeLabels(engine?: string): Record<PermissionMode, { label: 
         read_only: { label: "Plan", chipLabel: "Plan" },
         unconfined: { label: "Bypass Permissions", chipLabel: "Bypass Permissions" }
       };
+    case "cursor":
+      return {
+        standard: { label: "Agent", chipLabel: "Agent" },
+        read_only: { label: "Plan", chipLabel: "Plan" },
+        unconfined: {
+          label: translate("runtime.permission.unconfined"),
+          chipLabel: translate("runtime.permission.unconfined")
+        }
+      };
+    case "devin":
+      return {
+        standard: { label: "Ask", chipLabel: "Ask" },
+        read_only: { label: "Ask", chipLabel: "Ask" },
+        unconfined: { label: "Bypass", chipLabel: "Bypass" }
+      };
     default:
       return {
         standard: {
@@ -328,28 +344,60 @@ function permissionModeLabels(engine?: string): Record<PermissionMode, { label: 
   }
 }
 
-function permissionModeOptions(engine?: string): PermissionModeOption[] {
+function permissionModeIcons(mode: PermissionMode): { icon: LucideIcon; tone: ChipTone } {
+  switch (mode) {
+    case "read_only":
+      return { icon: Eye, tone: "neutral" };
+    case "unconfined":
+      return { icon: TriangleAlert, tone: "danger" };
+    default:
+      return { icon: Shield, tone: "neutral" };
+  }
+}
+
+function advertisedPermissionLabel(
+  advertised: EnginePermissionModeInfo | undefined,
+  fallback: { label: string; chipLabel: string }
+): { label: string; chipLabel: string } {
+  const label = advertised?.label?.trim();
+  if (!label) {
+    return fallback;
+  }
+  return { label, chipLabel: label };
+}
+
+function permissionModeOptions(
+  engine?: string,
+  advertised?: readonly EnginePermissionModeInfo[],
+): PermissionModeOption[] {
   const labels = permissionModeLabels(engine);
-  return [
-    {
-      mode: "standard",
-      ...labels.standard,
-      icon: Shield,
-      tone: "neutral"
-    },
-    {
-      mode: "read_only",
-      ...labels.read_only,
-      icon: Eye,
-      tone: "neutral"
-    },
-    {
-      mode: "unconfined",
-      ...labels.unconfined,
-      icon: TriangleAlert,
-      tone: "danger"
-    }
-  ];
+  const catalog = advertised?.filter((mode) => mode.mode === "standard" || mode.mode === "read_only" || mode.mode === "unconfined");
+  const modes: PermissionMode[] = catalog && catalog.length > 0
+    ? catalog.map((mode) => mode.mode)
+    : engineOffersReadOnly(engine)
+      ? ["standard", "read_only", "unconfined"]
+      : ["standard", "unconfined"];
+  return modes.map((mode) => {
+    const native = catalog?.find((item) => item.mode === mode);
+    return {
+      mode,
+      ...advertisedPermissionLabel(native, labels[mode]),
+      ...permissionModeIcons(mode)
+    };
+  });
+}
+
+function engineOffersReadOnly(engine?: string): boolean {
+  switch (engine?.trim().toLowerCase()) {
+    case undefined:
+    case "":
+    case "wuu":
+    case "codex":
+    case "claude":
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function permissionModeFromSummary(permissions?: PermissionSummary): PermissionModeState {
@@ -370,9 +418,18 @@ export function permissionModeHasAdvancedOverrides(_permissions?: PermissionSumm
   return false;
 }
 
-export function permissionModeOption(mode: PermissionModeState, engine?: string): Omit<PermissionModeOption, "mode"> & { mode: PermissionModeState } {
-  const options = permissionModeOptions(engine);
-  return options.find((option) => option.mode === mode) ?? options[0];
+export function permissionModeOption(
+  mode: PermissionModeState,
+  engine?: string,
+  advertised?: readonly EnginePermissionModeInfo[],
+): Omit<PermissionModeOption, "mode"> & { mode: PermissionModeState } {
+  const options = permissionModeOptions(engine, advertised);
+  const match = options.find((option) => option.mode === mode);
+  if (match) {
+    return match;
+  }
+  const labels = permissionModeLabels(engine);
+  return { mode, ...advertisedPermissionLabel(undefined, labels[mode] ?? labels.standard), ...permissionModeIcons(mode) };
 }
 
 export type HandoffRuntimePicker = {
@@ -1439,9 +1496,13 @@ type AccessOption = {
   tone: ChipTone;
 };
 
-function accessOptions(engine: string | undefined, includeApproveForMe: boolean): AccessOption[] {
+function accessOptions(
+  engine: string | undefined,
+  includeApproveForMe: boolean,
+  advertised?: readonly EnginePermissionModeInfo[],
+): AccessOption[] {
   const options: AccessOption[] = [];
-  for (const option of permissionModeOptions(engine)) {
+  for (const option of permissionModeOptions(engine, advertised)) {
     options.push({
       key: option.mode,
       mode: option.mode,
@@ -1465,11 +1526,13 @@ function accessOptions(engine: string | undefined, includeApproveForMe: boolean)
 export function AccessMenu({
   permissions,
   engine,
+  permissionModes,
   disabled,
   onSelect
 }: {
   permissions?: PermissionSummary;
   engine?: string;
+  permissionModes?: readonly EnginePermissionModeInfo[];
   disabled: boolean;
   onSelect: (mode: PermissionMode, approveForMe?: boolean) => void;
 }): JSX.Element {
@@ -1479,7 +1542,7 @@ export function AccessMenu({
   const showApproveForMe = (engine || "wuu") === "wuu";
   return (
     <div className="composer-context-menu access-menu" role="menu">
-      {accessOptions(engine, showApproveForMe).map((option) => {
+      {accessOptions(engine, showApproveForMe, permissionModes).map((option) => {
         const selected = mode === option.mode && option.approveForMe === approveForMeOn;
         return (
           <button

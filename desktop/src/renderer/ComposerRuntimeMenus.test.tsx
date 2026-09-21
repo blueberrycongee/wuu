@@ -368,6 +368,17 @@ describe("RuntimePicker", () => {
     });
   });
 
+  it("uses advertised ACP permission labels when the engine publishes them", () => {
+    expect(permissionModeOption("unconfined", "devin", [
+      { mode: "standard", id: "ask", label: "Ask" },
+      { mode: "unconfined", id: "bypass", label: "Bypass Permissions" },
+    ])).toMatchObject({
+      label: "Bypass Permissions",
+      chipLabel: "Bypass Permissions",
+      tone: "danger",
+    });
+  });
+
   it.each([undefined, "codex", "claude"])(
     "reserves the danger tone for unconfined access regardless of engine (%s)",
     (engine) => {

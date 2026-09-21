@@ -33,6 +33,24 @@ func TestCodexEngineModelCatalogCacheUsesFreshMatchingBinary(t *testing.T) {
 	}
 }
 
+func TestACPEngineCatalogCacheClonesPermissionModes(t *testing.T) {
+	now := time.Now()
+	entry := &codexEngineModelCatalogCacheEntry{
+		binaryPath: "/usr/local/bin/grok",
+		models:     []EngineModelInfo{{ID: "grok-4.6"}},
+		modes:      []EnginePermissionModeInfo{{Mode: "standard", ID: "ask", Label: "Ask"}},
+		expiresAt:  now.Add(time.Hour),
+	}
+	_, modes, ok := entry.loadCatalog("/usr/local/bin/grok", now)
+	if !ok || len(modes) != 1 || modes[0].Label != "Ask" {
+		t.Fatalf("cached modes = (%+v, %v)", modes, ok)
+	}
+	modes[0].Label = "changed"
+	if entry.modes[0].Label != "Ask" {
+		t.Fatal("cache returned mutable permission mode storage")
+	}
+}
+
 func TestACPEngineModelCatalogCacheHitsThenInvalidatesAfterLogin(t *testing.T) {
 	now := time.Now()
 	s := &Server{acpEngineModelCatalogCache: map[string]*codexEngineModelCatalogCacheEntry{

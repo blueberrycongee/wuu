@@ -1417,6 +1417,14 @@ export type EngineInfo = {
   error?: string;
   models?: EngineModelInfo[];
   models_error?: string;
+  permission_modes?: EnginePermissionModeInfo[];
+};
+
+/** One host permission mode mapped onto an external agent's native mode. */
+export type EnginePermissionModeInfo = {
+  mode: "standard" | "read_only" | "unconfined";
+  id?: string;
+  label?: string;
 };
 
 /** One model exposed by an external agent engine. */

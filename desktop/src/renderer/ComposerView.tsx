@@ -601,7 +601,8 @@ export function Composer({
   const slashCommands = slashCommandsOverride ?? builtinSlashCommands;
   const fastModelTarget = useMemo(() => runtimeFastModelTarget(initialized), [initialized]);
   const permissionMode = permissionModeFromSummary(initialized?.permissions);
-  const permissionOption = permissionModeOption(permissionMode, activeEngine);
+  const enginePermissionModes = engines?.find((engine) => engine.id === activeEngine)?.permission_modes;
+  const permissionOption = permissionModeOption(permissionMode, activeEngine, enginePermissionModes);
   const approveForMeOn = permissionMode === "standard" && Boolean(initialized?.permissions?.approve_for_me);
   const permissionChipLabel = approveForMeOn
     ? t("runtime.permission.approveForMe")
@@ -1342,6 +1343,7 @@ export function Composer({
                         <AccessMenu
                           permissions={initialized?.permissions}
                           engine={activeEngine}
+                          permissionModes={enginePermissionModes}
                           disabled={!initialized || readOnly || running}
                           onSelect={onSelectPermissionMode}
                         />

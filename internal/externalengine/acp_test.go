@@ -315,8 +315,10 @@ func TestACPUnconfinedSelectsAgentUnattendedMode(t *testing.T) {
 		want string
 	}{
 		{mode: "unconfined", want: "mode=bypass"},
-		// Any other mode leaves the agent's own policy alone rather than
-		// guessing a stricter one it may not implement.
+		// Standard maps onto the prompting choice, not accept-edits.
+		{mode: "standard", want: "mode=ask"},
+		// Unknown host values leave the agent's own policy alone rather
+		// than guessing a stricter one it may not implement.
 		{mode: "workspace", want: "mode="},
 	} {
 		t.Run(testCase.mode, func(t *testing.T) {
@@ -336,6 +338,50 @@ func TestACPUnconfinedSelectsAgentUnattendedMode(t *testing.T) {
 				t.Fatalf("agent mode = %q, want %q", result.Result.Content, testCase.want)
 			}
 		})
+	}
+}
+
+func TestACPHostPermissionModesMapOntoAdvertisedChoices(t *testing.T) {
+	for _, testCase := range []struct {
+		mode string
+		want string
+	}{
+		{mode: "standard", want: "mode=agent"},
+		{mode: "read_only", want: "mode=read-only"},
+		{mode: "unconfined", want: "mode=agent-full-access"},
+	} {
+		t.Run(testCase.mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			binding := testBinding()
+			binding.PermissionMode = testCase.mode
+			session, err := testEngine(t, "codex-mode").SessionForThread(ctx, binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := session.RunTurn(ctx, testInput(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Result.Content != testCase.want {
+				t.Fatalf("agent mode = %q, want %q", result.Result.Content, testCase.want)
+			}
+		})
+	}
+}
+
+func TestACPReadOnlyFailsWhenAgentHasNoDistinctReadOnlyMode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	binding := testBinding()
+	binding.PermissionMode = "read_only"
+	session, err := testEngine(t, "unattended-mode").SessionForThread(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.RunTurn(ctx, testInput(), nil)
+	if err == nil || !strings.Contains(err.Error(), "does not enforce Wuu's read-only boundary") {
+		t.Fatalf("read_only error = %v", err)
 	}
 }
 
@@ -514,6 +560,23 @@ func TestACPHelper(t *testing.T) {
 				}
 				break
 			}
+			if scenario == "codex-mode" {
+				selectedMode = "read-only"
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{
+							"id": "mode", "category": "mode", "type": "select", "currentValue": "read-only",
+							"options": []any{
+								map[string]any{"value": "read-only", "name": "Read Only"},
+								map[string]any{"value": "agent", "name": "Agent"},
+								map[string]any{"value": "agent-full-access", "name": "Agent (full access)"},
+							},
+						},
+					},
+				}
+				break
+			}
 			if scenario == "stderr-stall" {
 				// The engine explains itself on stderr and then never answers,
 				// which is what an unconfigured agent looks like from the wire.
@@ -604,7 +667,7 @@ func TestACPHelper(t *testing.T) {
 				result = map[string]string{"stopReason": "end_turn"}
 				break
 			}
-			if scenario == "unattended-mode" {
+			if scenario == "unattended-mode" || scenario == "codex-mode" {
 				text("mode=" + selectedMode)
 				result = map[string]string{"stopReason": "end_turn"}
 				break
@@ -788,15 +851,19 @@ func TestACPGrokPromptStallClearsOnExtensionNotification(t *testing.T) {
 func TestACPDiscoversGrokModelsFromSessionNew(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	models, err := testEngine(t, "grok").DiscoverModels(ctx)
+	catalog, err := testEngine(t, "grok").DiscoverCatalog(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	models := catalog.Models
 	if len(models) != 2 || models[0].ID != "grok-4.6" || !models[0].IsDefault || models[1].ID != "grok-4.5" {
 		t.Fatalf("models = %+v", models)
 	}
 	if models[0].DisplayName != "Grok 4.6" || models[0].DefaultEffort != "high" {
 		t.Fatalf("grok-4.6 = %+v", models[0])
+	}
+	if len(catalog.Modes) != 2 || catalog.Modes[0].Mode != "standard" || catalog.Modes[0].ID != "" || catalog.Modes[1].Mode != "unconfined" {
+		t.Fatalf("modes = %+v", catalog.Modes)
 	}
 }
 

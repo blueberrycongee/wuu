@@ -44,13 +44,13 @@ Wuu 引擎的行为如下：
 
 适配器会将所选模式传给外部程序：
 
-| Wuu 选项 | Codex | Claude Code |
-|---|---|---|
-| 标准 | `workspace-write`，审批策略为 `on-request` | `dontAsk` |
-| 只读 | `read-only`，审批策略为 `never` | `plan` |
-| 无限制 | `danger-full-access`，审批策略为 `never` | `bypassPermissions` |
+| Wuu 选项 | Codex | Claude Code | ACP Agent |
+|---|---|---|---|
+| 标准 | `workspace-write`，审批策略为 `on-request` | `dontAsk` | Agent 广告的询问模式（`agent`、`ask`、`default` 等）；没有广告时走宿主审批桥 |
+| 只读 | `read-only`，审批策略为 `never` | `plan` | Agent 广告的 `plan` / `read-only`；没有广告时拒绝 |
+| 无限制 | `danger-full-access`，审批策略为 `never` | `bypassPermissions` | Agent 广告的免询问模式（`bypassPermissions`、`agent-full-access`、`bypass` 等）；没有广告时单次自动接受 |
 
-这些是适配器设置，不代表各引擎提供相同保护。Claude Code 的无界面传输没有权限询问桥接，标准模式使用 `dontAsk`，使权限请求被拒绝而不是一直等待。外部程序的具体行为取决于其版本和配置。
+这些是适配器设置，不代表各引擎提供相同保护。Claude Code 的无界面传输没有权限询问桥接，标准模式使用 `dontAsk`，使权限请求被拒绝而不是一直等待。ACP Agent 通过 `category=mode` 配置项广告权限模式；统一输入框显示这些原生名称，并用 `session/set_config_option` 写入对应 id。外部程序的具体行为取决于其版本和配置。
 
 ## CLI 示例
 

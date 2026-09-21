@@ -14,6 +14,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is shown, so the lights stay aligned with the 48px titlebar instead of
   remaining at AppKit's default inset.
 
+### Changed
+
+- The composer access menu maps Standard, Read only, and Unconfined onto ACP
+  agents' advertised permission modes, and hides Read only when the agent
+  does not publish a distinct plan or read-only setting.
+
 ## [2026.9.21] - 2026-09-21
 
 ### Added
