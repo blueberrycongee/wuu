@@ -16,6 +16,10 @@ import {
 import { createPortal } from "react-dom";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import { MASCOT_EXIT_MS, useMascotAttention, useMascotPresence } from "./useMascotMotion";
+import {
+  useConversationBecameRenderActive,
+  useConversationRenderActive,
+} from "./ConversationRenderActivity";
 import { useMascotCoalescence } from "./useMascotCoalescence";
 import { useMascotMorph, ACTIVITY_MORPHS, type MascotMorph } from "./useMascotMorph";
 import { MascotAccessory, measureAccessoryFit, WUU_MASCOT_ACCESSORIES, type AccessoryFit, type WuuMascotAccessory } from "./WuuMascotAccessories";
@@ -212,7 +216,10 @@ export function WuuMascot({
   style,
   ...svgProps
 }: WuuMascotProps): JSX.Element | null {
-  const present = useMascotPresence(visible ?? true);
+  const renderActive = useConversationRenderActive();
+  const becameRenderActive = useConversationBecameRenderActive();
+  const presenceMotion = renderActive && !becameRenderActive;
+  const present = useMascotPresence(visible ?? true, presenceMotion);
   const attention = useMascotAttention(activity, ambient && present && visible !== false);
   const runtime = useContext(WuuMascotRuntimeContext);
   const effectiveProvider = provider ?? runtime.provider;
@@ -372,7 +379,13 @@ export function WuuMascot({
         data-wuu-mascot-accessory={selectedAccessory}
         data-wuu-mascot-activity={activity}
         data-wuu-mascot-morph={effectiveMorph}
-        data-wuu-mascot-presence={visible === undefined ? undefined : visible ? "enter" : "exit"}
+        data-wuu-mascot-presence={
+          visible === undefined || !presenceMotion
+            ? undefined
+            : visible
+              ? "enter"
+              : "exit"
+        }
         data-wuu-mascot-follows-pointer={followPointer ? "" : undefined}
       />
       {mascotLayers && selectedAccessory !== "none"

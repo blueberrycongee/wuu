@@ -3,6 +3,7 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WuuMascot, WuuMascotRuntimeProvider, modelMascotAccessory } from "./WuuMascot";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { EmptyConversationHome } from "./LoadingViews";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { AgentAvatarMark } from "./AgentAvatarMark";
@@ -206,6 +207,35 @@ describe("WuuMascot activity morph", () => {
     rerender(<WuuMascot visible accessory="headset" />);
     expect(host.querySelector(".wuu-mascot-layer-rear path")).not.toBeNull();
     expect(host.querySelector(".wuu-mascot-layer-front rect")).not.toBeNull();
+  });
+
+  it("skips presence motion when a cached conversation becomes visible", () => {
+    const host = render(
+      <ConversationRenderActivityProvider active={false}>
+        <WuuMascot visible activity="thinking" accessory="beanie" />
+      </ConversationRenderActivityProvider>,
+    );
+    rerender(
+      <ConversationRenderActivityProvider active>
+        <WuuMascot visible activity="thinking" accessory="beanie" />
+      </ConversationRenderActivityProvider>,
+    );
+    expect(host.querySelector("svg")?.getAttribute("data-wuu-mascot-presence")).toBeNull();
+  });
+
+  it("removes a hidden-pane mascot immediately instead of playing the exit", () => {
+    vi.useFakeTimers();
+    const host = render(
+      <ConversationRenderActivityProvider active={false}>
+        <WuuMascot visible activity="thinking" accessory="beanie" />
+      </ConversationRenderActivityProvider>,
+    );
+    rerender(
+      <ConversationRenderActivityProvider active={false}>
+        <WuuMascot visible={false} accessory="beanie" />
+      </ConversationRenderActivityProvider>,
+    );
+    expect(host.querySelector("svg")).toBeNull();
   });
 
   it("changes an explicit colour without replacing the body, eyes or worn accessory", () => {

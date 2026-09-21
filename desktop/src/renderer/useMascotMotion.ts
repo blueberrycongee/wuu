@@ -39,7 +39,7 @@ export function useMascotAttention(activity: WuuMascotActivity, enabled: boolean
 export const MASCOT_EXIT_MS = 180;
 
 /** Keep the same instance through a cancelled exit; ignore child animation events. */
-export function useMascotPresence(visible: boolean): boolean {
+export function useMascotPresence(visible: boolean, animate = true): boolean {
   const [retained, setRetained] = useState(visible);
   useEffect(() => {
     if (visible) {
@@ -47,8 +47,12 @@ export function useMascotPresence(visible: boolean): boolean {
       return;
     }
     if (!retained) return;
+    if (!animate) {
+      setRetained(false);
+      return;
+    }
     const timer = window.setTimeout(() => setRetained(false), MASCOT_EXIT_MS);
     return () => window.clearTimeout(timer);
-  }, [visible, retained]);
+  }, [animate, visible, retained]);
   return visible || retained;
 }

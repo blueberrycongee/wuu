@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useRef, type ReactNode } from "react";
 
 // Cached conversation panes stay mounted so tab switches can reuse their DOM,
 // but hidden panes must not keep consuming high-rate presentation updates.
@@ -23,4 +23,13 @@ export function ConversationRenderActivityProvider({
 
 export function useConversationRenderActive(): boolean {
   return useContext(ConversationRenderActivityContext);
+}
+
+/** True on the commit that makes a cached conversation visible again. */
+export function useConversationBecameRenderActive(): boolean {
+  const active = useConversationRenderActive();
+  const wasActive = useRef(active);
+  const becameActive = active && !wasActive.current;
+  wasActive.current = active;
+  return becameActive;
 }

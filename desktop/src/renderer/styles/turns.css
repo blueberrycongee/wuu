@@ -2541,7 +2541,9 @@
   display: flex;
   width: 100%;
   max-width: 100%;
-  min-height: 20px;
+  /* Match the 28px mascot slot. A 20px row grows when the ball appears and
+     shrinks when a settled catch-up hides it, which jumps the stream. */
+  min-height: 28px;
   align-items: center;
   gap: 8px;
   margin: 0;

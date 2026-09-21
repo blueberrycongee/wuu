@@ -8,22 +8,17 @@
 
 @keyframes wuu-mascot-enter {
   from {
-    /* Slide-in distance. Callers whose slot sits against a clip edge (process
-       rows) cap it with --wuu-mascot-slide-shift so the entry cannot paint
-       outside that edge. */
-    margin-inline-start: calc(-1 * var(--wuu-mascot-slide-shift, var(--wuu-mascot-size)));
-    margin-inline-end: 0;
+    /* Keep the layout slot. Sliding with margin shoved process-row text and
+       jumped the conversation after a session switch catch-up. */
     opacity: 0;
-    transform: translateY(2px) scale(0.8);
+    transform: translateX(calc(-1 * var(--wuu-mascot-slide-shift, 0px))) translateY(2px) scale(0.8);
   }
 }
 
 @keyframes wuu-mascot-exit {
   to {
-    margin-inline-start: calc(-1 * var(--wuu-mascot-slide-shift, var(--wuu-mascot-size)));
-    margin-inline-end: 0;
     opacity: 0;
-    transform: translateY(-2px) scale(0.8);
+    transform: translateX(calc(-1 * var(--wuu-mascot-slide-shift, 0px))) translateY(-2px) scale(0.8);
   }
 }
 

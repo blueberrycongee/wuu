@@ -19,6 +19,7 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { modelMascotAccessory } from "./WuuMascot";
 import { AgentIdentityContext } from "./AgentIdentityContext";
 import { translateCurrent as t } from "./i18n";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 beforeAll(() => {
   // jsdom does not lay out real heights. Stub getBoundingClientRect so
@@ -857,6 +858,36 @@ describe("ProcessSurface", () => {
       rerender({ processItems: makeSearches(5), streaming: true });
       rerender({ processItems: makeSearches(5, "completed"), streaming: false });
       expect(container.querySelector(".process-surface-count")?.textContent).toBe("5");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("snaps a delayed aggregated count when the conversation becomes visible", () => {
+    vi.useFakeTimers();
+    try {
+      if (container) unmount();
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      const mount = (active: boolean, count: number): void => {
+        act(() => {
+          root!.render(
+            (
+              <ConversationRenderActivityProvider active={active}>
+                <ProcessSurface processItems={makeSearches(count)} streaming />
+              </ConversationRenderActivityProvider>
+            ) as ReactElement,
+          );
+        });
+      };
+      mount(false, 2);
+      mount(false, 4);
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+
+      mount(true, 4);
+      expect(container.querySelector(".process-surface-count")?.textContent).toBe("4");
+      expect(container.querySelector(".process-text-motion-enter")).toBeNull();
     } finally {
       vi.useRealTimers();
     }

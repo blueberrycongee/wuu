@@ -8,6 +8,7 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import { STREAM_TEXT_NOTIFY_INTERVAL_MS, streamTextKey, streamTextStore } from "./StreamText";
 
 // Keep the temporarily hidden review surface's lifecycle coverage for restoration.
@@ -557,6 +558,49 @@ describe("TurnView", () => {
       vi.advanceTimersByTime(1);
     });
     expect(view.textContent).toContain("查看思考过程");
+  });
+
+  it("publishes a frozen process catch-up immediately when the conversation becomes visible", () => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const turn = makeTurn("in_progress", [makeCommentary("checking the files")]);
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <TurnView turn={turn} onStreamFrame={() => {}} />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <TurnView
+            turn={makeTurn("in_progress", [
+              makeCommentary("checking the files"),
+              makeReasoning("settled reasoning"),
+            ])}
+            onStreamFrame={() => {}}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active>
+          <TurnView
+            turn={makeTurn("in_progress", [
+              makeCommentary("checking the files"),
+              makeReasoning("settled reasoning"),
+            ])}
+            onStreamFrame={() => {}}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("查看思考过程");
   });
 
   it("publishes a live tool or reasoning continuation without a delayed layout jump", () => {

@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { ThreadItem } from "../shared/protocol";
 import {
+  browserActivityOpenURL,
   buildToolActivityProcessSegments,
   type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
@@ -22,6 +23,11 @@ import {
 import { AnimatedProcessText } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { translateCurrent as translate, useI18n } from "./i18n";
+import {
+  useWorkspaceBrowserOpen,
+  workspaceBrowserClickModifiers,
+  type WorkspaceBrowserOpenModifiers,
+} from "./WorkspaceBrowserOpen";
 import {
   CONDENSED_SUMMARY_MIN_TOOL_COUNT,
   PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
@@ -38,6 +44,10 @@ import { AgentAvatarMark } from "./AgentAvatarMark";
 import { RoomCoordinatorAvatar } from "./RoomCoordinatorAvatar";
 import { AgentIdentityContext } from "./AgentIdentityContext";
 import { ACTIVITY_MORPHS } from "./useMascotMorph";
+import {
+  useConversationBecameRenderActive,
+  useConversationRenderActive,
+} from "./ConversationRenderActivity";
 
 /**
  * How long to wait after the fold opens before snapping the reasoning
@@ -55,6 +65,8 @@ function useDebouncedProcessSummary(
   reasoningStreaming: boolean,
   streaming: boolean,
 ): ProcessSummaryPresentation {
+  const renderActive = useConversationRenderActive();
+  const becameRenderActive = useConversationBecameRenderActive();
   const [presented, setPresented] = useState<ProcessSummaryPresentation>(() => ({
     segments,
     toolCount,
@@ -110,9 +122,20 @@ function useDebouncedProcessSummary(
       return;
     }
 
+    if (!renderActive) {
+      clearTimers();
+      return;
+    }
+
     // A new kind, status, or copy is a phase change. Settling the stream is
-    // also a boundary: never leave a stale count on a completed row.
-    if (!streaming || liveIdentity !== presentedIdentityRef.current) {
+    // also a boundary: never leave a stale count on a completed row. The first
+    // visible commit after a session switch must also snap: a delayed count
+    // change would jump the aggregated toolcall row.
+    if (
+      !streaming ||
+      becameRenderActive ||
+      liveIdentity !== presentedIdentityRef.current
+    ) {
       publish(pendingRef.current);
       return;
     }
@@ -131,7 +154,14 @@ function useDebouncedProcessSummary(
         publish(pendingRef.current);
       }, PROCESS_SUMMARY_COUNT_MAX_WAIT_MS);
     }
-  }, [liveIdentity, liveSignature, reasoningStreaming, streaming]);
+  }, [
+    becameRenderActive,
+    liveIdentity,
+    liveSignature,
+    reasoningStreaming,
+    renderActive,
+    streaming,
+  ]);
 
   useEffect(() => () => {
     if (idleTimerRef.current !== undefined) {
@@ -214,6 +244,7 @@ type ProcessSurfaceProps = {
    * their original look after the session switches its next model. */
   provider?: string;
   model?: string;
+  onOpenURL?: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
   /**
    * Optional render hook for reasoning items in the expanded body.
    * The surface is decoupled from the reasoning fold's scroll and
@@ -240,9 +271,11 @@ export function ProcessSurface({
   active,
   provider,
   model,
+  onOpenURL,
   renderReasoningItem,
 }: ProcessSurfaceProps): JSX.Element {
   const { t } = useI18n();
+  const openWorkspaceURL = useWorkspaceBrowserOpen(onOpenURL);
   const toolItems = processItems.filter(isToolActivityItem);
   const reasoningItems = processItems.filter(
     (item) => item.type === "reasoning",
@@ -304,6 +337,16 @@ export function ProcessSurface({
     event: SyntheticEvent<HTMLDetailsElement>,
   ): void => {
     setExpanded(event.currentTarget.open);
+  };
+
+  const browserURL = browserActivityOpenURL(toolItems);
+  const handleSummaryClick = (event: SyntheticEvent<HTMLElement>): void => {
+    if (hasDetails || !browserURL) {
+      return;
+    }
+    event.preventDefault();
+    const mouse = event.nativeEvent as MouseEvent;
+    openWorkspaceURL(browserURL, workspaceBrowserClickModifiers(mouse));
   };
 
   const className = `process-surface${
@@ -377,6 +420,7 @@ export function ProcessSurface({
         disabled={!hasDetails}
         open={expanded}
         onToggle={handleToggle}
+        onSummaryClick={handleSummaryClick}
         rowClassName={`${processEntryActive ? " is-live-gray" : ""}${
           streaming ? " is-streaming" : ""
         }`}

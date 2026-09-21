@@ -14,6 +14,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   on `thread/started`, so they stay in the workspace sidebar instead of
   vanishing until a later list or reload.
 
+- Keep desktop process rows still when switching sessions: publish the
+  frozen aggregated tool-call layout on the first visible frame, and keep
+  the status ball from shoving the summary with its enter/exit motion.
+
 - Ignore stale ACP JSON-RPC results whose id does not match the in-flight
   request, so a Grok prompt that is already waiting on the model is not
   aborted as an internal Wuu error.
