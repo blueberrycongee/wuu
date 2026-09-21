@@ -28,6 +28,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Dragging the macOS window frame no longer resamples the under-window
+  blur on every resize frame. The frame uses an opaque fill while it moves
+  and restores the material when the drag ends.
+
 - Session lists no longer run `git status` for every worktree. Summary
   lists, which the desktop sidebar refreshes on a timer, keep the worktree
   path and skip that checkout scan. Thread indexes are also reused until
