@@ -30,6 +30,10 @@ describe("browser PiP pure helpers", () => {
     expect(rect.x).toBeCloseTo(0);
     expect(rect.y).toBeCloseTo(20);
     expect(pipContainRect(0, 500, 260, 170).scale).toBe(0);
+    const larger = pipContainRect(100, 80, 400, 400);
+    expect(larger.scale).toBe(1);
+    expect(larger.width).toBe(100);
+    expect(larger.height).toBe(80);
   });
 });
 
@@ -272,10 +276,12 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
     await settle();
 
-    // The page lays out at the card size, not a scaled-down desktop viewport.
+    // 1000×500 page zoomed into the 260×170 card: scale 0.26, letterboxed.
     expect(host.mounts).toHaveLength(1);
-    expect(host.mounts[0].zoom).toBe(1);
-    expect(host.mounts[0].rect).toEqual({ x: 0, y: 0, width: 260, height: 170 });
+    expect(host.mounts[0].zoom).toBeCloseTo(0.26);
+    expect(host.mounts[0].rect.width).toBeCloseTo(260);
+    expect(host.mounts[0].rect.height).toBeCloseTo(130);
+    expect(host.mounts[0].rect.y).toBeCloseTo(20);
     expect(win.visible).toBe(true);
     expect(sink.events.some((e) => e.event === "ready")).toBe(true);
     expect(overlay.executed.some((code) => code.includes('"mounted":true'))).toBe(true);
@@ -360,8 +366,9 @@ describe("BrowserPiPSurface", () => {
     win.emit("resized");
     expect(overlay.boundsSet.at(-1)).toEqual({ x: 0, y: 0, width: 520, height: 340 });
     expect(host.relayouts).toHaveLength(1);
-    expect(host.relayouts[0].zoom).toBe(1);
-    expect(host.relayouts[0].rect).toEqual({ x: 0, y: 0, width: 520, height: 340 });
+    expect(host.relayouts[0].zoom).toBeCloseTo(0.52);
+    expect(host.relayouts[0].rect.width).toBeCloseTo(520);
+    expect(host.relayouts[0].rect.height).toBeCloseTo(260);
     surface.stop();
   });
 
@@ -375,8 +382,9 @@ describe("BrowserPiPSurface", () => {
     host.emitInteraction({ kind: "click", x: 500, y: 250 });
     const push = overlay.executed.find((code) => code.includes("wuuPipInteract"));
     expect(push).toBeDefined();
-    expect(push).toContain('"x":500');
-    expect(push).toContain('"y":250');
+    // scale 0.26, offset (0, 20) → (130, 85).
+    expect(push).toContain('"x":130');
+    expect(push).toContain('"y":85');
     surface.stop();
   });
 
@@ -445,15 +453,17 @@ describe("BrowserPiPSurface", () => {
     host.relayouts.length = 0;
     overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=0&y=0");
     overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=-40&y=-30");
-    expect(win.bounds).toMatchObject({ x: 406, y: 391, width: 370, height: 185 });
-    expect(host.relayouts.at(-1)).toMatchObject({ zoom: 1, rect: { x: 0, y: 0, width: 370, height: 185 } });
+    expect(win.bounds).toMatchObject({ x: 416, y: 386, width: 360, height: 190 });
+    expect(host.relayouts.at(-1)?.zoom).toBeCloseTo(0.36);
+    expect(host.relayouts.at(-1)?.rect.width).toBeCloseTo(360);
+    expect(host.relayouts.at(-1)?.rect.height).toBeCloseTo(180);
     expect(win.added.at(-1)).toBe(overlay);
     surface.setHostLayout({
       host: { x: 0, y: 0, width: 800, height: 600 },
       obstacles: [],
       visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
     });
-    expect(win.bounds).toMatchObject({ width: 370, height: 185 });
+    expect(win.bounds).toMatchObject({ width: 360, height: 190 });
     surface.stop();
   });
 

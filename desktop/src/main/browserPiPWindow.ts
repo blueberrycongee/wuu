@@ -14,6 +14,7 @@ import {
   browserPiPSnapEase,
   browserPiPSnapPoint,
   PIP_ANCHOR_MARGIN,
+  PIP_MIN_SIZE,
   PIP_SNAP_MS,
   type BrowserPiPScreenLayout,
   type PipAlignment,
@@ -61,8 +62,9 @@ export function pipHostname(url: string): string {
   return match?.[1] ?? (url.trim() || "about:blank");
 }
 
-// Letterbox a fixed viewport into a box. The live card does not use this:
-// the page lays out at the card's own size so it reflows when the card resizes.
+// Fit a page viewport into the card the way page zoom does. The layout size
+// stays `contentW`×`contentH`; `scale` is the zoom factor (never above 1) and
+// the returned rect is the zoomed DIP size, centered when the card is larger.
 export function pipContainRect(
   contentW: number,
   contentH: number,
@@ -72,7 +74,7 @@ export function pipContainRect(
   if (contentW <= 0 || contentH <= 0 || boxW <= 0 || boxH <= 0) {
     return { x: 0, y: 0, width: 0, height: 0, scale: 0 };
   }
-  const scale = Math.min(boxW / contentW, boxH / contentH);
+  const scale = Math.min(1, boxW / contentW, boxH / contentH);
   const width = contentW * scale;
   const height = contentH * scale;
   return { x: (boxW - width) / 2, y: (boxH - height) / 2, width, height, scale };
@@ -80,8 +82,8 @@ export function pipContainRect(
 
 // ---------------------------------------------------------------------------
 // The browser PiP surface: an Electron panel window presenting the REAL tab
-// view, reparented off the hidden host. The view fills the card at zoom 1,
-// so the page's layout viewport is the card and agent coordinates match it. A
+// view, reparented off the hidden host. The page keeps its layout viewport
+// and is zoomed down so that whole viewport fits in the card. A
 // transparent overlay view above it draws the chrome strip, the interaction
 // effects, and the frosted placeholder, and swallows pointer input so the
 // preview can never steal focus or become an input target.
@@ -153,8 +155,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
   private userSize: { width: number; height: number } | undefined;
-  // width / height of the page viewport before the card adopts it.
-  private contentAspect = 4 / 3;
+  // The page's layout viewport, captured before the card zooms it down.
+  // Later view bounds are the zoomed size, so they must not replace this.
+  private layoutViewport: { width: number; height: number } | undefined;
   private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint } | undefined;
   private snapTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -358,11 +361,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.reportTabGoneUnlessStarting();
       return;
     }
-    if (bounds.width > 0 && bounds.height > 0) {
-      const aspect = bounds.width / bounds.height;
-      const changed = Math.abs(aspect - this.contentAspect) > 0.02;
-      this.contentAspect = aspect;
-      if (changed && !this.userSize && this.screenLayout && !this.dragging && !this.resizing) {
+    if (!this.layoutViewport && bounds.width > 0 && bounds.height > 0) {
+      this.layoutViewport = { width: bounds.width, height: bounds.height };
+      if (!this.userSize && this.screenLayout && !this.dragging && !this.resizing) {
         this.placeCommitted();
       }
     }
@@ -430,7 +431,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   private contentRect(): { x: number; y: number; width: number; height: number; scale: number } {
     const b = this.win?.getBounds() ?? this.deps.bounds;
-    return { x: 0, y: 0, width: Math.max(0, b.width), height: Math.max(0, b.height), scale: 1 };
+    const viewport = this.layoutViewport;
+    if (!viewport) return { x: 0, y: 0, width: Math.max(0, b.width), height: Math.max(0, b.height), scale: 1 };
+    return pipContainRect(viewport.width, viewport.height, b.width, b.height);
   }
 
   private placeCommitted(): void {
@@ -438,7 +441,10 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const win = this.win;
     if (!layout || !win || win.isDestroyed()) return;
     this.cancelSnap();
-    const card = browserPiPFitCard(layout.host, this.userSize ?? browserPiPSizeForAspect(this.contentAspect));
+    const aspect = this.layoutViewport && this.layoutViewport.height > 0
+      ? this.layoutViewport.width / this.layoutViewport.height
+      : 4 / 3;
+    const card = browserPiPFitCard(layout.host, this.userSize ?? browserPiPSizeForAspect(aspect));
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
@@ -511,7 +517,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         gesture.start,
         gesture.edge,
         { x: command.x - gesture.pointer.x, y: command.y - gesture.pointer.y },
-        { aspect: gesture.start.height > 0 ? gesture.start.width / gesture.start.height : this.contentAspect, frame },
+        { min: PIP_MIN_SIZE, frame },
       )
       : gesture.start;
     this.applyBounds(next);
@@ -634,12 +640,12 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   private forwardInteraction(hint: BrowserInteractionHint): void {
     if (!this.mounted) return;
-    // The view fills the card at zoom 1, so page CSS pixels are window pixels.
+    const fit = this.contentRect();
     this.execute(
       `window.wuuPipInteract?.(${JSON.stringify({
         kind: hint.kind,
-        x: hint.x,
-        y: hint.y,
+        x: fit.x + hint.x * fit.scale,
+        y: fit.y + hint.y * fit.scale,
         direction: hint.direction ?? "",
       })})`,
     );

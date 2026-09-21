@@ -72,20 +72,14 @@ export function browserPiPSizeForAspect(aspect: number, maxEdge = PIP_MAX_EDGE):
   return { width: Math.max(1, Math.round(maxEdge * ratio)), height: maxEdge };
 }
 
-// Shrink a chosen size into the column without changing its aspect ratio.
-export function browserPiPFitCard(host: PipRect, preferred: PipSize): PipSize {
-  const aspect = preferred.width / Math.max(1, preferred.height);
+// Clamp a chosen card into the column. Each side shrinks on its own so a
+// resize the user dragged is not forced back to the page's aspect ratio.
+export function browserPiPFitCard(host: PipRect, preferred: PipSize, min: PipSize = PIP_MIN_SIZE): PipSize {
   const maxW = Math.max(1, host.width - PIP_ANCHOR_MARGIN * 2);
   const maxH = Math.max(1, host.height - PIP_ANCHOR_MARGIN * 2);
-  let width = Math.min(preferred.width, maxW);
-  let height = width / aspect;
-  if (height > maxH) {
-    height = maxH;
-    width = height * aspect;
-  }
   return {
-    width: Math.max(1, Math.round(width)),
-    height: Math.max(1, Math.round(height)),
+    width: Math.round(clamp(preferred.width, Math.min(min.width, maxW), maxW)),
+    height: Math.round(clamp(preferred.height, Math.min(min.height, maxH), maxH)),
   };
 }
 
@@ -147,77 +141,34 @@ export function browserPiPNearestAnchor(
   return best;
 }
 
-// Scale the card from the corner opposite the dragged edge, keeping `aspect`
-// (width / height). A north-west drag of a bottom-right card leaves that
-// corner where it is and changes both sides together.
+// The dragged edge moves. The opposite edges stay put. The page zoom is
+// recomputed afterwards so the whole layout viewport still fits this rect.
 export function browserPiPResizeRect(
   start: PipRect,
   edge: PipResizeEdge,
   pointerDelta: PipPoint,
-  limits: { aspect: number; frame: PipRect },
+  limits: { min: PipSize; frame: PipRect },
 ): PipRect {
-  const aspect = Number.isFinite(limits.aspect) && limits.aspect > 0
-    ? limits.aspect
-    : start.width / Math.max(1, start.height);
-  const pin = pinnedCorner(edge);
-  const pinPoint = rectCorner(pin, start);
-  const growW = (edge.includes("e") ? pointerDelta.x : 0) + (edge.includes("w") ? -pointerDelta.x : 0);
-  const growH = (edge.includes("s") ? pointerDelta.y : 0) + (edge.includes("n") ? -pointerDelta.y : 0);
-  const fromW = start.width + growW;
-  const fromH = (start.height + growH) * aspect;
-  const widthTarget = (edge.includes("e") || edge.includes("w")) && (edge.includes("n") || edge.includes("s"))
-    ? (fromW + fromH) / 2
-    : (edge.includes("e") || edge.includes("w")) ? fromW : fromH;
-  let width = clamp(widthTarget, 80, Math.max(80, limits.frame.width));
-  let height = width / aspect;
-  if (height > limits.frame.height) {
-    height = limits.frame.height;
-    width = height * aspect;
-  }
-  width = Math.max(1, Math.round(width));
-  height = Math.max(1, Math.round(height));
-  return browserPiPClampRect(placeFromCorner(pin, pinPoint, width, height), limits.frame);
-}
-
-function pinnedCorner(edge: PipResizeEdge): PipAlignment {
-  const north = edge.includes("n");
-  const south = edge.includes("s");
-  const east = edge.includes("e");
-  const west = edge.includes("w");
-  if (north && west) return "bottom-right";
-  if (north && east) return "bottom-left";
-  if (south && west) return "top-right";
-  if (south && east) return "top-left";
-  if (east) return "top-left";
-  if (west) return "top-right";
-  if (south) return "top-left";
-  return "bottom-left";
-}
-
-function rectCorner(alignment: PipAlignment, rect: PipRect): PipPoint {
-  switch (alignment) {
-    case "top-left":
-      return { x: rect.x, y: rect.y };
-    case "top-right":
-      return { x: rect.x + rect.width, y: rect.y };
-    case "bottom-left":
-      return { x: rect.x, y: rect.y + rect.height };
-    case "bottom-right":
-      return { x: rect.x + rect.width, y: rect.y + rect.height };
-  }
-}
-
-function placeFromCorner(alignment: PipAlignment, corner: PipPoint, width: number, height: number): PipRect {
-  switch (alignment) {
-    case "top-left":
-      return { x: corner.x, y: corner.y, width, height };
-    case "top-right":
-      return { x: corner.x - width, y: corner.y, width, height };
-    case "bottom-left":
-      return { x: corner.x, y: corner.y - height, width, height };
-    case "bottom-right":
-      return { x: corner.x - width, y: corner.y - height, width, height };
-  }
+  const right = start.x + start.width;
+  const bottom = start.y + start.height;
+  const maxW = Math.max(1, limits.frame.width);
+  const maxH = Math.max(1, limits.frame.height);
+  const minW = Math.min(limits.min.width, maxW);
+  const minH = Math.min(limits.min.height, maxH);
+  let width = start.width;
+  let height = start.height;
+  if (edge.includes("e")) width = start.width + pointerDelta.x;
+  if (edge.includes("s")) height = start.height + pointerDelta.y;
+  if (edge.includes("w")) width = start.width - pointerDelta.x;
+  if (edge.includes("n")) height = start.height - pointerDelta.y;
+  width = clamp(width, minW, maxW);
+  height = clamp(height, minH, maxH);
+  return browserPiPClampRect({
+    x: edge.includes("w") ? right - width : start.x,
+    y: edge.includes("n") ? bottom - height : start.y,
+    width,
+    height,
+  }, limits.frame);
 }
 
 export function browserPiPClampRect(rect: PipRect, frame: PipRect): PipRect {
