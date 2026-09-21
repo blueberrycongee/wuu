@@ -112,6 +112,45 @@ function submittedMessagePlacement(viewport: HTMLElement, message: HTMLElement) 
   };
 }
 
+/**
+ * Where a newly submitted bubble would sit if it were still parked on the
+ * composer. The first turn has no scroll range, so placement starts here and
+ * the leftover screen distance is a transform on the motion wrapper.
+ */
+function submittedComposerScreenTop(
+  viewport: HTMLElement,
+  messageHeight: number,
+  composer: HTMLElement | null,
+): number {
+  if (composer) {
+    const viewportTop = viewport.getBoundingClientRect().top;
+    const composerTop = composer.getBoundingClientRect().top;
+    if (Number.isFinite(viewportTop) && Number.isFinite(composerTop)) {
+      return composerTop - viewportTop - messageHeight;
+    }
+  }
+  return viewport.clientHeight - messageHeight;
+}
+
+function submittedMotionNode(message: HTMLElement): HTMLElement | undefined {
+  return message.querySelector<HTMLElement>("[data-message-arrival]") ?? undefined;
+}
+
+function writeSubmittedMotion(
+  holder: { current: HTMLElement | undefined },
+  message: HTMLElement | undefined,
+  translateY: number,
+): void {
+  const node = message ? submittedMotionNode(message) : undefined;
+  if (holder.current && holder.current !== node) {
+    holder.current.style.removeProperty("transform");
+  }
+  holder.current = node;
+  if (!node) return;
+  if (Math.abs(translateY) <= 1) node.style.removeProperty("transform");
+  else node.style.transform = `translateY(${translateY}px)`;
+}
+
 function cssPixelValue(value: string): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -241,6 +280,7 @@ export function useConversationScrollState({
   const smoothAutoFollowRef = useRef(false);
   const submittedScrollFrameRef = useRef<number | undefined>(undefined);
   const reflowSubmittedMotionRef = useRef<(() => void) | undefined>(undefined);
+  const submittedMotionNodeRef = useRef<HTMLElement | undefined>(undefined);
   const positionSubmittedMessageRef = useRef<((animate: boolean) => boolean) | undefined>(undefined);
   const selectionPausedAutoFollowRef = useRef(false);
   const pointerScrollGestureRef = useRef<
@@ -352,6 +392,8 @@ export function useConversationScrollState({
 
   const cancelSubmittedQueryScroll = useCallback((): void => {
     reflowSubmittedMotionRef.current = undefined;
+    submittedMotionNodeRef.current?.style.removeProperty("transform");
+    submittedMotionNodeRef.current = undefined;
     if (smoothAutoFollowRef.current) suppressAutoFollowRearmRef.current = false;
     smoothAutoFollowRef.current = false;
     if (submittedScrollFrameRef.current !== undefined) {
@@ -546,7 +588,11 @@ export function useConversationScrollState({
     const targetTop = placement.targetTop;
     reserveTailSpace(targetTop, placement.messageHeight);
     const startTop = clampScrollTop(viewport, viewport.scrollTop);
-    if (!animate || !submissionRef.current?.animate || prefersReducedMotion() || Math.abs(targetTop - startTop) <= 1) {
+    const composerStart = submittedComposerScreenTop(viewport, placement.messageHeight, dockComposerNode);
+    const canScroll = Math.abs(targetTop - startTop) > 1;
+    const canLift = composerStart - placement.screenTop > 1;
+    if (!animate || !submissionRef.current?.animate || prefersReducedMotion() || (!canScroll && !canLift)) {
+      writeSubmittedMotion(submittedMotionNodeRef, message, 0);
       viewport.scrollTop = targetTop;
       programmaticScrollTopRef.current = clampScrollTop(viewport, viewport.scrollTop);
       lastConversationScrollTopRef.current = programmaticScrollTopRef.current;
@@ -556,7 +602,7 @@ export function useConversationScrollState({
     }
 
     const glide = createScrollGlide();
-    const screenStart = placement.documentTop - startTop;
+    const screenStart = !canScroll && canLift ? composerStart : placement.documentTop - startTop;
     glide.start(screenStart);
     let lastFrameTime: number | undefined;
     let animatedMessage = message;
@@ -566,6 +612,7 @@ export function useConversationScrollState({
       viewport = conversationViewport();
       if (!viewport) {
         scrollModeRef.current = "pending";
+        writeSubmittedMotion(submittedMotionNodeRef, undefined, 0);
         return;
       }
       // Animate the bubble's position in the reading viewport, not scrollTop.
@@ -576,6 +623,7 @@ export function useConversationScrollState({
         const replacement = submittedMessage();
         if (!replacement) {
           scrollModeRef.current = "pending";
+          writeSubmittedMotion(submittedMotionNodeRef, undefined, 0);
           return;
         }
         animatedMessage = replacement;
@@ -607,6 +655,10 @@ export function useConversationScrollState({
       const placed = viewport.scrollTop;
       programmaticScrollTopRef.current = placed;
       lastConversationScrollTopRef.current = placed;
+      // A short first turn cannot scroll the bubble down to the composer.
+      // Keep the same screen-space trajectory with a transform on the motion
+      // wrapper so the measured scroll anchor stays put.
+      writeSubmittedMotion(submittedMotionNodeRef, animatedMessage, placed - top);
       if (done) {
         scrollModeRef.current = "holding";
         reflowSubmittedMotionRef.current = undefined;
@@ -614,6 +666,7 @@ export function useConversationScrollState({
       submissionFrameCallbacks.current.rememberActiveThreadScrollSnapshot(viewport, false, placed);
     };
     reflowSubmittedMotionRef.current = () => paint(messageMotionTime() ?? lastFrameTime);
+    paint(undefined);
     const step = (now: number): void => {
       submittedScrollFrameRef.current = undefined;
       lastFrameTime = now;
@@ -626,7 +679,7 @@ export function useConversationScrollState({
     };
     submittedScrollFrameRef.current = window.requestAnimationFrame(step);
     return true;
-  }, [activePane, activeThreadID, ensureTailRange, reserveTailSpace, scrollConversationToBottom, splitConversation, submittedMessage]);
+  }, [activePane, activeThreadID, dockComposerNode, ensureTailRange, reserveTailSpace, scrollConversationToBottom, splitConversation, submittedMessage]);
 
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 

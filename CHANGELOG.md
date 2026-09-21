@@ -187,6 +187,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Lift the first submitted query bubble from the composer when the conversation
+  has no scroll range yet, matching the send motion of later queries.
+
 - Send ACP image attachments as local file paths in the prompt instead of
   failing the turn when the agent does not advertise image blocks. Grok and
   similar agents read those files with their own tools.

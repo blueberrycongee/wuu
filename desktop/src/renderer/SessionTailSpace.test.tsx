@@ -84,6 +84,10 @@ function statusSpace() {
   return Number.parseFloat(host.querySelector("main")?.style.getPropertyValue("--conversation-status-space") || "0");
 }
 function scrollTop() { return api.conversationScrollRef.current!.scrollTop; }
+function motionY(node = host.querySelector<HTMLElement>("[data-message-arrival]")) {
+  const match = node?.style.transform.match(/translateY\(([-\d.]+)px\)/);
+  return match ? Number(match[1]) : 0;
+}
 function render(props: Props = {}) { act(() => root.render(<Probe {...props} />)); }
 function tick(now: number) {
   act(() => {
@@ -689,6 +693,78 @@ it("keeps a short draft bubble in place when it is adopted by the new thread", (
   grow(100);
   expect(tailSpace()).toBeCloseTo(remaining - 100);
   expect(scrollTop()).toBe(0);
+});
+
+it("lifts a short first bubble from the composer when the viewport cannot scroll", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  expect(motionY()).toBeGreaterThan(100);
+  expect(scrollTop()).toBe(0);
+  tick(0);
+  const start = motionY();
+  tick(60);
+  const first = start - motionY();
+  tick(120);
+  expect(first).toBeGreaterThan(0);
+  expect(start - motionY() - first).toBeLessThan(first);
+  settle(360);
+  expect(motionY()).toBe(0);
+  expect(scrollTop()).toBe(0);
+});
+
+it("keeps a short first-bubble lift through thread adoption", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0); tick(80);
+  const before = motionY();
+  expect(before).toBeGreaterThan(0);
+  render({ id: "created", messageID: "submitted", running: true });
+  expect(motionY()).toBeCloseTo(before);
+  expect(scrollTop()).toBe(0);
+  settle(360);
+  expect(motionY()).toBe(0);
+});
+
+it("places a short first bubble without a composer lift with reduced motion", () => {
+  vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList);
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  expect(motionY()).toBe(0);
+  expect(scrollTop()).toBe(0);
+  expect(animations).toHaveLength(0);
+});
+
+it("clears an in-flight first-bubble lift when the user scrolls", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ id: null, messageID: "submitted", running: true });
+  tick(0);
+  expect(motionY()).toBeGreaterThan(0);
+  scrollUp(100);
+  expect(motionY()).toBe(0);
+});
+
+it("does not lift a follow-up bubble that can scroll into place", () => {
+  render({ messageID: "old" });
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  render({ messageID: "submitted", running: true });
+  expect(motionY()).toBe(0);
+  tick(0);
+  expect(motionY()).toBe(0);
+  settle(360);
+  expect(motionY()).toBe(0);
+  expect(scrollTop()).toBeCloseTo(messageBottom - 200);
 });
 
 it("creates a fresh consumable reserve for the next submission", () => {
