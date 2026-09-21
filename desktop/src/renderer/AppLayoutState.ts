@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   LAYOUT_MOTION_CLASS,
+  releaseWindowResizeClass,
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
 import { motionDurationMs } from "./motion";
@@ -800,7 +801,7 @@ export function useAppLayoutState({
     const root = document.documentElement;
     root.classList.add(WINDOW_RESIZING_CLASS);
     return () => {
-      root.classList.remove(WINDOW_RESIZING_CLASS);
+      releaseWindowResizeClass(WINDOW_RESIZING_CLASS);
     };
   }, [resizingSidebar, resizingRightPanel, resizingSplit]);
 
@@ -816,7 +817,7 @@ export function useAppLayoutState({
     const root = document.documentElement;
     root.classList.add(LAYOUT_MOTION_CLASS);
     return () => {
-      root.classList.remove(LAYOUT_MOTION_CLASS);
+      releaseWindowResizeClass(LAYOUT_MOTION_CLASS);
     };
   }, [rightPanelAnimating, sidebarAnimating]);
 

@@ -5,6 +5,10 @@ import {
   useConversationScrollState,
   wheelDeltaPixels,
 } from "./ConversationScrollState";
+import {
+  flushWindowResizeSettle,
+  WINDOW_RESIZING_CLASS,
+} from "./WindowResizeState";
 import type { Turn } from "../shared/protocol";
 
 function makeLongTurns(): Turn[] {
@@ -611,6 +615,7 @@ describe("useConversationScrollState — dock composer height", () => {
     } else {
       Reflect.deleteProperty(resizeObserverGlobal, "ResizeObserver");
     }
+    document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
     document.body.removeChild(container);
   });
 
@@ -715,6 +720,25 @@ describe("useConversationScrollState — dock composer height", () => {
     await act(async () => { await new Promise(requestAnimationFrame); });
 
     expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("452px");
+  });
+
+  it("does not rewrite dock composer height during a live window resize", async () => {
+    const { pane, dockComposer } = mountDockComposerProbe();
+    stubRectHeight(dockComposer, 168);
+    flushResizeObserversFor(dockComposer);
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("168px");
+
+    document.documentElement.classList.add(WINDOW_RESIZING_CLASS);
+    stubRectHeight(dockComposer, 220);
+    flushResizeObserversFor(dockComposer);
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("168px");
+
+    act(() => {
+      flushWindowResizeSettle();
+    });
+    expect(pane.style.getPropertyValue("--dock-composer-height")).toBe("220px");
   });
 
   it("clips at the input edge rather than the surrounding dock accessories", async () => {

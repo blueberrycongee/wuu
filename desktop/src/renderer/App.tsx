@@ -262,7 +262,7 @@ import {
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
-import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
@@ -1722,7 +1722,14 @@ export function App(): JSX.Element {
       }
       resizing = nextResizing;
       windowResizingRef.current = nextResizing;
-      root.classList.toggle(WINDOW_RESIZING_CLASS, nextResizing);
+      if (nextResizing) {
+        root.classList.add(WINDOW_RESIZING_CLASS);
+      } else {
+        // Apply frozen composer/scroll/footer geometry while transitions are
+        // still off. Waiting until after the class drops left a delayed jump
+        // once the window chrome was already still.
+        releaseWindowResizeClass(WINDOW_RESIZING_CLASS);
+      }
       if (
         !nextResizing &&
         pendingEnvironmentPanelHasRoomRef.current !== undefined

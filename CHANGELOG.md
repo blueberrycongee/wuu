@@ -207,6 +207,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Apply deferred conversation layout before lifting the window-resize freeze, so
+  dragging the desktop frame does not jump after the chrome is already still.
+
 - Keep Agent editor identity mascots unclipped so hats and other accessories
   are not cut by the circular preview, and sit the appearance badge outside
   the face.

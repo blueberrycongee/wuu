@@ -262,9 +262,9 @@ describe("windowRegistry", () => {
     it("attaches will-resize, resize, and resized listeners to a window", () => {
       const registry = createWindowRegistry();
       const win = makeWindow(1);
-      let calls = 0;
-      registry.attachResizeHandlers(win, () => {
-        calls++;
+      const phases: Array<"live" | "end"> = [];
+      registry.attachResizeHandlers(win, (phase) => {
+        phases.push(phase);
       });
       expect(win.listenerCount("will-resize")).toBe(1);
       expect(win.listenerCount("resize")).toBe(1);
@@ -273,7 +273,7 @@ describe("windowRegistry", () => {
       win.fire("will-resize");
       win.fire("resize");
       win.fire("resized");
-      expect(calls).toBe(3);
+      expect(phases).toEqual(["live", "live", "end"]);
     });
 
     it("does not register the window with the registry", () => {

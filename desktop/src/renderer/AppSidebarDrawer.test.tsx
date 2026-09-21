@@ -47,7 +47,11 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
 import { SIDEBAR_MOTION_MS } from "./AppLayoutState";
-import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import {
+  createWindowResizeSettleScheduler,
+  WINDOW_RESIZE_SETTLE_DELAY_MS,
+  WINDOW_RESIZING_CLASS,
+} from "./WindowResizeState";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 
 let container: HTMLDivElement;
@@ -748,6 +752,31 @@ describe("collapsed sidebar hover drawer", () => {
     } finally {
       window.innerHeight = originalHeight;
     }
+  });
+
+  it("applies deferred window-resize layout when the freeze lifts, not after an extra settle delay", async () => {
+    await renderCollapsedApp();
+    const callback = vi.fn();
+    const scheduler = createWindowResizeSettleScheduler(callback);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)).toBe(true);
+    scheduler.schedule();
+    expect(callback).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(140);
+    });
+    expect(document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)).toBe(false);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(WINDOW_RESIZE_SETTLE_DELAY_MS + 1);
+    });
+    expect(callback).toHaveBeenCalledTimes(1);
+    scheduler.cancel();
   });
 
   it("still marks the touch web shell as window-resizing when the viewport width changes", async () => {

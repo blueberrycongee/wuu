@@ -688,6 +688,26 @@ function scheduleWindowResizeEnd(delay = 140): void {
   }, delay);
 }
 
+function handleNativeWindowResizePhase(
+  phase: "live" | "end",
+  win?: BrowserWindow,
+): void {
+  if (phase === "end") {
+    // `resized` means the user released the frame. Do not treat it as another
+    // live tick — that restarted the 140ms freeze after the chrome was still.
+    if (windowResizeEndTimer) {
+      clearTimeout(windowResizeEndTimer);
+      windowResizeEndTimer = undefined;
+    }
+    setWindowResizeState(false);
+    if (win) scheduleMainWindowBoundsSave(win);
+    return;
+  }
+  setWindowResizeState(true);
+  scheduleWindowResizeEnd();
+  if (win) scheduleMainWindowBoundsSave(win);
+}
+
 function scheduleMainWindowBoundsSave(win: BrowserWindow, delay = 200): void {
   if (mainWindowBoundsSaveTimer) {
     clearTimeout(mainWindowBoundsSaveTimer);
@@ -991,9 +1011,8 @@ function createPopOutWindow(params: PopOutWindowParams): BrowserWindow {
     runtimeContext: params.context,
     threadID: params.kind === "thread" ? params.threadID : undefined,
   });
-  windowRegistry.attachResizeHandlers(win, () => {
-    setWindowResizeState(true);
-    scheduleWindowResizeEnd();
+  windowRegistry.attachResizeHandlers(win, (phase) => {
+    handleNativeWindowResizePhase(phase);
   });
   if (params.kind === "thread") {
     windowRegistry.setThreadWindow(params.threadID, windowID);
@@ -1083,10 +1102,8 @@ function createWindow(): void {
   const win = mainWindow;
   const windowID = win.webContents.id;
 
-  windowRegistry.attachResizeHandlers(win, () => {
-    setWindowResizeState(true);
-    scheduleWindowResizeEnd();
-    scheduleMainWindowBoundsSave(win);
+  windowRegistry.attachResizeHandlers(win, (phase) => {
+    handleNativeWindowResizePhase(phase, win);
   });
   win.on("close", () => {
     // Last-write-wins: cancel any pending debounce and persist synchronously

@@ -67,9 +67,13 @@ export interface WindowRegistry {
 
   /**
    * Attach the per-window resize listeners (`will-resize` / `resize` /
-   * `resized`) on `window` and run `onChange` for each event.
+   * `resized`) on `window`. Live events fire while the user is dragging the
+   * frame; `end` fires once from `resized` when they release it.
    */
-  attachResizeHandlers(window: BrowserWindow, onChange: () => void): void;
+  attachResizeHandlers(
+    window: BrowserWindow,
+    onChange: (phase: "live" | "end") => void,
+  ): void;
 
   /** Popped-out windows in the workdir; the main window is excluded. */
   sameWorkdirPopOutWindows(workdir: string): BrowserWindow[];
@@ -203,12 +207,15 @@ class WindowRegistryImpl implements WindowRegistry {
       .map((entry) => entry.window);
   }
 
-  attachResizeHandlers(window: BrowserWindow, onChange: () => void): void {
+  attachResizeHandlers(
+    window: BrowserWindow,
+    onChange: (phase: "live" | "end") => void,
+  ): void {
     const id = window.webContents.id;
     if (this.resizeCleanups.has(id)) return;  // idempotent — already wired
-    const willResizeCb = (): void => onChange();
-    const resizeCb = (): void => onChange();
-    const resizedCb = (): void => onChange();
+    const willResizeCb = (): void => onChange("live");
+    const resizeCb = (): void => onChange("live");
+    const resizedCb = (): void => onChange("end");
     window.on("will-resize", willResizeCb);
     window.on("resize", resizeCb);
     window.on("resized", resizedCb);
