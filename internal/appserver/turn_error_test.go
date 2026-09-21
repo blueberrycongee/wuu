@@ -71,6 +71,14 @@ func TestBuildTurnError_Nil(t *testing.T) {
 	}
 }
 
+func TestBuildTurnError_GrokPromptStallIsProvider(t *testing.T) {
+	err := errors.New("Grok did not respond to the prompt at all (no wire activity for 30s). the agent process is likely wedged by a stale shared leader or a hung startup check")
+	out := BuildTurnError(err, "grok")
+	if out.Category != "provider" {
+		t.Fatalf("category = %q, want provider", out.Category)
+	}
+}
+
 // TestBuildTurnError_HTTP401_Auth covers the OpenAI "invalid API key"
 // path: HTTP 401 with no parseable code in the body, classified as
 // auth while retaining the provider and HTTP status facts.

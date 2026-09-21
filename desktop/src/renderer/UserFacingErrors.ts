@@ -186,6 +186,7 @@ function extractSpecificDisplay(
       if (lower.includes("model returned")) return { title: t("error.modelError") };
       if (lower.includes("response failed") || lower.includes("response error")) return { title: t("error.responseFailed") };
       if (lower.includes("invalid_request_error")) return { title: t("error.invalidRequest") };
+      if (lower.includes("did not respond to the prompt")) return { title: t("error.engineUnresponsive") };
       return {};
     }
     case "invalid_request": {
@@ -493,7 +494,8 @@ function isProviderBusinessError(message: string): boolean {
     message.includes("response error") ||
     message.includes("previous_response_not_found") ||
     message.includes("content policy") ||
-    message.includes("rate_limit")
+    message.includes("rate_limit") ||
+    message.includes("did not respond to the prompt")
   );
 }
 

@@ -565,7 +565,21 @@ func TestACPHelper(t *testing.T) {
 				break
 			}
 			if scenario == "prompt-stall" {
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": "native-session",
+					"update":    map[string]any{"sessionUpdate": "available_commands_update", "availableCommands": []any{}},
+				}})
 				continue
+			}
+			if scenario == "prompt-alive" {
+				write(map[string]any{"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": map[string]any{
+					"sessionId": "native-session",
+					"update":    map[string]any{"sessionUpdate": "queue_ack"},
+				}})
+				time.Sleep(400 * time.Millisecond)
+				text("pong")
+				result = map[string]string{"stopReason": "end_turn"}
+				break
 			}
 			if scenario == "prompt-complete-hang" || scenario == "prompt-complete-stale" {
 				var prompt struct {
@@ -747,8 +761,27 @@ func TestACPGrokPromptStallSurfacesWedgedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = session.RunTurn(ctx, testInput(), nil)
-	if err == nil || !strings.Contains(err.Error(), "did not acknowledge the prompt") {
+	if err == nil || !strings.Contains(err.Error(), "did not respond to the prompt") {
 		t.Fatalf("stall error = %v", err)
+	}
+}
+
+func TestACPGrokPromptStallClearsOnExtensionNotification(t *testing.T) {
+	previous := grokPromptStall
+	grokPromptStall = 200 * time.Millisecond
+	t.Cleanup(func() { grokPromptStall = previous })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "grok", "prompt-alive").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "pong" {
+		t.Fatalf("extension ack was treated as silence: %+v", result)
 	}
 }
 

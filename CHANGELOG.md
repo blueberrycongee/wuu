@@ -229,6 +229,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Treat Grok ACP prompt-stall as total wire silence after `session/prompt`,
+  matching the Zeron watchdog: session boilerplate does not count as life,
+  but Grok's `_x.ai/session_notification` queue bookkeeping does, so extra-high
+  reasoning after that first frame can stay quiet. A wedged agent now surfaces
+  as an unresponsive-engine error instead of an internal Wuu error.
+
 - Restore desktop sessions against the submitted message's current position
   when history is remounted or reflowed, instead of reopening in stale blank
   space below the messages.

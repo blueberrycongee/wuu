@@ -921,6 +921,7 @@ export const zhCN = {
   "error.networkTitle": "网络异常",
   "error.authTitle": "认证失败",
   "error.providerTitle": "模型服务异常",
+  "error.engineUnresponsive": "Agent 没有响应",
   "error.contextOverflowTitle": "上下文超出模型上限",
   "error.requestTooLargeTitle": "请求超出大小限制",
   "error.responseTooLargeTitle": "响应数据过大",

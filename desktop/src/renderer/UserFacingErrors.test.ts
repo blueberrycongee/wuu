@@ -45,6 +45,18 @@ describe("userFacingErrorForMessage", () => {
     expect(userFacingErrorForMessage({ ...error, recovery: { ...error.recovery!, retry_count: 0, stop_reason: "replay_unsafe" } }, "turn").detail).not.toBe(live.detail);
   });
 
+  it.each(["zh-CN", "en-US"] as const)("classifies a Grok ACP prompt stall as an unresponsive engine in %s", (locale) => {
+    setActiveLocale(locale);
+    const message = "Grok did not respond to the prompt at all (no wire activity for 30s). the agent process is likely wedged by a stale shared leader or a hung startup check";
+    const live = userFacingErrorForMessage({ message, category: "provider" }, "turn");
+    const restored = userFacingErrorForMessage(message, "turn");
+    expect(live).toEqual(restored);
+    expect(live.category).toBe("provider");
+    expect(live.title).toBe(t("error.engineUnresponsive"));
+    expect(live.title).not.toBe(t("error.internalTitle"));
+    expect(live.diagnostic).toBe(message);
+  });
+
   it.each(["zh-CN", "en-US"] as const)("distinguishes empty replies from generic provider errors in %s", (locale) => {
     setActiveLocale(locale);
     const message = "model returned empty answer (stop_reason=completed)";

@@ -16,6 +16,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+// Bound on prompt-send → first sign of life on the wire. Healthy Grok
+// acknowledges within milliseconds (queue bookkeeping precedes model work),
+// so total silence past this window is a wedged agent. Extra-high reasoning
+// after that first frame may stay quiet for a long time.
 var grokPromptStall = 30 * time.Second
 
 // Handshake budgets. initialize is local process startup, so 30s of silence is
@@ -127,17 +131,18 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 				return nil, err
 			}
 		}
+		// First non-boilerplate frame after session/prompt is the sign of life
+		// the Grok stall watches for. Grok's queue bookkeeping can ride
+		// `_x.ai/session_notification` rather than session/update; extra-high
+		// reasoning after that frame may stay silent for a long time.
+		if prompting && !isACPSessionBoilerplate(method, params) {
+			disarmStall()
+		}
 		if method == "session/update" {
-			if prompting && !isACPSessionBoilerplate(params) {
-				disarmStall()
-			}
 			if !prompting {
 				return nil, decodeACPUpdate(ref, params)
 			}
 			return nil, t.acpUpdate(ref, params)
-		}
-		if prompting && isACPPromptCompleteMethod(method) {
-			disarmStall()
 		}
 		return nil, nil
 	}
@@ -236,7 +241,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 			cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			_ = r.notify(cancelCtx, "session/cancel", map[string]string{"sessionId": ref})
-			return fmt.Errorf("%s did not acknowledge the prompt within %s; %s", s.engine.entry.Name, profile.promptStall, profile.stallHint)
+			return fmt.Errorf("%s did not respond to the prompt at all (no wire activity for %s). %s", s.engine.entry.Name, profile.promptStall, profile.stallHint)
 		}
 		return acpEngineError(s.engine.entry, p, err)
 	}
@@ -412,7 +417,10 @@ func isACPPromptCompleteMethod(method string) bool {
 	}
 }
 
-func isACPSessionBoilerplate(raw json.RawMessage) bool {
+func isACPSessionBoilerplate(method string, raw json.RawMessage) bool {
+	if method != "session/update" {
+		return false
+	}
 	var notification struct {
 		Update struct {
 			Type string `json:"sessionUpdate"`

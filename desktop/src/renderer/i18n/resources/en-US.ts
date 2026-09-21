@@ -924,6 +924,7 @@ export const enUS = {
   "error.networkTitle": "Network error",
   "error.authTitle": "Authentication failed",
   "error.providerTitle": "Model provider error",
+  "error.engineUnresponsive": "Agent did not respond",
   "error.contextOverflowTitle": "Context exceeds model limit",
   "error.requestTooLargeTitle": "Request too large",
   "error.responseTooLargeTitle": "Response data too large",

@@ -294,7 +294,8 @@ func isProviderBusinessMessage(lower string) bool {
 		strings.Contains(lower, "model returned") ||
 		strings.Contains(lower, "response failed") ||
 		strings.Contains(lower, "response error") ||
-		strings.Contains(lower, "previous_response_not_found")
+		strings.Contains(lower, "previous_response_not_found") ||
+		strings.Contains(lower, "did not respond to the prompt")
 }
 
 func isLocalOperationMessage(lower string) bool {
