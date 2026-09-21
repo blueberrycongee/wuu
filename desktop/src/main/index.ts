@@ -842,6 +842,33 @@ function usesWindowControlsOverlay(): boolean {
   return process.platform === "win32";
 }
 
+// 14px lights at y=17 sit on the 24px center of the 48px renderer
+// titlebar, matching the CSS-centered toolbar controls beside them.
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 17 };
+
+function applyMacTrafficLightPosition(win: BrowserWindow): void {
+  if (process.platform !== "darwin" || win.isDestroyed()) return;
+  // Construction-time trafficLightPosition is a no-op until AppKit has
+  // attached the titlebar container. Packaged launches often paint before
+  // that happens, so the lights stay at hiddenInset's default (12, 11)
+  // until a later redraw. Re-apply after the window is actually shown.
+  win.setWindowButtonPosition(MAC_TRAFFIC_LIGHT_POSITION);
+}
+
+function attachMacTrafficLightPosition(win: BrowserWindow): void {
+  if (process.platform !== "darwin") return;
+  const apply = (): void => applyMacTrafficLightPosition(win);
+  apply();
+  setImmediate(apply);
+  win.on("ready-to-show", apply);
+  win.on("show", apply);
+  win.on("restore", apply);
+  win.on("maximize", apply);
+  win.on("unmaximize", apply);
+  win.on("leave-full-screen", apply);
+  win.webContents.on("did-finish-load", apply);
+}
+
 function windowFrameOptions(): Pick<
   BrowserWindowConstructorOptions,
   | "frame"
@@ -853,9 +880,7 @@ function windowFrameOptions(): Pick<
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      // 14px lights at y=17 sit on the 24px center of the 48px renderer
-      // titlebar, matching the CSS-centered toolbar controls beside them.
-      trafficLightPosition: { x: 18, y: 17 },
+      trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     };
   }
   if (usesWindowControlsOverlay()) {
@@ -894,6 +919,7 @@ const themedChromeWindows = new Set<BrowserWindow>();
 
 function registerThemedChromeWindow(win: BrowserWindow): void {
   themedChromeWindows.add(win);
+  attachMacTrafficLightPosition(win);
   const sendMaximized = (): void => {
     if (win.isDestroyed()) return;
     sendToWindow(win, "wuu:window-maximized-changed", win.isMaximized());

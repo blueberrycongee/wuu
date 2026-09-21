@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Packaged macOS builds re-apply the traffic-light position after the window
+  is shown, so the lights stay aligned with the 48px titlebar instead of
+  remaining at AppKit's default inset.
+
 ## [2026.9.21] - 2026-09-21
 
 ### Added
