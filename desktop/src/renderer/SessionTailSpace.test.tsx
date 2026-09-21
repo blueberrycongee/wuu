@@ -660,6 +660,58 @@ it("restores a thread's remaining space before restoring its reading position", 
   expect(scrollTop()).toBe(anchored);
 });
 
+it.each([
+  { paused: false, offset: -1500 },
+  { paused: true, offset: -1500 },
+  { paused: false, offset: 1500 },
+  { paused: true, offset: 1500 },
+])("restores the submitted message after history reflow (paused: $paused, offset: $offset)", ({ paused, offset }) => {
+  render({ messageID: "old" });
+  submit();
+  if (paused) scrollUp(80);
+  const message = host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!;
+  const readingTop = message.getBoundingClientRect().top;
+  const remaining = tailSpace();
+  render({ id: "b", messageID: "other" });
+
+  // Eviction can remove earlier rows; reflow or restored history can add them.
+  // Neither change is response growth or extra submission clearance.
+  naturalHeight += offset;
+  messageBottom += offset;
+  render({ id: "a", messageID: "submitted" });
+  settle(0);
+
+  expect(messageBottom - scrollTop()).toBeGreaterThan(0);
+  expect(host.querySelector<HTMLElement>('[data-user-message-id="submitted"]')!.getBoundingClientRect().top).toBeCloseTo(readingTop);
+  expect(tailSpace()).toBeCloseTo(remaining);
+});
+
+it("opens at latest content when the saved submission is outside the new history window", () => {
+  render({ messageID: "old" });
+  submit();
+  render({ id: "b", messageID: "other" });
+  naturalHeight -= 1500;
+  messageBottom -= 1500;
+  render({ id: "a", messageID: "newer" });
+  settle(0);
+  expect(tailSpace()).toBe(0);
+  expect(scrollTop()).toBe(Math.max(0, naturalHeight - viewportHeight));
+  grow(1000);
+  expect(scrollTop()).toBe(naturalHeight - viewportHeight);
+});
+
+it("consumes background output without moving the saved submission anchor", () => {
+  render({ messageID: "old" });
+  submit();
+  const anchored = scrollTop();
+  const remaining = tailSpace();
+  render({ id: "b", messageID: "other" });
+  naturalHeight += 50;
+  render({ id: "a", messageID: "submitted" });
+  expect(scrollTop()).toBe(anchored);
+  expect(tailSpace()).toBeCloseTo(remaining - 50);
+});
+
 it("follows leftover submission space to the content bottom, not the empty reservation", () => {
   render({ messageID: "old" });
   submit();

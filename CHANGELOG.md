@@ -216,6 +216,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore desktop sessions against the submitted message's current position
+  when history is remounted or reflowed, instead of reopening in stale blank
+  space below the messages.
+
 - Keep live `steer` inputs in the same reading flow as queued messages, including
   messages sent from the pending drawer, without replaying the submission glide.
 

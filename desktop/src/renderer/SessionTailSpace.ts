@@ -3,7 +3,7 @@ import { conversationDisclosureHeight } from "./ConversationDisclosure";
 
 /** A submission reserves a minimum content extent, not permanent bottom padding. */
 export function useSessionTailSpace({
-  threadID, enabled, preserveOnThreadChange, paneRef, viewportRef, contentRef,
+  threadID, enabled, preserveOnThreadChange, paneRef, viewportRef, contentRef, getRestorationOffset,
 }: {
   threadID?: string;
   enabled: boolean;
@@ -11,6 +11,7 @@ export function useSessionTailSpace({
   paneRef: RefObject<HTMLElement | null>;
   viewportRef: RefObject<HTMLElement | null>;
   contentRef: RefObject<HTMLElement | null>;
+  getRestorationOffset: () => number;
 }) {
   const space = useRef(0);
   const extent = useRef(0);
@@ -18,6 +19,7 @@ export function useSessionTailSpace({
   const reservedDisclosureHeight = useRef(0);
   const savedExtents = useRef(new Map<string, { extent: number; natural: number; disclosure: number }>());
   const layoutScope = useRef<{ threadID?: string; enabled: boolean } | undefined>(undefined);
+  const restoredOffset = useRef(0);
   const apply = useCallback((height: number) => {
     if (height === space.current) return;
     // Layout rounds fractional padding while the motion keeps a continuous
@@ -105,15 +107,20 @@ export function useSessionTailSpace({
   useLayoutEffect(() => {
     if (layoutScope.current?.threadID === threadID && layoutScope.current?.enabled === enabled) return;
     layoutScope.current = { threadID, enabled };
+    restoredOffset.current = 0;
     if (!preserveOnThreadChange) {
       const saved = threadID ? savedExtents.current.get(threadID) : undefined;
-      extent.current = saved?.extent ?? 0;
-      reservedNaturalHeight.current = saved?.natural ?? 0;
-      reservedDisclosureHeight.current = saved?.disclosure ?? 0;
       // First-query lead is in-flight motion on the outgoing thread, not a
       // saved reservation. Drop it before measuring so the incoming pane does
       // not inherit a composer-sized padding-top for one layout.
       contentRef.current?.style.removeProperty("padding-top");
+      // Rebase before measuring growth: a different history window moves the
+      // submission without producing output or creating new trailing space.
+      const offset = getRestorationOffset();
+      restoredOffset.current = offset;
+      extent.current = saved?.extent ? Math.max(0, saved.extent + offset) : 0;
+      reservedNaturalHeight.current = Math.max(0, (saved?.natural ?? 0) + offset);
+      reservedDisclosureHeight.current = saved?.disclosure ?? 0;
     }
     if (!enabled) {
       extent.current = 0;
@@ -128,5 +135,5 @@ export function useSessionTailSpace({
   // Content growth consumes it even when auto-follow has been paused.
   useLayoutEffect(syncLayout);
 
-  return { reserve, ensureRange, filled, consume, syncLayout, discard };
+  return { reserve, ensureRange, filled, consume, syncLayout, discard, restoredOffset };
 }

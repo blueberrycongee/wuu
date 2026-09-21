@@ -179,6 +179,8 @@ export type ConversationScrollSnapshot = {
   submittedMessageID?: string;
 };
 
+type ThreadScrollSnapshot = ConversationScrollSnapshot & { submittedMessageTop?: number };
+
 export function useConversationScrollState({
   activeThreadID,
   activePane,
@@ -244,7 +246,7 @@ export function useConversationScrollState({
     secondary: null
   });
   const conversationPaneRef = useRef<HTMLElement | null>(null);
-  const submissionRef = useRef<{ messageID: string; threadID?: string; animate: boolean } | undefined>(undefined);
+  const submissionRef = useRef<{ messageID: string; threadID?: string; animate: boolean; documentTop?: number } | undefined>(undefined);
   // Exactly one owner can write scrollTop. Geometry alone cannot transfer
   // ownership: a submission's padded bottom is not the bottom of its output.
   const scrollModeRef = useRef<ConversationScrollMode>("following");
@@ -299,7 +301,7 @@ export function useConversationScrollState({
   const userScrollAwayStartTopRef = useRef<number | undefined>(undefined);
   const touchLastYRef = useRef<number | undefined>(undefined);
   const threadScrollSnapshotsRef = useRef(
-    new Map<string, ConversationScrollSnapshot>()
+    new Map<string, ThreadScrollSnapshot>()
   );
   const streamScrollFrameRef = useRef<number | undefined>(undefined);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
@@ -362,6 +364,13 @@ export function useConversationScrollState({
     autoFollow: boolean,
     scrollTop?: number
   ): void {
+    const submission = submissionRef.current;
+    // Animation frames already measured the anchor while placing the bubble.
+    // Refresh it for ordinary scrolling without adding geometry reads per frame.
+    if (submission && !autoFollow && scrollTop === undefined) {
+      const message = submittedMessage();
+      if (message) submission.documentTop = submittedMessagePlacement(node, message).documentTop;
+    }
     threadScrollSnapshotsRef.current.set(threadID, {
       // Callers already scrolling inside a frame pass the offset they reached,
       // so this never re-measures the scroller while motion is in flight.
@@ -369,6 +378,7 @@ export function useConversationScrollState({
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
+      submittedMessageTop: submission?.documentTop,
     });
   }
 
@@ -465,10 +475,10 @@ export function useConversationScrollState({
 
   const adoptingSubmission = Boolean(submissionRef.current && !submissionRef.current.threadID && activeThreadID &&
     primaryTurns?.some(turn => turn.items.some(item => item.id === submissionRef.current?.messageID)));
-  const submittedMessage = useCallback(() => {
+  const submittedMessage = useCallback((messageID = submissionRef.current?.messageID) => {
     const viewport = conversationViewport();
     return Array.from(viewport?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])
-      .find(node => node.dataset.userMessageId === submissionRef.current?.messageID && !node.closest('[aria-hidden="true"]'));
+      .find(node => node.dataset.userMessageId === messageID && !node.closest('[aria-hidden="true"]'));
   }, [activePane, splitConversation]);
   const reconcileSubmittedArrival = useCallback(() => {
     const message = splitConversation ? undefined : submittedMessage();
@@ -484,13 +494,21 @@ export function useConversationScrollState({
       }]
       : []);
   }, [reconcileArrivals, splitConversation, submittedMessage]);
-  const { reserve: reserveTailSpace, ensureRange: ensureTailRange, filled: tailFilled, consume: consumeTailSpace, syncLayout: syncTailLayout, discard: discardTailSpace } = useSessionTailSpace({
+  const getRestorationOffset = useCallback(() => {
+    const snapshot = activeThreadID ? threadScrollSnapshotsRef.current.get(activeThreadID) : undefined;
+    const node = conversationViewport();
+    const message = snapshot?.submittedMessageID ? submittedMessage(snapshot.submittedMessageID) : undefined;
+    if (!node || !message || snapshot?.submittedMessageTop === undefined) return 0;
+    return submittedMessagePlacement(node, message).documentTop - snapshot.submittedMessageTop;
+  }, [activeThreadID, activePane, splitConversation, submittedMessage]);
+  const { reserve: reserveTailSpace, ensureRange: ensureTailRange, filled: tailFilled, consume: consumeTailSpace, syncLayout: syncTailLayout, discard: discardTailSpace, restoredOffset } = useSessionTailSpace({
     threadID: activeThreadID,
     enabled: initialized && !emptyConversation && !splitConversation,
     preserveOnThreadChange: adoptingSubmission,
     paneRef: conversationPaneRef,
     viewportRef: conversationScrollRef,
     contentRef: scrollContentRef,
+    getRestorationOffset,
   });
 
   const scrollConversationToBottom = useCallback((): void => {
@@ -604,6 +622,7 @@ export function useConversationScrollState({
     scrollModeRef.current = "placing";
     setAutoFollowOverflowAnchor(viewport, true);
     const placement = submittedMessagePlacement(viewport, message);
+    if (submissionRef.current) submissionRef.current.documentTop = placement.documentTop;
     const targetTop = placement.targetTop;
     reserveTailSpace(targetTop, placement.messageHeight);
     const startTop = clampScrollTop(viewport, viewport.scrollTop);
@@ -701,6 +720,7 @@ export function useConversationScrollState({
         animatedMessage = replacement;
       }
       const live = submittedMessagePlacement(viewport, animatedMessage);
+      if (submissionRef.current) submissionRef.current.documentTop = live.documentTop;
       const { position, done } = now === undefined
         ? { position: screenStart, done: false }
         : glide.step(now, live.documentTop - live.targetTop, viewport.clientHeight);
@@ -1187,14 +1207,25 @@ export function useConversationScrollState({
       return;
     }
     markSessionSwitch(activeThreadID, "scroll-restore-start");
-    const snapshot = threadScrollSnapshotsRef.current.get(activeThreadID);
+    let snapshot = threadScrollSnapshotsRef.current.get(activeThreadID);
+    const restorationOffset = restoredOffset.current;
+    restoredOffset.current = 0;
+    if (snapshot?.submittedMessageTop !== undefined && !submittedMessage(snapshot.submittedMessageID)) {
+      // The saved anchor itself may have left the history window. Its absolute
+      // extent cannot describe this layout; open at the latest content instead.
+      discardTailSpace(activeThreadID);
+      submissionRef.current = undefined;
+      snapshot = undefined;
+    }
     scrollModeRef.current = snapshot?.submissionPhase === "placing" ? "pending" :
       snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following");
     if (snapshot?.submittedMessageID) {
       submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
     }
     if (snapshot && !snapshot.autoFollow) {
-      applyProgrammaticScroll(node, snapshot.scrollTop, false);
+      // The tail reservation has already been rebased to the incoming history
+      // window. Restore its reading offset in that same coordinate system.
+      applyProgrammaticScroll(node, snapshot.scrollTop + restorationOffset, false);
       bottomOverscrollFromAwayRef.current = true;
       setNativeBottomOverscrollEnabled(node, true);
     } else {
@@ -1207,7 +1238,7 @@ export function useConversationScrollState({
     }
     markSessionSwitch(activeThreadID, "scroll-restore-end");
     return undefined;
-  }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry]);
+  }, [activePane, activeThreadID, setAutoFollow, splitConversation, syncDockComposerGeometry, restoredOffset, submittedMessage, discardTailSpace]);
 
   // Only a direct submission owns placement. Queue/steer materialization is
   // incoming content and must preserve the current following/reading policy.
