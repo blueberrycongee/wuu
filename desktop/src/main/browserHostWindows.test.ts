@@ -76,8 +76,16 @@ class FakeView implements BrowserViewHandle {
     isAttached: () => this.attached,
     sendCommand: async (method, params) => {
       this.sentCommands.push({ method, params });
-      if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchKeyEvent") {
-        for (const listener of this.listeners.get("before-mouse-event") ?? []) listener();
+      const rawType = params && typeof params.type === "string" ? params.type : "";
+      if (method === "Input.dispatchMouseEvent") {
+        const type = rawType === "mousePressed" ? "mouseDown"
+          : rawType === "mouseReleased" ? "mouseUp"
+          : rawType;
+        for (const listener of this.listeners.get("before-mouse-event") ?? []) listener({}, { type });
+      }
+      if (method === "Input.dispatchKeyEvent") {
+        const type = rawType === "rawKeyDown" || rawType === "keyDown" ? "keyDown" : rawType;
+        for (const listener of this.listeners.get("before-input-event") ?? []) listener({}, { type });
       }
       const responder = this.responders.get(method);
       return responder ? responder(params) : {};
@@ -666,7 +674,7 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     expect(view.boundsSet).toEqual(rect);
   });
 
-  it("reports a click in the panel and ignores one dispatched for the agent", async () => {
+  it("reports a press in the panel and ignores hovering, scrolling, and agent input", async () => {
     const harness = makeHarness();
     const userInput: string[] = [];
     harness.coordinator.setRendererSink({
@@ -680,7 +688,13 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     const window = harness.mainWindow as unknown as BrowserParentWindowHandle;
     harness.coordinator.reportBounds("/repo", "t1", window, { x: 1, y: 2, width: 80, height: 60 }, 1);
 
-    view.listeners.get("before-mouse-event")?.[0]?.();
+    const fireMouse = (type: string) => {
+      view.listeners.get("before-mouse-event")?.[0]?.({}, { type });
+    };
+    for (const type of ["mouseEnter", "mouseMove", "mouseLeave", "mouseUp", "mouseWheel"]) fireMouse(type);
+    expect(userInput).toEqual([]);
+
+    fireMouse("mouseDown");
     expect(userInput).toEqual(["t1"]);
 
     await harness.coordinator.handleServerRequest(

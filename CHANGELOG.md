@@ -35,6 +35,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Moving the pointer onto the workspace browser no longer takes the page
+  from the agent. A press, a context menu, or typing does.
+
 - Switching sessions no longer jumps the message stream or replays catch-up
   motion. A paused reading position stays where it was, and a conversation
   that changed while hidden appears in its current layout.

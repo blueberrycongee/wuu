@@ -900,7 +900,14 @@ export class BrowserHostCoordinator {
       entry.loadError = typeof args[2] === "string" && args[2].length > 0 ? args[2] : "load failed";
       publish();
     });
-    contents.on("before-mouse-event", () => this.noteUserInput(entry));
+    // Moving onto the page, or scrolling to watch it, is not using it.
+    // Opening the panel under the pointer synthesizes an enter event.
+    // A press or a context menu is the user taking the page.
+    contents.on("before-mouse-event", (...args: unknown[]) => {
+      const mouse = args[1] as { type?: string } | undefined;
+      if (mouse?.type !== "mouseDown" && mouse?.type !== "contextMenu") return;
+      this.noteUserInput(entry);
+    });
     contents.on("before-input-event", (...args: unknown[]) => {
       const input = args[1] as { type?: string } | undefined;
       if (input?.type === "keyDown") this.noteUserInput(entry);
