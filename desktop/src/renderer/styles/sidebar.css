@@ -182,9 +182,8 @@
 
 .globalized-sidebar-toggle-region {
   position: fixed;
-  /* Match the normal 30px toggle's center inside the 48px titlebar content
-   * box. The divider is an inset shadow, so the full 48px remains available
-   * and both this control and the native traffic lights center at 24px. */
+  /* Match the normal 30px toggle's center inside the 48px titlebar.
+   * This control and the native traffic lights both center at 24px. */
   top: calc((48px - 30px) / 2);
   /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
    * gutter so decorated theme controls never visually merge with it. */
