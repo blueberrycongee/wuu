@@ -326,11 +326,10 @@ func resolveWorkspaceStateDir(wuuHome, workspaceID, rootDir string) (string, err
 
 // NewSession builds the shared runtime for an interactive agent surface.
 // browserEnabledFromEnv reports whether the embedded browser tool is switched
-// on for this process. It follows the bundled-plugin gate convention (see
-// plugin.EnableCUAMacEnv): enabled only when WUU_ENABLE_BROWSER trims to
-// exactly "1", so an unset or any other value keeps the tool off.
+// on for this process. The tool is on by default. Set WUU_ENABLE_BROWSER to
+// exactly "0" to hide it; any other value, including unset, keeps it enabled.
 func browserEnabledFromEnv() bool {
-	return strings.TrimSpace(os.Getenv("WUU_ENABLE_BROWSER")) == "1"
+	return strings.TrimSpace(os.Getenv("WUU_ENABLE_BROWSER")) != "0"
 }
 
 func NewSession(opts Options) (*Session, error) {

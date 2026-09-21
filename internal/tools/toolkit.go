@@ -218,7 +218,6 @@ func New(rootDir string) (*Toolkit, error) {
 	t := &Toolkit{
 		env: env,
 		disabledTools: map[string]struct{}{
-			browserToolName:    {},
 			newContextToolName: {},
 		},
 		toolSearchEnabled: true,
@@ -368,8 +367,8 @@ func (t *Toolkit) rebuildRegistry() {
 		// Recurring agent profiles
 		NewListAgentProfilesTool(e),
 		NewCreateAgentProfileTool(e),
-		// Embedded browser automation (default-disabled in New(); enabled per
-		// session by SetBrowserEnabled off WUU_ENABLE_BROWSER).
+		// Embedded browser automation (default-enabled in New(); a session can
+		// still hide it with SetBrowserEnabled(false), including WUU_ENABLE_BROWSER=0).
 		NewBrowserTool(e),
 		// Deferred tool discovery
 		NewToolSearchTool(t),
@@ -680,8 +679,9 @@ func (t *Toolkit) SetBrowserTabs(store BrowserTabStore) {
 }
 
 // SetBrowserEnabled gates the embedded browser tool. New toolkits keep it
-// disabled; the runtime opts in per session (WUU_ENABLE_BROWSER). It toggles
-// disabledTools then republishes the surface so the catalog reflects availability.
+// enabled; the runtime can hide it per session (WUU_ENABLE_BROWSER=0). It
+// toggles disabledTools then republishes the surface so the catalog reflects
+// availability.
 func (t *Toolkit) SetBrowserEnabled(enabled bool) {
 	if t == nil {
 		return

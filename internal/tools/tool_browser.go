@@ -57,9 +57,9 @@ var browserKnownActions = map[string]struct{}{
 func (t *BrowserTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name: browserToolName,
-		// First sentence (<=180 runes) is lifted verbatim into the deferred
-		// tool catalog, so it must stand alone as the one-line summary.
 		Description: "Drive an embedded browser: navigate pages, observe the DOM, click, type, scroll, screenshot, and manage tabs through a single action parameter. " +
+			"Tabs stay hidden in the background by default; visiting a page does not show it to the user. " +
+			"Call set_visibility with visible=true only when the user's main goal is to watch the page, then set_visibility false or finalize when that goal ends. " +
 			"Read-only actions (observe, screenshot, tabs, wait_for) inspect page state; the others mutate it. " +
 			"Prefer node ids from observe over raw coordinates, and re-observe after an input to confirm the outcome before continuing.",
 		InputSchema: map[string]any{
@@ -71,7 +71,7 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 						"navigate", "observe", "click", "type", "scroll", "key",
 						"screenshot", "tabs", "finalize", "sequence", "set_visibility", "wait_for",
 					},
-					"description": "Required. Selects the browser operation to perform.",
+					"description": "Required. Selects the browser operation to perform. Use set_visibility only to show or hide the page; navigate and observe stay in the hidden host.",
 				},
 				"tab_id": map[string]any{
 					"type":        "string",
@@ -79,7 +79,11 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 				},
 				"url": map[string]any{
 					"type":        "string",
-					"description": "Used by action=navigate: the destination URL.",
+					"description": "Used by action=navigate: the destination URL. Opening this URL does not make the tab visible.",
+				},
+				"visible": map[string]any{
+					"type":        "boolean",
+					"description": "Used by action=set_visibility. true overlays the tab in the current session's right-side browser; false returns it to the hidden host.",
 				},
 			},
 			"required": []string{"action"},

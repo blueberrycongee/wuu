@@ -579,7 +579,6 @@ export class AppServerClient {
       process.platform,
     );
     if (app.isPackaged) {
-      delete helperEnv.WUU_ENABLE_BROWSER;
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }
     this.shutdownPromise = undefined;

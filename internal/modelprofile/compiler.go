@@ -292,14 +292,12 @@ func addWebTools(b *surfaceBuilder) {
 	b.addVisible("web_fetch", capability.CapabilityWebFetch)
 }
 
-// addBrowserTools defers the embedded browser tool on every profile. It is
-// registered unconditionally and never reads the environment: the compiler must
-// stay pure so surface tests do not drift with WUU_ENABLE_BROWSER. Runtime
-// gating lives entirely in the toolkit's disabledTools (default off, flipped by
-// SetBrowserEnabled), so a deferred entry here is inert until both the surface
-// exposes it AND the toolkit enables it.
+// addBrowserTools exposes the embedded browser tool on every profile. The
+// compiler stays pure and never reads the environment. Runtime opt-out still
+// lives in the toolkit's disabledTools, flipped by SetBrowserEnabled, so a
+// session can hide the tool without changing the compiled surface.
 func addBrowserTools(b *surfaceBuilder) {
-	b.addDeferred("wuu_browser", capability.CapabilityBrowser)
+	b.addVisible("wuu_browser", capability.CapabilityBrowser)
 }
 
 func addSessionTools(b *surfaceBuilder) {

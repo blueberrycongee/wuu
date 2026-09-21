@@ -29,8 +29,9 @@ export const ENABLE_ACCOUNT =
 
 /**
  * Agent-driven browser overlay (WebContentsView takeover, bounds reporting,
- * and server-request routing) stays opt-in. The workspace browser panel itself
- * is a regular workspace tool and no longer depends on this flag.
+ * and server-request routing). Visiting a page still happens in a hidden host;
+ * the overlay only appears after an explicit foreground promotion. Set
+ * VITE_ENABLE_BROWSER=false to hide the overlay during development.
  */
 export const ENABLE_EMBEDDED_BROWSER =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_BROWSER === "true";
+  import.meta.env.VITE_ENABLE_BROWSER !== "false";

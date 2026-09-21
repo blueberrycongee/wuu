@@ -37,6 +37,21 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
+func TestBrowserEnabledFromEnvDefaultsOn(t *testing.T) {
+	t.Setenv("WUU_ENABLE_BROWSER", "")
+	if !browserEnabledFromEnv() {
+		t.Fatal("unset WUU_ENABLE_BROWSER must keep the embedded browser enabled")
+	}
+	t.Setenv("WUU_ENABLE_BROWSER", "1")
+	if !browserEnabledFromEnv() {
+		t.Fatal("WUU_ENABLE_BROWSER=1 must keep the embedded browser enabled")
+	}
+	t.Setenv("WUU_ENABLE_BROWSER", "0")
+	if browserEnabledFromEnv() {
+		t.Fatal("WUU_ENABLE_BROWSER=0 must hide the embedded browser")
+	}
+}
+
 func TestSessionMaxParallelDefaultsAndOverrides(t *testing.T) {
 	session := &Session{maxParallel: 3}
 	if session.MaxParallel() != 3 {

@@ -160,14 +160,50 @@ func browserCall(action string, fields map[string]any) providers.ToolCall {
 	return providers.ToolCall{ID: action + "-1", Name: browserToolName, Arguments: string(args)}
 }
 
+func TestBrowserToolIsDirectOnDefaultSurface(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
+	if _, ok := kit.ActiveSurface().Tools[browserToolName]; !ok {
+		t.Fatalf("wuu_browser must be a direct tool, got tools=%v deferred=%v", kit.ActiveSurface().Tools, kit.ActiveSurface().DeferredTools)
+	}
+	if !containsProfileDef(kit.Definitions(), browserToolName) {
+		t.Fatal("wuu_browser must appear in Definitions without tool_search")
+	}
+}
+
 func TestBrowserLegacyDiscoveryNameLoadsProviderSafeTool(t *testing.T) {
-	kit, _, _ := newBrowserKit(t, &fakeBrowserBridge{})
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
 	kit.SetToolSearchEnabled(true)
+	if names, ok := toolSearchSelectNames("select:browser"); !ok || len(names) != 1 || names[0] != "browser" {
+		t.Fatalf("select:browser names = %v ok=%v, want [browser]", names, ok)
+	}
+	if names, ok := toolSearchSelectNames("select:wuu_browser"); !ok || len(names) != 1 || names[0] != browserToolName {
+		t.Fatalf("select:wuu_browser names = %v ok=%v, want [%s]", names, ok, browserToolName)
+	}
+	if !containsProfileDef(kit.Definitions(), browserToolName) {
+		t.Fatal("legacy select:browser must still resolve to the provider-safe wuu_browser tool")
+	}
+}
 
-	matches := kit.searchDeferredTools("select:browser", 1)
-	if len(matches) != 1 || matches[0].Name != browserToolName {
-		t.Fatalf("select:browser matches = %+v, want %q", matches, browserToolName)
+func TestSetBrowserEnabledHidesDirectTool(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", true)
+	kit.SetBrowserEnabled(false)
+	if _, ok := kit.ActiveSurface().Tools[browserToolName]; ok {
+		t.Fatal("disabled wuu_browser leaked into the compiled surface")
+	}
+	if containsProfileDef(kit.Definitions(), browserToolName) {
+		t.Fatal("disabled wuu_browser leaked into Definitions")
 	}
 }
 
