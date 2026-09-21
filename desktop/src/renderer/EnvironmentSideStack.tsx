@@ -10,6 +10,10 @@ import {
 import { environmentPanelScaleForWidth } from "./EnvironmentPanelScale";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { PluginInspectorSections } from "./plugins/PluginInspector";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
 
 function useEnvironmentPanelScale(
   stackRef: RefObject<HTMLDivElement | null>,
@@ -37,11 +41,21 @@ function useEnvironmentPanelScale(
       return () => window.removeEventListener("resize", handleResize);
     }
 
+    const settle = createWindowResizeSettleScheduler(() => {
+      applyScale(container.clientWidth);
+    });
     const observer = new ResizeObserver((entries) => {
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
       applyScale(entries[0]?.contentRect.width ?? container.clientWidth);
     });
     observer.observe(container);
-    return () => observer.disconnect();
+    return () => {
+      settle.cancel();
+      observer.disconnect();
+    };
   }, [enabled, stackRef]);
 }
 

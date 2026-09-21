@@ -84,9 +84,9 @@ export function scrollTopForDistanceFromLatest(
 }
 
 /**
- * Hidden cached panes skip layout, so estimated `content-visibility` heights
- * can still be live on the first in-flow pass. Force the last few turns to
- * their real size before restoring scroll.
+ * Hidden cached panes skip layout, so estimated heights can still be live on
+ * the first in-flow pass. Force the last few turns to their real size before
+ * restoring scroll.
  */
 export function measureLatestConversationTurns(node: HTMLElement, count = 5): void {
   const turns = node.querySelectorAll<HTMLElement>(".turn");
@@ -97,10 +97,9 @@ export function measureLatestConversationTurns(node: HTMLElement, count = 5): vo
 }
 
 /**
- * Lay out the incoming conversation before scroll restore. Hidden panes keep
- * `content-visibility: auto`, so the first in-flow pass still has 260px
- * estimates for turns outside the forced tail. Record the real heights while
- * they are forced visible; the later skip reuses those sizes instead of
+ * Lay out the incoming conversation before scroll restore. Turns outside the
+ * forced tail can still be on the 260px estimate. Record the real heights
+ * while they are forced visible; the later skip reuses those sizes instead of
  * shifting the viewport.
  */
 export function measureActiveConversationForRestore(node: HTMLElement): void {

@@ -29,6 +29,10 @@ import { WorkspacePanelEmpty } from "./WorkspaceFiles";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import { translateCurrent, useI18n } from "./i18n";
 import { TruncatedText } from "./TruncatedText";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
 
 const WORKSPACE_TERMINAL_PENDING_EVENT_IDS = 12;
 const WORKSPACE_TERMINAL_PENDING_EVENTS_PER_ID = 256;
@@ -506,6 +510,7 @@ function AgentTerminalPane({
     let fitAddon: XtermFitAddon | undefined;
     let dataDisposable: { dispose: () => void } | undefined;
     let resizeObserver: ResizeObserver | undefined;
+    let settleResize: ReturnType<typeof createWindowResizeSettleScheduler> | undefined;
     let stopObservingTheme: (() => void) | undefined;
     let stopObservingAppearance: (() => void) | undefined;
     setTerminalError(undefined);
@@ -577,7 +582,19 @@ function AgentTerminalPane({
           }
         });
       });
+      settleResize = createWindowResizeSettleScheduler(() => {
+        if (resizeFrame !== undefined) {
+          window.cancelAnimationFrame(resizeFrame);
+        }
+        resizeFrame = window.requestAnimationFrame(fitAndResize);
+      });
       resizeObserver = new ResizeObserver(() => {
+        // Fitting the terminal measures the host and rewrites the pty size.
+        // Do that once, when the window drag ends, not on every width change.
+        if (isWindowResizing()) {
+          settleResize.schedule();
+          return;
+        }
         if (resizeFrame !== undefined) {
           window.cancelAnimationFrame(resizeFrame);
         }
@@ -651,6 +668,7 @@ function AgentTerminalPane({
         window.cancelAnimationFrame(resizeFrame);
       }
       dataDisposable?.dispose();
+      settleResize?.cancel();
       resizeObserver?.disconnect();
       stopObservingTheme?.();
       stopObservingAppearance?.();
@@ -812,6 +830,7 @@ function UserTerminalPane({
     let fitAddon: XtermFitAddon | undefined;
     let dataDisposable: { dispose: () => void } | undefined;
     let resizeObserver: ResizeObserver | undefined;
+    let settleResize: ReturnType<typeof createWindowResizeSettleScheduler> | undefined;
     let stopObservingTheme: (() => void) | undefined;
     let stopObservingAppearance: (() => void) | undefined;
     let unsubscribeTerminal: (() => void) | undefined;
@@ -912,7 +931,17 @@ function UserTerminalPane({
           void window.wuu.writeTerminalSession(id, data);
         }
       });
+      settleResize = createWindowResizeSettleScheduler(() => {
+        if (resizeFrame !== undefined) {
+          window.cancelAnimationFrame(resizeFrame);
+        }
+        resizeFrame = window.requestAnimationFrame(fitAndResize);
+      });
       resizeObserver = new ResizeObserver(() => {
+        if (isWindowResizing()) {
+          settleResize?.schedule();
+          return;
+        }
         if (resizeFrame !== undefined) {
           window.cancelAnimationFrame(resizeFrame);
         }
@@ -974,6 +1003,7 @@ function UserTerminalPane({
       stopObservingTheme?.();
       stopObservingAppearance?.();
       dataDisposable?.dispose();
+      settleResize?.cancel();
       resizeObserver?.disconnect();
       pendingTerminalEventsRef.current.clear();
       terminal?.dispose();

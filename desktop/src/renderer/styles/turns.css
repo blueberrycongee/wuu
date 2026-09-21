@@ -153,6 +153,17 @@
   margin-bottom: 14px;
 }
 
+/* A live resize still wraps what is on screen. Turns forced visible for the
+ * first paint can sit above the viewport; let those keep their remembered
+ * height instead of wrapping again on every width change. */
+.window-resizing .turn:nth-last-child(-n + 5 of .turn),
+.window-resizing .turn[data-turn-status="in_progress"],
+.window-resizing .conversation-width .turn[data-latest-turn="true"],
+.window-resizing .turn-collapsed {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+
 .conversation-turn-history-loader {
   justify-self: center;
   margin: 4px 0 20px;

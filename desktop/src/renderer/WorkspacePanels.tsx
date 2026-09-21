@@ -26,6 +26,10 @@ import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
+import {
   ArrowLeft,
   FileDiff,
   FileText,
@@ -349,10 +353,20 @@ export function WorkspaceRightPanel({
       });
     }
 
-    const observer = new ResizeObserver(fitFileTreeToPanel);
+    const settle = createWindowResizeSettleScheduler(fitFileTreeToPanel);
+    const observer = new ResizeObserver(() => {
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
+      fitFileTreeToPanel();
+    });
     observer.observe(splitElement);
     fitFileTreeToPanel();
-    return () => observer.disconnect();
+    return () => {
+      settle.cancel();
+      observer.disconnect();
+    };
   }, []);
 
   useEffect(() => {

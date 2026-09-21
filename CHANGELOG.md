@@ -58,6 +58,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Resizing the window no longer remeasures every folded block, turn, and
   truncated label on each size change. The open conversation still stays
   pinned to its latest line while the frame moves.
+- Resizing the window reflows the open conversation. Sessions kept behind
+  it no longer wrap again on every size change, and off-screen turns keep
+  the height they already had.
 
 - Dragging the macOS window frame no longer resamples the under-window
   blur on every resize frame. The frame uses an opaque fill while it moves

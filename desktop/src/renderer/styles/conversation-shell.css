@@ -189,14 +189,20 @@
   overflow: clip;
 }
 
-/* Keep inactive panes out of layout. Use visibility:hidden instead of
- * content-visibility:hidden to avoid triggering thousands of warnings when
- * React components update in background tabs (timers, WebSocket, async state). */
+/* visibility:hidden still lays the pane out, and the pane is stretched over
+ * the open conversation, so a width change wraps every cached session.
+ * content-visibility:hidden does not help: measuring the open scroller forces
+ * that subtree to render. Drop the cached sessions out of the tree for the
+ * drag; they lay out once when the frame is released. */
 .cached-conversation-pane[data-active="false"] {
   position: absolute;
   inset: 0;
   visibility: hidden;
   pointer-events: none;
+}
+
+.window-resizing .cached-conversation-pane[data-active="false"] {
+  display: none;
 }
 
 .cached-conversation-pane[data-active="true"] {
