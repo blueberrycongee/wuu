@@ -61,8 +61,9 @@ function boot(reduced = false) {
   });
   (context as { window: unknown }).window = context;
   const runtime = vm.runInContext(`(${cursorRuntimeSource})()`, context) as {
-    moveTo: (x: number, y: number, press: boolean) => Promise<void>;
+    moveTo: (x: number, y: number) => Promise<void>;
     hide: () => void;
+    setViewport: (viewport: { x: number; y: number; scale: number }) => void;
     plan: (start: { x: number; y: number }, end: { x: number; y: number }) => {
       mode: string;
       control?: { x: number; y: number };
@@ -117,7 +118,7 @@ describe("agent cursor travel", () => {
 
   it("lands on the target and keeps the pointer from taking clicks", async () => {
     const { runtime, host, frames, setNow } = boot();
-    const arrived = runtime.moveTo(120, 80, true);
+    const arrived = runtime.moveTo(120, 80);
     let guard = 0;
     while (frames.length > 0 && guard < 80) {
       const callback = frames.shift();
@@ -127,16 +128,55 @@ describe("agent cursor travel", () => {
     }
     await arrived;
     expect(host.style.cssText).toContain("pointer-events:none");
-    expect(host.style.transform).toContain("translate(118.8px, 78.9px)");
+    expect(host.style.transform).toContain("translate(117px, 77.5px)");
     expect(host.style.opacity).toBe("1");
     expect(host.innerHTML).toContain("<svg");
   });
 
   it("snaps when motion is reduced", async () => {
     const { runtime, host, frames } = boot(true);
-    await runtime.moveTo(40, 50, false);
+    await runtime.moveTo(40, 50);
     expect(frames).toHaveLength(0);
-    expect(host.style.transform).toContain("translate(38.8px, 48.9px)");
+    expect(host.style.transform).toContain("translate(37px, 47.5px)");
+  });
+
+  it("keeps the pointer tip on the page point as a preview resizes", async () => {
+    const { runtime, host } = boot(true);
+    runtime.setViewport({ x: 0, y: 20, scale: 0.26 });
+    await runtime.moveTo(500, 250);
+    expect(host.style.transform).toContain("translate(127px, 82.5px)");
+    runtime.setViewport({ x: 10, y: 0, scale: 0.5 });
+    expect(host.style.transform).toContain("translate(257px, 122.5px)");
+    expect(host.style.transform).toContain("scale(1, 1)");
+  });
+
+  it("settles a pending arrival when hidden and never paints again", async () => {
+    const { runtime, host, frames, timers, setNow } = boot();
+    const arrived = runtime.moveTo(40, 50);
+    setNow(16);
+    frames.shift()?.(16);
+    expect(host.isConnected).toBe(true);
+    runtime.hide();
+    await arrived;
+    for (const timer of timers) timer();
+    expect(frames).toHaveLength(0);
+    expect(host.isConnected).toBe(false);
+  });
+
+  it("settles an interrupted move and continues from its painted position", async () => {
+    const { runtime, host, frames, setNow } = boot();
+    const first = runtime.moveTo(100, 50);
+    setNow(96);
+    frames.shift()?.(96);
+    const painted = host.style.transform.match(/translate\(([^p]+)px, ([^p]+)px\)/)!;
+    const second = runtime.moveTo(700, 500);
+    await first;
+    frames.shift()?.(96);
+    const retargeted = host.style.transform.match(/translate\(([^p]+)px, ([^p]+)px\)/)!;
+    expect(Number(retargeted[1])).toBeCloseTo(Number(painted[1]));
+    expect(Number(retargeted[2])).toBeCloseTo(Number(painted[2]));
+    runtime.hide();
+    await second;
   });
 
   it("removes the pointer when hidden", () => {
@@ -144,6 +184,6 @@ describe("agent cursor travel", () => {
     runtime.hide();
     expect(host.isConnected).toBe(false);
     expect(clearAgentCursorScript()).toContain("__wuuAgentCursor");
-    expect(agentCursorCommandScript(3, 4, false)).toContain("moveTo(3, 4, false)");
+    expect(agentCursorCommandScript(3, 4)).toContain("moveTo(3, 4)");
   });
 });

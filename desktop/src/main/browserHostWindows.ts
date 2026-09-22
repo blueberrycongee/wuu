@@ -1,6 +1,11 @@
 import type { Rectangle, Session } from "electron";
-import type { BrowserSurfaceSnapshot, JsonValue, ServerEvent } from "../shared/protocol";
-import { agentCursorCommandScript, clearAgentCursorScript } from "./agentCursor";
+import type { ActivitySession, BrowserSurfaceSnapshot, JsonValue, ServerEvent } from "../shared/protocol";
+import {
+  agentCursorCommandScript,
+  clearAgentCursorScript,
+  CURSOR_ARRIVE_CAP_MS,
+  type AgentCursorFeedback,
+} from "./agentCursor";
 import { writeBufferFileAtomicSync, writeTextFileAtomicSync } from "./atomicFile";
 import type { WindowRegistry } from "./windowRegistry";
 
@@ -130,15 +135,11 @@ export interface BrowserTabSurfaceMeta {
   title: string;
 }
 
-// Live pointer hint for the preview surface. Coordinates are page CSS pixels,
-// the same space click/scroll dispatch in. Emitted only after the input event
-// was actually dispatched — a hint never precedes the action it visualizes.
-export type BrowserInteractionHint = {
-  kind: "click" | "scroll" | "type";
-  x: number;
-  y: number;
-  direction?: string;
-};
+// Page CSS coordinates. Move listeners complete when the preview pointer
+// arrives; feedback is emitted only after the corresponding input succeeds.
+export type BrowserInteractionHint = AgentCursorFeedback
+  | { kind: "move"; x: number; y: number }
+  | { kind: "clear" };
 
 type TabEntry = {
   view: BrowserViewHandle;
@@ -227,7 +228,7 @@ export class BrowserHostCoordinator {
   // through the core protocol): they mirror actions this coordinator already
   // dispatched, so no model-visible data crosses a new channel.
   private readonly interactionListeners = new Set<
-    (workdir: string, tabID: string, hint: BrowserInteractionHint) => void
+    (workdir: string, tabID: string, hint: BrowserInteractionHint) => Promise<unknown> | void
   >();
   private readonly tabClosedListeners = new Set<(workdir: string, tabID: string) => void>();
   // Navigation and reparent notifications let the observation surface (PiP)
@@ -312,7 +313,7 @@ export class BrowserHostCoordinator {
   // without retrying.
   // -------------------------------------------------------------------------
   addInteractionListener(
-    listener: (workdir: string, tabID: string, hint: BrowserInteractionHint) => void,
+    listener: (workdir: string, tabID: string, hint: BrowserInteractionHint) => Promise<unknown> | void,
   ): () => void {
     this.interactionListeners.add(listener);
     return () => this.interactionListeners.delete(listener);
@@ -420,14 +421,15 @@ export class BrowserHostCoordinator {
     return { url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle() };
   }
 
-  private emitInteraction(entry: TabEntry, hint: BrowserInteractionHint): void {
-    for (const listener of this.interactionListeners) {
-      try {
-        listener(entry.workdir, entry.tabID, hint);
-      } catch {
-        // A broken preview listener must never fail the action it mirrors.
-      }
+  private async emitInteraction(entry: TabEntry, hint: BrowserInteractionHint): Promise<void> {
+    const tasks = [...this.interactionListeners].map(async (listener) => {
+      await listener(entry.workdir, entry.tabID, hint);
+    });
+    if (entry.inPanel && hint.kind !== "move" && hint.kind !== "clear") {
+      tasks.push(entry.view.webContents.executeJavaScript(`window.__wuuAgentCursor?.feedback(${JSON.stringify(hint)})`).then(() => undefined));
     }
+    // A preview failure must not fail browser input.
+    await Promise.allSettled(tasks);
   }
 
   private emitTabClosed(entry: TabEntry): void {
@@ -509,6 +511,14 @@ export class BrowserHostCoordinator {
     return this.tabs.get(tabKey(workdir, tabID))?.inPanel === true;
   }
 
+  updateActivity(activity: ActivitySession): void {
+    if (activity.kind !== "browser") return;
+    const entry = this.tabs.get(tabKey(activity.workdir, activity.target?.trim() || activity.id));
+    if (!entry || (activity.controller === "agent" && activity.state !== "stopped")) return;
+    entry.userInterrupted = true;
+    this.clearCursor(entry);
+  }
+
   surface(workdir: string, tabID: string): BrowserSurfaceSnapshot | undefined {
     const entry = this.tabs.get(tabKey(workdir, tabID));
     if (!entry || entry.view.webContents.isDestroyed()) return undefined;
@@ -565,6 +575,7 @@ export class BrowserHostCoordinator {
     // Persist the flag so a concurrent set_visibility promotion respects it
     // instead of painting the agent view back over the modal.
     entry.suppressed = suppressed;
+    if (suppressed) this.clearCursor(entry);
     this.applyEntryActivity(entry);
   }
 
@@ -821,7 +832,7 @@ export class BrowserHostCoordinator {
 
   private async click(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
     const point = await this.resolvePoint(entry, params);
-    if (!(await this.glideCursor(entry, point[0], point[1], true))) return { ok: true };
+    await this.glideCursor(entry, point[0], point[1]);
     await this.withAgentInput(entry, async () => {
       const dbg = entry.view.webContents.debugger;
       await dbg.sendCommand("Input.dispatchMouseEvent", {
@@ -841,7 +852,7 @@ export class BrowserHostCoordinator {
         clickCount: 1,
       });
     });
-    this.emitInteraction(entry, { kind: "click", x: point[0], y: point[1] });
+    void this.emitInteraction(entry, { kind: "click", x: point[0], y: point[1] });
     return { ok: true };
   }
 
@@ -854,9 +865,9 @@ export class BrowserHostCoordinator {
       point = await this.pointForNode(entry, params.node_id).catch(() => undefined);
     }
     const text = String(params.text ?? "");
-    if (point && !(await this.glideCursor(entry, point[0], point[1], false))) return { ok: true };
+    if (point) await this.glideCursor(entry, point[0], point[1]);
     await this.withAgentInput(entry, () => dbg.sendCommand("Input.insertText", { text }));
-    if (point) this.emitInteraction(entry, { kind: "type", x: point[0], y: point[1] });
+    if (point) void this.emitInteraction(entry, { kind: "type", x: point[0], y: point[1] });
     return { ok: true };
   }
 
@@ -873,7 +884,7 @@ export class BrowserHostCoordinator {
     }
     const wheel = wheelDeltas(params.dx, params.dy);
     const aimed = typeof params.node_id === "number" || (typeof params.x === "number" && typeof params.y === "number");
-    if (aimed && !(await this.glideCursor(entry, x, y, false))) return { ok: true };
+    if (aimed) await this.glideCursor(entry, x, y);
     await this.withAgentInput(entry, () =>
       entry.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseWheel",
@@ -883,7 +894,7 @@ export class BrowserHostCoordinator {
         deltaY: wheel.dy,
       }),
     );
-    this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(wheel.dx, wheel.dy) });
+    void this.emitInteraction(entry, { kind: "scroll", x, y, direction: scrollDirection(wheel.dx, wheel.dy) });
     return { ok: true };
   }
 
@@ -923,6 +934,7 @@ export class BrowserHostCoordinator {
     const contents = entry.view.webContents;
     const publish = (): void => this.publishSurface(entry);
     const onNavigate = (...args: unknown[]): void => {
+      this.clearCursor(entry);
       const url = typeof args[1] === "string" ? args[1] : contents.getURL();
       this.emitNavigate(entry.workdir, entry.tabID, url);
       publish();
@@ -1036,19 +1048,31 @@ export class BrowserHostCoordinator {
   // Move the pointer to the action, then let the caller send the input.
   // Hidden pages skip the travel so background work is not delayed. A real
   // user click during the travel cancels the action.
-  private async glideCursor(entry: TabEntry, x: number, y: number, press: boolean): Promise<boolean> {
-    if (!entry.inPanel || entry.view.webContents.isDestroyed()) return true;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+  private async glideCursor(entry: TabEntry, x: number, y: number): Promise<void> {
+    if (!entry.presented || entry.suppressed || entry.view.webContents.isDestroyed()) return;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     entry.userInterrupted = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await entry.view.webContents.executeJavaScript(agentCursorCommandScript(x, y, press));
+      const arrival = entry.inPanel
+        ? entry.view.webContents.executeJavaScript(agentCursorCommandScript(x, y))
+        : this.emitInteraction(entry, { kind: "move", x, y });
+      // Navigation or a stalled renderer can abandon its JS promise. Bound
+      // the wait in main as well as in the animation runtime.
+      await Promise.race([
+        arrival,
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, CURSOR_ARRIVE_CAP_MS + 100); }),
+      ]);
     } catch {
-      // The document can be mid-navigation. The action still proceeds.
+      // Painting can fail during navigation; input reports its own errors.
+    } finally {
+      clearTimeout(timer);
     }
-    return !entry.userInterrupted;
+    if (entry.userInterrupted) throw new Error("Browser action interrupted by user input");
   }
 
   private clearCursor(entry: TabEntry): void {
+    void this.emitInteraction(entry, { kind: "clear" });
     if (entry.view.webContents.isDestroyed()) return;
     void entry.view.webContents.executeJavaScript(clearAgentCursorScript()).catch(() => undefined);
   }
@@ -1161,6 +1185,7 @@ export class BrowserHostCoordinator {
 
   private reparent(entry: TabEntry, target: BrowserParentWindowHandle): void {
     const changed = entry.currentParent !== target.contentView;
+    if (changed) this.clearCursor(entry);
     if (entry.currentParent && changed) {
       try {
         entry.currentParent.removeChildView(entry.view);

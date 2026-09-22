@@ -172,7 +172,7 @@ import type {
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator, activityControlMethod } from "./cuaActivityWindows";
+import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
 import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
@@ -611,6 +611,8 @@ function emitServerEvent(event: ServerEvent): void {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
+  const browserActivity = observationActivityFromServerEvent(event);
+  if (browserActivity) browserHostCoordinator.updateActivity(browserActivity);
   observationCoordinator.handleServerEvent(event);
   const sideThreadEvent = sideThreadEventFromServerEvent(event);
   if (sideThreadEvent) {

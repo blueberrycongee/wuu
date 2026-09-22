@@ -45,6 +45,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Browser previews and the workspace panel share a clearer animated pointer,
+  with consistent movement and input feedback at every preview size.
+  Taking control clears the pointer and cancels pending input.
+
 - Desktop conversations use quieter titles and branding, tighter sidebar group
   spacing, and smaller reading/composer gaps. Workspace previews start with five
   recent sessions while keeping current, running, and unread sessions visible.

@@ -364,7 +364,7 @@ describe("BrowserPiPSurface", () => {
 
     win.bounds = { ...win.bounds, width: 520, height: 340 };
     const detached = win.removed.length;
-    win.emit("resized");
+    win.emit("resize");
     // The input view must remain attached throughout a pointer gesture.
     expect(win.removed).toHaveLength(detached);
     expect(overlay.boundsSet.at(-1)).toEqual({ x: 0, y: 0, width: 520, height: 340 });
@@ -375,19 +375,21 @@ describe("BrowserPiPSurface", () => {
     surface.stop();
   });
 
-  it("maps interaction hints from page CSS pixels into window coordinates", async () => {
+  it("passes page coordinates with the preview viewport transform", async () => {
     const { surface, overlay, host } = makeSurface();
     surface.start();
     surface.setVisible(true);
     await settle();
-    overlay.executed.length = 0;
+    const viewport = overlay.executed.find((code) => code.includes("wuuPipViewport"));
+    expect(viewport).toContain('"scale":0.26');
+    expect(viewport).toContain('"y":20');
 
     host.emitInteraction({ kind: "click", x: 500, y: 250 });
     const push = overlay.executed.find((code) => code.includes("wuuPipInteract"));
     expect(push).toBeDefined();
-    // scale 0.26, offset (0, 20) → (130, 85).
-    expect(push).toContain('"x":130');
-    expect(push).toContain('"y":85');
+    // The shared runtime maps coordinates and keeps the pointer size constant.
+    expect(push).toContain('"x":500');
+    expect(push).toContain('"y":250');
     surface.stop();
   });
 

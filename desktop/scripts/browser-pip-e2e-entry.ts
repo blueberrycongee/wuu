@@ -1,186 +1,136 @@
-// E2E entry (Electron main): drives a real hidden browser tab through the
-// production BrowserHostCoordinator + ObservationCoordinator and verifies the
-// browser PiP shows live frames, animates the synthetic pointer, honors the
-// visibility-takeover hide rule, and tears down without ghosts.
-// Bundled by browser-pip-e2e.cjs; do not run directly with node.
-import { app, BrowserWindow, WebContentsView } from "electron";
-import { mkdirSync, writeFileSync } from "node:fs";
+// Runs the production browser host and PiP with isolated, synthetic pages.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { app, BrowserWindow, WebContentsView } from "electron";
 import type { ActivitySession } from "../src/shared/protocol";
-import { ObservationCoordinator } from "../src/main/cuaActivityWindows";
-import { createObservationPiPFactory } from "../src/main/browserPiPWindow";
-import {
-  BrowserHostCoordinator,
-  defaultBrowserHostDeps,
-  BROWSER_PARTITION,
-  type BrowserHostWindowHandle,
-  type BrowserViewHandle,
-} from "../src/main/browserHostWindows";
+import { BrowserPiPSurface } from "../src/main/browserPiPWindow";
+import { BrowserHostCoordinator, defaultBrowserHostDeps, type BrowserHostWindowHandle, type BrowserViewHandle } from "../src/main/browserHostWindows";
 import type { WindowRegistry } from "../src/main/windowRegistry";
 
-const ARTIFACT_DIR = process.env.WUU_BROWSER_PIP_E2E_ARTIFACTS ?? "/tmp/wuu-browser-pip-e2e";
-const WORKDIR = "/e2e";
-const THREAD_ID = "thread-1";
-const TAB_ID = "t1";
+const artifacts = process.env.WUU_BROWSER_PIP_E2E_ARTIFACTS ?? "/tmp/wuu-browser-cursor-e2e";
+const profile = mkdtempSync(join(tmpdir(), "wuu-browser-cursor-"));
+app.setPath("userData", profile);
+app.on("quit", () => rmSync(profile, { recursive: true, force: true }));
+const workdir = "/e2e";
+const tabID = "cursor-tab";
+const activity: ActivitySession = {
+  id: "cursor-activity", kind: "browser", thread_id: "cursor-thread", workdir,
+  plugin_id: "embedded-browser", target: tabID, state: "background_controlled",
+  controller: "agent", created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+};
+const page = `<!doctype html><html><style>
+  *{box-sizing:border-box}body{margin:0;background:#f7f8fa;color:#24324a;font:16px system-ui}
+  body.dark{background:#18202d;color:#e7edf7}header{padding:30px 40px;border-bottom:1px solid #8190a433}
+  h1{margin:0 0 8px;font-size:24px;font-weight:600}p{margin:0;opacity:.7}
+  button{position:absolute;left:170px;top:170px;width:180px;height:60px;border:1px solid #759ad6;
+    background:#e0ecff;color:#284d85;border-radius:14px;font:inherit}
+  button:hover{background:#c4daff}article{position:absolute;left:40px;top:280px;max-width:550px;line-height:1.8}
+</style><body><header><h1>Browser workspace</h1><p>Live page · pointer interaction preview</p></header>
+<button id="target">Explore the page</button><article>One page, two views.<br>The pointer stays clear as the preview resizes.<br>Open the panel to continue browsing.</article>
+<script>window.clicks=0;document.getElementById('target').onclick=()=>{window.clicks++;document.querySelector('p').textContent='Completed actions: '+window.clicks};</script></body></html>`;
 
-// A page that visibly changes every frame tick: hue rotation + a millisecond
-// counter, so two captures of a live stream can never be byte-identical.
-const ANIMATED_PAGE = `data:text/html,${encodeURIComponent(`<!doctype html>
-<html><body style="margin:0;font:24px sans-serif">
-<div id="t" style="padding:40px">0</div>
-<script>
-  let n = 0;
-  setInterval(() => {
-    n += 1;
-    document.getElementById("t").textContent = String(n) + " " + Date.now();
-    document.body.style.background = "hsl(" + (n * 17 % 360) + ",70%,80%)";
-  }, 90);
-</script></body></html>`)}`;
-
-function fail(error: unknown): never {
-  console.error(error instanceof Error ? error.stack : String(error));
-  app.exit(1);
-  throw error;
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(label: string, check: () => Promise<boolean> | boolean, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (await check()) return;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for: ${label}`);
-    await sleep(120);
+async function waitFor(label: string, check: () => Promise<boolean> | boolean): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`Timed out: ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
 
-function browserActivity(overrides: Partial<ActivitySession>): ActivitySession {
-  return {
-    id: "activity-1",
-    kind: "browser",
-    thread_id: THREAD_ID,
-    workdir: WORKDIR,
-    plugin_id: "embedded-browser",
-    target: TAB_ID,
-    state: "background_controlled",
-    controller: "agent",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    ...overrides,
-  };
+function capture(win: BrowserWindow, name: string): void {
+  if (process.platform !== "darwin") return;
+  // BrowserWindow.capturePage excludes sibling WebContentsViews. Capture the
+  // native composition so the page and the pointer are verified together.
+  const nativeID = win.getMediaSourceId().split(":")[1];
+  execFileSync("screencapture", ["-x", "-o", "-l", nativeID, join(artifacts, name)]);
 }
 
-function findPipWindow(mainWin: BrowserWindow): BrowserWindow | undefined {
-  return BrowserWindow.getAllWindows().find(
-    (win) => win !== mainWin && !win.isDestroyed() && win.isVisible(),
-  );
-}
-
-app.whenReady().then(run).catch(fail);
-
-async function run(): Promise<void> {
-  mkdirSync(ARTIFACT_DIR, { recursive: true });
-
-  const mainWin = new BrowserWindow({ width: 1000, height: 700, show: false });
-  const registry = { mainWindow: () => mainWin } as unknown as WindowRegistry;
+app.whenReady().then(async () => {
+  mkdirSync(artifacts, { recursive: true });
+  const main = new BrowserWindow({ width: 1000, height: 720, show: false });
+  await main.loadURL("data:text/html;charset=utf-8,<body style='margin:0;background:%23edf0f5;font:14px system-ui;padding:12px'>Wuu · Browser panel</body>");
+  const views: WebContentsView[] = [];
+  const replies = new Map<string, unknown>();
+  const errors = new Map<string, string>();
   const host = new BrowserHostCoordinator(
-    registry,
-    { respond: () => undefined, reject: () => undefined },
+    { mainWindow: () => main } as unknown as WindowRegistry,
+    { respond: (id, result) => replies.set(id, result), reject: (id, message) => errors.set(id, message) },
     defaultBrowserHostDeps(
-      () =>
-        new BrowserWindow({
-          show: false,
-          skipTaskbar: true,
-          frame: false,
-          webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
-        }) as unknown as BrowserHostWindowHandle,
-      () =>
-        new WebContentsView({
-          webPreferences: { partition: BROWSER_PARTITION, contextIsolation: true, nodeIntegration: false },
-        }) as unknown as BrowserViewHandle,
-    ),
-    () => undefined,
+      () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
+      () => {
+        const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        views.push(view);
+        return view as unknown as BrowserViewHandle;
+      },
+    ), () => undefined,
   );
-
-  // Open the animated tab through the production reverse-RPC path.
-  await host.handleServerRequest({
-    workdir: WORKDIR,
-    kind: "server-request",
-    message: { id: "open-1", method: "browser/open_tab", params: { workdir: WORKDIR, tab_id: TAB_ID, initial_url: ANIMATED_PAGE } },
-  });
-
-  const coordinator = new ObservationCoordinator(
-    registry,
-    undefined,
-    createObservationPiPFactory({ browserHost: host, isPackaged: false }),
-  );
-  coordinator.setActiveThread(THREAD_ID);
-  coordinator.update(browserActivity({}));
-
-  // 1. The surface appears and cross-fades from the placeholder to live frames.
-  await waitFor("PiP window visible", () => Boolean(findPipWindow(mainWin)), 8_000);
-  const pip = findPipWindow(mainWin);
-  if (!pip) throw new Error("PiP window not found");
-  await waitFor(
-    "first live frame presented",
-    () => pip.webContents.executeJavaScript(`document.getElementById("view")?.classList.contains("live") ?? false`),
-    10_000,
-  );
-
-  // 2. Frames keep flowing: two captures of the surface differ.
-  const shot1 = await pip.webContents.capturePage();
-  await sleep(1_200);
-  const shot2 = await pip.webContents.capturePage();
-  writeFileSync(join(ARTIFACT_DIR, "pip-frame-1.png"), shot1.toPNG());
-  writeFileSync(join(ARTIFACT_DIR, "pip-frame-2.png"), shot2.toPNG());
-  if (shot1.toPNG().equals(shot2.toPNG())) {
-    throw new Error("PiP surface is not receiving live frames (identical captures)");
+  let sequence = 0;
+  async function request(method: string, params: Record<string, unknown>): Promise<void> {
+    const id = String(++sequence);
+    await host.handleServerRequest({ workdir, kind: "server-request", message: { id, method, params: { workdir, tab_id: tabID, ...params } } });
+    assert.equal(errors.get(id), undefined);
+    assert.ok(replies.has(id));
   }
-
-  // 3. A click through the production CDP path animates the synthetic pointer.
-  await host.handleServerRequest({
-    workdir: WORKDIR,
-    kind: "server-request",
-    message: { id: "click-1", method: "browser/cdp", params: { workdir: WORKDIR, tab_id: TAB_ID, method: "click", params: { x: 30, y: 40 } } },
+  await request("browser/open_tab", { initial_url: `data:text/html,${encodeURIComponent(page)}` });
+  const contents = views[0].webContents;
+  const surface = new BrowserPiPSurface({ activity, workdir, tabID, host, isPackaged: false,
+    bounds: { x: 120, y: 120, width: 384, height: 240 },
+    sink: { onEvent: () => undefined, onGone: () => undefined, onFailure: (error) => { throw error; } },
   });
-  await waitFor(
-    "pointer hint rendered",
-    () => pip.webContents.executeJavaScript(`document.getElementById("ptr")?.style.opacity === "1"`),
-    4_000,
-  );
+  surface.start();
+  surface.setVisible(true);
+  const pip = BrowserWindow.getAllWindows().find((win) => win !== main && win.isVisible())!;
+  assert.ok(pip);
+  const overlay = (pip.contentView.children.find((view) => view !== views[0]) as WebContentsView).webContents;
+  await waitFor("overlay ready", () => overlay.executeJavaScript(`typeof window.wuuPipInteract === 'function' && document.getElementById('ph').classList.contains('gone')`));
+  const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
+  const pointer = (wc: typeof contents) => wc.executeJavaScript(`(()=>{const el=document.getElementById('__wuu_agent_cursor');if(!el)return null;const m=new DOMMatrix(getComputedStyle(el).transform);return {x:m.e,y:m.f,width:el.offsetWidth,svg:el.querySelector('svg')?.outerHTML};})()`);
 
-  // 4. Visibility takeover hides the mirror (the real page is on screen).
-  await host.handleServerRequest({
-    workdir: WORKDIR,
-    kind: "server-request",
-    message: { id: "vis-1", method: "browser/set_visibility", params: { workdir: WORKDIR, tab_id: TAB_ID, visible: true } },
-  });
-  coordinator.update(browserActivity({ state: "foreground_controlled", controller: "user" }));
-  await waitFor("PiP hidden during takeover", () => pip.isDestroyed() || !pip.isVisible(), 4_000);
-  coordinator.update(browserActivity({ state: "background_controlled", controller: "agent" }));
-  await waitFor("PiP restored after takeover", () => !pip.isDestroyed() && pip.isVisible(), 4_000);
+  await click();
+  assert.equal(await contents.executeJavaScript("window.clicks"), 1, "PiP input reaches the page target");
+  const first = await pointer(overlay);
+  assert.ok(first);
+  assert.ok(Math.abs(first.x - (240 * .3 - 3)) < .1);
+  assert.ok(Math.abs(first.y - (200 * .3 - 2.5)) < .1);
+  assert.equal(await pointer(contents), null, "PiP paints only one pointer");
+  capture(pip, "pip-light.png");
 
-  // 5. User close dismisses the surface; a newer activity update revives it.
-  await pip.webContents.executeJavaScript(`document.getElementById("close").click()`);
-  await waitFor("PiP dismissed after user close", () => pip.isDestroyed(), 4_000);
-  coordinator.update(browserActivity({ updated_at: new Date(Date.now() + 1_000).toISOString() }));
-  await waitFor("PiP revived by newer activity", () => Boolean(findPipWindow(mainWin)), 8_000);
+  pip.setBounds({ x: 120, y: 120, width: 512, height: 320 });
+  await waitFor("resize projection", async () => Math.abs((await pointer(overlay)).x - (240 * .4 - 3)) < .1);
+  assert.equal((await pointer(overlay)).width, first.width, "Pointer size is independent of page zoom");
+  await contents.executeJavaScript("document.body.classList.add('dark')");
+  capture(pip, "pip-dark.png");
 
-  // 6. Closing the tab tears the surface down without a ghost.
-  const revived = findPipWindow(mainWin);
-  await host.handleServerRequest({
-    workdir: WORKDIR,
-    kind: "server-request",
-    message: { id: "close-1", method: "browser/close_tab", params: { workdir: WORKDIR, tab_id: TAB_ID } },
-  });
-  await waitFor("PiP gone after tab close", () => !revived || revived.isDestroyed(), 4_000);
-  await sleep(1_000);
-  if (findPipWindow(mainWin)) {
-    throw new Error("ghost PiP surface survived tab close");
-  }
+  surface.setVisible(false);
+  main.showInactive();
+  host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle, { x: 0, y: 42, width: 950, height: 620 }, 1, true);
+  await click();
+  assert.equal(await contents.executeJavaScript("window.clicks"), 2);
+  const panel = await pointer(contents);
+  assert.equal(panel.svg, first.svg, "Both surfaces use the same pointer artwork");
+  assert.ok(Math.abs(panel.x - 237) < .1);
+  await waitFor("PiP pointer removed", async () => (await pointer(overlay)) === null);
+  capture(main, "panel-dark.png");
 
-  console.log("browser-pip-e2e: PASS (artifacts in", ARTIFACT_DIR + ")");
+  // Navigation clears the old point; reduced motion arrives without travel.
+  await request("browser/cdp", { method: "navigate", params: { url: `data:text/html,${encodeURIComponent(page)}` } });
+  await contents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  main.setSize(620, 600);
+  host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle, { x: 0, y: 42, width: 580, height: 500 }, 1, true);
+  await contents.executeJavaScript("document.body.style.fontSize='20px'");
+  await click();
+  assert.equal(await contents.executeJavaScript("window.clicks"), 1);
+  capture(main, "panel-light-large-text.png");
+  host.updateActivity({ ...activity, controller: "user", state: "foreground_controlled" });
+  await waitFor("takeover clears pointer", async () => (await pointer(contents)) === null);
+
+  surface.stop();
+  host.destroyAll();
+  assert.ok(pip.isDestroyed());
+  console.log(`browser-pip-e2e: PASS (PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
+  main.destroy();
   app.exit(0);
-}
+}).catch((error) => { console.error(error); app.exit(1); });
