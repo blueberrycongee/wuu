@@ -416,19 +416,20 @@ describe("ChannelView", () => {
     expect(top).toBe(560);
   });
 
-  it("returns from Harness with cached history and its reading position before the refresh resolves", async () => {
+  it.each(["wheel", "native"])("returns from Harness with cached history and its %s reading position before the refresh resolves", async (input) => {
     const api = createApi();
     Object.defineProperty(window, "wuu", { configurable: true, value: api });
     const positions = new WeakMap<Element, number>();
+    let height = 1800;
     vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
-      return this.getAttribute("role") === "log" ? 1800 : 0;
+      return this.getAttribute("role") === "log" ? height : 0;
     });
     vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
       return this.getAttribute("role") === "log" ? 400 : 0;
     });
     vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) { return positions.get(this) ?? 0; });
     vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: Element, value: number) {
-      positions.set(this, Math.max(0, Math.min(value, 1400)));
+      positions.set(this, Math.max(0, Math.min(value, height - 400)));
     });
     const cache = new Map<string, ChannelConversationSnapshot>();
     const view = <ChannelView selectedRoomID="room-1" conversationCache={cache} directoryAgents={agents} directoryRooms={rooms} />;
@@ -436,7 +437,7 @@ describe("ChannelView", () => {
     await act(async () => root!.render(view));
     const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
     act(() => {
-      stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
+      if (input === "wheel") stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
       stream.scrollTop = 420;
       stream.dispatchEvent(new Event("scroll"));
     });
@@ -445,6 +446,15 @@ describe("ChannelView", () => {
     act(() => root!.render(view));
     expect(container.querySelector("[role=log]")?.textContent).toContain("Hello from Alpha");
     expect(container.querySelector("[role=log]")?.scrollTop).toBe(420);
+    const restored = container.querySelector<HTMLDivElement>("[role=log]")!;
+    act(() => {
+      restored.scrollTop = height - 400;
+      restored.dispatchEvent(new Event("scroll"));
+    });
+    act(() => root!.render(null));
+    height += 400;
+    act(() => root!.render(view));
+    expect(container.querySelector("[role=log]")?.scrollTop).toBe(height - 400);
   });
 
   it("preserves verifier task states for honest room activity", () => {

@@ -1246,7 +1246,11 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
     }
     positionedStreamRef.current = { roomID: selectedRoomID, node };
     rememberRoomScroll();
-  }, [messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
+    // Register after the controller's native listener so snapshots include
+    // the following state established by this scroll event.
+    node.addEventListener("scroll", rememberRoomScroll, { passive: true });
+    return () => node.removeEventListener("scroll", rememberRoomScroll);
+  }, [conversationCache, loadedRoomIDs, messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
 
   async function submitAgent(): Promise<void> {
     if (!window.wuu || !editingAgentID || !agentName.trim() || savingAgent) return;
@@ -2077,7 +2081,7 @@ export function ChannelView({ conversationCache, initialized, section = "rooms",
             }}
           />
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
-        <div ref={messageScroll.scrollRef} onScroll={rememberRoomScroll} className="channel-message-stream" role="log" aria-live="polite">
+        <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
           {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}
           {channelTimeline.map((message, index) => {
             const proposal = message.agent_creation_proposal;
