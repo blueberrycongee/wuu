@@ -234,6 +234,31 @@ describe("browser observation surface", () => {
     return { coordinator, surfaces, stops };
   }
 
+  it("passes the owning browser activity when docking its preview", () => {
+    const onExpand = vi.fn();
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      () => ({
+        start: vi.fn(),
+        setVisible: vi.fn(),
+        animateInteraction: vi.fn(),
+        stop: vi.fn(),
+      }),
+    );
+    coordinator.setBrowserExpandHandler(onExpand);
+    const current = browserActivity({ thread_id: "thread-2", target: "tab-2" });
+    coordinator.setActiveThread("thread-2");
+    coordinator.update(current);
+
+    const internal = coordinator as unknown as {
+      handlePiPEvent: (key: string, event: CUANativePiPEvent) => void;
+    };
+    internal.handlePiPEvent(observationKey(current), { event: "expand" });
+
+    expect(onExpand).toHaveBeenCalledWith(current);
+  });
+
   it("follows window moves but waits for fresh column measurements during resize", async () => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");

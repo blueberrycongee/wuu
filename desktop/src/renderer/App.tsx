@@ -1696,11 +1696,6 @@ export function App(): JSX.Element {
   });
   const openWorkspaceBrowserRef = useRef(openWorkspaceTool);
   openWorkspaceBrowserRef.current = openWorkspaceTool;
-  useEffect(() => {
-    const subscribe = window.wuu.onBrowserDock;
-    if (typeof subscribe !== "function") return undefined;
-    return subscribe(() => openWorkspaceBrowserRef.current("browser"));
-  }, []);
   const activeTodoUpdate = latestTodoUpdateForThread(activeThread);
   const activeContextKey = state.activeContext
     ? runtimeContextKey(state.activeContext)
@@ -3505,6 +3500,19 @@ export function App(): JSX.Element {
     isCurrentViewSwitchRequest,
     selectRuntimeContext,
   });
+
+  useEffect(() => {
+    const subscribe = window.wuu.onBrowserDock;
+    if (typeof subscribe !== "function") return undefined;
+    return subscribe((payload: { thread_id: string }) => {
+      if (!payload?.thread_id) return;
+      setAppMode("harness");
+      revealConversationFromFocusedWorkspace();
+      void activateThread(payload.thread_id).then(() => {
+        openWorkspaceBrowserRef.current("browser");
+      });
+    });
+  }, [activateThread, revealConversationFromFocusedWorkspace]);
 
   // The pet bubble click sends a `wuu:codex-pet-jump` event from main;
   // bring the conversation forward and switch to the target thread.

@@ -631,7 +631,7 @@ type BrowserTakeoverApi = {
     handler: (payload: { workdir: string; tabID: string }) => void,
   ) => () => void;
   onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
-  onBrowserDock: (handler: () => void) => () => void;
+  onBrowserDock: (handler: (payload: { thread_id: string }) => void) => () => void;
   reportBrowserPiPHostLayout: (
     payload: {
       host: { x: number; y: number; width: number; height: number };
@@ -685,7 +685,7 @@ browserApi.reportBrowserPiPHostLayout = (payload) => {
   void ipcRenderer.invoke("wuu:browser-pip-host-layout", payload);
 };
 browserApi.onBrowserDock = (handler) => {
-  const listener = () => handler();
+  const listener = (_event: Electron.IpcRendererEvent, payload: { thread_id: string }) => handler(payload);
   ipcRenderer.on("wuu:browser-dock", listener);
   return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
