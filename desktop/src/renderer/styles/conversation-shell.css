@@ -1,7 +1,7 @@
 /* Component color tokens for conversation-shell.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  --shell-process-control-color: var(--wuu-color-text-muted, #BCBCBD);
+  --shell-process-control-color: var(--ink-tertiary);
   --shell-session-tab-active-bg: var(--surface-3);
   --shell-session-tab-main-focus-shadow: var(--focus-ring);
   --shell-session-tab-status-default: rgba(17, 19, 21, 0.22);
@@ -58,7 +58,7 @@
   /* Answer actions already reserve their own row inside the preceding turn. */
   --conversation-turn-boundary-gap: 16px;
   --conversation-turn-item-gap: 8px;
-  --conversation-composer-clearance: 20px;
+  --conversation-composer-clearance: 12px;
 }
 
 .conversation-pane {
@@ -148,7 +148,7 @@
   --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
-  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 16px);
+  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 12px);
   --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
   --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
   --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
@@ -169,7 +169,7 @@
   min-height: 0;
   /* The second column hosts the generic side-thread panel when open. */
   grid-template-columns: minmax(0, 1fr) 0;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   background: var(--paper);
   margin-right: 0;
@@ -238,7 +238,7 @@
 }
 
 .conversation-pane.session-tabs-visible {
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
 .conversation-pane.environment-panel-reserved {
@@ -247,6 +247,8 @@
 
 .titlebar {
   display: grid;
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
@@ -254,7 +256,7 @@
   overflow: hidden;
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 24px;
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
 }
@@ -403,7 +405,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   margin: 0;
 }
 
@@ -723,7 +725,7 @@
  * The session model remains intact; only the titlebar projection changes. */
 .app-shell.compact-navigation .conversation-pane {
   grid-template-rows:
-    calc(48px + env(safe-area-inset-top, 0px))
+    calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px))
     minmax(0, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -1256,17 +1258,18 @@
   isolation: isolate;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
+  gap: var(--space-2);
+  min-height: max(34px, calc(var(--font-ui) * var(--line-ui) + var(--space-3)));
   border-radius: var(--radius-pill);
   border: 1px solid var(--shell-jump-pill-border);
   background: var(--shell-jump-pill-bg);
-  box-shadow: var(--shadow-card);
+  /* These controls float over reading content at the same elevation as menus. */
+  box-shadow: var(--shadow-pop);
 
   color: var(--ink);
-  font-size: 12px;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 
   pointer-events: auto;
   -webkit-app-region: no-drag;
@@ -1280,8 +1283,7 @@
 
 .jump-to-latest-pill {
   flex: 0 0 auto;
-  height: 34px;
-  padding: 0 12px;
+  padding: var(--space-1) var(--space-3);
   cursor: pointer;
 }
 
@@ -1545,7 +1547,7 @@ button.conversation-status-capsule,
 .conversation-status-capsule:hover {
   background: var(--shell-jump-pill-hover-bg);
   border-color: var(--shell-jump-pill-hover-border);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-pop);
 }
 
 .jump-to-latest-pill:focus-visible,
@@ -1553,7 +1555,7 @@ button.conversation-status-capsule,
   /* Keep focus visible even when a theme sets panel elevation to none. */
   outline: 2px solid var(--shell-jump-pill-focus-shadow-1);
   outline-offset: 0;
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-pop);
 }
 
 .jump-to-latest-pill svg {

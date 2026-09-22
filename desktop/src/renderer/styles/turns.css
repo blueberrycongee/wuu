@@ -2599,7 +2599,12 @@
 .process-surface-fold.has-details > .process-surface-row:hover,
 .process-surface-fold.has-details > .process-surface-row:focus-visible {
   color: var(--activity-toggle-hover-color);
-  outline: 0;
+}
+
+.process-surface-fold.has-details > .process-surface-row:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .process-surface-summary-line {
@@ -3019,11 +3024,11 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--conversation-prose-block-gap, 10px);
+  gap: var(--space-4);
   /* Expanded details are the fold's own content, not a nested column: every
    * row starts on the summary row's left edge, so the leading glyphs line up
    * as one list instead of stepping inward under the summary text. */
-  padding: 4px 0 2px;
+  padding: var(--space-2) 0 var(--space-1);
   color: var(--wuu-ink-soft);
   /* One shared height bound for the whole expanded fold: the tool trail
    * and the reasoning block both live here, and either can outgrow a
@@ -3059,13 +3064,13 @@
 }
 
 .process-surface-tool-list .activity-timeline {
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .process-surface-tool-list .activity-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-2);
   line-height: 1.5;
   color: var(--wuu-ink-soft);
 }

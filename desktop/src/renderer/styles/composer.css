@@ -417,9 +417,10 @@
   /* Keep the ambient shadow close to the frame so its geometric edge remains
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
+  --composer-surface-bg: var(--wuu-color-surface, #fdfdfe);
   --composer-image-attachment-button-shadow: var(--shadow-card);
   --composer-file-attachment-button-hover-bg: #eceee9;
-  --composer-textarea-placeholder: color-mix(in srgb, var(--ink) 26%, var(--paper));
+  --composer-textarea-placeholder: var(--ink-muted);
   --composer-textarea-disabled: var(--wuu-color-text-muted, #6d7471);
   --composer-send-button-disabled-text: rgba(255, 255, 255, 0.86);
   --composer-slash-menu-bg: rgba(255, 255, 255, 0.96);
@@ -591,7 +592,7 @@
   position: relative;
   width: 100%;
   border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--paper);
+  background: var(--composer-surface-bg);
   box-shadow: var(--composer-frame-shadow);
   contain: layout paint;
   overflow: hidden;
@@ -614,7 +615,7 @@
 
 .hero-composer-wrap .composer-frame {
   border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--paper);
+  background: var(--composer-surface-bg);
   box-shadow: var(--composer-frame-shadow);
 }
 
@@ -716,7 +717,7 @@
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
   border-radius: 0;
-  background: var(--paper);
+  background: var(--composer-surface-bg);
   overflow: visible;
 }
 

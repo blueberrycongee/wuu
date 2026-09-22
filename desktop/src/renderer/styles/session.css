@@ -14,14 +14,14 @@
  */
 
 :root {
-  /* Messages and the composer share both edges, including narrow panes and
-   * panes beside fixed panels. Symmetric safe areas preserve their center. */
+  /* Match the standard settings page's content column and page insets.
+   * Messages and the composer share both edges, including narrow panes. */
   --session-outer-padding-inline: max(
-    clamp(12px, calc(7.5% - 18px), 48px),
+    var(--page-padding),
     env(safe-area-inset-left, 0px),
     env(safe-area-inset-right, 0px)
   );
-  --session-composer-width: 736px;
+  --session-composer-width: var(--content-column-width);
   --session-outer-width: calc(
     var(--session-composer-width) + var(--session-outer-padding-inline) +
       var(--session-outer-padding-inline)

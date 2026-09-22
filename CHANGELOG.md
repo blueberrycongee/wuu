@@ -44,6 +44,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   with consistent movement and input feedback at every preview size.
   Taking control clears the pointer and cancels pending input.
 
+- Desktop conversations use quieter titles and branding, tighter sidebar group
+  spacing, and smaller reading/composer gaps. Workspace previews start with five
+  recent sessions while keeping current, running, and unread sessions visible.
+
+- Process summaries have clearer text and keyboard focus, with more space between
+  expanded tool rows. Floating navigation follows the UI font size and shared
+  menu elevation. Environment panels retain normal text and control sizes in
+  narrow windows. Conversations share the standard settings page's content
+  width and insets, with a near-white composer surface in the light theme.
+
 - The embedded browser can read the page it is showing. Observation returns
   the headings, paragraphs, lists, and tables together with the controls it
   can click, and a long page continues from the returned offset. Ending a
@@ -72,6 +82,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Returning to the owning conversation restores its preview.
 - Background browser activity keeps its floating preview hidden until explicitly
   made visible, so it does not interrupt work in another application.
+
+- Desktop surfaces share titlebar geometry and sidebar-control alignment, while
+  compact channel headers retain their native safe-area clearance.
 
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import type { RefObject } from "react";
 import type { TodoUpdate } from "../shared/protocol";
 import type { InspectorSnapshotV1 } from "../shared/workbench";
 import type { AppState } from "./AppState";
@@ -7,58 +7,8 @@ import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
 } from "./EnvironmentPanel";
-import { environmentPanelScaleForWidth } from "./EnvironmentPanelScale";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { PluginInspectorSections } from "./plugins/PluginInspector";
-import {
-  createWindowResizeSettleScheduler,
-  isWindowResizing,
-} from "./WindowResizeState";
-
-function useEnvironmentPanelScale(
-  stackRef: RefObject<HTMLDivElement | null>,
-  enabled: boolean,
-): void {
-  useEffect(() => {
-    const stack = stackRef.current;
-    const container = stack?.parentElement;
-    if (!enabled || !stack || !container) {
-      return;
-    }
-
-    const applyScale = (width: number): void => {
-      const scale = environmentPanelScaleForWidth(width);
-      stack.style.setProperty(
-        "--environment-panel-scale",
-        String(scale),
-      );
-    };
-    applyScale(container.clientWidth);
-
-    if (typeof ResizeObserver === "undefined") {
-      const handleResize = (): void => applyScale(container.clientWidth);
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-
-    const settle = createWindowResizeSettleScheduler(() => {
-      applyScale(container.clientWidth);
-    });
-    const observer = new ResizeObserver((entries) => {
-      if (isWindowResizing()) {
-        settle.schedule();
-        return;
-      }
-      applyScale(entries[0]?.contentRect.width ?? container.clientWidth);
-    });
-    observer.observe(container);
-    return () => {
-      settle.cancel();
-      observer.disconnect();
-    };
-  }, [enabled, stackRef]);
-}
-
 export function EnvironmentSideStack({
   visible,
   mounted,
@@ -105,9 +55,7 @@ export function EnvironmentSideStack({
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
 }): JSX.Element | null {
-  const stackRef = useRef<HTMLDivElement>(null);
   const shouldRender = (visible || mounted) && Boolean(state.initialized);
-  useEnvironmentPanelScale(stackRef, shouldRender);
 
   if (!shouldRender || !state.initialized) {
     return null;
@@ -119,7 +67,6 @@ export function EnvironmentSideStack({
     <div
       className="environment-side-stack environment-info-side-stack"
       data-pip-obstacle="environment"
-      ref={stackRef}
     >
       <EnvironmentPanel
         panelRef={panelRef}

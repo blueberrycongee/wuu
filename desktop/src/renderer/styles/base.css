@@ -73,7 +73,7 @@
   --ink-muted: color-mix(in srgb, var(--ink-soft) 70%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
 
-  --paper: var(--wuu-color-canvas, var(--gray-0));
+  --paper: var(--wuu-color-canvas, #fbfbfc);
   --surface-1: var(--wuu-color-surface, var(--gray-50));
   --surface-2: var(--wuu-color-surface-muted, var(--gray-100));
   --surface-3: var(--wuu-color-surface-elevated, var(--gray-150));
@@ -350,6 +350,12 @@
   --scrollbar-thumb-hover: rgba(56, 88, 118, 0.30);
   --scrollbar-thumb-active: rgba(38, 70, 98, 0.45);
   --scrollbar-thin-thumb: rgba(32, 36, 39, 0.14);
+
+  /* Every desktop surface uses the same 48px titlebar center. Keeping the
+   * row geometry in one token prevents page-specific chrome from drifting
+   * away from the native macOS traffic lights and Windows overlay. */
+  --window-titlebar-height: 48px;
+  --window-titlebar-padding-inline: 24px;
 
   --turn-warning-border: var(--warning-border);
   --turn-warning-bg: var(--warning-soft);
