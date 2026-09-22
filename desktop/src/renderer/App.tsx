@@ -21,6 +21,7 @@ import {
 } from "react";
 import type {
   ActivitySession,
+  BrowserDockTarget,
   Agent,
   ChannelRoom,
   DesktopProject,
@@ -1694,6 +1695,11 @@ export function App(): JSX.Element {
         clearActivitiesForWorkdir(current, workdir),
       ),
   });
+  const [browserDockTarget, setBrowserDockTarget] = useState<BrowserDockTarget>();
+  const [pendingBrowserDock, setPendingBrowserDock] = useState<{
+    target: BrowserDockTarget;
+    ready: boolean;
+  }>();
   const openWorkspaceBrowserRef = useRef(openWorkspaceTool);
   openWorkspaceBrowserRef.current = openWorkspaceTool;
   const activeTodoUpdate = latestTodoUpdateForThread(activeThread);
@@ -3504,15 +3510,29 @@ export function App(): JSX.Element {
   useEffect(() => {
     const subscribe = window.wuu.onBrowserDock;
     if (typeof subscribe !== "function") return undefined;
-    return subscribe((payload: { thread_id: string }) => {
-      if (!payload?.thread_id) return;
+    return subscribe((payload) => {
+      if (!payload || [payload.thread_id, payload.workdir, payload.tabID]
+        .some((value) => typeof value !== "string" || !value.trim())) return;
+      setPendingBrowserDock({ target: payload, ready: false });
       setAppMode("harness");
       revealConversationFromFocusedWorkspace();
       void activateThread(payload.thread_id).then(() => {
-        openWorkspaceBrowserRef.current("browser");
+        setPendingBrowserDock((current) => current?.target === payload
+          ? { target: payload, ready: true } : current);
       });
     });
   }, [activateThread, revealConversationFromFocusedWorkspace]);
+
+  useEffect(() => {
+    if (!pendingBrowserDock?.ready) return;
+    const { target } = pendingBrowserDock;
+    setPendingBrowserDock(undefined);
+    // Activation may fail or be superseded. Wait for its committed state before
+    // opening the panel, and never substitute the previously active session.
+    if (activeThreadID !== target.thread_id || state.activeContext?.cwd !== target.workdir) return;
+    setBrowserDockTarget(target);
+    openWorkspaceBrowserRef.current("browser");
+  }, [pendingBrowserDock, activeThreadID, state.activeContext?.cwd]);
 
   // The pet bubble click sends a `wuu:codex-pet-jump` event from main;
   // bring the conversation forward and switch to the target thread.
@@ -5964,6 +5984,7 @@ export function App(): JSX.Element {
             workspaceRightPanelDockableWithoutSidebar
           }
           browserActivity={activeBrowserActivity}
+          browserDockTarget={browserDockTarget}
           browserOverlaySuppressed={browserOverlaySuppressed}
           onBrowserActivityTakeover={() => void takeoverBrowserActivity()}
           onBrowserActivityRelease={() => void releaseBrowserActivity()}
