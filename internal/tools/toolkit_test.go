@@ -561,7 +561,7 @@ func TestToolkit_ReadFileRejectsSensitivePaths(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected sensitive path rejection")
 	}
-	if !strings.Contains(err.Error(), "sensitive path") || !strings.Contains(err.Error(), "explicit secret handling") {
+	if !strings.Contains(err.Error(), "sensitive path") || !strings.Contains(err.Error(), "Chat approval does not lift this guard") {
 		t.Fatalf("expected sensitive path guidance, got: %v", err)
 	}
 }

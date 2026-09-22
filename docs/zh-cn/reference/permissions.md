@@ -36,7 +36,7 @@ Wuu 引擎的行为如下：
 
 ## 敏感路径
 
-专用文件工具拒绝写入环境文件、SSH 私钥等已知敏感路径，无限制模式也一样。Wuu 主目录中的 `auth.json`、`credentials.json`、`remote.json`、`phone.json` 等凭据文件仍禁止直接读写。结构化 Git 工具也会检查敏感文件的暂存和提交。
+专用文件工具拒绝写入环境文件、凭据存储和 SSH 私钥等已知敏感路径，无限制模式也一样。源码文件不会只因为文件名包含 `credential` 或 `secret` 就被当成凭据存储：可以编辑 `credentials.go`，但不能编辑 `credentials.json`。对话中的授权不能解除这些防护。Wuu 主目录中的 `auth.json`、`credentials.json`、`remote.json`、`phone.json` 等凭据文件仍禁止直接读写。结构化 Git 工具也会检查敏感文件的暂存和提交。
 
 工具输出脱敏可以识别常见密钥格式，但无法识别所有秘密或编码。这些保护不保证任意 shell 程序、第三方代码和网络请求都不会泄露信息。
 

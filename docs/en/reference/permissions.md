@@ -36,7 +36,7 @@ The reviewer can allow the call, deny it, or leave it unresolved so the agent ca
 
 ## Sensitive paths
 
-Dedicated file tools refuse writes to known sensitive paths such as environment files and SSH private keys, including in Unconfined mode. Wuu credential files such as `auth.json`, `credentials.json`, `remote.json`, and `phone.json` under Wuu's home remain blocked for direct reads and writes. Structured Git tools also guard sensitive staging and commits.
+Dedicated file tools refuse writes to known sensitive paths such as environment files, credential stores, and SSH private keys, including in Unconfined mode. A source file is not treated as a credential store only because its name contains `credential` or `secret`; `credentials.go` can be edited, while `credentials.json` cannot. Chat approval does not lift these guards. Wuu credential files such as `auth.json`, `credentials.json`, `remote.json`, and `phone.json` under Wuu's home remain blocked for direct reads and writes. Structured Git tools also guard sensitive staging and commits.
 
 Tool output redaction recognizes common secret patterns, but cannot recognize every secret or encoding. These guards do not guarantee secrecy across arbitrary shell programs, third-party code, or network requests.
 
