@@ -30,13 +30,18 @@ func TestChildResultReturnsToOriginalRoomAndTaskOnce(t *testing.T) {
 	if binding.RoomID != other.ID {
 		t.Fatal("parent did not switch rooms")
 	}
+	params.TerminalState = CollaborationTerminalCompleted
 	first, err := s.EnqueueSessionResult(ctx, params)
 	if err != nil || first.Discarded || first.Message == nil || first.Message.RoomID != room.ID || first.Message.WorkID != task.ID || first.Message.GoalRevision != task.TaskGoalRevision || first.Message.Kind != CollaborationPeerResult {
 		t.Fatalf("child result lost its original scope: %+v %v", first, err)
 	}
-	replay, err := s.EnqueueSessionResult(ctx, params)
-	if err != nil || replay.Message == nil || replay.Message.ID != first.Message.ID {
-		t.Fatalf("result replay duplicated delivery: %+v %v", replay, err)
+	// A persisted receipt stays authoritative when the host's outcome projection
+	// changes across an upgrade, including older receipts marked completed.
+	replayParams := params
+	replayParams.TerminalState = CollaborationTerminalFailed
+	replay, err := s.EnqueueSessionResult(ctx, replayParams)
+	if err != nil || replay.Message == nil || replay.Message.ID != first.Message.ID || replay.Message.TerminalState != first.Message.TerminalState {
+		t.Fatalf("result replay duplicated or relabeled its receipt: %+v %v", replay, err)
 	}
 	conflict := params
 	conflict.Body = "A different result"
@@ -53,6 +58,49 @@ func TestChildResultReturnsToOriginalRoomAndTaskOnce(t *testing.T) {
 	_, continued := prepareIdentityTestTurn(t, s, agent.Agent.ID)
 	if continued.RoomID != room.ID || continued.WorkID != task.ID {
 		t.Fatalf("child result resumed an unrelated task: %+v", continued)
+	}
+}
+
+func TestChildResultOutcomeSurvivesRestartWithoutCompletingTask(t *testing.T) {
+	for _, outcome := range []CollaborationTerminalState{"", CollaborationTerminalCompleted, CollaborationTerminalFailed, CollaborationTerminalInterrupted} {
+		t.Run(string(outcome), func(t *testing.T) {
+			ctx := context.Background()
+			service, _, agent, room, task, params := prepareChildResultParent(t)
+			params.TerminalState = outcome
+			first, err := service.EnqueueSessionResult(ctx, params)
+			if err != nil || first.Message == nil {
+				t.Fatalf("enqueue result: %+v %v", first, err)
+			}
+			dir := service.dir
+			if err := service.Close(); err != nil {
+				t.Fatal(err)
+			}
+			service, err = Open(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = service.Close() })
+			replay, err := service.EnqueueSessionResult(ctx, params)
+			if err != nil || replay.Message == nil || replay.Message.ID != first.Message.ID {
+				t.Fatalf("recovery duplicated a result: %+v %v", replay, err)
+			}
+			client, err := service.BindAgentSession(ctx, agent.Agent.ID, params.ParentSessionRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			messages, err := client.ReceiveCollaboration(ctx, 32)
+			if err != nil || len(messages) != 1 {
+				t.Fatalf("receive persisted result: %+v %v", messages, err)
+			}
+			message := messages[0]
+			if message.TerminalState != outcome || message.RoomID != room.ID || message.WorkID != task.ID {
+				t.Fatalf("result changed its execution outcome or scope: %+v", message)
+			}
+			work, err := service.GetWork(ctx, task.ID)
+			if err != nil || terminalWorkState(work.State) {
+				t.Fatalf("execution result ended the responsibility: %+v %v", work, err)
+			}
+		})
 	}
 }
 

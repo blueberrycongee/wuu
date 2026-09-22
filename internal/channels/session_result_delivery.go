@@ -13,6 +13,9 @@ type SessionResultEnqueueParams struct {
 	SourceSessionRef string
 	RequestID        string
 	Body             string
+	// TerminalState describes a known execution outcome. Reports and control
+	// notices can omit it without claiming that execution completed.
+	TerminalState CollaborationTerminalState
 }
 
 type SessionResultEnqueueResult struct {
@@ -31,6 +34,12 @@ func (s *Service) EnqueueSessionResult(ctx context.Context, params SessionResult
 	params.RequestID, params.Body = strings.TrimSpace(params.RequestID), strings.TrimSpace(params.Body)
 	if params.ParentSessionRef == "" || params.ParentTurnID == "" || params.SourceSessionRef == "" || params.RequestID == "" || params.Body == "" {
 		return SessionResultEnqueueResult{}, errors.New("child result requires parent session and turn, source session, request id and body")
+	}
+	switch params.TerminalState {
+	case "", CollaborationTerminalCompleted, CollaborationTerminalFailed, CollaborationTerminalInterrupted,
+		CollaborationTerminalCancelled, CollaborationTerminalTimedOut, CollaborationTerminalUndeliverable:
+	default:
+		return SessionResultEnqueueResult{}, errors.New("invalid child result terminal state")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,6 +109,8 @@ func (s *Service) EnqueueSessionResult(ctx context.Context, params SessionResult
 		TargetKind: CollaborationTargetSession, TargetID: parent.SessionRef, Kind: CollaborationPeerResult,
 		Visibility: CollaborationVisibilityPrivate, RequestID: params.RequestID, Body: params.Body,
 	}
+	// Outcome metadata projects the host's execution record. Keep the existing
+	// fingerprint so results accepted before this metadata remain replayable.
 	hash := collaborationRequestHash(send)
 	if message, found, err := findCollaborationRequestTx(ctx, tx, send, hash); found || err != nil {
 		if err != nil {
@@ -114,7 +125,7 @@ func (s *Service) EnqueueSessionResult(ctx context.Context, params SessionResult
 		ToAgentID: parent.PrincipalID, TargetSessionRef: parent.SessionRef,
 		TargetKind: CollaborationTargetSession, TargetID: parent.SessionRef, Kind: CollaborationPeerResult,
 		Visibility: CollaborationVisibilityPrivate, Body: params.Body, RequestID: params.RequestID,
-		CorrelationID: params.ParentTurnID, TerminalState: CollaborationTerminalCompleted, CreatedAt: now,
+		CorrelationID: params.ParentTurnID, TerminalState: params.TerminalState, CreatedAt: now,
 	})
 	if err != nil {
 		return SessionResultEnqueueResult{}, err

@@ -13,6 +13,59 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
+func TestHarnessResultCarriesExecutionOutcome(t *testing.T) {
+	for _, outcome := range []TurnStatus{TurnStatusCompleted, TurnStatusFailed, TurnStatusInterrupted} {
+		t.Run(string(outcome), func(t *testing.T) {
+			f, provider := newCollaborationFlowFixture(t)
+			ctx := context.Background()
+			var parent ChannelSessionResult
+			f.rpc(t, MethodChannelSessionCreate, ChannelSessionCreateParams{AgentID: f.identity.ID, RoomID: f.room.ID, Prompt: "Inspect the project", RequestID: "request"}, &parent)
+			decision := provider.next(t)
+			actor := harnessTestActor(t, f, parent.Session.SessionRef)
+			id, _, _ := harnessTestCreate(t, f, actor)
+			worker := provider.next(t)
+			switch outcome {
+			case TurnStatusCompleted:
+				worker.response <- providers.ChatResponse{Content: "Inspection evidence is available."}
+			case TurnStatusFailed:
+				worker.failure <- providers.NewNonRetryableStreamError("execution could not finish")
+			case TurnStatusInterrupted:
+				if _, err := f.server.interruptThreadExecution(id, "", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			waitForThreadLeaseRelease(t, f.server.rt.SessionDir, id)
+			client, err := f.server.channelService.BindAgentSession(ctx, actor.AgentID, actor.SessionRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var receipt string
+			for range 2 {
+				if err := f.server.reconcileHarnessSessions(ctx); err != nil {
+					t.Fatal(err)
+				}
+				messages, err := client.ReceiveCollaboration(ctx, 32)
+				if err != nil || len(messages) != 1 {
+					t.Fatalf("result delivery: %+v %v", messages, err)
+				}
+				message := messages[0]
+				if message.FromSessionRef != id || string(message.TerminalState) != string(outcome) || message.CorrelationID != actor.TurnID {
+					t.Fatalf("manager received a different outcome or source: %+v", message)
+				}
+				if receipt != "" && receipt != message.ID {
+					t.Fatal("reconciliation duplicated the result")
+				}
+				receipt = message.ID
+			}
+			if err := client.AcknowledgeCollaboration(ctx, []string{receipt}); err != nil {
+				t.Fatal(err)
+			}
+			decision.response <- providers.ChatResponse{StopReason: "completed"}
+			f.waitForCompletion(t)
+		})
+	}
+}
+
 func harnessTestActor(t *testing.T, f *collaborationRPCFixture, ref string) channels.HarnessSessionActor {
 	t.Helper()
 	b, err := f.server.channelService.LookupCollaborationSession(context.Background(), ref)
@@ -196,6 +249,32 @@ func TestHarnessTakeoverFencesQueuedWorkAndLeavesHistory(t *testing.T) {
 		if op.Params.Prompt == "Apply the draft" {
 			t.Fatal("queued instruction survived control change")
 		}
+	}
+	client, err := f.server.channelService.BindAgentSession(context.Background(), actor.AgentID, actor.SessionRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices, err := client.ReceiveCollaboration(context.Background(), 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var controlNotice, failedOperation bool
+	for _, notice := range notices {
+		if strings.HasPrefix(notice.RequestID, "harness-control:") {
+			controlNotice = true
+			if notice.TerminalState != "" {
+				t.Fatalf("control change claimed an execution outcome: %+v", notice)
+			}
+		}
+		if strings.HasSuffix(notice.RequestID, ":failure") {
+			failedOperation = true
+			if notice.TerminalState != channels.CollaborationTerminalFailed {
+				t.Fatalf("revoked operation reported success: %+v", notice)
+			}
+		}
+	}
+	if !controlNotice || !failedOperation {
+		t.Fatalf("takeover lost its control or rejected-operation notice: %+v", notices)
 	}
 	m, found, err := session.Find(f.server.rt.SessionDir, id)
 	if err != nil || !found || m.Entries == 0 {
