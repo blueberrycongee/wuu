@@ -61,8 +61,11 @@
 .image-preview-toolbar-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 4px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
   border: 1px solid var(--image-preview-toolbar-border);
   border-radius: var(--radius-pill);
   background: var(--image-preview-toolbar-actions-bg);
@@ -71,8 +74,9 @@
 .image-preview-toolbar-button {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: max(32px, 1.6em);
+  height: max(32px, 1.6em);
+  flex: 0 0 auto;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
@@ -100,6 +104,11 @@
   height: 16px;
 }
 
+.image-preview-actual-size {
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
 .image-preview-zoom-readout {
   min-width: 46px;
   text-align: center;
@@ -121,8 +130,9 @@
 }
 
 .image-preview-image {
-  max-width: 92vw;
-  max-height: 88vh;
+  max-width: none;
+  max-height: none;
+  flex: 0 0 auto;
   transform-origin: center center;
   transition: opacity var(--motion-base) var(--ease-out);
   opacity: 0;
@@ -142,10 +152,10 @@
 
 .image-preview-svg svg {
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 92vw;
-  max-height: 88vh;
+  width: 100%;
+  height: 100%;
+  max-width: none !important;
+  max-height: none;
 }
 
 .image-preview-status {
@@ -155,7 +165,7 @@
   place-items: center;
   color: var(--image-preview-status-text);
   font-size: var(--font-ui);
-  letter-spacing: 0.02em;
+  pointer-events: none;
 }
 
 .image-preview-status.error {
@@ -174,4 +184,28 @@
   outline: 2px solid var(--image-preview-outline-focus);
   outline-offset: 2px;
   border-radius: var(--radius-media);
+}
+
+.image-preview-toolbar-button:focus-visible {
+  outline: 2px solid var(--image-preview-toolbar-text);
+  outline-offset: 2px;
+}
+
+.image-preview-save-error {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 18px 12px;
+  color: var(--image-preview-status-error);
+  font-size: var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .image-preview-toolbar { padding: 10px 8px; justify-content: center; }
+  .image-preview-toolbar-actions { gap: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-preview-overlay { animation: none; }
+  .image-preview-image, .image-preview-toolbar-button { transition: none; }
 }
