@@ -52,7 +52,9 @@ func Lookup(id string) (Entry, bool) {
 }
 
 // Resolve honors an explicit setting, then the engine-specific environment
-// override, then PATH. It never executes a binary or installs a dependency.
+// override, then PATH and the standard install locations. An invalid
+// override fails instead of selecting a different executable. It never
+// executes a binary or installs a dependency.
 func (e Entry) Resolve(override string) (string, error) {
 	if override = strings.TrimSpace(override); override == "" {
 		override = strings.TrimSpace(os.Getenv("WUU_" + strings.ToUpper(e.ID) + "_BINARY"))
@@ -60,16 +62,19 @@ func (e Entry) Resolve(override string) (string, error) {
 	if override != "" {
 		return exec.LookPath(override)
 	}
-	if path, err := exec.LookPath(e.Binary); err == nil {
+	if path, err := LookBinary(e.Binary); err == nil {
 		return path, nil
 	}
 	for _, candidate := range extraLookupPaths(e) {
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path, nil
+		path, err := exec.LookPath(candidate)
+		if err != nil {
+			continue
 		}
+		rememberDir(filepath.Dir(path))
+		return path, nil
 	}
 	if e.ID == "antigravity" {
-		if path, err := exec.LookPath("agy_acp_server.par"); err == nil {
+		if path, err := LookBinary("agy_acp_server.par"); err == nil {
 			return path, nil
 		}
 	}

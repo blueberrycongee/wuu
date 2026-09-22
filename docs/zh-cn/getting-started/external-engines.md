@@ -20,6 +20,8 @@ Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`�
 
 这七种引擎依次使用 `engines.<id>.binary_path`、`WUU_<ID>_BINARY`（如 `WUU_DEVIN_BINARY`）、`PATH` 查找可执行文件。指定路径无效时直接报错，不会悄悄换用其他程序。路径应指向程序，不要填写带参数的命令。检测只查找可执行文件，不验证凭据，也不创建对话。
 
+从访达或 Dock 打开桌面版时，进程拿不到终端里的 PATH。PATH 中找不到可执行文件时，会继续在常规安装位置查找（`~/.local/bin`、`~/bin`、Homebrew、`~/.opencode/bin`，以及 nvm、mise 这类版本管理器的 shim）。如果进程里仍然没有任何用户目录，再读取登录 shell 的 PATH。Codex 和 Claude Code 使用同一套回退。
+
 机器本地配置为每个引擎提供 `enabled`、`binary_path`，并用 `default_engine` 指定新会话默认值。省略 `enabled` 表示自动检测，`false` 表示禁用。例如：
 
 ```json

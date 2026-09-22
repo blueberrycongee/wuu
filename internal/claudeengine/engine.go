@@ -12,16 +12,19 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 // ResolveBinary locates the claude executable. The WUU_CLAUDE_BINARY
-// environment variable wins; otherwise PATH lookup of "claude".
+// environment variable wins. Otherwise lookup uses PATH and the standard
+// install locations, because a Finder or Dock launch does not receive the
+// terminal PATH.
 func ResolveBinary() (string, error) {
 	if path := strings.TrimSpace(envClaudeBinary()); path != "" {
 		return path, nil
 	}
-	path, err := exec.LookPath("claude")
+	path, err := enginecatalog.LookBinary("claude")
 	if err != nil {
 		return "", errors.New("claude binary not found: set WUU_CLAUDE_BINARY or install the claude CLI on PATH")
 	}

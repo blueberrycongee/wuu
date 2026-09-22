@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
@@ -2182,6 +2183,12 @@ func runAppServer(args []string) error {
 	host, err := resolveAppServerHost(*hostKind, *instanceID, *workspaceID, *configFile)
 	if err != nil {
 		return err
+	}
+	// Finder and Dock start the core with the system PATH. Install locations
+	// have to be visible before engine detection and before child processes
+	// inherit the environment.
+	if host.Kind == runtime.HostLocal {
+		enginecatalog.InstallUserPath()
 	}
 	rt, err := wuusdk.New(wuusdk.Options{
 		WorkDir:               *workdir,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -347,20 +346,15 @@ func claudeEngineModels() []EngineModelInfo {
 	}
 }
 
-// claudeBinaryPath resolves the claude binary: settings override, then env
-// override, then PATH lookup.
+// claudeBinaryPath resolves the claude binary: a settings override, otherwise
+// the shared lookup (env override, PATH, and desktop install locations).
 func (s *Server) claudeBinaryPath() (string, error) {
-	path := ""
 	if cfg := s.engineSettingsFromConfig(); cfg != nil && cfg.Claude != nil {
-		path = strings.TrimSpace(cfg.Claude.BinaryPath)
+		if path := strings.TrimSpace(cfg.Claude.BinaryPath); path != "" {
+			return path, nil
+		}
 	}
-	if path == "" {
-		path = strings.TrimSpace(os.Getenv("WUU_CLAUDE_BINARY"))
-	}
-	if path != "" {
-		return path, nil
-	}
-	return exec.LookPath("claude")
+	return claudeengine.ResolveBinary()
 }
 
 // engineSettingsFromConfig returns the persisted engine settings section.
@@ -429,20 +423,15 @@ func (s *Server) applyEngineSettingsToRuntime() {
 	s.rt.DefaultEngine = defaultEngine
 }
 
-// codexBinaryPath resolves the codex binary: settings override, then env
-// override, then PATH lookup.
+// codexBinaryPath resolves the codex binary: a settings override, otherwise
+// the shared lookup (env override, PATH, and desktop install locations).
 func (s *Server) codexBinaryPath() (string, error) {
-	path := ""
 	if cfg := s.engineSettingsFromConfig(); cfg != nil && cfg.Codex != nil {
-		path = strings.TrimSpace(cfg.Codex.BinaryPath)
+		if path := strings.TrimSpace(cfg.Codex.BinaryPath); path != "" {
+			return path, nil
+		}
 	}
-	if path == "" {
-		path = strings.TrimSpace(os.Getenv("WUU_CODEX_BINARY"))
-	}
-	if path != "" {
-		return path, nil
-	}
-	return exec.LookPath("codex")
+	return codexengine.ResolveBinary()
 }
 
 // binaryStatus reports whether a resolved binary path exists and is

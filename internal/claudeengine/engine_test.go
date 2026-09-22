@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +137,37 @@ func TestEngineMissingBinaryFailsClearly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "claude") {
 		t.Fatalf("error should mention claude, got: %v", err)
+	}
+}
+
+func TestResolveBinaryFindsUserInstallOutsidePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("NVM_DIR", filepath.Join(home, ".nvm"))
+	t.Setenv("WUU_CLAUDE_BINARY", "")
+	t.Setenv("PATH", t.TempDir())
+	name := "claude"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(home, ".local", "bin", name)
+	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("#!/bin/sh\nexit 0\n")
+	if runtime.GOOS == "windows" {
+		content = []byte("placeholder")
+	}
+	if err := os.WriteFile(binary, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveBinary()
+	if err != nil {
+		t.Fatalf("ResolveBinary: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(binary) {
+		t.Fatalf("ResolveBinary = %q, want %q", got, binary)
 	}
 }
 
