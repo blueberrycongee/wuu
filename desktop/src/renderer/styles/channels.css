@@ -3118,9 +3118,9 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--channel-header-height);
-  min-height: var(--channel-header-height);
-  padding: 0 max(16px, var(--window-controls-inset-right)) 0 16px;
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
+  padding: 0 max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
@@ -3469,11 +3469,11 @@ html[data-focus-modality="keyboard"] .agent-avatar-color-control input[type="ran
 .session-inspector-header {
   display: flex;
   align-items: center;
-  flex: 0 0 var(--channel-header-height);
-  height: var(--channel-header-height);
-  min-height: var(--channel-header-height);
+  flex: 0 0 var(--window-titlebar-height);
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
   gap: 8px;
-  padding: 0 max(16px, var(--window-controls-inset-right)) 0 16px;
+  padding: 0 max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
   border-bottom: 1px solid var(--hairline);
   -webkit-app-region: drag;
 }

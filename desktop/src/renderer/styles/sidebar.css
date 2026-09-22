@@ -111,7 +111,7 @@
    * so the title text vertically centers with the macOS traffic lights at
    * trafficLightPosition (18, 17). The default 56px row pushes the text 6px
    * below the lights. */
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
 .app-shell.popped-out-shell .titlebar {
@@ -809,7 +809,7 @@
    * toggle shares the traffic-light center at 24px. */
   position: relative;
   display: flex;
-  height: 48px;
+  height: var(--window-titlebar-height);
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
