@@ -1374,6 +1374,12 @@ export type BrowserCommandParams = {
   url?: string;
 };
 
+export type BrowserDockTarget = {
+  thread_id: string;
+  workdir: string;
+  tabID: string;
+};
+
 export type BrowserTabAdopted = {
   workdir: string;
   openerTabID: string;
@@ -3370,7 +3376,7 @@ export type WuuDesktopApi = {
     handler: (payload: BrowserTabAdopted) => void,
   ) => () => void;
   // Main→renderer: the floating browser card asked to dock into the panel.
-  onBrowserDock?: (handler: () => void) => () => void;
+  onBrowserDock?: (handler: (payload: BrowserDockTarget) => void) => () => void;
   // Renderer→main: hide the agent view while a full-window overlay (settings,
   // dialogs, search) is open so it can't occlude the modal; false restores it.
   suppressBrowserOverlay?: (

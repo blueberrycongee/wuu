@@ -45,7 +45,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import type { ActivitySession, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
+import type { ActivitySession, BrowserDockTarget, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
 import {
   formatWorkspaceFileTarget,
   parseWorkspaceFileTarget,
@@ -205,6 +205,7 @@ export function WorkspaceRightPanel({
   onToggleGlobalize,
   canExitGlobalized = true,
   browserActivity,
+  browserDockTarget,
   browserOverlaySuppressed = false,
   onBrowserActivityTakeover,
   onBrowserActivityRelease,
@@ -247,6 +248,7 @@ export function WorkspaceRightPanel({
   onToggleGlobalize: () => void;
   canExitGlobalized?: boolean;
   browserActivity?: ActivitySession;
+  browserDockTarget?: BrowserDockTarget;
   browserOverlaySuppressed?: boolean;
   onBrowserActivityTakeover?: () => void;
   onBrowserActivityRelease?: () => void;
@@ -941,6 +943,7 @@ export function WorkspaceRightPanel({
                   threadID={terminalThread?.id}
                   activeContext={activeContext}
                   activity={browserActivity}
+                  dockTarget={browserDockTarget}
                   requestedURL={browserNavigation}
                   overlaySuppressed={browserOverlaySuppressed}
                   onActivityTakeover={onBrowserActivityTakeover}

@@ -203,6 +203,11 @@ old snapshots as needing refresh rather than refill them at the reset time.
 Engines and subscription providers may also contain `local_usage`, the reported
 input/output/cache token totals and `reported_turns` in retained Wuu history.
 These values exclude unreported and external activity and are not billing totals.
+The optional `latest_request` contains the newest recorded request's `status`,
+`error`, `at`, `model`, and `usage_reported`, plus input/output/cache token counts
+when reported. Request time determines recency, not the session's last edit.
+Provider attribution uses durable records; absent fields remain unknown and
+usage must not be carried over from an earlier request.
 
 `engine/update` accepts `default_engine` and per-engine objects with `enabled`
 and `binary_path`. Omitted fields remain unchanged. It persists settings, updates

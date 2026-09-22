@@ -15,6 +15,7 @@ var (
 	compatGPT6VersionRE      = regexp.MustCompile(`(?:^|/)gpt-6[.-](\d+)(?:[.-]|$)`)
 	compatGPT6ProRE          = regexp.MustCompile(`(?:^|/)gpt-6[.-]?pro(?:[.-]|$)`)
 	compatAnthropicOpusRE    = regexp.MustCompile(`(?i)opus-(\d+)[.-](\d+)(?:[.@-]|$)|claude-(\d+)[.-](\d+)-opus(?:[.@-]|$)`)
+	compatBoundThinkingRE    = regexp.MustCompile(`(?i)(?:^|[/.])claude-(?:opus-5[.-]5|fable-5[.-]1)(?:$|[:@])`)
 	compatSAPReasoningRE     = regexp.MustCompile(`\bo[1-9]`)
 )
 
@@ -131,6 +132,9 @@ func compatVersionedGPT6ReasoningEfforts(apiID string) ([]string, bool) {
 	if compatGPT6Version(apiID) == 0 {
 		return nil, false
 	}
+	if strings.Contains(apiID, "gpt-6-sol") || strings.Contains(apiID, "gpt-6-luna") {
+		return []string{"none", "low", "medium", "high", "xhigh", "max"}, true
+	}
 	return []string{"low", "medium", "high", "xhigh", "max"}, true
 }
 
@@ -179,7 +183,7 @@ func compatGPT5ChatReasoningEfforts(apiID string) ([]string, bool) {
 }
 
 func compatAnthropicAdaptiveEfforts(apiID string) []string {
-	if compatAnthropicOpus47OrLater(apiID) {
+	if AnthropicRequiresBoundThinking(apiID) || compatAnthropicOpus47OrLater(apiID) {
 		return []string{"low", "medium", "high", "xhigh", "max"}
 	}
 	if strings.Contains(apiID, "opus-4-6") || strings.Contains(apiID, "opus-4.6") ||
@@ -229,4 +233,10 @@ func compatOpenAIGPTFamily(apiID string) int {
 func compatOpenAIGPTProModel(apiID string) bool {
 	id := strings.ToLower(apiID)
 	return compatGPT5ProRE.MatchString(id) || compatGPT6ProRE.MatchString(id)
+}
+
+// AnthropicRequiresBoundThinking identifies models whose adaptive thinking cannot
+// be disabled and whose signed blocks are bound to the conversation prefix.
+func AnthropicRequiresBoundThinking(model string) bool {
+	return compatBoundThinkingRE.MatchString(strings.TrimSpace(model))
 }

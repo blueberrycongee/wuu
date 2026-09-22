@@ -1790,6 +1790,7 @@ export const zhCN = {
   "workspace.browser.activityUserControl": "你正在控制",
   "workspace.browser.activityAgentControl": "Agent 控制",
   "workspace.browser.activityUnassigned": "未分配控制",
+  "workspace.browser.previewUnavailable": "此预览已失效，请打开新页面继续。",
   "workspace.browser.loadFailed": "加载失败（{code}）：{target}",
   "workspace.browser.unknownError": "未知错误",
   "workspace.tool.files": "文件",

@@ -1793,6 +1793,7 @@ export const enUS = {
   "workspace.browser.activityUserControl": "You are in control",
   "workspace.browser.activityAgentControl": "Agent in control",
   "workspace.browser.activityUnassigned": "Control unassigned",
+  "workspace.browser.previewUnavailable": "This preview is no longer available. Open a new page to continue.",
   "workspace.browser.loadFailed": "Failed to load ({code}): {target}",
   "workspace.browser.unknownError": "unknown error",
   "workspace.tool.files": "Files",

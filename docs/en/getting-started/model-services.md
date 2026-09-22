@@ -16,6 +16,14 @@ The first-run form offers a simpler connection setup. Use Settings for a custom 
 
 The composer's selection belongs to the conversation, or to the draft before its first message. Settings also lets you set workspace defaults; changing a conversation's model does not silently replace those defaults.
 
+## Current OpenAI and Anthropic models
+
+The catalog includes `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-fable-5-1`. Existing conversation and workspace selections remain unchanged; select a new model when you want to use it.
+
+GPT-6 Sol and Luna support reasoning levels from `none` through `max`, defaulting to `medium`. Their Fast entries use the same model with priority processing and a different price. Wuu defaults an unspecified official OpenAI connection to Responses for these models. If you explicitly selected Chat Completions, choose Responses for reasoning with tools; Chat Completions supports their tool calls only at `none`. Custom endpoints retain their configured transport. See the official [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) and [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) specifications.
+
+Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `none` selection to `low`; their defaults are `medium` and `high`, respectively. Wuu requests readable thinking summaries and lets the API drop thinking blocks invalidated by context changes while retaining valid signed blocks. These models reject forced tool choice, so Wuu expresses a required closing tool call as an instruction with automatic tool selection; this does not guarantee that the model calls it. See the official [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) and [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) migration guides.
+
 ## Use an existing subscription
 
 | Connection | Setup |
@@ -31,6 +39,11 @@ SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate 
 **Settings → Subscriptions** groups installed external agents and built-in
 subscription services. Each source keeps its own model and authentication path;
 expand **Details** for request information and ACP sign-in.
+
+Request status, errors, and reported usage belong to the recorded request, even
+after a conversation changes providers. Usage from an earlier request is never
+shown as the usage of a later failure. Older records without a provable source
+remain unknown. A static CLI model list alone does not establish login status.
 
 Codex account allowances come from the installed CLI and show remaining
 percentages and reset times. Refresh after a reset or when a snapshot is over
@@ -49,7 +62,7 @@ wuu init
 
 The file is `~/.wuu/config.json`, or `$WUU_HOME/config.json` when `WUU_HOME` is set. Edit an existing file instead of running `wuu init --force`, which overwrites it.
 
-Under `providers`, check `base_url`, `model`, and `api_key_env`. The generated configuration initially selects `openai`; replace its example model if your account needs a different one. Set the named environment variable before running:
+Under `providers`, check `base_url`, `model`, and `api_key_env`. The generated configuration initially selects `openai` with GPT-6 Sol over Responses; its Anthropic entry uses Claude Opus 5.5. Replace the example model if your account needs a different one. Set the named environment variable before running:
 
 ```bash
 export OPENAI_API_KEY="your API key"

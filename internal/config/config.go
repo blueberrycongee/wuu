@@ -950,13 +950,15 @@ func Default() Config {
 				Type:      "openai-compatible",
 				BaseURL:   "https://api.openai.com/v1",
 				APIKeyEnv: "OPENAI_API_KEY",
-				Model:     "gpt-4.1",
+				Model:     "gpt-6-sol",
+				WireAPI:   "responses",
 			},
 			"codex": {
 				Type:      "codex",
 				BaseURL:   "https://api.openai.com/v1",
 				APIKeyEnv: "OPENAI_API_KEY",
-				Model:     "gpt-5-codex",
+				Model:     "gpt-6-sol",
+				WireAPI:   "responses",
 			},
 			"openai-codex": {
 				Type:                  "openai-codex",
@@ -977,7 +979,7 @@ func Default() Config {
 				Type:      "anthropic",
 				BaseURL:   "https://api.anthropic.com",
 				APIKeyEnv: "ANTHROPIC_API_KEY",
-				Model:     "claude-3-5-sonnet-latest",
+				Model:     "claude-opus-5-5",
 			},
 			"openrouter": {
 				Type:      "openai-compatible",

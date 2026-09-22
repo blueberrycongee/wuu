@@ -97,6 +97,9 @@
 }
 
 .app-shell.right-panel-open {
+  /* Environment panels measure against the conversation column. Subtract the
+   * docked workspace track from their viewport-based inset calculation. */
+  --workspace-right-panel-reserved-width: var(--workspace-right-panel-width, 360px);
   grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
 }
 

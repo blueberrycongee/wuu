@@ -3230,3 +3230,82 @@ func TestTemperatureGating(t *testing.T) {
 		t.Fatalf("active thinking must drop temperature, got %v", *got.Temperature)
 	}
 }
+
+func TestLatestClaudeCatalogToolContinuation(t *testing.T) {
+	for _, model := range []string{"claude-opus-5-5", "claude-fable-5-1"} {
+		for _, effort := range []string{"", "none", "max"} {
+			t.Run(model+"/"+effort, func(t *testing.T) {
+				name, provider := modelcatalog.EnrichProvider("anthropic", config.ProviderConfig{Type: "anthropic", Model: model}, model)
+				selection := modelvariant.ResolveForProvider(name, provider, model, effort, "")
+				wantEffort := effort
+				if effort == "" {
+					wantEffort = provider.Models[model].DefaultVariant
+				} else if effort == "none" {
+					wantEffort = "low"
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if !strings.Contains(r.Header.Get("anthropic-beta"), "thinking-binding-controls-2026-08-01") {
+						t.Error("missing thinking binding header")
+					}
+					var body anthropicRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					if body.Thinking == nil || body.Thinking.Type != "adaptive" || body.Thinking.BudgetTokens != 0 || body.Thinking.Display != "summarized" || body.Thinking.BlockBinding["prefix_mismatch_behavior"] != "drop_block" {
+						t.Errorf("invalid thinking request: %+v", body.Thinking)
+					}
+					if body.OutputConfig == nil || body.OutputConfig.Effort != wantEffort {
+						t.Errorf("effort = %+v, want %s", body.OutputConfig, wantEffort)
+					}
+					if body.Temperature != nil || body.TopP != nil || body.TopK != nil {
+						t.Error("unsupported sampling options reached the wire")
+					}
+					choice, ok := body.ToolChoice.(map[string]any)
+					if !ok || choice["type"] != "auto" {
+						t.Errorf("unsupported tool choice: %#v", body.ToolChoice)
+					}
+					if len(body.Messages) != 4 || body.Messages[3].Role != "system" {
+						t.Errorf("lost tool continuation or closing instruction: %+v", body.Messages)
+					} else {
+						block := body.Messages[1].Content[0]
+						if block.Signature == nil || *block.Signature != "signed-prefix" || block.Thinking == nil || *block.Thinking != "inspect files" {
+							t.Errorf("signed thinking changed: %+v", block)
+						}
+						if body.Messages[2].Content[0].ToolUseID != "call_1" {
+							t.Error("lost tool result")
+						}
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}`))
+				}))
+				defer server.Close()
+				client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Persisted options from an older model must not re-enable manual
+				// budgets or sampling fields rejected by the selected model.
+				selection.ProviderOptions["thinking"] = map[string]any{"type": "enabled", "budgetTokens": 4096}
+				selection.ProviderOptions["temperature"] = 0.7
+				selection.ProviderOptions["topP"] = 0.9
+				selection.ProviderOptions["topK"] = 20
+				resp, err := client.Chat(context.Background(), providers.ChatRequest{
+					Model: model, Temperature: 0.7, ProviderOptions: selection.ProviderOptions,
+					ForceToolName: "agent_report",
+					Tools:         []providers.ToolDefinition{{Name: "agent_report", InputSchema: map[string]any{"type": "object"}}},
+					Messages: []providers.ChatMessage{
+						{Role: "system", Content: "Updated context after compaction"},
+						{Role: "user", Content: "inspect the files"},
+						{Role: "assistant", ReasoningBlocks: []providers.ReasoningBlock{{Type: "thinking", Thinking: "inspect files", Signature: "signed-prefix"}}, ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "list_files", Arguments: `{}`}}},
+						{Role: "tool", ToolCallID: "call_1", Content: "README.md"},
+					},
+				})
+				if err != nil || resp.Content != "done" {
+					t.Fatalf("Chat = %+v, %v", resp, err)
+				}
+			})
+		}
+	}
+}

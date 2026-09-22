@@ -963,6 +963,21 @@
   color: var(--ink-muted);
 }
 
+.settings-subscription-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+}
+
+.settings-subscription-details summary {
+  cursor: pointer;
+}
+
+.settings-subscription-details p,
+.settings-subscription-details .settings-engine-auth {
+  margin-block: 8px 0;
+}
+
 .settings-subscription-window[data-exhausted="true"] .settings-subscription-usage > :last-child {
   color: var(--danger);
 }

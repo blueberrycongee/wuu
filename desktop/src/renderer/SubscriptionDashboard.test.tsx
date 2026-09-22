@@ -88,6 +88,13 @@ describe("SubscriptionDashboard", () => {
     expect(container.querySelector('[data-testid="subscription-engine-codex"]')?.textContent).toContain("不可用");
     expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"] button[aria-haspopup="menu"]')).not.toBeNull();
     expect(container.textContent).not.toContain("openai");
+    const failed = container.querySelector('[data-testid="subscription-engine-grok"] details')!;
+    expect(failed.textContent).toContain("login expired");
+    expect(failed.textContent).toContain("grok-4.5");
+    expect(failed.querySelector('[data-testid="engine-auth-discover"]')).not.toBeNull();
+    const completed = container.querySelector('[data-testid="subscription-builtin-xai-subscription"] details')!;
+    expect(completed.textContent).toContain("20");
+    expect(completed.textContent).toContain("5");
   });
 
   it("switches an external model through draft memory and a built-in model through the provider save", async () => {
@@ -135,5 +142,20 @@ describe("SubscriptionDashboard", () => {
     expect(container.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
     await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("refreshes the accepted catalog and replaces a failed request without retaining its error", async () => {
+    await render();
+    vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
+      ...inventory.engines[0], models: [{ id: "new-model" }],
+      latest_request: { status: "completed", model: "new-model" },
+    }] });
+    await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
+    const source = container.querySelector('[data-testid="subscription-engine-grok"]')!;
+    expect(source.querySelector("details")?.textContent).toContain("new-model");
+    expect(source.textContent).not.toContain("login expired");
+    await act(async () => { source.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!.click(); });
+    expect(document.querySelector('[role="menuitemradio"][data-value="new-model"]')).not.toBeNull();
+    expect(document.querySelector('[role="menuitemradio"][data-value="grok-4.5"]')).toBeNull();
   });
 });

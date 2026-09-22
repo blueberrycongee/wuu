@@ -15,6 +15,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   and reset times. Unsupported account quotas stay unknown rather than being
   inferred from local usage.
 
+- Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
+  Claude Opus 5.5, with current limits, pricing, and reasoning controls.
+  Claude Fable 5.1 and Opus 5.5 use always-on adaptive thinking, preserve
+  readable progress, and recover from invalidated thinking after context
+  changes. Tool-closing requests use their supported automatic tool choice.
+  New CLI configurations start with GPT-6 Sol and Claude Opus 5.5.
+
 - SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
   documented 500k context window and low/medium/high/xhigh reasoning efforts.
   New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and
@@ -26,8 +33,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   does not steal focus from another workspace tool or a foreground Agent
   browser.
 
-- Embedded browser automation is available by default. While an agent is
-  browsing, the page stays in a floating card inside the conversation column.
+- Embedded browser automation is available by default. When explicitly made
+  visible, the page appears in a floating card inside the conversation column.
   Dragging the card snaps it to a corner of that column, clear of the composer.
   The page keeps its layout size and is zoomed so the whole page fits in
   the card. Dragging an edge or corner changes the card, and the zoom follows.
@@ -55,6 +62,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Conversation spacing accounts for the docked workspace panel as it opens or
+  resizes, keeping the scrollbar next to the message flow.
+
+- Expanding a browser preview opens its exact tab in the owning session. Missing
+  previews report an error instead of displaying a previous session’s page.
+
+- Browser previews stay hidden after switching away from their conversation,
+  including when panel visibility or background activity updates refresh them.
+  Returning to the owning conversation restores its preview.
+- Background browser activity keeps its floating preview hidden until explicitly
+  made visible, so it does not interrupt work in another application.
+
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,
   when it is opened from Finder or the Dock. Those launches do not receive
@@ -65,6 +84,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   stores such as `credentials.json` and `secrets.yaml` stay protected in every
   permission mode, and refusals no longer suggest chat approval or a mode
   switch that cannot lift the guard.
+
+- Subscription request details retain their recorded provider after model-service
+  changes and never reuse earlier token usage for a later failed request.
 
 - Searches without ripgrep no longer fail on long generated lines. The fallback
   respects Git ignore rules when Git is available and counts matching lines

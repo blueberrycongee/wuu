@@ -83,8 +83,15 @@ func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
 			// The thread's selection may have changed while the failed turn ran.
 			// Persist the immutable turn diagnostic, not the new selection.
 			th := newThreadState(sess.ID, nil, "another-provider", rt.Model, rt.RootDir, true, time.Now().UTC())
-			if err := srv.persistTurnTerminal(th, sess.ID+"-turn-0001", TurnKindUser, TurnStatusFailed, &live, time.Now().UTC(), nil); err != nil {
+			if err := srv.persistTurnTerminal(th, sess.ID+"-turn-0001", TurnKindUser, TurnStatusFailed, &live, time.Now().UTC(), nil, rt.ProviderName, rt.Model); err != nil {
 				t.Fatal(err)
+			}
+			activity, err := session.LatestSubscriptionActivity(rt.SessionDir, []session.SubscriptionActivityKey{{Provider: rt.ProviderName}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := activity[session.SubscriptionActivityKey{Provider: rt.ProviderName}]; got.Status != "failed" || got.Model != rt.Model || got.UsageReported {
+				t.Fatalf("recorded request = %+v", got)
 			}
 			out := &lockedBuffer{}
 			reloaded := New(rt, out)

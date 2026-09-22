@@ -82,9 +82,9 @@ function engineSource(engine: EngineInfo): SubscriptionSource {
 
 function engineLogin(engine: EngineInfo): SubscriptionLogin {
   if (!engine.binary_ok || !engine.enabled) return "unavailable";
-  // A declared catalog is proof the agent accepted a session. A probe error
-  // is only a sign-in hint for ACP, where session/new fails before login.
-  if ((engine.models ?? []).length > 0) return "ready";
+  // Only an ACP catalog was read from an accepted session. Static CLI model
+  // lists and Codex model/list do not establish an authenticated account.
+  if (engine.protocol === "acp" && (engine.models ?? []).length > 0) return "ready";
   if (engine.models_error) return engine.protocol === "acp" ? "sign_in" : "unknown";
   return "unknown";
 }

@@ -32,6 +32,25 @@ machine-specific setup in user-level configuration.
   first example. Avoid duplicate logic and fixes that move failures to another layer.
 - Require a concrete benefit for helpers, abstractions, and special cases. Prefer
   simple code and a few coherent abstractions over speculative infrastructure.
+- Keep a helper or extra module when it has at least two call sites, or when the
+  inlined logic is too long to read in one pass. A short operation used once stays
+  at the call site. Add an interface, base type, or registry only after a second
+  concrete implementation exists.
+- Define a constant used by one module in that module. Write a policy or default
+  once in the layer that owns it and pass that value down. Do not copy it into a
+  lower-layer constant or factory default.
+- A defensive branch stays only when removing it would break a real failure path.
+  Delete debugging-only catch blocks, checks for impossible states, and tests
+  that exist only to preserve that scaffolding once the contract is settled. A
+  missing field on a known type fails visibly.
+- Keep parameters that the function actually uses. When an established interface
+  requires an unused parameter, preserve the signature and state that constraint
+  instead of discarding the value to satisfy a type checker or linter.
+- Isolate a temporary compatibility workaround and name its removal condition in
+  one comment.
+- Follow the language's own visibility, error handling, and control flow. Go
+  returns early on errors. Match the surrounding file's types, imports, and
+  logging.
 - Judge public APIs from the caller's perspective: discoverability, misuse
   resistance, error semantics, configuration, compatibility, and evolution.
 - Base repository claims on inspected code, tests, configuration, and history.
@@ -52,16 +71,23 @@ machine-specific setup in user-level configuration.
   for build and test commands.
 - Run checks appropriate to the change before declaring it complete. Distinguish
   tests and builds from rendered UI, simulator, real-device, and production checks.
-- Add tests for observable regressions, meaningful invariants, boundaries, and
-  concrete bugs. Prefer existing behavioral coverage. Do not add tests merely
-  because code changed or coverage can increase.
-- Avoid tests that mirror literals, mappings, obvious control flow, implementation
-  details, or removed features unless their absence is itself a contract.
-  Coordinate concurrency deterministically instead of relying on sleeps when practical.
-- Do not add merge-gate tests that read stylesheet source, pin CSS declarations or
-  class lists, snapshot generated theme matrices, or assert prompt/i18n wording.
-  Test behavior, protocols, recovery, or public contracts. Run `make test-policy-check`
-  when changing tests; existing stylesheet-read exceptions do not authorize new ones.
+- Add a test only to protect an important contract: a public API, protocol,
+  persistence or migration rule, security or permission boundary, recovery
+  behavior, or a concrete bug that has already escaped. Design that test around
+  observable behavior and the failure cases callers depend on, and place it with
+  the existing suite.
+- Extend an existing behavioral test when one already covers the contract. Skip a
+  new test when the change has no such contract, when the goal is coverage, or
+  when the test would mirror literals, mappings, obvious control flow,
+  implementation details, or a removed feature. Absence is a contract only when
+  callers rely on that absence.
+- Coordinate concurrency deterministically instead of relying on sleeps when
+  practical.
+- Keep merge-gate tests on behavior, protocols, recovery, and public contracts.
+  Do not add tests that read stylesheet source, pin CSS declarations or class
+  lists, snapshot generated theme matrices, or assert prompt/i18n wording. Run
+  `make test-policy-check` when changing tests; existing stylesheet-read
+  exceptions do not authorize new ones.
 - Comments explain rationale, invariants, safety constraints, or external quirks.
   Public API documentation describes observable contracts, not incidental internals.
 - For long tasks, preserve the overall objective and report material progress.

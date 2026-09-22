@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestLatestSubscriptionActivityReadsNewestSessionOnly(t *testing.T) {
+func TestLatestSubscriptionActivityUsesRequestTimeAndIgnoresNewEmptySessions(t *testing.T) {
 	dir := t.TempDir()
 	older, err := CreateWithMetadata(dir, "older-codex", "/tmp/project")
 	if err != nil {
@@ -32,19 +32,19 @@ func TestLatestSubscriptionActivityReadsNewestSessionOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := AppendHistoryRecord(dir, newer.ID, HistoryRecord{
-		Role:       "meta",
-		Content:    turnTerminalContent,
-		StopReason: "completed",
-		At:         time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AppendHistoryRecord(dir, newer.ID, HistoryRecord{
 		Role:         "meta",
 		Content:      tokenUsageContent,
 		Model:        "gpt-5-codex",
 		InputTokens:  12,
 		OutputTokens: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendHistoryRecord(dir, newer.ID, HistoryRecord{
+		Role:       "meta",
+		Content:    turnTerminalContent,
+		StopReason: "completed",
+		At:         time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +64,21 @@ func TestLatestSubscriptionActivityReadsNewestSessionOnly(t *testing.T) {
 		Content:        turnTerminalContent,
 		StopReason:     "failed",
 		DisplayContent: "subscription rejected",
+		Provider:       "xai-subscription",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
+	if err := UpdateIndex(dir, older.ID, 0, "renamed recently"); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := CreateWithMetadata(dir, "empty-codex", "/tmp/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetEngine(dir, empty.ID, "codex"); err != nil {
+		t.Fatal(err)
+	}
 	got, err := LatestSubscriptionActivity(dir, []SubscriptionActivityKey{
 		{EngineID: "codex"},
 		{Provider: "xai-subscription"},
@@ -143,5 +154,56 @@ func TestSubscriptionUsageTracksRecordedProviderAcrossSelectionChanges(t *testin
 	}
 	if external := got[SubscriptionActivityKey{EngineID: "codex"}].LocalUsage; external.InputTokens != 100 {
 		t.Fatalf("external = %+v", external)
+	}
+}
+
+func TestSubscriptionLatestRequestDoesNotMixTurnsOrProviders(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := CreateWithMetadata(dir, "switching", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	appendRecord := func(record HistoryRecord) {
+		t.Helper()
+		at = at.Add(time.Second)
+		record.At = at
+		if err := AppendHistoryRecord(dir, sess.ID, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendRecord(HistoryRecord{Role: "user", Content: "old request"})
+	appendRecord(HistoryRecord{Role: "meta", Content: tokenUsageContent, Provider: "old", Model: "old-model", InputTokens: 12})
+	// A legacy terminal can use a provider recorded within this same request.
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, StopReason: "completed"})
+	appendRecord(HistoryRecord{Role: "user", Content: "new request"})
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, Provider: "new", Model: "new-model", StopReason: "failed", DisplayContent: "new failure"})
+	// Changing selection afterwards must not move either request.
+	if _, err := SetRuntimeSelection(dir, sess.ID, RuntimeSelection{Provider: "unused", Model: "unused"}); err != nil {
+		t.Fatal(err)
+	}
+	keys := []SubscriptionActivityKey{{Provider: "old"}, {Provider: "new"}, {Provider: "unused"}}
+	got, err := LatestSubscriptionActivity(dir, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, newer := got[keys[0]], got[keys[1]]
+	if old.Status != "completed" || old.Model != "old-model" || old.InputTokens != 12 || !old.UsageReported {
+		t.Fatalf("old request = %+v", old)
+	}
+	if newer.Status != "failed" || newer.Error != "new failure" || newer.Model != "new-model" || newer.UsageReported {
+		t.Fatalf("new request = %+v", newer)
+	}
+	if _, ok := got[keys[2]]; ok {
+		t.Fatal("current selection inherited historical activity")
+	}
+	appendRecord(HistoryRecord{Role: "user", Content: "old provider fails without usage"})
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, Provider: "old", StopReason: "failed"})
+	got, err = LatestSubscriptionActivity(dir, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest := got[keys[0]]; latest.Status != "failed" || latest.UsageReported || latest.Model != "" || latest.LocalUsage.InputTokens != 12 {
+		t.Fatalf("failed request reused old usage: %+v", latest)
 	}
 }

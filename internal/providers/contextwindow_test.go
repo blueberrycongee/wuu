@@ -14,6 +14,9 @@ func TestContextWindowFor_KnownModelsAreReasonable(t *testing.T) {
 		min   int
 		max   int
 	}{
+		{"claude-opus-5-5", 1_000_000, 1_000_000},
+		{"claude-fable-5-1", 1_000_000, 1_000_000},
+		{"anthropic/claude-opus-5-5", 1_000_000, 1_000_000},
 		// Anthropic Claude 4.x (catwalk says some are 1M)
 		{"claude-sonnet-4-5", 150_000, 1_500_000},
 		{"claude-opus-4", 150_000, 1_500_000},

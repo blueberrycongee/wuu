@@ -2764,7 +2764,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	}
 	var terminalErr error
 	if shouldPersistTerminal {
-		terminalErr = s.persistTurnTerminal(th, turnID, turnKind, status, structured, now, reconnectItem)
+		terminalErr = s.persistTurnTerminal(th, turnID, turnKind, status, structured, now, reconnectItem, turnRuntime.ProviderName, turnRuntime.Model)
 	}
 	if terminalErr != nil {
 		if err != nil {

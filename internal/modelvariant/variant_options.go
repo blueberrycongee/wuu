@@ -169,7 +169,7 @@ func compatAnthropicVariants(desc compatModelDescriptor, adaptiveEfforts []strin
 		}
 		return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
 			thinking := map[string]any{"type": "adaptive"}
-			if compatAnthropicOpus47OrLater(desc.APIID) {
+			if AnthropicRequiresBoundThinking(desc.APIID) || compatAnthropicOpus47OrLater(desc.APIID) {
 				thinking["display"] = "summarized"
 			}
 			return map[string]any{
@@ -256,7 +256,7 @@ func compatSAPVariants(desc compatModelDescriptor, adaptiveEfforts []string) map
 		if len(adaptiveEfforts) > 0 {
 			return compatWrapInSAPModelParams(compatVariantsFromEfforts(adaptiveEfforts, func(effort string) map[string]any {
 				thinking := map[string]any{"type": "adaptive"}
-				if compatAnthropicOpus47OrLater(desc.APIID) {
+				if AnthropicRequiresBoundThinking(desc.APIID) || compatAnthropicOpus47OrLater(desc.APIID) {
 					thinking["display"] = "summarized"
 				}
 				return map[string]any{

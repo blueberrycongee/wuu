@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../shared/protocol";
 import { EngineIcon } from "./EngineIcons";
+import { EngineAuthentication } from "./EngineAuthentication";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
 import {
@@ -50,7 +51,7 @@ export function SubscriptionDashboard({
       const base = inventory ?? loadedInventory;
       const refreshed = base ? { ...base, engines: base.engines.map((engine) => {
         const snapshot = loadedInventory?.engines.find((item) => item.id === engine.id);
-        return snapshot ? { ...engine, quota: snapshot.quota, local_usage: snapshot.local_usage, latest_request: snapshot.latest_request } : engine;
+        return snapshot ? { ...engine, ...snapshot, enabled: engine.enabled } : engine;
       }) } : undefined;
       const refreshedProviders = providers?.map((provider) => {
         const snapshot = loadedInventory?.subscription_providers?.find((item) => item.name === provider.name);
@@ -124,6 +125,23 @@ export function SubscriptionDashboard({
                   output: new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(source.localUsage.output_tokens),
                 })}</span>
               </div> : null}
+              <details className="settings-subscription-details">
+                <summary>{t("settings.subscriptionDetails")}</summary>
+                {source.detail ? <p>{source.detail}</p> : null}
+                {source.latest ? <>
+                  <p>{t(source.latest.error ? "settings.subscriptionRequestError" : "settings.subscriptionRequest", {
+                    status: t(source.latest.status === "completed" ? "channels.sessions.state.completed" : source.latest.status === "failed" ? "channels.sessions.state.failed" : source.latest.status === "interrupted" ? "channels.sessions.state.interrupted" : "settings.subscriptionUnknown"),
+                    model: source.latest.model || t("settings.unknownModel"),
+                    error: source.latest.error || "",
+                  })}</p>
+                  {source.latest.at && Number.isFinite(Date.parse(source.latest.at)) ? <time dateTime={source.latest.at}>{new Date(source.latest.at).toLocaleString()}</time> : null}
+                  <p>{source.latest.usage_reported ? t("settings.subscriptionRequestUsage", {
+                    input: (source.latest.input_tokens ?? 0) + (source.latest.cache_creation_tokens ?? 0) + (source.latest.cache_read_tokens ?? 0),
+                    output: source.latest.output_tokens ?? 0,
+                  }) : t("settings.subscriptionUsageUnknown")}</p>
+                </> : <p>{t("settings.subscriptionNoRequest")}</p>}
+                {source.engine?.protocol === "acp" && source.engine.enabled && source.engine.binary_ok ? <EngineAuthentication engineID={source.id} /> : null}
+              </details>
             </article>
           ))}
         </div>
@@ -136,7 +154,7 @@ export function SubscriptionDashboard({
 function Quota({ quota, now }: { quota?: SubscriptionQuota; now: number }): JSX.Element | null {
   const { t } = useI18n();
   const windows = quota?.status === "available" ? quota.windows?.filter((window) => Number.isFinite(window.used_percent) && window.used_percent >= 0) ?? [] : [];
-  if (!windows.length) return null;
+  if (!windows.length) return <div className="settings-subscription-usage"><span>{t("settings.subscriptionAllowance")}</span><span>{t(quota?.status === "unavailable" ? "settings.subscriptionQuotaUnavailable" : "settings.subscriptionQuotaUnknown")}</span></div>;
   return <div className="settings-subscription-quota">
     {windows.map((window) => {
       const remaining = Math.max(0, 100 - window.used_percent);
@@ -167,4 +185,3 @@ function loginKey(login: SubscriptionLogin): "settings.subscriptionReady" | "set
       return "settings.subscriptionUnknown";
   }
 }
-

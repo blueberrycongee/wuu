@@ -12,11 +12,12 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent
 } from "react";
-import type { ActivitySession, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
+import type { ActivitySession, BrowserDockTarget, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
 import { translateCurrent, useI18n } from "./i18n";
 import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
 import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
@@ -88,6 +89,7 @@ export function WorkspaceBrowserPanel({
   threadID,
   activeContext,
   activity,
+  dockTarget,
   requestedURL,
   overlaySuppressed = false,
   onActivityTakeover,
@@ -98,6 +100,7 @@ export function WorkspaceBrowserPanel({
   threadID?: string;
   activeContext?: RuntimeContext;
   activity?: ActivitySession;
+  dockTarget?: BrowserDockTarget;
   requestedURL?: WorkspaceBrowserNavigationRequest;
   overlaySuppressed?: boolean;
   onActivityTakeover?: () => void;
@@ -111,8 +114,12 @@ export function WorkspaceBrowserPanel({
     activity && activity.kind === "browser" && activity.state !== "stopped"
       ? browserTabIDForActivity(activity)
       : undefined;
-  const [adoptedTabID, setAdoptedTabID] = useState<string | undefined>(undefined);
-  const selectedTabID = adoptedTabID ?? displayedBrowserTabID(activity, threadID);
+  const requestedTabID = dockTarget && dockTarget.thread_id === threadID && dockTarget.workdir === workdir
+    ? dockTarget.tabID : undefined;
+  const sourceKey = JSON.stringify([workdir, threadID, requestedTabID, agentTabID]);
+  const [adoptedTab, setAdoptedTab] = useState<{ sourceKey: string; tabID: string }>();
+  const selectedTabID = (adoptedTab?.sourceKey === sourceKey ? adoptedTab.tabID : undefined)
+    ?? requestedTabID ?? displayedBrowserTabID(activity, threadID);
   const selectedTabIDRef = useRef(selectedTabID);
   selectedTabIDRef.current = selectedTabID;
   const showingAgentTab = Boolean(agentTabID && selectedTabID === agentTabID);
@@ -148,9 +155,19 @@ export function WorkspaceBrowserPanel({
     }
   }, []);
 
-  useEffect(() => {
-    setAdoptedTabID(undefined);
-  }, [agentTabID]);
+  useLayoutEffect(() => {
+    // A failed or absent snapshot must not leave another tab's address, title,
+    // navigation controls, or native page visible in this session.
+    setCurrentURL("");
+    setPageTitle("");
+    setDraftURL("");
+    setStatus("idle");
+    setErrorMessage(undefined);
+    setCanGoBack(false);
+    setCanGoForward(false);
+    setHostHint(undefined);
+    setPendingURL(undefined);
+  }, [workdir, selectedTabID]);
 
   useEffect(() => {
     if (!workdir || !selectedTabID) return undefined;
@@ -158,12 +175,22 @@ export function WorkspaceBrowserPanel({
     if (typeof read !== "function") return undefined;
     let cancelled = false;
     void read(workdir, selectedTabID).then((snapshot) => {
-      if (!cancelled && snapshot && snapshot.tabID === selectedTabID) applySurface(snapshot);
-    }).catch(() => undefined);
+      if (cancelled) return;
+      if (snapshot && snapshot.tabID === selectedTabID && snapshot.workdir === workdir) {
+        applySurface(snapshot);
+      } else if (requestedTabID) {
+        setStatus("error");
+        setErrorMessage(t("workspace.browser.previewUnavailable"));
+      }
+    }).catch((cause: unknown) => {
+      if (cancelled) return;
+      setStatus("error");
+      setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+    });
     return () => {
       cancelled = true;
     };
-  }, [applySurface, selectedTabID, workdir]);
+  }, [applySurface, requestedTabID, selectedTabID, t, workdir]);
 
   useEffect(() => {
     const subscribe = window.wuu?.onBrowserSurface;
@@ -180,9 +207,9 @@ export function WorkspaceBrowserPanel({
     return subscribe((payload) => {
       if (!workdir || payload.workdir !== workdir) return;
       if (payload.openerTabID !== selectedTabIDRef.current) return;
-      setAdoptedTabID(payload.tabID);
+      setAdoptedTab({ sourceKey, tabID: payload.tabID });
     });
-  }, [workdir]);
+  }, [sourceKey, workdir]);
 
   useEffect(() => {
     const subscribe = window.wuu?.onBrowserUserInput;
