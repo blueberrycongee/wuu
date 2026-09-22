@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, type Rectangle } from "electron";
+import { BrowserWindow, WebContentsView, screen, type Rectangle } from "electron";
 import appIcon from "../../../assets/app-icon-source.svg?raw";
 import type { ActivitySession } from "../shared/protocol";
 import { cursorRuntimeSource } from "./agentCursor";
@@ -136,6 +136,7 @@ type BrowserPiPSurfaceDeps = {
   // Injectable for tests; production uses real Electron views/windows.
   createWindow?: (bounds: Rectangle) => BrowserPiPWindowHandle;
   createOverlay?: () => BrowserPiPOverlayHandle;
+  cursorPosition?: () => PipPoint;
   parent?: () => { isDestroyed(): boolean } | null | undefined;
 };
 
@@ -149,6 +150,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private stopped = false;
   private completed = false;
   private dark = false;
+  private hoverTimer: ReturnType<typeof setInterval> | undefined;
+  private hoverPoint: PipPoint | null | undefined;
   private activity: ActivitySession;
   private lastInteractionRevision = 0;
   private readonly unsubs: Array<() => void> = [];
@@ -220,6 +223,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         this.pushHostLabel();
         this.setAppearance(this.dark);
         this.pushCompletion();
+        this.hoverPoint = undefined;
+        this.syncHover();
       })
       .catch(() => undefined);
     const reportGeometry = (): void => {
@@ -241,6 +246,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     win.on("close", () => this.unmount());
     win.on("closed", () => {
       if (this.win !== win) return;
+      this.stopHoverTracking();
       this.win = undefined;
       this.overlay = undefined;
       this.mounted = false;
@@ -288,13 +294,41 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.mount();
       if (this.win !== win || win.isDestroyed()) return;
       if (!win.isVisible()) win.showInactive();
+      if (!this.hoverTimer) {
+        this.syncHover();
+        // Native pointer delivery can pause while another app is active.
+        // Track only the visible card, without activating it or capturing frames.
+        this.hoverTimer = setInterval(() => this.syncHover(), 80);
+        this.hoverTimer.unref?.();
+      }
     } else if (!this.visible) {
+      this.stopHoverTracking();
       this.unmount();
       if (this.win !== win || win.isDestroyed()) return;
       win.hide();
     } else {
+      this.stopHoverTracking();
       win.hide();
     }
+  }
+
+  private syncHover(): void {
+    const win = this.win;
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    const cursor = this.deps.cursorPosition?.() ?? screen.getCursorScreenPoint();
+    const bounds = win.getBounds();
+    const x = cursor.x - bounds.x, y = cursor.y - bounds.y;
+    const point = x >= 0 && y >= 0 && x < bounds.width && y < bounds.height ? { x, y } : null;
+    if (this.hoverPoint !== undefined && this.hoverPoint?.x === point?.x && this.hoverPoint?.y === point?.y) return;
+    this.hoverPoint = point;
+    this.execute(`window.wuuPipHover?.(${JSON.stringify(point)})`);
+  }
+
+  private stopHoverTracking(): void {
+    if (this.hoverTimer) clearInterval(this.hoverTimer);
+    this.hoverTimer = undefined;
+    this.hoverPoint = undefined;
+    this.execute("window.wuuPipHover?.(null)");
   }
 
   // A live view has no frame production to freeze: a stopped activity simply
@@ -383,6 +417,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    this.stopHoverTracking();
     this.cancelSnap();
     for (const unsub of this.unsubs.splice(0)) unsub();
     this.unmount();
@@ -839,15 +874,20 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   #completion[data-completed="true"] #completion-icon{animation:none}
   #completion[data-completed="true"] #completion-check{animation:none;opacity:1}
 }
-@media (max-height:120px){#completion-mark{width:48px;height:48px}}
-#actions{position:absolute;top:8px;right:8px;z-index:6;display:flex;gap:6px;opacity:0;
-  transition:opacity .12s ease}
-#root:hover #actions,#root:focus-within #actions,#root.dragging #actions{opacity:1}
-#expand,#close{width:26px;height:26px;border:none;border-radius:13px;padding:0;
+@media (max-height:140px){#completion-mark{width:48px;height:48px;transform:translateY(8px)}}
+#hover-shade{position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:linear-gradient(rgba(0,0,0,.26),rgba(0,0,0,.04) 60%,transparent);
+  transition:opacity .16s ease}
+#actions{position:absolute;top:8px;left:8px;z-index:6;display:flex;gap:6px;opacity:0;
+  transition:opacity .16s ease}
+#root:is(:focus-within,.hovered,.dragging,.resizing) :is(#actions,#hover-shade){opacity:1}
+#expand,#close{width:30px;height:30px;border:none;border-radius:50%;padding:0;
   display:grid;place-items:center;cursor:pointer;color:#fff;
-  background:rgba(28,28,30,.55);backdrop-filter:blur(10px)}
-#expand:hover,#close:hover{background:rgba(28,28,30,.72)}
-#close:hover{background:rgba(215,0,21,.82)}
+  background:rgba(28,28,30,.48);backdrop-filter:blur(10px);transition:background .12s ease}
+#expand:is(:hover,.hovered),#close:is(:hover,.hovered){background:rgba(28,28,30,.78)}
+#expand:active,#close:active{background:rgba(28,28,30,.92)}
+#expand:focus-visible,#close:focus-visible{outline:2px solid #fff;outline-offset:2px}
+@media(prefers-reduced-motion:reduce){#actions,#hover-shade,#expand,#close{transition:none}}
 [data-resize]{position:absolute;z-index:4;touch-action:none;background:rgba(0,0,0,0.004)}
 [data-resize="n"],[data-resize="s"]{left:18px;right:18px;height:12px;cursor:ns-resize}
 [data-resize="n"]{top:0}[data-resize="s"]{bottom:0}
@@ -871,12 +911,13 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
       <div id="completion-check"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m8 16 6 6 10-12"/></svg></div>
     </div>
   </div>
+  <div id="hover-shade"></div>
   <div id="actions">
-    <button id="expand" title="Open in the side panel" aria-label="Open in the side panel">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h4v4"/><path d="M12 2 7.5 6.5"/><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v6A1.5 1.5 0 0 0 3.5 12h6A1.5 1.5 0 0 0 11 10.5V8"/></svg>
-    </button>
     <button id="close" title="Close" aria-label="Close">
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2 2 10"/></svg>
+    </button>
+    <button id="expand" title="Open in the side panel" aria-label="Open in the side panel">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h4v4"/><path d="M12 2 7.5 6.5"/><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v6A1.5 1.5 0 0 0 3.5 12h6A1.5 1.5 0 0 0 11 10.5V8"/></svg>
     </button>
   </div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
@@ -973,6 +1014,13 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   window.wuuPipViewport=function(viewport){cursor.setViewport(viewport);};
   window.wuuPipState=function(state){
     if(state.controller!=="agent"||state.state==="stopped")cursor.hide();
+  };
+  window.wuuPipHover=function(point){
+    root.classList.toggle("hovered",!!point);
+    ["close","expand"].forEach(function(id){
+      var button=document.getElementById(id),r=button.getBoundingClientRect();
+      button.classList.toggle("hovered",!!point&&point.x>=r.left&&point.x<r.right&&point.y>=r.top&&point.y<r.bottom);
+    });
   };
   window.wuuPipAppearance=function(a){document.documentElement.classList.toggle("dark",a.dark);};
   window.wuuPipCompleted=function(done){

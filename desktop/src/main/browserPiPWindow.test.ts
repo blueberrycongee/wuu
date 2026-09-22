@@ -243,7 +243,7 @@ function makeSink(): ObservationPiPEventSink & {
   };
 }
 
-function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle }): {
+function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle; cursorPosition?: () => { x: number; y: number } }): {
   surface: BrowserPiPSurface;
   win: FakePipWindow;
   overlay: FakeOverlay;
@@ -265,11 +265,45 @@ function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle }): {
     isPackaged: false,
     createWindow: () => win.asHandle(),
     createOverlay: () => overlay.asHandle(),
+    cursorPosition: opts?.cursorPosition ?? (() => ({ x: -1000, y: -1000 })),
   });
   return { surface, win, overlay, host, sink };
 }
 
 describe("BrowserPiPSurface", () => {
+  it("tracks pointer entry without focus and releases tracking when hidden or closed", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const cursor = { x: 10, y: 10 };
+      const { surface, overlay } = makeSurface({ cursorPosition: () => cursor });
+      surface.start();
+      surface.setVisible(true);
+      await settle();
+      overlay.executed.length = 0;
+      cursor.x = 120;
+      cursor.y = 120;
+      vi.advanceTimersByTime(100);
+      expect(overlay.executed).toContain('window.wuuPipHover?.({"x":20,"y":20})');
+      overlay.executed.length = 0;
+      vi.advanceTimersByTime(200);
+      expect(overlay.executed).toEqual([]);
+      cursor.x = 10;
+      vi.advanceTimersByTime(100);
+      expect(overlay.executed).toContain("window.wuuPipHover?.(null)");
+      surface.setHostLayout(null);
+      expect(vi.getTimerCount()).toBe(0);
+      surface.setHostLayout({ host: { x: 0, y: 0, width: 900, height: 700 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 900, height: 700 } });
+      expect(vi.getTimerCount()).toBe(1);
+      surface.setVisible(false);
+      expect(vi.getTimerCount()).toBe(0);
+      surface.setVisible(true);
+      surface.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("mounts the real tab zoom-fitted on show and restores it on hide", async () => {
     const { surface, win, overlay, host, sink } = makeSurface();
     surface.start();
