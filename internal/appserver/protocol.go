@@ -1217,6 +1217,11 @@ type ProviderSummary struct {
 	ReuseCodexCredentials bool                   `json:"reuse_codex_credentials,omitempty"`
 	CodexCredentialSource string                 `json:"codex_credential_source,omitempty"`
 	Models                []ProviderModelSummary `json:"models,omitempty"`
+	// LatestRequest is the newest settled request recorded for this built-in
+	// model service. It stays on the provider because these credentials are
+	// not the external engine's credentials.
+	LatestRequest *EngineLatestRequest       `json:"latest_request,omitempty"`
+	LocalUsage    *session.SubscriptionUsage `json:"local_usage,omitempty"`
 }
 
 type ProviderModelSummary struct {
@@ -1313,6 +1318,43 @@ type EngineInfo struct {
 	// composer. Empty native id still means the host can apply the selection
 	// through its approval bridge.
 	PermissionModes []EnginePermissionModeInfo `json:"permission_modes,omitempty"`
+	// LatestRequest is the newest settled request this engine has recorded.
+	// It is omitted when no turn has settled for the engine.
+	LatestRequest *EngineLatestRequest       `json:"latest_request,omitempty"`
+	Quota         *SubscriptionQuota         `json:"quota,omitempty"`
+	LocalUsage    *session.SubscriptionUsage `json:"local_usage,omitempty"`
+}
+
+// SubscriptionQuota reports only upstream account allowances. Missing windows
+// never mean unlimited usage. CheckedAt identifies the age of the snapshot.
+type SubscriptionQuota struct {
+	Status    string                    `json:"status"`
+	CheckedAt string                    `json:"checked_at"`
+	Windows   []SubscriptionQuotaWindow `json:"windows,omitempty"`
+}
+
+type SubscriptionQuotaWindow struct {
+	ID            string  `json:"id"`
+	Label         string  `json:"label,omitempty"`
+	UsedPercent   float64 `json:"used_percent"`
+	WindowMinutes int     `json:"window_minutes,omitempty"`
+	ResetsAt      string  `json:"resets_at,omitempty"`
+}
+
+// EngineLatestRequest is one settled request the subscription dashboard can
+// prove from stored history. Usage is present only when that request's engine
+// already reported tokens; a zero UsageReported means usage is unknown, not
+// zero.
+type EngineLatestRequest struct {
+	Status              string `json:"status,omitempty"`
+	Error               string `json:"error,omitempty"`
+	At                  string `json:"at,omitempty"`
+	Model               string `json:"model,omitempty"`
+	InputTokens         int    `json:"input_tokens,omitempty"`
+	OutputTokens        int    `json:"output_tokens,omitempty"`
+	CacheCreationTokens int    `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int    `json:"cache_read_tokens,omitempty"`
+	UsageReported       bool   `json:"usage_reported,omitempty"`
 }
 
 type EnginePermissionModeInfo struct {
@@ -1334,6 +1376,8 @@ type EngineModelInfo struct {
 type EngineListResult struct {
 	Engines  []EngineInfo          `json:"engines"`
 	Settings *config.EnginesConfig `json:"settings,omitempty"`
+	// Included only for an explicit subscription dashboard refresh.
+	SubscriptionProviders []ProviderSummary `json:"subscription_providers,omitempty"`
 }
 
 // EngineUpdateParams is the engine/update request body. Nil fields are

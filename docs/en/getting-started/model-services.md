@@ -26,6 +26,19 @@ The composer's selection belongs to the conversation, or to the draft before its
 
 SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 
+## Check subscriptions in the desktop app
+
+**Settings → Subscriptions** groups installed external agents and built-in
+subscription services. Each source keeps its own model and authentication path;
+expand **Details** for request information and ACP sign-in.
+
+Codex account allowances come from the installed CLI and show remaining
+percentages and reset times. Refresh after a reset or when a snapshot is over
+five minutes old. Other sources show **Not provided** until an account-quota
+integration is available; ACP context-window occupancy is not subscription quota.
+**Used in Wuu** totals reported tokens in retained local history, including cached
+input. It excludes unreported usage and activity outside Wuu, and is not a bill.
+
 ## Configure the CLI
 
 Create a user configuration once:

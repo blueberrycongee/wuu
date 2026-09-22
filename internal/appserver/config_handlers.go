@@ -2321,7 +2321,45 @@ func (s *Server) providerSummaries() []ProviderSummary {
 			}
 		}
 	}
+	s.attachLatestProviderRequests(summaries)
 	return summaries
+}
+
+// attachLatestProviderRequests records the newest settled request for
+// built-in subscription providers only. Ordinary API-key providers stay out
+// of this read; their credentials are not the subscription dashboard.
+func (s *Server) attachLatestProviderRequests(summaries []ProviderSummary) {
+	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
+		return
+	}
+	keys := make([]session.SubscriptionActivityKey, 0, len(summaries))
+	for _, summary := range summaries {
+		if !builtInSubscriptionProvider(summary) {
+			continue
+		}
+		keys = append(keys, session.SubscriptionActivityKey{Provider: summary.Name})
+	}
+	if len(keys) == 0 {
+		return
+	}
+	activity, err := session.LatestSubscriptionActivity(s.rt.SessionDir, keys)
+	if err != nil {
+		return
+	}
+	for index := range summaries {
+		record, ok := activity[session.SubscriptionActivityKey{Provider: summaries[index].Name}]
+		if !ok {
+			continue
+		}
+		summaries[index].LatestRequest = engineLatestRequest(record)
+		summaries[index].LocalUsage = &record.LocalUsage
+	}
+}
+
+func builtInSubscriptionProvider(summary ProviderSummary) bool {
+	return summary.ReuseCodexCredentials ||
+		config.IsXAISubscriptionProvider(summary.Type) ||
+		config.IsGrokBuildProvider(summary.Type)
 }
 
 // A conversation can select the same discovered connections shown in the

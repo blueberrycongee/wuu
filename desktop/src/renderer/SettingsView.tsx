@@ -8,6 +8,7 @@ import {
   Folder,
   Hash,
   KeyRound,
+  LayoutDashboard,
   Plug,
   PlugZap,
   Plus,
@@ -81,6 +82,7 @@ import { BackgroundSettings } from "./background/BackgroundSettings";
 import { SettingsRow } from "./SettingsRow";
 import { toastErrorMessage } from "./Toast";
 import { EngineSettingsSection } from "./EngineSettingsSection";
+import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
@@ -99,6 +101,7 @@ import { PluginIcon } from "./PublicIcon";
 import type { SettingsPageHostAPI, SettingsPageSummaryV1, SettingsValueMapV1 } from "../shared/workbench";
 
 export type SettingsPage =
+  | "subscriptions"
   | "providers"
   | "general"
   | "advanced"
@@ -889,6 +892,7 @@ export function SettingsView({
     ?? activeCustomPluginPage?.title
     ?? settingsPageTitle(activePage, t);
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
+    Object.freeze({ id: "subscriptions", label: settingsPageTitle("subscriptions", t) }),
     Object.freeze({ id: "providers", label: settingsPageTitle("providers", t) }),
     Object.freeze({ id: "advanced", label: settingsPageTitle("advanced", t) }),
     Object.freeze({ id: "general", label: settingsPageTitle("general", t) }),
@@ -942,6 +946,9 @@ export function SettingsView({
           >
             <div className="settings-nav-group">
               <div className="settings-nav-group-label">{t("settings.groupModel")}</div>
+              <SettingsNavItem icon={<LayoutDashboard className="icon-lg" />} active={activePage === "subscriptions"} onClick={() => setActivePage("subscriptions")}>
+                {t("settings.subscriptions")}
+              </SettingsNavItem>
               <SettingsNavItem icon={<KeyRound className="icon-lg" />} active={activePage === "providers"} onClick={() => setActivePage("providers")}>
                 {t("settings.providers")}
               </SettingsNavItem>
@@ -1066,6 +1073,12 @@ export function SettingsView({
                 context={Object.freeze({ surface: "settings" })}
                 settings={settingsPageHost}
                 onFailure={() => setActivePage("providers")}
+              />
+            ) : activePage === "subscriptions" ? (
+              <SubscriptionDashboard
+                inventory={engineInventory}
+                providers={providers}
+                onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
               />
             ) : activePage === "providers" ? (
               <>
@@ -2890,6 +2903,8 @@ type Translate = ReturnType<typeof useI18n>["t"];
 
 function settingsPageTitle(page: SettingsPage, t: Translate): string {
   switch (page) {
+    case "subscriptions":
+      return t("settings.subscriptions");
     case "providers":
       return t("settings.providers");
     case "advanced":

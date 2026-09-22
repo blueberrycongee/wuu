@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- A subscription dashboard in desktop Settings shows source models, reported
+  Wuu token usage, and Codex account allowance windows with remaining percentages
+  and reset times. Unsupported account quotas stay unknown rather than being
+  inferred from local usage.
+
 - SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
   documented 500k context window and low/medium/high/xhigh reasoning efforts.
   New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and

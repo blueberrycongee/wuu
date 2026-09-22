@@ -1738,8 +1738,8 @@ app.whenReady().then(async () => {
         settings ?? {},
       ),
   );
-  ipcMain.handle("wuu:engines-list", (event) =>
-    appServerRequest<EngineListResult>(event, "engine/list"),
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean }) =>
+    appServerRequest<EngineListResult>(event, "engine/list", { include_quota: options?.include_quota === true }),
   );
   ipcMain.handle("wuu:engines-update", (event, params: EngineUpdateParams) =>
     appServerRequest<EngineListResult>(event, "engine/update", params ?? {}),
