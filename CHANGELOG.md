@@ -76,6 +76,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Collaboration handles pending human directions before background session
+  reports, including after a restart and when an inbox spans multiple batches.
+  Earlier session results remain queued in their original room and task.
+
 - Conversation spacing accounts for the docked workspace panel as it opens or
   resizes, keeping the scrollbar next to the message flow.
 

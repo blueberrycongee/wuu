@@ -15,6 +15,8 @@ file references. Do not edit files or create a commit.
 
 Named agents can discover registered projects and communicate with other identities. A clear project name matters: switching your foreground workspace does not redirect a work session already assigned elsewhere.
 
+When human messages and background reports are waiting, the agent handles human directions first in its next coordination turn. Work sessions continue independently, and earlier reports remain queued for their original room and task.
+
 ## Follow the execution
 
 Project work runs in ordinary work conversations, also called Harness sessions in tool activity. Open the linked session from an agent's activity details to see file changes, commands, and results. It remains bound to its project and execution configuration; an unavailable or conflicting project binding produces an error rather than falling back to another project.

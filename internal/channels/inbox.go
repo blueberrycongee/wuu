@@ -116,7 +116,7 @@ func (s *Service) CheckSession(ctx context.Context, agentID, token, sessionRef s
 		LEFT JOIN collaboration_principals sender ON sender.id = delivery.from_id
 		WHERE delivery.to_agent_id = ? AND (NOT ? OR delivery.room_id = ?) AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
 			AND (delivery.target_session_ref = ? OR (delivery.target_session_ref IS NULL AND (` + scopeSQL + `)))
-		ORDER BY delivery.created_at, delivery.rowid LIMIT ?`
+		ORDER BY ` + collaborationDeliveryPriority + `, delivery.created_at, delivery.rowid LIMIT ?`
 	args := []any{actor.ID, binding.Primary, binding.RoomID, binding.SessionRef}
 	args = append(args, scopeArgs...)
 	remaining := max(0, checkLimit-len(items))
@@ -318,7 +318,7 @@ func (s *Service) checkAgent(ctx context.Context, agentID string) (CheckResult, 
 		WHERE delivery.to_agent_id = ? AND delivery.target_session_ref IS NULL
 			AND (delivery.work_id IS NULL OR delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion'))
 			AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
-		ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, agentID, checkLimit+1)
+		ORDER BY `+collaborationDeliveryPriority+`, delivery.created_at, delivery.rowid LIMIT ?`, agentID, checkLimit+1)
 	if err != nil {
 		return CheckResult{}, fmt.Errorf("query collaboration inbox: %w", err)
 	}
