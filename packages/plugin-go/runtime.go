@@ -186,12 +186,14 @@ type ServiceChangedNotice struct {
 }
 
 type Tool struct {
-	ID              string         `json:"id"`
-	Description     string         `json:"description"`
-	InputSchema     map[string]any `json:"input_schema"`
-	ExecutionScopes []string       `json:"execution_scopes,omitempty"`
-	Activity        *ToolActivity  `json:"activity,omitempty"`
-	Display         *ToolDisplay   `json:"display,omitempty"`
+	ID          string         `json:"id"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
+	// External engines require an explicit "external" scope. Omitting scopes
+	// retains the native root/child default.
+	ExecutionScopes []string      `json:"execution_scopes,omitempty"`
+	Activity        *ToolActivity `json:"activity,omitempty"`
+	Display         *ToolDisplay  `json:"display,omitempty"`
 }
 
 type ToolDisplay struct {

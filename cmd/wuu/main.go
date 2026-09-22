@@ -50,6 +50,9 @@ func run(args []string) error {
 		printUsage()
 		return nil
 	}
+	if args[0] == "session-tools" {
+		return runSessionTools(args[1:])
+	}
 
 	// Pre-launch installs left credential-bearing files at 0o644 / 0o755.
 	// Normalize them once, then rely on securefs writers and the process umask

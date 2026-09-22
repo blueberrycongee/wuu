@@ -47,7 +47,7 @@ wuu plugin remove my-plugin
 
 agent 运行时可以注册工具、补充上下文、观察支持的生命周期事件，以及提供或调用有版本的服务。桌面模块可以添加视图、固定插入点、语义渲染替换、会话卡片和样式。声明式主题和设置不需要桌面模块，见[主题与设置](themes-settings.md)。
 
-内置功能也使用这些机制。具体用法见[子代理](../desktop/subagents.md)、[自动化](../automation/scheduled-tasks.md)和[记忆](memory.md)。Peers 插件让 agent 联系同一工作区已有的会话，与创建子代理或使用具名协作身份是不同功能。
+内置功能也使用这些机制。具体用法见[子代理](../desktop/subagents.md)、[自动化](../automation/scheduled-tasks.md)和[记忆](memory.md)。Peers 插件让 Wuu 与[外部引擎会话](../getting-started/external-engines.md#联系其他会话)联系同一工作区已有的 session，发送一条有界请求并接收终态回复，与创建子代理或使用具名协作身份是不同功能。
 
 ## 开发插件
 

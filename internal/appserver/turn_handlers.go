@@ -2219,17 +2219,34 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	namedAgentID := strings.TrimSpace(th.NamedAgentID)
 	var hostMCPServers []agentengine.MCPServer
 	var hostMCPError error
+	stopSessionTools := func() {}
+	var pluginInstructions string
+	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+		var endpoint agentengine.MCPServer
+		endpoint, pluginInstructions, stopSessionTools, hostMCPError = s.startSessionToolsMCP(ctx, th, turnID)
+		if endpoint.URL != "" {
+			hostMCPServers = append(hostMCPServers, endpoint)
+		}
+	}
+	defer stopSessionTools()
 	if namedAgentID != "" && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
 		if threadRuntime != nil && threadRuntime.StreamRunner != nil {
 			sessionInstructions = threadRuntime.StreamRunner.SystemPrompt
 		}
 		var endpoint string
-		endpoint, hostMCPError = s.namedAgentMCPURL(namedAgentID, th.ID)
-		if hostMCPError == nil {
-			hostMCPServers = []agentengine.MCPServer{{Name: namedAgentMCPServerName, URL: endpoint}}
+		var namedErr error
+		endpoint, namedErr = s.namedAgentMCPURL(namedAgentID, th.ID)
+		if namedErr == nil {
+			var binding agentengine.MCPServer
+			binding, namedErr = localMCPServer(namedAgentMCPServerName, endpoint)
+			hostMCPServers = append(hostMCPServers, binding)
 		}
+		hostMCPError = errors.Join(hostMCPError, namedErr)
 	}
-	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
+	if pluginInstructions != "" {
+		sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + pluginInstructions)
+	}
+	binding := agentengine.ThreadBinding{
 		ThreadID:       th.ID,
 		RootDir:        firstNonEmpty(th.CWD, s.rt.RootDir),
 		Model:          th.Model,
@@ -2244,9 +2261,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		RequestApproval: func(approvalCtx context.Context, request agentengine.ApprovalRequest) (agentengine.ApprovalDecision, error) {
 			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
 		},
-	})
+	}
+	var engine agentengine.Session
 	if hostMCPError != nil {
 		engine = agentengine.FailedSession(hostMCPError)
+	} else {
+		engine = s.rt.EngineSessionForThread(ctx, threadRuntime, binding)
 	}
 	if engine == nil {
 		engine = s.rt.WuuEngine().SessionForRunner(s.rt.StreamRunner)
@@ -2618,6 +2638,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			Event:    sanitizeStreamEvent(ev),
 		})
 	})
+	stopSessionTools()
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
