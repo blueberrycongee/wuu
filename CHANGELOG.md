@@ -40,6 +40,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Browser previews and the workspace panel share a clearer animated pointer,
+  with consistent movement and input feedback at every preview size.
+  Taking control clears the pointer and cancels pending input.
+
 - The embedded browser can read the page it is showing. Observation returns
   the headings, paragraphs, lists, and tables together with the controls it
   can click, and a long page continues from the returned offset. Ending a

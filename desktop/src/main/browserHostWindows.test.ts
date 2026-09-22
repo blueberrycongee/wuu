@@ -1290,6 +1290,80 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     expect(harness.coordinator.tabSurfaceMeta("/repo", "missing")).toBeUndefined();
   });
 
+  it.each(["panel", "pip"])("waits for the %s cursor before dispatching input", async (surface) => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    let arrive!: () => void;
+    let started!: () => void;
+    const moving = new Promise<void>((resolve) => { started = resolve; });
+    const arrival = new Promise<void>((resolve) => { arrive = resolve; });
+    if (surface === "panel") {
+      harness.coordinator.reportBounds("/repo", "t1", harness.mainWindow, { x: 0, y: 0, width: 800, height: 600 }, 1);
+      view.webContents.executeJavaScript = async (code) => {
+        if (code.includes("return runtime.moveTo")) { started(); return arrival; }
+      };
+    } else {
+      harness.coordinator.mountTabOnWindow("/repo", "t1", new FakeWindow(), { x: 0, y: 0, width: 320, height: 200 }, .25);
+      harness.coordinator.addInteractionListener((_workdir, _tabID, hint) => {
+        if (hint.kind === "move") { started(); return arrival; }
+      });
+    }
+    const action = harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 },
+    }));
+    await moving;
+    expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(0);
+    arrive();
+    await action;
+    expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(2);
+    expect(harness.reply.reject).not.toHaveBeenCalled();
+  });
+
+  it("rejects an action when the user takes control during pointer travel", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    harness.coordinator.reportBounds("/repo", "t1", harness.mainWindow, { x: 0, y: 0, width: 800, height: 600 }, 1);
+    let arrive!: () => void;
+    let started!: () => void;
+    const moving = new Promise<void>((resolve) => { started = resolve; });
+    const arrival = new Promise<void>((resolve) => { arrive = resolve; });
+    view.webContents.executeJavaScript = async (code) => {
+      if (code.includes("return runtime.moveTo")) { started(); return arrival; }
+      if (code.includes("runtime.hide")) arrive();
+    };
+    const action = harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 },
+    }));
+    await moving;
+    for (const listener of view.listeners.get("before-mouse-event") ?? []) listener({}, { type: "mouseDown" });
+    await action;
+    expect(view.sentCommands.filter((command) => command.method === "Input.dispatchMouseEvent")).toHaveLength(0);
+    expect(harness.reply.reject).toHaveBeenCalledWith("server-request-1", "Browser action interrupted by user input");
+  });
+
+  it("bounds the arrival wait when a preview renderer stops responding", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = makeHarness();
+      await openTab(harness, "/repo", "t1");
+      harness.coordinator.mountTabOnWindow("/repo", "t1", new FakeWindow(), { x: 0, y: 0, width: 320, height: 200 }, .25);
+      harness.coordinator.addInteractionListener((_workdir, _tabID, hint) => {
+        if (hint.kind === "move") return new Promise(() => undefined);
+      });
+      const action = harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+        workdir: "/repo", tab_id: "t1", method: "click", params: { x: 40, y: 60 },
+      }));
+      await vi.advanceTimersByTimeAsync(1000);
+      await action;
+      expect(harness.reply.respond).toHaveBeenCalled();
+      expect(harness.reply.reject).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("emits interaction hints after click, scroll, and type dispatch", async () => {
     const harness = makeHarness();
     const hints: Array<{ workdir: string; tabID: string; hint: unknown }> = [];

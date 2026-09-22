@@ -1,22 +1,32 @@
-// Synthetic pointer drawn inside the page the user is watching. The page view
-// is composited above the workspace, so a panel overlay cannot sit on top of
-// it. The pointer does not receive clicks. Short travels ease in a straight
-// line with a small lean; longer travels arc off the straight line and the
-// tip leads. A press plays as the pointer arrives, and the pointing action
-// waits for that arrival so the click lands with the pointer.
+// Shared pointer rendering for the workspace page and the preview overlay.
+// Motion uses page coordinates; viewport mapping keeps the pointer legible
+// at a constant display size when the page is scaled down.
+
+export type AgentCursorFeedback = {
+  kind: "click" | "scroll" | "type";
+  x: number;
+  y: number;
+  direction?: string;
+};
+
+const AGENT_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="28" viewBox="0 0 24 28" fill="none">
+  <defs><linearGradient id="wuu-cursor-fill" x1="5" y1="3" x2="18" y2="25" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset="1" stop-color="#dceaff"/></linearGradient></defs>
+  <path d="M3 2.5 4.1 21.1Q4.15 22.1 4.9 21.4L9.3 17.3 13.2 25Q13.5 25.6 14.1 25.3L16.5 24.1Q17.1 23.8 16.8 23.2L12.9 15.8 19.1 15.3Q20.2 15.2 19.4 14.4Z" fill="url(#wuu-cursor-fill)" stroke="#284d85" stroke-width="1.35" stroke-linejoin="round"/>
+  <path d="m5.6 7.2.55 10.8 3.75-3.4 5.5-.5" stroke="#79afff" stroke-opacity=".7" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
 
 export const CURSOR_SCOOT_DISTANCE = 196;
 export const CURSOR_ARRIVE_CAP_MS = 700;
 
-const TIP_X = 1.2;
-const TIP_Y = 1.1;
+const TIP_X = 3;
+const TIP_Y = 2.5;
 
-export function agentCursorCommandScript(x: number, y: number, press: boolean): string {
+export function agentCursorCommandScript(x: number, y: number): string {
   const px = Math.round(x);
   const py = Math.round(y);
   return `(() => {
     const runtime = window.__wuuAgentCursor || (window.__wuuAgentCursor = (${cursorRuntimeSource})());
-    return runtime.moveTo(${px}, ${py}, ${press ? "true" : "false"});
+    return runtime.moveTo(${px}, ${py});
   })()`;
 }
 
@@ -36,6 +46,10 @@ export const cursorRuntimeSource = `function () {
   var TIP_X = ${TIP_X};
   var TIP_Y = ${TIP_Y};
   var host = null;
+  var effect = null;
+  var effectAnimation = null;
+  var viewport = { x: 0, y: 0, scale: 1 };
+  var lastPose = null;
   var point = null;
   var travel = null;
   var pressing = 0;
@@ -55,22 +69,23 @@ export const cursorRuntimeSource = `function () {
     host = document.createElement("div");
     host.id = "__wuu_agent_cursor";
     host.setAttribute("aria-hidden", "true");
-    host.style.cssText = "position:fixed;left:0;top:0;width:22px;height:22px;pointer-events:none;z-index:2147483647;transform-origin:" + TIP_X + "px " + TIP_Y + "px;filter:drop-shadow(0 1px 1px rgba(15,23,42,.38)) drop-shadow(0 0 7px rgba(37,99,235,.62));";
-    host.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><path d="M1.2 1.1 L1.4 15.6 L6.2 11.2 L9.4 18.4 L12.1 17.1 L8.8 10.2 L15.2 9.6 Z" fill="#f8fbff" stroke="#2563eb" stroke-width="1.15" stroke-linejoin="round"/></svg>';
+    host.style.cssText = "position:fixed;left:0;top:0;width:24px;height:28px;pointer-events:none;z-index:2147483647;transform-origin:" + TIP_X + "px " + TIP_Y + "px;filter:drop-shadow(0 1px 1px rgba(17,38,68,.32)) drop-shadow(0 0 5px rgba(70,136,255,.5));";
+    host.innerHTML = ${JSON.stringify(AGENT_CURSOR_SVG)};
     (document.documentElement || document.body).appendChild(host);
     return host;
   }
 
   function paint(pose) {
+    lastPose = pose;
     var node = ensureHost();
     var pressScale = pose.press > 0 ? (1 - pose.press * 0.16) : 1;
     node.style.opacity = String(pose.opacity);
-    node.style.transform = "translate(" + (pose.x - TIP_X) + "px, " + (pose.y - TIP_Y) + "px) rotate(" + pose.rotation + "deg) scale(" + (pose.stretch * pressScale) + ", " + (pose.squash * pressScale) + ")";
+    node.style.transform = "translate(" + (viewport.x + pose.x * viewport.scale - TIP_X) + "px, " + (viewport.y + pose.y * viewport.scale - TIP_Y) + "px) rotate(" + pose.rotation + "deg) scale(" + (pose.stretch * pressScale) + ", " + (pose.squash * pressScale) + ")";
   }
 
   function anchor() {
-    var width = window.innerWidth || 800;
-    var height = window.innerHeight || 600;
+    var width = (window.innerWidth - viewport.x * 2) / viewport.scale;
+    var height = (window.innerHeight - viewport.y * 2) / viewport.scale;
     return { x: Math.round(width * 0.58), y: Math.round(height * 0.55) };
   }
 
@@ -175,25 +190,12 @@ export const cursorRuntimeSource = `function () {
     if (raf) window.cancelAnimationFrame(raf);
     raf = 0;
     var move = travel.move;
-    var shouldPress = travel.press;
     window.clearTimeout(arrivalTimer);
     arrivalTimer = 0;
     travel = null;
     point = { x: move.end.x, y: move.end.y };
     restPose = poseAt(move, 1, 1);
     restingAt = now();
-    if (shouldPress) {
-      pressing = 1;
-      restPose.press = pressing;
-      window.clearTimeout(pressTimer);
-      pressTimer = window.setTimeout(function () {
-        pressing = 0;
-        if (!travel && host && restPose) {
-          restPose.press = 0;
-          paint(restPose);
-        }
-      }, 90);
-    }
     paint(restPose);
     resolve();
     if (!reduced) raf = window.requestAnimationFrame(frame);
@@ -238,7 +240,7 @@ export const cursorRuntimeSource = `function () {
   }
 
   return {
-    moveTo: function (x, y, press) {
+    moveTo: function (x, y) {
       cancelTravel();
       window.clearTimeout(pressTimer);
       pressing = 0;
@@ -249,7 +251,6 @@ export const cursorRuntimeSource = `function () {
       return new Promise(function (resolve) {
         travel = {
           move: move,
-          press: press === true,
           started: now(),
           baseOpacity: point ? 1 : 0,
           resolve: resolve
@@ -271,10 +272,53 @@ export const cursorRuntimeSource = `function () {
         }, CAP);
       });
     },
+    setViewport: function (next) {
+      viewport = next;
+      if (lastPose && host) paint(lastPose);
+      if (effect) { effect.remove(); effect = null; }
+    },
+    feedback: function (hint) {
+      if (!point || !host) return;
+      if (effectAnimation) effectAnimation.cancel();
+      if (effect) effect.remove();
+      effect = document.createElement("div");
+      effect.setAttribute("aria-hidden", "true");
+      var x = viewport.x + hint.x * viewport.scale;
+      var y = viewport.y + hint.y * viewport.scale;
+      effect.style.cssText = "position:fixed;left:" + x + "px;top:" + y + "px;pointer-events:none;z-index:2147483646;color:#568ff0;filter:drop-shadow(0 0 2px #fff);";
+      var transform = "translate(-50%,-50%)";
+      if (hint.kind === "click") {
+        effect.style.cssText += "width:28px;height:28px;border:2px solid currentColor;border-radius:50%;";
+        if (!reduced && restPose) {
+          pressing = 1;
+          paint(Object.assign({}, restPose, { press: 1 }));
+          window.clearTimeout(pressTimer);
+          pressTimer = window.setTimeout(function () { pressing = 0; }, 90);
+        }
+      } else if (hint.kind === "type") {
+        effect.style.cssText += "width:3px;height:18px;background:currentColor;border-radius:2px;";
+        effect.style.left = (x + 13) + "px";
+      } else {
+        var angle = { down: 0, left: 90, up: 180, right: 270 }[hint.direction] || 0;
+        transform += " rotate(" + angle + "deg)";
+        effect.style.left = (x + 15) + "px";
+        effect.innerHTML = '<svg width="14" height="18" viewBox="0 0 14 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 5 4 4 4-4M3 10l4 4 4-4"/></svg>';
+      }
+      document.documentElement.appendChild(effect);
+      effectAnimation = effect.animate([
+        { opacity: .85, transform: transform + (reduced ? "" : " scale(.65)") },
+        { opacity: 0, transform: transform + (reduced ? "" : " scale(1.15)") }
+      ], { duration: 420, easing: "ease-out", fill: "forwards" });
+    },
     hide: function () {
       cancelTravel();
       window.clearTimeout(pressTimer);
       restPose = null;
+      lastPose = null;
+      if (effectAnimation) effectAnimation.cancel();
+      effectAnimation = null;
+      if (effect) effect.remove();
+      effect = null;
       point = null;
       pressing = 0;
       if (host && host.parentNode) host.parentNode.removeChild(host);

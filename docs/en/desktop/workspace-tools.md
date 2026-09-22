@@ -50,6 +50,8 @@ Open **Browser** or enter `/browser` to view a page in the workspace panel besid
 
 Desktop browser automation is available by default. While the agent is browsing, the page stays in a floating card inside the conversation column. Dragging the card snaps it to a corner of that column, clear of the composer. The page keeps its layout size and is zoomed so the whole page fits in the card. Dragging an edge or corner changes the card, and the zoom follows. Pointer events on the card move or resize it; they do not click or scroll the page. The card does not paint the page scrollbar. Scrolling and taking control happen after the page is docked in the panel. The side panel does not open or close because of it. Opening the browser yourself, or expanding the card, docks that same page in the panel; the address bar, back, forward, and reload all drive it. Clicking the page, editing the address, or using the navigation buttons takes control, and the page stays in the panel. **Take control of browser** switches to manual control, **Return browser control to Agent** gives control back while keeping the page visible, and **Stop browser activity** stops that activity. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
 
+The floating preview and workspace panel share an animated pointer. It stays legible when the page is scaled, moves to the target before input, and shows click, typing, and scroll feedback. Taking control or stopping the activity clears it. Reduced-motion settings disable travel and idle movement.
+
 To route only the embedded browser through a proxy, set `WUU_BROWSER_PROXY` before launching the desktop. For a source build:
 
 ```bash

@@ -1,5 +1,6 @@
 import { BrowserWindow, WebContentsView, type Rectangle } from "electron";
 import type { ActivitySession } from "../shared/protocol";
+import { cursorRuntimeSource } from "./agentCursor";
 import { appShellWebPreferences } from "./appShellGuards";
 import {
   browserPiPAnchors,
@@ -103,7 +104,7 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setBounds(bounds: Rectangle): void;
   setParentWindow?(parent: unknown): void;
   on(
-    event: "close" | "closed" | "moved" | "resized" | "ready-to-show",
+    event: "close" | "closed" | "moved" | "resize" | "ready-to-show",
     listener: (...args: unknown[]) => void,
   ): void;
   destroy(): void;
@@ -222,7 +223,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.deps.sink.onEvent({ event: "geometry", x: b.x, y: b.y, width: b.width, height: b.height });
     };
     win.on("moved", reportGeometry);
-    win.on("resized", () => {
+    win.on("resize", () => {
       reportGeometry();
       this.refit();
     });
@@ -245,7 +246,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         if (this.matches(workdir, tabID)) this.deps.sink.onGone();
       }),
       this.deps.host.addInteractionListener((workdir, tabID, hint) => {
-        if (this.matches(workdir, tabID)) this.forwardInteraction(hint);
+        if (this.matches(workdir, tabID)) return this.forwardInteraction(hint);
       }),
       this.deps.host.addNavigateListener((workdir, tabID, url) => {
         if (!this.matches(workdir, tabID)) return;
@@ -344,7 +345,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     if (interaction.revision <= this.lastInteractionRevision) return;
     this.lastInteractionRevision = interaction.revision;
     this.forwardInteraction({
-      kind: interaction.kind as BrowserInteractionHint["kind"],
+      kind: interaction.kind as "click" | "type" | "scroll",
       x: interaction.x,
       y: interaction.y,
       direction: interaction.direction,
@@ -443,6 +444,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     this.overlay?.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
     if (!this.mounted) return;
     const fit = this.contentRect();
+    this.execute(`window.wuuPipViewport?.(${JSON.stringify(fit)})`);
     this.deps.host.relayoutMountedTab(
       this.deps.workdir,
       this.deps.tabID,
@@ -642,6 +644,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   // Overlay pushes.
   // -------------------------------------------------------------------------
   private syncOverlayMode(): void {
+    this.execute(`window.wuuPipViewport?.(${JSON.stringify(this.contentRect())})`);
     this.execute(`window.wuuPipMount?.(${JSON.stringify({ mounted: this.mounted })})`);
   }
 
@@ -660,24 +663,16 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     this.execute(`window.wuuPipHost?.(${JSON.stringify({ label })})`);
   }
 
-  private forwardInteraction(hint: BrowserInteractionHint): void {
-    if (!this.mounted) return;
-    const fit = this.contentRect();
-    this.execute(
-      `window.wuuPipInteract?.(${JSON.stringify({
-        kind: hint.kind,
-        x: fit.x + hint.x * fit.scale,
-        y: fit.y + hint.y * fit.scale,
-        direction: hint.direction ?? "",
-      })})`,
-    );
+  private forwardInteraction(hint: BrowserInteractionHint): Promise<unknown> | undefined {
+    if (hint.kind !== "clear" && (!this.mounted || !this.win?.isVisible())) return;
+    return this.execute(`window.wuuPipInteract?.(${JSON.stringify(hint)})`);
   }
 
-  private execute(code: string): void {
+  private execute(code: string): Promise<unknown> | undefined {
     const overlay = this.overlay;
     const win = this.win;
     if (!overlay || !win || win.isDestroyed()) return;
-    void overlay.webContents.executeJavaScript(code, true).catch(() => undefined);
+    return overlay.webContents.executeJavaScript(code, true).catch(() => undefined);
   }
 
   private createElectronWindow(bounds: Rectangle): BrowserPiPWindowHandle {
@@ -799,16 +794,6 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(28,28,30,.55);backdrop-filter:blur(10px)}
 #expand:hover,#close:hover{background:rgba(28,28,30,.72)}
 #close:hover{background:rgba(215,0,21,.82)}
-#ptr{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
-  background:rgba(255,255,255,.95);box-shadow:0 0 0 2px rgba(0,0,0,.45);
-  opacity:0;pointer-events:none;transition:transform .14s ease-out,opacity .2s ease}
-#ptr.on{opacity:1}
-#ring{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;
-  border:2px solid rgba(255,255,255,.9);opacity:0;pointer-events:none}
-#caret{position:absolute;width:2px;height:14px;margin:-7px 0 0 -1px;background:#fff;
-  box-shadow:0 0 0 1px rgba(0,0,0,.4);opacity:0;pointer-events:none}
-#scroll{position:absolute;font-size:14px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6);
-  opacity:0;pointer-events:none;transform:translate(-50%,-50%)}
 [data-resize]{position:absolute;z-index:4;touch-action:none;background:rgba(0,0,0,0.004)}
 [data-resize="n"],[data-resize="s"]{left:18px;right:18px;height:12px;cursor:ns-resize}
 [data-resize="n"]{top:0}[data-resize="s"]{bottom:0}
@@ -834,7 +819,6 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2 2 10"/></svg>
     </button>
   </div>
-  <div id="ring"></div><div id="ptr"></div><div id="caret"></div><div id="scroll"></div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
   <div data-resize="w"></div><div data-resize="e"></div>
   <div data-resize="sw"></div><div data-resize="s"></div><div data-resize="se"></div>
@@ -842,12 +826,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 <script>
 (function(){
   var ph=document.getElementById("ph");
-  var ptr=document.getElementById("ptr");
-  var ring=document.getElementById("ring");
-  var caret=document.getElementById("caret");
-  var scrollEl=document.getElementById("scroll");
+  var cursor=(${cursorRuntimeSource})();
   var root=document.getElementById("root");
-  var hideTimer=0;
   var label=${label};
   var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,resizing=false,resizeEdge="",last=null,velocity={x:0,y:0};
   document.getElementById("close").addEventListener("click",function(e){
@@ -858,7 +838,6 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     e.stopPropagation();
     window.location.href="wuu-pip://expand";
   });
-  function place(el,x,y){el.style.transform="translate("+x+"px,"+y+"px)";}
   function postDrag(phase,x,y,vx,vy){
     postUrl("wuu-pip://drag?phase="+phase+"&x="+x+"&y="+y+"&vx="+vx+"&vy="+vy);
   }
@@ -925,35 +904,19 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   root.addEventListener("pointercancel",endDrag);
   window.wuuPipMount=function(m){
     ph.classList.toggle("gone",!!(m&&m.mounted));
+    if(!m||!m.mounted)cursor.hide();
   };
   window.wuuPipHost=function(h){
     label=(h&&h.label)||label;
   };
-  window.wuuPipState=function(){};
+  window.wuuPipViewport=function(viewport){cursor.setViewport(viewport);};
+  window.wuuPipState=function(state){
+    if(state.controller!=="agent"||state.state==="stopped")cursor.hide();
+  };
   window.wuuPipInteract=function(it){
-    var x=it.x||0,y=it.y||0;
-    ptr.style.transition="transform .14s ease-out,opacity .2s ease";
-    place(ptr,x,y);
-    ptr.style.opacity="1";
-    clearTimeout(hideTimer);
-    hideTimer=setTimeout(function(){ptr.style.opacity="0";},1200);
-    if(it.kind==="click"){
-      place(ring,x,y);
-      ring.style.opacity="0";
-      ring.animate([{opacity:.9,transform:"translate("+x+"px,"+y+"px) scale(.4)"},
-        {opacity:0,transform:"translate("+x+"px,"+y+"px) scale(1.4)"}],
-        {duration:380,easing:"ease-out"});
-    }else if(it.kind==="type"){
-      place(caret,x,y);
-      caret.animate([{opacity:1},{opacity:1}],{duration:600});
-      caret.animate([{opacity:1},{opacity:0}],{duration:600,delay:600});
-    }else if(it.kind==="scroll"){
-      var ch={up:"↑",down:"↓",left:"←",right:"→"}[it.direction]||"↕";
-      scrollEl.textContent=ch;
-      scrollEl.animate([{opacity:.95,transform:"translate(-50%,-50%) translate("+x+"px,"+y+"px)"},
-        {opacity:0,transform:"translate(-50%,-50%) translate("+x+"px,"+(y+(it.direction==="up"?10:-10))+"px)"}],
-        {duration:520,easing:"ease-out"});
-    }
+    if(it.kind==="clear"){cursor.hide();return;}
+    if(it.kind==="move")return cursor.moveTo(it.x,it.y);
+    cursor.feedback(it);
   };
 })();
 </script>
