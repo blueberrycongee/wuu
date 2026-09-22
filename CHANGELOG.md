@@ -10,6 +10,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
+  Claude Opus 5.5, with current limits, pricing, and reasoning controls.
+  Claude Fable 5.1 and Opus 5.5 use always-on adaptive thinking, preserve
+  readable progress, and recover from invalidated thinking after context
+  changes. Tool-closing requests use their supported automatic tool choice.
+  New CLI configurations start with GPT-6 Sol and Claude Opus 5.5.
+
 - SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
   documented 500k context window and low/medium/high/xhigh reasoning efforts.
   New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and
@@ -49,6 +56,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   sent. Closing the panel keeps the page in the hidden host.
 
 ### Fixed
+
+- Conversation spacing accounts for the docked workspace panel as it opens or
+  resizes, keeping the scrollbar next to the message flow.
 
 - Expanding a browser preview opens its exact tab in the owning session. Missing
   previews report an error instead of displaying a previous session’s page.

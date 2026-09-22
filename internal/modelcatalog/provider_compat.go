@@ -27,6 +27,15 @@ func isKimiCodingProviderID(providerID string) bool {
 // user headers and model options always win over these defaults.
 func applyProviderCompatibilityDefaults(providerID string, provider config.ProviderConfig, modelIDs ...string) config.ProviderConfig {
 	switch {
+	case providerID == "openai":
+		if strings.TrimSpace(provider.WireAPI) == "" {
+			for _, id := range append([]string{provider.Model}, modelIDs...) {
+				switch APIModel(provider, id) {
+				case "gpt-6-sol", "gpt-6-luna":
+					provider.WireAPI = "responses"
+				}
+			}
+		}
 	case isKimiCodingProviderID(providerID):
 		provider.Headers = mergeHeaders(
 			map[string]string{"User-Agent": "KimiCLI/1.5"},
@@ -165,6 +174,9 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 		switch normalizeID(provider.ID) {
 		case "openai":
 			applyOpenAIGPT6AstraCatalog(provider)
+			applyOpenAIGPT6SolLunaCatalog(provider)
+		case "anthropic":
+			applyAnthropicLatestCatalog(provider)
 		case "deepseek":
 			applyDeepSeekOfficialCatalog(provider)
 		case kimiForCodingProviderID, kimiCodePlanCNProviderID, kimiCodePlanGlobalProviderID:
@@ -408,6 +420,75 @@ func applyOpenAIGPT6AstraCatalog(provider *Provider) {
 		SupportedEfforts: append([]string(nil), efforts...),
 		DefaultVariant:   "low",
 	})
+}
+
+// https://developers.openai.com/api/docs/models/gpt-6-sol
+// https://developers.openai.com/api/docs/models/gpt-6-luna
+// https://developers.openai.com/api/docs/pricing
+func applyOpenAIGPT6SolLunaCatalog(provider *Provider) {
+	for _, spec := range []struct {
+		id, name, family string
+		input, output    float64
+	}{
+		{"gpt-6-sol", "GPT-6 Sol", "gpt-sol", 2, 10},
+		{"gpt-6-luna", "GPT-6 Luna", "gpt-luna", 0.1, 0.5},
+	} {
+		for _, fast := range []bool{false, true} {
+			input, output := spec.input, spec.output
+			model := Model{
+				ID: spec.id, Name: spec.name, Family: spec.family,
+				Reasoning:        true,
+				ReasoningOptions: officialEffortOptions(false, "none", "low", "medium", "high", "xhigh", "max"),
+				Attachment:       officialBool(true), ToolCall: officialBool(true),
+				StructuredOutput: officialBool(true), Temperature: officialBool(false),
+				Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+				Limit:            &Limit{Context: 1_050_000, Input: 922_000, Output: 128_000},
+				SupportedEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
+				DefaultVariant:   "medium",
+			}
+			if fast {
+				model.ID += "-fast"
+				model.Name += " Fast"
+				model.APIID = spec.id
+				model.Options = map[string]any{"serviceTier": "priority"}
+				input *= 2
+				output *= 2
+			}
+			model.Cost = map[string]any{
+				"input": input, "output": output, "cache_read": input / 10, "cache_write": input * 1.25,
+				"tiers": []any{map[string]any{
+					"input": input * 2, "output": output * 1.5, "cache_read": input / 5, "cache_write": input * 2.5,
+					"tier": map[string]any{"size": 272000, "type": "context"},
+				}},
+			}
+			upsertOfficialModel(provider, model)
+		}
+	}
+}
+
+// https://platform.claude.com/docs/en/models/opus-5-5/overview
+// https://platform.claude.com/docs/en/models/fable-5-1/overview
+func applyAnthropicLatestCatalog(provider *Provider) {
+	for _, spec := range []struct {
+		id, name, family, date, effort string
+		input, output, cacheRead       float64
+	}{
+		{"claude-opus-5-5", "Claude Opus 5.5", "claude-opus", "2026-09-22", "medium", 4, 20, 0.2},
+		{"claude-fable-5-1", "Claude Fable 5.1", "claude-fable", "2026-09-01", "high", 10, 50, 0.25},
+	} {
+		upsertOfficialModel(provider, Model{
+			ID: spec.id, Name: spec.name, Family: spec.family, ReleaseDate: spec.date,
+			Reasoning:        true,
+			ReasoningOptions: officialEffortOptions(false, "low", "medium", "high", "xhigh", "max"),
+			Attachment:       officialBool(true), ToolCall: officialBool(true),
+			StructuredOutput: officialBool(true), Temperature: officialBool(false),
+			Modalities:       &Modalities{Input: []string{"text", "image", "pdf"}, Output: []string{"text"}},
+			Limit:            &Limit{Context: 1_000_000, Output: 128_000},
+			SupportedEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+			DefaultVariant:   spec.effort,
+			Cost:             map[string]any{"input": spec.input, "output": spec.output, "cache_read": spec.cacheRead, "cache_write": spec.input * 1.25},
+		})
+	}
 }
 
 func upsertOfficialModel(provider *Provider, correction Model) {

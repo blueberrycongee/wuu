@@ -91,6 +91,8 @@ func exactContextWindowOverride(lower, stripped string) (int, bool) {
 }
 
 var exactContextWindowOverrides = []contextWindowEntry{
+	{"claude-opus-5-5", 1_000_000},
+	{"claude-fable-5-1", 1_000_000},
 	// MiniMax official docs list MiniMax-M3 at 1M context and M2-series
 	// text models at 204,800. Keep these exact overrides ahead of the
 	// embedded catalog because older catalog snapshots have reported

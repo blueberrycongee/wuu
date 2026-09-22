@@ -16,6 +16,14 @@
 
 输入框中的选择属于当前对话；第一条消息发出前，它属于当前草稿。设置中还可以保存工作区默认值，切换一次对话的模型不会自动替换这些默认值。
 
+## 当前 OpenAI 和 Anthropic 模型
+
+目录已包含 `gpt-6-sol`、`gpt-6-luna`、`claude-opus-5-5` 和 `claude-fable-5-1`。已有会话和工作区选择保持不变，需要使用时主动切换模型。
+
+GPT-6 Sol 和 Luna 支持 `none` 至 `max` 推理档位，默认 `medium`。Fast 条目使用同一个模型，通过优先处理提供不同速度和价格。对这两个模型，官方 OpenAI 连接未指定协议时，Wuu 默认使用 Responses。如果明确选择了 Chat Completions，使用推理和工具时请切换为 Responses；Chat Completions 仅在 `none` 档位支持它们的工具调用。自定义端点保留原有协议。详见官方 [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) 和 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) 规格。
+
+Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 `none` 选择映射为 `low`，两者默认档位分别为 `medium` 和 `high`。Wuu 请求可读的思考摘要，并允许 API 丢弃因上下文变更而失效的思考块，同时保留有效的签名块。这两个模型不接受强制工具选择，因此 Wuu 通过指令表达收尾工具调用要求，使用自动工具选择；这不保证模型一定调用工具。详见官方 [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) 和 [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) 迁移指南。
+
 ## 使用已有订阅
 
 | 连接方式 | 设置方法 |
@@ -36,7 +44,7 @@ wuu init
 
 文件默认位于 `~/.wuu/config.json`；设置 `WUU_HOME` 后为 `$WUU_HOME/config.json`。已有文件时直接编辑，`wuu init --force` 会覆盖它。
 
-在 `providers` 下检查 `base_url`、`model` 和 `api_key_env`。生成的配置初始选择 `openai`；如果账号需要使用其他模型，请替换示例模型。运行前设置指定的环境变量：
+在 `providers` 下检查 `base_url`、`model` 和 `api_key_env`。生成的配置初始选择 `openai`，通过 Responses 使用 GPT-6 Sol；Anthropic 条目使用 Claude Opus 5.5。如果账号需要使用其他模型，请替换示例模型。运行前设置指定的环境变量：
 
 ```bash
 export OPENAI_API_KEY="你的 API key"
