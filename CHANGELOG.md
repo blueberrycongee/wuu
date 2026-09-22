@@ -33,6 +33,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The browser preview card does not paint page scrollbars. The card can be
+  moved and resized, but not scrolled or taken over. Scrollbars return when
+  the page is docked in the workspace panel.
+
 - The workspace browser and the agent page are the same tab. Opening the
   browser shows that page, and the address bar, back, forward, and reload
   drive it. A pointer travels to the target before a click or scroll is

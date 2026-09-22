@@ -87,7 +87,10 @@ export function pipContainRect(
 // and is zoomed down so that whole viewport fits in the card. A
 // transparent overlay view above it draws the chrome strip, the interaction
 // effects, and the frosted placeholder, and swallows pointer input so the
-// preview can never steal focus or become an input target.
+// preview can never steal focus or become an input target. The card is
+// watch-only: move and resize it, or expand it into the panel to take the
+// page over. Scrollbar paint is suppressed on the page while this card owns
+// the view.
 // ---------------------------------------------------------------------------
 
 export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
@@ -760,7 +763,8 @@ export function browserPiPOverlayHTML(initialLabel: string): string {
 <html><head><meta charset="utf-8" />
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;overflow:hidden;
+::-webkit-scrollbar{width:0;height:0;display:none}
+html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(0,0,0,0.004);
   font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
   color:#fff;user-select:none}

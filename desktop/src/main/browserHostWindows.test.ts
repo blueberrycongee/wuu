@@ -18,6 +18,7 @@ import {
   interactableNodesFromSnapshot,
   keyChord,
   keyDispatch,
+  spectatorScrollbarCSS,
   tabKey,
   valueFor,
   wheelDeltas,
@@ -59,6 +60,10 @@ class FakeView implements BrowserViewHandle {
   backgroundThrottling = true;
   readonly backgroundThrottlingChanges: boolean[] = [];
   zoomFactor = 1;
+  scriptResult: unknown = undefined;
+  cssSerial = 0;
+  readonly insertedCSS = new Map<string, string>();
+  readonly removedCSS: string[] = [];
   readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   readonly scripts: string[] = [];
   back = false;
@@ -124,6 +129,16 @@ class FakeView implements BrowserViewHandle {
     isLoading: () => this.loading,
     executeJavaScript: async (code: string) => {
       this.scripts.push(code);
+      return this.scriptResult;
+    },
+    insertCSS: async (css: string) => {
+      const key = `css-${++this.cssSerial}`;
+      this.insertedCSS.set(key, css);
+      return key;
+    },
+    removeInsertedCSS: async (key: string) => {
+      this.removedCSS.push(key);
+      this.insertedCSS.delete(key);
     },
     setZoomFactor: (factor: number) => {
       this.zoomFactor = factor;
@@ -254,6 +269,10 @@ function serverRequest(
     kind: "server-request",
     message: { id, method, params },
   };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function openTab(harness: Harness, workdir: string, tabID: string): Promise<void> {
@@ -954,6 +973,35 @@ describe("BrowserHostCoordinator preview surface accessors", () => {
     expect(view.zoomFactor).toBe(1);
     expect(pip.removed).toContain(view);
     expect(view.boundsSet).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
+  });
+
+  it("stops painting scrollbars on the watch-only card and restores them in the panel", async () => {
+    expect(spectatorScrollbarCSS(true)).toContain("scrollbar-width: none");
+    expect(spectatorScrollbarCSS(false)).not.toMatch(/width:\s*0/);
+    expect(spectatorScrollbarCSS(false)).toContain("scrollbar-color: transparent transparent");
+
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const pip = new FakeWindow();
+    harness.coordinator.mountTabOnWindow("/repo", "t1", pip, { x: 0, y: 0, width: 260, height: 163 }, 0.203);
+    await flushMicrotasks();
+    expect([...view.insertedCSS.values()][0]).toContain("scrollbar-width: none");
+
+    view.scriptResult = false;
+    harness.coordinator.mountTabOnWindow("/repo", "t1", pip, { x: 0, y: 0, width: 260, height: 163 }, 0.203);
+    await flushMicrotasks();
+    const classic = [...view.insertedCSS.values()];
+    expect(classic).toHaveLength(1);
+    expect(classic[0]).not.toMatch(/width:\s*0/);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }, "vis-scroll"),
+    );
+    await flushMicrotasks();
+    expect(view.insertedCSS.size).toBe(0);
+    expect(view.zoomFactor).toBe(1);
   });
 
   it("normalizes zoom when a takeover adopts a PiP-mounted tab, and refuses to yank it back", async () => {

@@ -70,6 +70,10 @@ export interface BrowserWebContentsHandle {
   stop(): void;
   isLoading(): boolean;
   executeJavaScript(code: string): Promise<unknown>;
+  // User-origin CSS outranks page styles. The preview card uses it to stop
+  // scrollbar paint without giving the page a way to draw the bar back.
+  insertCSS(css: string, options?: { cssOrigin?: "user" | "author" }): Promise<string>;
+  removeInsertedCSS(key: string): Promise<void>;
   // UI zoom scales rendering only. CDP input coordinates and the layout
   // viewport are CSS-px based and unaffected, so the PiP can shrink the view
   // for display without disturbing the agent's coordinate space.
@@ -168,6 +172,10 @@ type TabEntry = {
   loading: boolean;
   loadError?: string;
   activeOperations: number;
+  // Bumps cancel an in-flight scrollbar stylesheet install. The key is the
+  // sheet currently hiding scrollbar paint while this tab is on the preview card.
+  spectatorScrollbarEpoch: number;
+  spectatorScrollbarKey?: string;
 };
 
 type BrowserRendererSink = {
@@ -357,6 +365,10 @@ export class BrowserHostCoordinator {
     entry.view.webContents.setZoomFactor(zoom);
     entry.view.setBounds(rect);
     this.applyEntryActivity(entry);
+    // The card is watch-only. Scrollbar paint reads as a control, and the
+    // card cannot scroll or take the page over. The sheet comes off when the
+    // view leaves the card.
+    this.applySpectatorScrollbars(entry);
     if (wasPanel) this.rendererSink?.presented();
     return previous;
   }
@@ -622,6 +634,7 @@ export class BrowserHostCoordinator {
         userInterrupted: false,
         loading: false,
         activeOperations: 0,
+        spectatorScrollbarEpoch: 0,
       };
       this.applyEntryActivity(entry);
       this.tabs.set(key, entry);
@@ -1142,10 +1155,56 @@ export class BrowserHostCoordinator {
     if (changed) {
       // A parent change is an ownership handoff: the new owner decides the
       // display scale. Normalizing here means a visibility takeover never
-      // inherits the PiP's shrink-to-fit zoom.
+      // inherits the PiP's shrink-to-fit zoom or the card's hidden scrollbars.
       entry.view.webContents.setZoomFactor(1);
+      this.clearSpectatorScrollbars(entry);
       this.emitTabReparented(entry);
     }
+  }
+
+  private applySpectatorScrollbars(entry: TabEntry): void {
+    const epoch = ++entry.spectatorScrollbarEpoch;
+    void this.installSpectatorScrollbars(entry, epoch);
+  }
+
+  private async installSpectatorScrollbars(entry: TabEntry, epoch: number): Promise<void> {
+    const contents = entry.view.webContents;
+    if (contents.isDestroyed() || entry.spectatorScrollbarEpoch !== epoch) return;
+    let overlay = true;
+    try {
+      overlay = await contents.executeJavaScript(SPECTATOR_SCROLLBAR_PROBE) !== false;
+    } catch {
+      overlay = true;
+    }
+    if (contents.isDestroyed() || entry.spectatorScrollbarEpoch !== epoch) return;
+    if (!entry.presented || entry.inPanel) return;
+    let key = "";
+    try {
+      key = await contents.insertCSS(spectatorScrollbarCSS(overlay), { cssOrigin: "user" });
+    } catch {
+      return;
+    }
+    if (
+      contents.isDestroyed()
+      || entry.spectatorScrollbarEpoch !== epoch
+      || !entry.presented
+      || entry.inPanel
+    ) {
+      if (!contents.isDestroyed() && key) void contents.removeInsertedCSS(key).catch(() => undefined);
+      return;
+    }
+    const previous = entry.spectatorScrollbarKey;
+    entry.spectatorScrollbarKey = key;
+    if (previous && previous !== key) void contents.removeInsertedCSS(previous).catch(() => undefined);
+  }
+
+  private clearSpectatorScrollbars(entry: TabEntry): void {
+    entry.spectatorScrollbarEpoch += 1;
+    const key = entry.spectatorScrollbarKey;
+    entry.spectatorScrollbarKey = undefined;
+    const contents = entry.view.webContents;
+    if (!key || contents.isDestroyed()) return;
+    void contents.removeInsertedCSS(key).catch(() => undefined);
   }
 
   private destroyEntry(entry: TabEntry): void {
@@ -1200,6 +1259,45 @@ export class BrowserHostCoordinator {
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested directly).
 // ---------------------------------------------------------------------------
+
+// The preview card is watch-only: it can be moved and resized, and it cannot
+// scroll or take over the page. Scrollbar paint would read as a control.
+// Overlay scrollbars do not occupy layout, so they are removed. Classic
+// scrollbars do occupy a gutter; that gutter stays and is left unpainted so
+// the agent's coordinates do not move. The panel paints scrollbars again.
+export function spectatorScrollbarCSS(overlayScrollbars: boolean): string {
+  if (overlayScrollbars) {
+    return [
+      "html, body, * { scrollbar-width: none !important; }",
+      "::-webkit-scrollbar { width: 0 !important; height: 0 !important; background: transparent !important; }",
+    ].join("\n");
+  }
+  return [
+    "html, body, * { scrollbar-color: transparent transparent !important; }",
+    "::-webkit-scrollbar-thumb, ::-webkit-scrollbar-track, ::-webkit-scrollbar-track-piece, ::-webkit-scrollbar-corner, ::-webkit-scrollbar-button {",
+    "  background: transparent !important;",
+    "  background-color: transparent !important;",
+    "  border-color: transparent !important;",
+    "  box-shadow: none !important;",
+    "}",
+  ].join("\n");
+}
+
+// True when the OS draws overlay scrollbars. A forced overflow probe reads the
+// system mode even when the current page does not scroll yet.
+export const SPECTATOR_SCROLLBAR_PROBE = `(function(){
+  var parent=document.documentElement||document.body;
+  if(!parent) return true;
+  var probe=document.createElement("div");
+  probe.style.cssText="position:absolute;left:-9999px;top:0;width:120px;height:80px;overflow:scroll;visibility:hidden";
+  var inner=document.createElement("div");
+  inner.style.height="200px";
+  probe.appendChild(inner);
+  parent.appendChild(probe);
+  var overlay=probe.offsetWidth-probe.clientWidth<2;
+  probe.remove();
+  return overlay;
+})()`;
 
 // Composite (workdir, tab_id) key. The pool mints up to 3 cores, each of which
 // generates its own tab_ids independently, so a bare tab_id can collide across
