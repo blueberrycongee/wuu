@@ -49,6 +49,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Dark desktop surfaces use fine inset highlights for depth. Menus, dialogs,
+  and edge drawers retain black shadows to separate overlapping content.
+
 - Browser previews and the workspace panel share a clearer animated pointer,
   with consistent movement and input feedback at every preview size.
   Taking control clears the pointer and cancels pending input.
