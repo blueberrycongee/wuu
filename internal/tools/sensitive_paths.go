@@ -37,7 +37,7 @@ func sensitivePathReason(path string) (string, bool) {
 	}
 	lower := strings.ToLower(normalized)
 	parts := strings.Split(lower, "/")
-	for _, part := range parts {
+	for i, part := range parts {
 		part = strings.Trim(part, `"'`)
 		switch {
 		case part == ".git" || part == ".hg" || part == ".svn":
@@ -50,7 +50,7 @@ func sensitivePathReason(path string) (string, bool) {
 			return ".netrc credentials", true
 		case part == ".npmrc" || part == ".pypirc" || part == ".pgpass":
 			return "credential configuration", true
-		case (strings.Contains(part, "credential") || strings.Contains(part, "secret")) && !isSourceCredentialPath(part):
+		case (strings.Contains(part, "credential") || strings.Contains(part, "secret")) && (i != len(parts)-1 || !isSourceCredentialPath(part)):
 			return "credential or secret path", true
 		case part == "id_rsa" || part == "id_ed25519" || part == "id_ecdsa":
 			return "SSH private key", true

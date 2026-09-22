@@ -374,6 +374,8 @@ func TestSensitivePathReason_SourceFilesAreNotCredentialStores(t *testing.T) {
 		"aws/credentials",
 		"secret",
 		"credentials.go.json",
+		"credentials.go/token.json",
+		"secrets.ts/client.go",
 		".env",
 		"id_rsa",
 	}
@@ -404,17 +406,21 @@ func TestUnconfined_AllowsCredentialSourceButBlocksCredentialStore(t *testing.T)
 		t.Fatalf("credential source write = %q, err=%v", written, err)
 	}
 
-	_, err = kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "write_file",
-		Arguments: `{"path":"secrets.yaml","content":"token: value\n"}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "credential or secret path") {
-		t.Fatalf("expected credential-store refusal, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "explicit secret handling") || !strings.Contains(err.Error(), "including unconfined") {
-		t.Fatalf("refusal should say the guard holds in unconfined and must not ask for secret handling: %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, "secrets.yaml")); !os.IsNotExist(statErr) {
-		t.Fatalf("credential store should not be created, stat err=%v", statErr)
+	for _, path := range []string{"secrets.yaml", "credentials.go/token.json", "secrets.ts/client.go"} {
+		t.Run(path, func(t *testing.T) {
+			_, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name:      "write_file",
+				Arguments: `{"path":"` + path + `","content":"placeholder\n"}`,
+			})
+			if err == nil || !strings.Contains(err.Error(), "credential or secret path") {
+				t.Fatalf("expected credential-store refusal, got: %v", err)
+			}
+			if strings.Contains(err.Error(), "explicit secret handling") || !strings.Contains(err.Error(), "including unconfined") {
+				t.Fatalf("refusal should say the guard holds in unconfined and must not ask for secret handling: %v", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(root, path)); !os.IsNotExist(statErr) {
+				t.Fatalf("credential store should not be created, stat err=%v", statErr)
+			}
+		})
 	}
 }
