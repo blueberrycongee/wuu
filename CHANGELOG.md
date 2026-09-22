@@ -50,6 +50,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- File tools no longer treat source files such as `credentials.go` as credential
+  stores only because the name contains `credential` or `secret`. Credential
+  stores such as `credentials.json` and `secrets.yaml` stay protected in every
+  permission mode, and refusals no longer suggest chat approval or a mode
+  switch that cannot lift the guard.
+
 - Switching browser tabs keeps the floating preview window, including its
   chosen corner and size, instead of briefly closing and resetting it.
 

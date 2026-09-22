@@ -352,3 +352,69 @@ func TestUnconfinedSensitiveWriteBlockedAndReadRedacted(t *testing.T) {
 		t.Fatalf("unconfined read of .env should mask credential values: %s", result)
 	}
 }
+
+func TestSensitivePathReason_SourceFilesAreNotCredentialStores(t *testing.T) {
+	allowed := []string{
+		"internal/subscriptionquota/credentials.go",
+		"internal/example/credentials.go",
+		"src/auth/client_secret.ts",
+		"pkg/secrets.py",
+		"Credentials.GO",
+	}
+	for _, path := range allowed {
+		if reason, ok := sensitivePathReason(path); ok {
+			t.Fatalf("source file %q classified as sensitive (%s)", path, reason)
+		}
+	}
+
+	blocked := []string{
+		"credentials.json",
+		"secrets.yaml",
+		"config/client_secret.json",
+		"aws/credentials",
+		"secret",
+		"credentials.go.json",
+		".env",
+		"id_rsa",
+	}
+	for _, path := range blocked {
+		if _, ok := sensitivePathReason(path); !ok {
+			t.Fatalf("credential store %q should stay sensitive", path)
+		}
+	}
+}
+
+func TestUnconfined_AllowsCredentialSourceButBlocksCredentialStore(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	kit.SetBoundary(UnconfinedBoundary())
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"internal/example/credentials.go","content":"package example\n"}`,
+	})
+	if err != nil {
+		t.Fatalf("write_file should allow credential source: %v", err)
+	}
+	written, err := os.ReadFile(filepath.Join(root, "internal", "example", "credentials.go"))
+	if err != nil || string(written) != "package example\n" {
+		t.Fatalf("credential source write = %q, err=%v", written, err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"secrets.yaml","content":"token: value\n"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "credential or secret path") {
+		t.Fatalf("expected credential-store refusal, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "explicit secret handling") || !strings.Contains(err.Error(), "including unconfined") {
+		t.Fatalf("refusal should say the guard holds in unconfined and must not ask for secret handling: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "secrets.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("credential store should not be created, stat err=%v", statErr)
+	}
+}
