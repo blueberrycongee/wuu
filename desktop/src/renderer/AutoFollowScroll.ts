@@ -223,6 +223,7 @@ export function useAutoFollowScrollContainer({
     revealScrollbar?: boolean;
     animate?: boolean;
   }) => void;
+  restoreScrollPosition: (scrollTop: number, autoFollow: boolean) => void;
   pauseAutoFollow: () => void;
   scheduleScrollToBottom: () => void;
   handleScrollFrame: () => void;
@@ -336,6 +337,19 @@ export function useAutoFollowScrollContainer({
     },
     [cancelMotion, clearUserScrollAwayIntent, setAutoFollow],
   );
+
+  const restoreScrollPosition = useCallback((top: number, autoFollow: boolean): void => {
+    cancelMotion();
+    clearUserScrollAwayIntent();
+    pointerScrollGestureRef.current = undefined;
+    selectionPausedAutoFollowRef.current = false;
+    setAutoFollow(autoFollow);
+    const node = scrollRef.current;
+    if (!node) return;
+    node.scrollTop = autoFollow ? maxScrollTop(node) : clampScrollTop(node, top);
+    programmaticScrollTopRef.current = node.scrollTop;
+    lastScrollTopRef.current = node.scrollTop;
+  }, [cancelMotion, clearUserScrollAwayIntent, setAutoFollow]);
 
   const scheduleScrollToBottom = useCallback((): void => {
     const node = scrollRef.current;
@@ -582,13 +596,19 @@ export function useAutoFollowScrollContainer({
     };
   }, [cancelMotion, scrollToBottom]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) {
       return undefined;
     }
     selectionPausedAutoFollowRef.current = false;
     setAutoFollow(true);
     lastScrollTopRef.current = 0;
+    // Opening is a restore, not a later arrival. A zero-delay timer would
+    // overwrite a caller's saved reading position after the first paint.
+    if (openScrollDelayMs === 0) {
+      scrollToBottom({ force: true, revealScrollbar: true });
+      return;
+    }
     const timer = window.setTimeout(() => {
       scrollToBottom({ force: true, revealScrollbar: true });
     }, openScrollDelayMs);
@@ -612,9 +632,10 @@ export function useAutoFollowScrollContainer({
       autoFollowRef,
       scrollToBottom,
       pauseAutoFollow,
+      restoreScrollPosition,
       scheduleScrollToBottom,
       handleScrollFrame,
     }),
-    [handleScrollFrame, pauseAutoFollow, scheduleScrollToBottom, scrollToBottom],
+    [handleScrollFrame, pauseAutoFollow, restoreScrollPosition, scheduleScrollToBottom, scrollToBottom],
   );
 }

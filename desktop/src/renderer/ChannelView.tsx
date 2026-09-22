@@ -9,6 +9,8 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import { MAX_CACHED_CONVERSATION_PANES } from "./ConversationPaneCache";
+import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ManagedAgentWork } from "./ManagedAgentWork";
@@ -321,7 +323,15 @@ function taskBoardColumnKey(column: TaskBoardColumn):
 type ChannelDirectoryStateUpdater<T> =
   (update: T[] | ((current: T[]) => T[])) => void;
 
-export function ChannelView({ initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+export type ChannelConversationSnapshot = {
+  messages: ChannelMessage[];
+  scrollTop: number;
+  autoFollow: boolean;
+  readingAnchor?: ConversationReadingAnchor;
+};
+
+export function ChannelView({ conversationCache, initialized, section = "rooms", navigation, archivedRoomIDs = [], onSectionChange, selectedRoomID: controlledRoomID, onSelectRoom, onRoomRead, onOpenMemoryDirectory, onOpenSession, managedThreadsByAgentID = {}, lastViewedTurnByThreadID = {}, onOpenAgentConversation, onCreateAgent, onManageProviders, composerDraft, onComposerDraftChange, newRoomRequest, onNewRoomRequestHandled, editAgentRequestID, onEditAgentRequestHandled, editRoomRequestID, onEditRoomRequestHandled, directoryAgents, directoryRooms, onDirectoryAgentsChange, onDirectoryRoomsChange }: {
+  conversationCache?: Map<string, ChannelConversationSnapshot>;
   initialized?: InitializeResult;
   engines?: EngineInfo[];
   section?: ChannelSection;
@@ -443,7 +453,9 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       setInspectorClosing(false);
     }
   }, [inspectedSession, section, selectedRoomID]);
-  const [messagesByRoomID, setMessagesByRoomID] = useState<Record<string, ChannelMessage[]>>({});
+  const [messagesByRoomID, setMessagesByRoomID] = useState<Record<string, ChannelMessage[]>>(
+    () => Object.fromEntries([...(conversationCache ?? [])].map(([id, snapshot]) => [id, snapshot.messages])),
+  );
   const [coordinatorsByRoomID, setCoordinatorsByRoomID] = useState<Record<string, ChannelMessageListResult["coordinator"]>>({});
   const [responsesByRoomID, setResponsesByRoomID] = useState<Record<string, ChannelResponseActivity[]>>({});
   const responses = useMemo(() => (responsesByRoomID[selectedRoomID] ?? []).filter(
@@ -455,7 +467,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   // Keep the optimistic row's identity and display time through acknowledgement
   // and subsequent polls. Durable message data remains untouched.
   const sentPresentationRef = useRef(new Map<string, { key: string; createdAt: string }>());
-  const [loadedRoomIDs, setLoadedRoomIDs] = useState<Set<string>>(() => new Set());
+  const [loadedRoomIDs, setLoadedRoomIDs] = useState<Set<string>>(() => new Set(conversationCache?.keys()));
   const messages = messagesByRoomID[selectedRoomID] ?? [];
   const [trackedTasks, setTrackedTasks] = useState<ChannelMessage[]>([]);
   const [setupPanel, setSetupPanel] = useState<SetupPanel>(null);
@@ -581,7 +593,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
   const roomAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const roomAvatarTargetRef = useRef<string>("");
   const savedRoomNameRef = useRef("");
-  const messagesByRoomIDRef = useRef<Map<string, ChannelMessage[]>>(new Map());
+  const messagesByRoomIDRef = useRef<Map<string, ChannelMessage[]>>(new Map(Object.entries(messagesByRoomID)));
   const messageRefreshGenerationByRoomRef = useRef<Map<string, number>>(new Map());
   const messageRefreshInFlightByRoomRef = useRef<Set<string>>(new Set());
   const markedMessageSeqByRoomRef = useRef<Map<string, number>>(new Map());
@@ -1191,7 +1203,31 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     };
   }, [refreshTrackedTasks, section]);
 
+  const roomScrollSnapshotsRef = useRef(new Map<string, ChannelConversationSnapshot>(conversationCache));
   const positionedStreamRef = useRef<{ roomID: string; node: HTMLDivElement } | null>(null);
+  const rememberRoomScroll = (): void => {
+    const node = messageScroll.scrollRef.current;
+    // A pane swap can clamp the shared scrollport before restore. That clamp
+    // belongs to neither room's reading position.
+    if (!node || positionedStreamRef.current?.roomID !== selectedRoomID || !loadedRoomIDs.has(selectedRoomID)) return;
+    const autoFollow = messageScroll.autoFollowRef.current;
+    const snapshot: ChannelConversationSnapshot = {
+      messages,
+      scrollTop: node.scrollTop,
+      autoFollow,
+      readingAnchor: autoFollow ? undefined : captureReadingAnchor(node),
+    };
+    roomScrollSnapshotsRef.current.set(selectedRoomID, snapshot);
+    if (conversationCache) {
+      // App owns this bounded cache across Harness/Collaboration unmounts.
+      // Return with history and its reading frame in the same initial commit.
+      conversationCache.delete(selectedRoomID);
+      conversationCache.set(selectedRoomID, snapshot);
+      if (conversationCache.size > MAX_CACHED_CONVERSATION_PANES) {
+        conversationCache.delete(conversationCache.keys().next().value!);
+      }
+    }
+  };
   useLayoutEffect(() => {
     const node = messageScroll.scrollRef.current;
     if (section !== "rooms" || !node) {
@@ -1199,13 +1235,22 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       return;
     }
     const previous = positionedStreamRef.current;
-    // Position fetched history before paint, not after showing its first rows.
-    // A new room starts at latest; updates within it respect reading history.
-    messageScroll.scrollToBottom({
-      force: previous?.roomID !== selectedRoomID || previous.node !== node,
-    });
+    if (previous?.roomID !== selectedRoomID || previous.node !== node) {
+      const snapshot = roomScrollSnapshotsRef.current.get(selectedRoomID);
+      const top = snapshot?.readingAnchor
+        ? readingAnchorScrollTop(node, snapshot.readingAnchor) ?? snapshot.scrollTop
+        : snapshot?.scrollTop ?? 0;
+      messageScroll.restoreScrollPosition(top, snapshot?.autoFollow ?? true);
+    } else {
+      messageScroll.scrollToBottom();
+    }
     positionedStreamRef.current = { roomID: selectedRoomID, node };
-  }, [messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
+    rememberRoomScroll();
+    // Register after the controller's native listener so snapshots include
+    // the following state established by this scroll event.
+    node.addEventListener("scroll", rememberRoomScroll, { passive: true });
+    return () => node.removeEventListener("scroll", rememberRoomScroll);
+  }, [conversationCache, loadedRoomIDs, messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
 
   async function submitAgent(): Promise<void> {
     if (!window.wuu || !editingAgentID || !agentName.trim() || savingAgent) return;

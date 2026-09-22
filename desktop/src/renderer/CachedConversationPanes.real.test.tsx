@@ -1,9 +1,10 @@
-import { act, type ComponentProps } from "react";
+import { act, useLayoutEffect, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../shared/protocol";
 import { CachedConversationPanes } from "./CachedConversationPanes";
 import { retainCachedConversationPaneThreads } from "./ConversationPaneCache";
+import { ConversationRenderActivityProvider, useConversationRevealSnap } from "./ConversationRenderActivity";
 import { ImagePreviewProvider } from "./ImagePreview";
 
 let roots: Root[] = [];
@@ -14,6 +15,7 @@ afterEach(() => {
   }
   roots = [];
   document.body.innerHTML = "";
+  vi.restoreAllMocks();
 });
 
 function longThread(id: string, turnCount: number): Thread {
@@ -48,6 +50,44 @@ function longThread(id: string, turnCount: number): Thread {
 }
 
 describe("CachedConversationPanes real message tree", () => {
+  it("keeps reveal motion suppressed through nested layout commits and the first paint", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+    const paint = () => act(() => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(0));
+    });
+    const snapshots: boolean[] = [];
+    function CatchUp() {
+      const snap = useConversationRevealSnap();
+      const [measured, setMeasured] = useState(false);
+      useLayoutEffect(() => {
+        snapshots.push(snap);
+        if (snap && !measured) setMeasured(true);
+      });
+      return null;
+    }
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    act(() => root.render(<ConversationRenderActivityProvider active={false}><CatchUp /></ConversationRenderActivityProvider>));
+    snapshots.length = 0;
+    act(() => root.render(<ConversationRenderActivityProvider active><CatchUp /></ConversationRenderActivityProvider>));
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(snapshots.every(Boolean)).toBe(true);
+    paint();
+    expect(snapshots.every(Boolean)).toBe(true);
+    paint();
+    expect(snapshots.at(-1)).toBe(false);
+  });
+
   it("keeps a long cross-workspace pane mounted and reveals it synchronously", () => {
     const source = longThread("source-workspace", 200);
     const target = longThread("target-workspace", 200);

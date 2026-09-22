@@ -103,6 +103,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Background browser activity keeps its floating preview hidden until explicitly
   made visible, so it does not interrupt work in another application.
 
+- Switching desktop sessions keeps caught-up process folds stable through the
+  first paint. Collaboration conversations restore the message being read,
+  cancel outgoing scroll motion, and retain recent history when returning from
+  a Harness session, avoiding a blank reload and a jump to the latest message.
+
 - Desktop surfaces share titlebar geometry and sidebar-control alignment, while
   compact channel headers retain their native safe-area clearance.
 
