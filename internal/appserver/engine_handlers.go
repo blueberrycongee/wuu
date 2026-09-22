@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/externalengine"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const (
@@ -45,12 +46,28 @@ func (e *codexEngineModelCatalogCacheEntry) loadCatalog(binaryPath string, now t
 // handleEngineList reports the engine inventory and the persisted engine
 // settings for the settings UI.
 func (s *Server) handleEngineList(req Request) error {
+	var params struct {
+		IncludeQuota bool `json:"include_quota"`
+	}
+	if len(req.Params) > 0 {
+		if err := decodeParams(req.Params, &params); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
 	result := EngineListResult{
 		Engines:  s.engineInventory(),
 		Settings: s.engineSettingsFromConfig(),
+	}
+	if params.IncludeQuota {
+		s.attachSubscriptionQuotas(result.Engines)
+		for _, provider := range s.providerSummaries() {
+			if builtInSubscriptionProvider(provider) {
+				result.SubscriptionProviders = append(result.SubscriptionProviders, provider)
+			}
+		}
 	}
 	return s.writeResponse(req.ID, result, nil)
 }
@@ -149,6 +166,7 @@ func (s *Server) engineInventory() []EngineInfo {
 		}
 		out = append(out, info)
 	}
+	s.attachLatestEngineRequests(out)
 	if len(probes) == 0 {
 		return out
 	}
@@ -171,6 +189,57 @@ func (s *Server) engineInventory() []EngineInfo {
 	}
 	wg.Wait()
 	return out
+}
+
+// attachLatestEngineRequests fills the newest settled request each external
+// engine has already recorded. A store read failure leaves the field empty:
+// the inventory itself is still usable, and the dashboard says the request is
+// unknown rather than inventing a status.
+func (s *Server) attachLatestEngineRequests(engines []EngineInfo) {
+	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
+		return
+	}
+	keys := make([]session.SubscriptionActivityKey, 0, len(engines))
+	for _, engine := range engines {
+		if engine.ID == "" || engine.ID == string(agentengine.EngineWuu) {
+			continue
+		}
+		keys = append(keys, session.SubscriptionActivityKey{EngineID: engine.ID})
+	}
+	if len(keys) == 0 {
+		return
+	}
+	activity, err := session.LatestSubscriptionActivity(s.rt.SessionDir, keys)
+	if err != nil {
+		return
+	}
+	for i := range engines {
+		record, ok := activity[session.SubscriptionActivityKey{EngineID: engines[i].ID}]
+		if !ok {
+			continue
+		}
+		engines[i].LatestRequest = engineLatestRequest(record)
+		engines[i].LocalUsage = &record.LocalUsage
+	}
+}
+
+func engineLatestRequest(record session.SubscriptionActivity) *EngineLatestRequest {
+	latest := &EngineLatestRequest{
+		Status:        strings.TrimSpace(record.Status),
+		Error:         strings.TrimSpace(record.Error),
+		Model:         strings.TrimSpace(record.Model),
+		UsageReported: record.UsageReported,
+	}
+	if !record.At.IsZero() {
+		latest.At = record.At.UTC().Format(time.RFC3339)
+	}
+	if record.UsageReported {
+		latest.InputTokens = record.InputTokens
+		latest.OutputTokens = record.OutputTokens
+		latest.CacheCreationTokens = record.CacheCreationTokens
+		latest.CacheReadTokens = record.CacheReadTokens
+	}
+	return latest
 }
 
 // cachedCodexEngineModels keeps the expensive app-server model catalog

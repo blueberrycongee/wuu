@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- A subscription dashboard in desktop Settings shows source models, reported
+  Wuu token usage, and Codex account allowance windows with remaining percentages
+  and reset times. Unsupported account quotas stay unknown rather than being
+  inferred from local usage.
+
 - Model selection now includes GPT-6 Sol/Luna (including Fast mode) and
   Claude Opus 5.5, with current limits, pricing, and reasoning controls.
   Claude Fable 5.1 and Opus 5.5 use always-on adaptive thinking, preserve
@@ -92,6 +97,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   stores such as `credentials.json` and `secrets.yaml` stay protected in every
   permission mode, and refusals no longer suggest chat approval or a mode
   switch that cannot lift the guard.
+
+- Subscription request details retain their recorded provider after model-service
+  changes and never reuse earlier token usage for a later failed request.
 
 - Searches without ripgrep no longer fail on long generated lines. The fallback
   respects Git ignore rules when Git is available and counts matching lines

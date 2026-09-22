@@ -156,9 +156,9 @@ type HistoryRecord struct {
 	// on, out of the configured cap). Zero for all other record types.
 	RetryCount int `json:"retry_count,omitempty"`
 	MaxRetries int `json:"max_retries,omitempty"`
-	// Provider and Model carry which provider/model produced this token_usage
-	// row. Empty for chat records and for legacy token_usage rows written
-	// before this field existed; readers should treat empty as "unknown".
+	// Provider and Model identify the recorded request on token_usage and
+	// turn_terminal rows. Legacy records may omit them; readers must treat
+	// empty values as unknown rather than use the current session selection.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
 }

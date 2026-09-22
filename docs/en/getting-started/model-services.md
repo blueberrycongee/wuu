@@ -34,6 +34,24 @@ Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `no
 
 SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 
+## Check subscriptions in the desktop app
+
+**Settings → Subscriptions** groups installed external agents and built-in
+subscription services. Each source keeps its own model and authentication path;
+expand **Details** for request information and ACP sign-in.
+
+Request status, errors, and reported usage belong to the recorded request, even
+after a conversation changes providers. Usage from an earlier request is never
+shown as the usage of a later failure. Older records without a provable source
+remain unknown. A static CLI model list alone does not establish login status.
+
+Codex account allowances come from the installed CLI and show remaining
+percentages and reset times. Refresh after a reset or when a snapshot is over
+five minutes old. Other sources show **Not provided** until an account-quota
+integration is available; ACP context-window occupancy is not subscription quota.
+**Used in Wuu** totals reported tokens in retained local history, including cached
+input. It excludes unreported usage and activity outside Wuu, and is not a bill.
+
 ## Configure the CLI
 
 Create a user configuration once:

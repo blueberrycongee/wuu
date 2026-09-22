@@ -656,6 +656,8 @@ export type ProviderSummary = {
   // machine. Discovery does not imply Wuu is allowed to use it yet.
   codex_credential_source?: string;
   models?: ProviderModelSummary[];
+  latest_request?: EngineLatestRequest;
+  local_usage?: SubscriptionUsage;
 };
 
 export type ProviderModelSummary = {
@@ -1460,6 +1462,44 @@ export type EngineInfo = {
   models?: EngineModelInfo[];
   models_error?: string;
   permission_modes?: EnginePermissionModeInfo[];
+  latest_request?: EngineLatestRequest;
+  quota?: SubscriptionQuota;
+  local_usage?: SubscriptionUsage;
+};
+
+/** Token usage reported in retained Wuu history, not total account consumption. */
+export type SubscriptionUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  reported_turns: number;
+};
+
+/** Upstream account allowance; never inferred from Wuu token usage. */
+export type SubscriptionQuota = {
+  status: "available" | "unavailable";
+  checked_at: string;
+  windows?: {
+    id: string;
+    label?: string;
+    used_percent: number;
+    window_minutes?: number;
+    resets_at?: string;
+  }[];
+};
+
+/** Newest settled request recorded for one engine. Usage is omitted unless the engine reported tokens. */
+export type EngineLatestRequest = {
+  status?: string;
+  error?: string;
+  at?: string;
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_tokens?: number;
+  cache_read_tokens?: number;
+  usage_reported?: boolean;
 };
 
 /** One host permission mode mapped onto an external agent's native mode. */
@@ -1499,6 +1539,7 @@ export type EngineSettingsConfig = {
 };
 
 export type EngineListResult = {
+  subscription_providers?: ProviderSummary[];
   engines: EngineInfo[];
   settings?: EngineSettingsConfig;
 };
@@ -2976,7 +3017,7 @@ export type WuuDesktopApi = {
   updateGeneralSettings: (
     settings: RuntimeGeneralSettingsUpdate
   ) => Promise<ConfigGeneralUpdateResult>;
-  listEngines: () => Promise<EngineListResult>;
+  listEngines: (options?: { include_quota?: boolean }) => Promise<EngineListResult>;
   updateEngines: (params: EngineUpdateParams) => Promise<EngineListResult>;
   listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
   authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;

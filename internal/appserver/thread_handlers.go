@@ -1303,6 +1303,7 @@ func (s *Server) settleThreadExecutionForForcedArchive(threadID string) {
 	th.mu.Lock()
 	turnID := strings.TrimSpace(th.currentTurn)
 	turnKind := th.currentTurnKind
+	providerName, model := th.runningProviderName, th.runningModel
 	settledTurnID := ""
 	var reconnectItem *ThreadItem
 	switch {
@@ -1324,7 +1325,7 @@ func (s *Server) settleThreadExecutionForForcedArchive(threadID string) {
 		return
 	}
 	diagnostic := BuildTurnError(errArchivedWhileRunning, "")
-	if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem); err != nil {
+	if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem, providerName, model, providers.TokenUsage{}); err != nil {
 		providers.DebugLogf("persist forced archive settlement for thread %q: %v", threadID, err)
 	}
 }

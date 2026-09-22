@@ -192,6 +192,23 @@ availability, while `settings.<id>.enabled` is the persisted opt-in/opt-out
 preference. Do not infer an installed program or authenticated account from the
 preference alone.
 
+For subscription views, `engine/list` accepts optional `{ "include_quota": true }`.
+It reads account allowances through supported installed CLIs (currently Codex)
+and includes `subscription_providers` for built-in subscription services. Engine
+`quota` contains `status` (`available` or `unavailable`), `checked_at`, and optional
+`windows` with `id`, `label`, `used_percent`, `window_minutes`, and `resets_at`.
+Missing quota is unsupported or not queried, never unlimited. Clients must not
+infer account allowance from ACP context usage or local tokens, and should mark
+old snapshots as needing refresh rather than refill them at the reset time.
+Engines and subscription providers may also contain `local_usage`, the reported
+input/output/cache token totals and `reported_turns` in retained Wuu history.
+These values exclude unreported and external activity and are not billing totals.
+The optional `latest_request` contains the newest recorded request's `status`,
+`error`, `at`, `model`, and `usage_reported`, plus input/output/cache token counts
+when reported. Request time determines recency, not the session's last edit.
+Provider attribution uses durable records; absent fields remain unknown and
+usage must not be carried over from an earlier request.
+
 `engine/update` accepts `default_engine` and per-engine objects with `enabled`
 and `binary_path`. Omitted fields remain unchanged. It persists settings, updates
 runtime registration, and returns the same shape as `engine/list`. Discover engine
