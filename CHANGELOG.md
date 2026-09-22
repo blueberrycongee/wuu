@@ -33,6 +33,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- The embedded browser can read the page it is showing. Observation returns
+  the headings, paragraphs, lists, and tables together with the controls it
+  can click, and a long page continues from the returned offset. Ending a
+  browsing turn keeps the pages named in `keep`. A page the site opens is
+  tracked with the other tabs and closed when it is not kept.
+
 - The browser preview card does not paint page scrollbars. The card can be
   moved and resized, but not scrolled or taken over. Scrollbars return when
   the page is docked in the workspace panel.

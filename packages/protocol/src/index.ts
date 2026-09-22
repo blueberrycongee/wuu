@@ -234,8 +234,15 @@ export type BrowserListTabsParams = {
   workdir: string;
 };
 
+export type BrowserListedTab = {
+  tab_id: string;
+  url?: string;
+  title?: string;
+};
+
 export type BrowserListTabsResult = {
   tab_ids: string[];
+  tabs?: BrowserListedTab[];
 };
 
 export type RuntimeIssue = {

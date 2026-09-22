@@ -374,7 +374,15 @@ type BrowserBridge interface {
 	OpenTab(ctx context.Context, tabID, url string) error
 	CloseTab(ctx context.Context, tabID string) error
 	SetVisibility(ctx context.Context, tabID string, visible bool) error
-	ListTabs(ctx context.Context) ([]string, error)
+	ListTabs(ctx context.Context) ([]BrowserLiveTab, error)
+}
+
+// BrowserLiveTab is one view the desktop host currently has open for this
+// workspace. URL and Title are empty when the host only reports ids.
+type BrowserLiveTab struct {
+	ID    string
+	URL   string
+	Title string
 }
 
 // BrowserTabRecord is the durable per-tab state the tool persists between turns

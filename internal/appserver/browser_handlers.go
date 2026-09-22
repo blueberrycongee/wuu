@@ -104,7 +104,7 @@ func (b *browserBridge) SetVisibility(ctx context.Context, tabID string, visible
 	return err
 }
 
-func (b *browserBridge) ListTabs(ctx context.Context) ([]string, error) {
+func (b *browserBridge) ListTabs(ctx context.Context) ([]tools.BrowserLiveTab, error) {
 	if err := b.unavailable(); err != nil {
 		return nil, err
 	}
@@ -118,7 +118,24 @@ func (b *browserBridge) ListTabs(ctx context.Context) ([]string, error) {
 			return nil, fmt.Errorf("decode list_tabs result: %w", err)
 		}
 	}
-	return res.TabIDs, nil
+	if len(res.Tabs) > 0 {
+		out := make([]tools.BrowserLiveTab, 0, len(res.Tabs))
+		for _, tab := range res.Tabs {
+			if tab.TabID == "" {
+				continue
+			}
+			out = append(out, tools.BrowserLiveTab{ID: tab.TabID, URL: tab.URL, Title: tab.Title})
+		}
+		return out, nil
+	}
+	out := make([]tools.BrowserLiveTab, 0, len(res.TabIDs))
+	for _, id := range res.TabIDs {
+		if id == "" {
+			continue
+		}
+		out = append(out, tools.BrowserLiveTab{ID: id})
+	}
+	return out, nil
 }
 
 // stopBrowserActivitiesAndEmit stops every browser-kind activity this process

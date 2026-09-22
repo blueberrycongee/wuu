@@ -30,7 +30,7 @@ type fakeBrowserBridge struct {
 	onCDP   func(method string, params map[string]any) (any, error)
 	onOpen  func(tabID, initialURL string) error
 	onShot  func(tabID, destPath, format string) (BrowserScreenshotResult, error)
-	onList  func() ([]string, error)
+	onList  func() ([]BrowserLiveTab, error)
 	onClose func(tabID string) error
 }
 
@@ -113,7 +113,7 @@ func (b *fakeBrowserBridge) SetVisibility(_ context.Context, tabID string, visib
 	return nil
 }
 
-func (b *fakeBrowserBridge) ListTabs(_ context.Context) ([]string, error) {
+func (b *fakeBrowserBridge) ListTabs(_ context.Context) ([]BrowserLiveTab, error) {
 	b.mu.Lock()
 	b.listCalls++
 	b.mu.Unlock()
@@ -163,10 +163,14 @@ func browserCall(action string, fields map[string]any) providers.ToolCall {
 func TestBrowserDefinitionPublishesInputFields(t *testing.T) {
 	tool := NewBrowserTool(&Env{})
 	props, _ := tool.Definition().InputSchema["properties"].(map[string]any)
-	for _, name := range []string{"node_id", "text", "keys", "dx", "dy", "steps"} {
+	for _, name := range []string{"node_id", "text", "keys", "dx", "dy", "steps", "keep", "content_offset"} {
 		if _, ok := props[name]; !ok {
 			t.Fatalf("browser schema omits %s", name)
 		}
+	}
+	desc := tool.Definition().Description
+	if !strings.Contains(desc, "content_offset") || !strings.Contains(desc, "keep") {
+		t.Fatalf("browser description does not tell the model how to read or retain pages: %s", desc)
 	}
 }
 
@@ -484,6 +488,170 @@ func TestBrowserFinalizeEmptyKeepDoesNotTombstone(t *testing.T) {
 	// A later turn can browse again without ErrStopped.
 	if _, err := kit.executeBrowserToolResult(context.Background(), browserCall("observe", map[string]any{"tab_id": "tab-2"}), tool); err != nil {
 		t.Fatalf("observe after finalize-empty = %v, want success (session reusable)", err)
+	}
+}
+
+func TestBrowserObserveReadsContentAndContinues(t *testing.T) {
+	var gotOffset any
+	bridge := &fakeBrowserBridge{
+		onCDP: func(method string, params map[string]any) (any, error) {
+			if method != "observe" {
+				t.Fatalf("unexpected method %q", method)
+			}
+			gotOffset = params["content_offset"]
+			next := 2
+			return map[string]any{
+				"url":   "https://mimo.xiaomi.com/mimo-v2-6",
+				"title": "MiMo",
+				"nodes": []any{map[string]any{"node_id": 3, "role": "link", "name": "collection"}},
+				"content": []any{
+					map[string]any{"kind": "heading", "level": 1, "text": "MiMo V2.6"},
+					map[string]any{
+						"kind":  "paragraph",
+						"text":  "token: supersecretvalue",
+						"links": []any{map[string]any{"text": "collection", "node_id": 3}},
+					},
+					map[string]any{
+						"kind":   "table",
+						"header": []any{map[string]any{"text": "Benchmark"}, map[string]any{"text": "Score"}},
+						"rows": []any{[]any{
+							map[string]any{"text": "MMLU"},
+							map[string]any{"text": "85.2", "node_id": 3},
+						}},
+					},
+				},
+				"content_offset":      0,
+				"content_total":       4,
+				"content_next_offset": next,
+			}, nil
+		},
+	}
+	kit, _, _ := newBrowserKit(t, bridge)
+	tool := kit.registry.Lookup(browserToolName)
+	result, err := kit.executeBrowserToolResult(context.Background(), browserCall("observe", map[string]any{
+		"tab_id":         "tab-1",
+		"content_offset": 2,
+	}), tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOffset != float64(2) {
+		t.Fatalf("content_offset forwarded as %#v", gotOffset)
+	}
+	text := result.TextProjection()
+	for _, want := range []string{"# MiMo V2.6", "content_offset=2 continues", "MMLU", "85.2 [node 3]", "[node 3: collection]", "[REDACTED]"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("observe text missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "supersecretvalue") {
+		t.Fatalf("observe leaked credential text:\n%s", text)
+	}
+}
+
+func TestBrowserTabsRecordsUntrackedPopup(t *testing.T) {
+	bridge := &fakeBrowserBridge{
+		onList: func() ([]BrowserLiveTab, error) {
+			return []BrowserLiveTab{
+				{ID: "tab-1", URL: "https://news.ycombinator.com/", Title: "HN"},
+				{ID: "popup-tab-1-0", URL: "https://huggingface.co/collections/XiaomiMiMo/mimo-v26?code=SECRET123", Title: "MiMo"},
+			}, nil
+		},
+	}
+	kit, _, store := newBrowserKit(t, bridge)
+	if err := store.Put(BrowserTabRecord{TabID: "tab-1", URL: "https://news.ycombinator.com/"}); err != nil {
+		t.Fatal(err)
+	}
+	tool := kit.registry.Lookup(browserToolName)
+	result, err := kit.executeBrowserToolResult(context.Background(), browserCall("tabs", nil), tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	popup, ok, err := store.Get("popup-tab-1-0")
+	if err != nil || !ok || popup.Dead || !strings.Contains(popup.URL, "SECRET123") {
+		t.Fatalf("popup record = %+v ok=%v err=%v", popup, ok, err)
+	}
+	text := result.TextProjection()
+	if !strings.Contains(text, "popup-tab-1-0") || !strings.Contains(text, "huggingface.co/collections/XiaomiMiMo/mimo-v26") {
+		t.Fatalf("tabs text hid the popup:\n%s", text)
+	}
+	if strings.Contains(text, "SECRET123") || strings.Contains(string(result.StructuredContent), "SECRET123") {
+		t.Fatalf("tabs leaked the popup credential:\n%s", text)
+	}
+}
+
+func TestBrowserFinalizeClosesUntrackedPopup(t *testing.T) {
+	bridge := &fakeBrowserBridge{
+		onList: func() ([]BrowserLiveTab, error) {
+			return []BrowserLiveTab{
+				{ID: "tab-1", URL: "https://news.ycombinator.com/", Title: "HN"},
+				{ID: "popup-tab-1-0", URL: "https://huggingface.co/collections/XiaomiMiMo/mimo-v26", Title: "MiMo"},
+			}, nil
+		},
+	}
+	kit, _, store := newBrowserKit(t, bridge)
+	if err := store.Put(BrowserTabRecord{TabID: "tab-1", URL: "https://news.ycombinator.com/"}); err != nil {
+		t.Fatal(err)
+	}
+	tool := kit.registry.Lookup(browserToolName)
+	if _, err := kit.executeBrowserToolResult(context.Background(), browserCall("finalize", map[string]any{
+		"keep": []any{map[string]any{"tab_id": "tab-1", "status": "handoff"}},
+	}), tool); err != nil {
+		t.Fatal(err)
+	}
+	kept, ok, err := store.Get("tab-1")
+	if err != nil || !ok || kept.Status != "handoff" {
+		t.Fatalf("kept tab = %+v ok=%v err=%v", kept, ok, err)
+	}
+	if _, ok, _ := store.Get("popup-tab-1-0"); ok {
+		t.Fatal("unkept popup stayed in the registry")
+	}
+	bridge.mu.Lock()
+	closed := append([]string(nil), bridge.closeCalls...)
+	bridge.mu.Unlock()
+	if len(closed) != 1 || closed[0] != "popup-tab-1-0" {
+		t.Fatalf("closed = %v, want the popup only", closed)
+	}
+}
+
+func TestBrowserFinalizeTabIDKeepsNamedTab(t *testing.T) {
+	bridge := &fakeBrowserBridge{}
+	kit, _, store := newBrowserKit(t, bridge)
+	for _, id := range []string{"tab-1", "tab-2"} {
+		if err := store.Put(BrowserTabRecord{TabID: id, URL: "https://example.com/" + id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := kit.registry.Lookup(browserToolName)
+	if _, err := kit.executeBrowserToolResult(context.Background(), browserCall("finalize", map[string]any{
+		"tab_id": "tab-1",
+	}), tool); err != nil {
+		t.Fatal(err)
+	}
+	kept, ok, err := store.Get("tab-1")
+	if err != nil || !ok || kept.Status != "handoff" {
+		t.Fatalf("tab_id did not retain tab-1: %+v ok=%v err=%v", kept, ok, err)
+	}
+	if _, ok, _ := store.Get("tab-2"); ok {
+		t.Fatal("unnamed tab stayed open")
+	}
+}
+
+func TestBrowserFinalizeExplicitEmptyKeepClosesNamedTab(t *testing.T) {
+	bridge := &fakeBrowserBridge{}
+	kit, _, store := newBrowserKit(t, bridge)
+	if err := store.Put(BrowserTabRecord{TabID: "tab-1", URL: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	tool := kit.registry.Lookup(browserToolName)
+	if _, err := kit.executeBrowserToolResult(context.Background(), browserCall("finalize", map[string]any{
+		"keep":   []any{},
+		"tab_id": "tab-1",
+	}), tool); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := store.Get("tab-1"); ok {
+		t.Fatal("explicit empty keep retained the tab named by tab_id")
 	}
 }
 

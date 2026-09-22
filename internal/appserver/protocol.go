@@ -387,8 +387,15 @@ type BrowserListTabsParams struct {
 	Workdir string `json:"workdir"`
 }
 
+type BrowserListedTab struct {
+	TabID string `json:"tab_id"`
+	URL   string `json:"url,omitempty"`
+	Title string `json:"title,omitempty"`
+}
+
 type BrowserListTabsResult struct {
-	TabIDs []string `json:"tab_ids"`
+	TabIDs []string           `json:"tab_ids"`
+	Tabs   []BrowserListedTab `json:"tabs,omitempty"`
 }
 
 type RuntimeIssue struct {

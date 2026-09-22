@@ -16,6 +16,8 @@ import {
   browserPermissionDecision,
   configureBrowserProxy,
   interactableNodesFromSnapshot,
+  pageReadableContent,
+  readableBlocksFromSnapshot,
   keyChord,
   keyDispatch,
   spectatorScrollbarCSS,
@@ -390,10 +392,16 @@ describe("BrowserHostCoordinator CDP routing", () => {
       ),
     );
 
-    const observeResult = harness.reply.respond.mock.calls.at(-1)?.[1] as { result: { nodes: Array<Record<string, unknown>> } };
+    const observeResult = harness.reply.respond.mock.calls.at(-1)?.[1] as {
+      result: { nodes: Array<Record<string, unknown>>; content: Array<Record<string, unknown>> };
+    };
     expect(observeResult.result.nodes).toHaveLength(2);
     expect(observeResult.result.nodes[0]).toMatchObject({ node_id: 1, role: "button", name: "Submit", bounds: [5, 6, 50, 20] });
     expect(observeResult.result.nodes[1]).toMatchObject({ node_id: 2, role: "link" });
+    // The link's readable text and its click id come from the same snapshot.
+    expect(observeResult.result.content).toEqual([
+      { kind: "paragraph", text: "Release notes", node_id: 2 },
+    ]);
 
     // node_id 2 must resolve to backendNodeId 200 via the per-tab map.
     let requestedBackend: unknown;
@@ -415,6 +423,40 @@ describe("BrowserHostCoordinator CDP routing", () => {
     expect(mouseCommands[0]?.params).toMatchObject({ type: "mousePressed", x: 20, y: 30, button: "left" });
     expect(mouseCommands[1]?.params).toMatchObject({ type: "mouseReleased", x: 20, y: 30 });
     expect(harness.reply.respond).toHaveBeenLastCalledWith("click-1", { result: { ok: true } });
+  });
+
+  it("continues readable content from content_offset", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const children = Array.from({ length: 25 }, (_, index) => ({
+      tag: "p",
+      text: `Paragraph ${index} stays readable.`,
+    }));
+    harness.views[0].responders.set("DOMSnapshot.captureSnapshot", () => buildSnapshot([
+      { tag: "main", children },
+    ]));
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest(
+        "browser/cdp",
+        { workdir: "/repo", tab_id: "t1", method: "observe", params: { screenshot: false, content_offset: 20 } },
+        "obs-page",
+      ),
+    );
+
+    const observeResult = harness.reply.respond.mock.calls.at(-1)?.[1] as {
+      result: { content: Array<{ text?: string }>; content_offset: number; content_total: number; content_next_offset?: number };
+    };
+    expect(observeResult.result.content_offset).toBe(20);
+    expect(observeResult.result.content_total).toBe(25);
+    expect(observeResult.result.content_next_offset).toBeUndefined();
+    expect(observeResult.result.content.map((block) => block.text)).toEqual([
+      "Paragraph 20 stays readable.",
+      "Paragraph 21 stays readable.",
+      "Paragraph 22 stays readable.",
+      "Paragraph 23 stays readable.",
+      "Paragraph 24 stays readable.",
+    ]);
   });
 
   it("rejects click(node_id) when the tab has not been observed", async () => {
@@ -616,7 +658,13 @@ describe("BrowserHostCoordinator lifecycle", () => {
     await harness.coordinator.handleServerRequest(
       serverRequest("browser/list_tabs", { workdir: "/repoA" }, "list-1"),
     );
-    expect(harness.reply.respond).toHaveBeenLastCalledWith("list-1", { tab_ids: ["a1", "a2"] });
+    expect(harness.reply.respond).toHaveBeenLastCalledWith("list-1", {
+      tab_ids: ["a1", "a2"],
+      tabs: [
+        { tab_id: "a1", url: "https://example.com/", title: "Example" },
+        { tab_id: "a2", url: "https://example.com/", title: "Example" },
+      ],
+    });
   });
 
   it("destroyAll tears down every view and the host window", async () => {
@@ -768,6 +816,16 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     expect(harness.views).toHaveLength(2);
     expect(harness.views[1].loadedURLs).toContain("https://example.com/next");
     expect(adopted[0].startsWith("popup-t1-")).toBe(true);
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest("browser/list_tabs", { workdir: "/repo" }, "list-popup"),
+    );
+    const listed = harness.reply.respond.mock.calls.at(-1)?.[1] as {
+      tab_ids: string[];
+      tabs: Array<{ tab_id: string; url: string }>;
+    };
+    expect(listed.tab_ids).toContain("t1");
+    expect(listed.tabs.find((tab) => tab.tab_id.startsWith("popup-t1-"))?.url).toBe("https://example.com/next");
   });
 
   it("navigates through the same tab the panel is showing", async () => {
@@ -902,7 +960,157 @@ describe("pure helpers", () => {
     expect(nodes).toHaveLength(1);
     expect(nodes[0]).toMatchObject({ backendNodeId: 9, role: "button" });
   });
+
+  it("reads release-page text that is not itself a control", () => {
+    const snapshot = buildSnapshot([
+      { tag: "nav", children: [{ tag: "a", attrs: { href: "/home" }, text: "Home" }] },
+      {
+        tag: "main",
+        children: [
+          { tag: "h1", text: "MiMo V2.6" },
+          { tag: "div", text: "Context length 256k. Parameters 7B." },
+          {
+            tag: "p",
+            children: [
+              { tag: "#text", text: "See the" },
+              { tag: "a", attrs: { href: "/collection" }, text: "collection" },
+              { tag: "#text", text: "for scores." },
+            ],
+          },
+          { tag: "ol", children: [{ tag: "li", text: "First" }, { tag: "li", text: "Second" }] },
+          {
+            tag: "table",
+            children: [
+              { tag: "tr", children: [{ tag: "th", text: "Benchmark" }, { tag: "th", text: "Score" }] },
+              {
+                tag: "tr",
+                children: [
+                  { tag: "td", text: "MMLU" },
+                  { tag: "td", children: [{ tag: "a", attrs: { href: "/mmlu" }, text: "85.2" }] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { tag: "footer", children: [{ tag: "a", attrs: { href: "/privacy" }, text: "Privacy" }] },
+    ]);
+    const nodes = interactableNodesFromSnapshot(snapshot);
+    const blocks = readableBlocksFromSnapshot(snapshot);
+    const collection = nodes.find((node) => node.name === "collection");
+    const score = nodes.find((node) => node.name === "85.2");
+
+    expect(nodes.map((node) => node.name).sort()).toEqual(["85.2", "Home", "Privacy", "collection"]);
+    expect(blocks.map((block) => block.kind)).toEqual(["heading", "paragraph", "paragraph", "list", "table"]);
+    expect(blocks[0]).toMatchObject({ kind: "heading", level: 1, text: "MiMo V2.6" });
+    expect(blocks[1]).toMatchObject({ text: "Context length 256k. Parameters 7B." });
+    expect(blocks[2]).toMatchObject({
+      text: "See the collection for scores.",
+      links: [{ text: "collection", backendNodeId: collection?.backendNodeId }],
+    });
+    expect(blocks[3]).toMatchObject({ kind: "list", ordered: true, items: [{ text: "First" }, { text: "Second" }] });
+    expect(blocks[4]).toMatchObject({
+      header: [{ text: "Benchmark" }, { text: "Score" }],
+      rows: [[{ text: "MMLU" }, { text: "85.2", backendNodeId: score?.backendNodeId }]],
+    });
+    expect(JSON.stringify(blocks)).not.toContain("Home");
+    expect(JSON.stringify(blocks)).not.toContain("Privacy");
+  });
+
+  it("pages a long article on block boundaries", () => {
+    const children = Array.from({ length: 25 }, (_, index) => ({
+      tag: "p",
+      text: `Paragraph ${index} stays readable.`,
+    }));
+    const blocks = readableBlocksFromSnapshot(buildSnapshot([{ tag: "main", children }]));
+    expect(blocks).toHaveLength(25);
+
+    const first = pageReadableContent(blocks, 0);
+    expect(first.blocks).toHaveLength(20);
+    expect(first.total).toBe(25);
+    expect(first.nextOffset).toBe(20);
+
+    const second = pageReadableContent(blocks, first.nextOffset ?? 0);
+    expect(second.offset).toBe(20);
+    expect(second.blocks.map((block) => block.text)).toEqual([
+      "Paragraph 20 stays readable.",
+      "Paragraph 21 stays readable.",
+      "Paragraph 22 stays readable.",
+      "Paragraph 23 stays readable.",
+      "Paragraph 24 stays readable.",
+    ]);
+    expect(second.nextOffset).toBeUndefined();
+
+    const past = pageReadableContent(blocks, 100);
+    expect(past.blocks).toEqual([]);
+    expect(past.offset).toBe(25);
+    expect(past.nextOffset).toBeUndefined();
+  });
+
+  it("splits one long paragraph instead of returning it whole", () => {
+    const text = Array.from({ length: 400 }, () => "word").join(" ");
+    const blocks = readableBlocksFromSnapshot(buildSnapshot([{ tag: "p", text }]));
+    expect(blocks.length).toBeGreaterThan(1);
+    expect(blocks.every((block) => (block.text?.length ?? 0) <= 1600)).toBe(true);
+    expect(blocks.map((block) => block.text).join(" ")).toBe(text);
+  });
 });
+
+interface SnapshotSpec {
+  tag: string;
+  attrs?: Record<string, string>;
+  text?: string;
+  children?: SnapshotSpec[];
+}
+
+function buildSnapshot(roots: SnapshotSpec[]): Record<string, unknown> {
+  const strings: string[] = [];
+  const intern = (value: string): number => {
+    const existing = strings.indexOf(value);
+    if (existing >= 0) return existing;
+    strings.push(value);
+    return strings.length - 1;
+  };
+  const nodeName: number[] = [];
+  const parentIndex: number[] = [];
+  const backendNodeId: number[] = [];
+  const attributes: number[][] = [];
+  const layoutNodeIndex: number[] = [];
+  const layoutText: number[] = [];
+  const bounds: number[][] = [];
+  let backend = 1;
+  let y = 0;
+  const add = (node: SnapshotSpec, parent: number): void => {
+    const index = nodeName.length;
+    nodeName.push(intern(node.tag === "#text" ? "#text" : node.tag.toUpperCase()));
+    parentIndex.push(parent);
+    backendNodeId.push(backend);
+    backend += 1;
+    const attrs: number[] = [];
+    for (const [key, value] of Object.entries(node.attrs ?? {})) attrs.push(intern(key), intern(value));
+    attributes.push(attrs);
+    const box = [0, y, 160, 18];
+    y += 18;
+    layoutNodeIndex.push(index);
+    if (node.tag === "#text") {
+      layoutText.push(intern(node.text ?? ""));
+      bounds.push(box);
+      return;
+    }
+    layoutText.push(-1);
+    bounds.push(box);
+    if (node.text) add({ tag: "#text", text: node.text }, index);
+    for (const child of node.children ?? []) add(child, index);
+  };
+  for (const root of roots) add(root, -1);
+  return {
+    strings,
+    documents: [{
+      nodes: { nodeName, parentIndex, backendNodeId, attributes },
+      layout: { nodeIndex: layoutNodeIndex, text: layoutText, bounds },
+    }],
+  };
+}
 
 describe("BrowserHostCoordinator preview surface accessors", () => {
   it("lays out a new hidden page before navigation and preserves an existing tab's geometry", async () => {

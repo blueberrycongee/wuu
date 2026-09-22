@@ -11,10 +11,10 @@ import type { WindowRegistry } from "./windowRegistry";
 export const BROWSER_PARTITION = "persist:wuu-browser";
 
 // Conservative overflow gate. The core stdin scanner enforces a 4MB line
-// limit; a DOM snapshot on a large page is 5-50MB before trimming. We trim to
-// interactable nodes desktop-side, then still gate the serialized result at
-// 1MB and spill to the core-designated dest_path so a pathological page can
-// never wedge the whole protocol by overrunning the line limit.
+// limit; a DOM snapshot on a large page is 5-50MB before trimming. We project
+// that snapshot to interactable nodes plus one slice of readable text, then
+// still gate the serialized result at 1MB and spill to the core-designated
+// dest_path so a pathological page can never wedge the protocol.
 export const MAX_INLINE_RESULT_BYTES = 1024 * 1024;
 
 // Sensitive capabilities refused for tabs this coordinator owns. Contents it
@@ -660,12 +660,22 @@ export class BrowserHostCoordinator {
     return { ok: true };
   }
 
-  private listTabs(workdir: string): { tab_ids: string[] } {
+  private listTabs(workdir: string): {
+    tab_ids: string[];
+    tabs: { tab_id: string; url: string; title: string }[];
+  } {
     const ids: string[] = [];
+    const tabs: { tab_id: string; url: string; title: string }[] = [];
     for (const entry of this.tabs.values()) {
-      if (entry.workdir === workdir) ids.push(entry.tabID);
+      if (entry.workdir !== workdir) continue;
+      ids.push(entry.tabID);
+      tabs.push({
+        tab_id: entry.tabID,
+        url: entry.view.webContents.getURL(),
+        title: entry.view.webContents.getTitle(),
+      });
     }
-    return { tab_ids: ids };
+    return { tab_ids: ids, tabs };
   }
 
   private setVisibility(workdir: string, params: Record<string, JsonValue>): { ok: true } {
@@ -774,12 +784,15 @@ export class BrowserHostCoordinator {
       computedStyles: [],
     });
     const raw = interactableNodesFromSnapshot(snapshot);
+    const page = pageReadableContent(readableBlocksFromSnapshot(snapshot), contentOffsetParam(params));
     // Rebuild the node map from scratch: node_ids are only valid until the next
-    // observe.
+    // observe. Content node ids come from this same map.
     entry.nodeMap = new Map();
+    const nodeIDByBackend = new Map<number, number>();
     const nodes: JsonValue[] = raw.map((node, index) => {
       const nodeID = index + 1;
       entry.nodeMap.set(nodeID, node.backendNodeId);
+      nodeIDByBackend.set(node.backendNodeId, nodeID);
       return {
         node_id: nodeID,
         role: node.role,
@@ -788,11 +801,16 @@ export class BrowserHostCoordinator {
         bounds: node.bounds,
       };
     });
+    const content = page.blocks.map((block) => readableBlockJSON(block, nodeIDByBackend));
     const result: Record<string, JsonValue> = {
       url: entry.view.webContents.getURL(),
       title: entry.view.webContents.getTitle(),
       nodes,
+      content,
+      content_offset: page.offset,
+      content_total: page.total,
     };
+    if (page.nextOffset !== undefined) result.content_next_offset = page.nextOffset;
     const destPath = typeof params.dest_path === "string" ? params.dest_path : "";
     if (params.screenshot === true && destPath) {
       const shot = await this.captureToFile(entry, destPath);
@@ -1324,6 +1342,515 @@ export function boxModelCenter(box: unknown): [number, number] | undefined {
 export function scrollDirection(dx: number, dy: number): string {
   if (Math.abs(dy) >= Math.abs(dx)) return dy >= 0 ? "down" : "up";
   return dx >= 0 ? "right" : "left";
+}
+
+// One observe stays small enough for the model: a slice of blocks, not the
+// whole article. A single paragraph or table is split before paging so the
+// next content_offset always lands on a block boundary.
+const READABLE_SEGMENT_CHARS = 6000;
+const READABLE_SEGMENT_BLOCKS = 20;
+const READABLE_PARAGRAPH_CHARS = 1600;
+const READABLE_TABLE_ROWS = 12;
+
+const SKIP_CONTENT_TAGS = new Set([
+  "script",
+  "style",
+  "noscript",
+  "svg",
+  "template",
+  "canvas",
+  "iframe",
+  "head",
+  "nav",
+  "footer",
+]);
+
+const INLINE_CONTENT_TAGS = new Set([
+  "a",
+  "span",
+  "strong",
+  "em",
+  "b",
+  "i",
+  "code",
+  "small",
+  "mark",
+  "abbr",
+  "time",
+  "label",
+  "sup",
+  "sub",
+  "u",
+  "s",
+  "br",
+  "img",
+  "wbr",
+  "font",
+  "cite",
+  "q",
+  "kbd",
+  "samp",
+  "var",
+  "bdi",
+  "bdo",
+]);
+
+const PARAGRAPH_TAGS = new Set(["p", "blockquote", "figcaption", "caption", "dt", "dd", "address"]);
+
+export interface ReadablePiece {
+  text: string;
+  backendNodeId?: number;
+}
+
+export interface ReadableBlock {
+  kind: "heading" | "paragraph" | "list" | "table";
+  level?: number;
+  text?: string;
+  backendNodeId?: number;
+  ordered?: boolean;
+  links?: ReadablePiece[];
+  items?: ReadablePiece[];
+  header?: ReadablePiece[];
+  rows?: ReadablePiece[][];
+}
+
+interface ContentNode {
+  tag: string;
+  parent: number;
+  children: number[];
+  attrs: Record<string, string>;
+  backend?: number;
+  zeroArea: boolean;
+  pieces: string[];
+}
+
+// Project one DOM snapshot into readable blocks. Interactable nodes are
+// produced from the same snapshot, so a block's backendNodeId addresses one
+// of those controls. Navigation and footer chrome stay out of the reading
+// text; their controls remain in the interactable list.
+export function readableBlocksFromSnapshot(snapshot: unknown): ReadableBlock[] {
+  if (!isRecord(snapshot)) return [];
+  const strings = Array.isArray(snapshot.strings) ? snapshot.strings : [];
+  const str = (index: unknown): string =>
+    typeof index === "number" && index >= 0 && index < strings.length && typeof strings[index] === "string"
+      ? (strings[index] as string)
+      : "";
+  const documents = Array.isArray(snapshot.documents) ? snapshot.documents : [];
+  const blocks: ReadableBlock[] = [];
+  for (const document of documents) {
+    if (!isRecord(document)) continue;
+    const nodes = buildContentNodes(document, str);
+    for (let i = 0; i < nodes.length; i++) {
+      const parent = nodes[i].parent;
+      if (parent < 0 || parent >= nodes.length || parent === i) collectContent(nodes, i, blocks);
+    }
+  }
+  return splitReadableBlocks(blocks);
+}
+
+export function pageReadableContent(
+  blocks: ReadableBlock[],
+  offset: number,
+): { blocks: ReadableBlock[]; offset: number; total: number; nextOffset?: number } {
+  const total = blocks.length;
+  const start = Number.isFinite(offset) && offset > 0 ? Math.min(Math.floor(offset), total) : 0;
+  const page: ReadableBlock[] = [];
+  let chars = 0;
+  let index = start;
+  while (index < total && page.length < READABLE_SEGMENT_BLOCKS) {
+    const block = blocks[index];
+    const weight = readableBlockChars(block);
+    if (page.length > 0 && chars + weight > READABLE_SEGMENT_CHARS) break;
+    page.push(block);
+    chars += weight;
+    index += 1;
+  }
+  return {
+    blocks: page,
+    offset: start,
+    total,
+    ...(index < total ? { nextOffset: index } : {}),
+  };
+}
+
+function contentOffsetParam(params: Record<string, JsonValue>): number {
+  const raw = params.content_offset;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.floor(raw);
+}
+
+function readableBlockJSON(block: ReadableBlock, nodeIDByBackend: Map<number, number>): JsonValue {
+  const out: { [key: string]: JsonValue } = { kind: block.kind };
+  if (block.level) out.level = block.level;
+  if (block.text) out.text = block.text;
+  const nodeID = nodeIDFor(block.backendNodeId, nodeIDByBackend);
+  if (nodeID) out.node_id = nodeID;
+  if (block.ordered) out.ordered = true;
+  const links = piecesJSON(block.links, nodeIDByBackend);
+  if (links.length > 0) out.links = links;
+  const items = piecesJSON(block.items, nodeIDByBackend);
+  if (items.length > 0) out.items = items;
+  const header = piecesJSON(block.header, nodeIDByBackend);
+  if (header.length > 0) out.header = header;
+  if (block.rows && block.rows.length > 0) {
+    out.rows = block.rows.map((row) => piecesJSON(row, nodeIDByBackend));
+  }
+  return out;
+}
+
+function piecesJSON(pieces: ReadablePiece[] | undefined, nodeIDByBackend: Map<number, number>): JsonValue[] {
+  if (!pieces || pieces.length === 0) return [];
+  return pieces.map((piece) => {
+    const item: { [key: string]: JsonValue } = {};
+    if (piece.text) item.text = piece.text;
+    const nodeID = nodeIDFor(piece.backendNodeId, nodeIDByBackend);
+    if (nodeID) item.node_id = nodeID;
+    return item;
+  });
+}
+
+function nodeIDFor(backend: number | undefined, nodeIDByBackend: Map<number, number>): number | undefined {
+  if (backend === undefined) return undefined;
+  return nodeIDByBackend.get(backend);
+}
+
+function buildContentNodes(document: Record<string, unknown>, str: (index: unknown) => string): ContentNode[] {
+  const raw = isRecord(document.nodes) ? document.nodes : {};
+  const layout = isRecord(document.layout) ? document.layout : {};
+  const nodeName = numberArray(raw.nodeName);
+  const parentIndex = numberArray(raw.parentIndex);
+  const backendNodeId = numberArray(raw.backendNodeId);
+  const attributes = Array.isArray(raw.attributes) ? raw.attributes : [];
+  const nodes: ContentNode[] = nodeName.map((name, index) => ({
+    tag: str(name).toLowerCase(),
+    parent: typeof parentIndex[index] === "number" ? parentIndex[index] : -1,
+    children: [],
+    attrs: parseSnapshotAttributes(attributes[index], str),
+    backend: typeof backendNodeId[index] === "number" ? backendNodeId[index] : undefined,
+    zeroArea: false,
+    pieces: [],
+  }));
+  for (let i = 0; i < nodes.length; i++) {
+    const parent = nodes[i].parent;
+    if (parent >= 0 && parent < nodes.length && parent !== i) nodes[parent].children.push(i);
+  }
+  const nodeIndex = numberArray(layout.nodeIndex);
+  const text = Array.isArray(layout.text) ? layout.text : [];
+  const bounds = Array.isArray(layout.bounds) ? layout.bounds : [];
+  const positive = new Map<number, boolean>();
+  for (let i = 0; i < nodeIndex.length; i++) {
+    const idx = nodeIndex[i];
+    if (typeof idx !== "number" || idx < 0 || idx >= nodes.length) continue;
+    const rect = bounds[i];
+    let positiveBox = false;
+    if (Array.isArray(rect) && rect.length >= 4 && typeof rect[2] === "number" && typeof rect[3] === "number") {
+      if (rect[2] > 0 && rect[3] > 0) {
+        positiveBox = true;
+        positive.set(idx, true);
+      } else if (!positive.has(idx)) {
+        positive.set(idx, false);
+      }
+    }
+    const piece = str(text[i]).replace(/\s+/g, " ").trim();
+    if (piece && positiveBox && nodes[idx].pieces[nodes[idx].pieces.length - 1] !== piece) {
+      nodes[idx].pieces.push(piece);
+    }
+  }
+  for (const [idx, ok] of positive) {
+    if (!ok) nodes[idx].zeroArea = true;
+  }
+  return nodes;
+}
+
+function collectContent(nodes: ContentNode[], index: number, blocks: ReadableBlock[]): void {
+  const node = nodes[index];
+  if (!node || node.tag === "#text" || contentSkipped(node)) return;
+  if (isHeadingNode(node)) {
+    emitTextBlock(nodes, index, blocks, "heading", headingLevel(node));
+    return;
+  }
+  if (node.tag === "table" || node.attrs.role?.toLowerCase() === "table") {
+    emitTable(nodes, index, blocks);
+    return;
+  }
+  if (node.tag === "ul" || node.tag === "ol" || node.attrs.role?.toLowerCase() === "list") {
+    emitList(nodes, index, blocks);
+    return;
+  }
+  if (node.tag === "pre" || PARAGRAPH_TAGS.has(node.tag) || node.attrs.role?.toLowerCase() === "paragraph") {
+    emitTextBlock(nodes, index, blocks, "paragraph");
+    return;
+  }
+  let run: number[] = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    emitInlineRun(nodes, run, blocks, node);
+    run = [];
+  };
+  for (const child of node.children) {
+    const current = nodes[child];
+    if (current.tag === "#text" || isInlineContent(current)) run.push(child);
+    else {
+      flush();
+      collectContent(nodes, child, blocks);
+    }
+  }
+  flush();
+}
+
+function emitTextBlock(
+  nodes: ContentNode[],
+  index: number,
+  blocks: ReadableBlock[],
+  kind: "heading" | "paragraph",
+  level?: number,
+): void {
+  const text = descendantContentText(nodes, index);
+  if (!text) return;
+  const links = contentLinks(nodes, index);
+  const block: ReadableBlock = { kind, text };
+  if (level) block.level = level;
+  assignLinks(block, text, links);
+  blocks.push(block);
+}
+
+function emitInlineRun(nodes: ContentNode[], run: number[], blocks: ReadableBlock[], parent: ContentNode): void {
+  const parts: string[] = [];
+  const links: ReadablePiece[] = [];
+  for (const index of run) {
+    const text = descendantContentText(nodes, index);
+    if (text) parts.push(text);
+    const node = nodes[index];
+    if (isInteractable(node.tag, node.attrs) && typeof node.backend === "number" && text) {
+      links.push({ text, backendNodeId: node.backend });
+      continue;
+    }
+    for (const link of contentLinks(nodes, index)) links.push(link);
+  }
+  const text = parts.join(" ").replace(/\s+/g, " ").trim();
+  if (!text) return;
+  const block: ReadableBlock = { kind: "paragraph", text };
+  // The run's text nodes are not themselves controls. When the whole run is
+  // the label of the parent link or button, that parent is the click target.
+  if (isInteractable(parent.tag, parent.attrs) && typeof parent.backend === "number") {
+    links.unshift({ text, backendNodeId: parent.backend });
+  }
+  assignLinks(block, text, links);
+  blocks.push(block);
+}
+
+function assignLinks(block: ReadableBlock, text: string, links: ReadablePiece[]): void {
+  const unique = dedupeLinks(links.filter((link) => link.text.length > 0 && link.backendNodeId !== undefined));
+  if (unique.length === 1 && unique[0].text === text) {
+    block.backendNodeId = unique[0].backendNodeId;
+    return;
+  }
+  if (unique.length > 0) block.links = unique;
+}
+
+function emitList(nodes: ContentNode[], index: number, blocks: ReadableBlock[]): void {
+  const items: ReadablePiece[] = [];
+  const ordered = nodes[index].tag === "ol";
+  const extras: number[] = [];
+  for (const child of nodes[index].children) {
+    const current = nodes[child];
+    if (contentSkipped(current)) continue;
+    const item = current.tag === "li" || current.attrs.role?.toLowerCase() === "listitem";
+    if (!item) {
+      extras.push(child);
+      continue;
+    }
+    const text = descendantContentText(nodes, child);
+    if (!text) continue;
+    const links = contentLinks(nodes, child);
+    const piece: ReadablePiece = { text };
+    if (links.length === 1) piece.backendNodeId = links[0].backendNodeId;
+    items.push(piece);
+  }
+  if (items.length === 0) {
+    for (const child of nodes[index].children) collectContent(nodes, child, blocks);
+    return;
+  }
+  blocks.push({ kind: "list", ordered, items });
+  for (const extra of extras) collectContent(nodes, extra, blocks);
+}
+
+function emitTable(nodes: ContentNode[], index: number, blocks: ReadableBlock[]): void {
+  const rows: ReadablePiece[][] = [];
+  let header: ReadablePiece[] | undefined;
+  const walk = (current: number): void => {
+    const node = nodes[current];
+    if (current !== index && (node.tag === "table" || node.attrs.role?.toLowerCase() === "table")) return;
+    const row = current !== index && (node.tag === "tr" || node.attrs.role?.toLowerCase() === "row");
+    if (row) {
+      const cells = rowCells(nodes, current);
+      if (cells.length === 0) return;
+      if (!header && cells.every((cell) => cell.header)) header = cells.map(stripHeaderFlag);
+      else rows.push(cells.map(stripHeaderFlag));
+      return;
+    }
+    for (const child of node.children) walk(child);
+  };
+  walk(index);
+  if (!header && rows.length === 0) return;
+  blocks.push({ kind: "table", ...(header ? { header } : {}), rows });
+}
+
+function rowCells(
+  nodes: ContentNode[],
+  index: number,
+): Array<ReadablePiece & { header: boolean }> {
+  const cells: Array<ReadablePiece & { header: boolean }> = [];
+  for (const child of nodes[index].children) {
+    const node = nodes[child];
+    if (contentSkipped(node)) continue;
+    const role = node.attrs.role?.toLowerCase();
+    const cell =
+      node.tag === "td" ||
+      node.tag === "th" ||
+      role === "cell" ||
+      role === "gridcell" ||
+      role === "columnheader" ||
+      role === "rowheader";
+    if (!cell) continue;
+    const text = descendantContentText(nodes, child);
+    const links = contentLinks(nodes, child);
+    cells.push({
+      text,
+      ...(links.length === 1 ? { backendNodeId: links[0].backendNodeId } : {}),
+      header: node.tag === "th" || role === "columnheader" || role === "rowheader",
+    });
+  }
+  return cells;
+}
+
+function stripHeaderFlag(cell: ReadablePiece & { header: boolean }): ReadablePiece {
+  return { text: cell.text, ...(cell.backendNodeId !== undefined ? { backendNodeId: cell.backendNodeId } : {}) };
+}
+
+function contentLinks(nodes: ContentNode[], index: number): ReadablePiece[] {
+  const links: ReadablePiece[] = [];
+  const visit = (current: number): void => {
+    const node = nodes[current];
+    if (current !== index && contentSkipped(node)) return;
+    if (isInteractable(node.tag, node.attrs) && typeof node.backend === "number") {
+      const text = descendantContentText(nodes, current);
+      if (text) links.push({ text, backendNodeId: node.backend });
+      return;
+    }
+    for (const child of node.children) {
+      if (nodes[child].tag !== "#text") visit(child);
+    }
+  };
+  visit(index);
+  return links;
+}
+
+function descendantContentText(nodes: ContentNode[], index: number): string {
+  const parts: string[] = [];
+  const visit = (current: number): void => {
+    const node = nodes[current];
+    if (!node || (current !== index && contentSkipped(node))) return;
+    parts.push(...node.pieces);
+    for (const child of node.children) visit(child);
+  };
+  visit(index);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function contentSkipped(node: ContentNode): boolean {
+  if (!node || node.tag === "#text") return node?.zeroArea === true;
+  if (SKIP_CONTENT_TAGS.has(node.tag)) return true;
+  const role = node.attrs.role?.toLowerCase();
+  if (role === "navigation" || role === "contentinfo") return true;
+  if (node.attrs["aria-hidden"] === "true" || node.attrs["aria-hidden"] === "") return true;
+  if (node.attrs.hidden !== undefined) return true;
+  return node.zeroArea;
+}
+
+function isInlineContent(node: ContentNode): boolean {
+  if (contentSkipped(node)) return false;
+  if (INLINE_CONTENT_TAGS.has(node.tag)) return true;
+  const role = node.attrs.role?.toLowerCase();
+  return role === "link" || role === "button" || role === "presentation" || role === "none";
+}
+
+function isHeadingNode(node: ContentNode): boolean {
+  return /^h[1-6]$/.test(node.tag) || node.attrs.role?.toLowerCase() === "heading";
+}
+
+function headingLevel(node: ContentNode): number {
+  const tag = /^h([1-6])$/.exec(node.tag);
+  if (tag) return Number(tag[1]);
+  const aria = Number(node.attrs["aria-level"]);
+  if (Number.isFinite(aria) && aria >= 1 && aria <= 6) return aria;
+  return 2;
+}
+
+function dedupeLinks(links: ReadablePiece[]): ReadablePiece[] {
+  const seen = new Set<string>();
+  const out: ReadablePiece[] = [];
+  for (const link of links) {
+    const key = `${link.backendNodeId ?? ""}:${link.text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(link);
+  }
+  return out;
+}
+
+function splitReadableBlocks(blocks: ReadableBlock[]): ReadableBlock[] {
+  const out: ReadableBlock[] = [];
+  for (const block of blocks) {
+    if ((block.kind === "paragraph" || block.kind === "heading") && (block.text?.length ?? 0) > READABLE_PARAGRAPH_CHARS) {
+      const parts = splitReadableText(block.text ?? "", READABLE_PARAGRAPH_CHARS);
+      parts.forEach((text, index) => {
+        const next: ReadableBlock = { ...block, text };
+        if (index > 0) {
+          delete next.links;
+          delete next.backendNodeId;
+        }
+        out.push(next);
+      });
+      continue;
+    }
+    if (block.kind === "table" && (block.rows?.length ?? 0) > READABLE_TABLE_ROWS) {
+      const rows = block.rows ?? [];
+      for (let i = 0; i < rows.length; i += READABLE_TABLE_ROWS) {
+        out.push({ kind: "table", ...(block.header ? { header: block.header } : {}), rows: rows.slice(i, i + READABLE_TABLE_ROWS) });
+      }
+      continue;
+    }
+    out.push(block);
+  }
+  return out;
+}
+
+function splitReadableText(text: string, limit: number): string[] {
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf(" ", limit);
+    if (cut < Math.floor(limit / 2)) cut = limit;
+    const piece = rest.slice(0, cut).trim();
+    if (piece) parts.push(piece);
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+function readableBlockChars(block: ReadableBlock): number {
+  if (block.kind === "list") return (block.items ?? []).reduce((sum, item) => sum + item.text.length, 0);
+  if (block.kind === "table") {
+    const header = (block.header ?? []).reduce((sum, cell) => sum + cell.text.length, 0);
+    const rows = (block.rows ?? []).reduce(
+      (sum, row) => sum + row.reduce((rowSum, cell) => rowSum + cell.text.length, 0),
+      0,
+    );
+    return header + rows;
+  }
+  return block.text?.length ?? 0;
 }
 
 const INTERACTABLE_TAGS = new Set([

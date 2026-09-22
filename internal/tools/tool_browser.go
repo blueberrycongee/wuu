@@ -61,7 +61,10 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 			"Tabs stay hidden in the background by default; visiting a page does not show it to the user. " +
 			"Call set_visibility with visible=true only when the user's main goal is to watch the page, then set_visibility false or finalize when that goal ends. " +
 			"Read-only actions (observe, screenshot, tabs, wait_for) inspect page state; the others mutate it. " +
-			"Screenshot saves a UI preview and returns its path and dimensions, not image content to the model; use observe to read page text. " +
+			"Screenshot saves a UI preview and returns its path and dimensions, not image content to the model. " +
+			"observe returns readable content (headings, paragraphs, lists, and tables) and the interactive nodes from the same page view. Content that can be clicked includes its node_id. " +
+			"A long page sets content_next_offset; pass that value as content_offset to read the next slice. Node ids expire on the next observe. " +
+			"finalize keeps only tabs named in keep. A tab_id without keep retains that one tab as handoff. " +
 			"Prefer node ids from observe over raw coordinates, and re-observe after an input to confirm the outcome before continuing.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -76,7 +79,7 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 				},
 				"tab_id": map[string]any{
 					"type":        "string",
-					"description": "Target tab. Omit on navigate to open a new tab; the tool mints and returns a tab_id.",
+					"description": "Target tab. Omit on navigate to open a new tab; the tool mints and returns a tab_id. On finalize, a tab_id without keep retains that tab as handoff.",
 				},
 				"url": map[string]any{
 					"type":        "string",
@@ -103,6 +106,25 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 				"dx":         map[string]any{"type": "number", "description": "Horizontal wheel delta for action=scroll. Omit both dx and dy to scroll down one viewport."},
 				"dy":         map[string]any{"type": "number", "description": "Vertical wheel delta for action=scroll. Positive scrolls down."},
 				"timeout_ms": map[string]any{"type": "integer", "description": "Used by action=wait_for. Bounded to 60000 milliseconds."},
+				"content_offset": map[string]any{
+					"type":        "integer",
+					"description": "Used by action=observe. Zero-based block offset into the page's readable content. Pass the previous observe's content_next_offset to continue. Interactive node ids always come from this observe.",
+				},
+				"keep": map[string]any{
+					"type":        "array",
+					"description": "Used by action=finalize. Tabs to retain. Each item names tab_id and status (deliverable or handoff). Omitted tabs, including popups opened by the page, are closed. An explicit keep list wins over tab_id.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"tab_id": map[string]any{"type": "string"},
+							"status": map[string]any{
+								"type": "string",
+								"enum": []string{"deliverable", "handoff"},
+							},
+						},
+						"required": []string{"tab_id"},
+					},
+				},
 				"steps": map[string]any{
 					"type":        "array",
 					"description": "Used by action=sequence. One to 64 actions on this tab. Each step must set risk to safe, external_side_effect, or destructive; a non-safe step also requires confirmed=true.",
@@ -178,10 +200,31 @@ type browserCDPEnvelope struct {
 }
 
 type browserObservation struct {
-	URL            string        `json:"url"`
-	Title          string        `json:"title"`
-	Nodes          []browserNode `json:"nodes"`
-	ScreenshotPath string        `json:"screenshot_path"`
+	URL               string                `json:"url"`
+	Title             string                `json:"title"`
+	Nodes             []browserNode         `json:"nodes"`
+	Content           []browserContentBlock `json:"content"`
+	ContentOffset     int                   `json:"content_offset"`
+	ContentTotal      int                   `json:"content_total"`
+	ContentNextOffset *int                  `json:"content_next_offset"`
+	ScreenshotPath    string                `json:"screenshot_path"`
+}
+
+type browserContentBlock struct {
+	Kind    string                  `json:"kind"`
+	Level   int                     `json:"level,omitempty"`
+	Text    string                  `json:"text,omitempty"`
+	NodeID  int                     `json:"node_id,omitempty"`
+	Ordered bool                    `json:"ordered,omitempty"`
+	Links   []browserContentPiece   `json:"links,omitempty"`
+	Items   []browserContentPiece   `json:"items,omitempty"`
+	Header  []browserContentPiece   `json:"header,omitempty"`
+	Rows    [][]browserContentPiece `json:"rows,omitempty"`
+}
+
+type browserContentPiece struct {
+	Text   string `json:"text,omitempty"`
+	NodeID int    `json:"node_id,omitempty"`
 }
 
 type browserNode struct {
@@ -316,6 +359,13 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 	}
 	destPath := t.previewPath(bctx)
 	params := map[string]any{"screenshot": destPath != "", "dest_path": destPath}
+	var observeArgs struct {
+		ContentOffset int `json:"content_offset"`
+	}
+	_ = decodeArgs(argsJSON, &observeArgs)
+	if observeArgs.ContentOffset > 0 {
+		params["content_offset"] = observeArgs.ContentOffset
+	}
 	raw, err := t.cdpWithRebuild(ctx, tabID, "observe", params, t.tabURL(tabID), true)
 	if err != nil {
 		return toolresult.Result{}, err
@@ -324,17 +374,27 @@ func (t *BrowserTool) doObserve(ctx context.Context, argsJSON string, bctx brows
 	_ = json.Unmarshal(raw, &obs)
 	realURL := obs.URL
 	// Page-derived text passes through credential redaction before the model ever
-	// sees it: node names/values, the title, and the URL (which can carry OAuth
-	// codes or session/reset tokens in userinfo or query params).
+	// sees it: node names/values, readable content, the title, and the URL
+	// (which can carry OAuth codes or session/reset tokens in userinfo or query).
 	for i := range obs.Nodes {
 		obs.Nodes[i].Name = redactToolOutput(obs.Nodes[i].Name)
 		obs.Nodes[i].Value = redactToolOutput(obs.Nodes[i].Value)
 	}
+	redactBrowserContent(obs.Content)
 	obs.Title = redactToolOutput(obs.Title)
 	obs.URL = redactURLForModel(obs.URL)
-	structured, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"action": "observe", "tab_id": tabID, "url": obs.URL, "title": obs.Title, "nodes": obs.Nodes,
-	})
+	}
+	if obs.Content != nil {
+		payload["content"] = obs.Content
+		payload["content_offset"] = obs.ContentOffset
+		payload["content_total"] = obs.ContentTotal
+		if obs.ContentNextOffset != nil {
+			payload["content_next_offset"] = *obs.ContentNextOffset
+		}
+	}
+	structured, _ := json.Marshal(payload)
 	// The screenshot is a UI preview only: reference it as a file:// URI on the
 	// activity, never as a base64 image in the model result.
 	if bctx.setPreview != nil {
@@ -490,59 +550,61 @@ func (t *BrowserTool) doWaitFor(ctx context.Context, argsJSON string, bctx brows
 }
 
 func (t *BrowserTool) doTabs(ctx context.Context) (toolresult.Result, error) {
-	live, err := t.env.BrowserBridge.ListTabs(ctx)
+	live, records, err := t.syncLiveTabs(ctx)
 	if err != nil {
-		return toolresult.Result{}, browserBridgeError("tabs", "", err)
+		return toolresult.Result{}, err
 	}
-	liveSet := make(map[string]bool, len(live))
-	for _, id := range live {
-		liveSet[strings.TrimSpace(id)] = true
-	}
-	// Reconcile the durable store against the live host set: entries the host no
-	// longer knows have lost their view (core restart) and are marked dead so the
-	// next use rebuilds by URL instead of addressing a gone tab.
-	var records []BrowserTabRecord
-	if t.env.BrowserTabs != nil {
-		stored, listErr := t.env.BrowserTabs.List()
-		if listErr == nil {
-			for _, rec := range stored {
-				if !liveSet[rec.TabID] && !rec.Dead {
-					rec.Dead = true
-					rec.UpdatedAt = time.Time{}
-					_ = t.env.BrowserTabs.Put(rec)
-				}
-				records = append(records, rec)
-			}
-		}
-	}
-	structured, _ := json.Marshal(map[string]any{"action": "tabs", "live_tab_ids": live, "tabs": records})
+	ids := browserLiveIDs(live)
+	// The registry keeps the real URL so a lost view can be rebuilt. The model
+	// sees the same redaction observe applies, including a popup it did not open.
+	visible := modelTabRecords(records)
+	structured, _ := json.Marshal(map[string]any{"action": "tabs", "live_tab_ids": ids, "tabs": visible})
 	return toolresult.Result{
-		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderTabsText(live, records)}},
+		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderTabsText(ids, visible)}},
 		StructuredContent: structured,
 	}, nil
 }
 
-func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresult.Result, error) {
-	var args struct {
-		Keep []struct {
-			TabID  string `json:"tab_id"`
-			Status string `json:"status"`
-		} `json:"keep"`
+func modelTabRecords(records []BrowserTabRecord) []BrowserTabRecord {
+	if len(records) == 0 {
+		return records
 	}
-	_ = decodeArgs(argsJSON, &args)
-	keep := make(map[string]string, len(args.Keep))
-	for _, k := range args.Keep {
-		if id := strings.TrimSpace(k.TabID); id != "" {
-			keep[id] = strings.TrimSpace(k.Status)
-		}
+	out := make([]BrowserTabRecord, len(records))
+	for i, rec := range records {
+		rec.URL = redactURLForModel(rec.URL)
+		rec.Title = redactToolOutput(rec.Title)
+		out[i] = rec
+	}
+	return out
+}
+
+func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresult.Result, error) {
+	keep := browserKeepSet(argsJSON)
+	live, liveKnown := t.listLiveTabs(ctx)
+	liveByID := make(map[string]BrowserLiveTab, len(live))
+	for _, tab := range live {
+		liveByID[tab.ID] = tab
+	}
+	var records []BrowserTabRecord
+	if t.env.BrowserTabs != nil {
+		records, _ = t.env.BrowserTabs.List()
 	}
 	var closed, kept []string
+	seen := make(map[string]bool, len(records))
 	if t.env.BrowserTabs != nil {
-		stored, _ := t.env.BrowserTabs.List()
-		for _, rec := range stored {
+		for _, rec := range records {
+			seen[rec.TabID] = true
 			if status, ok := keep[rec.TabID]; ok {
 				rec.Status = status
 				rec.UpdatedAt = time.Time{}
+				if strings.TrimSpace(rec.URL) == "" {
+					if tab, ok := liveByID[rec.TabID]; ok {
+						rec.URL = tab.URL
+						if strings.TrimSpace(rec.Title) == "" {
+							rec.Title = tab.Title
+						}
+					}
+				}
 				_ = t.env.BrowserTabs.Put(rec)
 				kept = append(kept, rec.TabID)
 				delete(keep, rec.TabID)
@@ -553,7 +615,29 @@ func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresu
 			_ = t.env.BrowserTabs.Delete(rec.TabID)
 			closed = append(closed, rec.TabID)
 		}
-		// Kept tabs the model minted this turn may not be in the store yet.
+	}
+	// A page-opened window is a live view before it has a durable record.
+	// Close it unless the model kept it. When the host list is unavailable,
+	// leave those views alone rather than guessing.
+	if liveKnown {
+		for _, tab := range live {
+			if seen[tab.ID] {
+				continue
+			}
+			if status, ok := keep[tab.ID]; ok {
+				if t.env.BrowserTabs != nil {
+					_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title, Status: status})
+				}
+				kept = append(kept, tab.ID)
+				delete(keep, tab.ID)
+				continue
+			}
+			_ = t.env.BrowserBridge.CloseTab(ctx, tab.ID)
+			closed = append(closed, tab.ID)
+		}
+	}
+	// Kept tabs the model minted this turn may not be in the store yet.
+	if t.env.BrowserTabs != nil {
 		for id, status := range keep {
 			_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: id, Status: status})
 			kept = append(kept, id)
@@ -564,6 +648,138 @@ func (t *BrowserTool) doFinalize(ctx context.Context, argsJSON string) (toolresu
 		Content:           []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: renderFinalizeText(kept, closed)}},
 		StructuredContent: structured,
 	}, nil
+}
+
+// syncLiveTabs reconciles the durable registry with the host. Views the host
+// no longer has are marked dead so the next use rebuilds by URL. Views the
+// host has but the registry does not — a popup adopted on the desktop — are
+// recorded so the model can address them and finalize can close them.
+func (t *BrowserTool) syncLiveTabs(ctx context.Context) ([]BrowserLiveTab, []BrowserTabRecord, error) {
+	live, err := t.env.BrowserBridge.ListTabs(ctx)
+	if err != nil {
+		return nil, nil, browserBridgeError("tabs", "", err)
+	}
+	cleaned := normalizeLiveTabs(live)
+	liveByID := make(map[string]BrowserLiveTab, len(cleaned))
+	for _, tab := range cleaned {
+		liveByID[tab.ID] = tab
+	}
+	if t.env.BrowserTabs == nil {
+		return cleaned, nil, nil
+	}
+	stored, listErr := t.env.BrowserTabs.List()
+	if listErr != nil {
+		return cleaned, nil, nil
+	}
+	seen := make(map[string]bool, len(stored))
+	for _, rec := range stored {
+		seen[rec.TabID] = true
+		tab, liveOK := liveByID[rec.TabID]
+		changed := false
+		if liveOK {
+			if rec.Dead {
+				rec.Dead = false
+				changed = true
+			}
+			if strings.TrimSpace(rec.URL) == "" && tab.URL != "" {
+				rec.URL = tab.URL
+				changed = true
+			}
+			if strings.TrimSpace(rec.Title) == "" && tab.Title != "" {
+				rec.Title = tab.Title
+				changed = true
+			}
+		} else if !rec.Dead {
+			rec.Dead = true
+			changed = true
+		}
+		if changed {
+			rec.UpdatedAt = time.Time{}
+			_ = t.env.BrowserTabs.Put(rec)
+		}
+	}
+	for _, tab := range cleaned {
+		if seen[tab.ID] {
+			continue
+		}
+		_ = t.env.BrowserTabs.Put(BrowserTabRecord{TabID: tab.ID, URL: tab.URL, Title: tab.Title})
+	}
+	records, listErr := t.env.BrowserTabs.List()
+	if listErr != nil {
+		return cleaned, nil, nil
+	}
+	return cleaned, records, nil
+}
+
+func (t *BrowserTool) listLiveTabs(ctx context.Context) ([]BrowserLiveTab, bool) {
+	if t.env == nil || t.env.BrowserBridge == nil {
+		return nil, false
+	}
+	live, err := t.env.BrowserBridge.ListTabs(ctx)
+	if err != nil {
+		return nil, false
+	}
+	return normalizeLiveTabs(live), true
+}
+
+func normalizeLiveTabs(live []BrowserLiveTab) []BrowserLiveTab {
+	out := make([]BrowserLiveTab, 0, len(live))
+	seen := make(map[string]bool, len(live))
+	for _, tab := range live {
+		tab.ID = strings.TrimSpace(tab.ID)
+		tab.URL = strings.TrimSpace(tab.URL)
+		tab.Title = strings.TrimSpace(tab.Title)
+		if tab.ID == "" || seen[tab.ID] {
+			continue
+		}
+		seen[tab.ID] = true
+		out = append(out, tab)
+	}
+	return out
+}
+
+func browserLiveIDs(live []BrowserLiveTab) []string {
+	ids := make([]string, 0, len(live))
+	for _, tab := range live {
+		ids = append(ids, tab.ID)
+	}
+	return ids
+}
+
+// browserKeepSet is the set of tabs finalize retains. An explicit keep array,
+// including an empty one, is the whole decision. When keep is absent, a
+// tab_id retains that single tab as handoff — models that only have the
+// generic tab_id field still keep the page they named.
+func browserKeepSet(argsJSON string) map[string]string {
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(argsJSON), &raw)
+	_, explicit := raw["keep"]
+	var args struct {
+		Keep []struct {
+			TabID  string `json:"tab_id"`
+			Status string `json:"status"`
+		} `json:"keep"`
+		TabID string `json:"tab_id"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+	keep := make(map[string]string, len(args.Keep)+1)
+	for _, item := range args.Keep {
+		id := strings.TrimSpace(item.TabID)
+		if id == "" {
+			continue
+		}
+		status := strings.TrimSpace(item.Status)
+		if status == "" {
+			status = "handoff"
+		}
+		keep[id] = status
+	}
+	if !explicit {
+		if id := strings.TrimSpace(args.TabID); id != "" {
+			keep[id] = "handoff"
+		}
+	}
+	return keep
 }
 
 // cdpCall issues one semantic browser action over the CDP wire method and
@@ -777,6 +993,24 @@ func errBrowserMissingTab(action string) error {
 	return fmt.Errorf("browser %s requires tab_id: error_kind=missing_tab_id model_next_action=%q", action, "pass the tab_id returned by navigate")
 }
 
+func redactBrowserContent(blocks []browserContentBlock) {
+	for i := range blocks {
+		blocks[i].Text = redactToolOutput(blocks[i].Text)
+		redactContentPieces(blocks[i].Links)
+		redactContentPieces(blocks[i].Items)
+		redactContentPieces(blocks[i].Header)
+		for r := range blocks[i].Rows {
+			redactContentPieces(blocks[i].Rows[r])
+		}
+	}
+}
+
+func redactContentPieces(pieces []browserContentPiece) {
+	for i := range pieces {
+		pieces[i].Text = redactToolOutput(pieces[i].Text)
+	}
+}
+
 func renderObserveText(tabID string, obs browserObservation) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "tab %s\n", tabID)
@@ -785,6 +1019,9 @@ func renderObserveText(tabID string, obs browserObservation) string {
 	}
 	if ti := strings.TrimSpace(obs.Title); ti != "" {
 		fmt.Fprintf(&b, "title: %s\n", ti)
+	}
+	if obs.Content != nil {
+		writeObserveContent(&b, obs)
 	}
 	fmt.Fprintf(&b, "%d interactive node(s):", len(obs.Nodes))
 	for _, n := range obs.Nodes {
@@ -800,6 +1037,110 @@ func renderObserveText(tabID string, obs browserObservation) string {
 		}
 	}
 	return b.String()
+}
+
+func writeObserveContent(b *strings.Builder, obs browserObservation) {
+	total := obs.ContentTotal
+	if total == 0 {
+		total = len(obs.Content)
+	}
+	if total == 0 {
+		b.WriteString("content: none\n")
+		return
+	}
+	end := obs.ContentOffset + len(obs.Content)
+	switch {
+	case obs.ContentNextOffset != nil:
+		fmt.Fprintf(b, "content (blocks %d-%d of %d; content_offset=%d continues):\n", obs.ContentOffset+1, end, total, *obs.ContentNextOffset)
+	case obs.ContentOffset > 0:
+		fmt.Fprintf(b, "content (blocks %d-%d of %d):\n", obs.ContentOffset+1, end, total)
+	default:
+		b.WriteString("content:\n")
+	}
+	for _, block := range obs.Content {
+		writeContentBlock(b, block)
+	}
+}
+
+func writeContentBlock(b *strings.Builder, block browserContentBlock) {
+	switch block.Kind {
+	case "heading":
+		level := block.Level
+		if level < 1 {
+			level = 1
+		}
+		if level > 6 {
+			level = 6
+		}
+		fmt.Fprintf(b, "  %s %s\n", strings.Repeat("#", level), annotateNode(block.Text, block.NodeID))
+	case "list":
+		for i, item := range block.Items {
+			marker := "-"
+			if block.Ordered {
+				marker = fmt.Sprintf("%d.", i+1)
+			}
+			fmt.Fprintf(b, "  %s %s\n", marker, annotateNode(item.Text, item.NodeID))
+		}
+	case "table":
+		writeContentTable(b, block)
+	default:
+		fmt.Fprintf(b, "  %s\n", annotateNode(block.Text, block.NodeID))
+		for _, link := range block.Links {
+			if link.NodeID <= 0 {
+				continue
+			}
+			label := strings.TrimSpace(link.Text)
+			if label == "" {
+				fmt.Fprintf(b, "  [node %d]\n", link.NodeID)
+				continue
+			}
+			fmt.Fprintf(b, "  [node %d: %s]\n", link.NodeID, label)
+		}
+	}
+}
+
+func writeContentTable(b *strings.Builder, block browserContentBlock) {
+	header := block.Header
+	rows := block.Rows
+	if len(header) == 0 && len(rows) > 0 {
+		header = rows[0]
+		rows = rows[1:]
+	}
+	writeContentRow(b, header)
+	if len(header) > 0 {
+		b.WriteString("  |")
+		for range header {
+			b.WriteString(" --- |")
+		}
+		b.WriteByte('\n')
+	}
+	for _, row := range rows {
+		writeContentRow(b, row)
+	}
+}
+
+func writeContentRow(b *strings.Builder, cells []browserContentPiece) {
+	if len(cells) == 0 {
+		return
+	}
+	b.WriteString("  |")
+	for _, cell := range cells {
+		b.WriteString(" ")
+		b.WriteString(strings.ReplaceAll(annotateNode(cell.Text, cell.NodeID), "|", "/"))
+		b.WriteString(" |")
+	}
+	b.WriteByte('\n')
+}
+
+func annotateNode(text string, nodeID int) string {
+	text = strings.TrimSpace(text)
+	if nodeID <= 0 {
+		return text
+	}
+	if text == "" {
+		return fmt.Sprintf("[node %d]", nodeID)
+	}
+	return fmt.Sprintf("%s [node %d]", text, nodeID)
 }
 
 func renderTabsText(live []string, records []BrowserTabRecord) string {
