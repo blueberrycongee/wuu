@@ -52,6 +52,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Conversation images use compact tool thumbnails and bounded, proportional
   previews in replies, with consistent space before and after images.
 
+- TODO capsule hover cards use roomier line and task spacing, preserve paragraph
+  breaks, and keep long task descriptions at regular weight for easier reading.
+
 - Dark desktop surfaces use fine inset highlights for depth. Menus, dialogs,
   and edge drawers retain black shadows to separate overlapping content.
 

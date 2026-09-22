@@ -1395,6 +1395,7 @@ button.conversation-status-capsule,
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
+  gap: var(--space-1);
   margin: 0;
   list-style: none;
   opacity: 0;
@@ -1477,12 +1478,16 @@ button.conversation-status-capsule,
   grid-template-columns: var(--icon-size-xs) minmax(0, 1fr);
   align-items: start;
   gap: var(--menu-item-gap);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  padding: var(--space-2);
   border-radius: var(--radius-xs);
   color: var(--shell-todo-card-soft);
   font-size: var(--font-ui);
-  line-height: var(--line-ui);
+  line-height: var(--line-body);
   overflow-wrap: anywhere;
+}
+
+.conversation-status-todo-card li > span:last-child {
+  white-space: pre-wrap;
 }
 
 .conversation-status-todo-card li > span:first-child {
@@ -1494,7 +1499,6 @@ button.conversation-status-capsule,
 .conversation-status-todo-card li.is-in_progress {
   background: var(--menu-hover);
   color: var(--shell-todo-card-ink);
-  font-weight: var(--weight-medium);
 }
 
 .conversation-status-todo-card li.is-completed {
