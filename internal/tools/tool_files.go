@@ -31,7 +31,7 @@ func (t *ReadFileTool) IsConcurrencySafe() bool { return true }
 func (t *ReadFileTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a continuous range of a workspace file with line numbers. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
+		Description: "Read a continuous range of a workspace file with line numbers. Each line is NUMBER|CONTENT: the number and first | are display metadata; everything after that delimiter is file content, including its original indentation. Copy only CONTENT when editing. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -212,11 +212,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, argsJSON string) (string, er
 		}
 	}
 
-	// Format with line numbers (right-aligned to 6 chars + tab).
+	// A visible separator keeps display metadata distinct from source tabs.
 	var buf strings.Builder
 	for i, line := range readResult.Lines {
 		lineNum := args.Offset + i
-		fmt.Fprintf(&buf, "%6d\t%s\n", lineNum, line)
+		fmt.Fprintf(&buf, "%6d|%s\n", lineNum, line)
 	}
 
 	// Record read state for deduplication and active-file context freshness.
@@ -1189,6 +1189,7 @@ func (t *EditFileTool) Definition() providers.ToolDefinition {
 		Description: "Performs exact string replacement in a file.\n\n" +
 			"Usage:\n" +
 			"- Use old_text copied from current file evidence; if it no longer matches, read the relevant range and retry\n" +
+			"- In numbered reads and error snippets, discard the line number and first |; preserve all whitespace after | exactly (tabs and spaces differ)\n" +
 			"- Provide old_text (must match exactly once) and new_text\n" +
 			"- Use replace_all=true to replace every occurrence instead of requiring unique match\n" +
 			"- The edit will FAIL if old_text is not unique — provide more context or use replace_all\n" +
@@ -1371,10 +1372,38 @@ func (e editTextMatchError) Error() string {
 			}
 			b.WriteString(":\n")
 			b.WriteString(formatPatchErrorLines(candidate.Snippet, candidate.StartLine, 6))
+			if e.Kind == "old_text_not_found" {
+				b.WriteString(editIndentationHint(expected, candidate))
+			}
 		}
 	}
 	b.WriteString("\nsafe_retry: read_file the target range and retry edit_file with exact current old_text and enough surrounding context")
 	return b.String()
+}
+
+// Diagnose only candidates whose line bodies agree. This is evidence for a
+// retry, never permission to perform an indentation-insensitive replacement.
+func editIndentationHint(expected []string, candidate patchChunkCandidate) string {
+	if len(expected) != len(candidate.Snippet) {
+		return ""
+	}
+	first := -1
+	for i, line := range expected {
+		actual := candidate.Snippet[i]
+		if strings.TrimLeft(line, " \t") != strings.TrimLeft(actual, " \t") {
+			return ""
+		}
+		if first < 0 && line != actual {
+			first = i
+		}
+	}
+	if first < 0 {
+		return ""
+	}
+	oldLine, fileLine := expected[first], candidate.Snippet[first]
+	oldPrefix := oldLine[:len(oldLine)-len(strings.TrimLeft(oldLine, " \t"))]
+	filePrefix := fileLine[:len(fileLine)-len(strings.TrimLeft(fileLine, " \t"))]
+	return fmt.Sprintf("  indentation_mismatch: old_text line %d starts with %q; candidate file line %d starts with %q. Re-read and copy the file indentation exactly.\n", first+1, oldPrefix, candidate.StartLine+first, filePrefix)
 }
 
 func closestEditTextCandidates(content, oldText string, limit int) []patchChunkCandidate {

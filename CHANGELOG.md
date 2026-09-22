@@ -60,6 +60,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   respects Git ignore rules when Git is available and counts matching lines
   consistently across search modes.
 
+- File reads and edit-error snippets separate line numbers from source with a
+  visible delimiter, preserving indentation for exact edits. Failed edits can
+  identify tab/space differences without applying an ambiguous replacement.
+
 - Switching browser tabs keeps the floating preview window, including its
   chosen corner and size, instead of briefly closing and resetting it.
 

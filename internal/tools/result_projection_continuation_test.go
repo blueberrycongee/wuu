@@ -271,10 +271,11 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	kit.env.SessionDir = t.TempDir()
 	var file, expected strings.Builder
 	for i := 1; i <= 600; i++ {
-		line := fmt.Sprintf("record-%04d %s", i, strings.Repeat("x", 100))
+		indent := []string{"", "\t\t", "    ", " \t "}[i%4]
+		line := fmt.Sprintf("%srecord-%04d | %s", indent, i, strings.Repeat("x", 100))
 		fmt.Fprintln(&file, line)
 		if i >= 51 && i <= 450 {
-			fmt.Fprintf(&expected, "%6d\t%s\n", i, line)
+			fmt.Fprintf(&expected, "%6d|%s\n", i, line)
 		}
 	}
 	path := filepath.Join(root, "records.txt")
@@ -315,6 +316,27 @@ func TestReadFileProjectedPagesPreserveRequestedRange(t *testing.T) {
 	}
 	if pages == 0 || pages == 100 || actual.String() != expected.String() {
 		t.Fatalf("projected pages changed requested content: pages=%d, got bytes=%d want=%d", pages+1, actual.Len(), expected.Len())
+	}
+	// Copying only the content after each display delimiter must produce a
+	// usable exact-edit anchor, including mixed tabs/spaces and literal pipes.
+	var copied strings.Builder
+	for _, numbered := range contentLines(actual.String()) {
+		_, body, ok := strings.Cut(numbered, "|")
+		if !ok {
+			t.Fatalf("missing content boundary: %q", numbered)
+		}
+		copied.WriteString(body)
+		copied.WriteByte('\n')
+	}
+	old := copied.String()
+	replacement := strings.ReplaceAll(old, "record-", "updated-")
+	if _, err := NewEditFileTool(kit.env).Execute(context.Background(), mustMarshalMap(map[string]any{
+		"path": "records.txt", "old_text": old, "new_text": replacement,
+	})); err != nil {
+		t.Fatalf("exact edit from projected reads: %v", err)
+	}
+	if got := mustReadFile(t, path); got != strings.Replace(file.String(), old, replacement, 1) {
+		t.Fatal("round-trip edit changed indentation or content outside the requested range")
 	}
 	mustWriteFile(t, path, "changed\n")
 	if _, err := tool.Execute(context.Background(), savedNext); err == nil || !strings.Contains(err.Error(), "stale") {

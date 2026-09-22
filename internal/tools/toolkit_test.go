@@ -445,7 +445,7 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 	if len(parsed.Suggestions) == 0 || !strings.Contains(strings.Join(parsed.Suggestions, " "), "omitted range") {
 		t.Fatalf("read_file response missing omitted-range suggestion: %+v", parsed.Suggestions)
 	}
-	for _, want := range []string{"  3001\tline-3001", "  3002\tline-3002", "  3003\tline-3003"} {
+	for _, want := range []string{"  3001|line-3001", "  3002|line-3002", "  3003|line-3003"} {
 		if !strings.Contains(parsed.Content, want) {
 			t.Fatalf("expected content to include %q, got: %q", want, parsed.Content)
 		}
@@ -477,7 +477,7 @@ func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
 	if rangeParsed.NumLines != 3 || rangeParsed.Range.StartLine != 42 || rangeParsed.Range.EndLine != 44 {
 		t.Fatalf("unexpected range response metadata: %+v", rangeParsed)
 	}
-	for _, want := range []string{"    42\tline-0042", "    43\tline-0043", "    44\tline-0044"} {
+	for _, want := range []string{"    42|line-0042", "    43|line-0043", "    44|line-0044"} {
 		if !strings.Contains(rangeParsed.Content, want) {
 			t.Fatalf("range response missing %q:\n%s", want, rangeParsed.Content)
 		}
@@ -744,7 +744,7 @@ func TestToolkit_EditFileReportsRecoverableTextMatchErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "old_text_not_found") ||
 		!strings.Contains(err.Error(), "candidates") ||
-		!strings.Contains(err.Error(), "2| bravo") ||
+		!strings.Contains(err.Error(), "2|bravo") ||
 		!strings.Contains(err.Error(), "safe_retry") {
 		t.Fatalf("expected recoverable old_text guidance, got: %v", err)
 	}
@@ -1047,7 +1047,7 @@ func TestToolkit_ApplyPatchRejectsInvalidPatchAtomically(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "anchor_not_found") ||
 		!strings.Contains(err.Error(), "candidates") ||
-		!strings.Contains(err.Error(), "1| beta") ||
+		!strings.Contains(err.Error(), "1|beta") ||
 		!strings.Contains(err.Error(), "safe_retry") {
 		t.Fatalf("expected recoverable patch guidance, got: %v", err)
 	}

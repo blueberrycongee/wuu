@@ -959,10 +959,10 @@ func formatPatchErrorLines(lines []string, startLine, limit int) string {
 	}
 	for i, line := range lines {
 		if startLine > 0 {
-			fmt.Fprintf(&b, "  %d| %s\n", startLine+i, line)
+			fmt.Fprintf(&b, "  %d|%s\n", startLine+i, line)
 			continue
 		}
-		fmt.Fprintf(&b, "  %s\n", line)
+		fmt.Fprintf(&b, "  |%s\n", line)
 	}
 	if omitted > 0 {
 		fmt.Fprintf(&b, "  ... %d more lines omitted\n", omitted)
