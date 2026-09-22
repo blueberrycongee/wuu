@@ -76,6 +76,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Switching desktop sessions keeps caught-up process folds stable through the
+  first paint. Collaboration conversations restore the message being read,
+  cancel outgoing scroll motion, and retain recent history when returning from
+  a Harness session, avoiding a blank reload and a jump to the latest message.
+
 - Conversation spacing accounts for the docked workspace panel as it opens or
   resizes, keeping the scrollbar next to the message flow.
 
