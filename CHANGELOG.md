@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
+  fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
+  Save As dialog that preserves the original image.
+
 - Browser previews show an animated completion badge when the visible task
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.

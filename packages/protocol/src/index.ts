@@ -3105,7 +3105,7 @@ export type WuuDesktopApi = {
   listInstructionFiles: () => Promise<InstructionsListResult>;
   // 远程控制（设置 → 远程）。管理机器级 remote host 守护进程与手机配对,
   // 走主进程 RemoteHostManager 而非 app-server 协议。
-  /** Save a locally rendered artifact through the mobile system share sheet. */
+  /** Save original artifact bytes via a desktop save dialog or mobile share sheet. */
   saveArtifactFile?: (name: string, source: string) => Promise<void>;
   /** Export a complete workspace file to the phone, rejecting changed or oversized files. */
   exportWorkspaceFile?: (path: string, root?: string) => Promise<void>;
