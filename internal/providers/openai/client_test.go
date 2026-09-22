@@ -3617,3 +3617,56 @@ func TestChat_ResponsesOmitsSessionIDWithoutCacheHint(t *testing.T) {
 		t.Fatalf("x-client-request-id = %q, want empty", seenRequest)
 	}
 }
+
+func TestGPT6SolLunaCatalogResponsesToolRequest(t *testing.T) {
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna", "gpt-6-sol-fast", "gpt-6-luna-fast"} {
+		for _, effort := range []string{"none", "max"} {
+			t.Run(model+"/"+effort, func(t *testing.T) {
+				name, provider := modelcatalog.EnrichProvider("openai", config.ProviderConfig{Type: "openai", Model: model}, model)
+				selection := modelvariant.ResolveForProvider(name, provider, model, effort, "")
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/responses" {
+						t.Errorf("wrong endpoint: %s", r.URL.Path)
+					}
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					if body["model"] != strings.TrimSuffix(model, "-fast") {
+						t.Errorf("model = %v", body["model"])
+					}
+					reasoning, ok := body["reasoning"].(map[string]any)
+					if !ok || reasoning["effort"] != effort {
+						t.Errorf("reasoning = %#v", body["reasoning"])
+					}
+					if strings.HasSuffix(model, "-fast") && body["service_tier"] != "priority" {
+						t.Errorf("tier = %v", body["service_tier"])
+					}
+					if _, ok := body["temperature"]; ok {
+						t.Error("unexpected temperature")
+					}
+					if tools, ok := body["tools"].([]any); !ok || len(tools) != 1 {
+						t.Error("missing tools")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"id":"resp_1","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{}"}]}`))
+				}))
+				defer server.Close()
+				client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key", WireAPI: provider.WireAPI})
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := client.Chat(context.Background(), providers.ChatRequest{
+					Model: modelcatalog.APIModel(provider, model), ProviderOptions: selection.ProviderOptions, Temperature: 0.7,
+					Messages: []providers.ChatMessage{{Role: "user", Content: "Read the file"}},
+					Tools:    []providers.ToolDefinition{{Name: "read_file", InputSchema: map[string]any{"type": "object"}}},
+				})
+				if err != nil || len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "read_file" {
+					t.Fatalf("Chat = %+v, %v", resp, err)
+				}
+			})
+		}
+	}
+}

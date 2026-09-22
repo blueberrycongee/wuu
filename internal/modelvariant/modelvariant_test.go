@@ -220,7 +220,7 @@ func TestSummariesMatchProviderCompatForOpenAIProvider(t *testing.T) {
 }
 
 func TestSummariesIncludeMaxForGPT56OpenAIFallback(t *testing.T) {
-	for _, model := range []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+	for _, model := range []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"} {
 		t.Run(model, func(t *testing.T) {
 			provider := config.ProviderConfig{Type: "openai", Model: model}
 			variants := Summaries(provider, model)

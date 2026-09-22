@@ -14,6 +14,7 @@ import (
 	"time"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
@@ -553,6 +554,38 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 		payload.Thinking = &anthropicThinking{Type: "adaptive"}
 	}
 	applyAnthropicProviderOptions(&payload, req.ProviderOptions)
+
+	if modelvariant.AnthropicRequiresBoundThinking(req.Model) {
+		// Wuu can compact history and change system reminders or discovered
+		// tools between requests. Let the API drop only invalidated reasoning
+		// instead of rejecting the whole continuation, while preserving valid
+		// signed blocks unchanged. This also applies to newly created accounts.
+		if payload.Thinking == nil {
+			payload.Thinking = &anthropicThinking{}
+		}
+		payload.Thinking.Type = "adaptive"
+		payload.Thinking.BudgetTokens = 0
+		if payload.Thinking.Display == "" {
+			payload.Thinking.Display = "summarized"
+		}
+		payload.Thinking.BlockBinding = map[string]string{"prefix_mismatch_behavior": "drop_block"}
+		payload.Betas = append(payload.Betas, "thinking-binding-controls-2026-08-01")
+		if payload.OutputConfig != nil && payload.OutputConfig.Effort == "none" {
+			payload.OutputConfig.Effort = "low"
+		}
+		payload.Temperature = nil
+		payload.TopP = nil
+		payload.TopK = nil
+		if payload.ToolChoice != nil {
+			// These models reject forced tool_choice. Keep the closing-turn
+			// requirement explicit in a supported mid-conversation instruction.
+			payload.ToolChoice = map[string]any{"type": "auto"}
+			payload.Messages = append(payload.Messages, anthropicMessage{
+				Role:    "system",
+				Content: []anthropicBlock{{Type: "text", Text: fmt.Sprintf("Call the %q tool for this turn. Begin your response with that tool call.", req.ForceToolName)}},
+			})
+		}
+	}
 
 	// Temperature gating, applied after all option sources:
 	// - models that reject the field (per-model "temperature": false, arriving
@@ -1632,9 +1665,10 @@ type anthropicRequest struct {
 
 // anthropicThinking configures extended thinking.
 type anthropicThinking struct {
-	Type         string `json:"type"`                    // "adaptive" or "enabled"
-	BudgetTokens int    `json:"budget_tokens,omitempty"` // only for type=enabled
-	Display      string `json:"display,omitempty"`
+	Type         string            `json:"type"`                    // "adaptive" or "enabled"
+	BudgetTokens int               `json:"budget_tokens,omitempty"` // only for type=enabled
+	Display      string            `json:"display,omitempty"`
+	BlockBinding map[string]string `json:"block_binding,omitempty"`
 }
 
 // anthropicOutputConfig controls output behavior.

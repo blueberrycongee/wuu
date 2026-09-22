@@ -61,6 +61,10 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 	}
 
 	applyCompatSamplingDefaults(result, desc)
+	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) && AnthropicRequiresBoundThinking(desc.APIID) {
+		result["temperatureSupported"] = false
+		setOptionDefault(result, "thinking", map[string]any{"type": "adaptive", "display": "summarized"})
+	}
 	if desc.APINPM == compatNPMVertexAnthropic || (desc.APINPM == compatNPMAnthropic && !strings.Contains(desc.APIID, "claude")) {
 		setOptionDefault(result, "toolStreaming", false)
 	}
@@ -140,7 +144,7 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 	}
 	if gptFamily := compatOpenAIGPTFamily(desc.APIID); gptFamily != 0 && !strings.Contains(desc.APIID, "gpt-5-chat") && !strings.Contains(desc.APIID, "gpt-6-chat") {
 		defaultEffort := "medium"
-		if gptFamily >= 6 {
+		if gptFamily >= 6 && !strings.Contains(desc.APIID, "gpt-6-sol") && !strings.Contains(desc.APIID, "gpt-6-luna") {
 			defaultEffort = "low"
 		}
 		if !compatOpenAIGPTProModel(desc.APIID) {

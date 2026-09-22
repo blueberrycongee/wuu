@@ -160,7 +160,7 @@ func TestCatalogCarriesGPT56FamilyMetadata(t *testing.T) {
 	for _, model := range provider.Models {
 		models[model.ID] = model
 	}
-	for _, id := range []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+	for _, id := range []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"} {
 		model, ok := models[id]
 		if !ok {
 			t.Fatalf("missing %s from OpenAI catalog", id)
@@ -254,8 +254,8 @@ func TestCatalogSnapshotMatchesOpenCodeDefaultVisibleCounts(t *testing.T) {
 			}
 		}
 	}
-	if modelCount != 7714 {
-		t.Fatalf("model count = %d, want 7714", modelCount)
+	if modelCount != 7719 {
+		t.Fatalf("model count = %d, want 7719", modelCount)
 	}
 }
 
@@ -828,5 +828,20 @@ func TestMergeModelConfigPreservesCatalogCompatibilityMaps(t *testing.T) {
 	maxThinking, _ := merged.Variants["max"]["thinking"].(map[string]any)
 	if maxThinking["type"] != "adaptive" || maxThinking["display"] != "omitted" {
 		t.Fatalf("nested variant options did not merge with user precedence: %+v", maxThinking)
+	}
+}
+
+func TestGPT6SolLunaPreserveExplicitTransport(t *testing.T) {
+	for _, model := range []string{"gpt-6-sol", "gpt-6-luna"} {
+		for _, endpoint := range []string{"https://api.openai.com/v1", "https://gateway.example/v1"} {
+			_, provider := EnrichProvider("openai", config.ProviderConfig{Type: "openai", BaseURL: endpoint, Model: model, WireAPI: "chat"}, model)
+			if provider.WireAPI != "chat" {
+				t.Fatalf("explicit transport changed for %s: %s", endpoint, provider.WireAPI)
+			}
+		}
+		_, provider := EnrichProvider("openai", config.ProviderConfig{Type: "openai", BaseURL: "https://gateway.example/v1", Model: model}, model)
+		if provider.WireAPI != "" {
+			t.Fatalf("custom endpoint transport changed: %s", provider.WireAPI)
+		}
 	}
 }
