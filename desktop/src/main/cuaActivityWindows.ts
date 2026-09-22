@@ -108,6 +108,7 @@ type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
 export type ObservationPiPHandle = Pick<CUANativePiP, "start" | "setVisible" | "animateInteraction" | "stop"> & {
   updateActivity?(activity: ActivitySession): void;
   setLive?(live: boolean): void;
+  setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: { isDestroyed(): boolean } | null): void;
@@ -197,6 +198,22 @@ export class ObservationCoordinator {
     if (activity) {
       this.update(activity);
       return;
+    }
+    const current = this.current;
+    if (event.kind === "notification" && current?.activity.kind === "browser"
+      && event.workdir === current.activity.workdir) {
+      const { method, params } = event.message;
+      const turn = params as { thread_id?: string; turn?: { status: string }; awaiting_auto_continuation?: boolean; truncated?: boolean } | undefined;
+      if (turn?.thread_id === current.threadID) {
+        if (method === "turn/started" || method === "turn/error") {
+          current.pip.setTurnCompleted?.(false);
+        } else if (method === "turn/completed" && this.pipVisibility(current.activity)
+          && !this.dismissedAt.has(current.threadID)) {
+          // Stopping a browser activity is not evidence that its task succeeded.
+          current.pip.setTurnCompleted?.(turn.turn?.status === "completed"
+            && !turn.awaiting_auto_continuation && !turn.truncated);
+        }
+      }
     }
     this.scheduleReconcile();
   }
