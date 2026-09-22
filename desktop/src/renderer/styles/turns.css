@@ -301,7 +301,19 @@
 .turn-answer-body {
   display: flex;
   flex-direction: column;
-  gap: var(--conversation-message-element-gap);
+}
+
+.turn-answer-body > * + * {
+  margin-block-start: var(--conversation-message-element-gap);
+}
+
+.turn-answer-body > .turn-artifact-inline-list + *,
+.turn-answer-body > * + .turn-artifact-inline-list {
+  margin-block-start: var(--conversation-image-gap);
+}
+
+.assistant-turn-shell:has(> .turn-answer-body > .turn-artifact-inline-list:first-child) {
+  gap: var(--conversation-image-gap);
 }
 
                                                                     
@@ -4960,8 +4972,8 @@ pre {
 .turn-artifact-inline-image {
   align-self: flex-start;
   margin: 0;
-  width: min(100%, 480px);
-  max-width: min(100%, 480px);
+  width: min(100%, 240px);
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -4971,7 +4983,7 @@ pre {
   place-items: center;
   /* Reserve the media viewport before lazy loading, including remote previews.
      Decoding must not move the text being streamed beneath the image. */
-  aspect-ratio: 12 / 7;
+  aspect-ratio: 4 / 3;
   width: 100%;
   min-width: 0;
   min-height: 0;
@@ -4979,18 +4991,15 @@ pre {
 
 .turn-artifact-inline-image img {
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 100%;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
-  max-height: 100%;
-  justify-self: start;
   box-sizing: border-box;
-  border: 1px solid var(--message-flow-card-border);
-  border-radius: var(--message-flow-card-radius);
-  object-fit: scale-down;
-  /* Fit the frame to the image while the loading viewport stays stable. */
-  object-position: left center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-media);
+  background: var(--surface-1);
+  object-fit: contain;
 }
 
 .turn-artifact-inline-image button {
@@ -5002,7 +5011,7 @@ pre {
   min-height: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--message-flow-card-radius);
+  border-radius: var(--radius-media);
   overflow: hidden;
   background: transparent;
   color: var(--ink-muted);

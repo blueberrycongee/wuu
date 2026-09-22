@@ -58,6 +58,7 @@
   /* Answer actions already reserve their own row inside the preceding turn. */
   --conversation-turn-boundary-gap: 16px;
   --conversation-turn-item-gap: 8px;
+  --conversation-image-gap: max(var(--space-6), calc(var(--conversation-message-font-size) * 1.2));
   --conversation-composer-clearance: 12px;
 }
 

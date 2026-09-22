@@ -12,6 +12,10 @@ import { streamTextStore } from "../../src/renderer/StreamText";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../src/shared/protocol";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
+import mediaSource from "./media.svg?raw";
+import mediaURL from "./media.svg?no-inline";
+import portraitURL from "./media-portrait.svg?no-inline";
+import panoramaURL from "./media-panorama.svg?no-inline";
 
 const sample = `阅读体验来自稳定的节奏。文字大小可以按个人习惯调整，而段落、标题和列表之间的关系应该始终清楚，让读者能顺着内容自然往下读。
 
@@ -98,11 +102,34 @@ const conversationTurns: Turn[] = [
   ] },
 ];
 
+const mediaAnswer = `图片使用独立的阅读空间，前后的文字保持清楚的分组。
+
+![示例插画](${new URL(mediaURL, location.origin).href})
+
+这张图片展示完整内容；点击图片可以查看原图。
+
+![竖向截图](${new URL(portraitURL, location.origin).href})
+
+竖图不应占满整屏，也不应裁掉内容。
+
+![横向示意图](${new URL(panoramaURL, location.origin).href})
+
+横图在窄窗口内按比例缩小。`;
+const mediaTurns: Turn[] = [{
+  id: "media-turn", status: "completed", items_view: "full", duration_ms: 1200,
+  items: [
+    { id: "media-request", type: "user_message", status: "completed", text: "查看这张图片，再展示插画、竖图和横图。", images: [{ media_type: "image/svg+xml", data: btoa(mediaSource) }] },
+    { id: "media-tool", type: "tool_call", name: "view_image", status: "completed", display: { kind: "read", label: "查看图片" }, result_detail: { content: [{ type: "image", mime_type: "image/svg+xml", data: btoa(mediaSource), name: "Example illustration" }] } },
+    { id: "media-answer", type: "agent_message", status: "completed", terminal: true, text: mediaAnswer },
+  ],
+}];
+
 function Fixture(): JSX.Element {
   const params = new URLSearchParams(location.search);
   const [size, setSize] = useState<number>(Number(params.get("size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default);
   const [theme, setTheme] = useState(params.get("theme") || "light");
   const [surface, setSurface] = useState(params.get("surface") || "stream");
+  const turns = surface === "images" ? mediaTurns : conversationTurns;
   const [live, setLive] = useState(params.has("lateTerminal"));
   const [playing, setPlaying] = useState(false);
   const [run, setRun] = useState(0);
@@ -130,13 +157,13 @@ function Fixture(): JSX.Element {
       <strong>Wuu · 消息流排版验收</strong>
       <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{[MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max].map(value => <option key={value}>{value}</option>)}</select></label>
       <label>主题<select aria-label="主题" value={theme} onChange={event => setTheme(event.target.value)}><option value="light">浅色</option><option value="dark">深色</option></select></label>
-      <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option></select></label>
+      <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="images">消息图片</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option></select></label>
       <label><input aria-label="流式状态" type="checkbox" checked={live} onChange={event => setLive(event.target.checked)} />显示流式光标</label>
       <button type="button" disabled={playing || surface !== "stream"} onClick={() => { setRun(value => value + 1); setPlaying(true); }}>逐段播放</button>
     </header>
     <main className="conversation-pane fixture-pane">
-      <div className={`fixture-column${surface === "conversation" ? " fixture-production-turns" : ""}`}>
-        {surface === "conversation" ? <WuuUIRoot>{conversationTurns.map((turn, index) => <TurnView key={turn.id} turn={turn} onStreamFrame={() => {}} isLatestTurn={index === conversationTurns.length - 1} latestAgentMessageID="sample-short" />)}</WuuUIRoot> : <>
+      <div className={`fixture-column${(surface === "conversation" || surface === "images") ? " fixture-production-turns" : ""}`}>
+        {surface === "conversation" || surface === "images" ? <WuuUIRoot>{turns.map((turn, index) => <TurnView key={turn.id} turn={turn} onStreamFrame={() => {}} isLatestTurn={index === turns.length - 1} latestAgentMessageID={surface === "images" ? "media-answer" : "sample-short"} />)}</WuuUIRoot> : <>
         <section className="turn">
           <div className="message user-message">请用一组包含段落、分点和嵌套列表的内容，检查消息流的阅读节奏。</div>
           <div className="fixture-process turn-process-entry">已完成 3 项操作 · 排版验收示例</div>

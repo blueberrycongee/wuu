@@ -45,6 +45,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Conversation images use compact tool thumbnails and bounded, proportional
+  previews in replies, with consistent space before and after images.
+
 - Browser previews and the workspace panel share a clearer animated pointer,
   with consistent movement and input feedback at every preview size.
   Taking control clears the pointer and cancels pending input.
