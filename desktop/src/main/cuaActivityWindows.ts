@@ -89,9 +89,12 @@ export function isObservableActivity(activity: ActivitySession): boolean {
 // CUA surfaces stay up: there the user controls the target app itself, not a
 // Wuu panel showing the same pixels.
 export function pipVisibleForActivity(activity: ActivitySession, inPanel = false): boolean {
-  // Hide the card only while this same page is docked in the workspace panel.
-  // A visibility change on its own must not dismiss the card or the panel.
-  if (activity.kind === "browser") return !inPanel;
+  // Browser work stays hidden unless the agent explicitly promotes it with
+  // set_visibility=true. Showing the native PiP for background operations can
+  // activate the desktop window and interrupt whatever the user is doing.
+  if (activity.kind === "browser") {
+    return activity.state === "foreground_controlled" && !inPanel;
+  }
   return true;
 }
 
