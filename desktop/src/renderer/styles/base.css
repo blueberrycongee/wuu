@@ -108,7 +108,8 @@
   --ink-overlay-12: rgba(31, 35, 40, 0.12);
   --ink-overlay-18: rgba(31, 35, 40, 0.18);
 
-  /* Elevation recipes: controls < cards < popovers < modal dialogs.
+  /* Light elevation recipes: controls < cards < popovers < modal dialogs.
+     Dark inset recipes live in theme.css.
      Keep blur and alpha here, not in components. Negative spread confines the
      ambient shadow; existing surface borders provide the visible edge.
      Black is independent of text color so custom themes cannot turn shadows
