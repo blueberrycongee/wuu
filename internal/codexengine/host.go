@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 )
 
 // Host manages one shared codex app-server process. Multiple wuu threads
@@ -27,12 +28,14 @@ type Host struct {
 }
 
 // ResolveBinary locates the codex executable. The WUU_CODEX_BINARY
-// environment variable wins; otherwise PATH lookup of "codex".
+// environment variable wins. Otherwise lookup uses PATH and the standard
+// install locations, because a Finder or Dock launch does not receive the
+// terminal PATH.
 func ResolveBinary() (string, error) {
 	if path := envCodexBinary(); path != "" {
 		return path, nil
 	}
-	path, err := exec.LookPath("codex")
+	path, err := enginecatalog.LookBinary("codex")
 	if err != nil {
 		return "", errors.New("codex binary not found: set WUU_CODEX_BINARY or install the codex CLI on PATH")
 	}

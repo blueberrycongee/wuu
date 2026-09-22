@@ -20,6 +20,8 @@ Antigravity detection also accepts `agy_acp_server.par`; Linux launches it with 
 
 For these seven engines, executable lookup uses `engines.<id>.binary_path`, then `WUU_<ID>_BINARY` (for example `WUU_DEVIN_BINARY`), then `PATH`. An invalid override fails instead of silently using another executable. Supply a path to a program, not a command with arguments. Detection only resolves the executable: it does not validate credentials or start a conversation.
 
+The desktop app does not inherit a terminal PATH when it is opened from Finder or the Dock. If PATH does not contain the executable, lookup continues in the standard install locations (`~/.local/bin`, `~/bin`, Homebrew, `~/.opencode/bin`, and version-manager shims such as nvm and mise). When the process still has no user directories, it also reads the login shell PATH. Codex and Claude Code use this same fallback.
+
 The machine-local configuration accepts `enabled` and `binary_path` for each engine, and `default_engine` for new conversations. Omitting `enabled` enables automatic detection; `false` opts out. For example:
 
 ```json

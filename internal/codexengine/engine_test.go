@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +210,37 @@ func TestSessionDeclinesApprovalWithoutHostHandler(t *testing.T) {
 	response := result.(ApprovalDecisionResponse)
 	if response.Decision != DecisionDecline {
 		t.Fatalf("decision = %q, want decline", response.Decision)
+	}
+}
+
+func TestResolveBinaryFindsUserInstallOutsidePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("NVM_DIR", filepath.Join(home, ".nvm"))
+	t.Setenv("WUU_CODEX_BINARY", "")
+	t.Setenv("PATH", t.TempDir())
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(home, ".local", "bin", name)
+	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("#!/bin/sh\nexit 0\n")
+	if runtime.GOOS == "windows" {
+		content = []byte("placeholder")
+	}
+	if err := os.WriteFile(binary, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveBinary()
+	if err != nil {
+		t.Fatalf("ResolveBinary: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(binary) {
+		t.Fatalf("ResolveBinary = %q, want %q", got, binary)
 	}
 }
 
