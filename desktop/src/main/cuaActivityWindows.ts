@@ -183,7 +183,7 @@ export class ObservationCoordinator {
   private activeThreadID: string | undefined;
   private darkAppearance: boolean | undefined;
   private browserInPanel: ((activity: ActivitySession) => boolean) | undefined;
-  private onBrowserExpand: (() => void) | undefined;
+  private onBrowserExpand: ((activity: ActivitySession) => void) | undefined;
 
   constructor(
     private readonly registry: WindowRegistry,
@@ -210,7 +210,7 @@ export class ObservationCoordinator {
     this.browserInPanel = check;
   }
 
-  setBrowserExpandHandler(handler: () => void): void {
+  setBrowserExpandHandler(handler: (activity: ActivitySession) => void): void {
     this.onBrowserExpand = handler;
   }
 
@@ -220,7 +220,8 @@ export class ObservationCoordinator {
   }
 
   private pipVisibility(activity: ActivitySession): boolean {
-    return pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
+    return activityVisibleForThread(activity.thread_id, this.activeThreadID)
+      && pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
   }
 
   setActiveThread(threadID?: string): void {
@@ -413,7 +414,7 @@ export class ObservationCoordinator {
         if (this.current?.key === key) this.stopCurrent();
         return;
       case "expand":
-        this.onBrowserExpand?.();
+        if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);
         return;
       case "control":
         if (this.control && (event.action === "takeover" || event.action === "release" || event.action === "stop")) {

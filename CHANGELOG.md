@@ -53,6 +53,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Conversation spacing accounts for the docked workspace panel as it opens or
   resizes, keeping the scrollbar next to the message flow.
 
+- Expanding a browser preview opens its exact tab in the owning session. Missing
+  previews report an error instead of displaying a previous session’s page.
+
+- Browser previews stay hidden after switching away from their conversation,
+  including when panel visibility or background activity updates refresh them.
+  Returning to the owning conversation restores its preview.
 - Background browser activity keeps its floating preview hidden until explicitly
   made visible, so it does not interrupt work in another application.
 
