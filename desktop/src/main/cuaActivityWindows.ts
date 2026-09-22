@@ -108,6 +108,8 @@ export type ObservationPiPHandle = Pick<CUANativePiP, "start" | "setVisible" | "
   setAppearance?(dark: boolean): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: { isDestroyed(): boolean } | null): void;
+  // Browser surfaces can swap tabs without replacing the user's window.
+  retarget?(activity: ActivitySession, sink: ObservationPiPEventSink): void;
 };
 
 export interface BrowserPiPHostWindow {
@@ -294,6 +296,19 @@ export class ObservationCoordinator {
       this.replacement.activity = activity;
       return;
     }
+    const current = this.current;
+    if (current?.pip.retarget && current.activity.kind === "browser" && activity.kind === "browser"
+      && current.threadID === activity.thread_id && current.activity.workdir === activity.workdir) {
+      current.key = key;
+      current.activity = activity;
+      current.phase = "preparing";
+      current.pip.retarget(activity, this.eventSink(key));
+      if (this.current !== current) return;
+      current.pip.setVisible(this.pipVisibility(activity));
+      current.pip.setLive?.(true);
+      this.animateInteractionIfNew(activity, current.pip);
+      return;
+    }
     if (this.current || this.replacementInFlight) {
       this.replaceCurrent(activity, key);
       return;
@@ -352,11 +367,7 @@ export class ObservationCoordinator {
   }
 
   private spawnPiP(activity: ActivitySession, key: string): ObservationPiPHandle | undefined {
-    const sink: ObservationPiPEventSink = {
-      onEvent: (event) => this.handlePiPEvent(key, event),
-      onFailure: (message) => this.handlePiPFailure(key, message),
-      onGone: () => this.handlePiPGone(key),
-    };
+    const sink = this.eventSink(key);
     if (this.pipFactory) return this.pipFactory(activity, key, sink, () => this.initialBounds(activity));
     // No factory: the historical default is the native CUA helper only.
     if (activity.kind !== "cua") return undefined;
@@ -373,6 +384,14 @@ export class ObservationCoordinator {
       sink.onEvent,
       sink.onFailure,
     );
+  }
+
+  private eventSink(key: string): ObservationPiPEventSink {
+    return {
+      onEvent: (event) => this.handlePiPEvent(key, event),
+      onFailure: (message) => this.handlePiPFailure(key, message),
+      onGone: () => this.handlePiPGone(key),
+    };
   }
 
   private handlePiPEvent(key: string, event: CUANativePiPEvent): void {

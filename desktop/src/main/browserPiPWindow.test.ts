@@ -184,8 +184,8 @@ class FakeHost {
     return () => this.listeners.reparented.delete(listener);
   }
 
-  emitClosed(): void {
-    for (const listener of this.listeners.closed) listener("/repo", "t1");
+  emitClosed(tabID = "t1"): void {
+    for (const listener of this.listeners.closed) listener("/repo", tabID);
   }
   emitInteraction(hint: BrowserInteractionHint): void {
     for (const listener of this.listeners.interaction) listener("/repo", "t1", hint);
@@ -489,6 +489,67 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
     expect(win.bounds.width / win.bounds.height).toBeCloseTo(0.75);
     expect(host.mounts.at(-1)?.zoom).toBeCloseTo(win.bounds.height / 800);
+    surface.stop();
+  });
+
+  it("keeps the visible window, chosen corner and size while switching to a different page aspect", () => {
+    vi.useFakeTimers();
+    try {
+      const { surface, win, overlay, host, sink } = makeSurface();
+      surface.start();
+      surface.setVisible(true);
+      const layout = {
+        host: { x: 0, y: 0, width: 800, height: 600 },
+        obstacles: [],
+        visibleFrame: { x: 0, y: 0, width: 1200, height: 800 },
+      };
+      surface.setHostLayout(layout);
+      overlay.navigate(`wuu-pip://drag?phase=start&x=${win.bounds.x + 20}&y=${win.bounds.y + 20}&vx=0&vy=0`);
+      overlay.navigate("wuu-pip://drag?phase=end&x=44&y=44&vx=0&vy=0");
+      vi.advanceTimersByTime(300);
+      overlay.navigate("wuu-pip://resize?phase=start&edge=se&x=0&y=0");
+      overlay.navigate("wuu-pip://resize?phase=end&edge=se&x=40&y=30");
+      const placed = { ...win.bounds };
+      const hide = vi.spyOn(win, "hide");
+      const destroy = vi.spyOn(win, "destroy");
+      const nextSink = makeSink();
+      const next = { ...makeActivity(), id: "a2", target: "t2", state: "starting" as const };
+      surface.retarget(next, nextSink);
+      host.bounds = undefined;
+      surface.setVisible(true);
+      expect(win.visible).toBe(true);
+      expect(nextSink.gone).toBe(0);
+      // The tab becomes available after the starting activity notification.
+      host.bounds = { x: 0, y: 0, width: 600, height: 1000 };
+      surface.updateActivity({ ...next, state: "background_controlled" });
+      surface.setVisible(true);
+      surface.setHostLayout(layout);
+      expect(win.bounds).toEqual(placed);
+      expect(hide).not.toHaveBeenCalled();
+      expect(destroy).not.toHaveBeenCalled();
+      expect(host.unmounts).toHaveLength(1);
+      expect(host.mounts).toHaveLength(2);
+      expect(host.mounts[1].rect.width / host.mounts[1].rect.height).toBeCloseTo(0.6);
+      host.emitClosed();
+      expect(sink.gone).toBe(0);
+      expect(nextSink.gone).toBe(0);
+      host.emitClosed("t2");
+      expect(nextSink.gone).toBe(1);
+      surface.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not mount a retargeted page until the coordinator applies visibility", () => {
+    const { surface, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    surface.retarget({ ...makeActivity(), id: "a2", target: "t2" }, makeSink());
+    surface.setVisible(false);
+    expect(host.mounts).toHaveLength(1);
+    surface.setVisible(true);
+    expect(host.mounts).toHaveLength(2);
     surface.stop();
   });
 

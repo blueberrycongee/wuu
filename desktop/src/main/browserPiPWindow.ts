@@ -323,6 +323,23 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     this.pushActivityState();
   }
 
+  retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
+    this.unmount();
+    const bounds = this.win?.getBounds();
+    // Page aspect ratios must not reset the user's card size or resting corner.
+    if (bounds) this.userSize = { width: bounds.width, height: bounds.height };
+    this.deps.workdir = activity.workdir;
+    this.deps.tabID = activity.target!.trim();
+    this.deps.sink = sink;
+    this.layoutViewport = undefined;
+    this.announced = false;
+    this.lastInteractionRevision = 0;
+    this.updateActivity(activity);
+    this.pushHostLabel();
+    // The coordinator applies visibility after rebinding, so a tab already in
+    // the workspace panel is never pulled back into the card in between.
+  }
+
   animateInteraction(interaction: Interaction): void {
     if (interaction.revision <= this.lastInteractionRevision) return;
     this.lastInteractionRevision = interaction.revision;

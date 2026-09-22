@@ -283,7 +283,24 @@ describe("browser observation surface", () => {
     expect(surfaces[1].setLive).toHaveBeenLastCalledWith(true);
   });
 
-  it("swaps the surface on tab switch through the serialized replacement", () => {
+  it("reuses a retargetable browser surface across tab activity identities", () => {
+    const { coordinator, surfaces, stops } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity());
+    const retarget = vi.fn();
+    Object.assign(surfaces[0], { retarget });
+    const next = browserActivity({ id: "activity-2", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
+    coordinator.update(next);
+    expect(stops).toEqual([]);
+    expect(surfaces).toHaveLength(1);
+    expect(retarget).toHaveBeenCalledWith(next, expect.any(Object));
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    // Controls from the reused window must address the new observation key.
+    retarget.mock.calls[0][1].onEvent({ event: "user_close" });
+    expect(stops).toHaveLength(1);
+  });
+
+  it("swaps a non-retargetable surface through the serialized replacement", () => {
     const { coordinator, surfaces, stops } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity({ target: "tab-1" }));
