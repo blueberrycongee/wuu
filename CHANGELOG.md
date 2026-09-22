@@ -56,6 +56,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   permission mode, and refusals no longer suggest chat approval or a mode
   switch that cannot lift the guard.
 
+- Searches without ripgrep no longer fail on long generated lines. The fallback
+  respects Git ignore rules when Git is available and counts matching lines
+  consistently across search modes.
+
 - Switching browser tabs keeps the floating preview window, including its
   chosen corner and size, instead of briefly closing and resetting it.
 

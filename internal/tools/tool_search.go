@@ -268,7 +268,7 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 				if !errors.Is(err, errRipgrepUnavailable) {
 					return "", err
 				}
-				matches, err = grepWithFallback(t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
+				matches, err = grepWithFallback(ctx, t.env, execRoot, args.Pattern, searchRoot, args.Include, opts, 0)
 				if err != nil {
 					return "", err
 				}
@@ -804,7 +804,7 @@ func relativeRGPath(rootDir, matchPath string) string {
 	return filepath.ToSlash(rel)
 }
 
-func grepWithFallback(env *Env, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepMatch, error) {
+func grepWithFallback(ctx context.Context, env *Env, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepMatch, error) {
 	compilePattern := pattern
 	if opts.ignoreCase {
 		compilePattern = "(?i)" + pattern
@@ -815,57 +815,23 @@ func grepWithFallback(env *Env, rootDir, pattern, searchRoot, include string, op
 	}
 
 	matches := make([]grepMatch, 0, searchResultCapacity(limit))
-	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
 		if limit > 0 && len(matches) >= limit {
 			return filepath.SkipAll
 		}
-
-		rel, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if include != "" && !matchGlob(include, rel) {
-			return nil
-		}
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		scanner := bufio.NewScanner(bytes.NewReader(data))
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-			if re.MatchString(line) {
+		return scanFallbackLines(ctx, path, func(lineNum int, line []byte) bool {
+			if re.Match(line) {
 				matches = append(matches, grepMatch{
 					File:    rel,
 					Line:    lineNum,
-					Content: grepMatchContentForPath(env, rel, line),
+					Content: grepMatchContentForPath(env, rel, string(line)),
 				})
 				if limit > 0 && len(matches) >= limit {
-					break
+					return false
 				}
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("scan %s: %w", rel, err)
-		}
-		return nil
+			return true
+		})
 	})
 	if walkErr != nil {
 		return nil, walkErr
@@ -1010,7 +976,7 @@ func grepFilesWithMatches(ctx context.Context, rootDir, pattern, searchRoot, inc
 		if !errors.Is(err, errRipgrepUnavailable) {
 			return nil, err
 		}
-		return grepFilesWithMatchesFallback(rootDir, pattern, searchRoot, include, opts, limit)
+		return grepFilesWithMatchesFallback(ctx, rootDir, pattern, searchRoot, include, opts, limit)
 	}
 	return files, nil
 }
@@ -1105,7 +1071,7 @@ func grepFilesWithMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, i
 	return files, nil
 }
 
-func grepFilesWithMatchesFallback(rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
+func grepFilesWithMatchesFallback(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
 	compilePattern := pattern
 	if opts.ignoreCase {
 		compilePattern = "(?i)" + pattern
@@ -1116,40 +1082,17 @@ func grepFilesWithMatchesFallback(rootDir, pattern, searchRoot, include string, 
 	}
 
 	files := make([]string, 0, searchResultCapacity(limit))
-	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
 		if limit > 0 && len(files) >= limit {
 			return filepath.SkipAll
 		}
-
-		rel, err := filepath.Rel(rootDir, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if include != "" && !matchGlob(include, rel) {
-			return nil
-		}
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		if re.Match(data) {
-			files = append(files, rel)
-		}
-		return nil
+		return scanFallbackLines(ctx, path, func(_ int, line []byte) bool {
+			if re.Match(line) {
+				files = append(files, rel)
+				return false
+			}
+			return true
+		})
 	})
 	if walkErr != nil {
 		return nil, walkErr
@@ -1168,7 +1111,7 @@ func grepCountMatches(ctx context.Context, rootDir, pattern, searchRoot, include
 		if !errors.Is(err, errRipgrepUnavailable) {
 			return nil, 0, err
 		}
-		return grepCountMatchesFallback(rootDir, pattern, searchRoot, include, opts, limit)
+		return grepCountMatchesFallback(ctx, rootDir, pattern, searchRoot, include, opts, limit)
 	}
 	return counts, total, nil
 }
@@ -1250,7 +1193,7 @@ func grepCountMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, inclu
 	return counts, total, nil
 }
 
-func grepCountMatchesFallback(rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
+func grepCountMatchesFallback(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
 	compilePattern := pattern
 	if opts.ignoreCase {
 		compilePattern = "(?i)" + pattern
@@ -1262,41 +1205,23 @@ func grepCountMatchesFallback(rootDir, pattern, searchRoot, include string, opts
 
 	counts := make([]grepCountResult, 0, searchResultCapacity(limit))
 	total := 0
-	walkErr := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if isSkippedDir(info.Name()) {
-				return filepath.SkipDir
+	walkErr := walkFallbackSearchFiles(ctx, rootDir, searchRoot, include, func(path, rel string) error {
+		count := 0
+		err := scanFallbackLines(ctx, path, func(_ int, line []byte) bool {
+			if re.Match(line) {
+				count++
 			}
-			return nil
-		}
-
-		rel, err := filepath.Rel(rootDir, path)
+			return true
+		})
 		if err != nil {
-			return nil
+			return err
 		}
-		rel = filepath.ToSlash(rel)
-		if include != "" && !matchGlob(include, rel) {
-			return nil
-		}
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		matches := re.FindAll(data, -1)
-		if len(matches) > 0 {
-			total += len(matches)
+		if count > 0 {
+			total += count
 			if limit <= 0 || len(counts) < limit {
 				counts = append(counts, grepCountResult{
 					File:  rel,
-					Count: len(matches),
+					Count: count,
 				})
 			}
 		}
