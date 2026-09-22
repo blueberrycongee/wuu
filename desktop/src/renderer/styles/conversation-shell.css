@@ -78,7 +78,8 @@
       var(--session-composer-width) + var(--environment-panel-width) +
         var(--environment-panel-width) + var(--environment-panel-edge-gap) +
         var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
-        var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px)
+        var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
+        var(--workspace-right-panel-reserved-width, 0px)
     ),
     var(--environment-panel-reserved-width)
   );
