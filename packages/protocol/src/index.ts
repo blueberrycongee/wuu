@@ -251,7 +251,25 @@ export type RuntimeIssue = {
   message: string;
 };
 
+export type AutoModelConfig = {
+  enabled: boolean;
+  default: boolean;
+  classifier: ModelAliasSummary;
+  simple: ModelAliasSummary;
+  medium: ModelAliasSummary;
+  complex: ModelAliasSummary;
+};
+export type AutoModelDecision = {
+  tier: "simple" | "medium" | "complex";
+  selection: ModelAliasSummary;
+  classifier: ModelAliasSummary;
+  reason?: string;
+  duration_ms: number;
+  usage?: { InputTokens: number; OutputTokens: number; CacheReadTokens?: number; CacheCreationTokens?: number };
+};
+
 export type AdvancedSettingsSummary = {
+  auto_model?: AutoModelConfig;
   max_steps: number;
   max_context_tokens: number;
   temperature: number;
@@ -1412,6 +1430,7 @@ export type AuthXAILoginPollResult = {
 };
 
 export type RuntimeAdvancedSettingsUpdate = {
+  auto_model?: AutoModelConfig;
   max_steps?: number;
   max_context_tokens?: number;
   temperature?: number;
@@ -2283,6 +2302,8 @@ export type InstructionsListResult = {
 };
 
 export type Turn = {
+  auto_model?: AutoModelDecision;
+  selecting_model?: boolean;
   id: string;
   kind?: TurnKind;
   // The runtime selection captured when this turn began. It remains stable

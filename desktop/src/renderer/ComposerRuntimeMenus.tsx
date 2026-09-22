@@ -954,7 +954,7 @@ export function RuntimeModelMenu({
             engineLocked={engineLocked}
             hideEngine={hideEngine}
             compactSummary={compactSummary}
-            model={effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
+            model={effectiveModelID === "wuu/auto" ? "Auto" : effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
             effortOptions={effortOptions}
             selectedEffort={effectiveVariant}
             effortDisabled={false}

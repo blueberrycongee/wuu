@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/automodel"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/participant"
@@ -1448,6 +1449,14 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			if current != nil && strings.HasPrefix(rec.Content, autoDecisionPrefix) {
+				var decision automodel.Decision
+				if json.Unmarshal([]byte(strings.TrimPrefix(rec.Content, autoDecisionPrefix)), &decision) == nil {
+					current.AutoModel = &decision
+					current.ModelProvider, current.Model = decision.Selection.Provider, decision.Selection.Model
+				}
+			}
+
 			if current != nil && rec.Content == "token_usage" {
 				setProjectedTurnTiming(current, turnStartedAt[current.ID], rec.At)
 			}

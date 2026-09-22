@@ -129,6 +129,18 @@ func (s *Session) newCollaborationSession(rootDir, orientation string, selected 
 }
 
 func (s *Session) collaborationModel(selected ThreadModelSelection) (modelroles.Selection, providers.StreamClient, error) {
+	if selected.Model == config.AutoModelID {
+		cfg, _, err := s.LoadEffectiveConfig()
+		if err != nil {
+			return modelroles.Selection{}, nil, err
+		}
+		initial, err := cfg.AutoModelSelection()
+		if err != nil {
+			return modelroles.Selection{}, nil, err
+		}
+		selected.Provider, selected.Model, selected.Variant, selected.Effort = initial.Provider, initial.Model, initial.Variant, initial.Effort
+	}
+
 	provider := strings.TrimSpace(selected.Provider)
 	model := strings.TrimSpace(selected.Model)
 	variant := strings.TrimSpace(selected.Variant)

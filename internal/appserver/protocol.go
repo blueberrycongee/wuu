@@ -6,6 +6,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/automodel"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/channels"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -1036,6 +1037,7 @@ type ConfigProviderRemoveResult struct {
 }
 
 type ConfigAdvancedUpdateParams struct {
+	AutoModel               *config.AutoModelConfig       `json:"auto_model,omitempty"`
 	MaxSteps                *int                          `json:"max_steps,omitempty"`
 	MaxContextTokens        *int                          `json:"max_context_tokens,omitempty"`
 	Temperature             *float64                      `json:"temperature,omitempty"`
@@ -1069,18 +1071,19 @@ type GeneralSettingsSummary struct {
 }
 
 type AdvancedSettingsSummary struct {
-	MaxSteps                int     `json:"max_steps"`
-	MaxContextTokens        int     `json:"max_context_tokens"`
-	Temperature             float64 `json:"temperature"`
-	CompactThresholdPct     float64 `json:"compact_threshold_pct,omitempty"`
-	CompactKeepRecentTokens int     `json:"compact_keep_recent_tokens,omitempty"`
-	DisableAutoCompact      bool    `json:"disable_auto_compact"`
-	ProviderContextWindow   int     `json:"provider_context_window,omitempty"`
-	ContextWindowTokens     int     `json:"context_window_tokens,omitempty"`
-	ContextWindowSource     string  `json:"context_window_source,omitempty"`
-	InputLimitTokens        int     `json:"input_limit_tokens,omitempty"`
-	OutputReserveTokens     int     `json:"output_reserve_tokens,omitempty"`
-	CompactThresholdTokens  int     `json:"compact_threshold_tokens,omitempty"`
+	AutoModel               *config.AutoModelConfig `json:"auto_model,omitempty"`
+	MaxSteps                int                     `json:"max_steps"`
+	MaxContextTokens        int                     `json:"max_context_tokens"`
+	Temperature             float64                 `json:"temperature"`
+	CompactThresholdPct     float64                 `json:"compact_threshold_pct,omitempty"`
+	CompactKeepRecentTokens int                     `json:"compact_keep_recent_tokens,omitempty"`
+	DisableAutoCompact      bool                    `json:"disable_auto_compact"`
+	ProviderContextWindow   int                     `json:"provider_context_window,omitempty"`
+	ContextWindowTokens     int                     `json:"context_window_tokens,omitempty"`
+	ContextWindowSource     string                  `json:"context_window_source,omitempty"`
+	InputLimitTokens        int                     `json:"input_limit_tokens,omitempty"`
+	OutputReserveTokens     int                     `json:"output_reserve_tokens,omitempty"`
+	CompactThresholdTokens  int                     `json:"compact_threshold_tokens,omitempty"`
 }
 
 type ConfigCodexModelsParams struct {
@@ -2173,8 +2176,10 @@ type WorktreeInfo struct {
 }
 
 type Turn struct {
-	ID   string   `json:"id"`
-	Kind TurnKind `json:"kind,omitempty"`
+	AutoModel      *automodel.Decision `json:"auto_model,omitempty"`
+	SelectingModel bool                `json:"selecting_model,omitempty"`
+	ID             string              `json:"id"`
+	Kind           TurnKind            `json:"kind,omitempty"`
 	// ModelProvider and Model are captured when the turn begins. They stay
 	// stable while a config update prepares the thread for its next turn.
 	ModelProvider string        `json:"model_provider,omitempty"`

@@ -1,3 +1,4 @@
+import { AutoModelSettings } from "./AutoModelSettings";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import {
@@ -206,13 +207,13 @@ export function SettingsView({
   workbenchController?: WorkbenchController;
 }): JSX.Element {
   const { t } = useI18n();
-  const providers = initialized?.providers ?? [];
+  const providers = useMemo(() => (initialized?.providers ?? []).map(p => ({ ...p, models: p.models?.filter(m => m.id !== "wuu/auto") })), [initialized?.providers]);
   const runningProviderNameSet = useMemo(
     () => new Set((runningProviderNames ?? []).map((name) => name.trim()).filter(Boolean)),
     [runningProviderNames],
   );
   const [providerDraft, setProviderDraft] = useState(initialized?.provider ?? "");
-  const [modelDraft, setModelDraft] = useState(initialized?.model ?? "");
+  const [modelDraft, setModelDraft] = useState(initialized?.model === "wuu/auto" ? providers.find(p => p.name === initialized.provider)?.model ?? "" : initialized?.model ?? "");
   const [variantDraft, setVariantDraft] = useState(initialized?.variant ?? initialized?.effort ?? "");
   const [baseURLDraft, setBaseURLDraft] = useState(initialized?.providers?.find((item) => item.name === initialized.provider)?.base_url ?? "");
   const [apiKeyDraft, setAPIKeyDraft] = useState("");
@@ -493,7 +494,7 @@ export function SettingsView({
     setXAILogin(null);
     setProviderDraft(initialized?.provider ?? "");
     setProviderTypeDraft("openai-compatible");
-    setModelDraft(initialized?.model ?? "");
+    setModelDraft(initialized?.model === "wuu/auto" ? providers.find(p => p.name === initialized.provider)?.model ?? "" : initialized?.model ?? "");
     setVariantDraft(initialized?.variant ?? initialized?.effort ?? "");
     const summary = initialized?.providers?.find((item) => item.name === initialized.provider);
     setBaseURLDraft(summary?.base_url ?? "");
@@ -1075,6 +1076,7 @@ export function SettingsView({
                   onRefresh={onRefreshEngineInventory}
                   onUpdate={onUpdateEngineInventory}
                 />
+                <AutoModelSettings value={initialized?.advanced_settings?.auto_model} providers={providers} disabled={false} onSave={onAdvancedSave} />
                 <SettingsProvidersPage
                   providers={providers}
                   providerLabels={providerLabels}

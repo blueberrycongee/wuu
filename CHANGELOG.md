@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Built-in Auto model selection classifies new Wuu tasks into three configurable
+  model tiers, with cross-provider execution, durable turn decisions, cancellation,
+  fallback reporting, and classifier usage accounting.
+
 - SuperGrok and xAI API catalogs now include Grok 4.7 (`grok-4.7`), with the
   documented 500k context window and low/medium/high/xhigh reasoning efforts.
   New SuperGrok providers default to it; Grok Build lists it alongside 4.5 and

@@ -92,6 +92,19 @@ func (s *Server) handleThreadStart(req Request) error {
 	if model := strings.TrimSpace(params.Model); model != "" {
 		selection.Model = model
 	}
+	if selection.Model == config.AutoModelID {
+		if engineID != agentengine.EngineWuu {
+			return s.writeResponse(req.ID, nil, errors.New("Auto requires the Wuu engine"))
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if _, err := cfg.AutoModelSelection(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		selection.Variant, selection.Effort = "", ""
+	}
 	if effort := strings.TrimSpace(params.Effort); effort != "" {
 		selection.Effort = effort
 		if engineID == agentengine.EngineWuu {

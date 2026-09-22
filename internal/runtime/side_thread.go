@@ -39,6 +39,17 @@ func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		return nil, errors.New("side thread id is required")
 	}
 
+	if selected.Model == config.AutoModelID {
+		cfg, _, err := s.LoadEffectiveConfig()
+		if err != nil {
+			return nil, err
+		}
+		initial, err := cfg.AutoModelSelection()
+		if err != nil {
+			return nil, err
+		}
+		selected.Provider, selected.Model, selected.Variant, selected.Effort = initial.Provider, initial.Model, initial.Variant, initial.Effort
+	}
 	runner := s.newSideThreadBaseRunner(selected)
 	root := strings.TrimSpace(rootDir)
 	if root == "" {

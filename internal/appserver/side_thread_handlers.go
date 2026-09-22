@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -295,6 +296,10 @@ func (s *Server) mainThreadModelSelection(mainID string) runtime.ThreadModelSele
 			Variant:        strings.TrimSpace(th.ModelVariant),
 			Effort:         strings.TrimSpace(th.ModelEffort),
 			PermissionMode: strings.TrimSpace(th.PermissionMode),
+		}
+		if sel.Model == config.AutoModelID && th.execRuntime != nil && th.execRuntime.StreamRunner != nil {
+			r := th.execRuntime.StreamRunner
+			sel.Provider, sel.Model, sel.Variant, sel.Effort = r.ProviderName, r.Model, r.Variant, r.Effort
 		}
 		th.mu.Unlock()
 		if sel.Provider != "" && sel.Model != "" {

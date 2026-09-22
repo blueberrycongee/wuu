@@ -44,6 +44,13 @@ type ThreadModelDerivation struct {
 // own derivation when it is pinned. It mirrors the model resolution in
 // NewThreadRuntimeForRootModel; the two must stay in lockstep.
 func (s *Session) DeriveThreadModel(cfg config.Config, selected ThreadModelSelection) (ThreadModelDerivation, error) {
+	if selected.Model == config.AutoModelID {
+		initial, err := cfg.AutoModelSelection()
+		if err != nil {
+			return ThreadModelDerivation{}, err
+		}
+		selected.Provider, selected.Model, selected.Variant, selected.Effort = initial.Provider, initial.Model, initial.Variant, initial.Effort
+	}
 	providerName := strings.TrimSpace(selected.Provider)
 	if providerName == "" {
 		providerName = s.ProviderName

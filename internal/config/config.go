@@ -300,6 +300,7 @@ type ProviderModelModalitiesConfig struct {
 
 // AgentConfig controls behavior of the local tool loop.
 type AgentConfig struct {
+	AutoModel *AutoModelConfig `json:"auto_model,omitempty"`
 	// Name identifies the configured agent profile. Memory is global per user
 	// and is not scoped by this value.
 	Name             string `json:"name,omitempty"`
@@ -412,6 +413,7 @@ type ModelRoleConfig struct {
 }
 
 type AdvancedRuntimeUpdate struct {
+	AutoModel               *AutoModelConfig
 	MaxSteps                *int
 	MaxContextTokens        *int
 	Temperature             *float64
@@ -704,6 +706,9 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	if err := c.ValidateAutoModel(); err != nil {
+		return err
+	}
 	if len(c.Providers) == 0 {
 		return errors.New("providers is required")
 	}
@@ -839,6 +844,9 @@ func validateModelRolesConfig(c Config) error {
 		"fallback":     c.Agent.ModelRoles.Fallback,
 	}
 	for role, cfg := range roles {
+		if cfg.Model == AutoModelID {
+			return fmt.Errorf("Auto is a main conversation selection, not a %s role model", role)
+		}
 		provider := strings.TrimSpace(cfg.Provider)
 		if provider == "" {
 			continue
@@ -880,6 +888,9 @@ func validateModelAliasesConfig(c Config) error {
 			return fmt.Errorf("agent.model_aliases.%s.provider %q not found in providers", name, providerName)
 		}
 		model := strings.TrimSpace(alias.Model)
+		if model == AutoModelID {
+			return errors.New("Auto cannot be used as an execution model alias")
+		}
 		if model == "" {
 			return fmt.Errorf("agent.model_aliases.%s.model is required", name)
 		}
@@ -891,6 +902,10 @@ func validateModelAliasesConfig(c Config) error {
 }
 
 func validateAliasEffortVariant(aliasName string, alias ModelRoleConfig, providerCfg ProviderConfig, model string) error {
+	return validateSelectionOptions("agent.model_aliases."+aliasName, alias, providerCfg, model)
+}
+
+func validateSelectionOptions(path string, alias ModelRoleConfig, providerCfg ProviderConfig, model string) error {
 	modelCfg, ok := providerCfg.Models[model]
 	if !ok {
 		return nil
@@ -917,7 +932,7 @@ func validateAliasEffortVariant(aliasName string, alias ModelRoleConfig, provide
 			continue
 		}
 		if _, ok := valid[value]; !ok {
-			return fmt.Errorf("agent.model_aliases.%s.%s %q is not supported by model %q", aliasName, field.name, value, model)
+			return fmt.Errorf("%s.%s %q is not supported by model %q", path, field.name, value, model)
 		}
 	}
 	return nil
@@ -1393,6 +1408,9 @@ func UpdateAdvancedRuntime(configPath, providerName string, update AdvancedRunti
 	if agent == nil {
 		agent = make(map[string]any)
 		raw["agent"] = agent
+	}
+	if update.AutoModel != nil {
+		agent["auto_model"] = update.AutoModel
 	}
 	setOptionalInt(agent, "max_steps", update.MaxSteps)
 	setOptionalInt(agent, "max_context_tokens", update.MaxContextTokens)

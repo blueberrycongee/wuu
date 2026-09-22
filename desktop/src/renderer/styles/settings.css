@@ -2612,3 +2612,18 @@
     animation: none;
   }
 }
+
+.auto-model-selection {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+.auto-model-selection legend { margin-bottom: 8px; }
+.auto-model-selection label { display: flex; flex: 1 1 14em; flex-direction: column; gap: 6px; min-width: 0; }
+.auto-model-selections { display: flex; flex-direction: column; gap: 20px; }
+.auto-model-selection .settings-select-trigger { width: 100%; min-width: 0; }
+.auto-model-status { color: var(--ink-muted); font-size: var(--font-ui); margin-bottom: 8px; overflow-wrap: anywhere; }

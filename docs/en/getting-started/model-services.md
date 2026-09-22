@@ -67,3 +67,15 @@ Built-in views preserve useful structure: search pages keep whole records and sn
 If text replies work but tools fail, check the service's support for tool calling and streaming. A compatible API format alone does not establish that every model supports the same capabilities.
 
 Prompts, selected context, attachments, and tool results can leave your machine through the configured endpoint. The provider's pricing and data policies apply; with a gateway, the gateway receives those requests. Keep real API keys out of project files and Git history.
+
+## Auto model selection
+
+In **Settings → Model services → Auto**, choose a classifier and execution models for simple, medium, and complex tasks. Each choice refers to an existing provider and model, with optional reasoning settings. The choices may use different services. Enable Auto, then select **Auto** in a Wuu conversation's model menu, or make it the default for new conversations.
+
+Each new task first calls the classifier with bounded recent dialogue, the initial objective, and attachment counts. This adds latency and billable usage. The classifier cannot run tools. Its result selects one of the three configured tiers; it cannot select an arbitrary model. The actual provider, model, tier, classifier latency, usage, and fallback reason appear on the turn. The conversation keeps its Auto selection.
+
+A classifier failure, timeout (20 seconds), or invalid response selects the medium tier. If the selected tier cannot accept the input or tools, Wuu tries the other configured tiers; if none fits, the task fails explicitly. Unknown catalog capabilities remain subject to provider validation. Older history uses normal context compaction; the current request is not silently removed to fit a smaller model.
+
+Tool calls and continuations keep the selected execution model. A persisted decision is reused when the same turn resumes. New tasks use the latest saved Auto configuration; changing it does not switch a task already running. Providers and models referenced by enabled Auto must be reassigned or Auto disabled before removal. Disabling Auto does not silently convert existing Auto conversations to a fixed model.
+
+Auto is a Wuu conversation selection, including Wuu named-agent sessions. External engines manage their own model execution and cannot use this setting. It is not an upstream model name or a CLI model override. Side conversations and workers inherit execution defaults; explicitly configured worker models continue to take precedence.

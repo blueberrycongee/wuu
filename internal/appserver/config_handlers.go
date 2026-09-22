@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -69,7 +70,7 @@ func (s *Server) handleInitialize(req Request) error {
 			Dirty:   core.Dirty,
 		},
 		Provider:    s.rt.ProviderName,
-		Model:       s.rt.Model,
+		Model:       s.currentSessionRuntimeSelection().Model,
 		Effort:      s.currentDisplayEffort(),
 		Variant:     s.currentVariant(),
 		MaxParallel: s.rt.MaxParallel(),
@@ -96,7 +97,7 @@ func (s *Server) handleConfigRead(req Request) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigReadResult{
 		Provider:           s.rt.ProviderName,
-		Model:              s.rt.Model,
+		Model:              s.currentSessionRuntimeSelection().Model,
 		Effort:             s.currentDisplayEffort(),
 		Variant:            s.currentVariant(),
 		MaxParallel:        s.rt.MaxParallel(),
@@ -189,6 +190,7 @@ func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
 		summary.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
 	}
 	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
+		summary.AutoModel = cfg.Agent.AutoModel
 		summary.MaxSteps = cfg.Agent.MaxSteps
 		summary.MaxContextTokens = cfg.Agent.MaxContextTokens
 		summary.Temperature = cfg.Agent.Temperature
@@ -971,6 +973,26 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if params.AutoModel != nil {
+		// Auto policy updates affect future admissions, never a live runner.
+		rest := params
+		rest.AutoModel = nil
+		if !reflect.DeepEqual(rest, ConfigAdvancedUpdateParams{}) {
+			return s.writeResponse(req.ID, nil, errors.New("save Auto settings separately from advanced runtime settings"))
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		cfg.Agent.AutoModel = params.AutoModel
+		if err := cfg.ValidateAutoModel(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if err := config.UpdateAdvancedRuntime(s.rt.ConfigPath, s.rt.ProviderName, config.AdvancedRuntimeUpdate{AutoModel: params.AutoModel}); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{AdvancedSettings: s.currentAdvancedSettingsSummary(), ModelAliases: s.currentModelAliasSummaries(), ModelRoles: s.currentModelRoleSummaries(), Providers: s.providerSummaries()}, nil)
+	}
 	if s.hasRunningThread() {
 		return s.writeResponse(req.ID, nil, errors.New("cannot change advanced settings while a turn is running"))
 	}
@@ -1153,6 +1175,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
 		return s.writeResponse(req.ID, nil, errors.New("save provider configuration separately from conversation selection"))
 	}
+	if model == config.AutoModelID {
+		return s.writeResponse(req.ID, nil, errors.New("use Auto settings to change the default; Auto is not an upstream provider model"))
+	}
 	explicitSelection := providerName != "" || model != "" ||
 		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil
 	if model == "" && (threadID == "" || params.CreateProvider) {
@@ -1164,6 +1189,13 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.RemoveModel != "" && cfg.Agent.AutoModel != nil && cfg.Agent.AutoModel.Enabled {
+		for _, selection := range cfg.Agent.AutoModel.Selections() {
+			if selection.Provider == providerName && selection.Model == params.RemoveModel {
+				return s.writeResponse(req.ID, nil, errors.New("model is referenced by Auto; update or disable Auto first"))
+			}
+		}
 	}
 	var providerCfg config.ProviderConfig
 	var resolvedName string
@@ -1690,6 +1722,13 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if cfg.Agent.AutoModel != nil && cfg.Agent.AutoModel.Enabled {
+		for _, selection := range cfg.Agent.AutoModel.Selections() {
+			if selection.Provider == providerName {
+				return s.writeResponse(req.ID, nil, errors.New("provider is referenced by Auto; update or disable Auto first"))
+			}
+		}
+	}
 	existing, resolvedName, lookupErr := cfg.ResolveProvider(providerName)
 	if lookupErr != nil {
 		return s.writeResponse(req.ID, nil, lookupErr)
@@ -1907,6 +1946,15 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if model == config.AutoModelID {
+		if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+			return s.writeResponse(req.ID, nil, errors.New("Auto requires the Wuu engine"))
+		}
+		if _, err := cfg.AutoModelSelection(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		variant, effort = "", ""
 	}
 	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
 	if providerCfg.Models[model].Disabled {
@@ -2201,6 +2249,9 @@ func (s *Server) currentSessionRuntimeSelection() session.RuntimeSelection {
 	if s != nil && s.rt != nil {
 		selection.Provider = s.rt.ProviderName
 		selection.Model = s.rt.Model
+		if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil && cfg.Agent.AutoModel != nil && cfg.Agent.AutoModel.Enabled && cfg.Agent.AutoModel.Default {
+			selection.Model = config.AutoModelID
+		}
 		selection.Variant = s.currentVariant()
 		selection.Effort = s.currentEffort()
 		selection.PermissionMode = config.NormalizePermissionMode(s.rt.Permissions.Mode)
@@ -2381,6 +2432,9 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 			if source, err := codex.LocalOAuthStatus(home); err == nil {
 				summary.CodexCredentialSource = source
 			}
+		}
+		if cfg.Agent.AutoModel != nil && cfg.Agent.AutoModel.Enabled {
+			summary.Models = append([]ProviderModelSummary{{ID: config.AutoModelID, DisplayName: "Auto"}}, summary.Models...)
 		}
 		out = append(out, summary)
 	}

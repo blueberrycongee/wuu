@@ -364,6 +364,7 @@ export function createRuntimeSettingsActions(
         ? {
             ...current.initialized,
             advanced_settings: updated.advanced_settings,
+            model: settings.auto_model ? (settings.auto_model.enabled && settings.auto_model.default ? "wuu/auto" : (current.initialized.providers?.find(p => p.name === current.initialized?.provider)?.model ?? current.initialized.model)) : current.initialized.model,
             model_aliases:
               updated.model_aliases ??
               settings.model_aliases ??

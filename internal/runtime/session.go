@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -275,13 +276,15 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
-	StreamRunner      *agent.StreamRunner
-	Toolkit           *tools.Toolkit
-	AgentControl      *agentcontrol.AgentControl
-	ProcessManager    *process.Manager
-	ActivityRegistry  *activity.Registry
-	ModelBudget       modelbudget.Budget
-	WorkerModelBudget modelbudget.Budget
+	refreshModelPrompt func() error
+	refreshWorkerModel func(modelroles.Selection) error
+	StreamRunner       *agent.StreamRunner
+	Toolkit            *tools.Toolkit
+	AgentControl       *agentcontrol.AgentControl
+	ProcessManager     *process.Manager
+	ActivityRegistry   *activity.Registry
+	ModelBudget        modelbudget.Budget
+	WorkerModelBudget  modelbudget.Budget
 	// Selection is the (trimmed, unresolved) thread model selection this
 	// runtime was built for, with PermissionMode always carrying the
 	// effective normalized mode so a constructor-built stamp is never the
@@ -382,6 +385,9 @@ func NewSession(opts Options) (*Session, error) {
 	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
 	if err != nil {
 		return nil, err
+	}
+	if opts.ModelOverride == config.AutoModelID {
+		return nil, fmt.Errorf("Auto is a conversation model selection; do not pass it as an upstream model override")
 	}
 	if opts.ModelOverride != "" {
 		providerCfg.Model = opts.ModelOverride
@@ -1081,6 +1087,24 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if s == nil {
 		return nil, fmt.Errorf("runtime session is required")
 	}
+	if selected.Model == config.AutoModelID {
+		cfg, _, err := s.LoadEffectiveConfig()
+		if err != nil {
+			return nil, err
+		}
+		initial, err := cfg.AutoModelSelection()
+		if err != nil {
+			return nil, err
+		}
+		resolved := selected
+		resolved.Provider, resolved.Model, resolved.Variant, resolved.Effort = initial.Provider, initial.Model, initial.Variant, initial.Effort
+		rt, err := s.NewThreadRuntimeForRootModel(sessionID, rootDir, resolved)
+		if err == nil {
+			rt.Selection = selected
+			rt.Selection.PermissionMode = config.NormalizePermissionMode(selected.PermissionMode)
+		}
+		return rt, err
+	}
 	providerName := strings.TrimSpace(selected.Provider)
 	model := strings.TrimSpace(selected.Model)
 	requested := ThreadModelSelection{
@@ -1267,6 +1291,9 @@ func (s *Session) ConfigureNamedAgentThreadRuntime(threadRuntime *ThreadRuntime,
 		nil, teaching, index, nil,
 	)
 	runner.UpdateSystemPromptWithSections(promptResult.Content, agentPromptSections(promptResult.Sections))
+	threadRuntime.refreshModelPrompt = func() error {
+		return s.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation)
+	}
 	return nil
 }
 
@@ -1287,6 +1314,10 @@ func (s *Session) NewNamedAgentThreadRuntime(sessionID, rootDir, memoryDir, orie
 		return nil, err
 	}
 	threadRuntime.ExecutionProfile = CollaborationRuntimeVersion
+	if selected.Model == config.AutoModelID {
+		threadRuntime.Selection = selected
+		threadRuntime.Selection.PermissionMode = base.Permissions.Mode
+	}
 	if err := base.ConfigureNamedAgentThreadRuntime(threadRuntime, rootDir, memoryDir, orientation); err != nil {
 		return nil, err
 	}
@@ -1399,6 +1430,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		return nil, fmt.Errorf("open tool ledger: %w", err)
 	}
 
+	var refreshWorkerModel func(modelroles.Selection) error
 	if s.Toolkit != nil {
 		workerClient := s.WorkerClient
 		workerClientProvider := strings.TrimSpace(s.ModelRoles.Worker.Provider)
@@ -1426,6 +1458,20 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				return nil, catErr
 			}
 			workerToolSurface.DeferredToolCatalog = workerDeferredCatalog
+			workerSurface := &atomic.Pointer[workerModelSurface]{}
+			workerSurface.Store(&workerModelSurface{provider: workerToolProviderName, model: workerToolModeModel, search: workerToolSearchEnabled, native: workerNativeDeferredDiscovery, surface: workerToolSurface})
+			refreshWorkerModel = func(selection modelroles.Selection) error {
+				_, search, native := resolveToolLoadingModeForProvider(s.ToolLoadingPreference, selection.RuleProviderConfig, selection.APIModel, selection.ProviderOptions)
+				surface := compiledSurfaceForProviderModel(selection.RuleProvider, selection.APIModel)
+				catalog, err := workerDeferredToolCatalogPromptForToolkit(kit, selection.RuleProvider, selection.APIModel, search)
+				if err != nil {
+					return err
+				}
+				surface.DeferredToolCatalog = catalog
+				workerSurface.Store(&workerModelSurface{provider: selection.RuleProvider, model: selection.APIModel, search: search, native: native, surface: surface})
+				return nil
+			}
+
 			workerBaseSystemPrompt := buildWorkerBasePrompt(
 				threadRoot,
 				s.SessionDate,
@@ -1457,13 +1503,15 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				HarnessDir:                     filepath.Join(artifactDir, "harness"),
 				WorkerSysPrompt:                workerBaseSystemPrompt,
 				WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
+					current := workerSurface.Load()
 					skills := s.Skills
 					if generation != nil {
 						skills = generation.skills
 					}
-					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, s.InstructionFiles, skills), nil
+					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, current.provider, current.model, current.surface, s.InstructionFiles, skills), nil
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
+					current := workerSurface.Load()
 					workerKit, err := kit.CloneForRoot(workerRoot)
 					if err != nil {
 						return nil, err
@@ -1471,7 +1519,7 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					// Reset the inherited file-scope whitelist: a worker gets
 					// the standard workspace boundary roots.
 					workerKit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
-					workerKit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
+					workerKit.ConfigureSurfaceForProviderModel(current.provider, current.model, false)
 					workerStateDir := stateDir
 					if !sameRuntimeRoot(workerRoot, threadRoot) {
 						if home, err := statepath.Home(""); err == nil {
@@ -1490,8 +1538,8 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
 					workerKit.SetSessionDir(artifactDir)
-					workerKit.SetToolSearchEnabled(workerToolSearchEnabled)
-					workerKit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
+					workerKit.SetToolSearchEnabled(current.search)
+					workerKit.SetNativeDeferredToolDiscovery(current.native)
 					workerKit.SetAgentIdentity(meta.ID, meta.Path)
 					applyWorkerToolFilter(workerKit, wt)
 					return workerKit, nil
@@ -1564,15 +1612,16 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
 	runner.BeforeRequest = pluginRequestInterceptor(pluginHost, s.ProviderName, id, threadRoot)
 	releasedGeneration = true
-	return &ThreadRuntime{
-		StreamRunner:      runner,
-		Toolkit:           kit,
-		AgentControl:      agentControl,
-		ProcessManager:    threadProcessManager,
-		ActivityRegistry:  s.ActivityRegistry,
-		ModelBudget:       s.ModelBudget,
-		WorkerModelBudget: s.WorkerModelBudget,
-		PluginGeneration:  generation,
+	threadRuntime := &ThreadRuntime{
+		refreshWorkerModel: refreshWorkerModel,
+		StreamRunner:       runner,
+		Toolkit:            kit,
+		AgentControl:       agentControl,
+		ProcessManager:     threadProcessManager,
+		ActivityRegistry:   s.ActivityRegistry,
+		ModelBudget:        s.ModelBudget,
+		WorkerModelBudget:  s.WorkerModelBudget,
+		PluginGeneration:   generation,
 		// Direct callers get the session's own identity as the stamp;
 		// NewThreadRuntimeForRootModel overwrites it with the thread's
 		// requested selection so reuse comparisons stay in thread terms.
@@ -1583,7 +1632,25 @@ func (s *Session) NewThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			Effort:         strings.TrimSpace(runner.Effort),
 			PermissionMode: config.NormalizePermissionMode(s.Permissions.Mode),
 		},
-	}, nil
+	}
+	threadRuntime.refreshModelPrompt = func() error {
+		shadow := s.cloneForThreadModel()
+		shadow.RootDir, shadow.Toolkit, shadow.StreamRunner = threadRoot, kit, runner
+		if generation != nil {
+			shadow.systemPrompts = generation.systemPrompts
+			shadow.Skills = generation.skills
+		}
+		catalog, err := deferredToolCatalogPromptForToolkit(kit)
+		if err != nil {
+			return err
+		}
+		shadow.DeferredToolCatalogPrompt = catalog
+		shadow.RefreshSystemPrompt(runner.ProviderName, runner.APIModel)
+		runner.BeforeModelStep = pluginPreStepInjector(pluginHost, runner.ProviderName, runner.Model, id, threadRoot)
+		runner.BeforeRequest = pluginRequestInterceptor(pluginHost, runner.ProviderName, id, threadRoot)
+		return nil
+	}
+	return threadRuntime, nil
 }
 
 type sessionDriverCheckpointStore struct {

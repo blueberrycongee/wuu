@@ -70,7 +70,7 @@ func CollectTokenUsageRows(sessDir string) ([]TokenUsageRow, error) {
 			if !strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
 				continue
 			}
-			if strings.TrimSpace(rec.Content) != "token_usage" {
+			if strings.TrimSpace(rec.Content) != "token_usage" && !strings.HasPrefix(rec.Content, "auto_model:") {
 				continue
 			}
 			rows = append(rows, TokenUsageRow{
@@ -132,7 +132,7 @@ func CollectUsageScan(sessDir string) (UsageScan, error) {
 		}
 		collectSkillUsage(records, counts)
 		for _, rec := range records {
-			if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") && strings.TrimSpace(rec.Content) == "token_usage" {
+			if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") && (strings.TrimSpace(rec.Content) == "token_usage" || strings.HasPrefix(rec.Content, "auto_model:")) {
 				rows = append(rows, TokenUsageRow{
 					SessionID: sess.ID, At: rec.At, Provider: rec.Provider, Model: rec.Model,
 					InputTokens: rec.InputTokens, OutputTokens: rec.OutputTokens,

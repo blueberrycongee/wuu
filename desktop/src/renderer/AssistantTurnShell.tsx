@@ -1,3 +1,4 @@
+import { AutoModelStatus } from "./AutoModelStatus";
 import { ChevronRight } from "lucide-react";
 import {
   type SyntheticEvent,
@@ -201,6 +202,7 @@ export function AssistantTurnShell({
 
   return (
     <div className={className}>
+      <AutoModelStatus turn={turn} />
       {hasProcess ? (
         <TurnProcessFold
           entries={processEntries}
