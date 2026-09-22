@@ -39,12 +39,12 @@ export const cursorRuntimeSource = `function () {
   var point = null;
   var travel = null;
   var pressing = 0;
-  var pressUntil = 0;
+  var pressTimer = 0;
+  var arrivalTimer = 0;
+  var restingAt = 0;
+  var restPose = null;
   var raf = 0;
-  var reduced = false;
-  try {
-    reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
-  } catch (error) {}
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function now() {
     return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -132,6 +132,7 @@ export const cursorRuntimeSource = `function () {
     var atArc = quad(move.start, move.control, move.end, along);
     var ahead = quad(move.start, move.control, move.end, Math.min(1, along + 0.04));
     var lead = heading(atArc, ahead) + 135;
+    lead = ((lead + 180) % 360 + 360) % 360 - 180;
     return {
       x: atArc.x,
       y: atArc.y,
@@ -171,46 +172,77 @@ export const cursorRuntimeSource = `function () {
   }
 
   function finish(resolve) {
-    var move = travel && travel.move;
-    var shouldPress = travel && travel.press === true;
-    if (shouldPress && move) {
+    if (raf) window.cancelAnimationFrame(raf);
+    raf = 0;
+    var move = travel.move;
+    var shouldPress = travel.press;
+    window.clearTimeout(arrivalTimer);
+    arrivalTimer = 0;
+    travel = null;
+    point = { x: move.end.x, y: move.end.y };
+    restPose = poseAt(move, 1, 1);
+    restingAt = now();
+    if (shouldPress) {
       pressing = 1;
-      paint(poseAt(move, 1, 1));
-      window.setTimeout(function () {
+      restPose.press = pressing;
+      window.clearTimeout(pressTimer);
+      pressTimer = window.setTimeout(function () {
         pressing = 0;
-        if (!travel && host) paint(poseAt(move, 1, 1));
+        if (!travel && host && restPose) {
+          restPose.press = 0;
+          paint(restPose);
+        }
       }, 90);
     }
-    travel = null;
-    if (raf && window.cancelAnimationFrame) {
-      window.cancelAnimationFrame(raf);
-      raf = 0;
-    }
+    paint(restPose);
     resolve();
+    if (!reduced) raf = window.requestAnimationFrame(frame);
   }
 
   function frame() {
     raf = 0;
-    if (!travel) return;
+    if (!travel) {
+      if (!restPose || !host) return;
+      var elapsed = now() - restingAt;
+      var progress = Math.min(1, elapsed / 1100);
+      var tilt = Math.sin(progress * Math.PI * 4) * Math.sin(progress * Math.PI) * 9;
+      paint(Object.assign({}, restPose, { rotation: tilt, press: pressing }));
+      if (progress < 1) raf = window.requestAnimationFrame(frame);
+      return;
+    }
     var elapsed = now() - travel.started;
     var durationMs = travel.move.duration * 1000;
     var t = durationMs <= 0 ? 1 : Math.min(1, elapsed / durationMs);
-    var opacity = Math.min(1, (travel.baseOpacity || 0) + elapsed / 140);
-    paint(poseAt(travel.move, t, opacity));
-    point = t >= 1 ? { x: travel.move.end.x, y: travel.move.end.y } : null;
+    var opacity = Math.min(1, travel.baseOpacity + elapsed / 140);
+    var pose = poseAt(travel.move, t, opacity);
+    paint(pose);
+    // Retargeting starts from the painted point, including mid-flight moves.
+    point = { x: pose.x, y: pose.y };
     if (t >= 1 || elapsed >= CAP) {
-      if (t < 1) {
-        paint(poseAt(travel.move, 1, 1));
-        point = { x: travel.move.end.x, y: travel.move.end.y };
-      }
       finish(travel.resolve);
       return;
     }
     raf = window.requestAnimationFrame(frame);
   }
 
+  function cancelTravel() {
+    if (raf) window.cancelAnimationFrame(raf);
+    raf = 0;
+    window.clearTimeout(arrivalTimer);
+    arrivalTimer = 0;
+    if (travel) {
+      var resolve = travel.resolve;
+      travel = null;
+      resolve();
+    }
+  }
+
   return {
     moveTo: function (x, y, press) {
+      cancelTravel();
+      window.clearTimeout(pressTimer);
+      pressing = 0;
+      restPose = null;
       var end = { x: x, y: y };
       var start = point || anchor();
       var move = plan(start, end);
@@ -230,7 +262,7 @@ export const cursorRuntimeSource = `function () {
         }
         if (raf) window.cancelAnimationFrame(raf);
         raf = window.requestAnimationFrame(frame);
-        window.setTimeout(function () {
+        arrivalTimer = window.setTimeout(function () {
           if (travel && travel.resolve === resolve) {
             point = end;
             paint(poseAt(travel.move, 1, 1));
@@ -240,9 +272,9 @@ export const cursorRuntimeSource = `function () {
       });
     },
     hide: function () {
-      if (raf) window.cancelAnimationFrame(raf);
-      raf = 0;
-      travel = null;
+      cancelTravel();
+      window.clearTimeout(pressTimer);
+      restPose = null;
       point = null;
       pressing = 0;
       if (host && host.parentNode) host.parentNode.removeChild(host);

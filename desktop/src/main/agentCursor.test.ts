@@ -139,6 +139,35 @@ describe("agent cursor travel", () => {
     expect(host.style.transform).toContain("translate(38.8px, 48.9px)");
   });
 
+  it("settles a pending arrival when hidden and never paints again", async () => {
+    const { runtime, host, frames, timers, setNow } = boot();
+    const arrived = runtime.moveTo(40, 50, false);
+    setNow(16);
+    frames.shift()?.(16);
+    expect(host.isConnected).toBe(true);
+    runtime.hide();
+    await arrived;
+    for (const timer of timers) timer();
+    expect(frames).toHaveLength(0);
+    expect(host.isConnected).toBe(false);
+  });
+
+  it("settles an interrupted move and continues from its painted position", async () => {
+    const { runtime, host, frames, setNow } = boot();
+    const first = runtime.moveTo(100, 50, false);
+    setNow(96);
+    frames.shift()?.(96);
+    const painted = host.style.transform.match(/translate\(([^p]+)px, ([^p]+)px\)/)!;
+    const second = runtime.moveTo(700, 500, false);
+    await first;
+    frames.shift()?.(96);
+    const retargeted = host.style.transform.match(/translate\(([^p]+)px, ([^p]+)px\)/)!;
+    expect(Number(retargeted[1])).toBeCloseTo(Number(painted[1]));
+    expect(Number(retargeted[2])).toBeCloseTo(Number(painted[2]));
+    runtime.hide();
+    await second;
+  });
+
   it("removes the pointer when hidden", () => {
     const { runtime, host } = boot();
     runtime.hide();
