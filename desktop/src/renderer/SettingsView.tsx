@@ -1076,7 +1076,6 @@ export function SettingsView({
                   onRefresh={onRefreshEngineInventory}
                   onUpdate={onUpdateEngineInventory}
                 />
-                <AutoModelSettings value={initialized?.advanced_settings?.auto_model} providers={providers} disabled={false} onSave={onAdvancedSave} />
                 <SettingsProvidersPage
                   providers={providers}
                   providerLabels={providerLabels}
@@ -1118,6 +1117,7 @@ export function SettingsView({
                   xaiLoginBusy={xaiLoginBusy}
                   onStartXAILogin={() => void startXAILogin()}
                 />
+                <AutoModelSettings value={initialized?.advanced_settings?.auto_model} providers={providers} disabled={false} onSave={onAdvancedSave} />
               </>
             ) : activePage === "advanced" ? (
               <>

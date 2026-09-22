@@ -70,7 +70,7 @@ Prompts, selected context, attachments, and tool results can leave your machine 
 
 ## Auto model selection
 
-In **Settings → Model services → Auto**, choose a classifier and execution models for simple, medium, and complex tasks. Each choice refers to an existing provider and model, with optional reasoning settings. The choices may use different services. Enable Auto, then select **Auto** in a Wuu conversation's model menu, or make it the default for new conversations.
+In **Settings → Model services → Auto**, choose a classifier and execution models for simple, medium, and complex tasks. Auto appears below connected services. Enabling it reveals the model choices and scrolls them into view; disabling it hides them and retains their configuration. Each row contains the task role, a combined model/provider picker, and its reasoning setting. Changes save automatically; a failed save restores the previous setting and displays an error. The choices may use different services. Enable Auto, then select **Auto** in a Wuu conversation's model menu.
 
 Each new task first calls the classifier with bounded recent dialogue, the initial objective, and attachment counts. This adds latency and billable usage. The classifier cannot run tools. Its result selects one of the three configured tiers; it cannot select an arbitrary model. The actual provider, model, tier, classifier latency, usage, and fallback reason appear on the turn. The conversation keeps its Auto selection.
 

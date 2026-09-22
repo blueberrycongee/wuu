@@ -37,6 +37,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Auto settings now appear below connected model services, with one combined
+  provider/model picker and inline reasoning setting per task role. Changes save
+  automatically, with failed saves restoring the previous setting. Disabling Auto
+  hides the choices and retains their configuration. Enabling Auto scrolls the
+  choices into view; bounded picker widths keep the layout balanced.
+
 - The embedded browser can read the page it is showing. Observation returns
   the headings, paragraphs, lists, and tables together with the controls it
   can click, and a long page continues from the returned offset. Ending a
@@ -53,6 +59,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   sent. Closing the panel keeps the page in the hidden host.
 
 ### Fixed
+
+- Settings switches now include the track border in their sizing, keeping the
+  thumb centered with equal vertical clearance.
 
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,

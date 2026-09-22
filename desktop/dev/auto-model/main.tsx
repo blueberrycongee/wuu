@@ -48,7 +48,7 @@ const providers: ProviderSummary[] = [
 ];
 function Preview() {
   const [value, setValue] = useState<AutoModelConfig>({
-    enabled: true,
+    enabled: !params.has("scroll"),
     default: true,
     classifier: { provider: "Example service", model: "fast" },
     simple: { provider: "Example service", model: "fast" },
@@ -80,6 +80,14 @@ function Preview() {
         overflow: "auto",
       }}
     >
+      {params.has("scroll") && (
+        <section style={{ minHeight: "72vh", flexShrink: 0 }}>
+          <h2 className="settings-section-title">Connected services</h2>
+          {providers.map((provider) => (
+            <div className="settings-row" key={provider.name}>{provider.name}</div>
+          ))}
+        </section>
+      )}
       <AutoModelSettings
         value={value}
         providers={params.has("empty") ? [] : providers}

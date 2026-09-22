@@ -2613,17 +2613,58 @@
   }
 }
 
-.auto-model-selection {
-  border: 0;
-  padding: 0;
-  margin: 0;
+/* Auto uses the same controls as the other settings, without a nested card. */
+.auto-model-heading {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.auto-model-heading > .settings-section-header {
   min-width: 0;
 }
-.auto-model-selection legend { margin-bottom: 8px; }
-.auto-model-selection label { display: flex; flex: 1 1 14em; flex-direction: column; gap: 6px; min-width: 0; }
-.auto-model-selections { display: flex; flex-direction: column; gap: 20px; }
-.auto-model-selection .settings-select-trigger { width: 100%; min-width: 0; }
+
+/* Bound the form by its content instead of stretching the controls across
+ * the settings page. Right-aligned labels keep the reading gap consistent. */
+.auto-model-selections {
+  width: min(100%, calc(40em + 2 * var(--space-6)));
+  margin-inline: auto;
+  scroll-margin-block: var(--space-4);
+}
+
+.auto-model-selections .settings-row {
+  grid-template-columns: minmax(0, 8em) minmax(0, 20em) minmax(0, 12em);
+}
+
+.auto-model-selection > .settings-row-label-title {
+  text-align: right;
+}
+
+.auto-model-selections .settings-select-trigger {
+  min-width: 0;
+}
+
+@container settings-page (max-width: 44em) {
+  .auto-model-selections {
+    width: min(100%, calc(32em + var(--space-3)));
+  }
+
+  .auto-model-selections .settings-row {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 3fr);
+    column-gap: var(--space-3);
+  }
+
+  .auto-model-selection > .settings-row-label-title {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+
+@container settings-page (max-width: 25em) {
+  .auto-model-selections .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .auto-model-status { color: var(--ink-muted); font-size: var(--font-ui); margin-bottom: 8px; overflow-wrap: anywhere; }
