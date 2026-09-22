@@ -50,6 +50,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Conversation switches restore the reading turn instead of following background
+  output. History loading preserves in-flight scrolling without double-applying
+  native anchoring or counting new output below the reader. Cached streams catch
+  up before scroll measurement and no longer replay pending text fades on reveal.
+
 - Browser observations now read link and button text from Chromium's layout
   snapshot, including nested and repeated text, instead of returning unnamed
   links. The screenshot tool description clarifies that it saves a UI preview

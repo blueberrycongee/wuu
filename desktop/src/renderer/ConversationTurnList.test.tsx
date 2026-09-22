@@ -13,6 +13,7 @@ import {
   requestConversationTurnReveal,
   userMessageAnchorID,
 } from "./TurnViewHelpers";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -294,20 +295,33 @@ describe("ConversationTurnList", () => {
     );
   });
 
-  it("does not re-apply the prepended height when the reader already moved", async () => {
+  it.each([0, 200, 500])("anchors a prepend during a gesture and tail growth (native adjustment: %s)", async (nativeAdjustment) => {
     const prior = window.wuu;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     let calls = 0;
-    const turns = [makeTurn(40)];
+    const turns = [makeTurn(40), makeTurn(41)];
+    let tailGrowth = 0;
+    let appliedNativeAdjustment = false;
     const view = (historyCursor?: string) => (
       <ConversationTurnList
         threadID="remote"
         historyCursor={historyCursor}
         turns={turns}
-        renderTurn={(turn) => <div data-turn-id={turn.id}>{turn.id}</div>}
+        renderTurn={(turn) => <div data-turn-id={turn.id} ref={node => {
+          if (!node) return;
+          node.getBoundingClientRect = () => {
+            const index = [...container.querySelectorAll('[data-turn-id]')].indexOf(node);
+            const top = index * 500 - container.scrollTop;
+            return { top, bottom: top + 500, height: 500 } as DOMRect;
+          };
+          if (turn.id === "turn-39" && !appliedNativeAdjustment) {
+            appliedNativeAdjustment = true;
+            container.scrollTop += nativeAdjustment;
+          }
+        }}>{turn.id}</div>}
       />
     );
     window.wuu = {
@@ -316,14 +330,16 @@ describe("ConversationTurnList", () => {
         calls += 1;
         await gate;
         turns.unshift(makeTurn(39));
+        tailGrowth = 900;
         root!.render(view());
       },
     };
     container.className = "scroll-region";
     Object.defineProperty(container, "scrollHeight", {
       configurable: true,
-      get: () => container.querySelectorAll("[data-turn-id]").length * 10,
+      get: () => container.querySelectorAll("[data-turn-id]").length * 500 + tailGrowth,
     });
+    Object.defineProperty(container, "clientHeight", { configurable: true, value: 300 });
     try {
       render(view("cursor"));
       container.scrollTop = 120;
@@ -332,14 +348,37 @@ describe("ConversationTurnList", () => {
       });
       expect(calls).toBe(1);
 
-      // The viewport is no longer where the snapshot left it: native anchoring
-      // or the reader's own scroll owns that offset now.
+      // The user continues the gesture while the request is pending.
       container.scrollTop = 320;
 
       await act(async () => {
         release();
       });
-      expect(container.scrollTop).toBe(320);
+      expect(container.scrollTop).toBe(820);
+      expect(container.querySelector('[data-turn-id="turn-40"]')!.getBoundingClientRect().top).toBe(-320);
+    } finally {
+      window.wuu = prior;
+    }
+  });
+
+  it("does not move the shared viewport when a hidden pane receives history", () => {
+    container.className = "scroll-region";
+    const prior = window.wuu;
+    window.wuu = { ...prior, loadEarlierThreadHistory: async () => {} };
+    Object.defineProperty(container, "scrollHeight", {
+      configurable: true,
+      get: () => container.querySelectorAll('[data-turn-id]').length * 500,
+    });
+    const view = (turns: Turn[], active: boolean) => <ConversationRenderActivityProvider active={active}>
+      <ConversationTurnList threadID="hidden" historyCursor="cursor" turns={turns}
+        renderTurn={turn => <div data-turn-id={turn.id} />} />
+    </ConversationRenderActivityProvider>;
+    try {
+      render(view([makeTurn(40)], true));
+      render(view([makeTurn(40)], false));
+      container.scrollTop = 120;
+      render(view([makeTurn(39), makeTurn(40)], false));
+      expect(container.scrollTop).toBe(120);
     } finally {
       window.wuu = prior;
     }

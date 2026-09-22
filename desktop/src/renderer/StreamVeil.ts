@@ -72,7 +72,7 @@ let nextPainter = 0;
  */
 export function useStreamVeil(
   root: RefObject<HTMLDivElement | null>, text: string, live: boolean,
-  identity: string, stableBlocks = 0,
+  identity: string, stableBlocks = 0, active = true,
 ): void {
   const painter = useRef<{ update: () => void } | null>(null);
   const [painting, setPainting] = useState(live);
@@ -84,7 +84,9 @@ export function useStreamVeil(
   const latestStableBlocks = useRef(stableBlocks);
   useLayoutEffect(() => { latestStableBlocks.current = stableBlocks; }, [stableBlocks]);
   useLayoutEffect(() => {
-    if (!painting) return;
+    // Hiding is not provider completion: discard pending paint immediately.
+    // A revealed pane starts with a full-opacity baseline, not a catch-up fade.
+    if (!painting || !active) return;
     const element = root.current;
     const registry = (globalThis.CSS as unknown as { highlights?: HighlightRegistry } | undefined)?.highlights;
     const HighlightClass = (globalThis as unknown as { Highlight?: HighlightConstructor }).Highlight;
@@ -276,6 +278,6 @@ export function useStreamVeil(
       motion.removeEventListener("change", reset);
       document.removeEventListener("visibilitychange", reset);
     };
-  }, [root, identity, painting]);
-  useLayoutEffect(() => { painter.current?.update(); }, [text, live, stableBlocks, identity, painting]);
+  }, [root, identity, painting, active]);
+  useLayoutEffect(() => { painter.current?.update(); }, [text, live, stableBlocks, identity, painting, active]);
 }

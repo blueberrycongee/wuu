@@ -92,27 +92,17 @@ export function StreamingMarkdown({
     streamTextStore.replacementVersion(streamKey),
   );
   const acceptedStreamValueRef = useRef(hasStreamValue);
-  useLayoutEffect(() => {
-    const replacementVersion = streamTextStore.replacementVersion(streamKey);
-    if (hasStreamValue) {
-      acceptedStreamValueRef.current = true;
-    }
-    if (targetText !== renderedText) {
-      if (
-        acceptedStreamValueRef.current &&
-        !hasStreamValue &&
-        targetText.length < renderedText.length
-      ) {
-        return;
-      }
-      renderedReplacementVersionRef.current = replacementVersion;
-      setRenderedText(targetText);
-      return;
-    }
-    if (hasStreamValue) {
-      renderedReplacementVersionRef.current = replacementVersion;
-    }
-  }, [hasStreamValue, renderedText, streamKey, targetText]);
+  // Resolve the sticky snapshot before committing DOM. Publishing in a layout
+  // effect lets the parent's scroll restore measure the previous text first.
+  if (hasStreamValue) {
+    acceptedStreamValueRef.current = true;
+    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+  }
+  if (targetText !== renderedText && !(acceptedStreamValueRef.current &&
+    !hasStreamValue && targetText.length < renderedText.length)) {
+    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+    setRenderedText(targetText);
+  }
 
   /* ------------------------------ Phase ----------------------------------- */
   // Single internal phase: streaming while upstream is live, settled once
@@ -236,8 +226,8 @@ export function StreamingMarkdown({
     [split.blocks],
   );
   useStreamVeil(
-    surfaceRef, renderedText, isLive && renderActive,
-    `${streamKey}:${renderedReplacementVersionRef.current}`, visibleBlocks.length,
+    surfaceRef, renderedText, isLive,
+    `${streamKey}:${renderedReplacementVersionRef.current}`, visibleBlocks.length, renderActive,
   );
   const lastStableBlockIndex = visibleBlocks.length - 1;
   const lastStableBlock = visibleBlocks[lastStableBlockIndex] ?? "";

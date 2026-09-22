@@ -319,6 +319,50 @@ describe("useConversationScrollState — thread scroll snapshots", () => {
     fireScroll();
   });
 
+  it.each([0, 180])("restores the reading turn, not the growing tail (growth above: %s)", (growthAbove) => {
+    const node = mount({ activeThreadID: "thread-a", scrollHeight: 2400, clientHeight: 600, initialScrollTop: 1800 });
+    const turn = document.createElement("section");
+    turn.className = "turn";
+    turn.dataset.turnId = "reading-turn";
+    let documentTop = 400;
+    turn.getBoundingClientRect = () => ({
+      top: documentTop - node.scrollTop,
+      bottom: documentTop + 500 - node.scrollTop,
+      height: 500,
+    } as DOMRect);
+    node.querySelector('[data-testid="scroll-content"]')!.appendChild(turn);
+    fireScroll();
+    setScrollTop(520);
+    fireUserScroll();
+    switchThread("thread-b");
+    documentTop += growthAbove;
+    layout!.scrollHeight += 800 + growthAbove;
+    switchThread("thread-a");
+    expect(node.scrollTop).toBe(520 + growthAbove);
+    expect(turn.getBoundingClientRect().top).toBe(-120);
+  });
+
+  it("does not mistake native anchor compensation for a gesture back to latest", () => {
+    const node = mount({ activeThreadID: "thread-a", scrollHeight: 2400, clientHeight: 600, initialScrollTop: 1800 });
+    const turn = document.createElement("section");
+    turn.dataset.turnId = "reading-turn";
+    let documentTop = 1700;
+    turn.getBoundingClientRect = () => ({
+      top: documentTop - node.scrollTop, bottom: documentTop + 500 - node.scrollTop, height: 500,
+    } as DOMRect);
+    node.querySelector('[data-testid="scroll-content"]')!.appendChild(turn);
+    fireScroll();
+    setScrollTop(1770);
+    fireUserScroll();
+    // Reflow above the reader is compensated by Chromium; no downward input.
+    documentTop += 30;
+    setScrollTop(1800);
+    fireScroll();
+    layout!.scrollHeight += 400;
+    switchThread("thread-a", [...makeLongTurns()]);
+    expect(node.scrollTop).toBe(1800);
+  });
+
   it("does not jump a running session when its frozen snapshot lands on reveal", () => {
     const running: Turn[] = [
       {

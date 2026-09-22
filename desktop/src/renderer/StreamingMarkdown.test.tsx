@@ -6,7 +6,7 @@
  * without removing or remounting the Markdown tail.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   containsMermaidFence,
@@ -590,6 +590,27 @@ describe("splitIntoStableBlocks", () => {
 });
 
 describe("StreamingMarkdown session reveal", () => {
+  it("exposes caught-up text to the parent's first reveal layout measurement", () => {
+    const key = streamTextKey("turn", "s-words", "text");
+    const measurements: string[] = [];
+    function Pane({ active }: { active: boolean }) {
+      useLayoutEffect(() => {
+        if (active) measurements.push(container?.textContent ?? "");
+      }, [active]);
+      return <ConversationRenderActivityProvider active={active}>
+        <StreamingMarkdown streamKey={key} initialText="partial" isLive phase="final_answer" />
+      </ConversationRenderActivityProvider>;
+    }
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(<Pane active={false} />));
+    streamTextStore.set(key, "partial and more");
+    act(() => root!.render(<Pane active />));
+    expect(measurements).toHaveLength(1);
+    expect(measurements[0]).toContain("partial and more");
+  });
+
   it("does not fire a stream frame just because a cached conversation became visible", () => {
     const key = streamTextKey("turn", "s-words", "text");
     streamTextStore.seed(key, "partial");

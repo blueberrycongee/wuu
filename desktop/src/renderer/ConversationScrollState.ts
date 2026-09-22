@@ -35,6 +35,7 @@ import { createScrollGlide } from "./ScrollGlide";
 import { useSessionTailSpace } from "./SessionTailSpace";
 import { conversationDisclosureHeight, eventTargetsConversationDisclosure } from "./ConversationDisclosure";
 import { useMessageArrivalMotion } from "./useMessageArrivalMotion";
+import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
 
 // Tight threshold so the conversation only re-engages auto-follow when the
 // user is effectively parked at the bottom. The previous 48px band let one
@@ -68,12 +69,17 @@ function clampFraction(value: number, minimum: number, maximum: number): number 
 
 function restoredScrollTop(
   node: HTMLElement,
-  snapshot: { scrollTop: number; distanceFromLatest?: number; submittedMessageID?: string },
+  snapshot: { scrollTop: number; distanceFromLatest?: number; submittedMessageID?: string; readingAnchor?: ConversationReadingAnchor },
 ): number {
   // A submission owns the reading frame: its tail reservation is rebased to the
   // incoming history window, so the saved offset already lives in that
   // coordinate system. Distance-from-latest only serves frozen snapshots.
   if (snapshot.submittedMessageID !== undefined) return snapshot.scrollTop;
+  if (snapshot.readingAnchor) {
+    // A hidden stream may grow below the reader, or history may grow above it.
+    // Only the anchor's actual movement changes the restored offset.
+    return readingAnchorScrollTop(node, snapshot.readingAnchor) ?? snapshot.scrollTop;
+  }
   return snapshot.distanceFromLatest === undefined
     ? snapshot.scrollTop
     : scrollTopForDistanceFromLatest(node, snapshot.distanceFromLatest);
@@ -213,6 +219,7 @@ export type ConversationScrollSnapshot = {
   autoFollow: boolean;
   submissionPhase?: SubmissionScrollPhase;
   submittedMessageID?: string;
+  readingAnchor?: ConversationReadingAnchor;
 };
 
 type ThreadScrollSnapshot = ConversationScrollSnapshot & { submittedMessageTop?: number };
@@ -444,10 +451,9 @@ export function useConversationScrollState({
     threadScrollSnapshotsRef.current.set(threadID, {
       // Callers already scrolling inside a frame pass the offset they reached,
       // so this never re-measures the scroller while motion is in flight.
-      // Distance-from-latest survives a later height settle; raw scrollTop does
-      // not, which is the remaining session-switch jump.
       scrollTop: nextTop,
       distanceFromLatest: distanceFromLatest ?? Math.max(0, latestFollowScrollTop(node) - nextTop),
+      readingAnchor: !autoFollow && !submission ? captureReadingAnchor(node) : undefined,
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
@@ -1052,6 +1058,7 @@ export function useConversationScrollState({
       return {
         scrollTop,
         distanceFromLatest: Math.max(0, latestFollowScrollTop(node) - scrollTop),
+        readingAnchor: !isFollowing() && !submissionRef.current ? captureReadingAnchor(node) : undefined,
         autoFollow: isFollowing(),
         submissionPhase: submissionPhase(),
         submittedMessageID: submissionRef.current?.messageID,
@@ -1155,6 +1162,20 @@ export function useConversationScrollState({
           node,
           isFollowing()
         );
+        return;
+      }
+    }
+
+    const readingSnapshot = activeThreadID ? threadScrollSnapshotsRef.current.get(activeThreadID) : undefined;
+    if (!isFollowing() && readingSnapshot?.readingAnchor &&
+      Math.abs(node.scrollTop - readingSnapshot.scrollTop) > 1) {
+      const anchoredTop = readingAnchorScrollTop(node, readingSnapshot.readingAnchor);
+      if (anchoredTop !== undefined && Math.abs(anchoredTop - node.scrollTop) <= 0.5) {
+        // Native anchoring (or a history prepend) moved scrollTop but left the
+        // content stationary. It is not a gesture toward latest, and must not
+        // re-arm following or consume the reader's reserved space.
+        lastConversationScrollTopRef.current = clampScrollTop(node, node.scrollTop);
+        rememberActiveThreadScrollSnapshot(node, false);
         return;
       }
     }
@@ -1385,9 +1406,8 @@ export function useConversationScrollState({
         submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
       }
       if (snapshot && !snapshot.autoFollow) {
-        // Restore from distance-from-latest so a later height settle does not
-        // jump the reading point. The tail reservation is already in that
-        // coordinate system.
+        // Prefer the content anchor; submission reservations retain their own
+        // coordinate system and fallback snapshots still support empty layouts.
         applyProgrammaticScroll(
           node,
           restoredScrollTop(node, snapshot) + restorationOffset,

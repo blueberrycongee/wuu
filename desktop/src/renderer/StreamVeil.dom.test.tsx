@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useStreamVeil } from "./StreamVeil";
 import { StreamingMarkdown } from "./StreamingMarkdown";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 const registry = new Map<string, Set<Range>>();
 let frame: FrameRequestCallback | undefined;
@@ -44,6 +45,25 @@ afterEach(() => {
 });
 
 describe("streaming paint integration", () => {
+  it("clears pending fades on hide and reveals caught-up history at full opacity", () => {
+    setup();
+    const show = (text: string, active: boolean) => act(() => root.render(
+      <ConversationRenderActivityProvider active={active}>
+        <StreamingMarkdown streamKey="reveal-paint" initialText={text} isLive phase="final_answer" />
+      </ConversationRenderActivityProvider>,
+    ));
+    show("old", true);
+    show("old next", true);
+    expect(registry.size).toBeGreaterThan(0);
+    show("old next", false);
+    expect(registry.size).toBe(0);
+    show("old next background", true);
+    expect(host.textContent).toContain("old next background");
+    expect(registry.size).toBe(0);
+    show("old next background fresh", true);
+    expect(registry.size).toBeGreaterThan(0);
+  });
+
   it("paints appended DOM ranges without changing text nodes and cleans up on settlement", () => {
     setup();
     mount("wor");
