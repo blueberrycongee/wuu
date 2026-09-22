@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelMessage, ChannelResponse, ChannelRoom, CollaborationSessionBinding, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
 import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
-import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
+import { assignmentState, ChannelView, type ChannelConversationSnapshot, formatChannelUnreadCount } from "./ChannelView";
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
@@ -414,6 +414,37 @@ describe("ChannelView", () => {
     expect(top).toBe(560);
     act(() => stream.dispatchEvent(new Event("scroll")));
     expect(top).toBe(560);
+  });
+
+  it("returns from Harness with cached history and its reading position before the refresh resolves", async () => {
+    const api = createApi();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    const positions = new WeakMap<Element, number>();
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return this.getAttribute("role") === "log" ? 1800 : 0;
+    });
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      return this.getAttribute("role") === "log" ? 400 : 0;
+    });
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) { return positions.get(this) ?? 0; });
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: Element, value: number) {
+      positions.set(this, Math.max(0, Math.min(value, 1400)));
+    });
+    const cache = new Map<string, ChannelConversationSnapshot>();
+    const view = <ChannelView selectedRoomID="room-1" conversationCache={cache} directoryAgents={agents} directoryRooms={rooms} />;
+    root = createRoot(container);
+    await act(async () => root!.render(view));
+    const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+    act(() => {
+      stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
+      stream.scrollTop = 420;
+      stream.dispatchEvent(new Event("scroll"));
+    });
+    act(() => root!.render(null));
+    api.listChannelMessages = vi.fn(() => new Promise<{ messages: ChannelMessage[] }>(() => {}));
+    act(() => root!.render(view));
+    expect(container.querySelector("[role=log]")?.textContent).toContain("Hello from Alpha");
+    expect(container.querySelector("[role=log]")?.scrollTop).toBe(420);
   });
 
   it("preserves verifier task states for honest room activity", () => {
