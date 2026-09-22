@@ -51,6 +51,7 @@ class FakeView implements BrowserViewHandle {
   readonly sentCommands: Array<{ method: string; params?: Record<string, unknown> }> = [];
   readonly responders = new Map<string, (params?: Record<string, unknown>) => Record<string, unknown>>();
   readonly loadedURLs: string[] = [];
+  readonly loadedBounds: Rectangle[] = [];
   captureCount = 0;
   captureEmpty = false;
   boundsSet: Rectangle | undefined;
@@ -134,6 +135,7 @@ class FakeView implements BrowserViewHandle {
     },
     loadURL: async (url: string) => {
       this.loadedURLs.push(url);
+      this.loadedBounds.push(this.getBounds());
       this.url = url;
     },
     getURL: () => this.url,
@@ -862,6 +864,23 @@ describe("pure helpers", () => {
 });
 
 describe("BrowserHostCoordinator preview surface accessors", () => {
+  it("lays out a new hidden page before navigation and preserves an existing tab's geometry", async () => {
+    const harness = makeHarness();
+    await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", {
+      workdir: "/repo", tab_id: "t1", initial_url: "https://example.com/",
+    }));
+    const view = harness.views[0];
+    const viewport = view.loadedBounds[0];
+    expect(viewport.width).toBeGreaterThanOrEqual(1024);
+    expect(viewport.height).toBeGreaterThanOrEqual(600);
+    expect(harness.coordinator.tabBounds("/repo", "t1")).toEqual(viewport);
+
+    const preview = { x: 0, y: 0, width: 320, height: 200 };
+    harness.coordinator.mountTabOnWindow("/repo", "t1", new FakeWindow(), preview, 0.25);
+    await openTab(harness, "/repo", "t1");
+    expect(view.getBounds()).toEqual(preview);
+  });
+
   it("reports tab bounds for a live tab and undefined once it is gone", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");

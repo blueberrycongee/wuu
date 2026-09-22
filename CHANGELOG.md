@@ -43,6 +43,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Moving the pointer onto the workspace browser no longer takes the page
   from the agent. A press, a context menu, or typing does.
 
+- Browser previews start from a desktop-sized page viewport, preserve its
+  proportions in narrow columns, and keep the resize input layer attached
+  throughout a drag. Page navigation reapplies the preview scale.
+
 - Switching sessions no longer jumps the message stream or replays catch-up
   motion. A paused reading position stays where it was, and a conversation
   that changed while hidden appears in its current layout.

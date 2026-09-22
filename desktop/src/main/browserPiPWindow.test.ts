@@ -363,7 +363,10 @@ describe("BrowserPiPSurface", () => {
     await settle();
 
     win.bounds = { ...win.bounds, width: 520, height: 340 };
+    const detached = win.removed.length;
     win.emit("resized");
+    // The input view must remain attached throughout a pointer gesture.
+    expect(win.removed).toHaveLength(detached);
     expect(overlay.boundsSet.at(-1)).toEqual({ x: 0, y: 0, width: 520, height: 340 });
     expect(host.relayouts).toHaveLength(1);
     expect(host.relayouts[0].zoom).toBeCloseTo(0.52);
@@ -428,6 +431,7 @@ describe("BrowserPiPSurface", () => {
 
     host.meta = { url: "https://next.test/path", title: "Next" };
     host.emitNavigate("https://next.test/path");
+    expect(host.relayouts.at(-1)?.zoom).toBeCloseTo(0.26);
     expect(
       overlay.executed.some((code) => code.includes("wuuPipHost") && code.includes("next.test")),
     ).toBe(true);
@@ -464,6 +468,27 @@ describe("BrowserPiPSurface", () => {
       visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
     });
     expect(win.bounds).toMatchObject({ width: 360, height: 190 });
+    surface.stop();
+  });
+
+  it("keeps the page aspect in a narrow column and recaptures the viewport after panel use", () => {
+    const { surface, win, host } = makeSurface();
+    surface.start();
+    surface.setHostLayout({
+      host: { x: 0, y: 0, width: 300, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: 0, y: 0, width: 1200, height: 800 },
+    });
+    surface.setVisible(true);
+    expect(win.bounds.width / win.bounds.height).toBeCloseTo(2);
+    expect(host.mounts.at(-1)?.rect.width).toBe(win.bounds.width);
+    expect(host.mounts.at(-1)?.rect.height).toBe(win.bounds.height);
+
+    surface.setVisible(false);
+    host.bounds = { x: 0, y: 0, width: 600, height: 800 };
+    surface.setVisible(true);
+    expect(win.bounds.width / win.bounds.height).toBeCloseTo(0.75);
+    expect(host.mounts.at(-1)?.zoom).toBeCloseTo(win.bounds.height / 800);
     surface.stop();
   });
 

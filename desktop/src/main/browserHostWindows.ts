@@ -598,6 +598,10 @@ export class BrowserHostCoordinator {
     let entry = this.tabs.get(key);
     if (!entry) {
       const view = this.deps.createView();
+      // A new WebContentsView has empty bounds. Establish a desktop layout
+      // before navigation or PiP mounting, rather than laying out the page at
+      // the preview card's size and treating that as its original viewport.
+      view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
       this.ensureHostWindow().contentView.addChildView(view);
       if (!view.webContents.debugger.isAttached()) {
         view.webContents.debugger.attach("1.3");

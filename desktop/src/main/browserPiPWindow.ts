@@ -3,6 +3,7 @@ import type { ActivitySession } from "../shared/protocol";
 import { appShellWebPreferences } from "./appShellGuards";
 import {
   browserPiPAnchors,
+  browserPiPCardSize,
   browserPiPClampOrigin,
   browserPiPDragCommand,
   browserPiPFitCard,
@@ -244,7 +245,10 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         if (this.matches(workdir, tabID)) this.forwardInteraction(hint);
       }),
       this.deps.host.addNavigateListener((workdir, tabID, url) => {
-        if (this.matches(workdir, tabID)) this.pushHostLabel(url);
+        if (!this.matches(workdir, tabID)) return;
+        this.pushHostLabel(url);
+        // Chromium can restore an origin's zoom during navigation.
+        this.refit();
       }),
       this.deps.host.addTabReparentedListener((workdir, tabID, parent) => {
         if (!this.matches(workdir, tabID) || !this.mounted) return;
@@ -361,7 +365,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
       this.reportTabGoneUnlessStarting();
       return;
     }
-    if (!this.layoutViewport && bounds.width > 0 && bounds.height > 0) {
+    if (bounds.width > 0 && bounds.height > 0) {
       this.layoutViewport = { width: bounds.width, height: bounds.height };
       if (!this.userSize && this.screenLayout && !this.dragging && !this.resizing) {
         this.placeCommitted();
@@ -417,7 +421,6 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     if (!win || win.isDestroyed()) return;
     const b = win.getBounds();
     this.overlay?.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
-    this.raiseOverlay();
     if (!this.mounted) return;
     const fit = this.contentRect();
     this.deps.host.relayoutMountedTab(
@@ -444,7 +447,9 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const aspect = this.layoutViewport && this.layoutViewport.height > 0
       ? this.layoutViewport.width / this.layoutViewport.height
       : 4 / 3;
-    const card = browserPiPFitCard(layout.host, this.userSize ?? browserPiPSizeForAspect(aspect));
+    const card = this.userSize
+      ? browserPiPFitCard(layout.host, this.userSize)
+      : browserPiPCardSize(layout.host, browserPiPSizeForAspect(aspect));
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
@@ -602,11 +607,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     const overlay = this.overlay;
     if (!win || win.isDestroyed() || !overlay) return;
     const view = overlay as unknown as BrowserViewHandle;
-    try {
-      win.contentView.removeChildView(view);
-    } catch {
-      // The overlay is not attached yet.
-    }
+    // Adding an existing child raises it without detaching its native view.
+    // Detaching during a resize interrupts the overlay's pointer capture.
     win.contentView.addChildView(view);
     const b = win.getBounds();
     overlay.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
