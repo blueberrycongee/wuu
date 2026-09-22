@@ -44,7 +44,7 @@ import {
   ShieldCheck,
   Terminal,
   X,
-} from "lucide-react";
+} from "./WuuIcons";
 import type { ActivitySession, BrowserDockTarget, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
 import {
   formatWorkspaceFileTarget,

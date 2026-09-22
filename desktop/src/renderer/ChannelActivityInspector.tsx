@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpRight, PanelRightClose } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, PanelRightClose } from "./WuuIcons";
 import { useEffect, useRef, useState } from "react";
 import { ChannelSessionInspector } from "./ChannelSessionInspector";
 import { useI18n } from "./i18n";

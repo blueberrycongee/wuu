@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Download, ExternalLink, FileDiff, X } from "lucide-react";
+import { ChevronRight, Download, ExternalLink, FileDiff, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview } from "./ImagePreview";

@@ -1,4 +1,4 @@
-import { ChevronRight, List, LoaderCircle } from "lucide-react";
+import { ChevronRight, List, LoaderCircle } from "./WuuIcons";
 import { useEffect, useId, useRef, useState } from "react";
 import { isThreadExecuting, type ThreadSummary } from "./AppState";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";

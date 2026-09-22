@@ -1,5 +1,5 @@
 import { showErrorToast } from "./Toast";
-import { CircleAlert } from "lucide-react";
+import { CircleAlert } from "./WuuIcons";
 import { useEffect, useState } from "react";
 import type { ThreadItem, ThreadItemStatus, TurnError } from "../shared/protocol";
 import { isUnchangedContextCompaction, type TurnEventDisplay } from "./TurnEvents";

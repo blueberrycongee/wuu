@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Plus, X, Info, Maximize2, Minimize2, RotateCw, Copy, Paperclip, Settings2, Trash2 } from "lucide-react";
+import { Plus, X, Info, Maximize2, Minimize2, RotateCw, Copy, Paperclip, Settings2, Trash2 } from "../../src/renderer/WuuIcons";
 import { SidePanelToggleIcon } from "../../src/renderer/SidePanelToggleIcon";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";

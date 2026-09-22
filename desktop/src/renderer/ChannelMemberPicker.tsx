@@ -1,4 +1,4 @@
-import { Check, Search } from "lucide-react";
+import { Check, Search } from "./WuuIcons";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";

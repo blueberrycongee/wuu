@@ -8,7 +8,7 @@ import {
   RotateCw,
   Square,
   X
-} from "lucide-react";
+} from "./WuuIcons";
 import {
   useCallback,
   useEffect,

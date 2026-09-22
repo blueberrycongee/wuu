@@ -1,4 +1,4 @@
-import { Search, X } from "lucide-react";
+import { Search, X } from "./WuuIcons";
 import { useEffect, useRef } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,

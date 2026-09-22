@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import "./AccountConnectionOnboarding.css";
 
@@ -30,16 +30,20 @@ export function AccountConnectionOnboarding({ onContinue, error, onError }: {
           <path d="m349 124 4 4 9-9" />
         </g>
         <g className="account-device-outline">
-          <rect x="56" y="54" width="132" height="90" rx="10" />
-          <path d="M57 126h130m-65 18v17m-24 0h48" />
-          <rect x="378" y="36" width="72" height="130" rx="14" />
-          <path d="M403 46h22m-18 108h14" />
+          <rect x="56" y="54" width="132" height="90" rx="18" />
+          <path d="M122 144v17m-24 0h48" />
+          <rect x="378" y="36" width="72" height="130" rx="20" />
+          <path d="M407 154h14" />
         </g>
         <g className="account-device-screen">
-          <rect x="70" y="68" width="30" height="42" rx="4" />
-          <path d="M111 76h57m-57 12h42m-42 12h49" />
-          <rect x="390" y="66" width="48" height="26" rx="5" />
+          <rect x="70" y="68" width="24" height="60" rx="12" />
+          <path d="M108 78h58m-58 15h40m-40 15h48" />
+          <rect x="390" y="66" width="48" height="26" rx="10" />
           <path d="M399 76h29m-29 7h18m-18 23h29m-29 10h22m-22 10h26" />
+        </g>
+        <g className="account-device-capsules">
+          <rect x="78" y="77" width="8" height="24" rx="4" />
+          <rect x="403" y="45" width="22" height="5" rx="2.5" />
         </g>
         <circle className="account-device-signal account-device-signal-computer" cx="176" cy="57" r="5" />
         <circle className="account-device-signal account-device-signal-phone" cx="446" cy="39" r="5" />

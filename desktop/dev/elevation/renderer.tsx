@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Folder, ChevronDown, Plus } from "lucide-react";
+import { Folder, ChevronDown, Plus } from "../../src/renderer/WuuIcons";
 import { ProjectPickerMenu } from "../../src/renderer/ComposerRuntimeMenus";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import "../../src/renderer/styles.css";

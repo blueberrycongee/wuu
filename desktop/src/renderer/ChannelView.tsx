@@ -1,6 +1,6 @@
 import { AgentOnboardingHistory } from "./AgentOnboardingHistory";
 import { hostSupports } from "./HostCapabilities";
-import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronUp, ClipboardList, ImagePlus, MessageCircle, Network, PanelLeftClose, PanelLeftOpen, Plus, Settings2, X } from "./WuuIcons";
 import { Fragment, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChannelAgentInsight, ChannelMessage, ChannelMessageListResult, ChannelResponse, ChannelRoom, EngineInfo, InitializeResult, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark, randomAgentAvatarKey } from "./AgentAvatarMark";

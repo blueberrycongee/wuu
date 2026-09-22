@@ -1,7 +1,7 @@
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { hostSupports } from "./HostCapabilities";
 import { Children, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Github, Globe2, Mail } from "lucide-react";
+import { Github, Globe2, Mail } from "./WuuIcons";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";

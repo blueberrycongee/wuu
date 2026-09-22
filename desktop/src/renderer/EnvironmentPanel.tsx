@@ -12,7 +12,7 @@ import {
   Plus,
   Search,
   X
-} from "lucide-react";
+} from "./WuuIcons";
 import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState } from "react";
 import type {
   GitStatusResult,

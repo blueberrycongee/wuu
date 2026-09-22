@@ -9,7 +9,7 @@ import {
   PencilLine,
   Split,
   X,
-} from "lucide-react";
+} from "./WuuIcons";
 import { useEffect, useRef, useState } from "react";
 import type { InputFile, InputImage } from "../shared/protocol";
 import { AttachmentImage } from "./AttachmentImage";

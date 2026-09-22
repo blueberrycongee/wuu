@@ -18,7 +18,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   X
-} from "lucide-react";
+} from "./WuuIcons";
 import type {
   CodexPetSettingsUpdate,
   EngineListResult,

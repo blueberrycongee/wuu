@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, FileDiff } from "lucide-react";
+import { ChevronRight, FileDiff } from "./WuuIcons";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import {
   extractToolDiffPreview,

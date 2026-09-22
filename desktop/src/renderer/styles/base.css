@@ -850,13 +850,8 @@ button:disabled {
   stroke-width: var(--icon-stroke);
 }
 
-/*
- * Lucide's default 2px stroke reads heavy at the 14–18px sizes used by the
- * desktop UI. Keep library icons and our matching public icons on the same
- * lighter optical weight, including icons that do not carry a size utility.
- * Purpose-built diagrams, progress rings, avatars, and plugin image assets are
- * intentionally outside this selector and retain their own drawing weights.
- */
+/* Product glyphs and third-party marks share the UI stroke token. Diagrams,
+ * progress rings and avatars keep their own scale and drawing weights. */
 :where(svg.lucide, svg[data-icon]) {
   stroke-width: var(--icon-stroke);
 }

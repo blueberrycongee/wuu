@@ -1,5 +1,5 @@
 // Real fold components with synthetic rows; no product bridge or user data.
-import { Folder, FolderOpen } from "lucide-react";
+import { Folder, FolderOpen } from "../../src/renderer/WuuIcons";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SidebarCollapseBody, SidebarSection } from "../../src/renderer/SidebarSection";

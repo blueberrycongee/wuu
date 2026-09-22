@@ -1,4 +1,4 @@
-import { ChevronLeft, X } from "lucide-react";
+import { ChevronLeft, X } from "./WuuIcons";
 import { useEffect } from "react";
 import { SidebarNameDialog, type SidebarNameDialogProps } from "./SidebarNameDialog";
 import { useI18n } from "./i18n";

@@ -7,7 +7,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { X } from "lucide-react";
+import { X } from "../WuuIcons";
 
 import type { PluginHost, RegisteredConversationCard } from "./PluginHost";
 import { useI18n } from "../i18n";

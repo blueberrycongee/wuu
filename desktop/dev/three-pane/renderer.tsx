@@ -1,6 +1,6 @@
 import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowUp, MessageSquarePlus, PanelLeft, Plus, Search, Settings } from "lucide-react";
+import { ArrowUp, MessageSquarePlus, PanelLeft, Plus, Search, Settings } from "../../src/renderer/WuuIcons";
 import { ProjectGroup } from "../../src/renderer/ThreadSidebar";
 import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel, type WorkspacePanelView } from "../../src/renderer/WorkspacePanels";
@@ -81,7 +81,7 @@ function Fixture() {
           {params.has("empty") ? <EmptyConversationHome title="晚上好，今天还想在 wuu 里处理什么？" />
             : <div className="conversation-width session-flow">{params.has("background") ? <div className="sample-background-settings"><BackgroundSettings /></div> : <TurnView turn={turn} onStreamFrame={noop} isLatestTurn latestAgentMessageID="sample-answer"/>}</div>}
         </div>
-        <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer"><textarea aria-label="示例输入" placeholder="即刻开始"/><div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div></div></div></div></div></div></footer>
+        <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer"><textarea aria-label="示例输入" placeholder="即刻开始"/><div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div></div></div></div></div></div></footer>
       </main>
       <WorkspaceRightPanel open={rightOpen} present={rightOpen} tabs={tabs} activeTabID={activeTab} activeContext={{ kind: "no_project", cwd: "/preview" }} workspaceContext={{ kind: "no_project", cwd: "/preview" }} onSelectTab={setActiveTab} onOpenTool={openTool} onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(current => current.filter(tab => tab.id !== id)); setActiveTab(undefined); }} onReorderTabs={noop} onOpenFile={noop} onClose={() => setRightOpen(false)} globalized={false} onToggleGlobalize={noop}/>
     </div>

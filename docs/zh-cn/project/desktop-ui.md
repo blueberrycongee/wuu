@@ -35,6 +35,21 @@ npm --prefix desktop run dev:onboarding
 
 公开插件主题 token 的契约范围小于所有内部 CSS 变量。暴露新 token 或建议插件作者依赖内部变量前，请查看[主题参考](../customize/theme-surface-matrix.md)。
 
+## SVG 图形
+
+产品控件从 [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx) 导入图标。
+[iconArtwork.ts](../../../desktop/src/shared/iconArtwork.ts) 中的原创 24 单位图形也供浏览器浮窗使用，
+命名扩展图标和技能标记复用相同画法。第三方品牌保留其可辨识的标识。
+
+通过 `/dev/icons/` 按 12–32px 对照整个图标族，以及真实工具栏控件的浅深色、
+默认与大字号和禁用状态。同一控件角色内应匹配视觉大小、线条密度和居中效果，
+相同 SVG 盒子尺寸并不足够。将轮廓校准留在图形源中，不在各页面单独缩放。
+大幅插图和表达数据的 SVG 保留各自的布局与有意义的几何关系。
+
+另提供 12 个独立的[莫兰迪彩色 SVG](../../../desktop/src/renderer/assets/morandi/)，
+供需要彩色的界面按需选用。沿用同一轮廓，采用低饱和的鼠尾草绿、灰蓝、陶土粉、
+燕麦色与灰紫，可在图标预览中对照明暗背景。这些是备用资产，普通控件仍使用语义前景色。
+
 ## 背景图片
 
 通过 `/dev/three-pane/?background` 预览全局背景；去掉 `background` 参数可检查同一张图片在三栏中的呈现，加上 `empty` 参数可检查空会话画布与输入框下方的底部纸带。导入与处理后的图片保留在本地桌面 profile，栅格处理在线程中完成，不随布局变化重复执行。只有主画布透出图片；菜单、输入框、编辑器和覆盖式抽屉保留主题底色。

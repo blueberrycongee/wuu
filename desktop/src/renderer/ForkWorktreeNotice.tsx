@@ -1,4 +1,4 @@
-import { ChevronDown, Split } from "lucide-react";
+import { ChevronDown, Split } from "./WuuIcons";
 import type { Thread } from "../shared/protocol";
 import { MessageCopyButton } from "./MessageActions";
 import { translateCurrent as translate, useI18n } from "./i18n";

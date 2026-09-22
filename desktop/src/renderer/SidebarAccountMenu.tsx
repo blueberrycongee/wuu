@@ -1,6 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
-import { BarChart3, ChevronsUpDown, LogOut, Settings, Smartphone, UserRound } from "lucide-react";
+import { BarChart3, ChevronsUpDown, LogOut, Settings, Smartphone, UserRound } from "./WuuIcons";
 import type { AccountView } from "./AccountPanel";
 import { hostSupports } from "./HostCapabilities";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";

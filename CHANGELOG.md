@@ -55,6 +55,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Dark desktop surfaces use fine inset highlights for depth. Menus, dialogs,
   and edge drawers retain black shadows to separate overlapping content.
 
+- Desktop and shared Web controls use Wuu's original SVG icon family, with
+  consistent optical sizing across navigation, tools, settings, skills,
+  extension marks, empty states, and browser overlays. A set of twelve
+  muted Morandi SVG variants is available for optional colored surfaces.
+
 - Browser previews and the workspace panel share a clearer animated pointer,
   with consistent movement and input feedback at every preview size.
   Taking control clears the pointer and cancels pending input.

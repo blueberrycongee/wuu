@@ -2,7 +2,7 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import type { FitAddon as XtermFitAddon } from "@xterm/addon-fit";
 import type { Terminal as XtermTerminal, ITerminalOptions, ITheme } from "@xterm/xterm";
-import { Square, Terminal } from "lucide-react";
+import { Square, Terminal } from "./WuuIcons";
 import {
   useCallback,
   useEffect,

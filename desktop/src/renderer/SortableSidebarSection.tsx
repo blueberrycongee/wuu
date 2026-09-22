@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "./WuuIcons";
 import { type CSSProperties, type HTMLAttributes, type ReactNode, useEffect } from "react";
 import { arrayMove, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";

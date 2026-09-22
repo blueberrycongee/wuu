@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { X } from "./WuuIcons";
 import type {
   InputFile,
   InputImage,

@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { X } from "./WuuIcons";
 import {
   type FormEvent as ReactFormEvent,
   type KeyboardEvent as ReactKeyboardEvent,

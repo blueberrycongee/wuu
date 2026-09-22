@@ -15,7 +15,7 @@ import {
   SquarePen,
   Info,
   X,
-} from "lucide-react";
+} from "./WuuIcons";
 import type {
   Agent,
   InputFile,

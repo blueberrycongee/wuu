@@ -1,4 +1,4 @@
-import { type LucideIcon } from "lucide-react";
+import { type IconComponent } from "./WuuIcons";
 import {
   type AnimationEvent,
   type ChangeEvent,
@@ -23,7 +23,7 @@ export interface SidebarNameDialogProps {
   fieldLabel: string;
   fieldAriaLabel: string;
   placeholder: string;
-  icon: LucideIcon;
+  icon: IconComponent;
   submitLabel: string;
   cancelLabel: string;
   content?: ReactNode;

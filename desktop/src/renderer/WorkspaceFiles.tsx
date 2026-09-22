@@ -2,7 +2,7 @@ import { isTouchWebShell } from "./ComposerFocus";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { AlertCircle, FileText, FolderOpen, FolderX } from "lucide-react";
+import { AlertCircle, FileText, FolderOpen, FolderX } from "./WuuIcons";
 import { type CSSProperties, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   RuntimeContext,

@@ -234,7 +234,7 @@ import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert, RefreshCw } from "lucide-react";
+import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type {
 } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";

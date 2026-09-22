@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, PanelRightClose } from "lucide-react";
+import { ArrowDown, ArrowLeft, PanelRightClose } from "./WuuIcons";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ConversationTurnList } from "./ConversationTurnList";

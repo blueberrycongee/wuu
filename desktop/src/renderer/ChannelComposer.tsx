@@ -1,5 +1,5 @@
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
-import { Plus } from "lucide-react";
+import { Plus } from "./WuuIcons";
 import { forwardRef, type KeyboardEvent, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";

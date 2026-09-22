@@ -8,7 +8,7 @@ import {
   PackagePlus,
   RefreshCw,
   Wrench,
-} from "lucide-react";
+} from "./WuuIcons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   AppLocale,

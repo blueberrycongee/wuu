@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw } from "./WuuIcons";
 import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../shared/protocol";
 import { EngineIcon } from "./EngineIcons";
 import { EngineAuthentication } from "./EngineAuthentication";

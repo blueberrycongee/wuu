@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2, Monitor } from "lucide-react";
+import { ArrowLeft, ChevronDown, Check, Folder, FolderPlus, FolderOpen, MessageCircle, SquarePen, Settings2, Monitor } from "./WuuIcons";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import type { AppSidebar } from "./AppSidebar";
 import { SCRATCH_PSEUDO_PROJECT_ID, isThreadExecuting, isThreadRunning, isThreadUnread, sidebarThreadSortTime } from "./AppState";

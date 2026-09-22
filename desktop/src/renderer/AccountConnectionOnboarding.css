@@ -13,6 +13,7 @@
 }
 .account-device-animation svg { display: block; width: 100%; height: auto; }
 .account-device-outline { stroke: var(--ink-soft); stroke-width: 2.5; stroke-linecap: round; fill: var(--paper); }
+.account-device-capsules { fill: var(--ink-muted); }
 .account-device-screen { stroke: var(--ink-muted); stroke-width: 2; stroke-linecap: round; }
 .account-device-screen rect { fill: var(--surface-1); stroke: none; }
 .account-transfer-track { stroke: var(--ink-muted); opacity: .22; }

@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, Info, MessagesSquare, Plus, Send } from "./WuuIcons";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
 import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
 import {

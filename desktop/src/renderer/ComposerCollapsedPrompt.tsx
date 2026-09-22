@@ -1,4 +1,4 @@
-import { FileText, X } from "lucide-react";
+import { FileText, X } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
   type RefObject,

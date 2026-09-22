@@ -871,23 +871,16 @@
   display: block;
 }
 
-.side-panel-toggle-frame,
-.side-panel-toggle-divider {
+/* The rail stays visible when closed; its fill marks the open state. */
+.side-panel-toggle-icon > rect:last-child {
   fill: none;
   stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: var(--icon-stroke);
+  transition: fill var(--motion-base) var(--ease-out);
 }
 
-.side-panel-toggle-pane {
+.side-panel-toggle-icon[data-open="true"] > rect:last-child {
   fill: currentColor;
-  opacity: 0;
-  transition: opacity var(--motion-base) var(--ease-out);
-}
-
-.side-panel-toggle-icon[data-open="true"] .side-panel-toggle-pane {
-  opacity: 1;
+  stroke: none;
 }
 
 .launch-preview-button {

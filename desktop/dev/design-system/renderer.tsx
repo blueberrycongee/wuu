@@ -1,7 +1,7 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowUp, Folder, Plus, Search } from "lucide-react";
+import { ArrowUp, Folder, Plus, Search } from "../../src/renderer/WuuIcons";
 import { SelectMenu } from "../../src/renderer/SelectMenu";
 import { TurnView } from "../../src/renderer/TurnView";
 import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics";
@@ -165,7 +165,7 @@ function ConversationExample() {
     </div></div>
     <footer ref={dock} className="composer-wrap dock-composer-wrap"><div className="composer-stack"><div className="composer-shell"><div className="composer-frame-shell"><div className="composer-frame"><div className="composer">
       <textarea aria-label="示例消息" placeholder="即刻开始" />
-      <div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div>
+      <div className="composer-bar"><div className="composer-bar-left"><button className="composer-tool-button" aria-label="附件"><Plus className="icon"/></button></div><div className="composer-bar-right"><button className="codex-runtime-trigger">Wuu · 示例模型</button><button className="composer-action-button composer-send-button" disabled aria-label="发送"><ArrowUp className="icon"/></button></div></div>
     </div></div></div></div></div></footer>
   </main>;
 }

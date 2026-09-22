@@ -1,4 +1,4 @@
-import { Bell, X } from "lucide-react";
+import { Bell, X } from "./WuuIcons";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,

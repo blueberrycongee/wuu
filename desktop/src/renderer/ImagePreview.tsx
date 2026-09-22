@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { Download, Minus, RotateCcw, X, ZoomIn } from "lucide-react";
+import { Download, Minus, RotateCcw, X, ZoomIn } from "./WuuIcons";
 import { useI18n } from "./i18n";
 
 export type ImagePreviewItem =

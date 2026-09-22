@@ -1,4 +1,4 @@
-import { ChevronDown, Clock3 } from "lucide-react";
+import { ChevronDown, Clock3 } from "./WuuIcons";
 import {
   useEffect,
   useRef,

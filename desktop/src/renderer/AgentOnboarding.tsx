@@ -1,4 +1,4 @@
-import { ArrowRight, Shuffle, X } from "lucide-react";
+import { ArrowRight, Shuffle, X } from "./WuuIcons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ChannelRoomOnboarding, ChannelAgentCreateParams, InitializeResult, NamedAgent, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import { randomAgentAvatarKey } from "./AgentAvatarMark";
