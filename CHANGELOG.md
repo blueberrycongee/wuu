@@ -56,6 +56,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - The browser preview no longer moves to avoid the jump-to-latest and status
   row; composer avoidance remains in place.
 
+- Browser preview positioning uses current layout measurements during window
+  resizing without an extra animation-frame delay or stale intermediate moves.
+
 - Conversation switches restore the reading turn instead of following background
   output. History loading preserves in-flight scrolling without double-applying
   native anchoring or counting new output below the reader. Cached streams catch

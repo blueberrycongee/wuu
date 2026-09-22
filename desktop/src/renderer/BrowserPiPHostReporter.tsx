@@ -28,9 +28,12 @@ export function BrowserPiPHostReporter(): null {
     let frame = 0;
     let last = "";
     const send = (): void => {
+      if (frame) cancelAnimationFrame(frame);
       frame = 0;
       const payload = readBrowserPiPHostLayout(document);
-      const key = JSON.stringify(payload);
+      // A fixed-width column may not change during a window resize. Still
+      // refresh main's window-size baseline so subsequent moves can follow it.
+      const key = JSON.stringify([payload, window.innerWidth, window.innerHeight]);
       if (key === last) return;
       last = key;
       report(payload);
@@ -43,7 +46,9 @@ export function BrowserPiPHostReporter(): null {
     const observed = new Set<Element>();
     let resizeObserver: ResizeObserver | undefined;
     if (typeof ResizeObserver === "function") {
-      resizeObserver = new ResizeObserver(schedule);
+      // ResizeObserver already runs after layout, before paint. Deferring its
+      // measurement to rAF puts the native card a frame behind the conversation.
+      resizeObserver = new ResizeObserver(send);
     }
     const watchSizes = (): void => {
       if (!resizeObserver) return;

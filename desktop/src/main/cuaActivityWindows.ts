@@ -170,6 +170,7 @@ export class ObservationCoordinator {
   private browserHost: {
     id: number;
     client: { host: PipRect; obstacles: PipRect[] };
+    contentSize: { width: number; height: number };
     window: BrowserPiPHostWindow;
     detach: () => void;
   } | undefined;
@@ -496,7 +497,8 @@ export class ObservationCoordinator {
   }
 
   // Client rectangles are viewport coordinates from the conversation window.
-  // Reprojecting on move/resize keeps the card glued to that column.
+  // Reproject moves immediately. Resizes need fresh renderer measurements;
+  // projecting the previous column size first makes the card jump backwards.
   setBrowserPiPHostLayout(
     webContentsId: number,
     hostWindow: BrowserPiPHostWindow,
@@ -522,19 +524,23 @@ export class ObservationCoordinator {
     if (!this.browserHost || this.browserHost.id !== webContentsId || this.browserHost.window !== hostWindow) {
       this.browserHost?.detach();
       const reproject = (): void => {
+        const source = this.browserHost;
+        if (!source || source.window.isDestroyed()) return;
+        const content = source.window.getContentBounds();
+        // Dragging the top/left edge can emit move and resize together.
+        if (content.width !== source.contentSize.width || content.height !== source.contentSize.height) return;
         this.browserScreenLayout = this.projectBrowserHost();
         this.pushBrowserHost(this.current?.pip);
       };
       hostWindow.on("move", reproject);
-      hostWindow.on("resize", reproject);
       this.browserHost = {
         id: webContentsId,
         client,
+        contentSize: hostWindow.getContentBounds(),
         window: hostWindow,
         detach: () => {
           try {
             hostWindow.removeListener("move", reproject);
-            hostWindow.removeListener("resize", reproject);
           } catch {
             // The window can already be destroyed.
           }
@@ -542,6 +548,7 @@ export class ObservationCoordinator {
       };
     } else {
       this.browserHost.client = client;
+      this.browserHost.contentSize = hostWindow.getContentBounds();
     }
     this.browserScreenLayout = this.projectBrowserHost();
     this.pushBrowserHost(this.current?.pip);

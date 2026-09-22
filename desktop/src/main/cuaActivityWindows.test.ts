@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
@@ -232,6 +233,38 @@ describe("browser observation surface", () => {
     );
     return { coordinator, surfaces, stops };
   }
+
+  it("follows window moves but waits for fresh column measurements during resize", async () => {
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity());
+    const setHostLayout = vi.fn();
+    Object.assign(surfaces[0], { setHostLayout });
+    let content = { x: 100, y: 100, width: 1000, height: 800 };
+    const win = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      getContentBounds: () => content,
+      webContents: { getZoomFactor: () => 1 },
+    });
+    const client = { host: { x: 200, y: 40, width: 800, height: 700 }, obstacles: [] };
+    coordinator.setBrowserPiPHostLayout(1, win, client);
+    setHostLayout.mockClear();
+    content = { ...content, x: 80, width: 1020, height: 820 };
+    win.emit("resize");
+    win.emit("move");
+    expect(setHostLayout).not.toHaveBeenCalled();
+    coordinator.setBrowserPiPHostLayout(1, win, {
+      ...client, host: { ...client.host, width: 820, height: 720 },
+    });
+    expect(setHostLayout).toHaveBeenCalledTimes(1);
+    expect(setHostLayout.mock.calls[0][0].host).toEqual({ x: 280, y: 140, width: 820, height: 720 });
+    content = { ...content, x: 60, y: 80 };
+    win.emit("move");
+    expect(setHostLayout).toHaveBeenCalledTimes(2);
+    expect(setHostLayout.mock.calls[1][0].host).toEqual({ x: 260, y: 120, width: 820, height: 720 });
+    await coordinator.shutdown();
+    expect(win.listenerCount("move")).toBe(0);
+  });
 
   it("starts the surface for a browser activity and hides it while the user watches the real page", () => {
     const { coordinator, surfaces } = makeCoordinator();
