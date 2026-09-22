@@ -40,6 +40,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Desktop conversations use quieter titles and branding, tighter sidebar group
+  spacing, and smaller reading/composer gaps. Workspace previews start with five
+  recent sessions while keeping current, running, and unread sessions visible.
+
+- Process summaries have clearer text and keyboard focus, with more space between
+  expanded tool rows. Floating navigation follows the UI font size and shared
+  menu elevation. Environment panels retain normal text and control sizes in
+  narrow windows. Conversations share the standard settings page's content
+  width and insets, with a near-white composer surface in the light theme.
+
 - The embedded browser can read the page it is showing. Observation returns
   the headings, paragraphs, lists, and tables together with the controls it
   can click, and a long page continues from the returned offset. Ending a

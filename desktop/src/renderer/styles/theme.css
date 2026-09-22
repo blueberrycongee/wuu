@@ -218,6 +218,7 @@
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
+  --composer-surface-bg: var(--surface-1);
   --composer-image-attachment-button-shadow: var(--shadow-card);
   --composer-file-attachment-button-hover-bg: #2b2f34;
   --composer-textarea-placeholder: var(--ink-tertiary);

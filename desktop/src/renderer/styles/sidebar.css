@@ -355,11 +355,11 @@
   --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap));
   --sidebar-row-control-pad-x: 8px;
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
-  /* Semantic spacing stays on a 2/4/8/16px scale. Larger text grows the
+  /* Semantic spacing follows the shared spacing scale. Larger text grows the
    * row itself instead of stretching the space between related items. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-1);
-  --sidebar-functional-group-gap: var(--space-4);
+  --sidebar-functional-group-gap: var(--space-3);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -856,17 +856,12 @@
 .sidebar-brand-wordmark {
   grid-column: 1;
   font-family: var(--empty-home-title-font);
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 650;
   letter-spacing: 0.4px;
   line-height: 1;
-  /* Optical correction, not layout: the wordmark has no ascenders and the
-   * serif line box keeps descender space below its x-height ink, so centering
-   * the 28px line box leaves the visible glyphs ~3px below the bell glyph,
-   * which is centered in its own box on the trailing accessory column. Lift
-   * the ink onto that column's center; the offset scales with the wordmark
-   * font size and must be re-measured if that size changes. */
-  transform: translateY(-3px);
+  /* Lift the serif x-height toward the adjacent bell's visible center. */
+  transform: translateY(-0.107em);
 }
 
 .sidebar-notifications-button {

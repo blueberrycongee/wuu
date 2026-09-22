@@ -73,7 +73,7 @@
   --ink-muted: color-mix(in srgb, var(--ink-soft) 70%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
 
-  --paper: var(--wuu-color-canvas, var(--gray-0));
+  --paper: var(--wuu-color-canvas, #fbfbfc);
   --surface-1: var(--wuu-color-surface, var(--gray-50));
   --surface-2: var(--wuu-color-surface-muted, var(--gray-100));
   --surface-3: var(--wuu-color-surface-elevated, var(--gray-150));

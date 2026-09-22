@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { InitializeResult } from "../shared/protocol";
 import { initialState, type AppState } from "./AppState";
-import { environmentPanelScaleForWidth } from "./EnvironmentPanelScale";
 import {
   EnvironmentSideStack,
 } from "./EnvironmentSideStack";
@@ -77,25 +76,4 @@ describe("EnvironmentSideStack", () => {
     expect(container.querySelector(".query-history-popover")).toBeNull();
   });
 
-  it("scales the complete environment panel at narrow widths", () => {
-    Object.defineProperty(container, "clientWidth", {
-      configurable: true,
-      value: 420,
-    });
-    renderStack();
-
-    expect(environmentPanelScaleForWidth(560)).toBe(0.8);
-    expect(environmentPanelScaleForWidth(420)).toBe(0.6);
-    expect(environmentPanelScaleForWidth(320)).toBe(0.576);
-    expect(environmentPanelScaleForWidth(1_000)).toBe(0.8);
-    expect(environmentPanelScaleForWidth(1_200)).toBe(0.9);
-    expect(environmentPanelScaleForWidth(1_400)).toBe(1);
-
-    const stack = container.querySelector<HTMLElement>(
-      ".environment-info-side-stack",
-    );
-    expect(stack?.style.getPropertyValue("--environment-panel-scale")).toBe(
-      "0.6",
-    );
-  });
 });

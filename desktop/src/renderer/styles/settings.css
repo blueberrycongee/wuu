@@ -248,7 +248,7 @@
    * hundreds of px of slack left in the column. */
   container-name: settings-page;
   container-type: inline-size;
-  --settings-page-max-width: 880px;
+  --settings-page-max-width: calc(var(--content-column-width) + var(--settings-pad) * 2);
   --settings-pad: var(--page-padding);
   --settings-gap: var(--section-gap);
   width: min(var(--settings-page-max-width), 100%);

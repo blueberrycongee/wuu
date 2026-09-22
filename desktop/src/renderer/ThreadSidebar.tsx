@@ -31,7 +31,7 @@ function unpinnedThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.filter((thread) => !thread.pinned);
 }
 
-const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 8;
+const PROJECT_THREAD_INITIAL_VISIBLE_COUNT = 5;
 const PROJECT_THREAD_VISIBLE_INCREMENT = 10;
 const SIDEBAR_THREAD_ORDER_KEY = "wuu.desktop.sidebarThreadOrderByWorkspace";
 const PINNED_THREAD_ORDER_ID = "__wuu_pinned_threads__";

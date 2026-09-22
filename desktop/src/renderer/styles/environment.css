@@ -54,11 +54,6 @@
   pointer-events: none;
 }
 
-.environment-side-stack.environment-info-side-stack {
-  transform: scale(var(--environment-panel-scale, 1));
-  transform-origin: top right;
-}
-
 .environment-side-stack > .environment-panel {
   position: relative;
   top: auto;
@@ -74,10 +69,10 @@
 }
 
 .environment-panel {
-  --environment-panel-inset: 12px;
-  --environment-row-height: 32px;
+  --environment-panel-inset: var(--space-3);
+  --environment-row-height: var(--control-row-height);
   --environment-row-gap: 2px;
-  --environment-panel-close-size: 26px;
+  --environment-panel-close-size: var(--control-row-height);
   --environment-panel-close-gap: 4px;
   --environment-panel-chrome-gap: 6px;
   position: absolute;
@@ -181,8 +176,8 @@
 }
 
 .environment-row-group + .environment-row-group {
-  margin-top: 6px;
-  padding-top: 6px;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
   border-top: 1px solid var(--hairline-soft);
 }
 
@@ -211,9 +206,8 @@
 .plugin-inspector-section > h2 {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 
 .plugin-inspector-section-content {
@@ -356,8 +350,8 @@
 
 .environment-row strong {
   overflow: hidden;
-  font-size: var(--font-title);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -367,8 +361,8 @@
   min-width: 0;
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
