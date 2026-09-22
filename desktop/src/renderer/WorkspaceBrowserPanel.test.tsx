@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
-import type { ActivitySession, BrowserCommandParams, BrowserSurfaceSnapshot } from "../shared/protocol";
+import type { ActivitySession, BrowserDockTarget, BrowserCommandParams, BrowserSurfaceSnapshot } from "../shared/protocol";
 import {
   requestWorkspaceBrowserNavigation,
   resetWorkspaceBrowserNavigationForTests,
@@ -55,6 +55,8 @@ afterEach(() => {
 
 function render(props: {
   visible?: boolean;
+  threadID?: string;
+  dockTarget?: BrowserDockTarget;
   activity?: ActivitySession;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
@@ -65,7 +67,8 @@ function render(props: {
     root!.render(
       <WorkspaceBrowserPanel
         visible={props.visible ?? true}
-        threadID="thread-1"
+        threadID={props.threadID ?? "thread-1"}
+        dockTarget={props.dockTarget}
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
         onActivityTakeover={props.onActivityTakeover}
@@ -81,6 +84,8 @@ function render(props: {
 
 function rerender(props: {
   visible?: boolean;
+  threadID?: string;
+  dockTarget?: BrowserDockTarget;
   activity?: ActivitySession;
   onActivityTakeover?: () => void;
   onActivityRelease?: () => void;
@@ -90,7 +95,8 @@ function rerender(props: {
     root!.render(
       <WorkspaceBrowserPanel
         visible={props.visible ?? true}
-        threadID="thread-1"
+        threadID={props.threadID ?? "thread-1"}
+        dockTarget={props.dockTarget}
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
         onActivityTakeover={props.onActivityTakeover}
@@ -102,6 +108,53 @@ function rerender(props: {
 }
 
 describe("WorkspaceBrowserPanel", () => {
+  it("opens the exact retained preview tab even after its activity stopped", async () => {
+    const target = { thread_id: "thread-1", workdir: "/repo", tabID: "retained-preview" };
+    vi.mocked(window.wuu.browserSurface!).mockResolvedValue({
+      workdir: "/repo", tabID: target.tabID, url: "https://example.com/dashboard",
+      title: "Dashboard", loading: false, canGoBack: false, canGoForward: false,
+    });
+    await act(async () => { render({ dockTarget: target }); });
+    expect(window.wuu.browserSurface).toHaveBeenCalledWith("/repo", "retained-preview");
+    expect(container.querySelector<HTMLInputElement>(".workspace-browser-url-input")?.value)
+      .toBe("https://example.com/dashboard");
+    expect(browserCommand).not.toHaveBeenCalled();
+  });
+
+  it("clears an old page and reports a closed preview instead of falling back", async () => {
+    const { input } = render({});
+    act(() => surfaceHandlers[0]?.({
+      workdir: "/repo", tabID: "user:thread-1", url: "https://example.com/old",
+      title: "Old page", loading: false, canGoBack: true, canGoForward: false,
+    }));
+    expect(input?.value).toBe("https://example.com/old");
+    await act(async () => { rerender({ dockTarget: {
+      thread_id: "thread-1", workdir: "/repo", tabID: "closed-preview",
+    } }); });
+    expect(window.wuu.browserSurface).toHaveBeenLastCalledWith("/repo", "closed-preview");
+    expect(input?.value).toBe("");
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("Old page");
+    expect(browserCommand).not.toHaveBeenCalled();
+  });
+
+  it("drops an adopted popup and late snapshots when switching sessions", async () => {
+    let finishOldRead!: (snapshot: BrowserSurfaceSnapshot) => void;
+    vi.mocked(window.wuu.browserSurface!).mockImplementationOnce(() => new Promise((resolve) => { finishOldRead = resolve; }));
+    render({});
+    const adopt = vi.mocked(window.wuu.onBrowserTabAdopted!).mock.calls[0][0];
+    await act(async () => { adopt({ workdir: "/repo", openerTabID: "user:thread-1", tabID: "popup-1", url: "https://example.com/popup" }); });
+    expect(window.wuu.browserSurface).toHaveBeenLastCalledWith("/repo", "popup-1");
+    await act(async () => { rerender({ threadID: "thread-2" }); });
+    expect(window.wuu.browserSurface).toHaveBeenLastCalledWith("/repo", "user:thread-2");
+    await act(async () => { finishOldRead({
+      workdir: "/repo", tabID: "user:thread-1", url: "https://example.com/late",
+      title: "Old page", loading: false, canGoBack: true, canGoForward: false,
+    }); });
+    expect(container.querySelector<HTMLInputElement>(".workspace-browser-url-input")?.value).toBe("");
+    expect(container.textContent).not.toContain("Old page");
+  });
+
   it("navigates only after the user submits an address", async () => {
     const { input } = render({});
     const form = container.querySelector<HTMLFormElement>(".workspace-browser-url-form");
