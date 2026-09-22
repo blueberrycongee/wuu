@@ -26,7 +26,7 @@
   inset: 0;
   z-index: 1000;
   display: grid;
-  grid-template-rows: 72px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   background: var(--onboarding-white);
   color: var(--onboarding-ink-strong);
@@ -36,8 +36,10 @@
 .onboarding-chrome {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
   align-items: center;
-  padding: 18px 32px 0;
+  padding: 0 var(--window-titlebar-padding-inline);
   -webkit-app-region: drag;
 }
 

@@ -114,11 +114,11 @@
    * so the title text vertically centers with the macOS traffic lights at
    * trafficLightPosition (18, 17). The default 56px row pushes the text 6px
    * below the lights. */
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
 .app-shell.popped-out-shell .titlebar {
-  padding-left: max(24px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 }
 
 /* Right-panel "globalized" focus mode: the panel takes over the main stage
@@ -185,12 +185,12 @@
 
 .globalized-sidebar-toggle-region {
   position: fixed;
-  /* Match the normal 30px toggle's center inside the 48px titlebar.
+  /* Match the shared toolbar control's center inside the titlebar.
    * This control and the native traffic lights both center at 24px. */
-  top: calc((48px - 30px) / 2);
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
    * gutter so decorated theme controls never visually merge with it. */
-  left: max(8px, calc(var(--window-controls-inset-left) + 10px));
+  left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
   z-index: 150;
   width: 34px;
   height: 34px;
@@ -434,8 +434,8 @@
   .sidebar-toggle-button,
 .sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   position: fixed;
-  top: calc((48px - var(--control-size-toolbar)) / 2);
-  left: max(24px, calc(var(--window-controls-inset-left) + 10px));
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
   z-index: 150;
 }
 
@@ -803,7 +803,7 @@
   /* Keep a product-owned visual gutter after the macOS traffic-light
    * exclusion zone. Themes may decorate the first control, but they cannot
    * shrink this window-chrome boundary. */
-  padding-left: max(24px, calc(var(--window-controls-inset-left) + 10px));
+  padding-left: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 }
 
 .traffic-spacer {
@@ -812,7 +812,7 @@
    * toggle shares the traffic-light center at 24px. */
   position: relative;
   display: flex;
-  height: 48px;
+  height: var(--window-titlebar-height);
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;

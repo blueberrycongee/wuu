@@ -169,7 +169,7 @@
   min-height: 0;
   /* The second column hosts the generic side-thread panel when open. */
   grid-template-columns: minmax(0, 1fr) 0;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   background: var(--paper);
   margin-right: 0;
@@ -238,7 +238,7 @@
 }
 
 .conversation-pane.session-tabs-visible {
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
 .conversation-pane.environment-panel-reserved {
@@ -247,6 +247,8 @@
 
 .titlebar {
   display: grid;
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
@@ -254,7 +256,7 @@
   overflow: hidden;
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 24px;
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
 }
@@ -723,7 +725,7 @@
  * The session model remains intact; only the titlebar projection changes. */
 .app-shell.compact-navigation .conversation-pane {
   grid-template-rows:
-    calc(48px + env(safe-area-inset-top, 0px))
+    calc(var(--window-titlebar-height) + env(safe-area-inset-top, 0px))
     minmax(0, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
