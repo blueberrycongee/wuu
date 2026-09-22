@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Browser previews show an animated completion badge when the visible task
+  finishes successfully, and clear it when work resumes.
+
 - A subscription dashboard in desktop Settings shows source models, reported
   Wuu token usage, and Codex account allowance windows with remaining percentages
   and reset times. Unsupported account quotas stay unknown rather than being

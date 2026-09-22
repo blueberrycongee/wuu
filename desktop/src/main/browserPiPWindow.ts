@@ -1,4 +1,5 @@
 import { BrowserWindow, WebContentsView, type Rectangle } from "electron";
+import appIcon from "../../../assets/app-icon-source.svg?raw";
 import type { ActivitySession } from "../shared/protocol";
 import { cursorRuntimeSource } from "./agentCursor";
 import { appShellWebPreferences } from "./appShellGuards";
@@ -146,6 +147,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   private restoreBounds: Rectangle | undefined;
   private visible = false;
   private stopped = false;
+  private completed = false;
+  private dark = false;
   private activity: ActivitySession;
   private lastInteractionRevision = 0;
   private readonly unsubs: Array<() => void> = [];
@@ -215,6 +218,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         this.syncOverlayMode();
         this.pushActivityState();
         this.pushHostLabel();
+        this.setAppearance(this.dark);
+        this.pushCompletion();
       })
       .catch(() => undefined);
     const reportGeometry = (): void => {
@@ -269,6 +274,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   setVisible(visible: boolean): void {
     this.visible = visible;
+    if (!visible) this.setTurnCompleted(false);
     this.applyVisibility();
   }
 
@@ -296,6 +302,21 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   // the CUA PiP's frozen last frame, at zero capture cost.
   setLive(): void {}
 
+  setAppearance(dark: boolean): void {
+    this.dark = dark;
+    this.execute(`window.wuuPipAppearance?.(${JSON.stringify({ dark })})`);
+  }
+
+  setTurnCompleted(completed: boolean): void {
+    if (this.completed === completed) return;
+    this.completed = completed;
+    this.pushCompletion();
+  }
+
+  private pushCompletion(): void {
+    this.execute(`window.wuuPipCompleted?.(${this.completed})`);
+  }
+
   // Screen geometry of the conversation column. A null host means that column
   // is not on screen, so the card hides until it returns. Column changes while
   // the card is resting retarget the committed corner immediately; a drag in
@@ -321,10 +342,14 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   updateActivity(activity: ActivitySession): void {
     this.activity = activity;
+    if (activity.state === "stopped" || activity.state === "error" || activity.controller === "user") {
+      this.setTurnCompleted(false);
+    }
     this.pushActivityState();
   }
 
   retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
+    this.setTurnCompleted(false);
     this.unmount();
     const bounds = this.win?.getBounds();
     // Page aspect ratios must not reset the user's card size or resting corner.
@@ -665,6 +690,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 
   private forwardInteraction(hint: BrowserInteractionHint): Promise<unknown> | undefined {
     if (hint.kind !== "clear" && (!this.mounted || !this.win?.isVisible())) return;
+    if (hint.kind !== "clear") this.setTurnCompleted(false);
     return this.execute(`window.wuuPipInteract?.(${JSON.stringify(hint)})`);
   }
 
@@ -770,11 +796,14 @@ export function createObservationPiPFactory(deps: {
 // failure" rule.
 // ---------------------------------------------------------------------------
 export function browserPiPOverlayHTML(initialLabel: string): string {
-  const label = JSON.stringify(initialLabel);
+  const label = JSON.stringify(initialLabel).replace(/</g, "\\u003c");
+  const icon = `data:image/svg+xml,${encodeURIComponent(appIcon)}`;
   return `<!doctype html>
 <html><head><meta charset="utf-8" />
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
+:root{color-scheme:light;--surface:#f4f4f5;--muted:rgba(28,28,30,.45);--completion-scrim:rgba(255,255,255,.30)}
+:root.dark{color-scheme:dark;--surface:#242426;--muted:rgba(255,255,255,.55);--completion-scrim:rgba(0,0,0,.24)}
 ::-webkit-scrollbar{width:0;height:0;display:none}
 html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(0,0,0,0.004);
@@ -784,8 +813,33 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   background:rgba(0,0,0,0.004)}
 #root.dragging{cursor:grabbing}
 #ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:#f4f4f5;color:rgba(28,28,30,.45);transition:opacity .2s ease}
+  background:var(--surface);color:var(--muted);transition:opacity .2s ease}
 #ph.gone{opacity:0;pointer-events:none}
+#completion{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+  background:var(--completion-scrim);opacity:0;transition:opacity .2s ease}
+#completion[data-completed="true"]{opacity:1}
+#completion-mark{position:relative;width:64px;height:64px}
+#completion-icon{display:block;width:100%;height:100%;border-radius:15px;
+  box-shadow:0 3px 12px rgba(0,0,0,.20)}
+#completion-check{position:absolute;inset:0;display:grid;place-items:center;border-radius:50%;
+  background:#4cc38a;color:#082a1b;box-shadow:0 3px 10px rgba(0,0,0,.22);
+  opacity:0;transform:translate(27px,27px) scale(.46)}
+#completion-check svg{width:34px;height:34px}
+#completion[data-completed="true"] #completion-icon{animation:completion-icon .28s ease-out both}
+#completion[data-completed="true"] #completion-check{animation:completion-check 1.5s ease both}
+@keyframes completion-icon{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:scale(1)}}
+@keyframes completion-check{
+  0%,18%{opacity:0;transform:scale(.5)}
+  36%{opacity:1;transform:scale(1.08)}
+  46%,66%{opacity:1;transform:scale(1)}
+  90%{opacity:1;transform:translate(29px,29px) scale(.43)}
+  100%{opacity:1;transform:translate(27px,27px) scale(.46)}}
+@media (prefers-reduced-motion:reduce){
+  #completion{transition:none}
+  #completion[data-completed="true"] #completion-icon{animation:none}
+  #completion[data-completed="true"] #completion-check{animation:none;opacity:1}
+}
+@media (max-height:120px){#completion-mark{width:48px;height:48px}}
 #actions{position:absolute;top:8px;right:8px;z-index:6;display:flex;gap:6px;opacity:0;
   transition:opacity .12s ease}
 #root:hover #actions,#root:focus-within #actions,#root.dragging #actions{opacity:1}
@@ -811,6 +865,12 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
     <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.7 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.7-3.9-9S9.4 5.6 12 3z"/>
   </svg></div>
+  <div id="completion" role="status" aria-label="Browser task completed" aria-hidden="true" data-completed="false">
+    <div id="completion-mark">
+      <img id="completion-icon" src="${icon}" alt="" draggable="false" />
+      <div id="completion-check"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m8 16 6 6 10-12"/></svg></div>
+    </div>
+  </div>
   <div id="actions">
     <button id="expand" title="Open in the side panel" aria-label="Open in the side panel">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h4v4"/><path d="M12 2 7.5 6.5"/><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v6A1.5 1.5 0 0 0 3.5 12h6A1.5 1.5 0 0 0 11 10.5V8"/></svg>
@@ -828,6 +888,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   var ph=document.getElementById("ph");
   var cursor=(${cursorRuntimeSource})();
   var root=document.getElementById("root");
+  var completion=document.getElementById("completion");
   var label=${label};
   var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,resizing=false,resizeEdge="",last=null,velocity={x:0,y:0};
   document.getElementById("close").addEventListener("click",function(e){
@@ -912,6 +973,13 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   window.wuuPipViewport=function(viewport){cursor.setViewport(viewport);};
   window.wuuPipState=function(state){
     if(state.controller!=="agent"||state.state==="stopped")cursor.hide();
+  };
+  window.wuuPipAppearance=function(a){document.documentElement.classList.toggle("dark",a.dark);};
+  window.wuuPipCompleted=function(done){
+    if(completion.dataset.completed===String(done))return;
+    completion.dataset.completed=String(done);
+    completion.setAttribute("aria-hidden",String(!done));
+    if(done)cursor.hide();
   };
   window.wuuPipInteract=function(it){
     if(it.kind==="clear"){cursor.hide();return;}

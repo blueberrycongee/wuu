@@ -200,6 +200,7 @@ describe("browser observation surface", () => {
     start: ReturnType<typeof vi.fn>;
     setVisible: ReturnType<typeof vi.fn>;
     setLive: ReturnType<typeof vi.fn>;
+    setTurnCompleted: ReturnType<typeof vi.fn>;
     updateActivity: ReturnType<typeof vi.fn>;
     animateInteraction: ReturnType<typeof vi.fn>;
     stop: (onStopped?: () => void) => void;
@@ -220,6 +221,7 @@ describe("browser observation surface", () => {
           start: vi.fn(),
           setVisible: vi.fn(),
           setLive: vi.fn(),
+          setTurnCompleted: vi.fn(),
           updateActivity: vi.fn(),
           animateInteraction: vi.fn(),
           stop: (onStopped?: () => void) => {
@@ -233,6 +235,47 @@ describe("browser observation surface", () => {
     );
     return { coordinator, surfaces, stops };
   }
+
+  it("shows completion only for a successful final turn on the visible owning browser", () => {
+    const { coordinator, surfaces } = makeCoordinator();
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(browserActivity({ state: "foreground_controlled" }));
+    const completed = surfaces[0].setTurnCompleted;
+    const event: ServerEvent = { workdir: "/repo", kind: "notification", message: {
+      method: "turn/completed", params: { thread_id: "thread-1", turn: { id: "turn-1", status: "completed" } },
+    } };
+    coordinator.handleServerEvent({ ...event, workdir: "/other" });
+    coordinator.handleServerEvent({ ...event, message: { ...event.message, params: { thread_id: "other" } } });
+    expect(completed).not.toHaveBeenCalled();
+    coordinator.handleServerEvent(event);
+    expect(completed).toHaveBeenLastCalledWith(true);
+    for (const params of [
+      { turn: { status: "interrupted" } },
+      { turn: { status: "failed" } },
+      { turn: { status: "completed" }, awaiting_auto_continuation: true },
+      { turn: { status: "completed" }, truncated: true },
+    ]) {
+      coordinator.handleServerEvent({ ...event, message: { ...event.message, params: { thread_id: "thread-1", ...params } } });
+      expect(completed).toHaveBeenLastCalledWith(false);
+    }
+    for (const method of ["turn/started", "turn/error"]) {
+      coordinator.handleServerEvent({ ...event, message: { ...event.message, method } });
+      expect(completed).toHaveBeenLastCalledWith(false);
+    }
+    completed.mockClear();
+    coordinator.update(browserActivity({ state: "background_controlled", updated_at: "2026-07-10T10:00:02Z" }));
+    coordinator.handleServerEvent(event);
+    expect(completed).not.toHaveBeenCalled();
+    coordinator.update(browserActivity({ state: "foreground_controlled", updated_at: "2026-07-10T10:00:03Z" }));
+    coordinator.setBrowserInPanel(() => true);
+    coordinator.handleServerEvent(event);
+    expect(completed).not.toHaveBeenCalled();
+    coordinator.setBrowserInPanel(() => false);
+    coordinator.setActiveThread("other");
+    coordinator.handleServerEvent(event);
+    expect(completed).not.toHaveBeenCalled();
+    void coordinator.shutdown();
+  });
 
   it("passes the owning browser activity when docking its preview", () => {
     const onExpand = vi.fn();
