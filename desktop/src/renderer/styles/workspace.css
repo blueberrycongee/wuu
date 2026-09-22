@@ -4992,10 +4992,11 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
-  /* Keep the scrollbar track stable while the message flow uses the full pane.
-     Reserving both edges duplicates the gutter when a right panel narrows this
-     column, leaving an oversized blank rail beside the conversation. */
-  scrollbar-gutter: stable;
+  /* Reserve the classic scrollbar gutter on BOTH edges. A right-only gutter
+     would move the content box half a gutter left of the pane's centerline,
+     dragging the message flow — and the dock composer that mirrors this box —
+     with it. */
+  scrollbar-gutter: stable both-edges;
   transition: padding-right var(--environment-flow-motion-duration) var(--environment-panel-motion-easing);
   transition-delay: 0ms;
 }
@@ -5147,8 +5148,8 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: none;
-  /* Keep the split history track stable while preserving the pane width. */
-  scrollbar-gutter: stable;
+  /* Both edges, so a split pane's history keeps the pane's centerline. */
+  scrollbar-gutter: stable both-edges;
 }
 
 @media (pointer: coarse) {
@@ -5212,10 +5213,11 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   }
 }
 
-/* Global scrollbar styling lives in styles/scrollbars.css. Conversation panes
- * opt into a stable gutter so the layout never shifts when the thumb fades in
- * or out. */
+/* Global scrollbar styling lives in styles/scrollbars.css. The conversation
+ * panes opt into a stable gutter so the layout never shifts when the
+ * thumb fades in or out, and reserve it on both edges so the flow stays on
+ * the pane's centerline (see .scroll-region above). */
 .scroll-region:not(.empty-scroll-region):not(.workspace-scroll-region),
 .conversation-split-body {
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
 }
