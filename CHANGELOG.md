@@ -53,6 +53,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Switching browser tabs keeps the floating preview window, including its
   chosen corner and size, instead of briefly closing and resetting it.
 
+- The browser preview no longer moves to avoid the jump-to-latest and status
+  row; composer avoidance remains in place.
+
 - Conversation switches restore the reading turn instead of following background
   output. History loading preserves in-flight scrolling without double-applying
   native anchoring or counting new output below the reader. Cached streams catch

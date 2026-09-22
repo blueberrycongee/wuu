@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
+import { readBrowserPiPHostLayout } from "./BrowserPiPHostReporter";
 import { I18nProvider } from "./i18n";
 import { PluginHost } from "./plugins/PluginHost";
 
@@ -19,6 +20,26 @@ describe("ConversationStatusCluster", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("keeps preview placement independent of the navigation and status row", () => {
+    container.setAttribute("data-pip-anchor-host", "conversation");
+    container.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect;
+    const before = readBrowserPiPHostLayout(document);
+    act(() => root.render(
+      <ConversationStatusCluster
+        host={new PluginHost({ react: React })}
+        visible
+        navigation={<button>Jump</button>}
+        todoUpdate={undefined}
+        onOpenSession={vi.fn()}
+        clusterRef={(node) => {
+          if (node) node.getBoundingClientRect = () => ({ left: 500, top: 550, width: 250, height: 30 }) as DOMRect;
+        }}
+      />,
+    ));
+    expect(container.querySelector("button")).not.toBeNull();
+    expect(readBrowserPiPHostLayout(document)).toEqual(before);
   });
 
   it("closes the overflow menu when the user clicks outside", async () => {

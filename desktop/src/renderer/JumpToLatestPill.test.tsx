@@ -10,6 +10,7 @@ import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JumpToLatestPill } from "./JumpToLatestPill";
+import { readBrowserPiPHostLayout } from "./BrowserPiPHostReporter";
 import {
   WINDOW_RESIZE_SETTLE_DELAY_MS,
   WINDOW_RESIZING_CLASS,
@@ -120,6 +121,19 @@ it("keeps an inline companion mounted while adding and removing the history jump
   expect(host.querySelector("[data-companion]")).toBe(companion);
   act(() => companion.click());
   expect(open).toHaveBeenCalledOnce();
+});
+
+it("does not displace the browser preview when the jump action appears", () => {
+  const { node, setScrollTop } = scrollContainer({ scrollHeight: 1500, clientHeight: 500, scrollTop: 1000 });
+  node.setAttribute("data-pip-anchor-host", "conversation");
+  stubRect(node, { left: 0, top: 0, width: 800, height: 600 });
+  mountPill(node);
+  const before = readBrowserPiPHostLayout(document);
+  act(() => { setScrollTop(100); node.dispatchEvent(new Event("scroll")); });
+  const pill = document.querySelector<HTMLElement>(".jump-to-latest-pill")!;
+  expect(pill).not.toBeNull();
+  stubRect(pill, { left: 650, top: 550, width: 120, height: 30 });
+  expect(readBrowserPiPHostLayout(document)).toEqual(before);
 });
 
 function mountPill(node: HTMLElement): HTMLElement {

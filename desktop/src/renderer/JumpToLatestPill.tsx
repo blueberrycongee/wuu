@@ -337,7 +337,6 @@ export function JumpToLatestPill({
       <button
         type="button"
         className="jump-to-latest-pill jump-to-latest-pill-anchored"
-        data-pip-obstacle="jump"
         data-wuu-component="jump-to-latest"
         data-wuu-layer="navigation"
         data-wuu-state="visible"
