@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "./WuuIcons";
 import {
   type SyntheticEvent,
   useCallback,

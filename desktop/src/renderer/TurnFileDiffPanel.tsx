@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileText, X } from "lucide-react";
+import { FileText, X } from "./WuuIcons";
 import type { GitFileDiffResult, WorkspaceFileReadResult } from "../shared/protocol";
 import { RichContent } from "./RichContent";
 import { ToolDiffContent } from "./ToolDiffPreview";

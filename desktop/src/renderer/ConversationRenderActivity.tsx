@@ -14,9 +14,8 @@ import {
 // renderer main thread.
 const ConversationRenderActivityContext = createContext(true);
 
-// True only for the commit that shows a cached conversation again. The
-// following paint releases it, after transitions have already been suppressed
-// for that frame.
+// A reveal includes nested layout commits and the first painted frame. Releasing
+// in a passive effect is too early: React can flush it before that first paint.
 const ConversationRevealSnapContext = createContext(false);
 
 export function ConversationRenderActivityProvider({
@@ -26,28 +25,28 @@ export function ConversationRenderActivityProvider({
   active: boolean;
   children: ReactNode;
 }): JSX.Element {
-  const wasActive = useRef(active);
-  const activating = active && !wasActive.current;
-  if (activating) {
-    wasActive.current = true;
-  } else if (!active) {
-    wasActive.current = false;
+  const [reveal, setReveal] = useState({ active, snapping: false });
+  if (reveal.active !== active) {
+    setReveal({ active, snapping: active });
   }
-  const [, setRevealRelease] = useState(0);
+  const snapping = active && (reveal.snapping || !reveal.active);
   useEffect(() => {
-    if (!activating) {
-      return;
-    }
-    // The snap class has to survive the first paint. Releasing it here, in a
-    // passive effect, is the first commit after that paint.
-    setRevealRelease((generation) => generation + 1);
-  }, [activating]);
+    if (!snapping) return;
+    let frame = window.requestAnimationFrame(() => {
+      // The first callback runs before paint. Release on the next frame so
+      // caught-up folds have committed without a height transition.
+      frame = window.requestAnimationFrame(() => {
+        setReveal(current => ({ ...current, snapping: false }));
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [snapping]);
   return (
     <ConversationRenderActivityContext.Provider value={active}>
-      <ConversationRevealSnapContext.Provider value={activating}>
+      <ConversationRevealSnapContext.Provider value={snapping}>
         <div
           className={
-            activating
+            snapping
               ? "conversation-render-activity is-reveal-snap"
               : "conversation-render-activity"
           }

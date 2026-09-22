@@ -9,7 +9,7 @@ import {
   GitBranch,
   RefreshCw,
   Search
-} from "lucide-react";
+} from "./WuuIcons";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,

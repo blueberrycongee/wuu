@@ -5,7 +5,7 @@ import { WorkbenchConnectionContext } from "../../../desktop/src/renderer/Workbe
 import { webCredStore } from "./lib/credStore";
 import { RemoteDesktopBridge } from "./lib/desktopBridge";
 import { pairingURI, pairingExpired, pairingMatchesHost } from "./lib/pairing";
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from '../../../desktop/src/renderer/WuuIcons';
 import { ViewSwitchLoading } from '../../../desktop/src/renderer/LoadingViews';
 import { isNative } from './lib/native';
 

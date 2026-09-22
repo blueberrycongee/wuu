@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { CircleAlert } from "./WuuIcons";
 import { useSyncExternalStore } from "react";
 import { useI18n } from "./i18n";
 import { TopNotice, type TopNoticeAction } from "./TopNotice";

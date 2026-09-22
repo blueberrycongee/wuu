@@ -7,9 +7,9 @@
 // that collapses at 14px, so the row uses a 24-grid caduceus instead. The Wuu
 // mark is generated from our own blobatar identity layout (wuu-mascot-spec.ts).
 // Icons render in currentColor so they follow the surrounding text color, same
-// as lucide. Inner windows and wing gaps use evenodd.
+// as the product glyphs. Inner windows and wing gaps use evenodd.
 
-import { Terminal } from "lucide-react";
+import { Terminal } from "./WuuIcons";
 
 export const ENGINE_ICON_PATHS: Record<string, string> = {
   // The Codex CLI has no standalone mark; it reuses the OpenAI knot.

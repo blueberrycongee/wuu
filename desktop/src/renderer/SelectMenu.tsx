@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search } from "./WuuIcons";
 import {
   useEffect,
   useLayoutEffect,

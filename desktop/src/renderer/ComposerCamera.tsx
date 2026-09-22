@@ -3,7 +3,7 @@ import {
   Images,
   Paperclip,
   ChevronLeft,
-} from "lucide-react";
+} from "./WuuIcons";
 import {
   type ChangeEvent,
   type RefObject,

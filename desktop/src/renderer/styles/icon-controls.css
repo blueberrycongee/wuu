@@ -34,36 +34,12 @@
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
     .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
-    .session-tab-close, .workspace-tool-tab-close) > svg.lucide {
+    .session-tab-close, .workspace-tool-tab-close) > :is(svg.wuu-icon, svg.lucide) {
   display: block;
   flex: 0 0 auto;
   width: var(--control-icon-size);
   height: var(--control-icon-size);
   stroke-width: var(--control-icon-stroke);
-}
-
-/* Increase sparse glyphs' span, inversely scaling their stroke so the rendered
- * line weight stays equal to enclosed glyphs at every appearance scale. */
-:is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button) > svg.lucide-plus {
-  width: calc(var(--control-icon-size) * 10 / 9);
-  height: calc(var(--control-icon-size) * 10 / 9);
-  stroke-width: calc(var(--control-icon-stroke) * 0.9);
-}
-
-:is(.icon-button, .settings-icon-button, .composer-tool-button,
-    .sidebar-row-icon-button, .session-tab-close, .workspace-tool-tab-close) > svg.lucide-x {
-  width: calc(var(--control-icon-size) * 7 / 6);
-  height: calc(var(--control-icon-size) * 7 / 6);
-  stroke-width: calc(var(--control-icon-stroke) * 6 / 7);
-}
-
-/* SquarePen's nib reaches the viewBox edge, so at the shared toolbar size it
- * reads larger than the side-panel toggle. Shrink the glyph; keep the 1.75px
- * stroke so line weight still matches the toggle beside it. */
-.titlebar .session-tab-new > svg.lucide-square-pen {
-  width: calc(var(--control-icon-size) * 15.5 / 16);
-  height: calc(var(--control-icon-size) * 15.5 / 16);
 }
 
 :is(.session-tab-close, .workspace-tool-tab-close) {

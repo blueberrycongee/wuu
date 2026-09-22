@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { PanelRightClose } from "lucide-react";
+import { PanelRightClose } from "./WuuIcons";
 import { useAutoFollowScrollContainer } from "./AutoFollowScroll";
 import { ConversationTurnList } from "./ConversationTurnList";
 import { sideThreadMessagesToTurns } from "./SideThreadTurns";

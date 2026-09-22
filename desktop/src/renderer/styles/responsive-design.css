@@ -180,7 +180,7 @@
   .sidebar,
   .sidebar::before,
   .sidebar-content,
-  .side-panel-toggle-pane,
+  .side-panel-toggle-icon > rect:last-child,
   .titlebar,
   .scroll-region,
   .composer-wrap,

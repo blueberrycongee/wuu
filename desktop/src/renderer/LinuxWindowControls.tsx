@@ -1,3 +1,4 @@
+import { Minus, Square, Copy, X } from "./WuuIcons";
 import { useEffect, useState } from "react";
 import { desktopPlatform } from "./platform";
 import { useI18n } from "./i18n";
@@ -36,38 +37,8 @@ export function startLinuxTitlebarMaximizeGesture(): void {
 }
 
 function CaptionIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "close" }): JSX.Element {
-  if (kind === "minimize") {
-    return (
-      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <path d="M1 5h8" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  if (kind === "maximize") {
-    return (
-      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <rect x="1.25" y="1.25" width="7.5" height="7.5" rx="0.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
-      </svg>
-    );
-  }
-  if (kind === "restore") {
-    return (
-      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <path
-          d="M3 3.2h4.3v4.3H3zM2.2 2.4V1.5h5.8v5.8H7.1"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.2"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-      <path d="M2.2 2.2l5.6 5.6M7.8 2.2L2.2 7.8" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  );
+  const Icon = { minimize: Minus, maximize: Square, restore: Copy, close: X }[kind];
+  return <Icon size={14} />;
 }
 
 /** Frameless Linux caption buttons that share the white app header. */

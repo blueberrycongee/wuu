@@ -1,7 +1,7 @@
 import { AccountConnectionOnboarding } from "./AccountConnectionOnboarding";
 import './AccountPanel.css';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ChevronRight, Github, Monitor, Settings2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Github, Monitor, Settings2 } from './WuuIcons';
 import { useI18n } from './i18n';
 import { defaultAccountServer } from './accountServer';
 import phoneBrandArtwork from '../../../assets/app-icon-source.png';

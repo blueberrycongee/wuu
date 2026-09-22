@@ -1,4 +1,4 @@
-import { Info, X } from "lucide-react";
+import { Info, X } from "./WuuIcons";
 import type { ContextCompositionCategory, ThreadContextCompositionResult } from "../shared/protocol";
 import { formatCurrentNumber, translateCurrent as t, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";

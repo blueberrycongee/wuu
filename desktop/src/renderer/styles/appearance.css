@@ -68,7 +68,7 @@
   height: auto;
   padding-block: 0.35em;
 }
-:where(button, a, label) > svg.lucide {
+:where(button, a, label) > :is(svg.wuu-icon, svg.lucide) {
   width: var(--icon-size);
   height: var(--icon-size);
   flex-shrink: 0;

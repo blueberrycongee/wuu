@@ -14,7 +14,7 @@ import {
   MessagesSquare,
   Plus,
   Search,
-} from "lucide-react";
+} from "./WuuIcons";
 import {
   type PointerEvent as ReactPointerEvent,
   type DragEvent as ReactDragEvent,

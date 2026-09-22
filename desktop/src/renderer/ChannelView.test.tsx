@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelMessage, ChannelResponse, ChannelRoom, CollaborationSessionBinding, InitializeResult, NamedAgent, WuuDesktopApi } from "../shared/protocol";
 import { graphDensityScale } from "./AgentRelationshipGraph";
 import { groupAvatarRowSizes } from "./ChannelGroupAvatar";
-import { assignmentState, ChannelView, formatChannelUnreadCount } from "./ChannelView";
+import { assignmentState, ChannelView, type ChannelConversationSnapshot, formatChannelUnreadCount } from "./ChannelView";
 import { WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { clearToasts, ToastViewport } from "./Toast";
 import { userFacingErrorForMessage } from "./UserFacingErrors";
@@ -334,7 +334,7 @@ describe("ChannelView", () => {
     expect(positions.every((position) => position === 600)).toBe(true);
   });
 
-  it("keeps the reading position on refresh but starts the next room at latest", async () => {
+  it("keeps reading positions across refresh and room switches while new rooms start at latest", async () => {
     vi.useFakeTimers();
     try {
       const api = createApi();
@@ -367,9 +367,94 @@ describe("ChannelView", () => {
       expect(top).toBe(200);
       await act(async () => renderRoom("room-2"));
       expect(top).toBe(600);
+      await act(async () => renderRoom("room-1"));
+      expect(top).toBe(200);
+      await act(async () => { await vi.advanceTimersByTimeAsync(40); });
+      expect(top).toBe(200);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("restores the same message when another room and a reflow change the scroll range", async () => {
+    const api = createApi();
+    api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: [0, 1, 2].map(index => ({
+      id: `${room_id}-${index}`, room_id, seq: index + 1, author_type: "agent" as const,
+      author_id: "agent-1", kind: "text" as const, body: `History ${index}`, created_at: "2026-07-23T00:00:00Z",
+    })) }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    const renderRoom = (roomID: string) => root!.render(
+      <ChannelView selectedRoomID={roomID} directoryAgents={agents} directoryRooms={rooms} />,
+    );
+    await act(async () => renderRoom("room-1"));
+    const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+    let top = 800;
+    let growth = 0;
+    Object.defineProperties(stream, {
+      scrollHeight: { configurable: true, get: () => 1200 + growth },
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, 800 + growth)); } },
+    });
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const index = this.dataset.messageId?.match(/^room-1-(\d)$/)?.[1];
+      if (index !== undefined) return { top: Number(index) * 400 + growth - top, bottom: (Number(index) + 1) * 400 + growth - top, height: 400 } as DOMRect;
+      return original.call(this);
+    });
+    act(() => {
+      stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
+      top = 420;
+      stream.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => renderRoom("room-2"));
+    expect(top).toBe(800);
+    growth = 140;
+    await act(async () => renderRoom("room-1"));
+    expect(top).toBe(560);
+    act(() => stream.dispatchEvent(new Event("scroll")));
+    expect(top).toBe(560);
+  });
+
+  it.each(["wheel", "native"])("returns from Harness with cached history and its %s reading position before the refresh resolves", async (input) => {
+    const api = createApi();
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    const positions = new WeakMap<Element, number>();
+    let height = 1800;
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return this.getAttribute("role") === "log" ? height : 0;
+    });
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      return this.getAttribute("role") === "log" ? 400 : 0;
+    });
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) { return positions.get(this) ?? 0; });
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: Element, value: number) {
+      positions.set(this, Math.max(0, Math.min(value, height - 400)));
+    });
+    const cache = new Map<string, ChannelConversationSnapshot>();
+    const view = <ChannelView selectedRoomID="room-1" conversationCache={cache} directoryAgents={agents} directoryRooms={rooms} />;
+    root = createRoot(container);
+    await act(async () => root!.render(view));
+    const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+    act(() => {
+      if (input === "wheel") stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
+      stream.scrollTop = 420;
+      stream.dispatchEvent(new Event("scroll"));
+    });
+    act(() => root!.render(null));
+    api.listChannelMessages = vi.fn(() => new Promise<{ messages: ChannelMessage[] }>(() => {}));
+    act(() => root!.render(view));
+    expect(container.querySelector("[role=log]")?.textContent).toContain("Hello from Alpha");
+    expect(container.querySelector("[role=log]")?.scrollTop).toBe(420);
+    const restored = container.querySelector<HTMLDivElement>("[role=log]")!;
+    act(() => {
+      restored.scrollTop = height - 400;
+      restored.dispatchEvent(new Event("scroll"));
+    });
+    act(() => root!.render(null));
+    height += 400;
+    act(() => root!.render(view));
+    expect(container.querySelector("[role=log]")?.scrollTop).toBe(height - 400);
   });
 
   it("preserves verifier task states for honest room activity", () => {

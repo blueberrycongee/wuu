@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { CircleAlert } from "./WuuIcons";
 import type { ReactElement, ReactNode } from "react";
 
 export interface FieldErrorProps {

@@ -35,6 +35,26 @@ Compact menus use `--menu-inset`, `--menu-item-gap`, and `--menu-shell-radius`. 
 
 Public plugin theme tokens are a smaller contract than all internal CSS variables. Consult the [theme reference](../customize/theme-surface-matrix.md) before exposing a new token or telling plugin authors to depend on an internal variable.
 
+## SVG artwork
+
+Product controls import [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx).
+The original 24-unit artwork in [iconArtwork.ts](../../../desktop/src/shared/iconArtwork.ts)
+also supplies the browser overlay. Named extension icons and skill marks reuse
+these drawings. Third-party brand identities keep their own recognizable marks.
+
+Use `/dev/icons/` to compare the complete family at 12–32px, including real
+toolbar controls, light/dark themes, default/large fonts, and disabled states.
+Match apparent size, stroke density, and centering within each control role;
+equal SVG boxes alone are insufficient. Keep shape corrections in the artwork
+instead of adding per-screen scales. Larger illustrations and data-driven SVGs
+retain their own layout and meaningful geometry.
+
+Twelve standalone [Morandi SVGs](../../../desktop/src/renderer/assets/morandi/)
+are available for optional colored surfaces. They reuse the same silhouettes
+with muted sage, slate, clay, oat, and lilac accents. The icon preview includes
+them on both backgrounds. These are spare assets; ordinary controls retain
+their semantic foreground colors.
+
 ## Background images
 
 Preview the global background with `/dev/three-pane/?background`; omit `background` to check the same image across the three panes, and add `empty` to check the empty-session canvas and the dock strip under the composer. Import and processed images stay in the local desktop profile, and raster work runs in a worker rather than during layout. Only main canvases reveal the image; menus, inputs, editors, and overlapping drawers retain their theme surfaces.

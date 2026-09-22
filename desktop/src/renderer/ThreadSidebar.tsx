@@ -1,5 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
-import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split } from "lucide-react";
+import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split } from "./WuuIcons";
 import {
   type DragEvent as ReactDragEvent,
   useEffect,

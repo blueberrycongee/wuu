@@ -1,3 +1,5 @@
+import { iconSVG } from "../shared/iconArtwork";
+
 // Shared pointer rendering for the workspace page and the preview overlay.
 // Motion uses page coordinates; viewport mapping keeps the pointer legible
 // at a constant display size when the page is scaled down.
@@ -10,9 +12,7 @@ export type AgentCursorFeedback = {
 };
 
 const AGENT_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="28" viewBox="0 0 24 28" fill="none">
-  <defs><linearGradient id="wuu-cursor-fill" x1="5" y1="3" x2="18" y2="25" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset="1" stop-color="#dceaff"/></linearGradient></defs>
-  <path d="M3 2.5 4.1 21.1Q4.15 22.1 4.9 21.4L9.3 17.3 13.2 25Q13.5 25.6 14.1 25.3L16.5 24.1Q17.1 23.8 16.8 23.2L12.9 15.8 19.1 15.3Q20.2 15.2 19.4 14.4Z" fill="url(#wuu-cursor-fill)" stroke="#284d85" stroke-width="1.35" stroke-linejoin="round"/>
-  <path d="m5.6 7.2.55 10.8 3.75-3.4 5.5-.5" stroke="#79afff" stroke-opacity=".7" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M3 2.5 4.1 21.1Q4.15 22.1 4.9 21.4L9.3 17.3 13.2 25Q13.5 25.6 14.1 25.3L16.5 24.1Q17.1 23.8 16.8 23.2L12.9 15.8 19.1 15.3Q20.2 15.2 19.4 14.4Z" fill="#fafafa" stroke="#282a2d" stroke-width="1.5" stroke-linejoin="round"/>
 </svg>`;
 
 export const CURSOR_SCOOT_DISTANCE = 196;
@@ -302,7 +302,7 @@ export const cursorRuntimeSource = `function () {
         var angle = { down: 0, left: 90, up: 180, right: 270 }[hint.direction] || 0;
         transform += " rotate(" + angle + "deg)";
         effect.style.left = (x + 15) + "px";
-        effect.innerHTML = '<svg width="14" height="18" viewBox="0 0 14 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 5 4 4 4-4M3 10l4 4 4-4"/></svg>';
+        effect.innerHTML = ${JSON.stringify(iconSVG("ChevronsDown", 16))};
       }
       document.documentElement.appendChild(effect);
       effectAnimation = effect.animate([

@@ -1,4 +1,4 @@
-import { MessagesSquare, Plus, X } from "lucide-react";
+import { MessagesSquare, Plus, X } from "./WuuIcons";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";

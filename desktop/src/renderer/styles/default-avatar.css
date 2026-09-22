@@ -14,12 +14,15 @@
   -webkit-user-drag: none;
 }
 
-.human-avatar-background {
-  fill: var(--surface-3);
+.human-avatar-mark {
+  padding: 4px;
+  border-radius: var(--radius-circle);
+  background: var(--surface-3);
+  color: var(--ink-tertiary);
 }
 
 .human-avatar-figure {
-  fill: var(--ink-tertiary);
+  fill: none;
 }
 
 /* The wrapper sizes agent marks without painting over a blobatar's silhouette. */

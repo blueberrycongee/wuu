@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { LucideIcon } from "lucide-react";
-import { X } from "lucide-react";
+import type { IconComponent } from "./WuuIcons";
+import { X } from "./WuuIcons";
 
 const TOP_NOTICE_AUTO_DISMISS_MS = 6000;
 
@@ -11,7 +11,7 @@ export type TopNoticeAction = {
 
 export type TopNoticeProps = {
   message: React.ReactNode;
-  icon?: LucideIcon;
+  icon?: IconComponent;
   onDismiss: () => void;
   isError?: boolean;
   action?: TopNoticeAction;

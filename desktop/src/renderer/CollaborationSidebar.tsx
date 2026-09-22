@@ -1,5 +1,5 @@
 import { AgentOnboardingAvatar } from "./AgentOnboardingAvatar";
-import { ChevronRight, Code2, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { ChevronRight, Code2, PanelLeftOpen, Plus, Search } from "./WuuIcons";
 import { useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AppModeSwitch } from "./AppModeSwitch";

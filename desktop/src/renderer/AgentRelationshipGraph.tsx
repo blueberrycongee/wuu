@@ -1,4 +1,4 @@
-import { Settings2 } from "lucide-react";
+import { Settings2 } from "./WuuIcons";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import type { ChannelAgentInsight, ChannelRoom, NamedAgent } from "../shared/protocol";
 import { AgentAvatarMark } from "./AgentAvatarMark";

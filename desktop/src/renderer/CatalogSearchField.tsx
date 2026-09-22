@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { Search } from "./WuuIcons";
 
 export function CatalogSearchField({
   value,

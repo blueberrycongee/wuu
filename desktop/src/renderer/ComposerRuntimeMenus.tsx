@@ -36,8 +36,8 @@ import {
   Terminal,
   TriangleAlert,
   Zap,
-  type LucideIcon
-} from "lucide-react";
+  type IconComponent
+} from "./WuuIcons";
 import { type CSSProperties, type RefObject, useEffect, useRef, useState } from "react";
 import type {
   CodexModelSummary,
@@ -294,7 +294,7 @@ type PermissionModeOption = {
   mode: PermissionMode;
   label: string;
   chipLabel: string;
-  icon: LucideIcon;
+  icon: IconComponent;
   tone: ChipTone;
 };
 
@@ -345,7 +345,7 @@ function permissionModeLabels(engine?: string): Record<PermissionMode, { label: 
   }
 }
 
-function permissionModeIcons(mode: PermissionMode): { icon: LucideIcon; tone: ChipTone } {
+function permissionModeIcons(mode: PermissionMode): { icon: IconComponent; tone: ChipTone } {
   switch (mode) {
     case "read_only":
       return { icon: Eye, tone: "neutral" };

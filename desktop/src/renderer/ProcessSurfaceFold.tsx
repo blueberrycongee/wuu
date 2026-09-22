@@ -4,7 +4,7 @@ import type {
   Ref,
   SyntheticEvent,
 } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "./WuuIcons";
 
 /**
  * Generic "process row → expandable fold" primitive shared by every

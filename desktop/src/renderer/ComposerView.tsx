@@ -8,7 +8,7 @@ import {
   ArrowUp,
   ShieldCheck,
   Square
-} from "lucide-react";
+} from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,

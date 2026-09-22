@@ -1,4 +1,4 @@
-import { ListTree, Pencil } from "lucide-react";
+import { ListTree, Pencil } from "./WuuIcons";
 import { effortLabel } from "./RuntimeHelpers";
 import { useEffect, useId, useRef, useState } from "react";
 import { AgentAvatarMark } from "./AgentAvatarMark";

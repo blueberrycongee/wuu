@@ -20,6 +20,28 @@
   margin-block-start: var(--conversation-prose-block-gap, 1em);
 }
 
+/* Images share a bounded preview size and one gap on each side, including
+ * when settled streaming blocks wrap the surrounding paragraphs. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image {
+  width: auto;
+  height: auto;
+  max-width: min(100%, 400px);
+  max-height: 360px;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > * + :is(
+    .rich-paragraph:has(.rich-image-block),
+    .streaming-markdown-block:has(> .rich-paragraph:first-child .rich-image-block)
+  ),
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
+  :is(.rich-content, .streaming-markdown-block) > :is(
+    .rich-paragraph:has(.rich-image-block),
+    .streaming-markdown-block:has(> .rich-paragraph:last-child .rich-image-block)
+  ) + :not(.stream-cursor-block-tail) {
+  margin-block-start: var(--conversation-image-gap);
+}
+
 /* A heading may be the first/last child of a stable block or a direct child
  * of the live tail. Treat those wrappers as transparent for spacing without
  * changing their DOM, memoization or streaming cursor geometry. */

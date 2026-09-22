@@ -1769,33 +1769,9 @@
 }
 
 .composer-send-button svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2;
-  /*
-   * Point the paper plane straight up. lucide Send is drawn flying to the
-   * upper-right (NE); a -45deg turn about its center makes it ascend
-   * vertically, which reads as a cleaner "发送 / 向上" than the default
-   * diagonal tilt. transform-origin:center is required — SVG defaults the
-   * origin to 0 0, which would swing the glyph out of the button.
-   *
-   * The plane's ink is not centered in its 24x24 viewBox: the arrowhead's
-   * area centroid sits at ~(13.8, 10.2). After the -45deg rotation that
-   * centroid lands ~2.56 viewBox units directly above the box center — so
-   * without correction the plane floats high in the round button. The
-   * translateY(1.48px) (== 2.56 * 14/24 render scale) drops the centroid
-   * back onto the button's center. translateY runs after the rotate here,
-   * so it nudges in screen space (straight down), not along the tilt.
-   */
-  transform: translateY(1.48px) rotate(-45deg);
-  transform-origin: center;
-}
-
-.composer-send-button svg.lucide-arrow-up {
   width: 18px;
   height: 18px;
-  stroke-width: 1.75;
-  transform: none;
+  stroke-width: var(--icon-stroke);
 }
 
 .composer-send-button:hover {

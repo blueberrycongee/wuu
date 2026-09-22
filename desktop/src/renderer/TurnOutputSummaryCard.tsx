@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "./WuuIcons";
 
 import type { Turn } from "../shared/protocol";
 import { turnIsAnswerReady } from "./AppState";

@@ -1,4 +1,4 @@
-import { Copy, EyeOff, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
+import { Copy, EyeOff, Pencil, Pin, PinOff, Trash2 } from "./WuuIcons";
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import type { NamedAgent } from "../shared/protocol";

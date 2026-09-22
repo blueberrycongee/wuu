@@ -1,3 +1,4 @@
+import { UserRound } from "./WuuIcons";
 import type { JSX } from "react";
 
 /*
@@ -31,11 +32,7 @@ export function avatarHueIndex(seed: string): number {
 export function HumanAvatarMark(): JSX.Element {
   return (
     <span className="default-avatar human-avatar-mark" aria-hidden="true">
-      <svg viewBox="0 0 48 48" focusable="false">
-        <rect width="48" height="48" rx="10" className="human-avatar-background" />
-        <circle cx="24" cy="19" r="7" className="human-avatar-figure" />
-        <path d="M11.5 40c.8-8 5.1-12 12.5-12s11.7 4 12.5 12z" className="human-avatar-figure" />
-      </svg>
+      <UserRound className="human-avatar-figure" />
     </span>
   );
 }

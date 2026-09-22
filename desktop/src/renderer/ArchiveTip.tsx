@@ -1,4 +1,4 @@
-import { Archive, CircleAlert } from "lucide-react";
+import { Archive, CircleAlert } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { TopNotice } from "./TopNotice";
 

@@ -127,6 +127,22 @@ describe("useAutoFollowScrollContainer", () => {
     }
   });
 
+  it("restores a paused conversation before paint and cancels the outgoing arrival", () => {
+    layout!.scrollHeight += 400;
+    act(() => handle!.scrollToBottom({ animate: true }));
+    paint(0); paint(180);
+    expect(layout!.scrollTop).toBeGreaterThan(800);
+    act(() => handle!.restoreScrollPosition(320, false));
+    expect(layout!.scrollTop).toBe(320);
+    expect(handle!.autoFollowRef.current).toBe(false);
+    settle(200);
+    act(() => { notifyResize(); scrollNode!.dispatchEvent(new Event("scroll")); });
+    expect(layout!.scrollTop).toBe(320);
+    act(() => handle!.restoreScrollPosition(0, true));
+    expect(layout!.scrollTop).toBe(1200);
+    expect(handle!.autoFollowRef.current).toBe(true);
+  });
+
   it("uses one continuous arrival scroll across resize and reconciliation writes", () => {
     layout!.scrollHeight += 400;
     act(() => handle!.scrollToBottom({ animate: true }));

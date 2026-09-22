@@ -1,4 +1,4 @@
-import { Check, ChevronDown, GitBranch, Plus, Search } from "lucide-react";
+import { Check, ChevronDown, GitBranch, Plus, Search } from "./WuuIcons";
 import { useRef, useState } from "react";
 import type { GitStatusResult } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";

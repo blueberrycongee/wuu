@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { palette } from "blobatar";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "./WuuIcons";
 import { AVATAR_HUES } from "./DefaultAvatar";
 import {
   AGENT_AVATAR_ACCESSORIES,

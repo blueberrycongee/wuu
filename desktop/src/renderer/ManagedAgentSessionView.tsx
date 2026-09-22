@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, LoaderCircle, PanelRightClose, Search } from "lucide-react";
+import { ArrowLeft, ArrowRight, LoaderCircle, PanelRightClose, Search } from "./WuuIcons";
 import { useMemo, useRef, useState } from "react";
 import { isThreadExecuting, isThreadUnread, type ThreadSummary } from "./AppState";
 import { sortManagedSessions } from "./ManagedAgentSessions";

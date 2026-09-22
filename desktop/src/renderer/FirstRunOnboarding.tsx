@@ -1,4 +1,4 @@
-import { Check, LoaderCircle } from "lucide-react";
+import { Check, LoaderCircle } from "./WuuIcons";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   EngineInfo,

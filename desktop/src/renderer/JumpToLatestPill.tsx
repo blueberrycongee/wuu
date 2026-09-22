@@ -1,3 +1,4 @@
+import { ArrowDown } from "./WuuIcons";
 import {
   type RefObject,
   type ReactNode,
@@ -303,21 +304,7 @@ export function JumpToLatestPill({
 
   const pillBody = (
     <>
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 14 14"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M7 1V11M7 11L3 7M7 11L11 7"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <ArrowDown size={14} />
       <span>{accessibleLabel}</span>
     </>
   );

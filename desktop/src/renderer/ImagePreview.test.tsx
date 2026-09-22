@@ -84,7 +84,7 @@ describe("ImagePreviewProvider", () => {
     act(() => {
       probe.getAPI()?.openPreview({ src: "data:image/png;base64,AAA" });
     });
-    const icon = container.querySelector(".image-preview-toolbar-button .lucide-x");
+    const icon = container.querySelector(".image-preview-toolbar-button .wuu-icon-x");
     expect(icon).not.toBeNull();
     act(() => {
       icon!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -97,7 +97,7 @@ describe("ImagePreviewProvider", () => {
     act(() => {
       probe.getAPI()?.openPreview({ src: "data:image/png;base64,AAA" });
     });
-    const button = container.querySelector(".lucide-x")?.closest("button");
+    const button = container.querySelector(".wuu-icon-x")?.closest("button");
     expect(button).not.toBeNull();
     act(() => {
       button!.click();

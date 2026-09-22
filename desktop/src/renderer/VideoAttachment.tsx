@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Film } from "lucide-react";
+import { Film } from "./WuuIcons";
 import type { InputFile } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import "./styles/video-attachment.css";

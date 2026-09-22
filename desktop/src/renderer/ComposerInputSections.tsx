@@ -13,7 +13,7 @@ import {
   Send,
   Square,
   X
-} from "lucide-react";
+} from "./WuuIcons";
 import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalImagePreview } from "./ImagePreview";
 import { isComposerTextComposing } from "./ComposerSlashCommands";

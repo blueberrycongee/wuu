@@ -102,7 +102,7 @@ import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
   AppSidebar,
 } from "./AppSidebar";
-import { ChannelView, type ChannelSection } from "./ChannelView";
+import { ChannelView, type ChannelConversationSnapshot, type ChannelSection } from "./ChannelView";
 import { collaborationConversations, managedSidebarThreads, orderedPinnedCollaborationConversations, type CollaborationConversation } from "./CollaborationConversations";
 import { CollaborationSidebar } from "./CollaborationSidebar";
 import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft } from "./AgentOnboarding";
@@ -234,7 +234,7 @@ import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showErrorToast, showToast } from "./Toast";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert, RefreshCw } from "lucide-react";
+import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type {
 } from "../shared/protocol";
 import { useSettingsRuntimeState } from "./SettingsRuntimeState";
@@ -1136,6 +1136,7 @@ export function App(): JSX.Element {
   const runtimeVariantByModelRef = useRef(new Map<string, string>());
   const cachedThreadPaneHistoryRef = useRef<string[]>([]);
   const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
+  const channelConversationCacheRef = useRef(new Map<string, ChannelConversationSnapshot>());
   const draftSessionTabCounterRef = useRef(0);
   const currentSessionTab = activeSessionTab(state);
   const activeChannelRooms = useMemo(
@@ -5593,6 +5594,7 @@ export function App(): JSX.Element {
                 onClose={() => { setAgentOnboardingDraft(null); setAgentOnboardingActive(false); }}
               />
             ) : <ChannelView
+              conversationCache={channelConversationCacheRef.current}
               navigation={collaborationNavigation}
               initialized={sessionRuntime ?? state.initialized}
               engines={engineInventory?.engines}

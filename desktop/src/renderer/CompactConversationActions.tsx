@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Ellipsis, Info, SquarePen } from "lucide-react";
+import { Ellipsis, Info, SquarePen } from "./WuuIcons";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { isTouchWebShell } from "./ComposerFocus";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";

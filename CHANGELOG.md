@@ -49,11 +49,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Conversation images use compact tool thumbnails and bounded, proportional
+  previews in replies, with consistent space before and after images.
+
 - TODO capsule hover cards use roomier line and task spacing, preserve paragraph
   breaks, and keep long task descriptions at regular weight for easier reading.
 
 - Dark desktop surfaces use fine inset highlights for depth. Menus, dialogs,
   and edge drawers retain black shadows to separate overlapping content.
+
+- Desktop and shared Web controls use Wuu's original SVG icon family, with
+  consistent optical sizing across navigation, tools, settings, skills,
+  extension marks, empty states, and browser overlays. A set of twelve
+  muted Morandi SVG variants is available for optional colored surfaces.
 
 - Browser previews and the workspace panel share a clearer animated pointer,
   with consistent movement and input feedback at every preview size.
@@ -105,6 +113,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   Returning to the owning conversation restores its preview.
 - Background browser activity keeps its floating preview hidden until explicitly
   made visible, so it does not interrupt work in another application.
+
+- Switching desktop sessions keeps caught-up process folds stable through the
+  first paint. Collaboration conversations restore the message being read,
+  cancel outgoing scroll motion, and retain recent history when returning from
+  a Harness session, avoiding a blank reload and a jump to the latest message.
 
 - Desktop surfaces share titlebar geometry and sidebar-control alignment, while
   compact channel headers retain their native safe-area clearance.

@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, Info, X } from "lucide-react";
+import { ChevronRight, FileText, Info, X } from "./WuuIcons";
 import { useState } from "react";
 import type { InstructionFile, InstructionsListResult } from "../shared/protocol";
 import { formatCurrentNumber, translateCurrent as t, useI18n } from "./i18n";

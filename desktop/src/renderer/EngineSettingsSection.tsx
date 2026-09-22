@@ -1,4 +1,4 @@
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronRight, RefreshCw } from "./WuuIcons";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type {
   EngineInfo,

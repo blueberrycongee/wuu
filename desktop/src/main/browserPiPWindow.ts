@@ -1,5 +1,6 @@
 import { BrowserWindow, WebContentsView, screen, type Rectangle } from "electron";
 import appIcon from "../../../assets/app-icon-source.svg?raw";
+import { iconSVG } from "../shared/iconArtwork";
 import type { ActivitySession } from "../shared/protocol";
 import { cursorRuntimeSource } from "./agentCursor";
 import { appShellWebPreferences } from "./appShellGuards";
@@ -901,23 +902,20 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 </style></head>
 <body>
 <div id="root">
-  <div id="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-    <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.7 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.7-3.9-9S9.4 5.6 12 3z"/>
-  </svg></div>
+  <div id="ph">${iconSVG("Globe", 30)}</div>
   <div id="completion" role="status" aria-label="Browser task completed" aria-hidden="true" data-completed="false">
     <div id="completion-mark">
       <img id="completion-icon" src="${icon}" alt="" draggable="false" />
-      <div id="completion-check"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m8 16 6 6 10-12"/></svg></div>
+      <div id="completion-check">${iconSVG("Check", 34)}</div>
     </div>
   </div>
   <div id="hover-shade"></div>
   <div id="actions">
     <button id="close" title="Close" aria-label="Close">
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2 2 10"/></svg>
+      ${iconSVG("X", 14)}
     </button>
     <button id="expand" title="Open in the side panel" aria-label="Open in the side panel">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h4v4"/><path d="M12 2 7.5 6.5"/><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v6A1.5 1.5 0 0 0 3.5 12h6A1.5 1.5 0 0 0 11 10.5V8"/></svg>
+      ${iconSVG("ExternalLink", 14)}
     </button>
   </div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
