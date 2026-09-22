@@ -74,6 +74,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Background browser activity keeps its floating preview hidden until explicitly
   made visible, so it does not interrupt work in another application.
 
+- Desktop surfaces share titlebar geometry and sidebar-control alignment, while
+  compact channel headers retain their native safe-area clearance.
+
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,
   when it is opened from Finder or the Dock. Those launches do not receive

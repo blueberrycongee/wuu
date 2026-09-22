@@ -119,7 +119,7 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 	// updated_at (which also changes when a user renames or pins a session).
 	rows, err := db.Query(`SELECT m.session_id, m.role,
 		CASE WHEN m.role = 'meta' THEN m.content ELSE '' END,
-		m.steered, m.stop_reason, m.display_content, m.at, m.provider, m.model,
+		m.steered, m.client_id, m.stop_reason, m.display_content, m.at, m.provider, m.model,
 		m.input_tokens, m.output_tokens, m.cache_creation_tokens, m.cache_read_tokens
 		FROM session_messages m JOIN sessions s ON s.id = m.session_id
 		WHERE `+where+` AND (m.role = 'user' OR
@@ -140,30 +140,40 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 		}
 		candidate := SubscriptionActivity{Key: key}
 		provider := ""
+		requestUsage := usage
 		if terminal != nil {
 			candidate.Status = terminal.StopReason
 			candidate.Error = strings.TrimSpace(terminal.DisplayContent)
 			candidate.At = terminal.At
 			candidate.Model = terminal.Model
 			provider = terminal.Provider
+			// Provider-tagged terminals carry their own usage snapshot. Internal
+			// continuations have no user boundary, so earlier usage is unsafe.
+			// Only legacy user terminals use the preceding row; internal
+			// terminals have no client ID or provable request boundary.
+			if terminal.Provider != "" {
+				requestUsage = terminal
+			} else if terminal.ClientID == "" {
+				requestUsage = nil
+			}
 		}
-		if provider == "" && usage != nil {
-			provider = usage.Provider
+		if provider == "" && requestUsage != nil {
+			provider = requestUsage.Provider
 		}
 		if key.Provider != "" && provider != key.Provider {
 			return
 		}
-		if usage != nil && (provider == "" || usage.Provider == provider) {
+		if requestUsage != nil && (provider == "" || requestUsage.Provider == provider) && (requestUsage.InputTokens > 0 || requestUsage.OutputTokens > 0 || requestUsage.CacheCreationTokens > 0 || requestUsage.CacheReadTokens > 0) {
 			candidate.UsageReported = true
-			candidate.InputTokens = usage.InputTokens
-			candidate.OutputTokens = usage.OutputTokens
-			candidate.CacheCreationTokens = usage.CacheCreationTokens
-			candidate.CacheReadTokens = usage.CacheReadTokens
+			candidate.InputTokens = requestUsage.InputTokens
+			candidate.OutputTokens = requestUsage.OutputTokens
+			candidate.CacheCreationTokens = requestUsage.CacheCreationTokens
+			candidate.CacheReadTokens = requestUsage.CacheReadTokens
 			if candidate.Model == "" {
-				candidate.Model = usage.Model
+				candidate.Model = requestUsage.Model
 			}
 			if candidate.At.IsZero() {
-				candidate.At = usage.At
+				candidate.At = requestUsage.At
 			}
 		}
 		if !found || !candidate.At.Before(latest.At) {
@@ -174,7 +184,7 @@ func latestSubscriptionActivity(db *sql.DB, key SubscriptionActivityKey) (Subscr
 		var id string
 		var record HistoryRecord
 		var at sql.NullString
-		if err := rows.Scan(&id, &record.Role, &record.Content, &record.Steered,
+		if err := rows.Scan(&id, &record.Role, &record.Content, &record.Steered, &record.ClientID,
 			&record.StopReason, &record.DisplayContent, &at, &record.Provider, &record.Model,
 			&record.InputTokens, &record.OutputTokens, &record.CacheCreationTokens, &record.CacheReadTokens); err != nil {
 			return SubscriptionActivity{}, false, err

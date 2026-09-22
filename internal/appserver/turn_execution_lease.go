@@ -286,7 +286,7 @@ const turnTerminalHistoryRecord = "turn_terminal"
 // interrupted so the settled row ("网络异常 · 第 n/m 次重试") survives reload.
 const streamReconnectHistoryRecord = "stream_reconnect"
 
-func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause *TurnError, at time.Time, reconnect *ThreadItem, providerName, model string) error {
+func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause *TurnError, at time.Time, reconnect *ThreadItem, providerName, model string, usage providers.TokenUsage) error {
 	if s == nil || s.rt == nil || th == nil || !th.PersistHistory || strings.TrimSpace(turnID) == "" {
 		return nil
 	}
@@ -323,15 +323,19 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		structuredCause = string(encoded)
 	}
 	if err := session.AppendHistoryRecord(s.rt.SessionDir, th.ID, session.HistoryRecord{
-		Role:           "meta",
-		Content:        turnTerminalHistoryRecord,
-		Provider:       providerName,
-		Model:          model,
-		DisplayContent: message,
-		Cause:          structuredCause,
-		ClientID:       clientID,
-		StopReason:     string(status),
-		At:             at,
+		Role:                "meta",
+		Content:             turnTerminalHistoryRecord,
+		Provider:            providerName,
+		Model:               model,
+		InputTokens:         usage.InputTokens,
+		OutputTokens:        usage.OutputTokens,
+		CacheCreationTokens: usage.CacheCreationTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		DisplayContent:      message,
+		Cause:               structuredCause,
+		ClientID:            clientID,
+		StopReason:          string(status),
+		At:                  at,
 	}); err != nil {
 		return err
 	}
@@ -363,7 +367,7 @@ func (s *Server) abortStartedThreadTurnDurably(th *threadState, started startedT
 	var persistErr error
 	if started.userMsgSeq > 0 {
 		diagnostic := BuildTurnError(cause, "")
-		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, &diagnostic, time.Now().UTC(), nil, "", "")
+		persistErr = s.persistTurnTerminal(th, started.turnID, TurnKindUser, TurnStatusFailed, &diagnostic, time.Now().UTC(), nil, "", "", providers.TokenUsage{})
 	}
 	abortStartedThreadTurn(th, started, cause)
 	if persistErr != nil {

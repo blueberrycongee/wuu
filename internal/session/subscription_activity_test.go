@@ -43,6 +43,7 @@ func TestLatestSubscriptionActivityUsesRequestTimeAndIgnoresNewEmptySessions(t *
 	if err := AppendHistoryRecord(dir, newer.ID, HistoryRecord{
 		Role:       "meta",
 		Content:    turnTerminalContent,
+		ClientID:   "newer-codex-turn-0001",
 		StopReason: "completed",
 		At:         time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
 	}); err != nil {
@@ -175,7 +176,7 @@ func TestSubscriptionLatestRequestDoesNotMixTurnsOrProviders(t *testing.T) {
 	appendRecord(HistoryRecord{Role: "user", Content: "old request"})
 	appendRecord(HistoryRecord{Role: "meta", Content: tokenUsageContent, Provider: "old", Model: "old-model", InputTokens: 12})
 	// A legacy terminal can use a provider recorded within this same request.
-	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, StopReason: "completed"})
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, ClientID: "switching-turn-0001", StopReason: "completed"})
 	appendRecord(HistoryRecord{Role: "user", Content: "new request"})
 	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, Provider: "new", Model: "new-model", StopReason: "failed", DisplayContent: "new failure"})
 	// Changing selection afterwards must not move either request.
@@ -205,5 +206,35 @@ func TestSubscriptionLatestRequestDoesNotMixTurnsOrProviders(t *testing.T) {
 	}
 	if latest := got[keys[0]]; latest.Status != "failed" || latest.UsageReported || latest.Model != "" || latest.LocalUsage.InputTokens != 12 {
 		t.Fatalf("failed request reused old usage: %+v", latest)
+	}
+	// Internal continuations have no new user boundary or success terminal.
+	appendRecord(HistoryRecord{Role: "meta", Content: tokenUsageContent, Provider: "old", InputTokens: 8})
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, Provider: "old", StopReason: "failed"})
+	got, err = LatestSubscriptionActivity(dir, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest := got[keys[0]]; latest.UsageReported || latest.LocalUsage.InputTokens != 20 {
+		t.Fatalf("continuation reused earlier usage: %+v", latest)
+	}
+	appendRecord(HistoryRecord{Role: "meta", Content: tokenUsageContent, Provider: "legacy-unknown", InputTokens: 1})
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, StopReason: "failed"})
+	legacyKey := SubscriptionActivityKey{Provider: "legacy-unknown"}
+	legacy, err := LatestSubscriptionActivity(dir, []SubscriptionActivityKey{legacyKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := legacy[legacyKey]; got.UsageReported || got.Status != "" {
+		t.Fatalf("unattributed terminal inherited usage: %+v", got)
+	}
+
+	appendRecord(HistoryRecord{Role: "meta", Content: tokenUsageContent, Provider: "old", InputTokens: 3})
+	appendRecord(HistoryRecord{Role: "meta", Content: turnTerminalContent, Provider: "old", StopReason: "failed", InputTokens: 3})
+	got, err = LatestSubscriptionActivity(dir, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest := got[keys[0]]; !latest.UsageReported || latest.InputTokens != 3 || latest.LocalUsage.InputTokens != 23 {
+		t.Fatalf("terminal usage lost or double counted: %+v", latest)
 	}
 }
