@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Browser previews show an animated completion badge when the visible task
+  finishes successfully, and clear it when work resumes. Hover reveals preview
+  controls even while another application is active.
+
 - A subscription dashboard in desktop Settings shows source models, reported
   Wuu token usage, and Codex account allowance windows with remaining percentages
   and reset times. Unsupported account quotas stay unknown rather than being
@@ -47,6 +51,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Conversation images use compact tool thumbnails and bounded, proportional
   previews in replies, with consistent space before and after images.
+
+- Dark desktop surfaces use fine inset highlights for depth. Menus, dialogs,
+  and edge drawers retain black shadows to separate overlapping content.
 
 - Browser previews and the workspace panel share a clearer animated pointer,
   with consistent movement and input feedback at every preview size.

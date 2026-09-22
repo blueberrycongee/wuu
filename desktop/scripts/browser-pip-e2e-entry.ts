@@ -89,7 +89,13 @@ app.whenReady().then(async () => {
   const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
   const pointer = (wc: typeof contents) => wc.executeJavaScript(`(()=>{const el=document.getElementById('__wuu_agent_cursor');if(!el)return null;const m=new DOMMatrix(getComputedStyle(el).transform);return {x:m.e,y:m.f,width:el.offsetWidth,svg:el.querySelector('svg')?.outerHTML};})()`);
 
+  surface.setTurnCompleted(true);
+  await waitFor("completion shown", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'false'`));
+  await overlay.executeJavaScript(`Promise.all(document.getElementById('completion').getAnimations({subtree:true}).map(a=>a.finished))`);
+  capture(pip, "pip-completed.png");
+
   await click();
+  await waitFor("new work clears completion", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'true'`));
   assert.equal(await contents.executeJavaScript("window.clicks"), 1, "PiP input reaches the page target");
   const first = await pointer(overlay);
   assert.ok(first);
