@@ -175,11 +175,19 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		return acpEngineError(s.engine.entry, p, err)
 	}
 	mcp := make([]map[string]any, 0, len(s.binding.MCPServers))
-	if len(s.binding.MCPServers) > 0 && !init.Capabilities.MCP.HTTP {
-		return errors.New("this engine does not support the host's HTTP MCP tools")
-	}
 	for _, server := range s.binding.MCPServers {
-		mcp = append(mcp, map[string]any{"type": "http", "name": server.Name, "url": server.URL, "headers": []any{}})
+		if init.Capabilities.MCP.HTTP {
+			mcp = append(mcp, map[string]any{"type": "http", "name": server.Name, "url": server.URL, "headers": []any{}})
+			continue
+		}
+		if server.Stdio == nil || server.Stdio.Command == "" {
+			return errors.New("this engine requires a stdio fallback for the host's MCP tools")
+		}
+		env := make([]map[string]string, 0, len(server.Stdio.Env))
+		for name, value := range server.Stdio.Env {
+			env = append(env, map[string]string{"name": name, "value": value})
+		}
+		mcp = append(mcp, map[string]any{"name": server.Name, "command": server.Stdio.Command, "args": server.Stdio.Args, "env": env})
 	}
 	params := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp}
 	var session acpSession

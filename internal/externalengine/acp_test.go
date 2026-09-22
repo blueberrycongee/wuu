@@ -41,6 +41,53 @@ func testInput() agentengine.TurnInput {
 	return agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "Please inspect the project"}}}
 }
 
+func TestACPHostToolsNegotiateTransportOnCreateAndLoad(t *testing.T) {
+	for _, scenario := range []string{"mcp-http", "mcp-stdio"} {
+		for _, ref := range []string{"", "native-session"} {
+			t.Run(scenario+"/"+ref, func(t *testing.T) {
+				binding := testBinding()
+				binding.ExternalRef = ref
+				binding.MCPServers = []agentengine.MCPServer{{Name: "host", URL: "http://127.0.0.1:1234/capability", Stdio: &agentengine.MCPStdioServer{
+					Command: "/host/wuu", Args: []string{"session-tools", "--stdio"}, Env: map[string]string{"WUU_SESSION_TOOLS_URL": "http://127.0.0.1:1234/capability"},
+				}}}
+				sess, err := testEngine(t, scenario).SessionForThread(context.Background(), binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := sess.RunTurn(context.Background(), testInput(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var servers []map[string]any
+				if err := json.Unmarshal([]byte(result.Result.Content), &servers); err != nil {
+					t.Fatal(err)
+				}
+				if len(servers) != 1 || servers[0]["name"] != "host" {
+					t.Fatalf("servers=%v", servers)
+				}
+				if scenario == "mcp-http" {
+					if servers[0]["type"] != "http" || servers[0]["url"] != binding.MCPServers[0].URL {
+						t.Fatalf("servers=%v", servers)
+					}
+				} else {
+					if servers[0]["command"] != "/host/wuu" || servers[0]["type"] != nil || len(servers[0]["env"].([]any)) != 1 {
+						t.Fatalf("servers=%v", servers)
+					}
+				}
+			})
+		}
+	}
+	binding := testBinding()
+	binding.MCPServers = []agentengine.MCPServer{{Name: "host", URL: "http://127.0.0.1:1234/capability"}}
+	sess, err := testEngine(t, "mcp-stdio").SessionForThread(context.Background(), binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sess.RunTurn(context.Background(), testInput(), nil); err == nil {
+		t.Fatal("silently dropped unsupported host tools")
+	}
+}
+
 func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -534,6 +581,7 @@ func TestACPHelper(t *testing.T) {
 		update("agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": value}})
 	}
 	var promptID json.RawMessage
+	var hostServers json.RawMessage
 	selectedModel, selectedEffort, selectedMode := "", "", ""
 	for scanner.Scan() {
 		var msg rpcMessage
@@ -548,11 +596,21 @@ func TestACPHelper(t *testing.T) {
 				version = 2
 			}
 			caps := map[string]any{"loadSession": scenario != "no-load"}
+			if scenario == "mcp-http" {
+				caps["mcpCapabilities"] = map[string]any{"http": true}
+			}
 			if scenario == "echo-prompt-images" {
 				caps["promptCapabilities"] = map[string]any{"image": true}
 			}
 			result = map[string]any{"protocolVersion": version, "agentCapabilities": caps}
 		case "session/new":
+			if strings.HasPrefix(scenario, "mcp-") {
+				var params struct {
+					Servers json.RawMessage `json:"mcpServers"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				hostServers = params.Servers
+			}
 			if scenario == "grok" {
 				result = grokACPSessionResult()
 				break
@@ -621,6 +679,13 @@ func TestACPHelper(t *testing.T) {
 				selectedMode = params.Value
 			}
 		case "session/load":
+			if strings.HasPrefix(scenario, "mcp-") {
+				var params struct {
+					Servers json.RawMessage `json:"mcpServers"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				hostServers = params.Servers
+			}
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})
 				continue
@@ -631,6 +696,11 @@ func TestACPHelper(t *testing.T) {
 			text("old replay")
 		case "session/prompt":
 			promptID = msg.ID
+			if strings.HasPrefix(scenario, "mcp-") {
+				text(string(hostServers))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if strings.HasPrefix(scenario, "echo-prompt") {
 				var params struct {
 					Prompt json.RawMessage `json:"prompt"`

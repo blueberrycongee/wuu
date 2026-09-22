@@ -207,6 +207,14 @@ type ThreadBinding struct {
 type MCPServer struct {
 	Name string
 	URL  string
+	// Stdio is a local fallback for ACP agents without HTTP MCP support.
+	Stdio *MCPStdioServer
+}
+
+type MCPStdioServer struct {
+	Command string
+	Args    []string
+	Env     map[string]string
 }
 
 // ThreadBoundFactory is an optional factory extension for engines that bind
