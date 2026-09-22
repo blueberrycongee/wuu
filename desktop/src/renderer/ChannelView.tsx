@@ -9,6 +9,7 @@ import { AgentOnboarding, createAgentOnboardingDraft, type AgentOnboardingDraft 
 import { AgentRelationshipGraph } from "./AgentRelationshipGraph";
 import { squareAvatarImageFromFile } from "./avatarImage";
 import { AUTO_FOLLOW_BOTTOM_THRESHOLD_PX, useAutoFollowScrollContainer } from "./AutoFollowScroll";
+import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
 import { ChannelAgentHoverCard } from "./ChannelAgentHoverCard";
 import { ChannelActivityInspector } from "./ChannelActivityInspector";
 import { ManagedAgentWork } from "./ManagedAgentWork";
@@ -1191,7 +1192,24 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
     };
   }, [refreshTrackedTasks, section]);
 
+  const roomScrollSnapshotsRef = useRef(new Map<string, {
+    scrollTop: number;
+    autoFollow: boolean;
+    readingAnchor?: ConversationReadingAnchor;
+  }>());
   const positionedStreamRef = useRef<{ roomID: string; node: HTMLDivElement } | null>(null);
+  const rememberRoomScroll = (): void => {
+    const node = messageScroll.scrollRef.current;
+    // A pane swap can clamp the shared scrollport before restore. That clamp
+    // belongs to neither room's reading position.
+    if (!node || positionedStreamRef.current?.roomID !== selectedRoomID || !loadedRoomIDs.has(selectedRoomID)) return;
+    const autoFollow = messageScroll.autoFollowRef.current;
+    roomScrollSnapshotsRef.current.set(selectedRoomID, {
+      scrollTop: node.scrollTop,
+      autoFollow,
+      readingAnchor: autoFollow ? undefined : captureReadingAnchor(node),
+    });
+  };
   useLayoutEffect(() => {
     const node = messageScroll.scrollRef.current;
     if (section !== "rooms" || !node) {
@@ -1199,12 +1217,17 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
       return;
     }
     const previous = positionedStreamRef.current;
-    // Position fetched history before paint, not after showing its first rows.
-    // A new room starts at latest; updates within it respect reading history.
-    messageScroll.scrollToBottom({
-      force: previous?.roomID !== selectedRoomID || previous.node !== node,
-    });
+    if (previous?.roomID !== selectedRoomID || previous.node !== node) {
+      const snapshot = roomScrollSnapshotsRef.current.get(selectedRoomID);
+      const top = snapshot?.readingAnchor
+        ? readingAnchorScrollTop(node, snapshot.readingAnchor) ?? snapshot.scrollTop
+        : snapshot?.scrollTop ?? 0;
+      messageScroll.restoreScrollPosition(top, snapshot?.autoFollow ?? true);
+    } else {
+      messageScroll.scrollToBottom();
+    }
     positionedStreamRef.current = { roomID: selectedRoomID, node };
+    rememberRoomScroll();
   }, [messageScroll, messages, pendingMessage, section, selectedRoom, selectedRoomID]);
 
   async function submitAgent(): Promise<void> {
@@ -2036,7 +2059,7 @@ export function ChannelView({ initialized, section = "rooms", navigation, archiv
             }}
           />
           {loadError ? <div className="channel-error" role="alert">{loadError}</div> : null}
-        <div ref={messageScroll.scrollRef} className="channel-message-stream" role="log" aria-live="polite">
+        <div ref={messageScroll.scrollRef} onScroll={rememberRoomScroll} className="channel-message-stream" role="log" aria-live="polite">
           {selectedRoom?.onboarding ? <AgentOnboardingHistory onboarding={selectedRoom.onboarding} /> : null}
           {channelTimeline.map((message, index) => {
             const proposal = message.agent_creation_proposal;

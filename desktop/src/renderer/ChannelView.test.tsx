@@ -334,7 +334,7 @@ describe("ChannelView", () => {
     expect(positions.every((position) => position === 600)).toBe(true);
   });
 
-  it("keeps the reading position on refresh but starts the next room at latest", async () => {
+  it("keeps reading positions across refresh and room switches while new rooms start at latest", async () => {
     vi.useFakeTimers();
     try {
       const api = createApi();
@@ -367,9 +367,53 @@ describe("ChannelView", () => {
       expect(top).toBe(200);
       await act(async () => renderRoom("room-2"));
       expect(top).toBe(600);
+      await act(async () => renderRoom("room-1"));
+      expect(top).toBe(200);
+      await act(async () => { await vi.advanceTimersByTimeAsync(40); });
+      expect(top).toBe(200);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("restores the same message when another room and a reflow change the scroll range", async () => {
+    const api = createApi();
+    api.listChannelMessages = vi.fn(async ({ room_id }) => ({ messages: [0, 1, 2].map(index => ({
+      id: `${room_id}-${index}`, room_id, seq: index + 1, author_type: "agent" as const,
+      author_id: "agent-1", kind: "text" as const, body: `History ${index}`, created_at: "2026-07-23T00:00:00Z",
+    })) }));
+    Object.defineProperty(window, "wuu", { configurable: true, value: api });
+    root = createRoot(container);
+    const renderRoom = (roomID: string) => root!.render(
+      <ChannelView selectedRoomID={roomID} directoryAgents={agents} directoryRooms={rooms} />,
+    );
+    await act(async () => renderRoom("room-1"));
+    const stream = container.querySelector<HTMLDivElement>("[role=log]")!;
+    let top = 800;
+    let growth = 0;
+    Object.defineProperties(stream, {
+      scrollHeight: { configurable: true, get: () => 1200 + growth },
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, 800 + growth)); } },
+    });
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const index = this.dataset.messageId?.match(/^room-1-(\d)$/)?.[1];
+      if (index !== undefined) return { top: Number(index) * 400 + growth - top, bottom: (Number(index) + 1) * 400 + growth - top, height: 400 } as DOMRect;
+      return original.call(this);
+    });
+    act(() => {
+      stream.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
+      top = 420;
+      stream.dispatchEvent(new Event("scroll"));
+    });
+    await act(async () => renderRoom("room-2"));
+    expect(top).toBe(800);
+    growth = 140;
+    await act(async () => renderRoom("room-1"));
+    expect(top).toBe(560);
+    act(() => stream.dispatchEvent(new Event("scroll")));
+    expect(top).toBe(560);
   });
 
   it("preserves verifier task states for honest room activity", () => {
