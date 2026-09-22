@@ -52,7 +52,7 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }): JSX
   return (
     <ImagePreviewContext.Provider value={value}>
       {children}
-      {item ? <ImagePreviewOverlay item={item} onClose={closePreview} /> : null}
+      {item ? <ImagePreviewOverlay key={item.src ?? item.svg} item={item} onClose={closePreview} /> : null}
     </ImagePreviewContext.Provider>
   );
 }
@@ -139,13 +139,6 @@ function ImagePreviewOverlay({ item, onClose }: {
   }, [item]);
 
   useEffect(() => {
-    setView(fittedView);
-    setRotation(0);
-    setSaveError("");
-    setImageSize({ width: 0, height: 0 });
-    setLoadStatus("loading");
-    pointers.current.clear();
-    setDragging(false);
     if (item.svg != null) {
       const svg = svgRef.current!.querySelector("svg")!;
       const box = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
@@ -256,6 +249,9 @@ function ImagePreviewOverlay({ item, onClose }: {
   }
 
   function endPointer(event: ReactPointerEvent<HTMLDivElement>): void {
+    // Touch starts with implicit capture on the image. Transferring capture to
+    // the stage emits a bubbling loss from that image, not the end of a gesture.
+    if (event.type === "lostpointercapture" && event.target !== event.currentTarget) return;
     pointers.current.delete(event.pointerId);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (!pointers.current.size) setDragging(false);

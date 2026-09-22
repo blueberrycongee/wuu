@@ -272,14 +272,18 @@ it("does not close when a captured drag releases on the stage", () => {
   function pointer(type: string, x: number): void {
     const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 200 });
     Object.defineProperty(event, "pointerId", { value: 1 });
-    act(() => stage.dispatchEvent(event));
+    act(() => (type === "pointerdown" ? overlayImage()! : stage).dispatchEvent(event));
   }
   pointer("pointerdown", 200);
   pointer("pointermove", 260);
-  pointer("pointerup", 260);
+  const transfer = new Event("lostpointercapture", { bubbles: true });
+  Object.defineProperty(transfer, "pointerId", { value: 1 });
+  act(() => overlayImage()!.dispatchEvent(transfer));
+  pointer("pointermove", 320);
+  pointer("pointerup", 320);
   act(() => stage.click());
   expect(overlayRoot()).not.toBeNull();
-  expect(transform().x).toBe(60);
+  expect(transform().x).toBe(120);
   act(() => stage.click());
   expect(overlayRoot()).toBeNull();
 });
