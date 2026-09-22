@@ -71,7 +71,7 @@ func (s *Service) PrepareIdentityConversation(ctx context.Context, agent AgentRu
 		FROM collaboration_messages delivery LEFT JOIN works work ON work.id=delivery.work_id
 		WHERE delivery.to_agent_id=? AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
 		AND EXISTS(SELECT 1 FROM room_members member WHERE member.room_id=delivery.room_id AND member.member_type='agent' AND member.member_id=?)
-		ORDER BY CASE WHEN EXISTS(SELECT 1 FROM work_runs run WHERE run.work_id=delivery.work_id AND run.named_agent_id=delivery.to_agent_id AND run.state='running') THEN 0 ELSE 1 END,
+		ORDER BY `+collaborationDeliveryPriority+`, CASE WHEN EXISTS(SELECT 1 FROM work_runs run WHERE run.work_id=delivery.work_id AND run.named_agent_id=delivery.to_agent_id AND run.state='running') THEN 0 ELSE 1 END,
 		delivery.created_at, delivery.rowid LIMIT 1`, agent.ID, agent.ID).Scan(&roomID, &workID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = tx.QueryRowContext(ctx, `SELECT inbox.room_id FROM inbox_items inbox

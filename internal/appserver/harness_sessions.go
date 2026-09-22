@@ -728,7 +728,7 @@ func (s *Server) deliverHarnessResult(ctx context.Context, link *channels.Harnes
 		// Keep the payload stable across retries. Current control can change after
 		// delivery but before its cursor commits; provenance belongs to the input.
 		body := fmt.Sprintf("Harness session %s finished turn %s (%s). This is execution evidence, not proof that the user's goal is complete. Accepted input belongs to room %s, task %q goal revision %d, control revision %d. Compare these with the current session: a later control or task change makes this prior evidence, not completion of the new goal. Inspect artifacts and pending instructions before continuing with session send or reporting completion.\n\n%s", link.SessionID, turn.ID, turn.Status, actor.RoomID, actor.WorkID, actor.GoalRevision, revision, harnessExcerpt(text, 2400))
-		_, err = s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: actor.SessionRef, ParentTurnID: actor.TurnID, SourceSessionRef: link.SessionID, RequestID: "harness-result:" + link.SessionID + ":" + turn.ID, Body: body})
+		_, err = s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: actor.SessionRef, ParentTurnID: actor.TurnID, SourceSessionRef: link.SessionID, RequestID: "harness-result:" + link.SessionID + ":" + turn.ID, Body: body, TerminalState: channels.CollaborationTerminalState(turn.Status)})
 		if err != nil {
 			return err
 		}
@@ -800,7 +800,7 @@ func (s *Server) failHarnessOperation(ctx context.Context, op *channels.HarnessO
 		op.State, op.Error = "failed", reason
 		return s.channelService.PutHarnessOperation(ctx, *op)
 	}
-	_, err := s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: op.Actor.SessionRef, ParentTurnID: op.Actor.TurnID, SourceSessionRef: op.Params.SessionID, RequestID: op.ID + ":failure", Body: "Session operation failed: " + reason + ". Inspect the existing session before deciding whether to retry."})
+	_, err := s.channelService.EnqueueSessionResult(ctx, channels.SessionResultEnqueueParams{ParentSessionRef: op.Actor.SessionRef, ParentTurnID: op.Actor.TurnID, SourceSessionRef: op.Params.SessionID, RequestID: op.ID + ":failure", Body: "Session operation failed: " + reason + ". Inspect the existing session before deciding whether to retry.", TerminalState: channels.CollaborationTerminalFailed})
 	if err != nil {
 		return err
 	}

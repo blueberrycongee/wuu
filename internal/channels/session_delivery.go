@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// Human directions lead both turn selection and bounded inbox batches. Preserve
+// arrival order within each lane so corrections keep their original sequence.
+const collaborationDeliveryPriority = `CASE WHEN delivery.from_type = 'human' THEN 0 ELSE 1 END`
+
 // ReceiveCollaboration durably claims messages for a session without marking
 // them consumed. Repeat calls return the same unacknowledged deliveries, so a
 // crash before persisting agent input cannot lose a message. The host should
@@ -47,7 +51,7 @@ func (s *Service) ReceiveCollaboration(ctx context.Context, agentID, token, sess
   WHERE delivery.to_agent_id = ? AND (NOT ? OR delivery.room_id = ?) AND delivery.pulled_at IS NULL AND delivery.invalidated_at IS NULL
    AND (delivery.target_session_ref = ? OR (delivery.target_session_ref IS NULL AND delivery.room_id = ? AND (COALESCE(delivery.work_id, '') = ? AND ? OR ? AND (delivery.kind IN ('candidate_ready', 'peer_result', 'work_run_terminal', 'verification_feedback', 'completion')
        OR delivery.kind='control' AND EXISTS(SELECT 1 FROM works WHERE works.id=delivery.work_id AND works.state IN ('completed','cancelled','failed'))))))
-  ORDER BY delivery.created_at, delivery.rowid LIMIT ?`, actor.ID, binding.Primary, binding.RoomID, sessionRef, binding.RoomID, binding.WorkID, binding.WorkID != "" || binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination, (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination), limit)
+  ORDER BY `+collaborationDeliveryPriority+`, delivery.created_at, delivery.rowid LIMIT ?`, actor.ID, binding.Primary, binding.RoomID, sessionRef, binding.RoomID, binding.WorkID, binding.WorkID != "" || binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination, (binding.Purpose == CollaborationSessionConversation || binding.Purpose == CollaborationSessionCoordination), limit)
 	if err != nil {
 		return nil, err
 	}

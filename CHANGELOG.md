@@ -76,6 +76,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Managed session reports preserve completed, failed, and interrupted execution
+  outcomes. Control changes and ordinary evidence messages no longer claim a
+  successful completion; rejected session operations report failure.
+
+- Collaboration handles pending human directions before background session
+  reports, including after a restart and when an inbox spans multiple batches.
+  Earlier session results remain queued in their original room and task.
+
 - Conversation spacing accounts for the docked workspace panel as it opens or
   resizes, keeping the scrollbar next to the message flow.
 
