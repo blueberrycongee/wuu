@@ -61,6 +61,7 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 			"Tabs stay hidden in the background by default; visiting a page does not show it to the user. " +
 			"Call set_visibility with visible=true only when the user's main goal is to watch the page, then set_visibility false or finalize when that goal ends. " +
 			"Read-only actions (observe, screenshot, tabs, wait_for) inspect page state; the others mutate it. " +
+			"Screenshot saves a UI preview and returns its path and dimensions, not image content to the model; use observe to read page text. " +
 			"Prefer node ids from observe over raw coordinates, and re-observe after an input to confirm the outcome before continuing.",
 		InputSchema: map[string]any{
 			"type": "object",

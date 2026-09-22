@@ -40,6 +40,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Browser observations now read link and button text from Chromium's layout
+  snapshot, including nested and repeated text, instead of returning unnamed
+  links. The screenshot tool description clarifies that it saves a UI preview
+  rather than returning image content to the model.
+
 - Moving the pointer onto the workspace browser no longer takes the page
   from the agent. A press, a context menu, or typing does.
 

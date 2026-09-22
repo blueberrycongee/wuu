@@ -288,10 +288,10 @@ function twoNodeSnapshot(): Record<string, unknown> {
             [4, 5], // node 1: href=https://x.test/
             [],
           ],
-          textIds: [-1, -1, 7],
         },
         layout: {
           nodeIndex: [0, 1, 2],
+          text: [-1, -1, 7],
           bounds: [
             [5, 6, 50, 20],
             [7, 8, 60, 18],
@@ -815,6 +815,28 @@ describe("pure helpers", () => {
     expect(nodes).toHaveLength(2);
     expect(nodes[0]).toMatchObject({ backendNodeId: 100, role: "button", name: "Submit", bounds: [5, 6, 50, 20] });
     expect(nodes[1]).toMatchObject({ backendNodeId: 200, role: "link", name: "Release notes" });
+  });
+
+  it("reads nested link text by layout index without dropping repeated words or requiring text boxes", () => {
+    const snapshot = {
+      strings: ["HTML", "HEAD", "BODY", "A", "SPAN", "#text", "Model ", "Model", " release", "href", "/release"],
+      documents: [{
+        nodes: {
+          nodeName: [0, 1, 2, 3, 5, 4, 5, 5],
+          parentIndex: [-1, 0, 0, 2, 3, 3, 5, 3],
+          backendNodeId: [10, 11, 12, 13, 14, 15, 16, 17],
+          attributes: [[], [], [], [9, 10], [], [], [], []],
+        },
+        layout: {
+          nodeIndex: [0, 2, 3, 4, 5, 6, 7],
+          text: [-1, -1, -1, 6, -1, 7, 8],
+          bounds: Array.from({ length: 7 }, () => [0, 0, 100, 20]),
+        },
+      }],
+    };
+    expect(interactableNodesFromSnapshot(snapshot)).toEqual([
+      expect.objectContaining({ backendNodeId: 13, role: "link", name: "Model Model release" }),
+    ]);
   });
 
   it("scrolls down one viewport when no wheel delta is given", () => {

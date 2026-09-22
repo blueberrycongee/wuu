@@ -759,7 +759,6 @@ export class BrowserHostCoordinator {
   private async observe(entry: TabEntry, params: Record<string, JsonValue>): Promise<JsonValue> {
     const snapshot = await entry.view.webContents.debugger.sendCommand("DOMSnapshot.captureSnapshot", {
       computedStyles: [],
-      includeText: true,
     });
     const raw = interactableNodesFromSnapshot(snapshot);
     // Rebuild the node map from scratch: node_ids are only valid until the next
@@ -1412,31 +1411,21 @@ function snapshotTextByNode(document: Record<string, unknown>, str: (index: unkn
   const layout = isRecord(document.layout) ? document.layout : {};
   const nodeIndex = numberArray(layout.nodeIndex);
   const parentIndex = numberArray(nodes.parentIndex);
-  const textIds = Array.isArray(nodes.textIds) ? nodes.textIds : [];
-  const textValues = isRecord(document.textBoxes) ? document.textBoxes : {};
-  const layoutIndex = numberArray(textValues.layoutIndex);
-  const start = numberArray(textValues.start);
-  const length = numberArray(textValues.length);
-  const own = new Map<number, string>();
-  for (let box = 0; box < layoutIndex.length; box++) {
-    const nodeSlot = nodeIndex[layoutIndex[box]];
-    if (typeof nodeSlot !== "number") continue;
-    const from = start[box] ?? 0;
-    const piece = str(textIds[nodeSlot]).slice(from, from + (length[box] ?? 0)).trim();
-    if (!piece) continue;
-    const current = own.get(nodeSlot);
-    own.set(nodeSlot, current ? `${current} ${piece}` : piece);
-  }
+  const text = Array.isArray(layout.text) ? layout.text : [];
+  // CDP indexes text by layout entry, not DOM node. Each entry contains the
+  // complete rendered text, so wrapped text boxes must not be stitched again.
   // Text lives on the text node, while the clickable element is its ancestor.
   const textByNode = new Map<number, string>();
-  for (const [nodeSlot, piece] of own) {
+  for (let i = 0; i < nodeIndex.length; i++) {
+    const piece = str(text[i]).replace(/\s+/g, " ").trim();
+    if (!piece) continue;
     const seen = new Set<number>();
-    let current = nodeSlot;
+    let current = nodeIndex[i];
     while (current >= 0 && !seen.has(current)) {
       seen.add(current);
       const currentText = textByNode.get(current);
       if (!currentText) textByNode.set(current, piece);
-      else if (!currentText.includes(piece)) textByNode.set(current, `${currentText} ${piece}`);
+      else textByNode.set(current, `${currentText} ${piece}`);
       const parent = parentIndex[current];
       if (typeof parent !== "number" || parent === current) break;
       current = parent;
