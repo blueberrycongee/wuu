@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func newCodeModeTestToolkit(t *testing.T) *Toolkit {
@@ -261,5 +262,62 @@ func TestCodeModeExecResponseShape(t *testing.T) {
 	}
 	if decoded.State != "Yielded" || decoded.CellID != "cell-1" {
 		t.Fatalf("decoded response = %+v", decoded)
+	}
+}
+
+func TestCodeModeMediaReachesModelObservations(t *testing.T) {
+	for _, state := range []string{"Yielded", "Result"} {
+		t.Run(state, func(t *testing.T) {
+			response := codemode.Response{State: state, CellID: "media-cell", Content: []codemode.ContentItem{
+				{Type: "input_text", Text: "inspected screenshot"},
+				{Type: "input_image", ImageURL: "data:image/png;base64,aW1hZ2U="},
+				{Type: "input_audio", AudioURL: "data:audio/wav;base64,YXVkaW8="},
+			}}
+			result := codeModeResponseResult(response)
+			if err := result.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if result.IsError {
+				t.Fatal(result.TextProjection())
+			}
+			if strings.Contains(result.TextProjection(), "base64") || strings.Contains(result.TextProjection(), "aW1hZ2U=") {
+				t.Fatal("media leaked into model text")
+			}
+			history := []providers.ChatMessage{
+				{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Name: "exec", Arguments: "{}"}}},
+				{Role: "tool", ToolCallID: "call", Name: "exec", ToolResult: &result},
+			}
+			messages, err := providers.PrepareMessagesForModelRequest("gpt-5", history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(messages) != 3 || len(messages[2].Images) != 1 || messages[2].Images[0].Data != "aW1hZ2U=" || len(messages[2].Files) != 1 {
+				t.Fatalf("missing media observation: %+v", messages)
+			}
+			if response.Content[1].ImageURL == "" {
+				t.Fatal("mutated source response")
+			}
+			var envelope struct {
+				State, CellID string
+				Content       []codemode.ContentItem `json:"content_items"`
+			}
+			if err := json.Unmarshal([]byte(result.Content[0].Text), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope.State != state || len(envelope.Content) != 3 {
+				t.Fatalf("lost cell state or output: %+v", envelope)
+			}
+			// A model switch must apply the same admission rule to Code Mode images.
+			filtered, err := providers.PrepareMessagesForProviderRequestWithPolicy("openai", "text-only", history, providers.MediaInputPolicy{ImageKnown: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(filtered[2].Images) != 0 || !strings.Contains(filtered[2].Content, "omitted: unsupported") {
+				t.Fatal("image bypassed model capability policy")
+			}
+			if result.Content[1].Type != toolresult.ContentTypeImage {
+				t.Fatal("stored result lost its image")
+			}
+		})
 	}
 }
