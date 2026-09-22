@@ -50,11 +50,17 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Desktop surfaces share titlebar geometry and sidebar-control alignment, while
-  compact channel headers retain their native safe-area clearance.
+- Expanding a browser preview opens its exact tab in the owning session. Missing
+  previews report an error instead of displaying a previous session’s page.
 
+- Browser previews stay hidden after switching away from their conversation,
+  including when panel visibility or background activity updates refresh them.
+  Returning to the owning conversation restores its preview.
 - Background browser activity keeps its floating preview hidden until explicitly
   made visible, so it does not interrupt work in another application.
+
+- Desktop surfaces share titlebar geometry and sidebar-control alignment, while
+  compact channel headers retain their native safe-area clearance.
 
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,
