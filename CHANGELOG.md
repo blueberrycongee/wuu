@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Agents can inspect local PNG, JPEG, static GIF, and WebP images with
+  `read_file`, including generated session artifacts, without a composer
+  attachment. Image results retain the existing file scope and model capability
+  checks. Code Mode forwards emitted images as visual observations.
+
 - Browser previews show an animated completion badge when the visible task
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.

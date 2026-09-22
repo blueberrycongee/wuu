@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -192,7 +193,7 @@ func (w *CodeModeWaitTool) ExecuteResult(ctx context.Context, args string) (tool
 func codeModeResponseResult(response codemode.Response) toolresult.Result {
 	// Keep cell state and textual output in the existing envelope, but route
 	// media through the canonical result so provider projection can attach it.
-	content := append([]codemode.ContentItem(nil), response.Content...)
+	content := slices.Clone(response.Content)
 	var media []toolresult.ContentPart
 	for i, item := range content {
 		var kind, dataURL string
