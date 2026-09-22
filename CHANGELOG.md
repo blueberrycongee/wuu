@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Peer coordination now connects Wuu, Codex, Claude Code, ACP, and OpenCode
+  sessions through the same bounded request and terminal-reply flow. External
+  engines receive session-scoped plugin tools, with a local stdio bridge for
+  ACP agents that do not support HTTP MCP.
+
 - Browser previews show an animated completion badge when the visible task
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.

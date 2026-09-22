@@ -27,14 +27,13 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 	if encoded == "" {
 		return nil
 	}
-	var policy pluginhost.SessionToolPolicy
-	if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
-		return fmt.Errorf("decode session tool policy: %w", err)
-	}
 	if threadRuntime.StreamRunner == nil {
 		return errors.New("the selected agent engine cannot enforce session tool_policy")
 	}
-	guarded := newSessionToolPolicyExecutor(threadRuntime.StreamRunner.Tools, policy)
+	guarded, err := applySessionToolPolicy(threadRuntime.StreamRunner.Tools, encoded)
+	if err != nil {
+		return err
+	}
 	threadRuntime.StreamRunner.Tools = guarded
 	if guard, ok := guarded.(*sessionToolPolicyExecutor); ok && threadRuntime.Toolkit != nil {
 		for _, definition := range threadRuntime.Toolkit.Definitions() {
@@ -44,6 +43,17 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 		}
 	}
 	return nil
+}
+
+func applySessionToolPolicy(base agent.ToolExecutor, encoded string) (agent.ToolExecutor, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return base, nil
+	}
+	var policy pluginhost.SessionToolPolicy
+	if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
+		return nil, fmt.Errorf("decode session tool policy: %w", err)
+	}
+	return newSessionToolPolicyExecutor(base, policy), nil
 }
 
 // sessionToolPolicyExecutor is an attenuation-only decorator. It filters the

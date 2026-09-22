@@ -63,6 +63,9 @@ func replacePluginToolHost(executor agent.ToolExecutor, host *pluginhost.Host, t
 }
 
 func (e *pluginToolExecutor) Definitions() []providers.ToolDefinition {
+	if e.scope == "external" {
+		return e.pluginDefinitions()
+	}
 	inner := e.inner.Definitions()
 	if kit, ok := e.inner.(*tools.Toolkit); ok && kit.CodeModeOnly() {
 		return inner
@@ -94,6 +97,9 @@ func (e *pluginToolExecutor) FinalizeToolResult(call providers.ToolCall, result 
 }
 
 func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if e.scope == "external" && !e.pluginToolAllowed(call.Name) {
+		return toolresult.Result{}, toolerrors.New("tool_unavailable", "tool is unavailable to external engines")
+	}
 	input, err := e.toolInput(ctx, call)
 	if err != nil {
 		return toolresult.Result{}, err
@@ -155,6 +161,9 @@ func (e *pluginToolExecutor) toolInput(ctx context.Context, call providers.ToolC
 }
 
 func (e *pluginToolExecutor) SupportsTool(name string) bool {
+	if e.scope == "external" {
+		return e.pluginToolAllowed(name)
+	}
 	if e.host.SupportsTool(name) {
 		return e.pluginToolAllowed(name)
 	}

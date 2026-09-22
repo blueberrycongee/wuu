@@ -115,8 +115,8 @@ func validateToolRegistrations(tools []ToolRegistration) error {
 		scopes := make(map[string]struct{}, len(tool.ExecutionScopes))
 		for _, scope := range tool.ExecutionScopes {
 			scope = strings.TrimSpace(scope)
-			if scope != "root" && scope != "child" && scope != "collaboration" {
-				return fmt.Errorf("%s execution scope %q must be root, child or collaboration", prefix, scope)
+			if scope != "root" && scope != "child" && scope != "collaboration" && scope != "external" {
+				return fmt.Errorf("%s execution scope %q must be root, child, collaboration or external", prefix, scope)
 			}
 			if _, duplicate := scopes[scope]; duplicate {
 				return fmt.Errorf("%s repeats execution scope %q", prefix, scope)

@@ -72,6 +72,53 @@ func (c *pluginToolTestClient) ExecuteTool(context.Context, pluginhost.ToolExecu
 	return pluginhost.ToolExecuteResult{Result: toolresult.FromText("changed")}, nil
 }
 
+func TestExternalPluginToolsRequireOptInAndEnforceSessionPermissions(t *testing.T) {
+	for _, scopes := range [][]string{nil, {"root"}, {"collaboration"}, {"root", "external"}} {
+		client := &pluginToolTestClient{scopes: scopes}
+		host := pluginhost.New(client)
+		s := &Session{PluginHost: host}
+		tools, err := s.AcquireExternalPluginTools("source", t.TempDir(), "read_only")
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := host.ToolDefinitions()[0].Name
+		want := 0
+		if len(scopes) == 2 {
+			want = 1
+		}
+		if len(tools.Definitions()) != want {
+			t.Fatalf("scopes=%v tools=%v", scopes, tools.Definitions())
+		}
+		if _, err := tools.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: "{}"}); err == nil || client.executed {
+			t.Fatalf("read-only or hidden tool executed: scopes=%v err=%v", scopes, err)
+		}
+		if _, err := tools.Execute(context.Background(), providers.ToolCall{Name: "write_file", Arguments: "{}"}); err == nil {
+			t.Fatal("external surface dispatched a native tool")
+		}
+		tools.Close()
+		tools, err = s.AcquireExternalPluginTools("source", t.TempDir(), "standard")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = tools.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: "{}"})
+		if (err == nil) != (want == 1) || client.executed != (want == 1) {
+			t.Fatalf("scopes=%v err=%v executed=%v", scopes, err, client.executed)
+		}
+		tools.Close()
+		if err := host.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		tools, err = s.AcquireExternalPluginTools("source", t.TempDir(), "standard")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tools.Definitions()) != 0 {
+			t.Fatal("retired plugin remained visible")
+		}
+		tools.Close()
+	}
+}
+
 func TestPluginToolExecutorPreservesArgumentsAndRichResult(t *testing.T) {
 	inner := &recordingToolExecutor{}
 	executor := newPluginToolExecutor(inner, pluginhost.New(), "thread-1", "/workspace")

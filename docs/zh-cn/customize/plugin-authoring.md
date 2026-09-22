@@ -93,7 +93,9 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 ## 工具和能力
 
-模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root`、`child` 或 `collaboration` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。
+模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root`、`child`、`collaboration` 或 `external` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。
+
+外部引擎只获得 `execution_scopes` 明确包含 `external` 的工具；省略该字段不会自动开放。Wuu 使用绑定当前 Wuu session 和 turn 的本地 MCP 入口，并附加这些工具所属插件的 `agent.system_prompt.section` 内容。工具调用保留宿主指定的 session、turn 和 call 身份，经过会话权限边界及插件授权；外部引擎自己的工具仍由其原生权限系统管理。入口在 turn 结束时关闭，每次调用都解析当前启用的插件版本，因此缓存的工具名无法调用已禁用插件。外部 MCP 结果使用工具结果的文本投影。
 
 `executeTool` 接收参数以及 `cwd`、调用 ID、可用的会话和轮次标识等上下文。即使有 schema，也应验证参数。结果格式为 `{ result: { content: [...] } }`，工具失败时设置 `is_error: true`。内容可包含文本和支持的富结果部分。需要成为会话产物的文件应使用 `importArtifact`，不要只返回可能消失的临时路径。
 

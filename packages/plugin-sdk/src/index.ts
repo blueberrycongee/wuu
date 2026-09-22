@@ -752,7 +752,8 @@ export interface ToolRegistration {
   id: string;
   description: string;
   input_schema: JSONSchemaObject;
-  execution_scopes?: Array<"root" | "child" | "collaboration">;
+  /** External engines require explicit "external" opt-in; omission keeps native root/child defaults. */
+  execution_scopes?: Array<"root" | "child" | "collaboration" | "external">;
   activity?: ToolActivityMetadata;
   display?: ToolDisplayMetadata;
 }
