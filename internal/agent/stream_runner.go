@@ -1329,6 +1329,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	var (
 		contentBuf        strings.Builder
 		thinkingBuf       strings.Builder
+		images            []providers.InputImage
 		reasoningBlocks   []providers.ReasoningBlock
 		pendingTools      = map[int]*providers.ToolCall{}
 		usage             *providers.TokenUsage
@@ -1400,7 +1401,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 		return nil
 	}
-	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
+	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1426,6 +1427,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			partialToolRuntime = nil
 		}
 		partial := StepResult{
+			Images:           images,
 			Content:          contentBuf.String(),
 			Phase:            messagePhase,
 			ProviderItemID:   providerItemID,
@@ -1456,7 +1458,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	// reason, the stream was likely broken by a proxy or compatibility issue.
 	// A terminal length/max_tokens reason is a completed model response, not a
 	// broken stream, even when the visible text is empty.
-	if strings.TrimSpace(contentBuf.String()) == "" && len(toolCalls) == 0 && strings.TrimSpace(stopReason) == "" && finishReason == "" && !truncated {
+	if strings.TrimSpace(contentBuf.String()) == "" && len(images) == 0 && len(toolCalls) == 0 && strings.TrimSpace(stopReason) == "" && finishReason == "" && !truncated {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1511,6 +1513,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			fbModel = req.Model
 		}
 		return StepResult{
+			Images:               resp.Images,
 			Content:              resp.Content,
 			Phase:                resp.Phase,
 			ProviderItemID:       resp.ProviderItemID,
@@ -1539,6 +1542,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		providerItemModel = req.Model
 	}
 	return StepResult{
+		Images:               images,
 		Content:              contentBuf.String(),
 		Phase:                messagePhase,
 		ProviderItemID:       providerItemID,
@@ -1652,6 +1656,7 @@ func (s *streamStep) runReliableStream(
 	contentBuf *strings.Builder,
 	thinkingBuf *strings.Builder,
 	reasoningBlocks *[]providers.ReasoningBlock,
+	images *[]providers.InputImage,
 	pendingTools map[int]*providers.ToolCall,
 	messagePhase *providers.MessagePhase,
 	providerItemID *string,
@@ -1669,12 +1674,13 @@ func (s *streamStep) runReliableStream(
 	resetPartialOutput := func() {
 		hadContent := contentBuf.Len() > 0
 		hadThinking := thinkingBuf.Len() > 0
-		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 {
+		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 {
 			return
 		}
 		contentBuf.Reset()
 		thinkingBuf.Reset()
 		*reasoningBlocks = nil
+		*images = nil
 		*messagePhase = ""
 		*providerItemID = ""
 		*providerItemModel = ""
@@ -1752,6 +1758,11 @@ func (s *streamStep) runReliableStream(
 
 		for event := range ch {
 			switch event.Type {
+			case providers.EventImage:
+				if event.Image != nil {
+					*images = append(*images, *event.Image)
+				}
+
 			case providers.EventContentDelta:
 				if event.Phase != "" {
 					*messagePhase = event.Phase

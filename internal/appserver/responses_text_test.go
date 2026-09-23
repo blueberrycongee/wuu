@@ -3,8 +3,10 @@ package appserver
 import (
 	"context"
 	"fmt"
+	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -166,5 +168,68 @@ func TestThreadStateReconcilesOnlyCurrentOperationAcrossRetry(t *testing.T) {
 	}
 	if !slices.Equal(visible, []string{"Previous message.", "Fresh answer."}) {
 		t.Fatalf("retry altered another operation or retained stale text: %q", visible)
+	}
+}
+
+func TestResponsesGeneratedImageSurvivesHistoryReload(t *testing.T) {
+	const data = "aW1hZ2U="
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"id":"ig_1","type":"image_generation_call","status":"completed","result":"aW1hZ2U="}]}}
+
+`)
+	}))
+	defer server.Close()
+	client, err := openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "test", WireAPI: "responses", ResponsesTransport: providers.StreamTransportSSE})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(0, 0).UTC()
+	user := providers.ChatMessage{Role: "user", Content: "draw"}
+	th := newThreadState("thread", nil, "openai", "gpt-test", "/repo", false, now)
+	th.startTurnLocked("turn", user, now)
+	runner := agent.StreamRunner{Client: client, Model: "gpt-test"}
+	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{user}, func(event providers.StreamEvent) { th.applyStreamEventLocked("turn", event, now) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ThreadItemImage{{MediaType: "image/png", Data: data}}
+	assertImage := func(turns []Turn) {
+		t.Helper()
+		var found int
+		for _, turn := range turns {
+			for _, item := range turn.Items {
+				if item.Type == ThreadItemAgentMessage {
+					found++
+					if item.Text != "" || !item.Terminal || !reflect.DeepEqual(item.Images, want) {
+						t.Fatalf("image reply lost: %+v", item)
+					}
+				}
+			}
+		}
+		if found != 1 {
+			t.Fatalf("got %d assistant items, want one", found)
+		}
+	}
+	assertImage(th.Turns)
+	dir := t.TempDir()
+	sess, err := sessionstore.CreateWithMetadata(dir, "image", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteChatHistory(dir, sess.ID, append([]providers.ChatMessage{user}, result.NewMessages...)); err != nil {
+		t.Fatal(err)
+	}
+	history, err := loadPersistedMessages(dir, sess.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertImage(turnsFromPersistedHistory(sess.ID, history, now, nil))
+	loaded, err := loadChatMessages(dir, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 2 || loaded[1].Images[0].ProviderItemID != "ig_1" || !reflect.DeepEqual(chatMessageItem("item", loaded[1]).Images, want) {
+		t.Fatalf("restored attachment missing: %+v", loaded)
 	}
 }

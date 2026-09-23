@@ -3670,3 +3670,43 @@ func TestGPT6SolLunaCatalogResponsesToolRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestResponsesChatGeneratedImagesAndReplay(t *testing.T) {
+	for _, format := range []string{"png", "jpeg", "webp"} {
+		t.Run(format, func(t *testing.T) {
+			var requests []map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				requests = append(requests, request)
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"status":"completed","output":[{"id":"ig_1","type":"image_generation_call","status":"completed","output_format":%q,"result":"aW1hZ2U="}]}`, format)
+			}))
+			defer server.Close()
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test", WireAPI: "responses"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Chat(context.Background(), providers.ChatRequest{Model: "gpt-test", Messages: []providers.ChatMessage{{Role: "user", Content: "draw"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(response.Images) != 1 || response.Images[0].MediaType != "image/"+format || response.Images[0].Data != "aW1hZ2U=" {
+				t.Fatalf("missing image: %+v", response)
+			}
+			_, err = client.Chat(context.Background(), providers.ChatRequest{Model: "gpt-test", Messages: []providers.ChatMessage{{Role: "assistant", Images: response.Images}, {Role: "user", Content: "describe"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := requests[1]["input"].([]any)
+			prior := input[0].(map[string]any)
+			if prior["type"] != "image_generation_call" || prior["id"] != "ig_1" || prior["result"] != "aW1hZ2U=" {
+				t.Fatalf("image missing from follow-up: %+v", input)
+			}
+
+		})
+	}
+}

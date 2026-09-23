@@ -149,8 +149,10 @@ type ToolCall struct {
 	Display              *ToolCallDisplay `json:"display,omitempty"`
 }
 
-// InputImage carries one user-provided image in base64 form.
+// InputImage carries a user-provided or generated image in base64 form.
 type InputImage struct {
+	// ProviderItemID identifies a generated image for native output replay.
+	ProviderItemID string `json:"provider_item_id,omitempty"`
 	// Required evidence must cause an error instead of an unsupported-media omission.
 	// This is local admission metadata, never a provider wire field.
 	Required  bool
@@ -394,6 +396,7 @@ type ChatRequest struct {
 
 // ChatResponse is the normalized response from providers.
 type ChatResponse struct {
+	Images            []InputImage
 	Content           string
 	Phase             MessagePhase
 	ProviderItemID    string
@@ -425,6 +428,7 @@ type Client interface {
 type StreamEventType string
 
 const (
+	EventImage           StreamEventType = "image"
 	EventContentDelta    StreamEventType = "content_delta"
 	EventContentReplace  StreamEventType = "content_replace"
 	EventThinkingDelta   StreamEventType = "thinking_delta"
@@ -662,6 +666,7 @@ func (u TokenUsage) TotalContextTokens() int {
 
 // StreamEvent is a single event from a streaming chat response.
 type StreamEvent struct {
+	Image            *InputImage
 	Type             StreamEventType
 	Content          string
 	Phase            MessagePhase

@@ -26,11 +26,12 @@ type persistedToolCall struct {
 }
 
 type persistedImage struct {
-	Required  bool   `json:"required,omitempty"`
-	MediaType string `json:"media_type"`
-	Data      string `json:"data"`
-	Width     uint32 `json:"width,omitempty"`
-	Height    uint32 `json:"height,omitempty"`
+	ProviderItemID string `json:"provider_item_id,omitempty"`
+	Required       bool   `json:"required,omitempty"`
+	MediaType      string `json:"media_type"`
+	Data           string `json:"data"`
+	Width          uint32 `json:"width,omitempty"`
+	Height         uint32 `json:"height,omitempty"`
 }
 
 type persistedFile struct {
@@ -165,11 +166,12 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 				continue
 			}
 			msg.Images = append(msg.Images, providers.InputImage{
-				Required:  image.Required,
-				MediaType: image.MediaType,
-				Data:      image.Data,
-				Width:     image.Width,
-				Height:    image.Height,
+				Required:       image.Required,
+				ProviderItemID: image.ProviderItemID,
+				MediaType:      image.MediaType,
+				Data:           image.Data,
+				Width:          image.Width,
+				Height:         image.Height,
 			})
 		}
 		for _, file := range rec.Files {
@@ -375,11 +377,12 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 			continue
 		}
 		out.Images = append(out.Images, persistedImage{
-			Required:  image.Required,
-			MediaType: image.MediaType,
-			Data:      data,
-			Width:     image.Width,
-			Height:    image.Height,
+			Required:       image.Required,
+			ProviderItemID: image.ProviderItemID,
+			MediaType:      image.MediaType,
+			Data:           data,
+			Width:          image.Width,
+			Height:         image.Height,
 		})
 	}
 	for _, file := range msg.Files {
