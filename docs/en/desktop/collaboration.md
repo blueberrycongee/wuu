@@ -35,6 +35,12 @@ The task view shows ownership, progress, and results. Cancelling a task stops th
 
 Cancellation does not roll back file changes or completed commands. Check the [current diff and command results](workspace-tools.md) before accepting or resuming the work. Project routing keeps the task attached to the right project, but does not itself provide a filesystem sandbox; execution uses the applicable [permissions](../reference/permissions.md).
 
+## Delete a named agent
+
+Deleting an agent removes it from the agent list and its channels, deletes its direct messages and identity memory, and revokes its credentials. Task history does not prevent deletion. Unfinished tasks it owns, leads, or is actively executing are cancelled; its conversation and managed execution sessions stop, including sessions without a task link.
+
+Shared channel messages and completed task history retain their original attribution. Ordinary project session history and file changes remain available; deletion does not undo completed commands.
+
 ## Keep work available
 
 Room memory is shared within its room; identity memory belongs to the named agent. Agents can use these stores and saved plans as part of continuing work. Scheduled execution needs the host to be running: a sleeping or powered-off machine cannot carry out the task on time.

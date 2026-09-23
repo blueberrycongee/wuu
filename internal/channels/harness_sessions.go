@@ -106,6 +106,9 @@ func (s *Service) ReserveHarnessExecution(ctx context.Context, link HarnessSessi
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireActiveNamedAgentTx(ctx, tx, link.AgentID); err != nil {
+		return err
+	}
 	var work *Work
 	if link.WorkID != "" {
 		w, err := scanWork(tx.QueryRowContext(ctx, workSelect+` WHERE work.id=?`, link.WorkID))

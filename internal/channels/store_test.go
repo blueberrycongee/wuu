@@ -695,13 +695,108 @@ func TestDeleteNamedAgentPreservesTaskHistoryAndUpdatesRoomMembership(t *testing
 	if _, err := service.UpdateRoom(ctx, UpdateRoomParams{RoomID: room.ID, Members: &members}); err != nil {
 		t.Fatalf("add Beta: %v", err)
 	}
-	if _, err := service.CreateTaskHuman(ctx, TaskCreateParams{
+	task, err := service.CreateTaskHuman(ctx, TaskCreateParams{
 		RoomID: room.ID, Title: "Keep audit", OwnerID: beta.Agent.ID, HumanID: "human-1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("CreateTaskHuman() error = %v", err)
 	}
-	if err := service.DeleteNamedAgent(ctx, beta.Agent.ID); !errors.Is(err, ErrConflict) {
-		t.Fatalf("DeleteNamedAgent(with task history) error = %v, want ErrConflict", err)
+	completed, err := service.CreateTaskHuman(ctx, TaskCreateParams{
+		RoomID: room.ID, Title: "Completed audit", OwnerID: beta.Agent.ID, HumanID: "human-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdateTask(ctx, TaskUpdateParams{TaskID: completed.ID, State: TaskStateDone, AgentID: beta.Agent.ID, Token: beta.Token}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := service.BindAgent(ctx, beta.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := bindTestWorkSession(t, service, client, room.ID, task.ID, "deleted-agent-work")
+	run, err := worker.StartWorkRun(ctx, WorkRunStartParams{WorkID: task.ID, Kind: WorkRunProducer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dm := createTestDirectMessage(t, service, beta)
+	if err := service.DeleteNamedAgent(ctx, beta.Agent.ID); err != nil {
+		t.Fatalf("DeleteNamedAgent(with task history): %v", err)
+	}
+	if _, err := service.GetRoom(ctx, dm.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted DM error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(beta.Agent.MemoryDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted agent memory: %v", err)
+	}
+	// Reopening runs all recovery migrations: none may resurrect the identity,
+	// its memory directory, bindings, or queued work.
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(service.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if _, err := reopened.GetNamedAgent(ctx, beta.Agent.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetNamedAgent(deleted): %v", err)
+	}
+	if agents, err := reopened.ListNamedAgents(ctx); err != nil || len(agents) != 0 {
+		t.Fatalf("visible agents = %#v, err = %v", agents, err)
+	}
+	if _, err := reopened.AuthenticateAgent(ctx, beta.Agent.ID, beta.Token); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("deleted token remains usable: %v", err)
+	}
+	if _, err := reopened.UpdateNamedAgent(ctx, UpdateNamedAgentParams{ID: beta.Agent.ID, Name: "Revived"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update deleted identity: %v", err)
+	}
+	if _, err := reopened.OpenDirectMessage(ctx, "human-1", beta.Agent.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reopen deleted DM: %v", err)
+	}
+	if _, err := reopened.UpdateRoom(ctx, UpdateRoomParams{RoomID: room.ID, Members: &members}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reinvite deleted identity: %v", err)
+	}
+	if _, err := reopened.LookupCollaborationSession(ctx, "deleted-agent-work"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted binding restored: %v", err)
+	}
+	if err := reopened.ReserveHarnessExecution(ctx, HarnessSessionLink{SessionID: "late-execution", AgentID: beta.Agent.ID, RoomID: room.ID}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late execution admission: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(beta.Agent.MemoryDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("memory resurrected on reopen: %v", err)
+	}
+	activeHistory, err := reopened.GetWork(ctx, task.ID)
+	if err != nil || activeHistory.State != WorkCancelled || activeHistory.OwnerNamedAgentID != beta.Agent.ID {
+		t.Fatalf("cancelled history = %#v, err = %v", activeHistory, err)
+	}
+	completedHistory, err := reopened.GetWork(ctx, completed.ID)
+	if err != nil || completedHistory.State != WorkCompleted || completedHistory.OwnerNamedAgentID != beta.Agent.ID {
+		t.Fatalf("completed history = %#v, err = %v", completedHistory, err)
+	}
+	var runState WorkRunState
+	if err := reopened.db.QueryRowContext(ctx, `SELECT state FROM work_runs WHERE id = ?`, run.ID).Scan(&runState); err != nil || runState != WorkRunCancelled {
+		t.Fatalf("deleted agent run state = %s, err = %v", runState, err)
+	}
+	updated, err = reopened.GetRoom(ctx, room.ID)
+	if err != nil || len(updated.Members) != 1 {
+		t.Fatalf("room membership = %#v, err = %v", updated, err)
+	}
+	messages, err = reopened.ListMessages(ctx, room.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var historicalTasks int
+	for _, message := range messages {
+		if message.ID == task.ID || message.ID == completed.ID {
+			historicalTasks++
+			if message.TaskOwner != beta.Agent.ID {
+				t.Fatalf("lost historical attribution: %#v", message)
+			}
+		}
+	}
+	if historicalTasks != 2 {
+		t.Fatalf("preserved task messages = %d", historicalTasks)
 	}
 }
 

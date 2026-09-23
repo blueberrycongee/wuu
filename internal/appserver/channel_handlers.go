@@ -102,11 +102,38 @@ func (s *Server) handleChannelAgentDelete(ctx context.Context, req Request) erro
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	err := s.channelService.DeleteNamedAgent(ctx, params.AgentID)
-	if err == nil {
-		s.invalidateChannelAgentInsights()
+	s.namedAgentMu.Lock()
+	defer s.namedAgentMu.Unlock()
+	s.harnessMu.Lock()
+	defer s.harnessMu.Unlock()
+	agent, err := s.channelService.GetAgentRuntime(ctx, params.AgentID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, ChannelAgentDeleteResult{Deleted: err == nil}, err)
+	// Capture owned executions before deletion removes their bindings and token.
+	refs, _, err := s.namedAgentSessionRefs(ctx, agent)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	links, err := s.channelService.HarnessLinks(ctx, agent.ID, "")
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.channelService.DeleteNamedAgent(ctx, params.AgentID); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.invalidateChannelAgentInsights()
+	var interruptErr error
+	for _, ref := range refs {
+		interruptErr = errors.Join(interruptErr, s.interruptOwnedThreadExecution(ref))
+	}
+	for _, link := range links {
+		if link.Active {
+			interruptErr = errors.Join(interruptErr, s.reconcileHarnessLink(ctx, link))
+		}
+	}
+	s.kickHarnessSessions()
+	return s.writeResponse(req.ID, ChannelAgentDeleteResult{Deleted: true}, interruptErr)
 }
 
 func (s *Server) handleChannelAgentStart(ctx context.Context, req Request) error {
@@ -117,12 +144,12 @@ func (s *Server) handleChannelAgentStart(ctx context.Context, req Request) error
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	s.namedAgentMu.Lock()
+	defer s.namedAgentMu.Unlock()
 	agent, err := s.channelService.GetNamedAgent(ctx, params.AgentID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.namedAgentMu.Lock()
-	defer s.namedAgentMu.Unlock()
 	thread, err := s.ensureNamedAgentThreadLocked(agent)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)

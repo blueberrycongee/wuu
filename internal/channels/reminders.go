@@ -47,6 +47,9 @@ func (s *Service) setReminder(ctx context.Context, params ReminderSetParams, now
 		return Reminder{}, fmt.Errorf("begin reminder set: %w", err)
 	}
 	defer tx.Rollback()
+	if err := requireActiveNamedAgentTx(ctx, tx, params.AgentID); err != nil {
+		return Reminder{}, err
+	}
 	if params.RoomID != "" {
 		if err := s.requireRoomAgentMemberTx(ctx, tx, params.RoomID, params.AgentID); err != nil {
 			return Reminder{}, err

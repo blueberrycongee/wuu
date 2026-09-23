@@ -27,7 +27,7 @@ func insertConversationReplyTx(ctx context.Context, tx *sql.Tx, binding Collabor
 		SELECT EXISTS (
 			SELECT 1 FROM room_members member
 			JOIN collaboration_principals principal ON principal.id = member.member_id AND principal.kind = 'named_agent'
-			JOIN named_agents agent ON agent.id = principal.id AND agent.kind = 'named'
+			JOIN named_agents agent ON agent.id = principal.id AND agent.kind = 'named' AND agent.deleted_at IS NULL
 			WHERE member.room_id = ? AND member.member_type = 'agent' AND member.member_id = ?
 		)`, binding.RoomID, binding.PrincipalID).Scan(&canPublish); err != nil {
 		return nil, fmt.Errorf("check conversation reply membership: %w", err)

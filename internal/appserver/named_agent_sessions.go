@@ -15,15 +15,15 @@ func (s *Server) namedAgentSessionRefs(ctx context.Context, agent channels.Agent
 	refs := []string{agentRuntimeSessionID(agent)}
 	seen := map[string]struct{}{refs[0]: {}}
 	bySession := make(map[string]channels.CollaborationSessionBinding)
-	client, err := s.bindCollaborationPrincipal(ctx, agent, "")
-	if err != nil {
-		return nil, nil, err
-	}
-	bindings, err := client.ListCollaborationSessions(ctx, channels.CollaborationSessionListParams{PrincipalID: agent.ID})
+	// Host cleanup must still find executions when identity files are missing.
+	bindings, err := s.channelService.ListAllCollaborationSessions(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, binding := range bindings {
+		if binding.PrincipalID != agent.ID {
+			continue
+		}
 		bySession[binding.SessionRef] = binding
 		if _, ok := seen[binding.SessionRef]; !ok {
 			seen[binding.SessionRef] = struct{}{}

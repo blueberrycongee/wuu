@@ -118,6 +118,11 @@ func bindCollaborationSessionTx(ctx context.Context, tx *sql.Tx, actor AgentRunt
 	if actor.ID != params.PrincipalID {
 		return CollaborationSessionBinding{}, ErrUnauthorized
 	}
+	if principalKind == PrincipalNamedAgent {
+		if err := requireActiveNamedAgentTx(ctx, tx, params.PrincipalID); err != nil {
+			return CollaborationSessionBinding{}, err
+		}
+	}
 	if actor.IsRoomRuntime() && (params.RoomID != actor.RoomID || params.Purpose != CollaborationSessionCoordination || params.WorkID != "" || params.RunID != "") {
 		return CollaborationSessionBinding{}, ErrUnauthorized
 	}

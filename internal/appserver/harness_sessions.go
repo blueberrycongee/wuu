@@ -454,7 +454,7 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 			}
 		}
 		s.revokeSessionInputs(p.SessionID)
-		if err := s.interruptHarnessSession(p.SessionID); err != nil {
+		if err := s.interruptOwnedThreadExecution(p.SessionID); err != nil {
 			return err
 		}
 		op.State = "completed"
@@ -521,15 +521,6 @@ func (s *Server) applyHarnessOperationLocked(ctx context.Context, op *channels.H
 		op.TurnID, op.State = result.TurnID, "submitted"
 	}
 	return s.channelService.PutHarnessOperation(ctx, *op)
-}
-
-func (s *Server) interruptHarnessSession(id string) error {
-	if th := s.thread(id); th != nil {
-		_, err := s.interruptThreadExecution(id, "", "")
-		return err
-	}
-	_, err := session.RequestThreadExecutionReset(s.rt.SessionDir, id)
-	return err
 }
 
 // kickHarnessSessions is event-driven. The maintenance pass is only a crash or
@@ -650,7 +641,7 @@ func (s *Server) reconcileHarnessLink(ctx context.Context, link channels.Harness
 			}
 			s.revokeSessionInputs(link.SessionID)
 			s.publishSessionControl(link.SessionID)
-			return s.interruptHarnessSession(link.SessionID)
+			return s.interruptOwnedThreadExecution(link.SessionID)
 		}
 		return err
 	}

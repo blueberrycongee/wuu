@@ -60,9 +60,6 @@ func (s *Server) InterruptRunSession(sessionRef string) {
 			providers.DebugLogf("refuse to interrupt named session %q through hidden work run", sessionRef)
 			return
 		}
-		if _, err := s.interruptThreadExecution(sessionRef, "", ""); err != nil {
-			providers.DebugLogf("interrupt hidden work session %q: %v", sessionRef, err)
-		}
 	} else if s.rt != nil {
 		stored, found, err := session.Find(s.rt.SessionDir, sessionRef)
 		if err != nil {
@@ -73,7 +70,9 @@ func (s *Server) InterruptRunSession(sessionRef string) {
 			providers.DebugLogf("refuse to reset named session %q through hidden work run", sessionRef)
 			return
 		}
-		_, _ = session.RequestThreadExecutionReset(s.rt.SessionDir, sessionRef)
+	}
+	if err := s.interruptOwnedThreadExecution(sessionRef); err != nil {
+		providers.DebugLogf("interrupt hidden work session %q: %v", sessionRef, err)
 	}
 }
 
@@ -114,12 +113,8 @@ func (s *Server) interruptAgentSessions(agentID, sessionRef string, all bool) {
 	}
 	client, _ := s.channelService.BindAgent(context.Background(), agentID)
 	for _, ref := range refs {
-		if th := s.thread(ref); th != nil {
-			if _, err := s.interruptThreadExecution(ref, "", ""); err != nil {
-				providers.DebugLogf("interrupt agent runtime session %q: %v", ref, err)
-			}
-		} else if s.rt != nil {
-			_, _ = session.RequestThreadExecutionReset(s.rt.SessionDir, ref)
+		if err := s.interruptOwnedThreadExecution(ref); err != nil {
+			providers.DebugLogf("interrupt agent runtime session %q: %v", ref, err)
 		}
 		if binding, ok := bindings[ref]; ok && client != nil && binding.State == channels.CollaborationSessionRunning {
 			_, _ = client.UpdateCollaborationSessionState(context.Background(), channels.CollaborationSessionStateParams{
