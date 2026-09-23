@@ -41,8 +41,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   does not steal focus from another workspace tool or a foreground Agent
   browser.
 
-- Embedded browser automation is available by default. When explicitly made
-  visible, the page appears in a floating card inside the conversation column.
+- Embedded browser automation is available by default. The active conversation
+  previews the Agent's page in a floating card inside the conversation column.
   Dragging the card snaps it to a corner of that column, clear of the composer.
   The page keeps its layout size and is zoomed so the whole page fits in
   the card. Dragging an edge or corner changes the card, and the zoom follows.
@@ -115,8 +115,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Browser previews stay hidden after switching away from their conversation,
   including when panel visibility or background activity updates refresh them.
   Returning to the owning conversation restores its preview.
-- Background browser activity keeps its floating preview hidden until explicitly
-  made visible, so it does not interrupt work in another application.
+- Ordinary background browser actions show a watch-only preview in their active
+  conversation without requiring explicit visibility promotion. Further actions
+  keep it visible; docking the same page in the workspace panel hides the card.
+  A hidden or minimized desktop window stays hidden; its preview returns when
+  the window is shown or restored.
 
 - Switching desktop sessions keeps caught-up process folds stable through the
   first paint. Collaboration conversations restore the message being read,
