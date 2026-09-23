@@ -971,8 +971,8 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 	switch msg.Role {
 	case "assistant":
 		defer func() { th.agentStream = nil }()
-		out := th.reconcileAgentStreamItemsLocked(turnID, strings.TrimSpace(msg.Content) != "", now)
-		if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(msg.ReasoningContent) == "" {
+		out := th.reconcileAgentStreamItemsLocked(turnID, strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0, now)
+		if strings.TrimSpace(msg.Content) == "" && len(msg.Images) == 0 && strings.TrimSpace(msg.ReasoningContent) == "" {
 			return out
 		}
 		if strings.TrimSpace(msg.ReasoningContent) != "" && th.activeReasoningItemID == "" && !th.hasReasoningTextLocked(turnID, msg.ReasoningContent) {
@@ -987,10 +987,10 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 			th.upsertItemLocked(turnID, item, now)
 			out = append(out, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
 		}
-		if strings.TrimSpace(msg.Content) == "" {
+		if strings.TrimSpace(msg.Content) == "" && len(msg.Images) == 0 {
 			return out
 		}
-		if th.activeAgentItemID == "" && th.hasAgentTextLocked(turnID, msg.Content) {
+		if th.activeAgentItemID == "" && len(msg.Images) == 0 && th.hasAgentTextLocked(turnID, msg.Content) {
 			return out
 		}
 		terminal := assistantMessageTerminal(msg)
@@ -999,6 +999,7 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 			out = append(out, itemStarted(th.ID, turnID, item, now))
 		}
 		item.Text = msg.Content
+		item.Images = threadItemImages(msg.Images)
 		item.Seq = msg.Seq
 		item.SourceID = msg.ProviderItemID
 		item.Terminal = terminal
@@ -1572,7 +1573,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					Text:     msg.ReasoningContent,
 				}, historyIndex, true)
 			}
-			if strings.TrimSpace(msg.Content) != "" {
+			if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
 				appendItem(ThreadItem{
 					ID:           nextItemID(current.ID),
 					Seq:          msg.Seq,
@@ -1582,6 +1583,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					Terminal:     assistantMessageTerminal(msg),
 					Role:         "assistant",
 					Text:         msg.Content,
+					Images:       threadItemImages(msg.Images),
 					FinishReason: string(msg.FinishReason),
 					StopReason:   msg.StopReason,
 					Truncated:    msg.Truncated,
@@ -1717,7 +1719,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			RelatedSessionID: strings.TrimSpace(msg.RelatedSessionID),
 		}
 	case "assistant":
-		if strings.TrimSpace(msg.Content) != "" {
+		if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
 			return ThreadItem{
 				ID:           id,
 				Seq:          msg.Seq,
@@ -1727,6 +1729,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 				Terminal:     assistantMessageTerminal(msg),
 				Role:         "assistant",
 				Text:         msg.Content,
+				Images:       threadItemImages(msg.Images),
 				FinishReason: string(msg.FinishReason),
 				StopReason:   msg.StopReason,
 				Truncated:    msg.Truncated,
@@ -1793,10 +1796,11 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 			continue
 		}
 		msg.Images = append(msg.Images, providers.InputImage{
-			MediaType: image.MediaType,
-			Data:      image.Data,
-			Width:     image.Width,
-			Height:    image.Height,
+			ProviderItemID: image.ProviderItemID,
+			MediaType:      image.MediaType,
+			Data:           image.Data,
+			Width:          image.Width,
+			Height:         image.Height,
 		})
 	}
 	for _, file := range rec.Files {

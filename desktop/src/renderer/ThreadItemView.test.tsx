@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
+import { ImagePreviewProvider } from "./ImagePreview";
 import { ThreadItemView } from "./ThreadItemView";
 import { clearToasts, ToastViewport } from "./Toast";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
@@ -58,19 +59,21 @@ function render({
   act(() => {
     root!.render(
       <WuuUIRoot>
-        <ThreadItemView
-          turnID="turn-1"
-          turnStatus={turnStatus}
-          turnStartedAt={turnStartedAt}
-          item={item}
-          streaming={streaming}
-          actionableAgentMessageID={actionableAgentMessageID}
-          latestAgentMessageID={latestAgentMessageID}
-          onStreamFrame={() => {}}
-          onEditMessage={onEditMessage}
-          onForkMessage={onForkMessage}
-        />
-        <ToastViewport />
+        <ImagePreviewProvider>
+          <ThreadItemView
+            turnID="turn-1"
+            turnStatus={turnStatus}
+            turnStartedAt={turnStartedAt}
+            item={item}
+            streaming={streaming}
+            actionableAgentMessageID={actionableAgentMessageID}
+            latestAgentMessageID={latestAgentMessageID}
+            onStreamFrame={() => {}}
+            onEditMessage={onEditMessage}
+            onForkMessage={onForkMessage}
+          />
+          <ToastViewport />
+        </ImagePreviewProvider>
       </WuuUIRoot>,
     );
   });
@@ -707,4 +710,14 @@ describe("ThreadItemView", () => {
     act(() => setOpenThreadInSplitHandler(undefined));
   });
 
+});
+
+it("renders an image-only assistant response using the attachment preview", () => {
+  render({
+    item: { ...makeFinalAnswer("completed"), text: "", images: [{ media_type: "image/png", data: "aW1hZ2U=" }] },
+    turnStatus: "completed",
+    streaming: false,
+  });
+  const image = container!.querySelector("img");
+  expect(image?.getAttribute("src")).toBe("data:image/png;base64,aW1hZ2U=");
 });

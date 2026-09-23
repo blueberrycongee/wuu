@@ -7,5 +7,5 @@ export function SidePanelToggleIcon({ side, open, size }: {
 }): JSX.Element {
   const Icon = side === "left" ? PanelLeft : PanelRight;
   return <Icon className="side-panel-toggle-icon" data-open={open} size={size}
-    style={{ width: size ?? "var(--icon-size)", height: size ?? "var(--icon-size)" }} />;
+    style={size === undefined ? undefined : { width: size, height: size }} />;
 }

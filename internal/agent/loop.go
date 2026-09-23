@@ -888,10 +888,11 @@ func RunToolLoop(
 			// the user. Keep that visible text in durable history, but deliberately
 			// drop provider-native identity, reasoning, and tool calls because the
 			// failed stream may have left those structures incomplete.
-			if strings.TrimSpace(result.Content) != "" {
+			if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
 				appendMessage(providers.ChatMessage{
 					Role:    "assistant",
 					Content: result.Content,
+					Images:  result.Images,
 					Phase:   result.Phase,
 				})
 			}
@@ -946,6 +947,7 @@ func RunToolLoop(
 
 		assistant := providers.ChatMessage{
 			Role:                 "assistant",
+			Images:               result.Images,
 			Content:              result.Content,
 			Phase:                result.Phase,
 			ProviderItemID:       result.ProviderItemID,
@@ -983,7 +985,7 @@ func RunToolLoop(
 		// No tool calls → model is done. Return content plus finish metadata.
 		if len(result.ToolCalls) == 0 {
 			finalContent := result.Content
-			if strings.TrimSpace(finalContent) == "" {
+			if strings.TrimSpace(finalContent) == "" && len(result.Images) == 0 {
 				// A normal provider stop ends this turn even without outward text.
 				// It does not prove that the user's task is complete. Preserve length
 				// metadata separately so callers can still surface truncation.
@@ -1337,7 +1339,7 @@ func resolveEffectiveCompaction(cfg LoopConfig) CompactFn {
 }
 
 func stepResultHasNoPartialOutput(result StepResult) bool {
-	return strings.TrimSpace(result.Content) == "" &&
+	return strings.TrimSpace(result.Content) == "" && len(result.Images) == 0 &&
 		strings.TrimSpace(result.ReasoningContent) == "" &&
 		strings.TrimSpace(result.ProviderItemID) == "" &&
 		len(result.ReasoningBlocks) == 0 &&
@@ -1490,6 +1492,9 @@ func cloneReasoningBlocks(blocks []providers.ReasoningBlock) []providers.Reasoni
 }
 
 func shouldPersistAssistantMessage(msg providers.ChatMessage) bool {
+	if len(msg.Images) > 0 {
+		return true
+	}
 	if strings.TrimSpace(msg.Content) != "" {
 		return true
 	}

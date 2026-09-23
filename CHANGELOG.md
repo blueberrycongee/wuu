@@ -15,6 +15,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   attachment. Image results retain the existing file scope and model capability
   checks. Code Mode forwards emitted images as visual observations.
 
+- Image previews support smooth trackpad pinch zoom, two-finger panning, drag,
+  fit-to-window and actual-size views, rotation, keyboard controls, and a desktop
+  Save As dialog that preserves the original image.
+
 - Browser previews show an animated completion badge when the visible task
   finishes successfully, and clear it when work resumes. Hover reveals preview
   controls even while another application is active.
@@ -42,8 +46,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   does not steal focus from another workspace tool or a foreground Agent
   browser.
 
-- Embedded browser automation is available by default. When explicitly made
-  visible, the page appears in a floating card inside the conversation column.
+- Embedded browser automation is available by default. The active conversation
+  previews the Agent's page in a floating card inside the conversation column.
   Dragging the card snaps it to a corner of that column, clear of the composer.
   The page keeps its layout size and is zoomed so the whole page fits in
   the card. Dragging an edge or corner changes the card, and the zoom follows.
@@ -53,6 +57,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   hide the tool.
 
 ### Changed
+
+- Folder, conversation, and new-conversation icons use simpler contours and
+  consistent rounded frames, matching the sidebar toggle controls. Single and
+  stacked conversation bubbles share the same visual style.
+
+- Information, add, and expand/restore icons use balanced optical insets beside
+  sidebar toggles and close icons. Sidebar glyphs follow their control's size,
+  including compact titlebar menus.
 
 - Conversation images use compact tool thumbnails and bounded, proportional
   previews in replies, with consistent space before and after images.
@@ -99,6 +111,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Inline artifact image previews fit the image's original proportions instead of
+  adding white margins inside a fixed 4:3 frame, without cropping or stretching.
+  Click-to-enlarge still opens the complete original image.
+
+- Conversation model changes no longer replace the selected model with workspace
+  defaults. Model, reasoning-effort, and permission update failures use the shared
+  top notification instead of duplicating errors in the composer status line.
+
+- Responses image-generation results now appear as assistant image attachments
+  and remain available when reopening the conversation, including replies with
+  no text.
+
 - Managed session reports preserve completed, failed, and interrupted execution
   outcomes. Control changes and ordinary evidence messages no longer claim a
   successful completion; rejected session operations report failure.
@@ -116,8 +140,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Browser previews stay hidden after switching away from their conversation,
   including when panel visibility or background activity updates refresh them.
   Returning to the owning conversation restores its preview.
-- Background browser activity keeps its floating preview hidden until explicitly
-  made visible, so it does not interrupt work in another application.
+- Ordinary background browser actions show a watch-only preview in their active
+  conversation without requiring explicit visibility promotion. Further actions
+  keep it visible; docking the same page in the workspace panel hides the card.
+  A hidden or minimized desktop window stays hidden; its preview returns when
+  the window is shown or restored.
 
 - Switching desktop sessions keeps caught-up process folds stable through the
   first paint. Collaboration conversations restore the message being read,
@@ -126,6 +153,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Desktop surfaces share titlebar geometry and sidebar-control alignment, while
   compact channel headers retain their native safe-area clearance.
+  Sidebar toggles now retain their position and size when switching to Settings
+  or opening a narrow-window drawer. Workspace headers use the same geometry
+  across window widths. Desktop zoom preserves native window-control alignment
+  while controls fit; larger zoom or font sizes expand the row to avoid clipping.
 
 - The desktop app detects external engines installed in the usual user
   locations, including `~/.local/bin`, Homebrew, and version-manager shims,

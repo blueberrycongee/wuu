@@ -11,6 +11,9 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 800, height: 600 } as DOMRect);
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -21,6 +24,7 @@ afterEach(() => {
   });
   root = null;
   container.remove();
+  vi.restoreAllMocks();
 });
 
 function overlayImage(): HTMLImageElement | null {
@@ -194,9 +198,117 @@ it("shares the original image through the native host and reports a failed save"
   try {
     const probe = renderWithProbe();
     act(() => probe.getAPI()!.openPreview({src:"data:image/png;base64,aGVsbG8=",title:"test.png"}));
+    loadImage();
     const button = container.querySelector<HTMLButtonElement>('.image-preview-toolbar-button')!;
     await act(async () => { button.click(); });
     expect(saveArtifactFile).toHaveBeenCalledWith("test.png","data:image/png;base64,aGVsbG8=");
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Storage full");
   } finally { window.wuu = previous; }
+});
+
+function loadImage(): void {
+  const image = overlayImage()!;
+  Object.defineProperties(image, { naturalWidth: { configurable: true, value: 1600 }, naturalHeight: { configurable: true, value: 1200 } });
+  act(() => image.dispatchEvent(new Event("load")));
+}
+
+function key(key: string, options: KeyboardEventInit = {}): void {
+  act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options })));
+}
+
+function transform(): { x: number; y: number; scale: number } {
+  const values = overlayImage()!.style.transform.match(/translate\(([-.\d]+)px, ([-.\d]+)px\) scale\(([-.\d]+)\)/)!;
+  return { x: Number(values[1]), y: Number(values[2]), scale: Number(values[3]) };
+}
+
+it("zooms smoothly around the pinch position, pans with two-finger scrolling, and fits back into view", () => {
+  const probe = renderWithProbe();
+  act(() => probe.getAPI()!.openPreview({ src: "data:image/png;base64,AAA" }));
+  loadImage();
+  key("1");
+  const stage = container.querySelector(".image-preview-stage")!;
+  const wheel = new WheelEvent("wheel", { ctrlKey: true, deltaY: -10, clientX: 600, clientY: 400, cancelable: true });
+  act(() => stage.dispatchEvent(wheel));
+  expect(wheel.defaultPrevented).toBe(true);
+  expect(transform().scale).toBeCloseTo(Math.exp(0.1));
+  expect(transform().x).toBeCloseTo(200 * (1 - Math.exp(0.1)));
+  expect(transform().y).toBeCloseTo(100 * (1 - Math.exp(0.1)));
+  const before = transform();
+  act(() => stage.dispatchEvent(new WheelEvent("wheel", { deltaX: 30, deltaY: 20, cancelable: true })));
+  expect(transform().scale).toBe(before.scale);
+  expect(transform().x).toBeCloseTo(before.x - 30);
+  key("0");
+  expect(transform()).toEqual({ x: 0, y: 0, scale: 568 / 1200 });
+});
+
+it("keeps the image reachable after extreme panning and zooming out, and resets for the next image", () => {
+  const probe = renderWithProbe();
+  act(() => probe.getAPI()!.openPreview({ src: "data:image/png;base64,AAA" }));
+  loadImage();
+  key("1");
+  const stage = container.querySelector(".image-preview-stage")!;
+  act(() => stage.dispatchEvent(new WheelEvent("wheel", { deltaX: 10000, deltaY: 10000 })));
+  expect(transform()).toEqual({ x: -416, y: -316, scale: 1 });
+  act(() => stage.dispatchEvent(new WheelEvent("wheel", { ctrlKey: true, deltaY: 10000 })));
+  expect(transform()).toEqual({ x: 0, y: 0, scale: 0.05 });
+  key("r");
+  expect(overlayImage()!.style.transform).toContain("rotate(90deg)");
+  expect(transform().scale).toBeCloseTo(568 / 1600);
+  act(() => probe.getAPI()!.openPreview({ src: "data:image/png;base64,BBB" }));
+  loadImage();
+  expect(overlayImage()!.style.transform).toContain("rotate(0deg)");
+  expect(transform()).toEqual({ x: 0, y: 0, scale: 568 / 1200 });
+});
+
+it("does not close when a captured drag releases on the stage", () => {
+  const probe = renderWithProbe();
+  act(() => probe.getAPI()!.openPreview({ src: "data:image/png;base64,AAA" }));
+  loadImage();
+  key("1");
+  const stage = container.querySelector<HTMLElement>(".image-preview-stage")!;
+  stage.setPointerCapture = vi.fn();
+  stage.hasPointerCapture = () => true;
+  stage.releasePointerCapture = vi.fn();
+  function pointer(type: string, x: number): void {
+    const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 200 });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    act(() => (type === "pointerdown" ? overlayImage()! : stage).dispatchEvent(event));
+  }
+  pointer("pointerdown", 200);
+  pointer("pointermove", 260);
+  const transfer = new Event("lostpointercapture", { bubbles: true });
+  Object.defineProperty(transfer, "pointerId", { value: 1 });
+  act(() => overlayImage()!.dispatchEvent(transfer));
+  pointer("pointermove", 320);
+  pointer("pointerup", 320);
+  act(() => stage.click());
+  expect(overlayRoot()).not.toBeNull();
+  expect(transform().x).toBe(120);
+  act(() => stage.click());
+  expect(overlayRoot()).toBeNull();
+});
+
+it("contains keyboard focus and Escape without triggering conversation shortcuts", () => {
+  const opener = document.createElement("button");
+  document.body.append(opener);
+  opener.focus();
+  const probe = renderWithProbe();
+  const underlying = vi.fn();
+  window.addEventListener("keydown", underlying);
+  try {
+    act(() => probe.getAPI()!.openPreview({ src: "data:image/png;base64,AAA" }));
+    loadImage();
+    expect(document.activeElement).toBe(overlayRoot());
+    key("Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(container.querySelector(".wuu-icon-x")!.closest("button"));
+    key("Tab");
+    expect(overlayRoot()!.contains(document.activeElement)).toBe(true);
+    key("Escape");
+    expect(overlayRoot()).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(underlying).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", underlying);
+    opener.remove();
+  }
 });

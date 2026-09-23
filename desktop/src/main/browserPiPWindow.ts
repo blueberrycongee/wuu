@@ -33,6 +33,7 @@ import type {
   BrowserViewHandle,
 } from "./browserHostWindows";
 import {
+  type BrowserPiPHostWindow,
   type ObservationPiPEventSink,
   type ObservationPiPFactory,
   type ObservationPiPHandle,
@@ -138,7 +139,7 @@ type BrowserPiPSurfaceDeps = {
   createWindow?: (bounds: Rectangle) => BrowserPiPWindowHandle;
   createOverlay?: () => BrowserPiPOverlayHandle;
   cursorPosition?: () => PipPoint;
-  parent?: () => { isDestroyed(): boolean } | null | undefined;
+  parent?: () => BrowserPiPHostWindow | null | undefined;
 };
 
 export class BrowserPiPSurface implements ObservationPiPHandle {
@@ -162,7 +163,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
   // undefined: the column has not been measured yet. null: measured, and the
   // conversation column is not on screen.
   private screenLayout: BrowserPiPScreenLayout | null | undefined = undefined;
-  private hostParent: { isDestroyed(): boolean } | null = null;
+  private hostParent: BrowserPiPHostWindow | null = null;
+  private detachHostParent: (() => void) | undefined;
   private dragging = false;
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
@@ -240,7 +242,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     });
     win.on("ready-to-show", () => {
       if (win.isDestroyed() || this.win !== win) return;
-      if (this.visible) win.showInactive();
+      this.applyVisibility();
     });
     // Reparent the agent tab out before the window dies: a child
     // WebContentsView would be destroyed with the window and kill the tab.
@@ -248,6 +250,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     win.on("closed", () => {
       if (this.win !== win) return;
       this.stopHoverTracking();
+      this.detachHostParent?.();
+      this.detachHostParent = undefined;
       this.win = undefined;
       this.overlay = undefined;
       this.mounted = false;
@@ -277,6 +281,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         }
       }),
     );
+    this.setHostParent(this.deps.parent?.() ?? null);
   }
 
   setVisible(visible: boolean): void {
@@ -291,7 +296,11 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     // Unknown layout (no report yet) still shows, so a card can appear before
     // the first measurement. An explicit empty layout means the column is gone.
     const columnGone = this.screenLayout === null;
-    if (this.visible && !columnGone) {
+    const parent = this.hostParent;
+    // Showing a native child window can reveal its hidden parent on macOS.
+    // Restore the preview from host visibility events, never by showing Wuu.
+    const parentHidden = parent && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized());
+    if (this.visible && !columnGone && !parentHidden) {
       this.mount();
       if (this.win !== win || win.isDestroyed()) return;
       if (!win.isVisible()) win.showInactive();
@@ -367,12 +376,23 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     this.applyVisibility();
   }
 
-  setHostParent(parent: { isDestroyed(): boolean } | null): void {
+  setHostParent(parent: BrowserPiPHostWindow | null): void {
     const win = this.win;
-    if (!win || win.isDestroyed() || !win.setParentWindow || this.hostParent === parent) return;
+    if (!win || win.isDestroyed() || this.hostParent === parent) return;
+    this.detachHostParent?.();
+    this.detachHostParent = undefined;
     this.hostParent = parent;
-    if (!parent || parent.isDestroyed()) return;
-    win.setParentWindow(parent);
+    if (win.isVisible()) win.hide();
+    win.setParentWindow?.(parent && !parent.isDestroyed() ? parent : null);
+    if (parent && !parent.isDestroyed()) {
+      const events = ["show", "hide", "minimize", "restore"] as const;
+      const syncVisibility = (): void => this.applyVisibility();
+      for (const event of events) parent.on(event, syncVisibility);
+      this.detachHostParent = () => {
+        for (const event of events) parent.removeListener(event, syncVisibility);
+      };
+    }
+    this.applyVisibility();
   }
 
   updateActivity(activity: ActivitySession): void {
@@ -419,6 +439,8 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     }
     this.stopped = true;
     this.stopHoverTracking();
+    this.detachHostParent?.();
+    this.detachHostParent = undefined;
     this.cancelSnap();
     for (const unsub of this.unsubs.splice(0)) unsub();
     this.unmount();
@@ -765,8 +787,6 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
         ...appShellWebPreferences(this.deps.isPackaged),
       },
     }) as unknown as BrowserPiPWindowHandle;
-    const parent = this.deps.parent?.();
-    if (parent && !parent.isDestroyed()) win.setParentWindow?.(parent);
     return win;
   }
 
@@ -790,7 +810,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
 export function createObservationPiPFactory(deps: {
   browserHost: BrowserHostCoordinator;
   isPackaged: boolean;
-  parent?: () => { isDestroyed(): boolean } | null | undefined;
+  parent?: () => BrowserPiPHostWindow | null | undefined;
 }): ObservationPiPFactory {
   return (activity, _key, sink, bounds) => {
     if (activity.kind === "browser") {

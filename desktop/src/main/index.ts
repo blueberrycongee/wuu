@@ -1,3 +1,4 @@
+import { saveArtifactFile } from "./artifactSave";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { routeHarnessWorkspaceRequest, WORKSPACE_HARNESS_DISPATCH } from "./harnessWorkspaceRouting";
@@ -1661,6 +1662,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:text-polish", (event, text: string) =>
     appServerRequest<TextPolishResult>(event, "text/polish", { text }),
   );
+  ipcMain.handle("wuu:artifact-save", async (event, name: string, source: string) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    if (!parent) throw new Error("Artifact window is no longer available");
+    await saveArtifactFile(parent, event.sender.session, name, source);
+  });
   ipcMain.handle("wuu:open-external", async (_event, url: string) => {
     await openExternalNavigation(url);
   });

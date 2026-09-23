@@ -2,7 +2,7 @@ import {
   createContext,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type UIEvent as ReactUIEvent,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useContext,
   useEffect,
@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { Download, Minus, RotateCcw, X, ZoomIn } from "./WuuIcons";
+import { Download, Maximize2, Minus, RotateCw, X, ZoomIn } from "./WuuIcons";
 import { useI18n } from "./i18n";
 
 export type ImagePreviewItem =
@@ -36,22 +36,6 @@ export function useOptionalImagePreview(): ImagePreviewContextValue | null {
   return useContext(ImagePreviewContext);
 }
 
-const MIN_SCALE = 0.5;
-const MAX_SCALE = 8;
-const SCALE_STEP = 0.5;
-
-function clampScale(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 1;
-  }
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
-}
-
-function nextScale(current: number, direction: 1 | -1): number {
-  const target = direction > 0 ? current + SCALE_STEP : current - SCALE_STEP;
-  return clampScale(target);
-}
-
 export function ImagePreviewProvider({ children }: { children: ReactNode }): JSX.Element {
   const [item, setItem] = useState<ImagePreviewItem | null>(null);
 
@@ -68,241 +52,280 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }): JSX
   return (
     <ImagePreviewContext.Provider value={value}>
       {children}
-      {item ? <ImagePreviewOverlay item={item} onClose={closePreview} /> : null}
+      {item ? <ImagePreviewOverlay key={item.src ?? item.svg} item={item} onClose={closePreview} /> : null}
     </ImagePreviewContext.Provider>
   );
 }
 
-function ImagePreviewOverlay({
-  item,
-  onClose
-}: {
+type View = { scale: number | null; x: number; y: number };
+const fittedView: View = { scale: null, x: 0, y: 0 };
+
+function ImagePreviewOverlay({ item, onClose }: {
   item: ImagePreviewItem;
   onClose: () => void;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [view, setView] = useState<View>(fittedView);
+  const [rotation, setRotation] = useState(0);
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [saveError, setSaveError] = useState("");
-  const saveImage = (): void => {
-    const source = item.svg == null ? item.src : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
-    if (!source || !window.wuu?.saveArtifactFile) return;
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<HTMLDivElement>(null);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const suppressClick = useRef(false);
+  const rotated = rotation % 180 !== 0;
+  const width = rotated ? imageSize.height : imageSize.width;
+  const height = rotated ? imageSize.width : imageSize.height;
+  const fitScale = width && height
+    ? Math.min(1, Math.max(1, stageSize.width - 32) / width, Math.max(1, stageSize.height - 32) / height)
+    : 1;
+  const minScale = Math.min(0.05, fitScale);
+  const scale = view.scale ?? fitScale;
+  const ready = loadStatus === "loaded";
+
+  const constrain = useCallback((next: View): View => {
+    const zoom = next.scale ?? fitScale;
+    const maxX = Math.max(0, (width * zoom - stageSize.width) / 2 + 16);
+    const maxY = Math.max(0, (height * zoom - stageSize.height) / 2 + 16);
+    return { ...next, x: Math.max(-maxX, Math.min(maxX, next.x)), y: Math.max(-maxY, Math.min(maxY, next.y)) };
+  }, [fitScale, width, height, stageSize]);
+  const visibleView = constrain(view);
+
+  const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number, dx = 0, dy = 0) => {
+    const bounds = stageRef.current!.getBoundingClientRect();
+    const x = clientX == null ? 0 : clientX - bounds.left - bounds.width / 2;
+    const y = clientY == null ? 0 : clientY - bounds.top - bounds.height / 2;
+    setView(previous => {
+      const current = constrain(previous);
+      const currentScale = current.scale ?? fitScale;
+      const nextScale = Math.max(minScale, Math.min(8, currentScale * factor));
+      const ratio = nextScale / currentScale;
+      return constrain({ scale: nextScale, x: x - (x - current.x) * ratio + dx, y: y - (y - current.y) * ratio + dy });
+    });
+  }, [constrain, fitScale, minScale]);
+
+  const pan = useCallback((x: number, y: number) => {
+    setView(previous => {
+      const current = constrain(previous);
+      return constrain({ ...current, x: current.x + x, y: current.y + y });
+    });
+  }, [constrain]);
+
+  const rotate = useCallback(() => {
+    setRotation(current => (current + 90) % 360);
+    setView(fittedView);
+  }, []);
+
+  const saveImage = useCallback(async () => {
+    if (!window.wuu?.saveArtifactFile || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     setSaveError("");
-    void window.wuu.saveArtifactFile(item.title || (item.svg == null ? "image.png" : "image.svg"), source)
-      .catch(error => setSaveError(String(error)));
-  };
-  const dragState = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number } | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
+    const source = item.svg == null ? item.src : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
+    try {
+      await window.wuu.saveArtifactFile(item.title || (item.svg == null ? "image" : "image.svg"), source);
+    } catch (error) {
+      setSaveError(String(error));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }, [item]);
 
   useEffect(() => {
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
-    setLoadStatus("loading");
+    if (item.svg != null) {
+      const svg = svgRef.current!.querySelector("svg")!;
+      const box = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
+      const bounds = svg.getBoundingClientRect();
+      setImageSize({ width: box?.[2] || bounds.width, height: box?.[3] || bounds.height });
+      setLoadStatus("loaded");
+    }
   }, [item.src, item.svg]);
 
   useEffect(() => {
+    const stage = stageRef.current!;
+    const measure = () => setStageSize({ width: stage.clientWidth, height: stage.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    overlayRef.current!.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
     };
   }, []);
 
   useEffect(() => {
-    function handleKey(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
+    const stage = stageRef.current!;
+    function wheel(event: WheelEvent): void {
+      event.preventDefault();
+      if (!ready) return;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? stage.clientHeight : 1;
+      if (event.ctrlKey || event.metaKey) {
+        // Chromium reports a trackpad pinch as Ctrl + wheel, with small deltas.
+        zoomAt(Math.exp(-event.deltaY * unit * 0.01), event.clientX, event.clientY);
+      } else {
+        pan(-event.deltaX * unit, -event.deltaY * unit);
       }
     }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
-  const resetTransform = useCallback(() => {
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
-  }, []);
-
-  const zoomIn = useCallback(() => {
-    setScale((current) => nextScale(current, 1));
-  }, []);
-  const zoomOut = useCallback(() => {
-    setScale((current) => nextScale(current, -1));
-  }, []);
-
-  const handleWheel = useCallback((event: WheelEvent) => {
-    event.preventDefault();
-    const direction = event.deltaY > 0 ? -1 : 1;
-    setScale((current) => nextScale(current, direction));
-  }, []);
+    stage.addEventListener("wheel", wheel, { passive: false });
+    return () => stage.removeEventListener("wheel", wheel);
+  }, [ready, zoomAt, pan]);
 
   useEffect(() => {
-    const node = viewportRef.current;
-    if (!node) {
-      return;
+    function keydown(event: KeyboardEvent): void {
+      // Keep preview shortcuts (especially Escape) away from the conversation.
+      event.stopPropagation();
+      if (event.key === "Tab") {
+        const buttons = Array.from(overlayRef.current!.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.shiftKey ? (index <= 0 ? buttons.length - 1 : index - 1) : (index + 1) % buttons.length;
+        event.preventDefault();
+        buttons[next]?.focus();
+        return;
+      }
+      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (ready) void saveImage();
+        return;
+      }
+      if (!ready || event.metaKey || event.ctrlKey || event.altKey) return;
+      switch (event.key) {
+        case "+": case "=": zoomAt(1.25); break;
+        case "-": zoomAt(1 / 1.25); break;
+        case "0": setView(fittedView); break;
+        case "1": setView({ scale: 1, x: 0, y: 0 }); break;
+        case "r": case "R": rotate(); break;
+        case "ArrowLeft": pan(60, 0); break;
+        case "ArrowRight": pan(-60, 0); break;
+        case "ArrowUp": pan(0, 60); break;
+        case "ArrowDown": pan(0, -60); break;
+        default: return;
+      }
+      event.preventDefault();
     }
-    node.addEventListener("wheel", handleWheel, { passive: false });
-    return () => node.removeEventListener("wheel", handleWheel);
-  }, [handleWheel]);
+    document.addEventListener("keydown", keydown, true);
+    return () => document.removeEventListener("keydown", keydown, true);
+  }, [onClose, ready, saveImage, zoomAt, pan, rotate]);
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (scale <= 1) {
-      return;
-    }
-    if (event.button !== 0) {
-      return;
-    }
-    const target = event.currentTarget;
-    target.setPointerCapture(event.pointerId);
-    dragState.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      baseX: offset.x,
-      baseY: offset.y
-    };
-  };
+  function pointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (!ready || event.button !== 0) return;
+    suppressClick.current = event.target !== event.currentTarget;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
 
-  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const drag = dragState.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    setOffset({
-      x: drag.baseX + (event.clientX - drag.startX),
-      y: drag.baseY + (event.clientY - drag.startY)
-    });
-  };
-
-  const endDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const drag = dragState.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    dragState.current = null;
-  };
-
-  const handleBackgroundClick = (event: ReactUIEvent<HTMLDivElement>): void => {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  };
-
-  const handleDoubleClick = (): void => {
-    if (scale > 1) {
-      resetTransform();
+  function pointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
+    const previous = pointers.current.get(event.pointerId);
+    if (!previous) return;
+    const next = { x: event.clientX, y: event.clientY };
+    const other = Array.from(pointers.current.entries()).find(([id]) => id !== event.pointerId)?.[1];
+    pointers.current.set(event.pointerId, next);
+    if (previous.x === next.x && previous.y === next.y) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    suppressClick.current = true;
+    setDragging(true);
+    if (other) {
+      const before = Math.hypot(previous.x - other.x, previous.y - other.y);
+      const after = Math.hypot(next.x - other.x, next.y - other.y);
+      if (before > 0) zoomAt(after / before, (previous.x + other.x) / 2, (previous.y + other.y) / 2,
+        (next.x - previous.x) / 2, (next.y - previous.y) / 2);
     } else {
-      setScale(2);
+      pan(next.x - previous.x, next.y - previous.y);
     }
-  };
+  }
 
-  const handleImageLoad = (): void => setLoadStatus("loaded");
-  const handleImageError = (): void => setLoadStatus("error");
+  function endPointer(event: ReactPointerEvent<HTMLDivElement>): void {
+    // Touch starts with implicit capture on the image. Transferring capture to
+    // the stage emits a bubbling loss from that image, not the end of a gesture.
+    if (event.type === "lostpointercapture" && event.target !== event.currentTarget) return;
+    pointers.current.delete(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!pointers.current.size) setDragging(false);
+  }
 
-  const transform = `translate(${offset.x}px, ${offset.y}px) scale(${scale})`;
-  const cursor = scale > 1 ? "grab" : "zoom-in";
+  function backgroundClick(event: ReactMouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget && !suppressClick.current) onClose();
+    suppressClick.current = false;
+  }
 
+  const transform = `translate(${visibleView.x}px, ${visibleView.y}px) scale(${scale}) rotate(${rotation}deg)`;
+  const canPan = width * scale > stageSize.width - 32 || height * scale > stageSize.height - 32;
   return (
-    <div
-      ref={viewportRef}
-      className="image-preview-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("imagePreview.label")}
-      onClick={handleBackgroundClick}
-    >
-      <div className="image-preview-toolbar" onClick={(event) => event.stopPropagation()}>
+    <div ref={overlayRef} className="image-preview-overlay" role="dialog" aria-modal="true"
+      aria-label={t("imagePreview.label")} tabIndex={-1}>
+      <div className="image-preview-toolbar">
         <div className="image-preview-toolbar-actions">
-          {window.wuu?.saveArtifactFile && <button type="button" className="image-preview-toolbar-button" onClick={saveImage} aria-label={t("artifacts.downloadNamed", {name:item.title || "image"})}><Download className="icon" aria-hidden="true" /></button>}
-          <button
-            type="button"
-            className="image-preview-toolbar-button"
-            onClick={zoomOut}
-            disabled={scale <= MIN_SCALE}
-            aria-label={t("imagePreview.zoomOut")}
-            title={t("imagePreview.zoomOut")}
-          >
+          {window.wuu?.saveArtifactFile && <button type="button" className="image-preview-toolbar-button"
+            onClick={() => void saveImage()} disabled={!ready || saving}
+            aria-label={t("imagePreview.saveAs")} title={t("imagePreview.saveAs")}>
+            <Download className="icon" aria-hidden="true" />
+          </button>}
+          <button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1 / 1.25)}
+            disabled={!ready || scale <= minScale} aria-label={t("imagePreview.zoomOut")} title={t("imagePreview.zoomOut")}>
             <Minus className="icon" aria-hidden="true" />
           </button>
-          <span className="image-preview-zoom-readout" aria-live="polite">
-            {formatNumber(scale, {
-              style: "percent",
-              maximumFractionDigits: 0,
-            })}
+          <span className="image-preview-zoom-readout">
+            {formatNumber(scale, { style: "percent", maximumFractionDigits: 0 })}
           </span>
-          <button
-            type="button"
-            className="image-preview-toolbar-button"
-            onClick={zoomIn}
-            disabled={scale >= MAX_SCALE}
-            aria-label={t("imagePreview.zoomIn")}
-            title={t("imagePreview.zoomIn")}
-          >
+          <button type="button" className="image-preview-toolbar-button" onClick={() => zoomAt(1.25)}
+            disabled={!ready || scale >= 8} aria-label={t("imagePreview.zoomIn")} title={t("imagePreview.zoomIn")}>
             <ZoomIn className="icon" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            className="image-preview-toolbar-button"
-            onClick={resetTransform}
-            disabled={scale === 1 && offset.x === 0 && offset.y === 0}
-            aria-label={t("imagePreview.resetZoom")}
-            title={t("imagePreview.resetZoom")}
-          >
-            <RotateCcw className="icon" aria-hidden="true" />
+          <button type="button" className="image-preview-toolbar-button" onClick={() => setView(fittedView)}
+            disabled={!ready} aria-label={t("imagePreview.fit")} title={t("imagePreview.fit")}>
+            <Maximize2 className="icon" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            className="image-preview-toolbar-button"
-            onClick={onClose}
-            aria-label={t("imagePreview.close")}
-            title={t("imagePreview.closeShortcut")}
-          >
+          <button type="button" className="image-preview-toolbar-button" onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+            disabled={!ready} aria-label={t("imagePreview.actualSize")} title={t("imagePreview.actualSize")}>
+            <span className="image-preview-actual-size" aria-hidden="true">1:1</span>
+          </button>
+          <button type="button" className="image-preview-toolbar-button" onClick={rotate}
+            disabled={!ready} aria-label={t("imagePreview.rotate")} title={t("imagePreview.rotate")}>
+            <RotateCw className="icon" aria-hidden="true" />
+          </button>
+          <button type="button" className="image-preview-toolbar-button" onClick={onClose}
+            aria-label={t("imagePreview.close")} title={t("imagePreview.closeShortcut")}>
             <X className="icon" aria-hidden="true" />
           </button>
         </div>
       </div>
-      {saveError && <p className="image-preview-status error" role="alert">{saveError}</p>}
-      <div
-        className="image-preview-stage"
-        style={{ cursor }}
-        onClick={handleBackgroundClick}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onDoubleClick={handleDoubleClick}
-      >
-        {item.svg == null && loadStatus === "loading" ? (
-          <div className="image-preview-status">{t("imagePreview.loading")}</div>
-        ) : null}
-        {item.svg == null && loadStatus === "error" ? (
-          <div className="image-preview-status error">
-            {t("imagePreview.loadFailed")}
-          </div>
-        ) : null}
+      {saveError && <p className="image-preview-save-error" role="alert">{saveError}</p>}
+      <div ref={stageRef} className="image-preview-stage" style={{ cursor: dragging ? "grabbing" : canPan ? "grab" : "zoom-in" }}
+        onClick={backgroundClick} onPointerDown={pointerDown} onPointerMove={pointerMove}
+        onPointerUp={endPointer} onPointerCancel={endPointer} onLostPointerCapture={endPointer}
+        onDoubleClick={event => {
+          if (!ready || event.target === event.currentTarget) return;
+          if (scale > fitScale + 0.001) setView(fittedView);
+          else zoomAt(Math.max(2, 1 / fitScale), event.clientX, event.clientY);
+        }}>
+        {loadStatus !== "loaded" && <div className={`image-preview-status${loadStatus === "error" ? " error" : ""}`}>
+          {t(loadStatus === "error" ? "imagePreview.loadFailed" : "imagePreview.loading")}
+        </div>}
         {item.svg != null ? (
-          <div
-            className="image-preview-image image-preview-svg loaded"
-            role="img"
-            aria-label={item.alt ?? ""}
-            style={{ transform }}
-            dangerouslySetInnerHTML={{ __html: item.svg }}
-          />
+          <div ref={svgRef} className="image-preview-image image-preview-svg loaded" role="img" aria-label={item.alt ?? ""}
+            style={{ transform, width: imageSize.width || undefined, height: imageSize.height || undefined }}
+            dangerouslySetInnerHTML={{ __html: item.svg }} />
         ) : (
-          <img
-            className={`image-preview-image${loadStatus === "loaded" ? " loaded" : ""}`}
-            src={item.src}
-            alt={item.alt ?? ""}
-            draggable={false}
-            style={{ transform }}
-            onLoad={handleImageLoad}
-            onError={handleImageError}
-          />
+          <img className={`image-preview-image${ready ? " loaded" : ""}`} src={item.src} alt={item.alt ?? ""}
+            draggable={false} style={{ transform, width: imageSize.width || undefined, height: imageSize.height || undefined }}
+            onLoad={event => {
+              setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
+              setLoadStatus("loaded");
+            }} onError={() => setLoadStatus("error")} />
         )}
       </div>
     </div>

@@ -178,3 +178,13 @@ describe("buildAssistantTurnDisplay compaction notices", () => {
     expect(buildAssistantTurnDisplay(makeTurn("completed", [noteStatus]), undefined, stubRenderer)).toBeUndefined();
   });
 });
+
+it("keeps image-only assistant replies in the answer region", () => {
+  const item = {
+    ...makeCommentary(""),
+    terminal: true,
+    images: [{ media_type: "image/png", data: "aW1hZ2U=" }],
+  };
+  const display = build(makeTurn("completed", [item]));
+  expect(display.entries.some(entry => entry.item.id === item.id && entry.position === "answer")).toBe(true);
+});

@@ -225,19 +225,20 @@ describe("SettingsView shell", () => {
     expect(window.wuu.getRemoteControlSnapshot).toHaveBeenCalled();
   });
 
-  it("exposes the sidebar state and invokes the toggle action", () => {
+  it.each([false, true])("exposes the sidebar state and invokes the toggle action (collapsed=%s)", (sidebarCollapsed) => {
     installBuildInfoStub({
       core: undefined,
       desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
     });
     const onToggleSidebar = vi.fn();
-    renderSettings({ initialized: baseInitialized(), onToggleSidebar });
+    renderSettings({ initialized: baseInitialized(), onToggleSidebar, sidebarCollapsed });
 
     const toggle = container.querySelector<HTMLButtonElement>(
-      ".settings-titlebar .settings-sidebar-toggle",
+      ".settings-sidebar-toggle",
     );
     expect(toggle).not.toBeNull();
-    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll(".settings-sidebar-toggle")).toHaveLength(1);
+    expect(toggle?.getAttribute("aria-pressed")).toBe(String(!sidebarCollapsed));
 
     act(() => {
       toggle?.click();

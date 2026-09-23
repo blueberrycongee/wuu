@@ -6,7 +6,7 @@
   grid-column: 2;
   grid-row: 1 / -1;
   width: 100%;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--hairline-strong);
@@ -78,7 +78,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--hairline-soft);
+  box-shadow: inset 0 -1px 0 var(--hairline-soft);
   /* The panel spans the titlebar row, so this header is the only drag
    * strip on the right of the conversation pane. Match .titlebar and
    * .workspace-panel-tabbar; interactive children opt out below. */

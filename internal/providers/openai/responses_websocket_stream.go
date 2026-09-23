@@ -510,6 +510,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 	var sawToolCall bool
 	var sawProviderEvent bool
 	var text responsesTextStream
+	var images responsesImageStream
 	var responseID string
 	var responseItems []responsesInputItem
 
@@ -680,6 +681,9 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		err := json.Unmarshal(frame.data, &event)
 		if err == nil {
 			err = text.consume(event, emit)
+		}
+		if err == nil {
+			err = images.consume(event, emit)
 		}
 		if err != nil {
 			session.mu.Lock()
@@ -1369,6 +1373,8 @@ func marshalResponsesWebSocketCreate(payload responsesRequest) ([]byte, error) {
 
 func responsesOutputItemReplayInput(item responsesOutputItem) (responsesInputItem, bool) {
 	switch item.Type {
+	case "image_generation_call":
+		return responsesInputItem{Type: item.Type, ID: item.ID, Status: "completed", Result: item.Result}, true
 	case "reasoning":
 		if len(item.Raw) == 0 {
 			return responsesInputItem{}, false

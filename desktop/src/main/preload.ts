@@ -477,6 +477,20 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-show-in-folder", path),
   showWorkspaceItemMenu: (path: string) =>
     ipcRenderer.invoke("wuu:file-show-menu", path),
+  saveArtifactFile: async (name: string, source: string) => {
+    // Blob URLs belong to this renderer and cannot be fetched by the main process.
+    if (source.startsWith("blob:")) {
+      const response = await fetch(source);
+      const blob = await response.blob();
+      source = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    }
+    await ipcRenderer.invoke("wuu:artifact-save", name, source);
+  },
   openExternal: (url: string) =>
     ipcRenderer.invoke("wuu:open-external", url),
   startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts) =>
