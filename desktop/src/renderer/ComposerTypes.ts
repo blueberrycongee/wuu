@@ -1,6 +1,8 @@
 import type { CodexModelSummary } from "../shared/protocol";
 import { resolveLocalizedText } from "./i18n";
 
+export const COMPOSER_PROJECT_MENU_WIDTH = 320;
+
 export type CodexModelLoadState = {
   provider?: string;
   loading: boolean;

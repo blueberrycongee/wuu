@@ -562,27 +562,35 @@
   width: 100%;
 }
 
-/* Separate workspace context from the input actions. */
+/* Context controls sit on the canvas; only the active pill gains a surface. */
 .composer-workspace-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
-  min-height: 46px;
-  margin: 0 14px -10px;
-  padding: 6px 10px 14px;
-  border-radius: calc(var(--radius-md) - 4px) calc(var(--radius-md) - 4px) 0 0;
-  background: var(--surface-2);
+  margin: 0 var(--space-3) var(--space-2);
 }
 
 .composer-workspace-bar .hero-project-pill-anchor {
   max-width: 100%;
 }
 
-/* Pills otherwise hover with --surface-2; step up so the wash still reads. */
-.composer-workspace-bar .hero-project-pill:hover::before,
+.composer-workspace-bar .hero-project-pill {
+  height: auto;
+  min-height: var(--control-row-height);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-sm);
+}
+
+.composer-workspace-bar .hero-project-pill::before {
+  inset: 0;
+}
+
+.composer-workspace-bar .hero-project-pill:hover:not(:disabled)::before,
 .composer-workspace-bar .hero-project-pill[aria-expanded="true"]::before {
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 
 .composer .codex-runtime-trigger {
@@ -2014,15 +2022,16 @@
   left: 12px;
   bottom: 42px;
   z-index: 30;
-  display: grid;
-  width: 280px;
-  max-height: min(360px, calc(100vh - 180px));
+  display: flex;
+  flex-direction: column;
+  width: var(--composer-project-menu-width);
+  max-height: min(400px, var(--floating-menu-available-height, calc(100vh - 120px)));
   overflow: hidden;
   border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
+  border-radius: calc(var(--radius-sm) + var(--space-2));
   background: var(--menu-bg);
   box-shadow: var(--menu-shadow);
-  padding: var(--menu-inset);
+  padding: var(--space-2);
   transform-origin: bottom left;
   --menu-enter-y: 4px;
   animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
@@ -2363,34 +2372,56 @@
 
 .project-picker-list {
   display: grid;
-  max-height: 188px;
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 240px;
   overflow: auto;
-  gap: 1px;
+  gap: 2px;
+  padding-block: var(--space-1);
 }
 
 .composer-project-menu button {
   display: flex;
+  flex-shrink: 0;
   height: auto;
   min-height: var(--control-row-height);
   align-items: center;
   gap: var(--menu-item-gap);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
+  font-weight: 400;
   line-height: var(--line-ui);
   padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
   text-align: left;
+}
+
+.composer-project-menu > button,
+.project-picker-list > button {
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr) var(--icon-size-sm);
+  padding: var(--space-2) var(--space-1);
+}
+
+.composer-project-menu > button {
+  font-weight: var(--weight-medium);
 }
 
 .composer-project-menu button:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
-.composer-project-menu button span {
+.composer-project-menu button > span {
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-picker-item-title {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2404,8 +2435,22 @@
 }
 
 .composer-project-menu .menu-search {
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 0;
   font-weight: 400;
   line-height: var(--line-ui);
+}
+
+.composer-project-menu .menu-search input {
+  font-size: var(--font-menu);
+}
+
+.project-picker-heading {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-1) var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--font-sm);
+  font-weight: 400;
 }
 
 .composer-project-menu .menu-search svg {
@@ -2421,8 +2466,9 @@
 
 .project-picker-divider {
   height: 1px;
-  background: var(--surface-3);
-  margin: 6px 0;
+  flex-shrink: 0;
+  background: var(--hairline-soft);
+  margin: var(--space-1);
 }
 
 /* Right-click edit menu for the composer textarea (ComposerContextMenu
@@ -2729,23 +2775,11 @@
   max-width: 100%;
 }
 
-.composer-branch-menu {
-  width: 280px;
-  max-height: min(280px, calc(100vh - 120px));
-}
-
-.composer-branch-menu .project-picker-list button {
-  width: 100%;
-  height: auto;
-  min-height: var(--control-row-height);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-}
-
 .composer-branch-menu small {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--ink-muted);
-  font-size: var(--font-sm);
+  font-size: var(--font-xs);
   font-weight: 400;
 }
 
@@ -2774,19 +2808,6 @@
 }
 
 @media (pointer: fine) {
-  .composer-workspace-bar {
-    min-height: 46px;
-    padding: 5px 8px 13px;
-  }
-
-  .composer-workspace-bar .hero-project-pill {
-    height: auto;
-    min-height: 28px;
-    gap: 7px;
-    padding: 4px 8px;
-    font-size: var(--font-sm);
-  }
-
   .composer-workspace-bar .hero-project-pill-icon,
   .composer-workspace-bar .hero-project-pill-icon svg {
     width: 14px;
