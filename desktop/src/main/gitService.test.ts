@@ -3,13 +3,14 @@ import {
   mkdtempSync,
   mkdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeContext } from "../shared/protocol";
 import { GitService, gitWorkingTreeBusy, type CommitMessageGenerator } from "./gitService";
 
@@ -44,6 +45,13 @@ function serviceFor(
   );
 }
 
+beforeEach(() => {
+  // Force Git's default quoting regardless of the developer's configuration.
+  vi.stubEnv("GIT_CONFIG_COUNT", "1");
+  vi.stubEnv("GIT_CONFIG_KEY_0", "core.quotePath");
+  vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
+});
+
 afterEach(() => {
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
@@ -63,11 +71,7 @@ describe("GitService file previews", () => {
       'quote"name.txt',
       "back\\slash.txt",
     ]),
-  ])("preserves untracked filename %j in changes, previews and totals", (path) => {
-    // Force Git's default quoting regardless of the developer's configuration.
-    vi.stubEnv("GIT_CONFIG_COUNT", "1");
-    vi.stubEnv("GIT_CONFIG_KEY_0", "core.quotePath");
-    vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
+  ])("preserves filename %j across untracked, staged, modified and deleted changes", (path) => {
     const root = makeRepository();
     const text = "第一行\n第二行\n";
     writeFileSync(join(root, path), text);
@@ -90,6 +94,100 @@ describe("GitService file previews", () => {
     });
     expect.soft(result.patch).toContain("+第一行\n+第二行");
     expect.soft(service.status().diff).toEqual({ files: 1, additions: 2, deletions: 0 });
+
+    execFileSync("git", ["--literal-pathspecs", "-C", root, "add", "--", path]);
+    const staged = service.changes();
+    expect.soft(staged.files).toEqual([
+      { path, status: "added", additions: 2, deletions: 0, binary: false },
+    ]);
+    const stagedPreview = service.fileDiff(staged.files[0].path);
+    expect.soft(stagedPreview).toMatchObject({
+      path, status: "added", original_text: "", modified_text: text,
+      additions: 2, deletions: 0, binary: false,
+    });
+    expect.soft(stagedPreview.patch).toContain("+第一行\n+第二行");
+    expect.soft(service.status()).toMatchObject({
+      diff: { files: 1, additions: 2, deletions: 0 },
+      staged_diff: { files: 1, additions: 2, deletions: 0 },
+    });
+
+    execFileSync("git", ["-C", root, "commit", "-qm", "add file"]);
+    const modifiedText = `${text}第三行\n`;
+    writeFileSync(join(root, path), modifiedText);
+    for (const staged of [false, true]) {
+      if (staged) {
+        execFileSync("git", ["--literal-pathspecs", "-C", root, "add", "--", path]);
+      }
+      const changes = service.changes();
+      expect.soft(changes.files).toEqual([
+        { path, status: "modified", additions: 1, deletions: 0, binary: false },
+      ]);
+      const preview = service.fileDiff(changes.files[0].path);
+      expect.soft(preview).toMatchObject({
+        path, status: "modified", original_text: text, modified_text: modifiedText,
+        additions: 1, deletions: 0, binary: false,
+      });
+      expect.soft(preview.patch).toContain("+第三行");
+      expect.soft(service.status()).toMatchObject({
+        diff: { files: 1, additions: 1, deletions: 0 },
+        staged_diff: staged
+          ? { files: 1, additions: 1, deletions: 0 }
+          : { files: 0, additions: 0, deletions: 0 },
+      });
+    }
+
+    execFileSync("git", ["-C", root, "commit", "-qm", "modify file"]);
+    rmSync(join(root, path));
+    const deleted = service.changes();
+    expect.soft(deleted.files).toEqual([
+      { path, status: "deleted", additions: 0, deletions: 3, binary: false },
+    ]);
+    const deletedPreview = service.fileDiff(deleted.files[0].path);
+    expect.soft(deletedPreview).toMatchObject({
+      path, status: "deleted", original_text: modifiedText, modified_text: "",
+      additions: 0, deletions: 3, binary: false,
+    });
+    expect.soft(deletedPreview.patch).toContain("-第一行\n-第二行\n-第三行");
+  });
+
+  it("keeps rename paths, text revisions and binary statistics aligned with other changes", () => {
+    const root = makeRepository();
+    const oldPath = process.platform === "win32" ? "旧 name.txt" : "旧\tname.txt";
+    const path = process.platform === "win32" ? "新 name.txt" : "新\nname.txt";
+    const originalText = "first\nsecond\nthird\nfourth\n";
+    const modifiedText = "first\nsecond\nthird\nupdated\n";
+    writeFileSync(join(root, oldPath), originalText);
+    writeFileSync(join(root, "binary old.bin"), Buffer.from([0, 1, 2]));
+    execFileSync("git", ["-C", root, "add", "-A"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "add rename sources"]);
+    renameSync(join(root, oldPath), join(root, path));
+    writeFileSync(join(root, path), modifiedText);
+    renameSync(join(root, "binary old.bin"), join(root, "binary new.bin"));
+    writeFileSync(join(root, "README.md"), "updated workspace\n");
+    execFileSync("git", ["-C", root, "add", "-A"]);
+    const service = serviceFor(root);
+
+    const changes = service.changes();
+    expect.soft(changes.files).toHaveLength(3);
+    expect.soft(changes.files).toEqual(expect.arrayContaining([
+      { path, old_path: oldPath, status: "renamed", additions: 1, deletions: 1, binary: false },
+      { path: "binary new.bin", old_path: "binary old.bin", status: "renamed", additions: 0, deletions: 0, binary: true },
+      { path: "README.md", status: "modified", additions: 1, deletions: 1, binary: false },
+    ]));
+    const preview = service.fileDiff(path);
+    expect.soft(preview).toMatchObject({
+      path, old_path: oldPath, status: "renamed", additions: 1, deletions: 1,
+      original_text: originalText, modified_text: modifiedText,
+    });
+    expect.soft(preview.patch).toContain("-fourth\n+updated");
+    expect.soft(preview.patch).not.toContain("+first");
+    expect.soft(service.fileDiff("binary new.bin")).toMatchObject({
+      status: "renamed", binary: true, additions: 0, deletions: 0,
+    });
+    expect.soft(service.status()).toMatchObject({
+      diff: { files: 3, additions: 2, deletions: 2 },
+      staged_diff: { files: 3, additions: 2, deletions: 2 },
+    });
   });
 
   it("returns ignored text files as complete new-file previews", () => {
@@ -109,14 +207,22 @@ describe("GitService file previews", () => {
     expect(result.modified_text).toBe("# Brief\n\nBody\n");
   });
 
-  it("returns both text revisions for a modified file", () => {
+  it("returns only the selected literal filename and both revisions for a modified file", () => {
     const root = makeRepository();
-    writeFileSync(join(root, "README.md"), "workspace improved\n");
+    const path = "file[1].txt";
+    writeFileSync(join(root, path), "workspace\n");
+    writeFileSync(join(root, "file1.txt"), "other file\n");
+    execFileSync("git", ["-C", root, "add", "-A"]);
+    execFileSync("git", ["-C", root, "commit", "-qm", "add literal path fixtures"]);
+    writeFileSync(join(root, path), "workspace improved\n");
+    writeFileSync(join(root, "file1.txt"), "unrelated change\n");
 
-    const result = serviceFor(root).fileDiff("README.md");
+    const result = serviceFor(root).fileDiff(path);
 
     expect(result.original_text).toBe("workspace\n");
     expect(result.modified_text).toBe("workspace improved\n");
+    expect(result.patch).toContain("+workspace improved");
+    expect(result.patch).not.toContain("unrelated change");
   });
 
   it("keeps ignored files out of the workspace Git change list", () => {
@@ -201,6 +307,8 @@ describe("GitService commit message generation", () => {
   it("returns the AI message without committing, staging unstaged files", async () => {
     const root = makeRepository();
     writeChange(root);
+    const path = process.platform === "win32" ? " 中文.txt" : " 中文\tname.txt ";
+    writeFileSync(join(root, path), "new file\n");
     const before = headHash(root);
     const calls: { diff: string; files: string[] }[] = [];
     const generate: CommitMessageGenerator = async (_context, input) => {
@@ -213,10 +321,11 @@ describe("GitService commit message generation", () => {
     expect(result.message).toBe("feat(desktop): add feature flag");
     expect(headHash(root)).toBe(before);
     expect(calls).toHaveLength(1);
-    expect(calls[0].files).toEqual(["feature.ts"]);
+    expect(calls[0].files).toEqual(expect.arrayContaining(["feature.ts", path]));
+    expect(calls[0].files).toHaveLength(2);
     expect(calls[0].diff).toContain("+export const feature = true;");
     // Generation stages the change exactly like a commit would.
-    expect(serviceFor(root).status().staged_diff?.files).toBe(1);
+    expect(serviceFor(root).status().staged_diff?.files).toBe(2);
   });
 
   it("leaves unstaged files alone when include_unstaged is false", async () => {
