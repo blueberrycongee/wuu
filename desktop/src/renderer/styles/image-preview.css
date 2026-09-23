@@ -38,6 +38,7 @@
 
 .image-preview-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
@@ -69,6 +70,18 @@
   border: 1px solid var(--image-preview-toolbar-border);
   border-radius: var(--radius-pill);
   background: var(--image-preview-toolbar-actions-bg);
+}
+
+.image-preview-navigation {
+  flex-wrap: nowrap;
+  margin-right: auto;
+}
+
+.image-preview-position {
+  min-width: 5ch;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .image-preview-toolbar-button {
@@ -203,6 +216,7 @@
 @media (max-width: 480px) {
   .image-preview-toolbar { padding: 10px 8px; justify-content: center; }
   .image-preview-toolbar-actions { gap: 2px; }
+  .image-preview-navigation { margin-right: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

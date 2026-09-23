@@ -25,6 +25,18 @@ It renders the real first-run component without the product preload, app-server,
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
 
+## Conversation image previews
+
+Image previews group the current conversation's displayed uploads, tool-result
+images, and message images in display order. Previous/next buttons and the left
+and right arrow keys move through the group; the counter shows the position.
+Navigation stops at either end, and a single image has no navigation controls.
+Expand collapsed content or load earlier history before opening its images.
+The group stays fixed while the preview is open, so streaming output does not
+shift the current position. Each image starts fitted and unrotated; Shift with
+the left/right arrow keys pans a zoomed image. Escape closes the preview and
+returns focus to the opener.
+
 ## Shared typography and geometry
 
 [`base.css`](../../../desktop/src/renderer/styles/base.css) defines the renderer's base roles, including typography, colors, corners, focus, and elevation. [`spacing.css`](../../../desktop/src/renderer/styles/spacing.css) defines spacing roles, density boundaries, and minimum control sizes. Prefer these existing roles to new per-component constants.

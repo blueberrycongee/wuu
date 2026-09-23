@@ -3,6 +3,7 @@ import { ChevronRight, Download, ExternalLink, FileDiff, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
 import { useImagePreview } from "./ImagePreview";
+import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import { useI18n } from "./i18n";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
@@ -348,13 +349,16 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
   const source = artifactSource(artifact, cwd);
+  const register = useImagePreviewRegistration(source && failedSource !== source && artifact.mimeType.startsWith("image/")
+    ? { src: source, alt: artifact.name, title: artifact.name } : null);
   let image: ReactNode;
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) {
     image = (
       <AttachmentImage
         image={{ media_type: artifact.mimeType, data: artifact.data ?? "", remote_ref: artifact.remoteRef }}
         label={t("imagePreview.label")}
-        onOpen={src => openPreview({ src, alt: artifact.name, title: artifact.name })}
+        previewTitle={artifact.name}
+        onOpen={(src, origin) => openPreview({ src, alt: artifact.name, title: artifact.name }, origin)}
       />
     );
   } else if (!source || !artifact.mimeType.startsWith("image/")) {
@@ -363,7 +367,8 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
     image = (
       <button
         type="button"
-        onClick={() => openPreview({ src: source, alt: artifact.name, title: artifact.name })}
+        ref={register}
+        onClick={event => openPreview({ src: source, alt: artifact.name, title: artifact.name }, event.currentTarget)}
         aria-label={t("artifacts.previewNamed", { name: artifact.name })}
         disabled={failedSource === source}
       >

@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Conversation image previews support previous/next buttons, left/right arrow
+  keys, and a position counter for displayed uploads, tool images, and message
+  images. Navigation stops at the first and last image.
+
 ### Changed
 
 - Text file reads show a line number on the first line of each page and at

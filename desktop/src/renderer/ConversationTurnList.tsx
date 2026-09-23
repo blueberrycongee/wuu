@@ -24,6 +24,7 @@ import {
 } from "./TurnViewHelpers";
 import { submitGlideActive, subscribeSubmitGlide } from "./AutoFollowScroll";
 import { useI18n } from "./i18n";
+import { ImagePreviewGallery } from "./ImagePreviewGallery";
 import { useConversationRenderActive } from "./ConversationRenderActivity";
 import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "./ConversationReadingAnchor";
 
@@ -329,6 +330,7 @@ export function ConversationTurnList({
   }, [autoLoadEarlier, hasEarlierTurns, loadEarlierTurns, remoteBusy]);
 
   return (
+    <ImagePreviewGallery key={threadID}>
     <HistoryAnchor turns={visibleTurns} active={renderActive} loaderRef={historyLoaderRef}>
       {hasEarlierTurns ? (
         <button
@@ -369,6 +371,7 @@ export function ConversationTurnList({
       })}
       {renderAfterMissingTurn}
     </HistoryAnchor>
+    </ImagePreviewGallery>
   );
 }
 

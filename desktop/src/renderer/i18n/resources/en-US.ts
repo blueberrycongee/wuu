@@ -1644,6 +1644,8 @@ export const enUS = {
   "imagePreview.resetZoom": "Reset zoom",
   "imagePreview.close": "Close preview",
   "imagePreview.closeShortcut": "Close preview (Esc)",
+  "imagePreview.previous": "Previous image (←)",
+  "imagePreview.next": "Next image (→)",
   "imagePreview.saveAs": "Save image as…",
   "imagePreview.fit": "Fit to window (0)",
   "imagePreview.actualSize": "Actual size (1)",

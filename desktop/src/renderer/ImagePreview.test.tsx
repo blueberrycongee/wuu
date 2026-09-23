@@ -6,6 +6,9 @@ import {
   useImagePreview,
   type ImagePreviewContextValue
 } from "./ImagePreview";
+import { ConversationTurnList } from "./ConversationTurnList";
+import { TurnView } from "./TurnView";
+import type { Turn } from "../shared/protocol";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -76,6 +79,7 @@ describe("ImagePreviewProvider", () => {
     expect(previewImage).not.toBeNull();
     expect(previewImage?.getAttribute("src")).toContain("data:image/png");
     expect(previewImage?.getAttribute("alt")).toBe("Sample");
+    expect(container.querySelector(".image-preview-navigation")).toBeNull();
 
     act(() => {
       probe.getAPI()?.closePreview();
@@ -211,6 +215,112 @@ function loadImage(): void {
   Object.defineProperties(image, { naturalWidth: { configurable: true, value: 1600 }, naturalHeight: { configurable: true, value: 1200 } });
   act(() => image.dispatchEvent(new Event("load")));
 }
+
+const uploadTurn: Turn = {
+  id: "upload", status: "completed", items_view: "full", items: [{ id: "user", type: "user_message", text: "Compare these images",
+    images: [{ media_type: "image/png", data: "dXBsb2Fk" }] }],
+};
+const toolTurn: Turn = {
+  id: "tool", status: "completed", items_view: "full", items: [
+    { id: "read", type: "tool_call", name: "read_file", status: "completed",
+      result_detail: { content: [{ type: "image", mime_type: "image/png", data: "dG9vbA==", name: "tool.png" }] } },
+    { id: "answer", type: "agent_message", text: "![Message image](https://example.com/image.png)" },
+  ],
+};
+
+function renderConversations(turns: Turn[]): void {
+  act(() => {
+    root ??= createRoot(container);
+    root.render(<ImagePreviewProvider>
+      <ConversationTurnList threadID="current" turns={turns}
+        renderTurn={turn => <TurnView turn={turn} threadID="current" onStreamFrame={() => {}} />} />
+      <div hidden><ConversationTurnList threadID="cached" turns={[uploadTurn]}
+        renderTurn={turn => <TurnView turn={turn} threadID="cached" onStreamFrame={() => {}} />} /></div>
+    </ImagePreviewProvider>);
+  });
+}
+
+it("browses uploads, read_file output and message images in display order without leaving the dialog", () => {
+  renderConversations([toolTurn]);
+  // Earlier history mounts after the recent turn but belongs before it.
+  renderConversations([uploadTurn, toolTurn]);
+  const opener = container.querySelector<HTMLButtonElement>(".turn-artifact-inline-image button")!;
+  expect(opener).not.toBeNull();
+  opener.focus();
+  act(() => opener.click());
+  const dialog = overlayRoot();
+  expect(overlayImage()?.src).toContain("dG9vbA==");
+  expect(container.querySelector(".image-preview-position")?.textContent).toBe("2 / 3");
+  loadImage();
+  key("1");
+  key("ArrowLeft", { shiftKey: true });
+  expect(transform().x).toBe(60);
+  key("r");
+  key("ArrowRight");
+  expect(overlayRoot()).toBe(dialog);
+  expect(overlayImage()?.src).toBe("https://example.com/image.png");
+  expect(overlayImage()?.style.transform).toContain("rotate(0deg)");
+  const next = container.querySelector<HTMLButtonElement>(".image-preview-navigation button:last-child")!;
+  expect(next.disabled).toBe(true);
+  key("ArrowRight");
+  expect(container.querySelector(".image-preview-position")?.textContent).toBe("3 / 3");
+  // A broken image must not trap navigation behind readiness checks.
+  act(() => overlayImage()!.dispatchEvent(new Event("error")));
+  act(() => container.querySelector<HTMLButtonElement>(".image-preview-navigation button")!.click());
+  expect(overlayImage()?.src).toContain("dG9vbA==");
+  key("ArrowLeft");
+  expect(overlayImage()?.src).toContain("dXBsb2Fk");
+  expect(container.querySelector<HTMLButtonElement>(".image-preview-navigation button")!.disabled).toBe(true);
+  key("ArrowLeft");
+  expect(container.querySelector(".image-preview-position")?.textContent).toBe("1 / 3");
+  key("Escape");
+  expect(overlayRoot()).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
+
+it("uses the clicked occurrence for repeated images and refreshes membership only on reopen", () => {
+  const repeated: Turn = { ...uploadTurn, id: "repeat", items: [{ ...uploadTurn.items[0], id: "repeat-user" }] };
+  renderConversations([uploadTurn, repeated]);
+  const openers = container.querySelectorAll<HTMLImageElement>(".message-image");
+  act(() => openers[1].click());
+  expect(container.querySelector(".image-preview-position")?.textContent).toBe("2 / 2");
+  renderConversations([repeated]);
+  key("ArrowLeft");
+  expect(container.querySelector(".image-preview-position")?.textContent).toBe("1 / 2");
+  key("Escape");
+  act(() => container.querySelector<HTMLImageElement>(".message-image")!.click());
+  expect(container.querySelector(".image-preview-navigation")).toBeNull();
+});
+
+it("loads remote originals on navigation and ignores results after moving away", async () => {
+  const prior = window.wuu;
+  let resolve!: (data: string) => void;
+  const read = vi.fn().mockImplementation(() => new Promise<string>(done => { resolve = done; }));
+  window.wuu = { ...prior, readRemoteAttachment: read };
+  const remote: Turn = { ...uploadTurn, id: "remote", items: [{ ...uploadTurn.items[0], id: "remote-user",
+    images: [{ media_type: "image/png", data: "", remote_ref: "thread:remote" }] }] };
+  try {
+    renderConversations([uploadTurn, remote, toolTurn]);
+    expect(read).not.toHaveBeenCalled();
+    act(() => container.querySelector<HTMLImageElement>(".message-image")!.click());
+    key("ArrowRight");
+    expect(read).toHaveBeenCalledWith("thread:remote");
+    expect(overlayImage()).toBeNull();
+    key("ArrowRight");
+    await act(async () => resolve("cmVtb3Rl"));
+    expect(overlayImage()?.src).toContain("dG9vbA==");
+    key("ArrowLeft");
+    await act(async () => resolve("cmVtb3Rl"));
+    expect(overlayImage()?.src).toBe("data:image/png;base64,cmVtb3Rl");
+    expect(container.querySelector(".image-preview-position")?.textContent).toBe("2 / 4");
+    key("ArrowRight");
+    read.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => key("ArrowLeft"));
+    expect(container.querySelector(".image-preview-status.error")).not.toBeNull();
+    key("ArrowRight");
+    expect(overlayImage()?.src).toContain("dG9vbA==");
+  } finally { window.wuu = prior; }
+});
 
 function key(key: string, options: KeyboardEventInit = {}): void {
   act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options })));

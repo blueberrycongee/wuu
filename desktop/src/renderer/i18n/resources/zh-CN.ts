@@ -1641,6 +1641,8 @@ export const zhCN = {
   "imagePreview.resetZoom": "重置缩放",
   "imagePreview.close": "关闭预览",
   "imagePreview.closeShortcut": "关闭预览（Esc）",
+  "imagePreview.previous": "上一张图片（←）",
+  "imagePreview.next": "下一张图片（→）",
   "imagePreview.saveAs": "图片另存为…",
   "imagePreview.fit": "适应窗口（0）",
   "imagePreview.actualSize": "原始尺寸（1）",
