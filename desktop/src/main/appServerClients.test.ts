@@ -297,15 +297,18 @@ describe("AppServerClientPool session routing", () => {
     });
     pool.prewarmContexts([active, owner]);
     children.get(owner.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "session" } })}\n`);
+    // An explicit destination is sufficient before resume/history hydration.
+    const followUp = pool.requestInContext(owner, "turn/start", { thread_id: "cached", prompt: "Next" });
     const read = pool.request("thread/resume", { session_id: "session" });
     const steer = pool.requestInContext(active, "turn/steer", { thread_id: "session", prompt: "Correction" });
     const pending = requests.get(owner.cwd)!;
-    expect(pending.map(request => request.method)).toEqual(["thread/resume", "turn/steer"]);
+    expect(pending.map(request => request.method)).toEqual(["turn/start", "thread/resume", "turn/steer"]);
     expect(requests.get(active.cwd)).toEqual([]);
     for (const request of pending) {
       children.get(owner.cwd)!.stdout.write(`${JSON.stringify({ id: request.id, result: { owner: true } })}\n`);
     }
     expect(await read).toEqual({ owner: true });
+    expect(await followUp).toEqual({ owner: true });
     expect(await steer).toEqual({ owner: true });
     pool.shutdown();
   });

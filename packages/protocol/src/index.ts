@@ -3226,6 +3226,8 @@ export type WuuDesktopApi = {
     permissionMode?: string,
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
+    // Capture the destination before attachment preparation or a workspace switch.
+    targetContext?: RuntimeContext,
   ) => Promise<{ turn: Turn }>;
   queueTurn: (
     threadId: string,
@@ -3236,6 +3238,7 @@ export type WuuDesktopApi = {
     permissionMode?: string,
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
+    targetContext?: RuntimeContext,
   ) => Promise<{ queued: QueuedTurn }>;
   updateQueuedTurn: (
     threadId: string,
@@ -3255,6 +3258,7 @@ export type WuuDesktopApi = {
     files?: InputFile[],
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
+    targetContext?: RuntimeContext,
   ) => Promise<{ turn_id: string }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
