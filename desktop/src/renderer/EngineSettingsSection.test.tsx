@@ -145,4 +145,21 @@ describe("EngineSettingsSection", () => {
     });
     expect(onUpdate).toHaveBeenCalledWith({ codex: { enabled: false } });
   });
+
+  it("shows a detected binary path only in the override field", async () => {
+    const path = "/opt/claude/bin/claude";
+    render({
+      engines: [{ id: "claude", enabled: true, binary_ok: true, binary_path: path }],
+      settings: { default_engine: "wuu" },
+    });
+
+    const row = container.querySelector('[data-testid="settings-engine-claude-status"]')!;
+    expect(row.getAttribute("aria-label")).toContain("已就绪");
+    expect(row.textContent).not.toContain(path);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-claude-advanced-toggle"]')!.click();
+    });
+    expect(container.querySelector<HTMLInputElement>('[data-testid="settings-engine-claude-path"]')?.placeholder).toBe(path);
+    expect(row.querySelector(".settings-engine-detail")).toBeNull();
+  });
 });
