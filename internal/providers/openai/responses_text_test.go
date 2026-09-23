@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,15 +34,18 @@ func TestResponsesStreamFinalMessage(t *testing.T) {
 	completed := func(items ...string) string {
 		return `{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[` + strings.Join(items, ",") + `]}}`
 	}
+	image := `{"id":"ig_1","type":"image_generation_call","status":"completed","output_format":"png","result":"aW1hZ2U="}`
 	answer := message("msg_1", "final_answer", "Hello world")
 	added := `{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message","phase":"final_answer"}}`
 	delta := `{"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","delta":"Hello"}`
 	for _, tc := range []struct {
-		name   string
-		events []string
-		want   string
-		phase  providers.MessagePhase
-		itemID string
+		name      string
+		events    []string
+		want      string
+		phase     providers.MessagePhase
+		itemID    string
+		images    []providers.InputImage
+		wantError bool
 	}{
 		{
 			name: "done_without_added_or_deltas", events: []string{done(0, answer), completed()},
@@ -118,6 +122,11 @@ func TestResponsesStreamFinalMessage(t *testing.T) {
 			events: []string{added, delta, done(0, `{"id":"msg_1","type":"message","phase":"final_answer","content":[]}`), completed()},
 		},
 		{name: "native_empty_completion", events: []string{completed()}},
+		{name: "malformed_image", events: []string{completed(`{"id":"ig_1","type":"image_generation_call","status":"completed","result":"not base64"}`)}, wantError: true},
+		{name: "missing_image_result", events: []string{completed(`{"id":"ig_1","type":"image_generation_call","status":"failed"}`)}, wantError: true},
+		{name: "image_only", events: []string{done(0, image), completed(image)}, images: []providers.InputImage{{ProviderItemID: "ig_1", MediaType: "image/png", Data: "aW1hZ2U="}}},
+		{name: "image_in_final_snapshot", events: []string{completed(image)}, images: []providers.InputImage{{ProviderItemID: "ig_1", MediaType: "image/png", Data: "aW1hZ2U="}}},
+		{name: "image_and_text_deduplicated", events: []string{done(0, image), done(0, image), done(1, answer), completed(image, answer)}, want: "Hello world", phase: providers.MessagePhaseFinalAnswer, itemID: "msg_1", images: []providers.InputImage{{ProviderItemID: "ig_1", MediaType: "image/png", Data: "aW1hZ2U="}}},
 	} {
 		for _, transport := range []providers.StreamTransportMode{providers.StreamTransportSSE, providers.StreamTransportWebSocket} {
 			t.Run(tc.name+"/"+string(transport), func(t *testing.T) {
@@ -169,6 +178,12 @@ func TestResponsesStreamFinalMessage(t *testing.T) {
 						visible.WriteString(event.Content)
 					}
 				})
+				if tc.wantError {
+					if err == nil {
+						t.Fatal("invalid image was silently accepted")
+					}
+					return
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -178,12 +193,12 @@ func TestResponsesStreamFinalMessage(t *testing.T) {
 				if requests.Load() != 1 || result.FinishReason != providers.FinishReasonStop {
 					t.Fatalf("unexpected continuation: requests=%d finish=%q", requests.Load(), result.FinishReason)
 				}
-				if tc.want != "" {
+				if tc.want != "" || len(tc.images) > 0 {
 					if len(result.NewMessages) != 1 {
 						t.Fatalf("final reply not persisted: %+v", result.NewMessages)
 					}
 					msg := result.NewMessages[0]
-					if msg.Content != tc.want || msg.Phase != tc.phase || msg.ProviderItemID != tc.itemID {
+					if msg.Content != tc.want || msg.Phase != tc.phase || msg.ProviderItemID != tc.itemID || !reflect.DeepEqual(msg.Images, tc.images) {
 						t.Fatalf("persisted message: %+v", msg)
 					}
 				} else if len(result.NewMessages) != 0 {

@@ -416,6 +416,7 @@ function BuiltInThreadItemView({
               pendingCompanionReasoning={pendingCompanionReasoning}
               onStreamFrame={onStreamFrame}
             />
+            {(item.images?.length ?? 0) > 0 ? <MessageImageGrid images={item.images ?? []} collapsedLimit={4} /> : null}
           </div>
           {editSummaryCard}
           {actionsVisible ? (

@@ -174,7 +174,7 @@ export function AssistantTurnShell({
   const answerHandoffRequested = answerEntries.some(
     (entry) =>
       entry.item.type === "agent_message" &&
-      streamFieldValue(turn.id, entry.item, "text").trim().length > 0,
+      (streamFieldValue(turn.id, entry.item, "text").trim().length > 0 || (entry.item.images?.length ?? 0) > 0),
   );
   const processCollapseRequested = answerHandoffRequested;
   const className = [

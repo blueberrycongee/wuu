@@ -98,6 +98,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Responses image-generation results now appear as assistant image attachments
+  and remain available when reopening the conversation, including replies with
+  no text.
+
 - Managed session reports preserve completed, failed, and interrupted execution
   outcomes. Control changes and ordinary evidence messages no longer claim a
   successful completion; rejected session operations report failure.

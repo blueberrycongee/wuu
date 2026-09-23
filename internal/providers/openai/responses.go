@@ -429,6 +429,12 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 				Content: []responsesInputContentPart{{Type: "output_text", Text: msg.Content}},
 			})
 		}
+		for _, image := range msg.Images {
+			input = append(input, responsesInputItem{
+				Type: "image_generation_call", ID: image.ProviderItemID,
+				Status: "completed", Result: image.Data,
+			})
+		}
 		for _, call := range msg.ToolCalls {
 			if nativeDeferred && isResponsesToolSearchCall(call) {
 				input = append(input, responsesInputItem{
@@ -449,7 +455,7 @@ func appendResponsesInputItem(input []responsesInputItem, msg providers.ChatMess
 				Arguments: call.Arguments,
 			})
 		}
-		if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 && len(msg.ProviderItems) == 0 {
+		if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 && len(msg.ProviderItems) == 0 && len(msg.Images) == 0 {
 			input = append(input, responsesInputItem{Role: "assistant", Content: ""})
 		}
 		return input
@@ -881,6 +887,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	pendingReasoning := newResponsesPendingReasoning()
 	var sawToolCall bool
 	var text responsesTextStream
+	var images responsesImageStream
 
 	scanner := providers.NewSSEReader(resp.Body, resetIdle)
 	for scanner.Scan() {
@@ -896,6 +903,9 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 		err := json.Unmarshal([]byte(data), &event)
 		if err == nil {
 			err = text.consume(event, emit)
+		}
+		if err == nil {
+			err = images.consume(event, emit)
 		}
 		if err != nil {
 			providers.DebugLogfWire("Responses SSE parse error: %v, data: %s", err, data)
@@ -1337,6 +1347,7 @@ type responsesReasoning struct {
 }
 
 type responsesInputItem struct {
+	Result    string          `json:"result,omitempty"`
 	Raw       json.RawMessage `json:"-"`
 	Type      string          `json:"type,omitempty"`
 	ID        string          `json:"id,omitempty"`
@@ -1406,6 +1417,7 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 		return providers.ChatResponse{}, r.Error.asError()
 	}
 
+	var images []providers.InputImage
 	var contentParts []string
 	calls := make([]providers.ToolCall, 0)
 	reasoningBlocks := make([]providers.ReasoningBlock, 0)
@@ -1413,6 +1425,12 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 	var providerItemID string
 	for _, item := range r.Output {
 		switch item.Type {
+		case "image_generation_call":
+			image, err := item.generatedImage()
+			if err != nil {
+				return providers.ChatResponse{}, err
+			}
+			images = append(images, image)
 		case "reasoning":
 			reasoningBlocks = append(reasoningBlocks, responsesReasoningBlock(item))
 		case "message":
@@ -1452,6 +1470,7 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 	usage, stopReason, finishReason, truncated := responsesDoneMetadata(&r, len(calls) > 0, "")
 
 	return providers.ChatResponse{
+		Images:            images,
 		Content:           strings.Join(contentParts, "\n"),
 		Phase:             phase,
 		ProviderItemID:    providerItemID,
@@ -1466,18 +1485,20 @@ func (r responsesResponse) asChatResponse(model string) (providers.ChatResponse,
 }
 
 type responsesOutputItem struct {
-	Raw       json.RawMessage `json:"-"`
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	Role      string          `json:"role,omitempty"`
-	Phase     string          `json:"phase,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"`
-	Summary   json.RawMessage `json:"summary,omitempty"`
-	CallID    string          `json:"call_id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Execution string          `json:"execution,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Result       string          `json:"result,omitempty"`
+	OutputFormat string          `json:"output_format,omitempty"`
+	Raw          json.RawMessage `json:"-"`
+	ID           string          `json:"id"`
+	Type         string          `json:"type"`
+	Role         string          `json:"role,omitempty"`
+	Phase        string          `json:"phase,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Content      json.RawMessage `json:"content,omitempty"`
+	Summary      json.RawMessage `json:"summary,omitempty"`
+	CallID       string          `json:"call_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Execution    string          `json:"execution,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
 }
 
 func (i *responsesOutputItem) UnmarshalJSON(data []byte) error {

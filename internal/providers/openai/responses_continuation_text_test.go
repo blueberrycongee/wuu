@@ -18,7 +18,14 @@ func TestResponsesWebSocketContinuationUsesFinalMessage(t *testing.T) {
 		name         string
 		events       []string
 		continuation bool
+		imageOnly    bool
 	}{
+		{
+			name:         "image_only_continuation",
+			events:       []string{`{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"id":"ig_1","type":"image_generation_call","status":"completed","result":"aW1hZ2U="}]}}`},
+			continuation: true,
+			imageOnly:    true,
+		},
 		{
 			name: "terminal_snapshot_only",
 			events: []string{
@@ -84,7 +91,11 @@ func TestResponsesWebSocketContinuationUsesFinalMessage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if first.Content != "Final answer" {
+			if tc.imageOnly {
+				if len(first.NewMessages) != 1 || len(first.NewMessages[0].Images) != 1 {
+					t.Fatal("image reply missing")
+				}
+			} else if first.Content != "Final answer" {
 				t.Fatalf("snapshot not recovered: %q", first.Content)
 			}
 			history = append(history, first.NewMessages...)

@@ -926,6 +926,10 @@
   margin: 0;
 }
 
+.agent-text > .message-images {
+  justify-content: flex-start;
+}
+
 .message-images:only-child {
   margin-bottom: 2px;
 }
